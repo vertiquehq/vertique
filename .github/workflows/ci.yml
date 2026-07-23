@@ -27,7 +27,7 @@ jobs:
           cache: maven
 
       - name: Build and test
-        run: ./mvnw -ntp clean verify
+        run: ./mvnw -ntp -T 1 clean verify
 
       - name: Check formatting
-        run: ./mvnw -ntp spotless:check
+        run: ./mvnw -ntp -T 1 spotless:check
