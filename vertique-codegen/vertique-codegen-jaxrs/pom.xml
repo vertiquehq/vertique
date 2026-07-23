@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
+SPDX-License-Identifier: EUPL-1.2
+-->
+
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
+
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>dev.vertique</groupId>
+        <artifactId>vertique-parent</artifactId>
+        <version>${revision}</version>
+        <relativePath>../../pom.xml</relativePath>
+    </parent>
+
+    <artifactId>vertique-codegen-jaxrs</artifactId>
+    <name>Vertique Codegen JAX-RS</name>
+    <description>Annotation processor (CG-009) that validates JAX-RS resource classes at compile
+        time: security-annotation conflicts, path-placeholder/PathParam alignment, body/form
+        exclusivity, and multiple-HTTP-verb guardrail. Pure validation — no source files are
+        generated.</description>
+
+    <dependencies>
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-security-core</artifactId>
+        </dependency>
+        <!-- APT helpers from CG-001 -->
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-codegen-core</artifactId>
+        </dependency>
+
+        <!-- Compile: references Authorized, RequestParams and other rest-core types -->
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-rest-core</artifactId>
+        </dependency>
+
+        <!-- Jakarta security annotations: @PermitAll, @RolesAllowed, @DenyAll -->
+        <dependency>
+            <groupId>jakarta.annotation</groupId>
+            <artifactId>jakarta.annotation-api</artifactId>
+        </dependency>
+
+        <!-- Swagger @Operation annotation for operationId detection -->
+        <dependency>
+            <groupId>io.swagger.core.v3</groupId>
+            <artifactId>swagger-annotations-jakarta</artifactId>
+        </dependency>
+
+        <!-- Test -->
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-codegen-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <!-- JAX-RS markers for resource fixtures -->
+        <dependency>
+            <groupId>jakarta.ws.rs</groupId>
+            <artifactId>jakarta.ws.rs-api</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <!-- Test: load and inspect generated descriptor/bean-param model companions reflectively -->
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-rest-jaxrs</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+</project>

@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
+SPDX-License-Identifier: EUPL-1.2
+-->
+
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
+
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>dev.vertique</groupId>
+        <artifactId>vertique-parent</artifactId>
+        <version>${revision}</version>
+        <relativePath>../../pom.xml</relativePath>
+    </parent>
+
+    <artifactId>vertique-codegen-cron</artifactId>
+    <name>Vertique Codegen Cron</name>
+    <description>Annotation processor that validates @CronJob annotations at compile time: cron expression syntax, @ServiceContract participation, @ServiceOperation requirement on the matched contract method, and policy bounds. Pure validation — no code generation.</description>
+
+    <dependencies>
+        <!-- APT helpers from CG-001 -->
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-codegen-core</artifactId>
+        </dependency>
+
+        <!-- vertique-job-cron is a compile dep because the processor invokes new CronExpression(expr)
+             at processor-runtime time. The transitive Vert.x deps are unused at processor time but
+             unavoidable without aggressive exclusions; harmless on the processor classpath. -->
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-job-cron</artifactId>
+        </dependency>
+
+        <!-- Test -->
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-codegen-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <!-- Annotation source for test fixtures: @CronJob, @ServiceContract, @ServiceOperation,
+             ServiceHandler. Test scope only — keeps these off the processor jar's runtime classpath
+             beyond what vertique-job-cron already pulls. -->
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-services</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+</project>

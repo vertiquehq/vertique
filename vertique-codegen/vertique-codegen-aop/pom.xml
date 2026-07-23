@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
+SPDX-License-Identifier: EUPL-1.2
+-->
+
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
+
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>dev.vertique</groupId>
+        <artifactId>vertique-parent</artifactId>
+        <version>${revision}</version>
+        <relativePath>../../pom.xml</relativePath>
+    </parent>
+
+    <artifactId>vertique-codegen-aop</artifactId>
+    <name>Vertique Codegen AOP</name>
+    <description>Annotation processor that generates reflection-free {Bean}$AopProxy subclass proxies for beans with @Aspect-annotated methods, substituting the proxy via a generated Dagger @Binds</description>
+
+    <dependencies>
+        <!-- APT helpers from CG-001 -->
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-codegen-core</artifactId>
+        </dependency>
+
+        <!-- AOP SPI — the processor reads @Aspect at compile time -->
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-aop</artifactId>
+        </dependency>
+
+        <!-- JavaPoet for code generation -->
+        <dependency>
+            <groupId>com.palantir.javapoet</groupId>
+            <artifactId>javapoet</artifactId>
+        </dependency>
+
+        <!-- Test -->
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-codegen-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <!-- Dagger annotations (@Inject/@Named/@Singleton/@AssistedInject) used by test fixtures -->
+        <dependency>
+            <groupId>com.google.dagger</groupId>
+            <artifactId>dagger</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+</project>

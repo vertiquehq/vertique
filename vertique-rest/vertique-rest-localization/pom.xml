@@ -1,0 +1,124 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
+SPDX-License-Identifier: EUPL-1.2
+-->
+
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
+
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>dev.vertique</groupId>
+        <artifactId>vertique-parent</artifactId>
+        <version>${revision}</version>
+        <relativePath>../../pom.xml</relativePath>
+    </parent>
+
+    <artifactId>vertique-rest-localization</artifactId>
+    <name>Vertique REST Localization</name>
+    <description>Inbound REST locale negotiation: an ordered LocaleSource chain (built-in Accept-Language source) that binds the typed LocalizationContext for handler code and downstream propagation.</description>
+
+    <build>
+        <plugins>
+            <!--
+              FR-RLOC-003/004: this server-only module MUST NOT depend on vertique-rest-jaxrs or
+              vertique-rest-client. It defines inbound locale negotiation against vertique-rest-core
+              only; outbound Accept-Language is deferred to a future vertique-rest-client-localization
+              module, and the end-to-end demonstration/IT live in examples/vertique-example-localization.
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-enforcer-plugin</artifactId>
+                <version>3.4.1</version>
+                <executions>
+                    <execution>
+                        <id>enforce-rest-localization-boundaries</id>
+                        <goals><goal>enforce</goal></goals>
+                        <configuration>
+                            <rules>
+                                <bannedDependencies>
+                                    <excludes>
+                                        <exclude>dev.vertique:vertique-rest-jaxrs</exclude>
+                                        <exclude>dev.vertique:vertique-rest-client</exclude>
+                                    </excludes>
+                                    <message>
+                                        vertique-rest-localization is server-only: it must not depend on
+                                        vertique-rest-jaxrs (FR-RLOC-004) or vertique-rest-client
+                                        (FR-RLOC-003). It defines inbound locale negotiation against
+                                        vertique-rest-core; outbound Accept-Language is deferred to a future
+                                        vertique-rest-client-localization module, and the JAX-RS runtime
+                                        end-to-end test lives in examples/vertique-example-localization.
+                                    </message>
+                                </bannedDependencies>
+                            </rules>
+                            <fail>true</fail>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+
+    <dependencies>
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-rest-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-localization</artifactId>
+        </dependency>
+        <!-- WarningThrottle (once-per-key WARN throttle) used by the locale source and interceptor. -->
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-context</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.vertx</groupId>
+            <artifactId>vertx-web</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.google.dagger</groupId>
+            <artifactId>dagger</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>jakarta.inject</groupId>
+            <artifactId>jakarta.inject-api</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-api</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+        </dependency>
+
+        <!-- Test -->
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.vertx</groupId>
+            <artifactId>vertx-junit5</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.mockito</groupId>
+            <artifactId>mockito-core</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-config-core</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+</project>

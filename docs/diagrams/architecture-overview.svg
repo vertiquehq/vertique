@@ -1,0 +1,120 @@
+<!--
+SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
+SPDX-License-Identifier: EUPL-1.2
+-->
+
+<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 820 692" role="img">
+<title>Vertique platform architecture</title>
+<desc>A layered platform stack on Vert.x 5.1. Shipped capabilities are solid; prospective additions are dashed (roadmap): MCP inbound tool edge, AI agents in the programming model, LLM clients outbound, and Spring Boot / Quarkus host bridges. Inbound edges: REST, WebSocket, SSE, Kafka, Camel. Request pipeline: security, validation, sanitization, localization. Programming model on the event bus: services, durable saga/Temporal workflow, cron jobs, delayed jobs, transactional inbox/outbox. An async non-blocking reactive runtime. Outbound edges: REST client, Kafka producers, Camel outbox. Cross-cutting observability and audit. Compile-time foundation: Dagger DI, codegen, config, bootstrap, deploy, JSON profiles. PostgreSQL and Flyway data layer.</desc>
+<defs>
+<style>
+text{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;}
+.title{font-size:14px;font-weight:500;}
+.sub{font-size:12px;font-weight:400;}
+.cap{font-size:12px;font-weight:400;fill:#5F5E5A;}
+.arrow{stroke:#888780;stroke-width:1.2;fill:none;}
+.fill-gray{fill:#F1EFE8;stroke:#5F5E5A;}.gray-t{fill:#2C2C2A;}.gray-s{fill:#5F5E5A;}
+.fill-blue{fill:#E6F1FB;stroke:#185FA5;}.blue-t{fill:#0C447C;}.blue-s{fill:#185FA5;}
+.fill-coral{fill:#FAECE7;stroke:#993C1D;}.coral-t{fill:#712B13;}.coral-s{fill:#993C1D;}
+.fill-teal{fill:#E1F5EE;stroke:#0F6E56;}.teal-t{fill:#085041;}.teal-s{fill:#0F6E56;}
+.fill-purple{fill:#EEEDFE;stroke:#534AB7;}.purple-t{fill:#3C3489;}.purple-s{fill:#534AB7;}
+.fill-pink{fill:#FBEAF0;stroke:#993556;}.pink-t{fill:#72243E;}.pink-s{fill:#993556;}
+.wordmark{font-size:19px;font-weight:600;fill:#2C2C2A;}
+@media (prefers-color-scheme:dark){
+.cap{fill:#B4B2A9;}.wordmark{fill:#F1EFE8;}.arrow{stroke:#888780;}
+.fill-gray{fill:#2C2C2A;stroke:#B4B2A9;}.gray-t{fill:#F1EFE8;}.gray-s{fill:#D3D1C7;}
+.fill-blue{fill:#0C447C;stroke:#85B7EB;}.blue-t{fill:#E6F1FB;}.blue-s{fill:#B5D4F4;}
+.fill-coral{fill:#712B13;stroke:#F0997B;}.coral-t{fill:#FAECE7;}.coral-s{fill:#F5C4B3;}
+.fill-teal{fill:#085041;stroke:#5DCAA5;}.teal-t{fill:#E1F5EE;}.teal-s{fill:#9FE1CB;}
+.fill-purple{fill:#3C3489;stroke:#AFA9EC;}.purple-t{fill:#EEEDFE;}.purple-s{fill:#CECBF6;}
+.fill-pink{fill:#72243E;stroke:#ED93B1;}.pink-t{fill:#FBEAF0;}.pink-s{fill:#F4C0D1;}
+}
+</style>
+<marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker>
+</defs>
+
+<g><rect class="fill-gray" x="28" y="16" width="143" height="44" rx="8" stroke-width="0.5"/><text class="title gray-t" x="99" y="33" text-anchor="middle" dominant-baseline="central">Browsers &amp; apps</text><text class="sub gray-s" x="99" y="49" text-anchor="middle" dominant-baseline="central">REST · WS · SSE</text></g>
+<g><rect class="fill-gray" x="183" y="16" width="143" height="44" rx="8" stroke-width="0.5"/><text class="title gray-t" x="254" y="33" text-anchor="middle" dominant-baseline="central">Service callers</text><text class="sub gray-s" x="254" y="49" text-anchor="middle" dominant-baseline="central">event bus</text></g>
+<g><rect class="fill-gray" x="338" y="16" width="143" height="44" rx="8" stroke-width="0.5"/><text class="title gray-t" x="409" y="33" text-anchor="middle" dominant-baseline="central">Kafka topics</text><text class="sub gray-s" x="409" y="49" text-anchor="middle" dominant-baseline="central">consume · produce</text></g>
+<g><rect class="fill-gray" x="493" y="16" width="143" height="44" rx="8" stroke-width="0.5"/><text class="title gray-t" x="564" y="33" text-anchor="middle" dominant-baseline="central">Files &amp; systems</text><text class="sub gray-s" x="564" y="49" text-anchor="middle" dominant-baseline="central">SFTP · S3 · JMS</text></g>
+<g><rect class="fill-gray" x="648" y="16" width="143" height="44" rx="8" stroke-width="0.5" stroke-dasharray="4 3"/><text class="title gray-t" x="719" y="33" text-anchor="middle" dominant-baseline="central">AI agents</text><text class="sub gray-s" x="719" y="49" text-anchor="middle" dominant-baseline="central">via MCP · tools</text></g>
+
+<line class="arrow" x1="254" y1="62" x2="254" y2="72" marker-end="url(#arrow)"/>
+<line class="arrow" x1="409" y1="62" x2="409" y2="72" marker-end="url(#arrow)"/>
+<line class="arrow" x1="564" y1="62" x2="564" y2="72" marker-end="url(#arrow)"/>
+
+<rect class="fill-gray" x="18" y="74" width="784" height="502" rx="20" stroke-width="0.5"/>
+<text class="wordmark" x="30" y="100">Vertique</text>
+<text class="cap" x="30" y="120">Enterprise microservices on Vert.x — compile-time wired, event-bus native</text>
+<g><rect class="fill-gray" x="596" y="86" width="80" height="22" rx="11" stroke-width="0.5"/><text class="sub gray-t" x="636" y="98" text-anchor="middle" dominant-baseline="central">Java 21</text></g>
+<g><rect class="fill-gray" x="684" y="86" width="96" height="22" rx="11" stroke-width="0.5"/><text class="sub gray-t" x="732" y="98" text-anchor="middle" dominant-baseline="central">Vert.x 5.1</text></g>
+
+<text class="cap" x="30" y="140">Inbound edge — protocol adapters</text>
+<g><rect class="fill-blue" x="28" y="148" width="98" height="50" rx="8" stroke-width="0.5"/><text class="title blue-t" x="77" y="167" text-anchor="middle" dominant-baseline="central">REST</text><text class="sub blue-s" x="77" y="183" text-anchor="middle" dominant-baseline="central">JAX-RS</text></g>
+<g><rect class="fill-blue" x="136" y="148" width="98" height="50" rx="8" stroke-width="0.5"/><text class="title blue-t" x="185" y="167" text-anchor="middle" dominant-baseline="central">WebSocket</text><text class="sub blue-s" x="185" y="183" text-anchor="middle" dominant-baseline="central">typed msgs</text></g>
+<g><rect class="fill-blue" x="244" y="148" width="98" height="50" rx="8" stroke-width="0.5"/><text class="title blue-t" x="293" y="167" text-anchor="middle" dominant-baseline="central">SSE</text><text class="sub blue-s" x="293" y="183" text-anchor="middle" dominant-baseline="central">event stream</text></g>
+<g><rect class="fill-blue" x="352" y="148" width="98" height="50" rx="8" stroke-width="0.5"/><text class="title blue-t" x="401" y="167" text-anchor="middle" dominant-baseline="central">Kafka</text><text class="sub blue-s" x="401" y="183" text-anchor="middle" dominant-baseline="central">consumers</text></g>
+<g><rect class="fill-blue" x="460" y="148" width="98" height="50" rx="8" stroke-width="0.5"/><text class="title blue-t" x="509" y="167" text-anchor="middle" dominant-baseline="central">Camel</text><text class="sub blue-s" x="509" y="183" text-anchor="middle" dominant-baseline="central">300+ adapters</text></g>
+<g><rect class="fill-blue" x="568" y="148" width="98" height="50" rx="8" stroke-width="0.5" stroke-dasharray="4 3"/><text class="title blue-t" x="617" y="167" text-anchor="middle" dominant-baseline="central">MCP</text><text class="sub blue-s" x="617" y="183" text-anchor="middle" dominant-baseline="central">tool server</text></g>
+
+<text class="cap" x="30" y="216">Request &amp; message pipeline</text>
+<g><rect class="fill-coral" x="28" y="224" width="150" height="50" rx="8" stroke-width="0.5"/><text class="title coral-t" x="103" y="243" text-anchor="middle" dominant-baseline="central">Security</text><text class="sub coral-s" x="103" y="259" text-anchor="middle" dominant-baseline="central">JWT · RBAC</text></g>
+<g><rect class="fill-coral" x="190" y="224" width="150" height="50" rx="8" stroke-width="0.5"/><text class="title coral-t" x="265" y="243" text-anchor="middle" dominant-baseline="central">Validation</text><text class="sub coral-s" x="265" y="259" text-anchor="middle" dominant-baseline="central">Jakarta</text></g>
+<g><rect class="fill-coral" x="352" y="224" width="150" height="50" rx="8" stroke-width="0.5"/><text class="title coral-t" x="427" y="243" text-anchor="middle" dominant-baseline="central">Sanitization</text><text class="sub coral-s" x="427" y="259" text-anchor="middle" dominant-baseline="central">canonicalize</text></g>
+<g><rect class="fill-coral" x="514" y="224" width="150" height="50" rx="8" stroke-width="0.5"/><text class="title coral-t" x="589" y="243" text-anchor="middle" dominant-baseline="central">Localization</text><text class="sub coral-s" x="589" y="259" text-anchor="middle" dominant-baseline="central">i18n locales</text></g>
+
+<text class="cap" x="30" y="292">Programming model — on the event bus</text>
+<g><rect class="fill-teal" x="28" y="300" width="98" height="54" rx="8" stroke-width="0.5"/><text class="title teal-t" x="77" y="320" text-anchor="middle" dominant-baseline="central">Services</text><text class="sub teal-s" x="77" y="338" text-anchor="middle" dominant-baseline="central">event bus</text></g>
+<g><rect class="fill-teal" x="136" y="300" width="98" height="54" rx="8" stroke-width="0.5"/><text class="title teal-t" x="185" y="320" text-anchor="middle" dominant-baseline="central">Workflow</text><text class="sub teal-s" x="185" y="338" text-anchor="middle" dominant-baseline="central">saga · Temporal</text></g>
+<g><rect class="fill-teal" x="244" y="300" width="98" height="54" rx="8" stroke-width="0.5"/><text class="title teal-t" x="293" y="320" text-anchor="middle" dominant-baseline="central">Cron jobs</text><text class="sub teal-s" x="293" y="338" text-anchor="middle" dominant-baseline="central">recurring</text></g>
+<g><rect class="fill-teal" x="352" y="300" width="98" height="54" rx="8" stroke-width="0.5"/><text class="title teal-t" x="401" y="320" text-anchor="middle" dominant-baseline="central">Delayed</text><text class="sub teal-s" x="401" y="338" text-anchor="middle" dominant-baseline="central">job queue</text></g>
+<g><rect class="fill-teal" x="460" y="300" width="98" height="54" rx="8" stroke-width="0.5"/><text class="title teal-t" x="509" y="320" text-anchor="middle" dominant-baseline="central">Inbox/Outbox</text><text class="sub teal-s" x="509" y="338" text-anchor="middle" dominant-baseline="central">transactional</text></g>
+<g><rect class="fill-teal" x="568" y="300" width="98" height="54" rx="8" stroke-width="0.5" stroke-dasharray="4 3"/><text class="title teal-t" x="617" y="320" text-anchor="middle" dominant-baseline="central">AI</text><text class="sub teal-s" x="617" y="338" text-anchor="middle" dominant-baseline="central">agents · tools</text></g>
+
+<line class="arrow" x1="77" y1="354" x2="77" y2="364" stroke="#7F77DD" marker-end="url(#arrow)"/>
+<line class="arrow" x1="185" y1="354" x2="185" y2="364" stroke="#7F77DD" marker-end="url(#arrow)"/>
+<line class="arrow" x1="293" y1="354" x2="293" y2="364" stroke="#7F77DD" marker-end="url(#arrow)"/>
+<line class="arrow" x1="401" y1="354" x2="401" y2="364" stroke="#7F77DD" marker-end="url(#arrow)"/>
+<line class="arrow" x1="509" y1="354" x2="509" y2="364" stroke="#7F77DD" marker-end="url(#arrow)"/>
+<line class="arrow" x1="617" y1="354" x2="617" y2="364" stroke="#7F77DD" marker-end="url(#arrow)"/>
+
+<g><rect class="fill-purple" x="28" y="366" width="638" height="48" rx="8" stroke-width="0.5"/><text class="title purple-t" x="347" y="386" text-anchor="middle" dominant-baseline="central">Vert.x 5 runtime · event bus</text><text class="sub purple-s" x="347" y="401" text-anchor="middle" dominant-baseline="central">async · non-blocking · reactive</text></g>
+
+<text class="cap" x="30" y="430">Outbound edge — clients &amp; relays</text>
+<g><rect class="fill-blue" x="28" y="438" width="150" height="50" rx="8" stroke-width="0.5"/><text class="title blue-t" x="103" y="457" text-anchor="middle" dominant-baseline="central">REST client</text><text class="sub blue-s" x="103" y="473" text-anchor="middle" dominant-baseline="central">declarative · resilient</text></g>
+<g><rect class="fill-blue" x="190" y="438" width="150" height="50" rx="8" stroke-width="0.5"/><text class="title blue-t" x="265" y="457" text-anchor="middle" dominant-baseline="central">Kafka producers</text><text class="sub blue-s" x="265" y="473" text-anchor="middle" dominant-baseline="central">typed @KafkaProducer</text></g>
+<g><rect class="fill-blue" x="352" y="438" width="150" height="50" rx="8" stroke-width="0.5"/><text class="title blue-t" x="427" y="457" text-anchor="middle" dominant-baseline="central">Camel outbox</text><text class="sub blue-s" x="427" y="473" text-anchor="middle" dominant-baseline="central">relay to endpoints</text></g>
+<g><rect class="fill-blue" x="514" y="438" width="150" height="50" rx="8" stroke-width="0.5" stroke-dasharray="4 3"/><text class="title blue-t" x="589" y="457" text-anchor="middle" dominant-baseline="central">LLM clients</text><text class="sub blue-s" x="589" y="473" text-anchor="middle" dominant-baseline="central">providers · MCP</text></g>
+
+<g><rect class="fill-pink" x="686" y="148" width="114" height="340" rx="14" stroke-width="0.5"/>
+<text class="title pink-t" x="743" y="170" text-anchor="middle" dominant-baseline="central">Observability</text><text class="sub pink-s" x="743" y="186" text-anchor="middle" dominant-baseline="central">&amp; audit</text>
+<text class="title pink-t" x="698" y="216" dominant-baseline="central">Metrics</text><text class="sub pink-s" x="698" y="232" dominant-baseline="central">Micrometer</text>
+<text class="title pink-t" x="698" y="272" dominant-baseline="central">Tracing</text><text class="sub pink-s" x="698" y="288" dominant-baseline="central">OpenTelemetry</text>
+<text class="title pink-t" x="698" y="328" dominant-baseline="central">Logging</text><text class="sub pink-s" x="698" y="344" dominant-baseline="central">structured</text>
+<text class="title pink-t" x="698" y="384" dominant-baseline="central">Audit</text><text class="sub pink-s" x="698" y="400" dominant-baseline="central">evidence</text>
+<text class="title pink-t" x="698" y="440" dominant-baseline="central">Correlation</text><text class="sub pink-s" x="698" y="456" dominant-baseline="central">context</text>
+</g>
+
+<text class="cap" x="30" y="506">Foundation — compile-time wiring</text>
+<g><rect class="fill-gray" x="28" y="514" width="100" height="48" rx="8" stroke-width="0.5"/><text class="title gray-t" x="78" y="532" text-anchor="middle" dominant-baseline="central">Dagger 2 DI</text><text class="sub gray-s" x="78" y="548" text-anchor="middle" dominant-baseline="central">compile-time</text></g>
+<g><rect class="fill-gray" x="138" y="514" width="100" height="48" rx="8" stroke-width="0.5"/><text class="title gray-t" x="188" y="532" text-anchor="middle" dominant-baseline="central">Codegen</text><text class="sub gray-s" x="188" y="548" text-anchor="middle" dominant-baseline="central">APT processors</text></g>
+<g><rect class="fill-gray" x="248" y="514" width="100" height="48" rx="8" stroke-width="0.5"/><text class="title gray-t" x="298" y="532" text-anchor="middle" dominant-baseline="central">Config</text><text class="sub gray-s" x="298" y="548" text-anchor="middle" dominant-baseline="central">Vault·AWS·Azure</text></g>
+<g><rect class="fill-gray" x="358" y="514" width="100" height="48" rx="8" stroke-width="0.5"/><text class="title gray-t" x="408" y="532" text-anchor="middle" dominant-baseline="central">Bootstrap</text><text class="sub gray-s" x="408" y="548" text-anchor="middle" dominant-baseline="central">entrypoint</text></g>
+<g><rect class="fill-gray" x="468" y="514" width="100" height="48" rx="8" stroke-width="0.5"/><text class="title gray-t" x="518" y="532" text-anchor="middle" dominant-baseline="central">Deploy</text><text class="sub gray-s" x="518" y="548" text-anchor="middle" dominant-baseline="central">verticles</text></g>
+<g><rect class="fill-gray" x="578" y="514" width="100" height="48" rx="8" stroke-width="0.5"/><text class="title gray-t" x="628" y="532" text-anchor="middle" dominant-baseline="central">JSON profiles</text><text class="sub gray-s" x="628" y="548" text-anchor="middle" dominant-baseline="central">configurable</text></g>
+<g><rect class="fill-gray" x="688" y="514" width="100" height="48" rx="8" stroke-width="0.5" stroke-dasharray="4 3"/><text class="title gray-t" x="738" y="532" text-anchor="middle" dominant-baseline="central">Bridges</text><text class="sub gray-s" x="738" y="548" text-anchor="middle" dominant-baseline="central">Spring · Quarkus</text></g>
+
+<line class="arrow" x1="270" y1="576" x2="270" y2="602" marker-end="url(#arrow)"/>
+<line class="arrow" x1="550" y1="576" x2="550" y2="602" marker-end="url(#arrow)"/>
+
+<g><rect class="fill-gray" x="150" y="604" width="240" height="52" rx="8" stroke-width="0.5"/><text class="title gray-t" x="270" y="624" text-anchor="middle" dominant-baseline="central">PostgreSQL</text><text class="sub gray-s" x="270" y="640" text-anchor="middle" dominant-baseline="central">reactive client · repositories</text></g>
+<g><rect class="fill-gray" x="430" y="604" width="240" height="52" rx="8" stroke-width="0.5"/><text class="title gray-t" x="550" y="624" text-anchor="middle" dominant-baseline="central">Flyway</text><text class="sub gray-s" x="550" y="640" text-anchor="middle" dominant-baseline="central">schema migrations</text></g>
+
+<rect x="30" y="666" width="12" height="12" rx="3" fill="#378ADD"/><text class="cap" x="48" y="672" dominant-baseline="central">Edges</text>
+<rect x="118" y="666" width="12" height="12" rx="3" fill="#D85A30"/><text class="cap" x="136" y="672" dominant-baseline="central">Pipeline</text>
+<rect x="222" y="666" width="12" height="12" rx="3" fill="#1D9E75"/><text class="cap" x="240" y="672" dominant-baseline="central">Model</text>
+<rect x="312" y="666" width="12" height="12" rx="3" fill="#7F77DD"/><text class="cap" x="330" y="672" dominant-baseline="central">Runtime</text>
+<rect x="420" y="666" width="12" height="12" rx="3" fill="#D4537E"/><text class="cap" x="438" y="672" dominant-baseline="central">Telemetry</text>
+<rect x="530" y="666" width="12" height="12" rx="3" fill="#888780"/><text class="cap" x="548" y="672" dominant-baseline="central">Foundation</text>
+<rect x="650" y="666" width="12" height="12" rx="3" fill="none" stroke="#5F5E5A" stroke-width="1" stroke-dasharray="3 2"/><text class="cap" x="668" y="672" dominant-baseline="central">roadmap</text>
+</svg>

@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
+SPDX-License-Identifier: EUPL-1.2
+-->
+
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
+
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>dev.vertique</groupId>
+        <artifactId>vertique-parent</artifactId>
+        <version>${revision}</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
+
+    <artifactId>vertique-kafka</artifactId>
+    <packaging>pom</packaging>
+    <name>Vertique Kafka</name>
+    <description>Kafka integration family: format-agnostic core runtime, JSON serde, and Avro/Apicurio serde modules</description>
+
+    <modules>
+        <module>vertique-kafka-core</module>
+        <module>vertique-kafka-json</module>
+        <module>vertique-kafka-avro</module>
+        <module>vertique-kafka-test</module>
+    </modules>
+</project>

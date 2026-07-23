@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
+SPDX-License-Identifier: EUPL-1.2
+-->
+
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
+
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>dev.vertique</groupId>
+        <artifactId>vertique-parent</artifactId>
+        <version>${revision}</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
+
+    <artifactId>vertique-codegen</artifactId>
+    <packaging>pom</packaging>
+    <name>Vertique Codegen</name>
+    <description>Annotation processor infrastructure: shared APT helpers and a compile-testing harness for downstream codegen modules (CG-002+)</description>
+
+    <modules>
+        <module>vertique-codegen-core</module>
+        <module>vertique-codegen-test</module>
+        <module>vertique-codegen-aop</module>
+        <module>vertique-codegen-events</module>
+        <module>vertique-codegen-dagger</module>
+        <module>vertique-codegen-application</module>
+        <module>vertique-codegen-rest-client</module>
+        <module>vertique-codegen-delayed-job</module>
+        <module>vertique-codegen-kafka</module>
+        <module>vertique-codegen-workflow</module>
+        <module>vertique-codegen-cron</module>
+        <module>vertique-codegen-services</module>
+        <module>vertique-codegen-sanitization</module>
+        <module>vertique-codegen-jaxrs</module>
+    </modules>
+</project>

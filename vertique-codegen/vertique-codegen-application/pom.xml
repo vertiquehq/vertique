@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
+SPDX-License-Identifier: EUPL-1.2
+-->
+
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
+
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>dev.vertique</groupId>
+        <artifactId>vertique-parent</artifactId>
+        <version>${revision}</version>
+        <relativePath>../../pom.xml</relativePath>
+    </parent>
+
+    <artifactId>vertique-codegen-application</artifactId>
+    <name>Vertique Codegen Application</name>
+    <description>Annotation processor that generates a VertiqueComponentFactory implementation and its
+        META-INF/services registration from a @VertiqueApp-annotated Dagger @Component, so a standalone
+        application writes neither the factory nor the service file.</description>
+
+    <dependencies>
+        <!-- APT helpers from CG-001 -->
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-codegen-core</artifactId>
+        </dependency>
+
+        <!-- JavaPoet for code generation -->
+        <dependency>
+            <groupId>com.palantir.javapoet</groupId>
+            <artifactId>javapoet</artifactId>
+        </dependency>
+
+        <!-- Test -->
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-codegen-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <!-- Annotation + contract source for test fixtures: @VertiqueApp, VertiqueApplicationComponent.
+             Brings in vertique-core (VertiqueComponentFactory / VertiqueRuntime / VertxModule) and
+             vertique-deploy transitively. Test scope only — the processor references these types by
+             FQN string (ClassName / @SupportedAnnotationTypes), so they stay off the processor jar's
+             runtime classpath. -->
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-application</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <!-- Dagger annotation constants (@Component) for test fixtures, plus the Dagger annotation
+             processor so the generated factory + DaggerX compile together in the compile-testing run. -->
+        <dependency>
+            <groupId>com.google.dagger</groupId>
+            <artifactId>dagger</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.google.dagger</groupId>
+            <artifactId>dagger-compiler</artifactId>
+            <version>${dagger.version}</version>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+</project>

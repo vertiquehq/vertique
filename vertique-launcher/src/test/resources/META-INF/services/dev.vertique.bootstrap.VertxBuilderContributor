@@ -1,0 +1,5 @@
+dev.vertique.launcher.OrderedAlphaContributor
+dev.vertique.launcher.OrderedBetaContributor
+dev.vertique.launcher.ThrowingContributor
+dev.vertique.launcher.FakeMetricsContributor
+dev.vertique.launcher.OptionsRecordingContributor

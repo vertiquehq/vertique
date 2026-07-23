@@ -1,0 +1,15 @@
+# SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
+# SPDX-License-Identifier: EUPL-1.2
+
+target/**
+**/target/**
+.idea/**
+.vscode/**
+**/.classpath
+**/.factorypath
+**/.project
+**/.settings/**
+.flattened-pom.xml
+.java-version
+**/src/**/*.class
+.vertique/

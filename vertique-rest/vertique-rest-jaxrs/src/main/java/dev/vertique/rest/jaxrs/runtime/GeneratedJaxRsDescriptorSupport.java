@@ -1,0 +1,210 @@
+// SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
+// SPDX-License-Identifier: EUPL-1.2
+
+package dev.vertique.rest.jaxrs.runtime;
+
+import dev.vertique.core.sanitization.Canonicalizer;
+import dev.vertique.core.sanitization.Sanitizer;
+import dev.vertique.core.util.AnnotationResolver;
+import java.lang.annotation.Annotation;
+import java.lang.reflect.Method;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+
+/**
+ * Stateless runtime helper bag exposed to generated JAX-RS resource descriptor and bean-param
+ * model implementations.
+ *
+ * <p>Generated companions created by the CG-010 pipeline reference user-author types via
+ * string FQN constants (never {@code .class} literals) to stay compatible with inaccessible
+ * or private nested types. This class provides the resolution layer that converts those FQN
+ * strings to the corresponding {@link Class} or {@link Method} objects at the first call from
+ * each descriptor instance.
+ *
+ * <p>Primitive type names ({@code "int"}, {@code "long"}, {@code "boolean"}, etc.) are
+ * recognised and mapped to the matching {@link Class} without invoking {@link Class#forName},
+ * which does not accept primitive type names.
+ *
+ * <p>Caching policy: results are <strong>not</strong> cached at the support level. Each
+ * generated descriptor instance is free to cache its own resolutions in its own fields after
+ * receiving them from this class. Keeping the support stateless and idempotent simplifies
+ * testing and allows the same support instance to be shared across multiple descriptors without
+ * locking.
+ *
+ * <p>Annotation resolution delegates to {@link AnnotationResolver}, which walks the full
+ * superclass chain and all transitively reachable interfaces (BFS order). This closes the
+ * interface-walk gap for resources whose JAX-RS annotations live on a super-interface rather
+ * than on the concrete class.
+ *
+ * <p>Instantiate directly: {@code new GeneratedJaxRsDescriptorSupport()}.
+ */
+public final class GeneratedJaxRsDescriptorSupport {
+
+    /**
+     * Map from primitive type name to its corresponding {@link Class} object.
+     *
+     * <p>{@link Class#forName(String)} does not accept primitive names; this table provides
+     * the mapping so that {@code resolveClass("int", ...)} returns {@code int.class} rather
+     * than throwing {@link ClassNotFoundException}.
+     */
+    private static final Map<String, Class<?>> PRIMITIVES = Map.of(
+            "boolean", boolean.class,
+            "byte", byte.class,
+            "char", char.class,
+            "short", short.class,
+            "int", int.class,
+            "long", long.class,
+            "float", float.class,
+            "double", double.class,
+            "void", void.class);
+
+    /**
+     * Creates a new support instance. Intended to be called by generated descriptor or
+     * bean-param model classes on their first {@code describe()} / {@code fields()} call.
+     */
+    public GeneratedJaxRsDescriptorSupport() {}
+
+    // --- Type resolution ---
+
+    /**
+     * Resolves a single class by its fully-qualified name using the given class loader.
+     *
+     * <p>Primitive type names ({@code "int"}, {@code "long"}, etc.) are handled without
+     * invoking {@link Class#forName}.
+     *
+     * @param fqn the fully-qualified class name or primitive type name; must not be {@code null}
+     * @param cl  the class loader to use for non-primitive types; must not be {@code null}
+     * @return the resolved {@link Class}; never {@code null}
+     * @throws ClassNotFoundException if the class is not found on {@code cl}'s classpath
+     */
+    public Class<?> resolveClass(String fqn, ClassLoader cl) throws ClassNotFoundException {
+        Class<?> primitive = PRIMITIVES.get(fqn);
+        if (primitive != null) {
+            return primitive;
+        }
+        return Class.forName(fqn, true, cl);
+    }
+
+    /**
+     * Resolves an array of classes by their fully-qualified names using the given class loader.
+     *
+     * <p>Primitive type names are handled without invoking {@link Class#forName}; see
+     * {@link #resolveClass(String, ClassLoader)}.
+     *
+     * @param fqns the fully-qualified class names or primitive type names; must not be
+     *             {@code null}
+     * @param cl   the class loader to use for non-primitive types; must not be {@code null}
+     * @return an array of resolved classes in the same order as {@code fqns}; never {@code null}
+     * @throws ClassNotFoundException if any non-primitive entry in {@code fqns} is not found
+     */
+    public Class<?>[] resolveClasses(String[] fqns, ClassLoader cl) throws ClassNotFoundException {
+        Class<?>[] result = new Class<?>[fqns.length];
+        for (int i = 0; i < fqns.length; i++) {
+            result[i] = resolveClass(fqns[i], cl);
+        }
+        return result;
+    }
+
+    /**
+     * Resolves an array of FQNs to a list of {@link Canonicalizer} subclasses using the given
+     * class loader.
+     *
+     * @param fqns the fully-qualified names of canonicalizer implementation classes; must not be
+     *             {@code null}
+     * @param cl   the class loader to use; must not be {@code null}
+     * @return an ordered list of resolved canonicalizer classes; never {@code null}
+     * @throws ClassNotFoundException if any class in {@code fqns} is not found
+     * @throws ClassCastException     if any resolved class does not implement {@link Canonicalizer}
+     */
+    @SuppressWarnings("unchecked")
+    public List<Class<? extends Canonicalizer>> resolveCanonicalizers(String[] fqns, ClassLoader cl)
+            throws ClassNotFoundException {
+        List<Class<? extends Canonicalizer>> result = new ArrayList<>(fqns.length);
+        for (String fqn : fqns) {
+            Class<?> resolved = Class.forName(fqn, true, cl);
+            result.add((Class<? extends Canonicalizer>) resolved.asSubclass(Canonicalizer.class));
+        }
+        return result;
+    }
+
+    /**
+     * Resolves an array of FQNs to a list of {@link Sanitizer} subclasses using the given
+     * class loader.
+     *
+     * @param fqns the fully-qualified names of sanitizer implementation classes; must not be
+     *             {@code null}
+     * @param cl   the class loader to use; must not be {@code null}
+     * @return an ordered list of resolved sanitizer classes; never {@code null}
+     * @throws ClassNotFoundException if any class in {@code fqns} is not found
+     * @throws ClassCastException     if any resolved class does not implement {@link Sanitizer}
+     */
+    @SuppressWarnings("unchecked")
+    public List<Class<? extends Sanitizer>> resolveSanitizers(String[] fqns, ClassLoader cl)
+            throws ClassNotFoundException {
+        List<Class<? extends Sanitizer>> result = new ArrayList<>(fqns.length);
+        for (String fqn : fqns) {
+            Class<?> resolved = Class.forName(fqn, true, cl);
+            result.add((Class<? extends Sanitizer>) resolved.asSubclass(Sanitizer.class));
+        }
+        return result;
+    }
+
+    /**
+     * Resolves a resource method by name and erased parameter type FQNs.
+     *
+     * <p>Parameter types are loaded from the resource type's own class loader so that the
+     * resolution works correctly for class loaders that isolate the resource from the support
+     * class loader. Primitive type names are handled without invoking {@link Class#forName};
+     * see {@link #resolveClass(String, ClassLoader)}.
+     *
+     * @param resourceType  the class that declares or inherits the method; must not be
+     *                      {@code null}
+     * @param name          the method name; must not be {@code null}
+     * @param paramTypeFqns the FQNs of the erased parameter types in declaration order; may be
+     *                      empty
+     * @return the resolved method; never {@code null}
+     * @throws ClassNotFoundException if any parameter type FQN cannot be resolved
+     * @throws NoSuchMethodException  if no method with the given name and parameter types exists
+     *                                on {@code resourceType}
+     */
+    public Method resolveMethod(Class<?> resourceType, String name, String... paramTypeFqns)
+            throws ClassNotFoundException, NoSuchMethodException {
+        ClassLoader cl = resourceType.getClassLoader();
+        Class<?>[] paramTypes = resolveClasses(paramTypeFqns, cl);
+        return resourceType.getMethod(name, paramTypes);
+    }
+
+    // --- Effective annotation resolution ---
+
+    /**
+     * Returns the merged annotation list for a class, walking the superclass chain and all
+     * transitively reachable interfaces in BFS order (via {@link AnnotationResolver}).
+     *
+     * <p>This is the class-level analog of {@link #effectiveMethodAnnotations(Method)} and
+     * ensures that interface-declared class-level annotations (e.g. {@code @Path}, security
+     * annotations, {@code @Consumes}) are visible to the descriptor even when the concrete
+     * class carries no direct annotations.
+     *
+     * @param clazz the class to inspect; must not be {@code null}
+     * @return an immutable list of all resolved annotations; never {@code null}
+     */
+    public List<Annotation> effectiveClassAnnotations(Class<?> clazz) {
+        return AnnotationResolver.resolveClassAnnotations(clazz);
+    }
+
+    /**
+     * Returns the merged annotation list for a method, walking the superclass chain and all
+     * transitively reachable interfaces in BFS order (via {@link AnnotationResolver}).
+     *
+     * <p>Annotations declared only on the interface method (e.g. {@code @Operation},
+     * {@code @ValidateWith}) are included in the result even when the concrete override has
+     * none.
+     *
+     * @param method the method to inspect; must not be {@code null}
+     * @return an immutable list of all resolved annotations; never {@code null}
+     */
+    public List<Annotation> effectiveMethodAnnotations(Method method) {
+        return AnnotationResolver.resolveMethodAnnotations(method);
+    }
+}

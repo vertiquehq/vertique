@@ -1,0 +1,14 @@
+# SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
+# SPDX-License-Identifier: EUPL-1.2
+
+definitionId: order-fulfillment
+definitionVersion: 1
+stateType: dev.vertique.examples.workflow.order.state.OrderState
+contract: dev.vertique.examples.workflow.order.OrderFulfillmentWorkflowV1
+startPayloadType: dev.vertique.examples.workflow.order.command.PlaceOrder
+initialStateMapper: order.fromPlaceOrder
+initialStep: done
+unknownTopLevelField: this-should-cause-a-parse-failure
+steps:
+  - id: done
+    type: complete

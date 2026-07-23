@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
+SPDX-License-Identifier: EUPL-1.2
+-->
+
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
+
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>dev.vertique</groupId>
+        <artifactId>vertique-parent</artifactId>
+        <version>${revision}</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
+
+    <artifactId>vertique-rest</artifactId>
+    <packaging>pom</packaging>
+    <name>Vertique REST</name>
+    <description>REST modules: core extension API, JAX-RS runtime, security, validation, and clients</description>
+
+    <modules>
+        <module>vertique-rest-core</module>
+        <module>vertique-rest-jaxrs</module>
+        <module>vertique-rest-security</module>
+        <module>vertique-rest-auth-jwt</module>
+        <module>vertique-rest-openapi-plugin</module>
+        <module>vertique-rest-client</module>
+        <module>vertique-rest-localization</module>
+        <module>vertique-rest-websocket</module>
+        <module>vertique-rest-validation</module>
+        <module>vertique-rest-openapi-validation</module>
+    </modules>
+</project>

@@ -1,0 +1,77 @@
+# SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
+# SPDX-License-Identifier: EUPL-1.2
+
+definitionId: order-fulfillment-fanout-doc
+definitionVersion: 1
+stateType: dev.vertique.workflow.definition.it.fixture.OrderFanOutState
+contract: dev.vertique.workflow.definition.it.fixture.OrderFulfillmentFanOutDocumentWorkflowV1
+startPayloadType: dev.vertique.workflow.definition.it.fixture.PlaceFanOutOrder
+initialStateMapper: fanout.doc.fromPlaceFanOutOrder
+initialStep: reserve-order
+steps:
+  - id: reserve-order
+    type: fork
+    branches:
+      - branchId: inventory
+        startStep: dispatch-inventory
+      - branchId: payment
+        startStep: dispatch-payment
+      - branchId: fraud
+        startStep: dispatch-fraud
+    join: all-reservations
+  - id: dispatch-inventory
+    type: service
+    target: inventory.reserve
+    payloadMapper: fanout.doc.inventoryPayload
+    next: wait-inventory-reserved
+  - id: wait-inventory-reserved
+    type: wait-signal
+    signal: inventory.reserved.doc
+    payloadType: dev.vertique.workflow.definition.it.fixture.InventoryReservedDoc
+    stateReducer: fanout.doc.applyInventoryReserved
+    next: inventory-done
+  - id: inventory-done
+    type: complete
+  - id: dispatch-payment
+    type: service
+    target: payment.authorize
+    payloadMapper: fanout.doc.paymentPayload
+    next: wait-payment-authorized
+  - id: wait-payment-authorized
+    type: wait-signal
+    signal: payment.authorized.doc
+    payloadType: dev.vertique.workflow.definition.it.fixture.PaymentAuthorizedDoc
+    stateReducer: fanout.doc.applyPaymentAuthorized
+    next: payment-done
+  - id: payment-done
+    type: complete
+  - id: dispatch-fraud
+    type: service
+    target: fraud.screen
+    payloadMapper: fanout.doc.fraudPayload
+    next: wait-fraud-screened
+  - id: wait-fraud-screened
+    type: wait-signal
+    signal: fraud.screened.doc
+    payloadType: dev.vertique.workflow.definition.it.fixture.FraudScreenedDoc
+    stateReducer: fanout.doc.applyFraudScreened
+    next: fraud-done
+  - id: fraud-done
+    type: complete
+  - id: all-reservations
+    type: join
+    policy: all-required
+    reducer: fanout.doc.mergeBranchResults
+    next: ship-order
+    onFailure: order-failed
+  - id: ship-order
+    type: service
+    target: shipping.create-shipment
+    payloadMapper: fanout.doc.shipmentPayload
+    next: done
+  - id: done
+    type: complete
+  - id: order-failed
+    type: fail
+    errorType: PARALLEL_BRANCH_FAILURE
+    messageFactory: fanout.doc.failureMessage

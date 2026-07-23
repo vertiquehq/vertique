@@ -1,0 +1,26 @@
+# SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
+# SPDX-License-Identifier: EUPL-1.2
+
+version = 1
+
+[[annotations]]
+path = [
+  ".mvn/wrapper/maven-wrapper.properties",
+  "mvnw",
+  "mvnw.cmd",
+]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "The Apache Software Foundation"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = [
+  "**/*.avsc",
+  "**/*.json",
+  "**/META-INF/services/**",
+  "NOTICE",
+  "vertique-micrometer/vertique-micrometer-services/src/main/resources/META-INF/vertique/module.md",
+]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 Koivisto Capital Oy"
+SPDX-License-Identifier = "EUPL-1.2"

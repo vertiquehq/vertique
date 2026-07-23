@@ -1,0 +1,57 @@
+{
+  "management": {
+    "port": 9090
+  },
+  "db": {
+    "host": "localhost",
+    "port": 5432,
+    "database": "order_fulfillment",
+    "user": "app_user",
+    "password": "app_secret",
+    "maxPoolSize": 5
+  },
+  "flyway": {
+    "mode": "DISABLED",
+    "jdbcUrl": "jdbc:postgresql://localhost:5432/order_fulfillment",
+    "user": "app_user",
+    "password": "app_secret",
+    "locations": [
+      "classpath:db/migration/inbox-outbox",
+      "classpath:db/migration/workflow"
+    ]
+  },
+  "inboxOutbox": {
+    "relay": {
+      "pollingIntervalMs": 500,
+      "batchSize": 10,
+      "leaseTimeoutMs": 10000,
+      "maxAttempts": 5,
+      "backoffBaseDelayMs": 500,
+      "backoffMaxDelayMs": 30000,
+      "strategy": "POLLING",
+      "instances": 1
+    },
+    "cleanup": {
+      "publishedRetentionMs": 3600000,
+      "deadLetterRetentionMs": 86400000,
+      "inboxRetentionMs": 3600000,
+      "cleanupIntervalMs": 300000
+    }
+  },
+  "services": {
+    "inventory": {
+      "instances": 1
+    },
+    "payment": {
+      "instances": 1
+    },
+    "shipping": {
+      "instances": 1
+    },
+    "workflow": {
+      "signals": {
+        "instances": 1
+      }
+    }
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "namespace": "dev.vertique.kafka.avro.it",
+  "type": "record",
+  "name": "OrderCreated",
+  "fields": [
+    { "name": "eventType", "type": "string" },
+    { "name": "orderId", "type": "string" },
+    { "name": "amount", "type": "long" }
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "http": {
+    "port": 8080
+  },
+  "db": {
+    "host": "localhost",
+    "port": 5432,
+    "database": "example_db",
+    "user": "app_user",
+    "password": "app_secret",
+    "maxPoolSize": 5
+  },
+  "flyway": {
+    "mode": "VALIDATE",
+    "jdbcUrl": "jdbc:postgresql://localhost:5432/example_db",
+    "user": "ddl_user",
+    "password": "ddl_secret"
+  }
+}

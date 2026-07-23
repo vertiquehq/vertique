@@ -1,0 +1,1195 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
+SPDX-License-Identifier: EUPL-1.2
+-->
+
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
+
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>dev.vertique</groupId>
+    <artifactId>vertique-parent</artifactId>
+    <version>${revision}</version>
+    <packaging>pom</packaging>
+    <name>Vertique</name>
+    <description>An opinionated framework for building microservices on Vert.x</description>
+
+    <scm>
+        <connection>scm:git:https://github.com/vertiquehq/vertique.git</connection>
+        <developerConnection>scm:git:git@github.com:vertiquehq/vertique.git</developerConnection>
+        <url>https://github.com/vertiquehq/vertique</url>
+    </scm>
+
+    <modules>
+        <module>vertique-bom</module>
+        <module>vertique-core</module>
+        <module>vertique-json</module>
+        <module>vertique-security</module>
+        <module>vertique-config</module>
+        <module>vertique-bootstrap</module>
+        <module>vertique-launcher</module>
+        <module>vertique-localization</module>
+        <module>vertique-rest</module>
+        <module>vertique-context</module>
+        <module>vertique-logging</module>
+        <module>vertique-correlation</module>
+        <module>vertique-services</module>
+        <module>vertique-kafka</module>
+        <module>vertique-db</module>
+        <module>vertique-job</module>
+        <module>vertique-deploy</module>
+        <module>vertique-application</module>
+        <module>vertique-application-test</module>
+        <module>vertique-validation</module>
+        <module>vertique-sanitization</module>
+        <module>vertique-management</module>
+        <module>vertique-inbox-outbox</module>
+        <module>vertique-workflow</module>
+        <module>vertique-codegen</module>
+        <module>vertique-aop</module>
+        <module>vertique-events</module>
+        <module>vertique-micrometer</module>
+        <module>vertique-opentelemetry</module>
+        <module>examples/vertique-example-hello</module>
+        <module>examples/vertique-example-services</module>
+        <module>examples/vertique-example-db</module>
+        <module>examples/vertique-example-custom-response</module>
+        <module>examples/vertique-example-rest-client</module>
+        <module>examples/vertique-example-webhook</module>
+        <module>examples/vertique-example-sse</module>
+        <module>examples/vertique-example-websocket</module>
+        <module>examples/vertique-example-services-codegen</module>
+        <module>examples/vertique-example-aop</module>
+        <module>examples/vertique-example-events</module>
+        <module>examples/vertique-example-localization</module>
+        <module>examples/vertique-example-workflow-order-fulfillment</module>
+    </modules>
+
+    <properties>
+        <revision>0.0.0-SNAPSHOT</revision>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+
+        <java.version>21</java.version>
+        <vertx.version>5.1.2</vertx.version>
+        <dagger.version>2.59.2</dagger.version>
+        <!-- Jackson 2.x line — the framework imports the Jackson 2 BOM (see dependencyManagement)
+             to stay on 2.x deliberately, since Vert.x 5.1 supports both 2.x and 3.x. Keep aligned
+             with the Jackson 2 line vertx-dependencies ships; the 2.x -> 3.x migration is separate. -->
+        <jackson.version>2.21.4</jackson.version>
+        <micrometer.version>1.16.6</micrometer.version>
+        <opentelemetry.version>1.63.0</opentelemetry.version>
+        <opentelemetry-semconv.version>1.41.1</opentelemetry-semconv.version>
+        <!-- io.prometheus client BOM version — align with the version micrometer-registry-prometheus pulls -->
+        <prometheus-metrics.version>1.4.3</prometheus-metrics.version>
+        <lombok.version>1.18.42</lombok.version>
+        <swagger-core.version>2.2.44</swagger-core.version>
+        <jakarta.ws.rs.version>4.0.0</jakarta.ws.rs.version>
+        <jakarta.inject.version>2.0.1</jakarta.inject.version>
+        <jakarta.annotation.version>2.1.1</jakarta.annotation.version>
+        <logback.version>1.5.34</logback.version>
+        <slf4j.version>2.0.17</slf4j.version>
+
+        <!-- Test -->
+        <junit.jupiter.version>5.14.4</junit.jupiter.version>
+        <rest-assured.version>6.0.0</rest-assured.version>
+        <atlassian.swagger-validator.version>2.46.0</atlassian.swagger-validator.version>
+        <mockito.version>5.22.0</mockito.version>
+        <flyway.version>12.0.2</flyway.version>
+        <postgresql.jdbc.version>42.7.11</postgresql.jdbc.version>
+        <testcontainers.version>2.0.5</testcontainers.version>
+        <apicurio.version>3.2.4</apicurio.version>
+        <avro.version>1.12.1</avro.version>
+        <wiremock.version>3.13.2</wiremock.version>
+        <jakarta.validation.version>3.1.1</jakarta.validation.version>
+        <hibernate-validator.version>9.1.0.Final</hibernate-validator.version>
+        <!-- victools JSON-schema generator (annotation -> JSON Schema synthesis, rest-validation) -->
+        <victools.version>4.38.0</victools.version>
+        <expressly.version>6.0.0</expressly.version>
+        <owasp-html-sanitizer.version>20260313.1</owasp-html-sanitizer.version>
+        <cel.version>0.12.0</cel.version>
+        <vault-java-driver.version>6.2.2</vault-java-driver.version>
+        <aws.sdk.version>2.48.3</aws.sdk.version>
+        <azure-keyvault-secrets.version>4.11.0</azure-keyvault-secrets.version>
+        <azure-identity.version>1.18.3</azure-identity.version>
+        <lowkey-vault.version>7.3.0</lowkey-vault.version>
+
+        <!-- Codegen -->
+        <javapoet.version>0.14.0</javapoet.version>
+        <compile-testing.version>0.23.0</compile-testing.version>
+
+        <!-- Plugin versions -->
+        <maven.compiler.plugin.version>3.15.0</maven.compiler.plugin.version>
+        <maven.dependency.plugin.version>3.7.0</maven.dependency.plugin.version>
+        <maven.surefire.plugin.version>3.5.5</maven.surefire.plugin.version>
+        <maven.failsafe.plugin.version>3.5.5</maven.failsafe.plugin.version>
+        <maven.enforcer.plugin.version>3.6.3</maven.enforcer.plugin.version>
+        <!-- Downstream parents may disable only this boundary rule and supply their own equivalent. -->
+        <vertique.open-core.boundary.skip>false</vertique.open-core.boundary.skip>
+        <maven.shade.plugin.version>3.6.1</maven.shade.plugin.version>
+        <exec-maven-plugin.version>3.0.0</exec-maven-plugin.version>
+        <jib-maven-plugin.version>3.5.1</jib-maven-plugin.version>
+        <spotless.version>3.3.0</spotless.version>
+        <jacoco.version>0.8.12</jacoco.version>
+
+        <!-- Default for Surefire/Failsafe late replacement when JaCoCo is skipped. -->
+        <argLine/>
+
+        <!-- Test output: true = redirect to file (default), false = console -->
+        <test.output.toFile>true</test.output.toFile>
+    </properties>
+
+    <dependencyManagement>
+        <dependencies>
+            <!-- Micrometer BOM — declared before vertx-dependencies so 1.16.6 wins over any
+                 version that vertx-dependencies transitively manages. -->
+            <dependency>
+                <groupId>io.micrometer</groupId>
+                <artifactId>micrometer-bom</artifactId>
+                <version>${micrometer.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+
+            <!-- Prometheus client BOM — keeps every io.prometheus:prometheus-metrics-* artifact
+                 (incl. the tracer artifacts the registry and the OTel exemplar bridge depend on
+                 directly) on the single client version micrometer-registry-prometheus pulls, so the
+                 whole io.prometheus set stays internally compatible instead of skewing per-artifact. -->
+            <dependency>
+                <groupId>io.prometheus</groupId>
+                <artifactId>prometheus-metrics-bom</artifactId>
+                <version>${prometheus-metrics.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+
+            <!-- OpenTelemetry BOM — declared before vertx-dependencies so ${opentelemetry.version}
+                 wins over any version that vertx-dependencies transitively manages. -->
+            <dependency>
+                <groupId>io.opentelemetry</groupId>
+                <artifactId>opentelemetry-bom</artifactId>
+                <version>${opentelemetry.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+
+            <!-- OpenTelemetry Semantic Conventions — NOT included in the OTel BOM -->
+            <dependency>
+                <groupId>io.opentelemetry.semconv</groupId>
+                <artifactId>opentelemetry-semconv</artifactId>
+                <version>${opentelemetry-semconv.version}</version>
+            </dependency>
+
+            <!-- Vert.x BOM -->
+            <dependency>
+                <groupId>io.vertx</groupId>
+                <artifactId>vertx-dependencies</artifactId>
+                <version>${vertx.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+
+            <!-- Jackson BOM — explicitly pin the Jackson 2.x line. Vert.x 5.1 ships both Jackson 2.x
+                 and 3.x BOMs; importing the Jackson 2 BOM keeps the framework on 2.x deliberately.
+                 The 2.x -> 3.x migration is tracked as a separate (riskier) effort. -->
+            <dependency>
+                <groupId>com.fasterxml.jackson</groupId>
+                <artifactId>jackson-bom</artifactId>
+                <version>${jackson.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+
+            <!-- Framework modules -->
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-core</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-json</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-security-core</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-security-runtime</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-security-config</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-context</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-deploy</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-application</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-application-test</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-management</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-config-core</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-bootstrap</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-launcher</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-localization</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-rest-core</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-rest-jaxrs</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-rest-security</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-rest-websocket</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-rest-auth-jwt</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-rest-openapi-plugin</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-rest-client</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-rest-localization</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-rest-validation</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-rest-openapi-validation</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-logging</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-correlation</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-services</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-kafka-core</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-kafka-json</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-kafka-avro</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-kafka-test</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-db-core</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-db-postgresql</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-db-flyway</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-db-test</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-validation</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-sanitization</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-job-core</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-job-cron</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-job-postgresql</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-job-delayed</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-inbox-outbox-core</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-inbox-outbox-postgresql</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-inbox-outbox-services</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-inbox-outbox-delayed-job</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-inbox-outbox-kafka</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-workflow-core</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-workflow-engine</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-workflow-postgresql</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-workflow-services</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-workflow-delayed</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-workflow-tasks</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-workflow-events</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-workflow-definition</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-aop</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-events</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-codegen-core</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-codegen-test</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-codegen-dagger</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-codegen-application</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-codegen-rest-client</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-codegen-delayed-job</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-codegen-kafka</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-codegen-workflow</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-codegen-cron</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-codegen-services</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-codegen-sanitization</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-codegen-jaxrs</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-codegen-aop</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-codegen-events</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-config-vault</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-config-aws-secrets</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-config-aws-ssm</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-config-azure-keyvault</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+
+            <!-- Micrometer framework modules -->
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-micrometer-core</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-micrometer-registry-prometheus</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-micrometer-rest</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-micrometer-services</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+
+            <!-- OpenTelemetry framework modules -->
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-opentelemetry-core</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-opentelemetry-rest</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-opentelemetry-services</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-opentelemetry-prometheus</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+
+            <!-- HashiCorp Vault SDK (isolated to vertique-config-vault) -->
+            <dependency>
+                <groupId>io.github.jopenlibs</groupId>
+                <artifactId>vault-java-driver</artifactId>
+                <version>${vault-java-driver.version}</version>
+            </dependency>
+
+            <!-- AWS SDK v2 BOM (governs the public AWS configuration providers) -->
+            <dependency>
+                <groupId>software.amazon.awssdk</groupId>
+                <artifactId>bom</artifactId>
+                <version>${aws.sdk.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+
+            <!-- Azure Key Vault Secrets SDK (isolated to vertique-config-azure-keyvault) -->
+            <dependency>
+                <groupId>com.azure</groupId>
+                <artifactId>azure-security-keyvault-secrets</artifactId>
+                <version>${azure-keyvault-secrets.version}</version>
+            </dependency>
+            <!-- Azure Identity SDK (isolated to vertique-config-azure-keyvault) -->
+            <dependency>
+                <groupId>com.azure</groupId>
+                <artifactId>azure-identity</artifactId>
+                <version>${azure-identity.version}</version>
+            </dependency>
+            <!-- Lowkey Vault test double (test scope — vertique-config-azure-keyvault) -->
+            <dependency>
+                <groupId>com.github.nagyesta.lowkey-vault</groupId>
+                <artifactId>lowkey-vault-testcontainers</artifactId>
+                <version>${lowkey-vault.version}</version>
+                <scope>test</scope>
+            </dependency>
+            <dependency>
+                <groupId>com.github.nagyesta.lowkey-vault</groupId>
+                <artifactId>lowkey-vault-client</artifactId>
+                <version>${lowkey-vault.version}</version>
+                <scope>test</scope>
+            </dependency>
+
+
+            <!-- Codegen -->
+            <dependency>
+                <groupId>com.palantir.javapoet</groupId>
+                <artifactId>javapoet</artifactId>
+                <version>${javapoet.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.google.testing.compile</groupId>
+                <artifactId>compile-testing</artifactId>
+                <version>${compile-testing.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.opentest4j</groupId>
+                <artifactId>opentest4j</artifactId>
+                <version>1.3.0</version>
+            </dependency>
+
+            <!-- CEL (Common Expression Language — workflow-definition only) -->
+            <dependency>
+                <groupId>dev.cel</groupId>
+                <artifactId>cel</artifactId>
+                <version>${cel.version}</version>
+            </dependency>
+
+            <!-- Dagger -->
+            <dependency>
+                <groupId>com.google.dagger</groupId>
+                <artifactId>dagger</artifactId>
+                <version>${dagger.version}</version>
+            </dependency>
+
+            <!-- Jakarta -->
+            <dependency>
+                <groupId>jakarta.inject</groupId>
+                <artifactId>jakarta.inject-api</artifactId>
+                <version>${jakarta.inject.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>jakarta.ws.rs</groupId>
+                <artifactId>jakarta.ws.rs-api</artifactId>
+                <version>${jakarta.ws.rs.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>jakarta.annotation</groupId>
+                <artifactId>jakarta.annotation-api</artifactId>
+                <version>${jakarta.annotation.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>jakarta.validation</groupId>
+                <artifactId>jakarta.validation-api</artifactId>
+                <version>${jakarta.validation.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.hibernate.validator</groupId>
+                <artifactId>hibernate-validator</artifactId>
+                <version>${hibernate-validator.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.glassfish.expressly</groupId>
+                <artifactId>expressly</artifactId>
+                <version>${expressly.version}</version>
+            </dependency>
+
+            <!-- OWASP HTML Sanitizer -->
+            <dependency>
+                <groupId>com.googlecode.owasp-java-html-sanitizer</groupId>
+                <artifactId>owasp-java-html-sanitizer</artifactId>
+                <version>${owasp-html-sanitizer.version}</version>
+            </dependency>
+
+            <!-- Swagger/OpenAPI -->
+            <dependency>
+                <groupId>io.swagger.core.v3</groupId>
+                <artifactId>swagger-annotations-jakarta</artifactId>
+                <version>${swagger-core.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.swagger.core.v3</groupId>
+                <artifactId>swagger-core-jakarta</artifactId>
+                <version>${swagger-core.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.swagger.core.v3</groupId>
+                <artifactId>swagger-jaxrs2-jakarta</artifactId>
+                <version>${swagger-core.version}</version>
+            </dependency>
+
+            <!-- victools JSON-schema generator + the modules that map Jackson, Jakarta-validation,
+                 and Swagger-2 annotations into JSON Schema (rest-validation schema synthesis) -->
+            <dependency>
+                <groupId>com.github.victools</groupId>
+                <artifactId>jsonschema-generator</artifactId>
+                <version>${victools.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.github.victools</groupId>
+                <artifactId>jsonschema-module-jackson</artifactId>
+                <version>${victools.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.github.victools</groupId>
+                <artifactId>jsonschema-module-jakarta-validation</artifactId>
+                <version>${victools.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.github.victools</groupId>
+                <artifactId>jsonschema-module-swagger-2</artifactId>
+                <version>${victools.version}</version>
+            </dependency>
+
+            <!-- Logging -->
+            <dependency>
+                <groupId>ch.qos.logback</groupId>
+                <artifactId>logback-classic</artifactId>
+                <version>${logback.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>ch.qos.logback</groupId>
+                <artifactId>logback-core</artifactId>
+                <version>${logback.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.slf4j</groupId>
+                <artifactId>slf4j-api</artifactId>
+                <version>${slf4j.version}</version>
+            </dependency>
+
+            <!-- Lombok -->
+            <dependency>
+                <groupId>org.projectlombok</groupId>
+                <artifactId>lombok</artifactId>
+                <version>${lombok.version}</version>
+                <scope>provided</scope>
+            </dependency>
+
+            <!-- Test -->
+            <dependency>
+                <groupId>org.junit.jupiter</groupId>
+                <artifactId>junit-jupiter</artifactId>
+                <version>${junit.jupiter.version}</version>
+                <scope>test</scope>
+            </dependency>
+            <!-- junit-jupiter-api is managed without a forced scope: vertique-application-test depends
+                 on it at compile scope (it ships the VertiqueAppExtension test-support type). -->
+            <dependency>
+                <groupId>org.junit.jupiter</groupId>
+                <artifactId>junit-jupiter-api</artifactId>
+                <version>${junit.jupiter.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.vertx</groupId>
+                <artifactId>vertx-junit5</artifactId>
+                <version>${vertx.version}</version>
+                <scope>test</scope>
+            </dependency>
+            <dependency>
+                <groupId>io.rest-assured</groupId>
+                <artifactId>rest-assured</artifactId>
+                <version>${rest-assured.version}</version>
+                <scope>test</scope>
+            </dependency>
+            <dependency>
+                <groupId>com.atlassian.oai</groupId>
+                <artifactId>swagger-request-validator-restassured</artifactId>
+                <version>${atlassian.swagger-validator.version}</version>
+                <scope>test</scope>
+                <exclusions>
+                    <exclusion>
+                        <groupId>io.rest-assured</groupId>
+                        <artifactId>rest-assured</artifactId>
+                    </exclusion>
+                </exclusions>
+            </dependency>
+            <dependency>
+                <groupId>org.mockito</groupId>
+                <artifactId>mockito-core</artifactId>
+                <version>${mockito.version}</version>
+                <scope>test</scope>
+            </dependency>
+            <dependency>
+                <groupId>org.mockito</groupId>
+                <artifactId>mockito-junit-jupiter</artifactId>
+                <version>${mockito.version}</version>
+                <scope>test</scope>
+            </dependency>
+
+            <!-- Flyway -->
+            <dependency>
+                <groupId>org.flywaydb</groupId>
+                <artifactId>flyway-core</artifactId>
+                <version>${flyway.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.flywaydb</groupId>
+                <artifactId>flyway-database-postgresql</artifactId>
+                <version>${flyway.version}</version>
+            </dependency>
+
+            <!-- PostgreSQL JDBC -->
+            <dependency>
+                <groupId>org.postgresql</groupId>
+                <artifactId>postgresql</artifactId>
+                <version>${postgresql.jdbc.version}</version>
+            </dependency>
+
+            <!-- Avro + Apicurio Registry serde (vertique-kafka-avro) -->
+            <dependency>
+                <groupId>org.apache.avro</groupId>
+                <artifactId>avro</artifactId>
+                <version>${avro.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.apicurio</groupId>
+                <artifactId>apicurio-registry-avro-serde-kafka</artifactId>
+                <version>${apicurio.version}</version>
+            </dependency>
+
+            <!-- Testcontainers -->
+            <dependency>
+                <groupId>org.testcontainers</groupId>
+                <artifactId>testcontainers</artifactId>
+                <version>${testcontainers.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.testcontainers</groupId>
+                <artifactId>testcontainers-postgresql</artifactId>
+                <version>${testcontainers.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.testcontainers</groupId>
+                <artifactId>testcontainers-kafka</artifactId>
+                <version>${testcontainers.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.testcontainers</groupId>
+                <artifactId>testcontainers-vault</artifactId>
+                <version>${testcontainers.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.testcontainers</groupId>
+                <artifactId>testcontainers-localstack</artifactId>
+                <version>${testcontainers.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.testcontainers</groupId>
+                <artifactId>testcontainers-junit-jupiter</artifactId>
+                <version>${testcontainers.version}</version>
+            </dependency>
+
+            <!-- WireMock -->
+            <dependency>
+                <groupId>org.wiremock</groupId>
+                <artifactId>wiremock-standalone</artifactId>
+                <version>${wiremock.version}</version>
+                <scope>test</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+    <build>
+        <pluginManagement>
+            <plugins>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-compiler-plugin</artifactId>
+                    <version>${maven.compiler.plugin.version}</version>
+                    <configuration>
+                        <release>${java.version}</release>
+                        <annotationProcessorPaths>
+                            <path>
+                                <groupId>com.google.dagger</groupId>
+                                <artifactId>dagger-compiler</artifactId>
+                                <version>${dagger.version}</version>
+                            </path>
+                            <path>
+                                <groupId>org.projectlombok</groupId>
+                                <artifactId>lombok</artifactId>
+                                <version>${lombok.version}</version>
+                            </path>
+                        </annotationProcessorPaths>
+                    </configuration>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-dependency-plugin</artifactId>
+                    <version>${maven.dependency.plugin.version}</version>
+                    <executions>
+                        <execution>
+                            <id>copy-mockito-agent</id>
+                            <phase>process-test-classes</phase>
+                            <goals>
+                                <goal>copy</goal>
+                            </goals>
+                            <configuration>
+                                <artifactItems>
+                                    <artifactItem>
+                                        <groupId>org.mockito</groupId>
+                                        <artifactId>mockito-core</artifactId>
+                                        <version>${mockito.version}</version>
+                                        <type>jar</type>
+                                        <outputDirectory>${project.build.directory}</outputDirectory>
+                                        <destFileName>mockito-agent.jar</destFileName>
+                                    </artifactItem>
+                                </artifactItems>
+                            </configuration>
+                        </execution>
+                    </executions>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-surefire-plugin</artifactId>
+                    <version>${maven.surefire.plugin.version}</version>
+                    <configuration>
+                        <!-- Mockito's inline mock maker requires Instrumentation. Load it at JVM
+                             startup instead of relying on environment-sensitive self-attachment.
+                             Late replacement preserves the JaCoCo agent prepared for this module. -->
+                        <argLine>@{argLine} -javaagent:${project.build.directory}/mockito-agent.jar</argLine>
+                        <redirectTestOutputToFile>${test.output.toFile}</redirectTestOutputToFile>
+                        <!-- Hard per-fork wall-clock cap: hard-kills the forked JVM if it exceeds
+                             the limit, regardless of where it is stuck. This is the reliable
+                             hang-guard — a JUnit @Timeout only *interrupts* the thread (SAME_THREAD
+                             mode) and cannot unblock native/Docker I/O or an interrupt-swallowing
+                             retry loop. Unit forks are fast; this is a generous backstop. -->
+                        <forkedProcessTimeoutInSeconds>600</forkedProcessTimeoutInSeconds>
+                        <!-- Best-effort per-method bound for interruptible lifecycle hangs; a
+                             class-level @Timeout does NOT cover @BeforeAll/@AfterAll. Not a
+                             substitute for the fork cap above (SAME_THREAD cannot abort an
+                             uninterruptible block), but fails faster when the hang IS interruptible. -->
+                        <properties>
+                            <configurationParameters>
+                                junit.jupiter.execution.timeout.lifecycle.method.default = 120 s
+                            </configurationParameters>
+                        </properties>
+                    </configuration>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-failsafe-plugin</artifactId>
+                    <version>${maven.failsafe.plugin.version}</version>
+                    <configuration>
+                        <!-- Keep the same deterministic premain setup for integration-test forks. -->
+                        <argLine>@{argLine} -javaagent:${project.build.directory}/mockito-agent.jar</argLine>
+                        <redirectTestOutputToFile>${test.output.toFile}</redirectTestOutputToFile>
+                        <!-- Hard per-fork wall-clock cap for integration tests. Container-backed ITs
+                             do broker/DB startup and verticle deployment in @BeforeAll; when a broker
+                             comes up unreachable (the apache/kafka advertised-listener flake) the
+                             consumer verticles rebootstrap forever and @BeforeAll never returns. A
+                             JUnit @Timeout cannot abort that (SAME_THREAD interrupt is ignored by the
+                             Kafka client / Docker I/O), so the build otherwise hangs until the 6-hour
+                             CI job timeout. This fork cap hard-kills the JVM instead — bounding the
+                             worst case to 15 min per module fork so CI always reports a result.
+                             Sized above any healthy module IT suite (full reactor ITs run ~12 min). -->
+                        <forkedProcessTimeoutInSeconds>900</forkedProcessTimeoutInSeconds>
+                        <!-- Best-effort per-method bound for interruptible lifecycle hangs; a
+                             class-level @Timeout does NOT cover @BeforeAll/@AfterAll. Not a
+                             substitute for the fork cap above. -->
+                        <properties>
+                            <configurationParameters>
+                                junit.jupiter.execution.timeout.lifecycle.method.default = 120 s
+                            </configurationParameters>
+                        </properties>
+                    </configuration>
+                    <executions>
+                        <execution>
+                            <id>integration-test</id>
+                            <phase>integration-test</phase>
+                            <goals>
+                                <goal>integration-test</goal>
+                            </goals>
+                        </execution>
+                        <execution>
+                            <id>integration-test-verify</id>
+                            <phase>verify</phase>
+                            <goals>
+                                <goal>verify</goal>
+                            </goals>
+                        </execution>
+                    </executions>
+                </plugin>
+                <plugin>
+                    <groupId>io.swagger.core.v3</groupId>
+                    <artifactId>swagger-maven-plugin-jakarta</artifactId>
+                    <version>${swagger-core.version}</version>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-shade-plugin</artifactId>
+                    <version>${maven.shade.plugin.version}</version>
+                </plugin>
+                <plugin>
+                    <groupId>org.codehaus.mojo</groupId>
+                    <artifactId>exec-maven-plugin</artifactId>
+                    <version>${exec-maven-plugin.version}</version>
+                </plugin>
+                <plugin>
+                    <groupId>com.google.cloud.tools</groupId>
+                    <artifactId>jib-maven-plugin</artifactId>
+                    <version>${jib-maven-plugin.version}</version>
+                </plugin>
+                <plugin>
+                    <groupId>com.diffplug.spotless</groupId>
+                    <artifactId>spotless-maven-plugin</artifactId>
+                    <version>${spotless.version}</version>
+                    <configuration>
+                        <java>
+                            <palantirJavaFormat/>
+                            <removeUnusedImports/>
+                        </java>
+                    </configuration>
+                </plugin>
+                <plugin>
+                    <groupId>org.jacoco</groupId>
+                    <artifactId>jacoco-maven-plugin</artifactId>
+                    <version>${jacoco.version}</version>
+                    <configuration>
+                        <excludes>
+                            <!-- Dagger-generated code -->
+                            <exclude>**/*_Factory.class</exclude>
+                            <exclude>**/*_MembersInjector.class</exclude>
+                            <exclude>**/Dagger*.class</exclude>
+                            <exclude>**/*Module_*.class</exclude>
+                            <!-- Dagger @Module classes: pure DI wiring, no testable logic -->
+                            <exclude>**/*Module.class</exclude>
+                            <!-- Package-info -->
+                            <exclude>**/package-info.class</exclude>
+                        </excludes>
+                    </configuration>
+                    <executions>
+                        <execution>
+                            <id>prepare-agent</id>
+                            <goals>
+                                <goal>prepare-agent</goal>
+                            </goals>
+                        </execution>
+                        <execution>
+                            <id>prepare-agent-integration</id>
+                            <goals>
+                                <goal>prepare-agent-integration</goal>
+                            </goals>
+                            <configuration>
+                                <!-- Append to the same file as unit tests so coverage is aggregated -->
+                                <destFile>${project.build.directory}/jacoco.exec</destFile>
+                                <append>true</append>
+                            </configuration>
+                        </execution>
+                        <execution>
+                            <id>report</id>
+                            <phase>verify</phase>
+                            <goals>
+                                <goal>report</goal>
+                            </goals>
+                        </execution>
+                    </executions>
+                </plugin>
+                <plugin>
+                    <groupId>org.codehaus.mojo</groupId>
+                    <artifactId>flatten-maven-plugin</artifactId>
+                    <version>1.7.0</version>
+                    <configuration>
+                        <flattenMode>resolveCiFriendliesOnly</flattenMode>
+                    </configuration>
+                    <executions>
+                        <execution>
+                            <id>flatten</id>
+                            <phase>process-resources</phase>
+                            <goals>
+                                <goal>flatten</goal>
+                            </goals>
+                        </execution>
+                        <execution>
+                            <id>flatten-clean</id>
+                            <phase>clean</phase>
+                            <goals>
+                                <goal>clean</goal>
+                            </goals>
+                        </execution>
+                    </executions>
+                </plugin>
+            </plugins>
+        </pluginManagement>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-enforcer-plugin</artifactId>
+                <version>${maven.enforcer.plugin.version}</version>
+                <executions>
+                    <execution>
+                        <id>ban-commercial-dependencies</id>
+                        <phase>validate</phase>
+                        <goals>
+                            <goal>enforce</goal>
+                        </goals>
+                        <configuration>
+                            <skip>${vertique.open-core.boundary.skip}</skip>
+                            <rules>
+                                <bannedDependencies>
+                                    <searchTransitive>true</searchTransitive>
+                                    <excludes>
+                                        <exclude>dev.vertique.enterprise:*</exclude>
+                                        <exclude>dev.vertique:vertique-audit</exclude>
+                                        <exclude>dev.vertique:vertique-audit-*</exclude>
+                                        <exclude>dev.vertique:vertique-blob</exclude>
+                                        <exclude>dev.vertique:vertique-blob-*</exclude>
+                                        <exclude>dev.vertique:vertique-camel</exclude>
+                                        <exclude>dev.vertique:vertique-camel-*</exclude>
+                                    </excludes>
+                                    <message>Commercial Vertique artifacts are not permitted in the open-core reactor.</message>
+                                </bannedDependencies>
+                            </rules>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-dependency-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>flatten-maven-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <groupId>com.diffplug.spotless</groupId>
+                <artifactId>spotless-maven-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <groupId>org.jacoco</groupId>
+                <artifactId>jacoco-maven-plugin</artifactId>
+            </plugin>
+        </plugins>
+    </build>
+</project>

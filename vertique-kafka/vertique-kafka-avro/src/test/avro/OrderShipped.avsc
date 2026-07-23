@@ -1,0 +1,10 @@
+{
+  "namespace": "dev.vertique.kafka.avro.it",
+  "type": "record",
+  "name": "OrderShipped",
+  "fields": [
+    { "name": "eventType", "type": "string" },
+    { "name": "orderId", "type": "string" },
+    { "name": "carrier", "type": "string" }
+  ]
+}

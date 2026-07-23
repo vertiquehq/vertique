@@ -1,0 +1,77 @@
+<!--
+SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
+SPDX-License-Identifier: EUPL-1.2
+-->
+
+<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 680 568" role="img">
+<title>Vertique security and identity model</title>
+<desc>Credentials presented at ingress (Bearer JWT, API key, mTLS, Basic, HMAC) are verified by the SecurityIdentityResolver chain against pluggable verification sources, producing one typed SecurityContext with four pillars: identity, authentication state, authorization claims, and request origin. That single context is shared across REST, services, jobs, workflow and WebSocket/SSE. Authorization is a per-call decision, never ambient. Every credential, authorization and channel event is observable. Vertique verifies credentials but is not an identity provider.</desc>
+<defs>
+<style>
+text{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;}
+.title{font-size:14px;font-weight:500;}
+.sub{font-size:12px;font-weight:400;}
+.cap{font-size:12px;font-weight:400;fill:#5F5E5A;}
+.arrow{stroke:#888780;stroke-width:1.2;fill:none;}
+.dash{stroke:#888780;stroke-width:1.2;fill:none;stroke-dasharray:4 3;}
+.fill-gray{fill:#F1EFE8;stroke:#5F5E5A;}.gray-t{fill:#2C2C2A;}.gray-s{fill:#5F5E5A;}
+.fill-blue{fill:#E6F1FB;stroke:#185FA5;}.blue-t{fill:#0C447C;}.blue-s{fill:#185FA5;}
+.fill-coral{fill:#FAECE7;stroke:#993C1D;}.coral-t{fill:#712B13;}.coral-s{fill:#993C1D;}
+.fill-teal{fill:#E1F5EE;stroke:#0F6E56;}.teal-t{fill:#085041;}.teal-s{fill:#0F6E56;}
+.fill-purple{fill:#EEEDFE;stroke:#534AB7;}.purple-t{fill:#3C3489;}.purple-s{fill:#534AB7;}
+.fill-pink{fill:#FBEAF0;stroke:#993556;}.pink-t{fill:#72243E;}.pink-s{fill:#993556;}
+.fill-amber{fill:#FAEEDA;stroke:#854F0B;}.amber-t{fill:#633806;}.amber-s{fill:#854F0B;}
+@media (prefers-color-scheme:dark){
+.cap{fill:#B4B2A9;}.arrow{stroke:#888780;}.dash{stroke:#888780;}
+.fill-gray{fill:#2C2C2A;stroke:#B4B2A9;}.gray-t{fill:#F1EFE8;}.gray-s{fill:#D3D1C7;}
+.fill-blue{fill:#0C447C;stroke:#85B7EB;}.blue-t{fill:#E6F1FB;}.blue-s{fill:#B5D4F4;}
+.fill-coral{fill:#712B13;stroke:#F0997B;}.coral-t{fill:#FAECE7;}.coral-s{fill:#F5C4B3;}
+.fill-teal{fill:#085041;stroke:#5DCAA5;}.teal-t{fill:#E1F5EE;}.teal-s{fill:#9FE1CB;}
+.fill-purple{fill:#3C3489;stroke:#AFA9EC;}.purple-t{fill:#EEEDFE;}.purple-s{fill:#CECBF6;}
+.fill-pink{fill:#72243E;stroke:#ED93B1;}.pink-t{fill:#FBEAF0;}.pink-s{fill:#F4C0D1;}
+.fill-amber{fill:#633806;stroke:#FAC775;}.amber-t{fill:#FAEEDA;}.amber-s{fill:#FAC775;}
+}
+</style>
+<marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker>
+</defs>
+
+<text class="cap" x="340" y="24" text-anchor="middle">Vertique verifies credentials and builds one SecurityContext — it is not an identity provider</text>
+
+<g><rect class="fill-gray" x="90" y="40" width="350" height="52" rx="8" stroke-width="0.5"/><text class="title gray-t" x="265" y="58" text-anchor="middle" dominant-baseline="central">Credentials at ingress</text><text class="sub gray-s" x="265" y="78" text-anchor="middle" dominant-baseline="central">Bearer JWT · API key · mTLS · Basic · HMAC</text></g>
+<line class="arrow" x1="265" y1="92" x2="265" y2="108" marker-end="url(#arrow)"/>
+
+<g><rect class="fill-coral" x="40" y="110" width="450" height="76" rx="8" stroke-width="0.5"/>
+<text class="title coral-t" x="265" y="128" text-anchor="middle" dominant-baseline="central">SecurityIdentityResolver chain</text>
+<text class="sub coral-s" x="265" y="150" text-anchor="middle" dominant-baseline="central">JWKS · introspection · API-key · mTLS · HMAC · basic · custom</text>
+<text class="sub coral-s" x="265" y="168" text-anchor="middle" dominant-baseline="central">accept → AuthenticationEvidence · reject → CredentialRejectedEvent</text>
+</g>
+<line class="arrow" x1="265" y1="186" x2="265" y2="206" marker-end="url(#arrow)"/>
+
+<g><rect class="fill-teal" x="40" y="206" width="450" height="112" rx="10" stroke-width="0.5"/>
+<text class="title teal-t" x="54" y="222" dominant-baseline="central">SecurityContext — one typed envelope</text>
+</g>
+<g><rect class="fill-blue" x="54" y="234" width="98" height="64" rx="6" stroke-width="0.5"/><text class="title blue-t" x="103" y="256" text-anchor="middle" dominant-baseline="central">Identity</text><text class="sub blue-s" x="103" y="276" text-anchor="middle" dominant-baseline="central">actor·subject</text></g>
+<g><rect class="fill-blue" x="162" y="234" width="98" height="64" rx="6" stroke-width="0.5"/><text class="title blue-t" x="211" y="256" text-anchor="middle" dominant-baseline="central">Auth state</text><text class="sub blue-s" x="211" y="276" text-anchor="middle" dominant-baseline="central">method·evidence</text></g>
+<g><rect class="fill-blue" x="270" y="234" width="98" height="64" rx="6" stroke-width="0.5"/><text class="title blue-t" x="319" y="256" text-anchor="middle" dominant-baseline="central">Claims</text><text class="sub blue-s" x="319" y="276" text-anchor="middle" dominant-baseline="central">roles·scopes</text></g>
+<g><rect class="fill-blue" x="378" y="234" width="98" height="64" rx="6" stroke-width="0.5"/><text class="title blue-t" x="427" y="256" text-anchor="middle" dominant-baseline="central">Origin</text><text class="sub blue-s" x="427" y="276" text-anchor="middle" dominant-baseline="central">TLS facts</text></g>
+<line class="arrow" x1="265" y1="318" x2="265" y2="340" marker-end="url(#arrow)"/>
+
+<g><rect class="fill-purple" x="40" y="340" width="450" height="56" rx="8" stroke-width="0.5"/><text class="title purple-t" x="265" y="360" text-anchor="middle" dominant-baseline="central">One context, every surface</text><text class="sub purple-s" x="265" y="380" text-anchor="middle" dominant-baseline="central">REST · Services · Jobs · Workflow · WebSocket/SSE</text></g>
+<line class="arrow" x1="265" y1="396" x2="265" y2="416" marker-end="url(#arrow)"/>
+
+<g><rect class="fill-gray" x="90" y="416" width="350" height="58" rx="8" stroke-width="0.5"/><text class="title gray-t" x="265" y="436" text-anchor="middle" dominant-baseline="central">Authorization = per-call decision</text><text class="sub gray-s" x="265" y="456" text-anchor="middle" dominant-baseline="central">allow / deny per call — never ambient state</text></g>
+
+<g><rect class="fill-pink" x="510" y="110" width="140" height="294" rx="8" stroke-width="0.5"/>
+<text class="title pink-t" x="580" y="128" text-anchor="middle" dominant-baseline="central">Security events</text>
+<text class="sub pink-s" x="580" y="146" text-anchor="middle" dominant-baseline="central">→ observers</text>
+<text class="sub pink-s" x="522" y="180" dominant-baseline="central">credential accepted</text>
+<text class="sub pink-s" x="522" y="202" dominant-baseline="central">credential rejected</text>
+<text class="sub pink-s" x="522" y="224" dominant-baseline="central">authz decision</text>
+<text class="sub pink-s" x="522" y="246" dominant-baseline="central">channel lifecycle</text>
+<text class="title pink-t" x="522" y="280" dominant-baseline="central">→ audit · metrics</text>
+</g>
+<path class="dash" d="M490 148 L510 148" marker-end="url(#arrow)"/>
+<path class="dash" d="M440 445 L500 445 L500 380 L510 380" marker-end="url(#arrow)"/>
+
+<g><rect class="fill-amber" x="40" y="492" width="610" height="56" rx="8" stroke-width="0.5"/><text class="title amber-t" x="345" y="510" text-anchor="middle" dominant-baseline="central">Boundary — verifies credentials, is not an identity provider</text><text class="sub amber-s" x="345" y="530" text-anchor="middle" dominant-baseline="central">no user store · no passwords · no login / SAML flows · no server sessions (ADR-0063)</text></g>
+</svg>

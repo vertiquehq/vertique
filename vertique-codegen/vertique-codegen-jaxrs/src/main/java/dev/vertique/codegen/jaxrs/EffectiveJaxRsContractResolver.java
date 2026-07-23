@@ -1,0 +1,1219 @@
+// SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
+// SPDX-License-Identifier: EUPL-1.2
+
+package dev.vertique.codegen.jaxrs;
+
+import dev.vertique.codegen.AnnotationMirrors;
+import dev.vertique.codegen.CodegenContext;
+import dev.vertique.codegen.Diagnostics;
+import dev.vertique.codegen.JaxRsAnnotations;
+import java.util.ArrayList;
+import java.util.EnumSet;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
+import javax.lang.model.element.AnnotationMirror;
+import javax.lang.model.element.AnnotationValue;
+import javax.lang.model.element.ElementKind;
+import javax.lang.model.element.ExecutableElement;
+import javax.lang.model.element.Modifier;
+import javax.lang.model.element.TypeElement;
+import javax.lang.model.type.TypeMirror;
+
+/**
+ * Resolves the effective JAX-RS contract for a concrete resource class by applying the
+ * precedence rule: (1) direct annotations on the concrete class or method, (2) matching
+ * declarations in the superclass chain, (3) matching declarations in implemented interfaces in
+ * BFS discovery order.
+ *
+ * <p>The BFS interface walk mirrors the runtime {@code TypeResolver.getAllInterfaces} algorithm:
+ * deque + {@code LinkedHashSet} dedup keyed by binary name. First-found-wins within a given
+ * precedence level, producing the same deterministic outcome as the runtime
+ * {@code AnnotationResolver}.
+ *
+ * <p>Conflict detection is performed per annotation kind. When two implemented interfaces carry
+ * conflicting values for the same kind, a compile-time error is emitted via
+ * {@link CodegenContext#diagnostics()} and the offending method or class is excluded from the
+ * resolved contract. Identical values across interfaces are not a conflict.
+ *
+ * <p>When a direct annotation on the concrete class or method disagrees with an interface
+ * declaration, the direct annotation wins (precedence rule 1) and a compiler warning is emitted
+ * so the developer notices the silent override.
+ */
+public final class EffectiveJaxRsContractResolver {
+
+    // --- Annotation FQN constants ---
+
+    private static final String CONSUMES_FQN = "jakarta.ws.rs.Consumes";
+    private static final String PRODUCES_FQN = "jakarta.ws.rs.Produces";
+    private static final String DEFAULT_VALUE_FQN = "jakarta.ws.rs.DefaultValue";
+    private static final String OPERATION_FQN = "io.swagger.v3.oas.annotations.Operation";
+    private static final String VALIDATE_WITH_FQN = "dev.vertique.core.validation.ValidateWith";
+
+    // --- Sanitization annotation FQN constants (mirrors AnnotationCollector in codegen-sanitization) ---
+
+    private static final String CANONICALIZE_FQN = "dev.vertique.core.sanitization.Canonicalize";
+    private static final String SANITIZE_FQN = "dev.vertique.core.sanitization.Sanitize";
+    private static final String SKIP_CANON_FQN = "dev.vertique.core.sanitization.SkipCanonicalization";
+    private static final String SKIP_SANIT_FQN = "dev.vertique.core.sanitization.SkipSanitization";
+
+    private final CodegenContext ctx;
+
+    /**
+     * Creates a new {@code EffectiveJaxRsContractResolver} bound to the given codegen context.
+     *
+     * @param ctx the shared codegen context; must not be {@code null}
+     */
+    public EffectiveJaxRsContractResolver(CodegenContext ctx) {
+        this.ctx = ctx;
+    }
+
+    // --- Public API ---
+
+    /**
+     * Returns {@code true} iff {@code concreteClass} is a concrete (non-abstract, non-interface)
+     * type AND either carries a direct {@code @Path} annotation or transitively implements an
+     * interface that carries {@code @Path}.
+     *
+     * <p>This is the cheap yes/no predicate used by candidate discovery (step 1). It does NOT
+     * run the full resolver and does NOT check for class-level conflicts.
+     *
+     * @param concreteClass the type element to test; must not be {@code null}
+     * @return {@code true} if the class is a concrete JAX-RS resource candidate
+     */
+    public boolean hasEffectivePath(TypeElement concreteClass) {
+        if (concreteClass.getKind() == ElementKind.INTERFACE) {
+            return false;
+        }
+        if (concreteClass.getModifiers().contains(Modifier.ABSTRACT)) {
+            return false;
+        }
+        // Direct @Path on the concrete class
+        if (AnnotationMirrors.isPresent(concreteClass, JaxRsAnnotations.PATH)) {
+            return true;
+        }
+        // Walk interfaces transitively via BFS
+        for (TypeElement iface : JaxRsHierarchy.allInterfaces(ctx, concreteClass)) {
+            if (AnnotationMirrors.isPresent(iface, JaxRsAnnotations.PATH)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Resolves the full effective contract for the given concrete resource class.
+     *
+     * <p>Uses {@link JaxRsMethodDiscovery#collect} for the concrete methods, then resolves each
+     * method's effective annotations by the precedence rule. Conflict errors are emitted
+     * immediately; conflicting methods are excluded from the returned contract's method list.
+     * Class-level conflicts cause the returned contract to have an empty method list (and callers
+     * should not proceed with descriptor emission).
+     *
+     * @param concreteClass the concrete resource class to resolve; must not be {@code null}
+     * @return the resolved effective contract; never {@code null}
+     */
+    public EffectiveResourceContract resolve(TypeElement concreteClass) {
+        // --- Class-level resolution ---
+        String classPath = resolveClassPath(concreteClass);
+        EffectiveSecurityContract classSecurity = resolveClassSecurity(concreteClass);
+
+        // Class-level conflict check: did resolveClassPath or resolveClassSecurity detect a
+        // conflict? If so, return an empty-methods contract to signal skip.
+        if (classPath == null && !AnnotationMirrors.isPresent(concreteClass, JaxRsAnnotations.PATH)) {
+            // Check if any interface has @Path — if none found, that's fine; class-level conflict
+            // detection is done inside resolveClassPath via the conflictingPath flag.
+        }
+
+        // --- Method-level resolution ---
+        List<ExecutableElement> concreteMethods = JaxRsMethodDiscovery.collect(concreteClass, ctx.types());
+        List<EffectiveMethodContract> methods = new ArrayList<>();
+        boolean classLevelConflict = isClassLevelConflict(concreteClass);
+
+        if (!classLevelConflict) {
+            for (ExecutableElement method : concreteMethods) {
+                EffectiveMethodContract mc = resolveMethod(concreteClass, method);
+                if (mc != null) {
+                    methods.add(mc);
+                }
+            }
+        }
+
+        return new EffectiveResourceContract(concreteClass, classPath, classSecurity, List.copyOf(methods));
+    }
+
+    // --- Class-level resolution helpers ---
+
+    /**
+     * Resolves the effective class-level {@code @Path} value using the precedence rule.
+     * Returns {@code null} if no effective path is found.
+     *
+     * <p>When the direct class annotation disagrees with an interface declaration, a warning is
+     * emitted and the direct value wins.
+     *
+     * @param concreteClass the concrete class
+     * @return the effective {@code @Path} value, or {@code null}
+     */
+    private String resolveClassPath(TypeElement concreteClass) {
+        // Precedence 1: direct @Path on the concrete class
+        String directPath = pathValue(concreteClass);
+        if (directPath != null) {
+            // Warn if any interface also carries @Path with a different value
+            for (TypeElement iface : JaxRsHierarchy.allInterfaces(ctx, concreteClass)) {
+                String ifacePath = pathValue(iface);
+                if (ifacePath != null && !ifacePath.equals(directPath)) {
+                    ctx.diagnostics()
+                            .warning(
+                                    concreteClass,
+                                    Diagnostics.directOverridesInterfaceWarning(
+                                            concreteClass.getSimpleName().toString(),
+                                            "@Path",
+                                            directPath,
+                                            iface.getQualifiedName().toString(),
+                                            ifacePath));
+                }
+            }
+            return directPath;
+        }
+
+        // Precedence 2: superclass chain
+        String superPath = resolveClassPathFromSuperChain(concreteClass);
+        if (superPath != null) {
+            return superPath;
+        }
+
+        // Precedence 3: BFS interfaces — conflict detection
+        return resolveClassPathFromInterfaces(concreteClass);
+    }
+
+    /**
+     * Walks the superclass chain (excluding the concrete class itself) looking for a class-level
+     * {@code @Path}.
+     *
+     * @param concreteClass the concrete class
+     * @return the first found {@code @Path} value, or {@code null}
+     */
+    private String resolveClassPathFromSuperChain(TypeElement concreteClass) {
+        TypeElement current = JaxRsHierarchy.superClass(ctx, concreteClass);
+        while (current != null
+                && !"java.lang.Object".equals(current.getQualifiedName().toString())) {
+            String p = pathValue(current);
+            if (p != null) {
+                return p;
+            }
+            current = JaxRsHierarchy.superClass(ctx, current);
+        }
+        return null;
+    }
+
+    /**
+     * BFS over all transitively implemented interfaces looking for class-level {@code @Path}.
+     * Emits a compile-time error when two interfaces carry different {@code @Path} values.
+     *
+     * @param concreteClass the concrete class
+     * @return the first-found interface {@code @Path} value, or {@code null} on conflict or absence
+     */
+    private String resolveClassPathFromInterfaces(TypeElement concreteClass) {
+        String found = null;
+        String foundInterface = null;
+        for (TypeElement iface : JaxRsHierarchy.allInterfaces(ctx, concreteClass)) {
+            String p = pathValue(iface);
+            if (p == null) continue;
+            if (found == null) {
+                found = p;
+                foundInterface = iface.getQualifiedName().toString();
+            } else if (!found.equals(p)) {
+                ctx.diagnostics()
+                        .error(
+                                concreteClass,
+                                Diagnostics.classContractConflict(
+                                        concreteClass.getSimpleName().toString(),
+                                        "@Path",
+                                        foundInterface,
+                                        found,
+                                        iface.getQualifiedName().toString(),
+                                        p));
+                return null;
+            }
+        }
+        return found;
+    }
+
+    /**
+     * Returns {@code true} if the concrete class has a class-level path-conflict or security
+     * conflict across its implemented interfaces — used to gate method processing.
+     *
+     * @param concreteClass the concrete class
+     * @return {@code true} if a class-level conflict was already detected
+     */
+    private boolean isClassLevelConflict(TypeElement concreteClass) {
+        // Re-run the path resolution to see if it would produce null due to conflict
+        // (direct path wins, so conflict only happens when direct is absent and interfaces conflict)
+        if (pathValue(concreteClass) != null) {
+            return false;
+        }
+        if (resolveClassPathFromSuperChain(concreteClass) != null) {
+            return false;
+        }
+        // Check interfaces for path conflict
+        String found = null;
+        for (TypeElement iface : JaxRsHierarchy.allInterfaces(ctx, concreteClass)) {
+            String p = pathValue(iface);
+            if (p == null) continue;
+            if (found == null) {
+                found = p;
+            } else if (!found.equals(p)) {
+                return true; // conflict detected
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Resolves the effective class-level security contract using the precedence rule.
+     *
+     * @param concreteClass the concrete class
+     * @return the effective security contract; never {@code null}
+     */
+    private EffectiveSecurityContract resolveClassSecurity(TypeElement concreteClass) {
+        // Precedence 1: direct security annotations on the concrete class
+        EffectiveSecurityContract direct = buildSecurityContract(concreteClass);
+        if (!direct.isEmpty()) {
+            // Warn if any interface also carries conflicting security
+            warnSecurityOverride(concreteClass, direct, JaxRsHierarchy.allInterfaces(ctx, concreteClass), true);
+            return direct;
+        }
+
+        // Precedence 2: superclass chain
+        TypeElement current = JaxRsHierarchy.superClass(ctx, concreteClass);
+        while (current != null
+                && !"java.lang.Object".equals(current.getQualifiedName().toString())) {
+            EffectiveSecurityContract sc = buildSecurityContract(current);
+            if (!sc.isEmpty()) {
+                return sc;
+            }
+            current = JaxRsHierarchy.superClass(ctx, current);
+        }
+
+        // Precedence 3: BFS interfaces
+        return resolveSecurityFromInterfaces(concreteClass, concreteClass, true);
+    }
+
+    // --- Method-level resolution helpers ---
+
+    /**
+     * Resolves the effective contract for a single concrete method. Returns {@code null} when a
+     * method-level conflict was detected (and a diagnostic was emitted).
+     *
+     * @param concreteClass  the resource class
+     * @param concreteMethod the concrete method
+     * @return the resolved method contract, or {@code null} on conflict
+     */
+    private EffectiveMethodContract resolveMethod(TypeElement concreteClass, ExecutableElement concreteMethod) {
+        // HTTP verb
+        String httpMethod = resolveHttpVerb(concreteMethod, concreteClass);
+
+        // Method @Path
+        String methodPath =
+                resolveMethodAnnotationString(concreteMethod, concreteClass, JaxRsAnnotations.PATH, "value");
+
+        // @Operation.operationId
+        String operationId = resolveOperationId(concreteMethod, concreteClass);
+
+        // @Consumes / @Produces
+        List<String> consumes = resolveMediaTypes(concreteMethod, concreteClass, CONSUMES_FQN);
+        List<String> produces = resolveMediaTypes(concreteMethod, concreteClass, PRODUCES_FQN);
+
+        // Method-level security
+        EffectiveSecurityContract methodSecurity = resolveMethodSecurity(concreteMethod, concreteClass);
+
+        // @ValidateWith
+        List<TypeMirror> validationGroups = resolveValidationGroups(concreteMethod, concreteClass);
+
+        // Route-level canonicalization / sanitization chains
+        List<TypeMirror> routeCanonicalizers =
+                resolveRouteChain(concreteMethod, concreteClass, CANONICALIZE_FQN, SKIP_CANON_FQN);
+        List<TypeMirror> routeSanitizers =
+                resolveRouteChain(concreteMethod, concreteClass, SANITIZE_FQN, SKIP_SANIT_FQN);
+
+        // Parameters
+        List<EffectiveParamContract> params =
+                resolveParams(concreteMethod, concreteClass, routeCanonicalizers, routeSanitizers);
+
+        return new EffectiveMethodContract(
+                concreteMethod,
+                httpMethod,
+                methodPath,
+                operationId,
+                consumes,
+                produces,
+                methodSecurity,
+                validationGroups,
+                params,
+                routeCanonicalizers,
+                routeSanitizers);
+    }
+
+    /**
+     * Resolves the effective HTTP verb annotation FQN for a method using the precedence rule.
+     *
+     * @param method        the concrete method
+     * @param resourceClass the enclosing resource class (for interface lookup)
+     * @return the HTTP verb annotation FQN, or {@code null} for non-endpoint methods
+     */
+    private String resolveHttpVerb(ExecutableElement method, TypeElement resourceClass) {
+        // Precedence 1: direct verb on the concrete method
+        for (String verb : JaxRsAnnotations.HTTP_VERBS) {
+            if (AnnotationMirrors.isPresent(method, verb)) {
+                return verb;
+            }
+        }
+
+        // Precedence 2: superclass chain — method already includes inherited declarations from
+        // JaxRsMethodDiscovery (the concrete method may itself be inherited)
+        // The method element already IS the effective method from the chain; superclass is already
+        // folded in via JaxRsMethodDiscovery. So we only need to check interfaces.
+
+        // Precedence 3: BFS interfaces — find matching abstract method
+        for (TypeElement iface : JaxRsHierarchy.allInterfaces(ctx, resourceClass)) {
+            ExecutableElement ifaceMethod = JaxRsHierarchy.findMatchingMethod(ctx, method, iface);
+            if (ifaceMethod == null) continue;
+            for (String verb : JaxRsAnnotations.HTTP_VERBS) {
+                if (AnnotationMirrors.isPresent(ifaceMethod, verb)) {
+                    return verb;
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Resolves a single string-valued annotation attribute on a method using the precedence rule.
+     *
+     * @param method         the concrete method
+     * @param resourceClass  the resource class
+     * @param annotationFqn  the annotation FQN
+     * @param attributeName  the attribute name (usually {@code "value"})
+     * @return the attribute value, or {@code null} if absent
+     */
+    private String resolveMethodAnnotationString(
+            ExecutableElement method, TypeElement resourceClass, String annotationFqn, String attributeName) {
+        // Precedence 1: direct
+        String direct = findAnnotationString(method, annotationFqn, attributeName);
+        if (direct != null) {
+            return direct;
+        }
+        // Precedence 3: BFS interfaces
+        for (TypeElement iface : JaxRsHierarchy.allInterfaces(ctx, resourceClass)) {
+            ExecutableElement ifaceMethod = JaxRsHierarchy.findMatchingMethod(ctx, method, iface);
+            if (ifaceMethod == null) continue;
+            String v = findAnnotationString(ifaceMethod, annotationFqn, attributeName);
+            if (v != null) {
+                return v;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Resolves the {@code @Operation.operationId} for a method using the precedence rule.
+     *
+     * @param method        the concrete method
+     * @param resourceClass the resource class
+     * @return the operationId, or {@code null} if absent
+     */
+    private String resolveOperationId(ExecutableElement method, TypeElement resourceClass) {
+        // Precedence 1: direct
+        String direct = findAnnotationString(method, OPERATION_FQN, "operationId");
+        if (direct != null && !direct.isBlank()) {
+            return direct;
+        }
+        // Precedence 3: BFS interfaces
+        for (TypeElement iface : JaxRsHierarchy.allInterfaces(ctx, resourceClass)) {
+            ExecutableElement ifaceMethod = JaxRsHierarchy.findMatchingMethod(ctx, method, iface);
+            if (ifaceMethod == null) continue;
+            String v = findAnnotationString(ifaceMethod, OPERATION_FQN, "operationId");
+            if (v != null && !v.isBlank()) {
+                return v;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Resolves the media types from {@code @Consumes} or {@code @Produces} using the precedence
+     * rule.
+     *
+     * @param method         the concrete method
+     * @param resourceClass  the resource class
+     * @param annotationFqn  either {@link #CONSUMES_FQN} or {@link #PRODUCES_FQN}
+     * @return the resolved list of media-type strings; empty if absent
+     */
+    private List<String> resolveMediaTypes(ExecutableElement method, TypeElement resourceClass, String annotationFqn) {
+        // Precedence 1: direct on method
+        List<String> direct = findAnnotationStringArray(method, annotationFqn);
+        if (direct != null) {
+            return direct;
+        }
+        // Precedence 3: BFS interfaces
+        for (TypeElement iface : JaxRsHierarchy.allInterfaces(ctx, resourceClass)) {
+            ExecutableElement ifaceMethod = JaxRsHierarchy.findMatchingMethod(ctx, method, iface);
+            if (ifaceMethod == null) continue;
+            List<String> v = findAnnotationStringArray(ifaceMethod, annotationFqn);
+            if (v != null) {
+                return v;
+            }
+        }
+        return List.of();
+    }
+
+    /**
+     * Resolves the effective method-level security contract using the precedence rule.
+     *
+     * @param method        the concrete method
+     * @param resourceClass the resource class
+     * @return the effective security contract; never {@code null}
+     */
+    private EffectiveSecurityContract resolveMethodSecurity(ExecutableElement method, TypeElement resourceClass) {
+        // Precedence 1: direct on method
+        EffectiveSecurityContract direct = buildSecurityContract(method);
+        if (!direct.isEmpty()) {
+            warnSecurityOverride(method, direct, JaxRsHierarchy.allInterfaces(ctx, resourceClass), false);
+            return direct;
+        }
+        // Precedence 3: BFS interfaces
+        return resolveSecurityFromInterfaces(method, resourceClass, false);
+    }
+
+    /**
+     * Resolves the validation groups from {@code @ValidateWith} using the precedence rule.
+     *
+     * @param method        the concrete method
+     * @param resourceClass the resource class
+     * @return the list of validation group type mirrors, or {@code null} if the annotation is absent
+     */
+    private List<TypeMirror> resolveValidationGroups(ExecutableElement method, TypeElement resourceClass) {
+        // Precedence 1: direct on method
+        List<TypeMirror> direct = findAnnotationClassArray(method, VALIDATE_WITH_FQN);
+        if (direct != null) {
+            return direct;
+        }
+        // Precedence 3: BFS interfaces
+        for (TypeElement iface : JaxRsHierarchy.allInterfaces(ctx, resourceClass)) {
+            ExecutableElement ifaceMethod = JaxRsHierarchy.findMatchingMethod(ctx, method, iface);
+            if (ifaceMethod == null) continue;
+            List<TypeMirror> v = findAnnotationClassArray(ifaceMethod, VALIDATE_WITH_FQN);
+            if (v != null) {
+                return v;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Resolves the effective parameter contracts for all parameters of a concrete method.
+     *
+     * @param method               the concrete method
+     * @param resourceClass        the resource class
+     * @param routeCanonicalizers  route-level canonicalizer chain to use as baseline for each param
+     * @param routeSanitizers      route-level sanitizer chain to use as baseline for each param
+     * @return the list of parameter contracts; never {@code null}
+     */
+    private List<EffectiveParamContract> resolveParams(
+            ExecutableElement method,
+            TypeElement resourceClass,
+            List<TypeMirror> routeCanonicalizers,
+            List<TypeMirror> routeSanitizers) {
+        List<EffectiveParamContract> result = new ArrayList<>();
+        var params = method.getParameters();
+        for (int i = 0; i < params.size(); i++) {
+            var param = params.get(i);
+            result.add(resolveParam(param, i, method, resourceClass, routeCanonicalizers, routeSanitizers));
+        }
+        return List.copyOf(result);
+    }
+
+    /**
+     * Resolves the effective contract for a single parameter at the given index.
+     *
+     * @param concreteParam       the concrete parameter element
+     * @param paramIndex          zero-based parameter index
+     * @param method              the enclosing method
+     * @param resourceClass       the resource class
+     * @param routeCanonicalizers route-level canonicalizer chain to use as baseline
+     * @param routeSanitizers     route-level sanitizer chain to use as baseline
+     * @return the resolved parameter contract; never {@code null}
+     */
+    private EffectiveParamContract resolveParam(
+            javax.lang.model.element.VariableElement concreteParam,
+            int paramIndex,
+            ExecutableElement method,
+            TypeElement resourceClass,
+            List<TypeMirror> routeCanonicalizers,
+            List<TypeMirror> routeSanitizers) {
+
+        // Classify using the concrete param (direct annotations take precedence)
+        // For param source, we also look at the interface param if no direct annotation found
+        JaxRsParamSource source = classifyEffectiveParam(concreteParam, paramIndex, method, resourceClass);
+
+        // Param name — from the classification annotation (e.g. @PathParam("id"))
+        String name = resolveParamName(concreteParam, paramIndex, method, resourceClass, source);
+
+        // @DefaultValue
+        String defaultValue = resolveDefaultValue(concreteParam, paramIndex, method, resourceClass);
+
+        // Merged annotation sources (GitHub issue #162): concreteParam plus the matching parameter
+        // on each superclass/interface override that declares it, mirroring the runtime
+        // AnnotationResolver.resolveParameterAnnotations merge so a converter-decision marker
+        // annotation declared only on an interface method is not lost when the codegen path
+        // materializes literals from concreteParam alone.
+        List<javax.lang.model.element.VariableElement> annotationSources =
+                resolveParamAnnotationSources(concreteParam, paramIndex, method, resourceClass);
+
+        TypeMirror type = concreteParam.asType();
+
+        // Component type for List<T>
+        TypeMirror componentType = resolveComponentType(type);
+
+        // Bean param type
+        TypeMirror beanParamType = (source == JaxRsParamSource.BEAN_PARAM) ? type : null;
+
+        // Generic type for BODY params — capture the full parameterized type mirror so the emitter
+        // can emit a TypeReference-style token for generic bodies (e.g. List<Foo>)
+        TypeMirror genericType = (source == JaxRsParamSource.BODY) ? type : null;
+
+        // Per-parameter policies: start from route-level chain, apply param-level overrides.
+        // This mirrors ParameterExtractor.resolveParamPolicies at compile time.
+        List<TypeMirror> paramCanonicalizers =
+                resolveParamChain(concreteParam, CANONICALIZE_FQN, SKIP_CANON_FQN, routeCanonicalizers);
+        List<TypeMirror> paramSanitizers =
+                resolveParamChain(concreteParam, SANITIZE_FQN, SKIP_SANIT_FQN, routeSanitizers);
+
+        return new EffectiveParamContract(
+                concreteParam,
+                annotationSources,
+                source,
+                name,
+                defaultValue,
+                type,
+                componentType,
+                beanParamType,
+                genericType,
+                paramCanonicalizers,
+                paramSanitizers);
+    }
+
+    /**
+     * Classifies the effective source for a parameter, falling through to the matching interface
+     * method parameter when the concrete param has no direct annotation.
+     *
+     * @param concreteParam the concrete parameter
+     * @param paramIndex    zero-based index
+     * @param method        the enclosing concrete method
+     * @param resourceClass the resource class
+     * @return the effective {@link JaxRsParamSource}
+     */
+    private JaxRsParamSource classifyEffectiveParam(
+            javax.lang.model.element.VariableElement concreteParam,
+            int paramIndex,
+            ExecutableElement method,
+            TypeElement resourceClass) {
+        // Classify the concrete param first; if it falls through to BODY and there's an interface
+        // param with annotations, use those
+        JaxRsParamSource direct = JaxRsParamClassifier.classify(concreteParam, ctx.types(), ctx.elements());
+        if (direct != JaxRsParamSource.BODY) {
+            return direct;
+        }
+        // Check if an interface param would classify differently
+        for (TypeElement iface : JaxRsHierarchy.allInterfaces(ctx, resourceClass)) {
+            ExecutableElement ifaceMethod = JaxRsHierarchy.findMatchingMethod(ctx, method, iface);
+            if (ifaceMethod == null) continue;
+            var ifaceParams = ifaceMethod.getParameters();
+            if (paramIndex >= ifaceParams.size()) continue;
+            JaxRsParamSource ifaceSource =
+                    JaxRsParamClassifier.classify(ifaceParams.get(paramIndex), ctx.types(), ctx.elements());
+            if (ifaceSource != JaxRsParamSource.BODY) {
+                return ifaceSource;
+            }
+        }
+        return JaxRsParamSource.BODY;
+    }
+
+    /**
+     * Resolves the full list of parameter elements whose annotation mirrors back the effective
+     * annotation set for a parameter (GitHub issue #162), mirroring the runtime
+     * {@code AnnotationResolver.resolveParameterAnnotations} merge at compile time: the concrete
+     * parameter, then the matching parameter on each superclass in the chain that declares the
+     * method, then the matching parameter on each transitively implemented interface (BFS order via
+     * {@link JaxRsHierarchy#allInterfaces}) that declares the method. A superclass/interface method
+     * with fewer parameters than {@code paramIndex} (should not normally happen for a genuine
+     * override, but guarded defensively) is skipped for that level.
+     *
+     * <p>Unlike {@link #resolveParamName}/{@link #classifyEffectiveParam} (which resolve a single
+     * effective value by first-found-wins precedence), this method returns <em>every</em> declaring
+     * parameter element so a caller (the literal-annotation materializer) can union annotation types
+     * across all of them — a marker annotation declared only on an interface's parameter, with no
+     * direct override on the concrete parameter, must still be visible.
+     *
+     * @param concreteParam the concrete parameter element; always included first
+     * @param paramIndex    zero-based parameter index
+     * @param method        the enclosing concrete method
+     * @param resourceClass the resource class
+     * @return an immutable list starting with {@code concreteParam}, followed by each
+     *         superclass/interface override's matching parameter that declares the method; never
+     *         {@code null}, never empty
+     */
+    private List<javax.lang.model.element.VariableElement> resolveParamAnnotationSources(
+            javax.lang.model.element.VariableElement concreteParam,
+            int paramIndex,
+            ExecutableElement method,
+            TypeElement resourceClass) {
+        List<javax.lang.model.element.VariableElement> sources = new ArrayList<>();
+        sources.add(concreteParam);
+
+        // Superclass chain (excluding the concrete class itself)
+        TypeElement current = JaxRsHierarchy.superClass(ctx, resourceClass);
+        while (current != null
+                && !"java.lang.Object".equals(current.getQualifiedName().toString())) {
+            ExecutableElement superMethod = JaxRsHierarchy.findMatchingMethod(ctx, method, current);
+            if (superMethod != null && paramIndex < superMethod.getParameters().size()) {
+                sources.add(superMethod.getParameters().get(paramIndex));
+            }
+            current = JaxRsHierarchy.superClass(ctx, current);
+        }
+
+        // BFS interfaces
+        for (TypeElement iface : JaxRsHierarchy.allInterfaces(ctx, resourceClass)) {
+            ExecutableElement ifaceMethod = JaxRsHierarchy.findMatchingMethod(ctx, method, iface);
+            if (ifaceMethod != null && paramIndex < ifaceMethod.getParameters().size()) {
+                sources.add(ifaceMethod.getParameters().get(paramIndex));
+            }
+        }
+
+        return List.copyOf(sources);
+    }
+
+    /**
+     * Resolves the effective annotation name for a parameter (e.g. the value of {@code @PathParam}).
+     *
+     * @param concreteParam the concrete parameter
+     * @param paramIndex    zero-based index
+     * @param method        the enclosing method
+     * @param resourceClass the resource class
+     * @param source        the resolved param source
+     * @return the param name, or {@code null} if the source has no name annotation
+     */
+    private String resolveParamName(
+            javax.lang.model.element.VariableElement concreteParam,
+            int paramIndex,
+            ExecutableElement method,
+            TypeElement resourceClass,
+            JaxRsParamSource source) {
+        String annotationFqn = paramSourceAnnotationFqn(source);
+        if (annotationFqn == null) {
+            return null;
+        }
+        // Precedence 1: direct on concrete param
+        String direct = findAnnotationString(concreteParam, annotationFqn, "value");
+        if (direct != null) {
+            return direct;
+        }
+        // Precedence 3: BFS interfaces
+        for (TypeElement iface : JaxRsHierarchy.allInterfaces(ctx, resourceClass)) {
+            ExecutableElement ifaceMethod = JaxRsHierarchy.findMatchingMethod(ctx, method, iface);
+            if (ifaceMethod == null) continue;
+            var ifaceParams = ifaceMethod.getParameters();
+            if (paramIndex >= ifaceParams.size()) continue;
+            String v = findAnnotationString(ifaceParams.get(paramIndex), annotationFqn, "value");
+            if (v != null) {
+                return v;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Returns the annotation FQN that carries the param name for the given source kind,
+     * or {@code null} for sources that have no name annotation.
+     *
+     * @param source the param source
+     * @return the annotation FQN, or {@code null}
+     */
+    private String paramSourceAnnotationFqn(JaxRsParamSource source) {
+        return switch (source) {
+            case PATH -> JaxRsAnnotations.PATH_PARAM;
+            case QUERY -> JaxRsAnnotations.QUERY_PARAM;
+            case HEADER -> JaxRsAnnotations.HEADER_PARAM;
+            case COOKIE -> JaxRsAnnotations.COOKIE_PARAM;
+            case FORM -> JaxRsAnnotations.FORM_PARAM;
+            default -> null;
+        };
+    }
+
+    /**
+     * Resolves the {@code @DefaultValue} string for a parameter using the precedence rule.
+     *
+     * @param concreteParam the concrete parameter
+     * @param paramIndex    zero-based index
+     * @param method        the enclosing method
+     * @param resourceClass the resource class
+     * @return the default value string, or {@code null} if absent
+     */
+    private String resolveDefaultValue(
+            javax.lang.model.element.VariableElement concreteParam,
+            int paramIndex,
+            ExecutableElement method,
+            TypeElement resourceClass) {
+        // Precedence 1: direct
+        String direct = findAnnotationString(concreteParam, DEFAULT_VALUE_FQN, "value");
+        if (direct != null) {
+            return direct;
+        }
+        // Precedence 3: BFS interfaces
+        for (TypeElement iface : JaxRsHierarchy.allInterfaces(ctx, resourceClass)) {
+            ExecutableElement ifaceMethod = JaxRsHierarchy.findMatchingMethod(ctx, method, iface);
+            if (ifaceMethod == null) continue;
+            var ifaceParams = ifaceMethod.getParameters();
+            if (paramIndex >= ifaceParams.size()) continue;
+            String v = findAnnotationString(ifaceParams.get(paramIndex), DEFAULT_VALUE_FQN, "value");
+            if (v != null) {
+                return v;
+            }
+        }
+        return null;
+    }
+
+    // --- Route-level chain resolution helpers ---
+
+    /**
+     * Resolves the effective route-level chain (canonicalizers or sanitizers) for a method by
+     * applying the same precedence as the runtime
+     * {@code ResourceScanner.resolveRouteCanonicalizerChain} / {@code resolveRouteSanitizerChain}:
+     *
+     * <ol>
+     *   <li>Method-level {@code @Skip*} → empty chain (opt-out)</li>
+     *   <li>Method-level {@code @Canonicalize}/{@code @Sanitize} → use method value</li>
+     *   <li>Class-level {@code @Skip*} → empty chain</li>
+     *   <li>Class-level {@code @Canonicalize}/{@code @Sanitize} → use class value</li>
+     *   <li>None of the above → empty chain</li>
+     * </ol>
+     *
+     * <p>Conflict detection (both additive and skip on the same element) is not surfaced here
+     * because it is already surfaced by the sanitization APT processor at the type-level and would
+     * be a duplicate error. The runtime resolvers throw {@link IllegalStateException} on conflict;
+     * callers of the generated descriptor would hit that error at startup.
+     *
+     * @param method        the concrete method
+     * @param resourceClass the resource class (used to locate class-level annotations)
+     * @param additiveFqn   FQN of the additive annotation ({@code @Canonicalize} or {@code @Sanitize})
+     * @param skipFqn       FQN of the skip annotation ({@code @SkipCanonicalization} or {@code @SkipSanitization})
+     * @return ordered list of class type mirrors; never {@code null}, empty when no chain applies
+     */
+    private List<TypeMirror> resolveRouteChain(
+            ExecutableElement method, TypeElement resourceClass, String additiveFqn, String skipFqn) {
+
+        boolean methodSkip = findMetaAnnotationMirror(method, skipFqn) != null;
+        AnnotationMirror methodAdd = findMetaAnnotationMirror(method, additiveFqn);
+        boolean classSkip = findMetaAnnotationMirror(resourceClass, skipFqn) != null;
+        AnnotationMirror classAdd = findMetaAnnotationMirror(resourceClass, additiveFqn);
+
+        // Method-level overrides class-level
+        if (methodSkip) return List.of();
+        if (methodAdd != null) return readClassArrayAsMirrors(methodAdd);
+        if (classSkip) return List.of();
+        if (classAdd != null) return readClassArrayAsMirrors(classAdd);
+        return List.of();
+    }
+
+    /**
+     * Resolves the effective per-parameter chain by starting from the route-level chain and
+     * applying parameter-level annotation overrides — mirroring
+     * {@code ParameterExtractor.resolveParamPolicies} at compile time.
+     *
+     * <ol>
+     *   <li>Param-level {@code @Skip*} → empty chain (opt-out from route chain)</li>
+     *   <li>Param-level {@code @Canonicalize}/{@code @Sanitize} → use param value</li>
+     *   <li>Otherwise → use the route-level chain as-is</li>
+     * </ol>
+     *
+     * @param param       the parameter element
+     * @param additiveFqn FQN of the additive annotation
+     * @param skipFqn     FQN of the skip annotation
+     * @param routeChain  the route-level chain to use as baseline
+     * @return the effective chain for this parameter; never {@code null}
+     */
+    private List<TypeMirror> resolveParamChain(
+            javax.lang.model.element.VariableElement param,
+            String additiveFqn,
+            String skipFqn,
+            List<TypeMirror> routeChain) {
+
+        boolean paramSkip = findMetaAnnotationMirror(param, skipFqn) != null;
+        if (paramSkip) return List.of();
+        AnnotationMirror paramAdd = findMetaAnnotationMirror(param, additiveFqn);
+        if (paramAdd != null) return readClassArrayAsMirrors(paramAdd);
+        return routeChain;
+    }
+
+    /**
+     * Finds a meta-annotation mirror on the given element, walking annotation type hierarchies
+     * recursively to support composed annotations. Mirrors the logic in
+     * {@code AnnotationCollector.findMetaAnnotation} in the sanitization codegen module.
+     *
+     * @param element       the element to inspect
+     * @param annotationFqn the FQN of the annotation to find
+     * @return the annotation mirror, or {@code null} if not found
+     */
+    private AnnotationMirror findMetaAnnotationMirror(javax.lang.model.element.Element element, String annotationFqn) {
+        return findMetaRecursive(element, annotationFqn, new HashSet<>());
+    }
+
+    /**
+     * Recursive helper for {@link #findMetaAnnotationMirror}. Walks annotation mirrors on the
+     * element, descending into each annotation type's own annotations to find composed uses.
+     *
+     * @param element       the element or annotation type element to inspect
+     * @param annotationFqn the FQN to find
+     * @param visited       set of already-visited annotation FQNs to avoid infinite loops
+     * @return the matching annotation mirror, or {@code null}
+     */
+    private AnnotationMirror findMetaRecursive(
+            javax.lang.model.element.Element element, String annotationFqn, Set<String> visited) {
+        for (AnnotationMirror mirror : element.getAnnotationMirrors()) {
+            var annotationType = mirror.getAnnotationType().asElement();
+            String thisFqn = annotationType instanceof TypeElement te
+                    ? te.getQualifiedName().toString()
+                    : annotationType.getSimpleName().toString();
+
+            if (annotationFqn.equals(thisFqn)) {
+                return mirror;
+            }
+            // Direct match on a meta-annotation declared on this annotation type
+            var meta = AnnotationMirrors.findByFqn(annotationType, annotationFqn);
+            if (meta.isPresent()) {
+                return meta.get();
+            }
+            // Recurse into the annotation type's own annotations, guarding against cycles
+            if (visited.add(thisFqn)) {
+                AnnotationMirror deeper = findMetaRecursive(annotationType, annotationFqn, visited);
+                if (deeper != null) {
+                    return deeper;
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Reads the {@code value()} {@code Class[]} attribute of a {@code @Canonicalize} or
+     * {@code @Sanitize} annotation mirror as a list of {@link TypeMirror} instances.
+     *
+     * @param mirror the annotation mirror
+     * @return the ordered list of type mirrors; never {@code null}
+     */
+    private List<TypeMirror> readClassArrayAsMirrors(AnnotationMirror mirror) {
+        List<TypeMirror> result = new ArrayList<>();
+        for (AnnotationValue av : ctx.annotations().attributeArray(mirror, "value")) {
+            Object val = av.getValue();
+            if (val instanceof TypeMirror tm) {
+                result.add(tm);
+            }
+        }
+        return List.copyOf(result);
+    }
+
+    /**
+     * Extracts the component type from a parameterized multi-value collection mirror —
+     * {@code List<T>}, {@code Set<T>}, {@code SortedSet<T>}, {@code NavigableSet<T>}, or
+     * {@code Collection<T>} — or returns {@code null} for any other type. Mirrors the supported
+     * <em>collection</em> shapes of {@code ResourceScanner.resolveComponentType} so the generated
+     * dispatch path binds and validates all values for these shapes, at parity with the reflective
+     * path.
+     *
+     * <p>Array shapes ({@code T[]}) are intentionally <em>not</em> recognized here: the generated
+     * descriptor emits a parameter type's FQN in source-array form (e.g. {@code "java.lang.Integer[]"}),
+     * which {@code Class.forName} cannot resolve, so emitting a non-null {@code componentType} for an
+     * array param would turn a silent first-value bind into a runtime {@code ClassNotFoundException}.
+     * Arrays therefore keep their existing (scalar-classified) generated handling; the reflective path
+     * handles {@code T[]} fully via {@code ResourceScanner.resolveComponentType}.
+     *
+     * @param type the parameter type mirror
+     * @return the component type for a recognized parameterized collection shape, or {@code null}
+     */
+    private TypeMirror resolveComponentType(TypeMirror type) {
+        if (!(type instanceof javax.lang.model.type.DeclaredType declared)) {
+            return null;
+        }
+        TypeMirror erased = ctx.types().erasure(type);
+        var erasedEl = ctx.types().asElement(erased);
+        if (erasedEl instanceof TypeElement te
+                && isSupportedCollectionFqn(te.getQualifiedName().toString())) {
+            var args = declared.getTypeArguments();
+            if (!args.isEmpty()) {
+                return args.get(0);
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Returns {@code true} if {@code fqn} names one of the multi-value collection interfaces whose
+     * type argument is bound element-wise: {@code java.util.List}, {@code java.util.Set},
+     * {@code java.util.SortedSet}, {@code java.util.NavigableSet}, or {@code java.util.Collection}.
+     *
+     * @param fqn the qualified name of the erased parameter type
+     * @return {@code true} when the type is a supported multi-value collection interface
+     */
+    private static boolean isSupportedCollectionFqn(String fqn) {
+        return "java.util.List".equals(fqn)
+                || "java.util.Set".equals(fqn)
+                || "java.util.SortedSet".equals(fqn)
+                || "java.util.NavigableSet".equals(fqn)
+                || "java.util.Collection".equals(fqn);
+    }
+
+    // --- Security resolution helpers ---
+
+    /**
+     * Resolves security annotations from BFS-ordered interfaces for a given element (class or
+     * method). Returns {@link EffectiveSecurityContract#NONE} when no security is found.
+     * Emits a compile-time error when two interfaces carry conflicting security kinds.
+     *
+     * @param element       the element whose matching interface declaration to look up (for methods,
+     *                      the corresponding interface method; for classes, the interface itself)
+     * @param resourceClass the resource class used as the BFS root for interface discovery
+     * @param classLevel    {@code true} when resolving class-level security
+     * @return the effective security contract; never {@code null}
+     */
+    private EffectiveSecurityContract resolveSecurityFromInterfaces(
+            javax.lang.model.element.Element element, TypeElement resourceClass, boolean classLevel) {
+        EffectiveSecurityContract found = null;
+        String foundInterfaceName = null;
+
+        for (TypeElement iface : JaxRsHierarchy.allInterfaces(ctx, resourceClass)) {
+            javax.lang.model.element.Element target;
+            if (classLevel) {
+                target = iface;
+            } else {
+                target = JaxRsHierarchy.findMatchingMethod(ctx, (ExecutableElement) element, iface);
+                if (target == null) continue;
+            }
+            EffectiveSecurityContract sc = buildSecurityContract(target);
+            if (sc.isEmpty()) continue;
+
+            if (found == null) {
+                found = sc;
+                foundInterfaceName = iface.getQualifiedName().toString();
+            } else if (!securityContractsCompatible(found, sc)) {
+                // Conflict: emit error
+                String contextName = classLevel
+                        ? resourceClass.getSimpleName().toString()
+                        : ((ExecutableElement) element).getSimpleName().toString() + "()";
+                String level = classLevel ? "class-level" : "method-level";
+                ctx.diagnostics()
+                        .error(
+                                resourceClass,
+                                Diagnostics.classContractConflict(
+                                        contextName,
+                                        level + " security",
+                                        foundInterfaceName,
+                                        describeSecurityKinds(found.kinds()),
+                                        iface.getQualifiedName().toString(),
+                                        describeSecurityKinds(sc.kinds())));
+                return EffectiveSecurityContract.NONE;
+            }
+            // identical or compatible — continue (first-found wins)
+        }
+        return found != null ? found : EffectiveSecurityContract.NONE;
+    }
+
+    /**
+     * Returns {@code true} if the two security contracts are compatible (i.e. represent the same
+     * effective kind set and values — no conflict).
+     *
+     * @param a first security contract
+     * @param b second security contract
+     * @return {@code true} if compatible
+     */
+    private boolean securityContractsCompatible(EffectiveSecurityContract a, EffectiveSecurityContract b) {
+        return a.kinds().equals(b.kinds())
+                && a.rolesAllowed().equals(b.rolesAllowed())
+                && a.authorizedScopes().equals(b.authorizedScopes())
+                && a.authorizedMatchAll() == b.authorizedMatchAll();
+    }
+
+    /**
+     * Emits a warning when a direct security annotation overrides an interface declaration with a
+     * different security kind.
+     *
+     * @param element     the element carrying the direct annotation
+     * @param direct      the direct security contract
+     * @param interfaces  the BFS-ordered interfaces to check
+     * @param classLevel  {@code true} for class-level warnings
+     */
+    private void warnSecurityOverride(
+            javax.lang.model.element.Element element,
+            EffectiveSecurityContract direct,
+            List<TypeElement> interfaces,
+            boolean classLevel) {
+        for (TypeElement iface : interfaces) {
+            javax.lang.model.element.Element target;
+            if (classLevel) {
+                target = iface;
+            } else {
+                if (!(element instanceof ExecutableElement method)) continue;
+                target = JaxRsHierarchy.findMatchingMethod(ctx, method, iface);
+                if (target == null) continue;
+            }
+            EffectiveSecurityContract ifaceSc = buildSecurityContract(target);
+            if (!ifaceSc.isEmpty() && !securityContractsCompatible(direct, ifaceSc)) {
+                String contextName = classLevel
+                        ? ((TypeElement) element).getSimpleName().toString()
+                        : ((ExecutableElement) element).getSimpleName().toString() + "()";
+                ctx.diagnostics()
+                        .warning(
+                                element,
+                                Diagnostics.directOverridesInterfaceWarning(
+                                        contextName,
+                                        "security",
+                                        describeSecurityKinds(direct.kinds()),
+                                        iface.getQualifiedName().toString(),
+                                        describeSecurityKinds(ifaceSc.kinds())));
+            }
+        }
+    }
+
+    /**
+     * Builds an {@link EffectiveSecurityContract} from the security annotations directly present
+     * on the given element.
+     *
+     * @param element the element to inspect
+     * @return the security contract, or {@link EffectiveSecurityContract#NONE} if none present
+     */
+    private EffectiveSecurityContract buildSecurityContract(javax.lang.model.element.Element element) {
+        boolean hasDenyAll = AnnotationMirrors.isPresent(element, JaxRsAnnotations.DENY_ALL);
+        boolean hasPermitAll = AnnotationMirrors.isPresent(element, JaxRsAnnotations.PERMIT_ALL);
+        boolean hasRolesAllowed = AnnotationMirrors.isPresent(element, JaxRsAnnotations.ROLES_ALLOWED);
+        boolean hasAuthorized = AnnotationMirrors.isPresent(element, JaxRsAnnotations.AUTHORIZED);
+
+        if (!hasDenyAll && !hasPermitAll && !hasRolesAllowed && !hasAuthorized) {
+            return EffectiveSecurityContract.NONE;
+        }
+
+        Set<EffectiveSecurityContract.SecurityKind> kinds =
+                EnumSet.noneOf(EffectiveSecurityContract.SecurityKind.class);
+        if (hasDenyAll) kinds.add(EffectiveSecurityContract.SecurityKind.DENY_ALL);
+        if (hasPermitAll) kinds.add(EffectiveSecurityContract.SecurityKind.PERMIT_ALL);
+        if (hasRolesAllowed) kinds.add(EffectiveSecurityContract.SecurityKind.ROLES_ALLOWED);
+        if (hasAuthorized) kinds.add(EffectiveSecurityContract.SecurityKind.AUTHORIZED);
+
+        List<String> rolesAllowed = List.of();
+        if (hasRolesAllowed) {
+            rolesAllowed = AnnotationMirrors.findByFqn(element, JaxRsAnnotations.ROLES_ALLOWED)
+                    .map(m -> ctx.annotations().attributeArray(m, "value").stream()
+                            .map(av -> av.getValue().toString())
+                            .toList())
+                    .orElse(List.of());
+        }
+
+        List<String> scopes = List.of();
+        boolean matchAll = true;
+        if (hasAuthorized) {
+            var authorizedMirror = AnnotationMirrors.findByFqn(element, JaxRsAnnotations.AUTHORIZED);
+            if (authorizedMirror.isPresent()) {
+                scopes = ctx.annotations().attributeArray(authorizedMirror.get(), "scopes").stream()
+                        .map(av -> av.getValue().toString())
+                        .toList();
+                matchAll = ctx.annotations()
+                        .attribute(authorizedMirror.get(), "matchAll", Boolean.class)
+                        .orElse(true);
+            }
+        }
+
+        return new EffectiveSecurityContract(Set.copyOf(kinds), rolesAllowed, scopes, matchAll);
+    }
+
+    /**
+     * Returns a human-readable description of the given security kind set.
+     *
+     * @param kinds the security kinds
+     * @return a description string, e.g. {@code "@DenyAll"}
+     */
+    private String describeSecurityKinds(Set<EffectiveSecurityContract.SecurityKind> kinds) {
+        List<String> names = new ArrayList<>();
+        for (EffectiveSecurityContract.SecurityKind k : kinds) {
+            names.add("@" + k.name().replace("_", ""));
+        }
+        return String.join(" + ", names);
+    }
+
+    // --- Annotation reading helpers ---
+
+    /**
+     * Returns the {@code String}-typed attribute value from the given annotation on the element,
+     * or {@code null} if the annotation is absent.
+     *
+     * @param element       the element to inspect
+     * @param annotationFqn the annotation FQN
+     * @param attributeName the attribute name
+     * @return the attribute value, or {@code null}
+     */
+    private String findAnnotationString(
+            javax.lang.model.element.Element element, String annotationFqn, String attributeName) {
+        return AnnotationMirrors.findByFqn(element, annotationFqn)
+                .flatMap(m -> ctx.annotations().attribute(m, attributeName, String.class))
+                .orElse(null);
+    }
+
+    /**
+     * Returns the {@code String[]}-typed attribute value from the given annotation on the element
+     * as a {@code List<String>}, or {@code null} if the annotation is absent.
+     *
+     * @param element       the element to inspect
+     * @param annotationFqn the annotation FQN
+     * @return the list of strings, or {@code null} if the annotation is absent
+     */
+    private List<String> findAnnotationStringArray(javax.lang.model.element.Element element, String annotationFqn) {
+        return AnnotationMirrors.findByFqn(element, annotationFqn)
+                .map(m -> ctx.annotations().attributeArray(m, "value").stream()
+                        .map(av -> av.getValue().toString())
+                        .toList())
+                .orElse(null);
+    }
+
+    /**
+     * Returns the {@code Class[]}-typed attribute value from the given annotation as a
+     * {@code List<TypeMirror>}, or {@code null} if the annotation is absent.
+     *
+     * @param element       the element to inspect
+     * @param annotationFqn the annotation FQN
+     * @return the list of type mirrors, or {@code null} if the annotation is absent
+     */
+    private List<TypeMirror> findAnnotationClassArray(javax.lang.model.element.Element element, String annotationFqn) {
+        return AnnotationMirrors.findByFqn(element, annotationFqn)
+                .map(m -> {
+                    List<AnnotationValue> values = ctx.annotations().attributeArray(m, "value");
+                    List<TypeMirror> mirrors = new ArrayList<>();
+                    for (AnnotationValue av : values) {
+                        Object val = av.getValue();
+                        if (val instanceof TypeMirror tm) {
+                            mirrors.add(tm);
+                        }
+                    }
+                    return mirrors.isEmpty() ? null : (List<TypeMirror>) mirrors;
+                })
+                .orElse(null);
+    }
+
+    /**
+     * Returns the {@code @Path} value from the given element, or {@code null} if absent.
+     *
+     * @param element the element to inspect
+     * @return the path value, or {@code null}
+     */
+    private String pathValue(javax.lang.model.element.Element element) {
+        return AnnotationMirrors.findByFqn(element, JaxRsAnnotations.PATH)
+                .flatMap(m -> ctx.annotations().attribute(m, "value", String.class))
+                .orElse(null);
+    }
+}

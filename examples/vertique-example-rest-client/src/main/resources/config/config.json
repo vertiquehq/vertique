@@ -1,0 +1,8 @@
+{
+  "restClient": {
+    "userService": {
+      "baseUrl": "http://localhost:8081",
+      "readTimeout": 5000
+    }
+  }
+}

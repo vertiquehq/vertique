@@ -1,0 +1,12 @@
+{
+  "identity": {
+    "snapshot": {
+      "hmacKeys": {
+        "active": {
+          "keyId": "demo-key-1",
+          "secretRef": "change-me-demo-only-identity-snapshot-signing-key"
+        }
+      }
+    }
+  }
+}

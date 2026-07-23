@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
+SPDX-License-Identifier: EUPL-1.2
+-->
+
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
+
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>dev.vertique</groupId>
+        <artifactId>vertique-parent</artifactId>
+        <version>${revision}</version>
+        <relativePath>../../pom.xml</relativePath>
+    </parent>
+
+    <artifactId>vertique-codegen-sanitization</artifactId>
+    <name>Vertique Codegen Sanitization</name>
+    <description>Annotation processor (CG-008) that generates {DTO}_InputProcessor walkers for REST request body
+        DTOs annotated with @Sanitize/@Canonicalize, replacing reflective Map traversal in DefaultInputObjectProcessor
+        with direct field-name switches and pre-resolved chain constants.</description>
+
+    <dependencies>
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-security-core</artifactId>
+        </dependency>
+        <!-- APT helpers from CG-001 -->
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-codegen-core</artifactId>
+        </dependency>
+
+        <!-- Compile: emitted code references GeneratedInputProcessor, ChainResolver,
+             InputTraversalContext, GeneratedInputProcessorDispatcher, GeneratedSupport,
+             EffectiveInputPolicies, InputLocation, etc. Also pulls vertique-core (for the
+             sanitization annotations) transitively. -->
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-rest-core</artifactId>
+        </dependency>
+
+        <!-- JavaPoet for code generation -->
+        <dependency>
+            <groupId>com.palantir.javapoet</groupId>
+            <artifactId>javapoet</artifactId>
+        </dependency>
+
+        <!-- Test -->
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-codegen-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <!-- JAX-RS markers for resource fixtures -->
+        <dependency>
+            <groupId>jakarta.ws.rs</groupId>
+            <artifactId>jakarta.ws.rs-api</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <!-- Built-in canonicalizers/sanitizers referenced by test fixtures -->
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-sanitization</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+</project>

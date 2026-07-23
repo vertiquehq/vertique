@@ -1,0 +1,46 @@
+<!--
+SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
+SPDX-License-Identifier: EUPL-1.2
+-->
+
+# Contributing to Vertique
+
+Thank you for contributing to Vertique.
+
+## Local verification
+
+Vertique requires Java 21. Before submitting a change, run:
+
+```bash
+./mvnw -ntp clean verify
+./mvnw -ntp spotless:check
+```
+
+Use `./mvnw -ntp spotless:apply` to apply the project formatter.
+
+## Change scope
+
+- Keep module boundaries intact and dependencies explicit.
+- Include tests for behavior changes and defect fixes.
+- Update the owning module's `src/main/resources/META-INF/vertique/module.md` when
+  public behavior, configuration, wiring, or constraints change.
+- Keep unrelated refactoring out of the same change.
+
+## Commits and pull requests
+
+Use Conventional Commits:
+
+```text
+<type>(<scope>): <description>
+```
+
+Common types are `feat`, `fix`, `refactor`, `test`, `docs`, `build`, `chore`,
+and `ci`.
+
+Open changes through a pull request. Maintainers may request focused tests,
+documentation updates, or a clean full build before merging.
+
+## Releases
+
+Tags in this repository do not publish artifacts. Release orchestration and
+publication credentials are maintainer-controlled outside this repository.

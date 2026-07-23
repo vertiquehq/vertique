@@ -1,0 +1,65 @@
+// SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
+// SPDX-License-Identifier: EUPL-1.2
+
+package dev.vertique.workflow.client;
+
+import dev.vertique.workflow.contract.WorkflowContract;
+import dev.vertique.workflow.contract.WorkflowQuery;
+import dev.vertique.workflow.contract.WorkflowSignal;
+import dev.vertique.workflow.contract.WorkflowStart;
+import dev.vertique.workflow.ops.WorkflowInstanceId;
+import dev.vertique.workflow.ops.WorkflowView;
+import io.vertx.core.Future;
+
+/**
+ * Top-level workflow contract fixture whose generated proxy companion ({@code
+ * SelectionWorkflow_WorkflowClientProxy}) exists on the test classpath.
+ *
+ * <p>The contract mirrors the {@code selection-saga} definition (v1) registered in
+ * {@link WorkflowClientFactorySelectionTest}: one {@code @WorkflowStart} method using
+ * {@link SelectionStartPayload} (which implements {@code IdempotencyKeyed}), two
+ * {@code @WorkflowSignal} methods for {@code "order.confirmed"} and {@code "order.shipped"} using
+ * {@link SelectionSignalPayload} (which implements {@code SignalDedupKeyed}), and one
+ * {@code @WorkflowQuery} method.
+ */
+@WorkflowContract(definitionId = "selection-saga", definitionVersion = 1)
+interface SelectionWorkflow {
+
+    /**
+     * Starts a selection workflow instance.
+     *
+     * @param payload the start payload; must not be null
+     * @return the new workflow instance id
+     */
+    @WorkflowStart
+    Future<WorkflowInstanceId> start(SelectionStartPayload payload);
+
+    /**
+     * Signals that the order was confirmed.
+     *
+     * @param instanceId the workflow instance to signal; must not be null
+     * @param payload the signal payload; must not be null
+     * @return a future that completes when the signal is accepted
+     */
+    @WorkflowSignal("order.confirmed")
+    Future<Void> confirm(WorkflowInstanceId instanceId, SelectionSignalPayload payload);
+
+    /**
+     * Signals that the order was shipped.
+     *
+     * @param instanceId the workflow instance to signal; must not be null
+     * @param payload the signal payload; must not be null
+     * @return a future that completes when the signal is accepted
+     */
+    @WorkflowSignal("order.shipped")
+    Future<Void> ship(WorkflowInstanceId instanceId, SelectionSignalPayload payload);
+
+    /**
+     * Queries the current view of a workflow instance.
+     *
+     * @param instanceId the workflow instance to query; must not be null
+     * @return the workflow view
+     */
+    @WorkflowQuery("view")
+    Future<WorkflowView> getView(WorkflowInstanceId instanceId);
+}

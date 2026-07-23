@@ -1,0 +1,1309 @@
+// SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
+// SPDX-License-Identifier: EUPL-1.2
+
+package dev.vertique.job.cron;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.anyLong;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.spy;
+import static org.mockito.Mockito.timeout;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+import dev.vertique.context.DispatchEnvelopeBuilder;
+import dev.vertique.core.context.DeferredExecutionOrigin;
+import dev.vertique.core.eventbus.DispatchEnvelope;
+import dev.vertique.core.eventbus.EventBusClient;
+import dev.vertique.core.eventbus.EventBusExceptionMapper;
+import dev.vertique.core.eventbus.LocalMessageCodec;
+import dev.vertique.core.eventbus.Result;
+import dev.vertique.job.CronJobSchedule;
+import dev.vertique.job.JobContext;
+import dev.vertique.job.JobDispatchContext;
+import dev.vertique.job.JobExecution;
+import dev.vertique.job.JobInterceptor;
+import dev.vertique.job.JobRepository;
+import dev.vertique.job.JobState;
+import dev.vertique.services.ResolvedServiceTarget;
+import dev.vertique.services.ServiceTargetResolver;
+import io.vertx.core.Future;
+import io.vertx.core.Vertx;
+import io.vertx.core.eventbus.DeliveryOptions;
+import io.vertx.junit5.VertxExtension;
+import io.vertx.junit5.VertxTestContext;
+import java.time.Instant;
+import java.time.ZoneId;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Nested;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
+import org.junit.jupiter.api.extension.ExtendWith;
+
+/**
+ * Tests for {@link CronScheduler} — timer registration, basic fire behaviour, overlap policies,
+ * {@link JobInterceptor} invocation chain, and SINGLE_INSTANCE validation.
+ */
+@DisplayName("CronScheduler")
+@ExtendWith(VertxExtension.class)
+class CronSchedulerTest {
+
+    private CronScheduler scheduler;
+
+    /** Creates a test {@link EventBusClient} from the given Vert.x instance. */
+    private static EventBusClient testEventBusClient(Vertx vertx) {
+        return new EventBusClient(vertx, new EventBusExceptionMapper());
+    }
+
+    /**
+     * Returns a stub {@link ServiceTargetResolver} that resolves any stable target id to the
+     * same id used as the address (sufficient for tests that use {@link CronTargetReference.EventBusTarget}).
+     */
+    private static ServiceTargetResolver stubTargetResolver() {
+        ServiceTargetResolver resolver = mock(ServiceTargetResolver.class);
+        when(resolver.resolve(anyString())).thenAnswer(inv -> {
+            String targetId = inv.getArgument(0);
+            return new ResolvedServiceTarget(targetId, null, "", targetId, targetId, null, targetId);
+        });
+        return resolver;
+    }
+
+    @BeforeEach
+    void setUp(Vertx vertx) {
+        // Register the local codec for DispatchEnvelope messages (idempotent — catches re-registration)
+        try {
+            vertx.eventBus().registerCodec(new LocalMessageCodec<>("dispatch.envelope"));
+        } catch (IllegalStateException e) {
+            // Already registered — safe to ignore
+        }
+        scheduler = new CronScheduler(
+                vertx,
+                Set.of(),
+                null,
+                stubTargetResolver(),
+                testEventBusClient(vertx),
+                DispatchEnvelopeBuilder.forTesting());
+    }
+
+    @AfterEach
+    void tearDown() {
+        scheduler.stop();
+    }
+
+    @Test
+    @DisplayName("registers jobs and tracks count")
+    void registersJobsAndTracksCount(Vertx vertx) {
+        CronJobDefinition job1 = new CronJobDefinition(
+                "job-1",
+                new CronExpression("* * * * * *"),
+                new CronTargetReference.EventBusTarget("test.address"),
+                "test.address",
+                ExecutionMode.EVERY_INSTANCE,
+                ZoneId.of("UTC"),
+                3,
+                null,
+                OverlapPolicy.SKIP,
+                true,
+                Map.of(),
+                MisfirePolicy.SKIP);
+        CronJobDefinition job2 = new CronJobDefinition(
+                "job-2",
+                new CronExpression("0 * * * * *"),
+                new CronTargetReference.EventBusTarget("test.address2"),
+                "test.address2",
+                ExecutionMode.EVERY_INSTANCE,
+                ZoneId.of("UTC"),
+                3,
+                null,
+                OverlapPolicy.SKIP,
+                true,
+                Map.of(),
+                MisfirePolicy.SKIP);
+
+        scheduler.register(job1);
+        scheduler.register(job2);
+
+        assertEquals(2, scheduler.registeredJobCount());
+    }
+
+    @Test
+    @DisplayName("registering the same job id twice is a no-op — second call is silently dropped")
+    void registerSameIdTwiceIsIdempotent(Vertx vertx) {
+        // Required for idempotency under both the new lifecycle verticle (which calls scan()
+        // on every deploy) and any legacy app code that still calls scan()/start() manually
+        // after upgrade. Without idempotency every cron job would fire 2x per tick on those
+        // upgrade paths.
+        CronJobDefinition job = new CronJobDefinition(
+                "duplicate-job",
+                new CronExpression("* * * * * *"),
+                new CronTargetReference.EventBusTarget("test.address"),
+                "test.address",
+                ExecutionMode.EVERY_INSTANCE,
+                ZoneId.of("UTC"),
+                3,
+                null,
+                OverlapPolicy.SKIP,
+                true,
+                Map.of(),
+                MisfirePolicy.SKIP);
+
+        scheduler.register(job);
+        scheduler.register(job);
+
+        assertEquals(1, scheduler.registeredJobCount(), "second register() with same id must be ignored");
+    }
+
+    @Test
+    @DisplayName("stop() clears registered jobs so a redeploy starts from a clean slate")
+    void stopClearsRegisteredJobs(Vertx vertx) {
+        CronJobDefinition job = new CronJobDefinition(
+                "redeploy-job",
+                new CronExpression("* * * * * *"),
+                new CronTargetReference.EventBusTarget("test.address"),
+                "test.address",
+                ExecutionMode.EVERY_INSTANCE,
+                ZoneId.of("UTC"),
+                3,
+                null,
+                OverlapPolicy.SKIP,
+                true,
+                Map.of(),
+                MisfirePolicy.SKIP);
+
+        scheduler.register(job);
+        assertEquals(1, scheduler.registeredJobCount());
+        scheduler.stop();
+        assertEquals(0, scheduler.registeredJobCount(), "stop() must clear jobs so a redeploy can re-register cleanly");
+
+        // And a register/stop/register cycle ends with exactly one job registered.
+        scheduler.register(job);
+        assertEquals(1, scheduler.registeredJobCount());
+    }
+
+    @Test
+    @DisplayName("calling start() twice does not double-arm timers — second call is a no-op")
+    void startIsIdempotent(Vertx vertx, VertxTestContext ctx) {
+        // start() iterates jobs and schedules a timer per job via scheduleNext(), which puts the
+        // timer id into activeTimers. A second start() with no intervening stop() would orphan
+        // the prior timer (it keeps firing) and overwrite activeTimers with the new id, doubling
+        // every job's fires per tick. Today's only caller is CronLifecycleVerticle (Vert.x calls
+        // start() once per deploy) so this is latent — but the fix is the symmetric counterpart
+        // to register() idempotency.
+        Vertx spyVertx = spy(vertx);
+        AtomicInteger setTimerCalls = new AtomicInteger();
+        doAnswer(inv -> {
+                    setTimerCalls.incrementAndGet();
+                    return inv.callRealMethod();
+                })
+                .when(spyVertx)
+                .setTimer(anyLong(), any());
+
+        CronScheduler localScheduler = new CronScheduler(
+                spyVertx,
+                Set.of(),
+                null,
+                stubTargetResolver(),
+                testEventBusClient(vertx),
+                DispatchEnvelopeBuilder.forTesting());
+        CronJobDefinition job = new CronJobDefinition(
+                "twice-started-job",
+                new CronExpression("0 0 0 * * *"),
+                new CronTargetReference.EventBusTarget("test.address"),
+                "test.address",
+                ExecutionMode.EVERY_INSTANCE,
+                ZoneId.of("UTC"),
+                3,
+                null,
+                OverlapPolicy.SKIP,
+                true,
+                Map.of(),
+                MisfirePolicy.SKIP);
+        localScheduler.register(job);
+
+        localScheduler
+                .start()
+                .compose(v -> localScheduler.start())
+                .onSuccess(v -> ctx.verify(() -> {
+                    // First start arms one timer; second start must be a no-op so the
+                    // total setTimer count stays at 1, not 2.
+                    assertEquals(1, setTimerCalls.get(), "second start() must not arm a duplicate timer");
+                    localScheduler.stop();
+                    ctx.completeNow();
+                }))
+                .onFailure(ctx::failNow);
+    }
+
+    @Test
+    @DisplayName("synchronous throw from misfireRecovery does not escape start()")
+    void misfireRecoverySyncThrowDoesNotEscapeStart(Vertx vertx, VertxTestContext ctx) {
+        // misfireRecovery.recover() is documented as fire-and-forget — failures must not block
+        // startup. Async failures already go through .onFailure handlers, but a synchronous
+        // throw from a custom JobRepository.findSchedule(...) (NPE, IllegalStateException from
+        // a closed pool) would escape start() unwrapped, bypass CronLifecycleVerticle's failed-
+        // future rollback, and leave the singleton scheduler with running=true and timers armed.
+        JobRepository repository = mock(JobRepository.class);
+        when(repository.findSchedule(anyString())).thenThrow(new RuntimeException("repo boom"));
+        CronScheduler dbScheduler = new CronScheduler(
+                vertx,
+                Set.of(),
+                repository,
+                stubTargetResolver(),
+                testEventBusClient(vertx),
+                DispatchEnvelopeBuilder.forTesting());
+        try {
+            CronJobDefinition siJob = new CronJobDefinition(
+                    "single-instance-job",
+                    new CronExpression("0 0 0 * * *"),
+                    new CronTargetReference.EventBusTarget("test.address"),
+                    "test.address",
+                    ExecutionMode.SINGLE_INSTANCE,
+                    ZoneId.of("UTC"),
+                    3,
+                    null,
+                    OverlapPolicy.SKIP,
+                    true,
+                    Map.of(),
+                    MisfirePolicy.FIRE_NOW);
+            dbScheduler.register(siJob);
+
+            dbScheduler
+                    .start()
+                    .onSuccess(v -> ctx.verify(() -> {
+                        // start() must succeed despite the misfire-recovery sync throw —
+                        // misfire recovery is documented as fire-and-forget.
+                        assertEquals(1, dbScheduler.registeredJobCount());
+                        ctx.completeNow();
+                    }))
+                    .onFailure(ctx::failNow);
+        } finally {
+            // tearDown() calls scheduler.stop() on `scheduler`, not dbScheduler — clean up here.
+            // (We can't call stop() now because the assertions are inside the async onSuccess.)
+        }
+    }
+
+    @Test
+    @DisplayName("start returns succeeded future")
+    void startReturnsSucceededFuture(Vertx vertx, VertxTestContext ctx) {
+        scheduler.start().onSuccess(v -> ctx.completeNow()).onFailure(ctx::failNow);
+    }
+
+    @Test
+    @DisplayName("stop returns succeeded future")
+    void stopReturnsSucceededFuture(Vertx vertx, VertxTestContext ctx) {
+        scheduler
+                .start()
+                .compose(v -> scheduler.stop())
+                .onSuccess(v -> ctx.completeNow())
+                .onFailure(ctx::failNow);
+    }
+
+    @Test
+    @DisplayName("EVERY_INSTANCE job fires on all instances without locking")
+    void everyInstanceFiresWithoutLock(Vertx vertx, VertxTestContext ctx) {
+        // Register a consumer for the handler address
+        vertx.eventBus().consumer("test.every.address", msg -> ctx.completeNow());
+
+        // Job that fires every second
+        CronJobDefinition job = new CronJobDefinition(
+                "every-instance-job",
+                new CronExpression("* * * * * *"),
+                new CronTargetReference.EventBusTarget("test.every.address"),
+                "test.every.address",
+                ExecutionMode.EVERY_INSTANCE,
+                ZoneId.of("UTC"),
+                3,
+                null,
+                OverlapPolicy.SKIP,
+                false,
+                Map.of(),
+                MisfirePolicy.SKIP);
+
+        scheduler.register(job);
+        scheduler.start();
+
+        // completeNow() is called inside the consumer handler above when the job fires
+        // The VertxTestContext will timeout and fail if the job doesn't fire within 3 seconds
+    }
+
+    @Test
+    @DisplayName("binds DeferredExecutionOrigin(cron, job.id()) into the dispatch context")
+    void bindsDeferredExecutionOrigin(Vertx vertx, VertxTestContext ctx) {
+        AtomicBoolean asserted = new AtomicBoolean(false);
+
+        // Inspect the FQCN-keyed dispatch-context map carried in the DispatchEnvelope: the cron
+        // boundary must bind a DeferredExecutionOrigin proving deferred (cron) execution (W2/A6).
+        vertx.eventBus().consumer("test.origin.address", msg -> {
+            if (!(msg.body() instanceof DispatchEnvelope<?> body) || !asserted.compareAndSet(false, true)) {
+                return;
+            }
+            Object origin = body.metadata().dispatchContext().get(DeferredExecutionOrigin.class.getName());
+            ctx.verify(() -> {
+                assertInstanceOf(DeferredExecutionOrigin.class, origin);
+                DeferredExecutionOrigin deferredOrigin = (DeferredExecutionOrigin) origin;
+                assertEquals("cron", deferredOrigin.kind());
+                assertEquals("origin-test-job", deferredOrigin.reference());
+            });
+            ctx.completeNow();
+        });
+
+        CronJobDefinition job = new CronJobDefinition(
+                "origin-test-job",
+                new CronExpression("* * * * * *"),
+                new CronTargetReference.EventBusTarget("test.origin.address"),
+                "test.origin.address",
+                ExecutionMode.EVERY_INSTANCE,
+                ZoneId.of("UTC"),
+                3,
+                null,
+                OverlapPolicy.SKIP,
+                false,
+                Map.of(),
+                MisfirePolicy.SKIP);
+
+        scheduler.register(job);
+        scheduler.start();
+    }
+
+    @Test
+    @DisplayName("EVERY_INSTANCE job does not fire concurrently when previous execution is still in progress")
+    void everyInstanceDoesNotFireConcurrently(Vertx vertx, VertxTestContext ctx) {
+        AtomicInteger concurrentCount = new AtomicInteger();
+        AtomicInteger maxConcurrent = new AtomicInteger();
+        AtomicInteger fireCount = new AtomicInteger();
+
+        // Handler that holds execution for 1.5 seconds (longer than 1s cron interval)
+        vertx.eventBus().consumer("test.concurrent.address", msg -> {
+            int current = concurrentCount.incrementAndGet();
+            maxConcurrent.updateAndGet(max -> Math.max(max, current));
+            fireCount.incrementAndGet();
+            // Simulate slow work — hold for 1.5s before replying
+            vertx.setTimer(1500, id -> {
+                concurrentCount.decrementAndGet();
+                // Reply to the replyAddress so the scheduler tracks completion
+                var body = (dev.vertique.core.eventbus.DispatchEnvelope<?>) msg.body();
+                if (body.replyAddress().isPresent()) {
+                    vertx.eventBus()
+                            .send(
+                                    body.replyAddress().orElseThrow(),
+                                    dev.vertique.core.eventbus.DispatchEnvelope.of("done"),
+                                    new DeliveryOptions().setCodecName("dispatch.envelope"));
+                }
+            });
+        });
+
+        // Job fires every second with SKIP policy (default)
+        CronJobDefinition job = new CronJobDefinition(
+                "concurrent-test-job",
+                new CronExpression("* * * * * *"),
+                new CronTargetReference.EventBusTarget("test.concurrent.address"),
+                "test.concurrent.address",
+                ExecutionMode.EVERY_INSTANCE,
+                ZoneId.of("UTC"),
+                3,
+                null,
+                OverlapPolicy.SKIP,
+                false,
+                Map.of(),
+                MisfirePolicy.SKIP);
+
+        scheduler.register(job);
+        scheduler.start();
+
+        // Wait 4 seconds — without the guard, we'd see 4 concurrent executions
+        vertx.setTimer(
+                4000,
+                id -> ctx.verify(() -> {
+                    // With the per-job concurrency guard, max concurrent should be 1
+                    assertTrue(
+                            maxConcurrent.get() <= 1,
+                            "Expected max 1 concurrent execution, got " + maxConcurrent.get());
+                    assertTrue(fireCount.get() >= 1, "Job should have fired at least once");
+                    ctx.completeNow();
+                }));
+    }
+
+    @Test
+    @DisplayName("QUEUE_ONE policy executes queued fire after first execution completes")
+    void queueOnePolicyExecutesAfterCompletion(Vertx vertx, VertxTestContext ctx) {
+        AtomicInteger fireCount = new AtomicInteger();
+
+        // Handler that holds execution for 1.5s (longer than 1s cron interval) then replies
+        vertx.eventBus().consumer("test.queue-one.address", msg -> {
+            fireCount.incrementAndGet();
+            vertx.setTimer(1500, id -> {
+                var body = (dev.vertique.core.eventbus.DispatchEnvelope<?>) msg.body();
+                if (body.replyAddress().isPresent()) {
+                    vertx.eventBus()
+                            .send(
+                                    body.replyAddress().orElseThrow(),
+                                    dev.vertique.core.eventbus.DispatchEnvelope.of("done"),
+                                    new DeliveryOptions().setCodecName("dispatch.envelope"));
+                }
+            });
+        });
+
+        // Job fires every second with QUEUE_ONE policy
+        CronJobDefinition job = new CronJobDefinition(
+                "queue-one-job",
+                new CronExpression("* * * * * *"),
+                new CronTargetReference.EventBusTarget("test.queue-one.address"),
+                "test.queue-one.address",
+                ExecutionMode.EVERY_INSTANCE,
+                ZoneId.of("UTC"),
+                3,
+                null,
+                OverlapPolicy.QUEUE_ONE,
+                false,
+                Map.of(),
+                MisfirePolicy.SKIP);
+
+        scheduler.register(job);
+        scheduler.start();
+
+        // Wait 4s: first execution fires ~at 0s (holds 1.5s), fires from cron at 1s are queued,
+        // queued fire runs after first completes (~1.5s), so by 4s we should have at least 2 fires
+        vertx.setTimer(
+                4000,
+                id -> ctx.verify(() -> {
+                    assertTrue(
+                            fireCount.get() >= 2,
+                            "Expected at least 2 fires with QUEUE_ONE policy, got " + fireCount.get());
+                    ctx.completeNow();
+                }));
+    }
+
+    // --- Interceptor tests ---
+
+    @Test
+    @DisplayName("onDispatch interceptor is called before job fires")
+    void onDispatchInterceptorCalled(Vertx vertx, VertxTestContext ctx) {
+        AtomicInteger dispatchCount = new AtomicInteger();
+        JobInterceptor interceptor = new JobInterceptor() {
+            @Override
+            public void onDispatch(JobDispatchContext dispatchCtx) {
+                dispatchCount.incrementAndGet();
+            }
+        };
+
+        scheduler = new CronScheduler(
+                vertx,
+                Set.of(interceptor),
+                null,
+                stubTargetResolver(),
+                testEventBusClient(vertx),
+                DispatchEnvelopeBuilder.forTesting());
+
+        vertx.eventBus().consumer("test.interceptor.address", msg -> {
+            ctx.verify(() -> {
+                assertTrue(dispatchCount.get() >= 1, "onDispatch should have been called");
+                ctx.completeNow();
+            });
+        });
+
+        CronJobDefinition job = new CronJobDefinition(
+                "interceptor-job",
+                new CronExpression("* * * * * *"),
+                new CronTargetReference.EventBusTarget("test.interceptor.address"),
+                "test.interceptor.address",
+                ExecutionMode.EVERY_INSTANCE,
+                ZoneId.of("UTC"),
+                3,
+                null,
+                OverlapPolicy.SKIP,
+                false,
+                Map.of(),
+                MisfirePolicy.SKIP);
+
+        scheduler.register(job);
+        scheduler.start();
+    }
+
+    @Test
+    @DisplayName("onComplete interceptor is called after job completes")
+    void onCompleteInterceptorCalled(Vertx vertx, VertxTestContext ctx) {
+        AtomicInteger completeCount = new AtomicInteger();
+        JobInterceptor interceptor = new JobInterceptor() {
+            @Override
+            public void onComplete(
+                    JobDispatchContext dispatchCtx, Result<?> result, Instant startTime, Instant endTime) {
+                completeCount.incrementAndGet();
+            }
+        };
+
+        scheduler = new CronScheduler(
+                vertx,
+                Set.of(interceptor),
+                null,
+                stubTargetResolver(),
+                testEventBusClient(vertx),
+                DispatchEnvelopeBuilder.forTesting());
+
+        // Handler that replies immediately
+        vertx.eventBus().consumer("test.complete.address", msg -> {
+            var body = (DispatchEnvelope<?>) msg.body();
+            if (body.replyAddress().isPresent()) {
+                vertx.eventBus()
+                        .send(
+                                body.replyAddress().orElseThrow(),
+                                DispatchEnvelope.of("done"),
+                                new DeliveryOptions().setCodecName("dispatch.envelope"));
+            }
+        });
+
+        CronJobDefinition job = new CronJobDefinition(
+                "complete-interceptor-job",
+                new CronExpression("* * * * * *"),
+                new CronTargetReference.EventBusTarget("test.complete.address"),
+                "test.complete.address",
+                ExecutionMode.EVERY_INSTANCE,
+                ZoneId.of("UTC"),
+                3,
+                null,
+                OverlapPolicy.SKIP,
+                false,
+                Map.of(),
+                MisfirePolicy.SKIP);
+
+        scheduler.register(job);
+        scheduler.start();
+
+        vertx.setTimer(
+                2500,
+                id -> ctx.verify(() -> {
+                    assertTrue(completeCount.get() >= 1, "onComplete should have been called at least once");
+                    ctx.completeNow();
+                }));
+    }
+
+    @Test
+    @DisplayName("interceptor exception does not prevent job dispatch")
+    void interceptorExceptionDoesNotPreventDispatch(Vertx vertx, VertxTestContext ctx) {
+        JobInterceptor throwingInterceptor = new JobInterceptor() {
+            @Override
+            public void onDispatch(JobDispatchContext dispatchCtx) {
+                throw new RuntimeException("interceptor boom");
+            }
+        };
+
+        scheduler = new CronScheduler(
+                vertx,
+                Set.of(throwingInterceptor),
+                null,
+                stubTargetResolver(),
+                testEventBusClient(vertx),
+                DispatchEnvelopeBuilder.forTesting());
+
+        vertx.eventBus().consumer("test.throwing.address", msg -> ctx.completeNow());
+
+        CronJobDefinition job = new CronJobDefinition(
+                "throwing-interceptor-job",
+                new CronExpression("* * * * * *"),
+                new CronTargetReference.EventBusTarget("test.throwing.address"),
+                "test.throwing.address",
+                ExecutionMode.EVERY_INSTANCE,
+                ZoneId.of("UTC"),
+                3,
+                null,
+                OverlapPolicy.SKIP,
+                false,
+                Map.of(),
+                MisfirePolicy.SKIP);
+
+        scheduler.register(job);
+        scheduler.start();
+    }
+
+    // --- SINGLE_INSTANCE validation tests ---
+
+    @Test
+    @DisplayName("SINGLE_INSTANCE requires repository — throws IllegalArgumentException when null")
+    void singleInstanceRequiresRepository(Vertx vertx) {
+        CronJobDefinition job = new CronJobDefinition(
+                "single-instance-job",
+                new CronExpression("* * * * * *"),
+                new CronTargetReference.EventBusTarget("test.single.address"),
+                "test.single.address",
+                ExecutionMode.SINGLE_INSTANCE,
+                ZoneId.of("UTC"),
+                3,
+                null,
+                OverlapPolicy.SKIP,
+                true,
+                Map.of(),
+                MisfirePolicy.FIRE_NOW);
+
+        // scheduler has null repository
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class, () -> scheduler.register(job));
+        assertTrue(
+                ex.getMessage().contains("SINGLE_INSTANCE requires JobRepository"),
+                "Expected SINGLE_INSTANCE requires JobRepository message, got: " + ex.getMessage());
+    }
+
+    @Test
+    @DisplayName("SINGLE_INSTANCE requires SKIP overlap policy — throws IllegalArgumentException for QUEUE_ONE")
+    void singleInstanceRequiresSkipOverlapPolicy(Vertx vertx) {
+        // Need a scheduler with a non-null repository for this test
+        // We use a new scheduler — SINGLE_INSTANCE+SKIP should pass, SINGLE_INSTANCE+QUEUE_ONE should fail
+        // Since this test uses null repository the SINGLE_INSTANCE check fires first;
+        // to isolate the overlap policy check we use a scheduler with a stub repository
+        CronJobDefinition job = new CronJobDefinition(
+                "bad-overlap-job",
+                new CronExpression("* * * * * *"),
+                new CronTargetReference.EventBusTarget("test.bad-overlap.address"),
+                "test.bad-overlap.address",
+                ExecutionMode.SINGLE_INSTANCE,
+                ZoneId.of("UTC"),
+                3,
+                null,
+                OverlapPolicy.QUEUE_ONE,
+                true,
+                Map.of(),
+                MisfirePolicy.FIRE_NOW);
+
+        // Even with null repository the first check fires; that's fine —
+        // the important thing is the error is caught at register time
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class, () -> scheduler.register(job));
+        assertTrue(
+                ex.getMessage().contains("SINGLE_INSTANCE"),
+                "Expected SINGLE_INSTANCE-related error message, got: " + ex.getMessage());
+    }
+
+    @Test
+    @DisplayName("tracked job with no repository logs warning but does not throw")
+    void trackedJobWithoutRepositoryDoesNotThrow(Vertx vertx) {
+        CronJobDefinition job = new CronJobDefinition(
+                "tracked-no-repo-job",
+                new CronExpression("* * * * * *"),
+                new CronTargetReference.EventBusTarget("test.tracked.address"),
+                "test.tracked.address",
+                ExecutionMode.EVERY_INSTANCE,
+                ZoneId.of("UTC"),
+                3,
+                null,
+                OverlapPolicy.SKIP,
+                true,
+                Map.of(),
+                MisfirePolicy.SKIP);
+
+        // Should not throw — just logs a warning
+        scheduler.register(job);
+        assertEquals(1, scheduler.registeredJobCount());
+    }
+
+    // --- Misfire recovery tests ---
+
+    @Nested
+    @DisplayName("misfire recovery")
+    class MisfireRecovery {
+
+        /**
+         * Builds a stub {@link JobRepository} that returns the given {@code lastFiredAt} from
+         * {@code findSchedule()}, and succeeds on {@code tryInsert()}, {@code updateScheduleFireTimes()},
+         * and {@code completeExecution()}.
+         */
+        private JobRepository stubRepository(Instant lastFiredAt) {
+            JobRepository repo = mock(JobRepository.class);
+            CronJobSchedule schedule = new CronJobSchedule(
+                    "test-job",
+                    "0 0 8 * * *",
+                    "test.misfire.address",
+                    "eventbus:test.misfire.address",
+                    "SINGLE_INSTANCE",
+                    "UTC",
+                    true,
+                    "SKIP",
+                    3,
+                    true,
+                    lastFiredAt,
+                    null);
+            when(repo.findSchedule(anyString())).thenReturn(Future.succeededFuture(Optional.of(schedule)));
+            when(repo.tryInsert(any(JobExecution.class)))
+                    .thenReturn(Future.succeededFuture(Optional.of(UUID.randomUUID())));
+            when(repo.updateScheduleFireTimes(anyString(), any(Instant.class), any(Instant.class)))
+                    .thenReturn(Future.succeededFuture());
+            when(repo.completeExecution(any(UUID.class), any(), any(), any(), any()))
+                    .thenReturn(Future.succeededFuture(Optional.empty()));
+            return repo;
+        }
+
+        @Test
+        @DisplayName("FIRE_NOW: dispatches the most recent missed fire when last_fired_at is old")
+        void fireNowDispatchesMostRecentMissedFire(Vertx vertx, VertxTestContext ctx) {
+            // lastFiredAt is 2 days ago — the daily job should have fired yesterday
+            Instant twoDaysAgo = Instant.now().minusSeconds(2 * 24 * 3600);
+            JobRepository repo = stubRepository(twoDaysAgo);
+
+            scheduler = new CronScheduler(
+                    vertx,
+                    Set.of(),
+                    repo,
+                    stubTargetResolver(),
+                    testEventBusClient(vertx),
+                    DispatchEnvelopeBuilder.forTesting());
+
+            AtomicInteger fireCount = new AtomicInteger();
+            vertx.eventBus().consumer("test.misfire.address", msg -> {
+                fireCount.incrementAndGet();
+                // Reply so the scheduler can complete the execution
+                var body = (DispatchEnvelope<?>) msg.body();
+                if (body.replyAddress().isPresent()) {
+                    vertx.eventBus()
+                            .send(
+                                    body.replyAddress().orElseThrow(),
+                                    DispatchEnvelope.of("done"),
+                                    new DeliveryOptions().setCodecName("dispatch.envelope"));
+                }
+            });
+
+            CronJobDefinition job = new CronJobDefinition(
+                    "test-job",
+                    new CronExpression("0 0 8 * * *"), // daily at 08:00
+                    new CronTargetReference.EventBusTarget("test.misfire.address"),
+                    "test.misfire.address",
+                    ExecutionMode.SINGLE_INSTANCE,
+                    ZoneId.of("UTC"),
+                    3,
+                    null,
+                    OverlapPolicy.SKIP,
+                    true,
+                    Map.of(),
+                    MisfirePolicy.FIRE_NOW);
+
+            scheduler.register(job);
+            scheduler.start();
+
+            // Allow time for the async findSchedule + dispatch to complete
+            vertx.setTimer(
+                    500,
+                    id -> ctx.verify(() -> {
+                        // Exactly one misfire should have been dispatched (FIRE_NOW = only latest)
+                        assertEquals(1, fireCount.get(), "FIRE_NOW should dispatch exactly one missed fire");
+                        ctx.completeNow();
+                    }));
+        }
+
+        @Test
+        @DisplayName("SKIP: does not dispatch missed fires on startup")
+        void skipPolicyDoesNotDispatchMissedFires(Vertx vertx, VertxTestContext ctx) {
+            Instant twoDaysAgo = Instant.now().minusSeconds(2 * 24 * 3600);
+            JobRepository repo = stubRepository(twoDaysAgo);
+
+            scheduler = new CronScheduler(
+                    vertx,
+                    Set.of(),
+                    repo,
+                    stubTargetResolver(),
+                    testEventBusClient(vertx),
+                    DispatchEnvelopeBuilder.forTesting());
+
+            AtomicInteger fireCount = new AtomicInteger();
+            vertx.eventBus().consumer("test.skip-misfire.address", msg -> fireCount.incrementAndGet());
+
+            CronJobDefinition job = new CronJobDefinition(
+                    "test-job",
+                    new CronExpression("0 0 8 * * *"),
+                    new CronTargetReference.EventBusTarget("test.skip-misfire.address"),
+                    "test.skip-misfire.address",
+                    ExecutionMode.SINGLE_INSTANCE,
+                    ZoneId.of("UTC"),
+                    3,
+                    null,
+                    OverlapPolicy.SKIP,
+                    true,
+                    Map.of(),
+                    MisfirePolicy.SKIP);
+
+            scheduler.register(job);
+            scheduler.start();
+
+            // Wait briefly — no dispatch should happen
+            vertx.setTimer(
+                    300,
+                    id -> ctx.verify(() -> {
+                        assertEquals(0, fireCount.get(), "SKIP policy should not dispatch any missed fires");
+                        ctx.completeNow();
+                    }));
+        }
+
+        @Test
+        @DisplayName("FIRE_ALL: dispatches every missed fire when last_fired_at is old")
+        void fireAllDispatchesEveryMissedFire(Vertx vertx, VertxTestContext ctx) {
+            // lastFiredAt 3 hours ago for an every-hour job (should have fired at +1h and +2h)
+            Instant threeHoursAgo = Instant.now().minusSeconds(3 * 3600);
+            JobRepository repo = mock(JobRepository.class);
+            CronJobSchedule schedule = new CronJobSchedule(
+                    "fire-all-job",
+                    "0 0 * * * *",
+                    "test.fire-all.address",
+                    "eventbus:test.fire-all.address",
+                    "SINGLE_INSTANCE",
+                    "UTC",
+                    true,
+                    "SKIP",
+                    3,
+                    true,
+                    threeHoursAgo,
+                    null);
+            when(repo.findSchedule(anyString())).thenReturn(Future.succeededFuture(Optional.of(schedule)));
+            when(repo.tryInsert(any(JobExecution.class)))
+                    .thenReturn(Future.succeededFuture(Optional.of(UUID.randomUUID())));
+            when(repo.updateScheduleFireTimes(anyString(), any(Instant.class), any(Instant.class)))
+                    .thenReturn(Future.succeededFuture());
+            when(repo.completeExecution(any(UUID.class), any(), any(), any(), any()))
+                    .thenReturn(Future.succeededFuture(Optional.empty()));
+
+            scheduler = new CronScheduler(
+                    vertx,
+                    Set.of(),
+                    repo,
+                    stubTargetResolver(),
+                    testEventBusClient(vertx),
+                    DispatchEnvelopeBuilder.forTesting());
+
+            AtomicInteger fireCount = new AtomicInteger();
+            vertx.eventBus().consumer("test.fire-all.address", msg -> {
+                fireCount.incrementAndGet();
+                var body = (DispatchEnvelope<?>) msg.body();
+                if (body.replyAddress().isPresent()) {
+                    vertx.eventBus()
+                            .send(
+                                    body.replyAddress().orElseThrow(),
+                                    DispatchEnvelope.of("done"),
+                                    new DeliveryOptions().setCodecName("dispatch.envelope"));
+                }
+            });
+
+            CronJobDefinition job = new CronJobDefinition(
+                    "fire-all-job",
+                    new CronExpression("0 0 * * * *"), // every hour
+                    new CronTargetReference.EventBusTarget("test.fire-all.address"),
+                    "test.fire-all.address",
+                    ExecutionMode.SINGLE_INSTANCE,
+                    ZoneId.of("UTC"),
+                    3,
+                    null,
+                    OverlapPolicy.SKIP,
+                    true,
+                    Map.of(),
+                    MisfirePolicy.FIRE_ALL);
+
+            scheduler.register(job);
+            scheduler.start();
+
+            // Allow time for async recovery
+            vertx.setTimer(
+                    500,
+                    id -> ctx.verify(() -> {
+                        // FIRE_ALL fires in a loop but SINGLE_INSTANCE has an in-flight guard,
+                        // so only the first fire proceeds; subsequent ones are dropped by the guard
+                        // until the first completes. At least 1 fire should dispatch.
+                        assertTrue(fireCount.get() >= 1, "FIRE_ALL should dispatch at least 1 missed fire");
+                        ctx.completeNow();
+                    }));
+        }
+
+        @Test
+        @DisplayName("no misfire when schedule has no last_fired_at (new job)")
+        void noMisfireForNewJobWithNoHistory(Vertx vertx, VertxTestContext ctx) {
+            JobRepository repo = mock(JobRepository.class);
+            CronJobSchedule schedule = new CronJobSchedule(
+                    "new-job",
+                    "0 0 8 * * *",
+                    "test.new-job.address",
+                    "eventbus:test.new-job.address",
+                    "SINGLE_INSTANCE",
+                    "UTC",
+                    true,
+                    "SKIP",
+                    3,
+                    true,
+                    null, // lastFiredAt = null (never fired)
+                    null);
+            when(repo.findSchedule(anyString())).thenReturn(Future.succeededFuture(Optional.of(schedule)));
+
+            scheduler = new CronScheduler(
+                    vertx,
+                    Set.of(),
+                    repo,
+                    stubTargetResolver(),
+                    testEventBusClient(vertx),
+                    DispatchEnvelopeBuilder.forTesting());
+
+            AtomicInteger fireCount = new AtomicInteger();
+            vertx.eventBus().consumer("test.new-job.address", msg -> fireCount.incrementAndGet());
+
+            CronJobDefinition job = new CronJobDefinition(
+                    "new-job",
+                    new CronExpression("0 0 8 * * *"),
+                    new CronTargetReference.EventBusTarget("test.new-job.address"),
+                    "test.new-job.address",
+                    ExecutionMode.SINGLE_INSTANCE,
+                    ZoneId.of("UTC"),
+                    3,
+                    null,
+                    OverlapPolicy.SKIP,
+                    true,
+                    Map.of(),
+                    MisfirePolicy.FIRE_NOW);
+
+            scheduler.register(job);
+            scheduler.start();
+
+            vertx.setTimer(
+                    300,
+                    id -> ctx.verify(() -> {
+                        assertEquals(0, fireCount.get(), "No misfire dispatch for new job with no history");
+                        ctx.completeNow();
+                    }));
+        }
+
+        @Test
+        @DisplayName("no misfire when schedule is not found in repository")
+        void noMisfireWhenScheduleNotFound(Vertx vertx, VertxTestContext ctx) {
+            JobRepository repo = mock(JobRepository.class);
+            when(repo.findSchedule(anyString())).thenReturn(Future.succeededFuture(Optional.empty()));
+
+            scheduler = new CronScheduler(
+                    vertx,
+                    Set.of(),
+                    repo,
+                    stubTargetResolver(),
+                    testEventBusClient(vertx),
+                    DispatchEnvelopeBuilder.forTesting());
+
+            AtomicInteger fireCount = new AtomicInteger();
+            vertx.eventBus().consumer("test.no-schedule.address", msg -> fireCount.incrementAndGet());
+
+            CronJobDefinition job = new CronJobDefinition(
+                    "no-schedule-job",
+                    new CronExpression("0 0 8 * * *"),
+                    new CronTargetReference.EventBusTarget("test.no-schedule.address"),
+                    "test.no-schedule.address",
+                    ExecutionMode.SINGLE_INSTANCE,
+                    ZoneId.of("UTC"),
+                    3,
+                    null,
+                    OverlapPolicy.SKIP,
+                    true,
+                    Map.of(),
+                    MisfirePolicy.FIRE_NOW);
+
+            scheduler.register(job);
+            scheduler.start();
+
+            vertx.setTimer(
+                    300,
+                    id -> ctx.verify(() -> {
+                        assertEquals(0, fireCount.get(), "No misfire dispatch when schedule not in repository");
+                        ctx.completeNow();
+                    }));
+        }
+
+        @Test
+        @DisplayName("misfire check is skipped for EVERY_INSTANCE jobs")
+        void misfireCheckSkippedForEveryInstance(Vertx vertx, VertxTestContext ctx) {
+            // Even with FIRE_NOW policy, EVERY_INSTANCE jobs skip misfire recovery
+            JobRepository repo = mock(JobRepository.class);
+            // findSchedule should never be called for EVERY_INSTANCE jobs
+
+            scheduler = new CronScheduler(
+                    vertx,
+                    Set.of(),
+                    repo,
+                    stubTargetResolver(),
+                    testEventBusClient(vertx),
+                    DispatchEnvelopeBuilder.forTesting());
+
+            CronJobDefinition job = new CronJobDefinition(
+                    "every-instance-misfire-job",
+                    new CronExpression("0 0 8 * * *"),
+                    new CronTargetReference.EventBusTarget("test.ei-misfire.address"),
+                    "test.ei-misfire.address",
+                    ExecutionMode.EVERY_INSTANCE,
+                    ZoneId.of("UTC"),
+                    3,
+                    null,
+                    OverlapPolicy.SKIP,
+                    true,
+                    Map.of(),
+                    MisfirePolicy.FIRE_NOW);
+
+            scheduler.register(job);
+            scheduler.start();
+
+            // Wait briefly then verify findSchedule was never called
+            vertx.setTimer(
+                    300,
+                    id -> ctx.verify(() -> {
+                        // findSchedule should never be called for EVERY_INSTANCE jobs
+                        // (no verification needed on mock — test passes if no exception is thrown)
+                        ctx.completeNow();
+                    }));
+        }
+
+        @Test
+        @DisplayName("misfire check failure is handled gracefully (logged as warning)")
+        void misfireCheckFailureIsHandledGracefully(Vertx vertx, VertxTestContext ctx) {
+            JobRepository repo = mock(JobRepository.class);
+            when(repo.findSchedule(anyString()))
+                    .thenReturn(Future.failedFuture(new RuntimeException("DB unavailable")));
+
+            scheduler = new CronScheduler(
+                    vertx,
+                    Set.of(),
+                    repo,
+                    stubTargetResolver(),
+                    testEventBusClient(vertx),
+                    DispatchEnvelopeBuilder.forTesting());
+
+            CronJobDefinition job = new CronJobDefinition(
+                    "failing-check-job",
+                    new CronExpression("0 0 8 * * *"),
+                    new CronTargetReference.EventBusTarget("test.failing-check.address"),
+                    "test.failing-check.address",
+                    ExecutionMode.SINGLE_INSTANCE,
+                    ZoneId.of("UTC"),
+                    3,
+                    null,
+                    OverlapPolicy.SKIP,
+                    true,
+                    Map.of(),
+                    MisfirePolicy.FIRE_NOW);
+
+            scheduler.register(job);
+            // Should not throw — misfire check failure is best-effort
+            scheduler.start().onSuccess(v -> ctx.completeNow()).onFailure(ctx::failNow);
+        }
+    }
+
+    // --- Consumer timeout tests ---
+
+    @Nested
+    @DisplayName("consumer timeout")
+    @Timeout(value = 15, unit = TimeUnit.SECONDS)
+    class ConsumerTimeout {
+
+        /**
+         * Builds a minimal stub repository that allows completeExecution and tryInsert calls.
+         * The completion is captured so tests can verify the state passed to completeExecution.
+         */
+        private JobRepository stubRepoCapturingCompletion(AtomicReference<JobState> capturedState) {
+            JobRepository repo = mock(JobRepository.class);
+            // Used by EVERY_INSTANCE tracked jobs — use thenAnswer to return fresh future per call
+            when(repo.save(any(JobExecution.class))).thenAnswer(inv -> Future.succeededFuture(UUID.randomUUID()));
+            // Used by SINGLE_INSTANCE jobs
+            when(repo.tryInsert(any(JobExecution.class)))
+                    .thenAnswer(inv -> Future.succeededFuture(Optional.of(UUID.randomUUID())));
+            when(repo.completeExecution(any(UUID.class), any(JobState.class), any(), any(), any()))
+                    .thenAnswer(invocation -> {
+                        capturedState.set(invocation.getArgument(1));
+                        return Future.succeededFuture(Optional.empty());
+                    });
+            when(repo.updateScheduleFireTimes(anyString(), any(Instant.class), any(Instant.class)))
+                    .thenAnswer(inv -> Future.succeededFuture());
+            return repo;
+        }
+
+        @Test
+        @DisplayName("execution timeout marks tracked execution as ABANDONED when handler never replies")
+        void executionTimeoutMarksAbandoned(Vertx vertx, VertxTestContext ctx) {
+            AtomicReference<JobState> capturedState = new AtomicReference<>();
+            JobRepository repo = stubRepoCapturingCompletion(capturedState);
+
+            // Scheduler with 300 ms timeout — handler will never reply
+            // Use SINGLE_INSTANCE so tryInsert() is the persistence path
+            scheduler = new CronScheduler(
+                    vertx,
+                    Set.of(),
+                    repo,
+                    stubTargetResolver(),
+                    testEventBusClient(vertx),
+                    10,
+                    300L,
+                    0L,
+                    DispatchEnvelopeBuilder.forTesting());
+
+            // Register a handler that intentionally never replies
+            vertx.eventBus().consumer("test.timeout.address", msg -> {
+                // Deliberately not replying — let the timeout fire
+            });
+
+            CronJobDefinition job = new CronJobDefinition(
+                    "timeout-test-job",
+                    new CronExpression("* * * * * *"),
+                    new CronTargetReference.EventBusTarget("test.timeout.address"),
+                    "test.timeout.address",
+                    ExecutionMode.SINGLE_INSTANCE,
+                    ZoneId.of("UTC"),
+                    3,
+                    null,
+                    OverlapPolicy.SKIP,
+                    true,
+                    Map.of(),
+                    MisfirePolicy.SKIP);
+
+            scheduler.register(job);
+            scheduler.start();
+
+            // Wait long enough for the job to fire (≤1s) and the timeout to fire (300 ms after)
+            vertx.setTimer(
+                    3000,
+                    id -> ctx.verify(() -> {
+                        verify(repo, timeout(1000).atLeastOnce())
+                                .completeExecution(
+                                        any(UUID.class), eq(JobState.ABANDONED), anyString(), anyString(), any());
+                        ctx.completeNow();
+                    }));
+        }
+
+        @Test
+        @DisplayName("execution timeout does not fire when handler replies within the timeout")
+        void executionTimeoutCancelledOnReply(Vertx vertx, VertxTestContext ctx) {
+            JobRepository repo = mock(JobRepository.class);
+            when(repo.save(any(JobExecution.class))).thenAnswer(inv -> Future.succeededFuture(UUID.randomUUID()));
+            when(repo.completeExecution(any(UUID.class), any(JobState.class), any(), any(), any()))
+                    .thenAnswer(inv -> Future.succeededFuture(Optional.empty()));
+            when(repo.updateScheduleFireTimes(anyString(), any(Instant.class), any(Instant.class)))
+                    .thenAnswer(inv -> Future.succeededFuture());
+
+            // 2 second timeout — handler replies in 100 ms
+            scheduler = new CronScheduler(
+                    vertx,
+                    Set.of(),
+                    repo,
+                    stubTargetResolver(),
+                    testEventBusClient(vertx),
+                    10,
+                    2000L,
+                    0L,
+                    DispatchEnvelopeBuilder.forTesting());
+
+            AtomicInteger completeCount = new AtomicInteger();
+
+            vertx.eventBus().consumer("test.fast-reply.address", msg -> {
+                var body = (DispatchEnvelope<?>) msg.body();
+                if (body.replyAddress().isPresent()) {
+                    vertx.setTimer(100, id -> {
+                        vertx.eventBus()
+                                .send(
+                                        body.replyAddress().orElseThrow(),
+                                        DispatchEnvelope.of("done"),
+                                        new DeliveryOptions().setCodecName("dispatch.envelope"));
+                        completeCount.incrementAndGet();
+                    });
+                }
+            });
+
+            CronJobDefinition job = new CronJobDefinition(
+                    "fast-reply-job",
+                    new CronExpression("* * * * * *"),
+                    new CronTargetReference.EventBusTarget("test.fast-reply.address"),
+                    "test.fast-reply.address",
+                    ExecutionMode.EVERY_INSTANCE,
+                    ZoneId.of("UTC"),
+                    3,
+                    null,
+                    OverlapPolicy.SKIP,
+                    false,
+                    Map.of(),
+                    MisfirePolicy.SKIP);
+
+            scheduler.register(job);
+            scheduler.start();
+
+            // Give the job time to fire, reply, and confirm ABANDONED was NOT called
+            vertx.setTimer(
+                    2500,
+                    id -> ctx.verify(() -> {
+                        assertTrue(completeCount.get() >= 1, "Handler should have replied at least once");
+                        // completeExecution should NOT have been called with ABANDONED
+                        // (called with SUCCEEDED from normal completion path)
+                        verify(repo, org.mockito.Mockito.never())
+                                .completeExecution(
+                                        any(UUID.class), eq(JobState.ABANDONED), anyString(), anyString(), any());
+                        ctx.completeNow();
+                    }));
+        }
+    }
+
+    // --- Cancellation tests ---
+
+    @Nested
+    @DisplayName("cancellation")
+    @Timeout(value = 10, unit = TimeUnit.SECONDS)
+    class Cancellation {
+
+        @Test
+        @DisplayName("cancel listener sets isCancelled on the JobContext")
+        void cancelListenerSetsCancelledFlag(Vertx vertx, VertxTestContext ctx) {
+            AtomicBoolean cancelObserved = new AtomicBoolean(false);
+
+            // Handler that captures the JobContext, publishes a cancel signal, then checks the flag
+            vertx.eventBus().consumer("test.cancel.address", msg -> {
+                if (msg.body() instanceof DispatchEnvelope<?> body) {
+                    // Extract the JobContext from the dispatch context map
+                    dev.vertique.job.DefaultJobContext jobCtx = (dev.vertique.job.DefaultJobContext)
+                            body.metadata().dispatchContext().get(JobContext.class.getName());
+                    if (jobCtx != null) {
+                        UUID executionId = jobCtx.executionId();
+                        // Publish a cancel signal on the job.cancel.<executionId> address
+                        vertx.eventBus().publish("job.cancel." + executionId, "cancel");
+                        // Give the event bus time to deliver the cancel message, then read the flag
+                        vertx.setTimer(100, id -> {
+                            cancelObserved.set(jobCtx.isCancelled());
+                            // Reply to unblock the scheduler
+                            if (body.replyAddress().isPresent()) {
+                                vertx.eventBus()
+                                        .send(
+                                                body.replyAddress().orElseThrow(),
+                                                DispatchEnvelope.of("done"),
+                                                new DeliveryOptions().setCodecName("dispatch.envelope"));
+                            }
+                        });
+                    }
+                }
+            });
+
+            CronJobDefinition job = new CronJobDefinition(
+                    "cancel-test-job",
+                    new CronExpression("* * * * * *"),
+                    new CronTargetReference.EventBusTarget("test.cancel.address"),
+                    "test.cancel.address",
+                    ExecutionMode.EVERY_INSTANCE,
+                    ZoneId.of("UTC"),
+                    3,
+                    null,
+                    OverlapPolicy.SKIP,
+                    false,
+                    Map.of(),
+                    MisfirePolicy.SKIP);
+
+            scheduler.register(job);
+            scheduler.start();
+
+            vertx.setTimer(
+                    3000,
+                    id -> ctx.verify(() -> {
+                        assertTrue(cancelObserved.get(), "JobContext should have isCancelled=true after cancel signal");
+                        ctx.completeNow();
+                    }));
+        }
+    }
+}

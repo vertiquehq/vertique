@@ -1,0 +1,21 @@
+{
+  "openapi": "3.0.1",
+  "info": {
+    "title": "Action-Only Claims-Validator Test API",
+    "description": "Minimal OpenAPI fixture used by ActionOnlyRouteClaimsValidatorIT. The /content operation declares NO security requirement, modelling an action-only (@RequiresAction with SecurityPolicy.None) route on which the JwtClaimsValidator must still run.",
+    "version": "0.0.1"
+  },
+  "paths": {
+    "/content": {
+      "get": {
+        "summary": "Read content (action-gated, no OpenAPI security requirement)",
+        "operationId": "getContent",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    }
+  }
+}

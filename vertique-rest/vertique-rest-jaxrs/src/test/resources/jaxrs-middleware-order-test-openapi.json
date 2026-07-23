@@ -1,0 +1,21 @@
+{
+  "openapi": "3.0.1",
+  "info": {
+    "title": "Middleware Order Test API",
+    "description": "Minimal OpenAPI fixture used by JaxRsRouterMountMiddlewareOrderIT",
+    "version": "0.0.1"
+  },
+  "paths": {
+    "/ping": {
+      "get": {
+        "summary": "Ping endpoint",
+        "operationId": "getPing",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    }
+  }
+}

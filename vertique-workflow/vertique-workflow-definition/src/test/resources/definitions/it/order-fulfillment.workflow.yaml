@@ -1,0 +1,58 @@
+# SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
+# SPDX-License-Identifier: EUPL-1.2
+
+definitionId: order-fulfillment-doc
+definitionVersion: 1
+stateType: dev.vertique.workflow.definition.it.fixture.OrderDocState
+contract: dev.vertique.workflow.definition.it.fixture.OrderFulfillmentDocumentWorkflowV1
+startPayloadType: dev.vertique.workflow.definition.it.fixture.PlaceOrderDoc
+initialStateMapper: doc.order.fromPlaceOrder
+initialStep: reserve-inventory
+steps:
+  - id: reserve-inventory
+    type: service
+    target: inventory.reserve
+    payloadMapper: doc.order.reserveInventoryPayload
+    compensation: release-inventory
+    next: wait-inventory
+  - id: release-inventory
+    type: compensation
+    forwardStep: reserve-inventory
+    target: inventory.release
+    payloadMapper: doc.order.releaseInventoryPayload
+  - id: wait-inventory
+    type: wait-signal
+    signal: inventory.reserved
+    payloadType: dev.vertique.workflow.definition.it.fixture.InventoryReservedDoc
+    stateReducer: doc.order.applyInventoryReserved
+    next: authorize-payment
+  - id: authorize-payment
+    type: service
+    target: payment.authorize
+    payloadMapper: doc.order.authorizePaymentPayload
+    compensation: void-authorization
+    next: wait-payment
+  - id: void-authorization
+    type: compensation
+    forwardStep: authorize-payment
+    target: payment.void
+    payloadMapper: doc.order.voidAuthorizationPayload
+  - id: wait-payment
+    type: wait-signal
+    signal: payment.captured
+    payloadType: dev.vertique.workflow.definition.it.fixture.PaymentCapturedDoc
+    stateReducer: doc.order.applyPaymentCaptured
+    next: create-shipment
+  - id: create-shipment
+    type: service
+    target: shipping.create
+    payloadMapper: doc.order.createShipmentPayload
+    next: wait-shipment
+  - id: wait-shipment
+    type: wait-signal
+    signal: shipment.created
+    payloadType: dev.vertique.workflow.definition.it.fixture.ShipmentCreatedDoc
+    stateReducer: doc.order.applyShipmentCreated
+    next: done
+  - id: done
+    type: complete

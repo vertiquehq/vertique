@@ -1,0 +1,147 @@
+{
+  "definitionId": "order-fulfillment",
+  "definitionVersion": 1,
+  "stateType": "dev.vertique.examples.workflow.order.state.OrderState",
+  "contract": "dev.vertique.examples.workflow.order.OrderFulfillmentWorkflowV1",
+  "startPayloadType": "dev.vertique.examples.workflow.order.command.PlaceOrder",
+  "initialStateMapper": "order.fromPlaceOrder",
+  "subjectResolver": "order.subject",
+  "initialStep": "reserve-inventory",
+  "steps": [
+    {
+      "id": "reserve-inventory",
+      "type": "service",
+      "target": "inventory.reserve",
+      "payloadMapper": "order.reserveInventoryPayload",
+      "compensation": "release-inventory",
+      "next": "wait-inventory"
+    },
+    {
+      "id": "release-inventory",
+      "type": "compensation",
+      "forwardStep": "reserve-inventory",
+      "target": "inventory.release",
+      "payloadMapper": "order.releaseInventoryPayload"
+    },
+    {
+      "id": "wait-inventory",
+      "type": "wait-signal",
+      "signal": "inventory.reserved",
+      "payloadType": "dev.vertique.examples.workflow.order.signal.InventoryReserved",
+      "stateReducer": "order.applyInventoryReserved",
+      "next": "defer-shipment",
+      "timeout": {
+        "after": "PT15M",
+        "onTimeoutMutator": "order.markInventoryTimedOut",
+        "next": "cancel-order"
+      }
+    },
+    {
+      "id": "defer-shipment",
+      "type": "timer",
+      "fireAt": "PT1H",
+      "next": "route-review"
+    },
+    {
+      "id": "route-review",
+      "type": "decision",
+      "routes": [
+        {
+          "when": "review.riskLevel in ['high', 'critical']",
+          "to": "parallel-reviews"
+        },
+        {
+          "condition": "policy.lowRiskAutoApprove",
+          "to": "ship-order"
+        }
+      ],
+      "default": "manual-review"
+    },
+    {
+      "id": "manual-review",
+      "type": "human-task",
+      "taskType": "approval",
+      "assignment": {
+        "mode": "role",
+        "value": "editor"
+      },
+      "decisions": [
+        {
+          "name": "approve",
+          "payloadType": "dev.vertique.examples.workflow.order.task.ApprovePayload",
+          "applicator": "review.applyApprove",
+          "next": "ship-order"
+        },
+        {
+          "name": "reject",
+          "payloadType": "dev.vertique.examples.workflow.order.task.RejectPayload",
+          "applicator": "review.applyReject",
+          "next": "cancel-order"
+        }
+      ],
+      "due": {
+        "at": "PT24H",
+        "onDueMutator": "review.markOverdue",
+        "next": "cancel-order"
+      },
+      "reminders": {
+        "interval": "PT6H"
+      },
+      "requireVersionStability": true
+    },
+    {
+      "id": "parallel-reviews",
+      "type": "fork",
+      "branches": [
+        {
+          "branchId": "legal",
+          "startStep": "legal-review",
+          "raceSafety": "NORMAL"
+        },
+        {
+          "branchId": "finance",
+          "startStep": "finance-review"
+        }
+      ],
+      "join": "reviews-joined",
+      "retryPolicy": {
+        "maxAttempts": 3,
+        "initialDelay": "PT5S",
+        "backoff": "EXPONENTIAL"
+      }
+    },
+    {
+      "id": "legal-review",
+      "type": "complete"
+    },
+    {
+      "id": "finance-review",
+      "type": "complete"
+    },
+    {
+      "id": "reviews-joined",
+      "type": "join",
+      "policy": "all-required",
+      "reducer": "review.combineBranchResults",
+      "next": "ship-order",
+      "onFailure": "cancel-order"
+    },
+    {
+      "id": "ship-order",
+      "type": "service",
+      "target": "shipping.create",
+      "payloadMapper": "order.shippingPayload",
+      "next": "done"
+    },
+    {
+      "id": "done",
+      "type": "complete"
+    },
+    {
+      "id": "cancel-order",
+      "type": "fail",
+      "errorType": "order-cancelled",
+      "messageFactory": "order.cancellationMessage"
+    }
+  ]
+}

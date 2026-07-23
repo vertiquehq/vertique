@@ -1,0 +1,108 @@
+// SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
+// SPDX-License-Identifier: EUPL-1.2
+
+package dev.vertique.core.codegen;
+
+import java.lang.annotation.Annotation;
+import java.lang.reflect.Type;
+import java.util.Optional;
+import java.util.function.Supplier;
+
+/**
+ * Neutral, runtime metadata view of a single method parameter, implemented and consumed by
+ * codegen-generated code.
+ *
+ * <p>The constant-only accessors ({@link #index()}, {@link #name()}, {@link #type()},
+ * {@link #findAnnotation(Class)}, {@link #hasAnnotation(Class)}) form the <em>reflection-free
+ * core</em>: a generated implementation returns compile-time-captured constants and never reflects
+ * at call time. The parameter name is captured from the {@code VariableElement} at compile time, so
+ * it is available without the {@code -parameters} javac flag. <em>Parameter-level</em> annotation
+ * lookups ({@link #findAnnotation(Class)}/{@link #hasAnnotation(Class)}) are now backed by generated
+ * annotation-literals — for each {@code @Retention(RUNTIME)} parameter annotation the emitter bakes a
+ * {@code <Ann>$Literal} constant and resolves the lookup by {@code annotationType()} match, with no
+ * reflective read — mirroring the method-level lookup on {@link MethodMetadata}.
+ *
+ * <p>{@link #genericType()} and {@link #annotationsLazy()} form the opt-in
+ * <em>reflective-accessor group</em>. They are <strong>not</strong> part of the reflection-free
+ * guarantee and are never called by generated proxy code; a consumer that needs the generic
+ * parameter type or the parameter's full annotation array must opt into them explicitly, accepting
+ * the reflection they entail.
+ *
+ * <p>This SPI references no AOP or event type — it is a neutral runtime home shared across those
+ * concerns.
+ */
+public interface ParameterMetadata {
+
+    // --- constant-only reflection-free core ---
+
+    /**
+     * Returns the zero-based position of the parameter in its method's parameter list.
+     *
+     * @return the parameter index
+     */
+    int index();
+
+    /**
+     * Returns the compile-time-captured name of the parameter.
+     *
+     * @return the parameter name
+     */
+    String name();
+
+    /**
+     * Returns the erased type of the parameter.
+     *
+     * @return the erased parameter type
+     */
+    Class<?> type();
+
+    /**
+     * Looks up an annotation of the given type declared on the parameter.
+     *
+     * <p>Backed by generated annotation-literals: the emitter bakes a {@code <Ann>$Literal} constant
+     * per {@code @Retention(RUNTIME)} parameter annotation and resolves the lookup by
+     * {@code annotationType()} match, performing no reflective annotation read.
+     *
+     * @param type the annotation type to look up
+     * @param <A> the annotation type
+     * @return the annotation if present, otherwise {@link Optional#empty()}
+     */
+    <A extends Annotation> Optional<A> findAnnotation(Class<A> type);
+
+    /**
+     * Reports whether an annotation of the given type is declared on the parameter.
+     *
+     * <p>Backed by the same generated annotation-literals as {@link #findAnnotation(Class)}, with no
+     * reflective annotation read.
+     *
+     * @param type the annotation type to test for
+     * @return {@code true} if the annotation is present, {@code false} otherwise
+     */
+    boolean hasAnnotation(Class<? extends Annotation> type);
+
+    // --- reflective-accessor group (opt-in; NOT part of the reflection-free guarantee) ---
+
+    /**
+     * Returns the generic type of the parameter.
+     *
+     * <p>Part of the opt-in reflective-accessor group: this is not part of the reflection-free
+     * guarantee and is never called by generated proxy code.
+     *
+     * @return the generic parameter type
+     */
+    Type genericType();
+
+    /**
+     * Returns a supplier of the parameter's full declared annotation array.
+     *
+     * <p>Part of the opt-in reflective-accessor group: this is not part of the reflection-free
+     * guarantee and is never called by generated proxy code. It exists for the JAX-RS bridge, which
+     * consumes the full annotation array (wired in Phase 3); the default returns an empty array so
+     * existing implementations keep compiling without overriding it.
+     *
+     * @return a supplier of the parameter's annotations (an empty array by default)
+     */
+    default Supplier<Annotation[]> annotationsLazy() {
+        return () -> new Annotation[0];
+    }
+}

@@ -1,0 +1,842 @@
+// SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
+// SPDX-License-Identifier: EUPL-1.2
+
+package dev.vertique.job.delayed;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.atLeastOnce;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.timeout;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+import dev.vertique.context.ContextScopeBinder;
+import dev.vertique.context.DefaultContextHolder;
+import dev.vertique.context.DispatchEnvelopeBuilder;
+import dev.vertique.context.DurableContextMetadataRegistry;
+import dev.vertique.context.DurableContextPropagator;
+import dev.vertique.core.context.ContextDecodeResult;
+import dev.vertique.core.context.ContextValue;
+import dev.vertique.core.context.DeferredExecutionOrigin;
+import dev.vertique.core.context.DurableCarrierDescriptor;
+import dev.vertique.core.context.DurableContextMetadataDecoder;
+import dev.vertique.core.context.DurableDecodeContext;
+import dev.vertique.core.context.DurableMetadata;
+import dev.vertique.core.eventbus.DispatchEnvelope;
+import dev.vertique.core.eventbus.EventBusClient;
+import dev.vertique.core.eventbus.EventBusExceptionMapper;
+import dev.vertique.core.eventbus.LocalMessageCodec;
+import dev.vertique.core.eventbus.Result;
+import dev.vertique.job.JobCompletionHandler;
+import dev.vertique.job.JobContext;
+import dev.vertique.job.JobDispatchContext;
+import dev.vertique.job.JobExecution;
+import dev.vertique.job.JobInterceptor;
+import dev.vertique.job.JobRepository;
+import dev.vertique.job.JobState;
+import dev.vertique.job.JobType;
+import dev.vertique.job.ProgressSnapshot;
+import dev.vertique.job.delayed.config.DelayedJobQueueConfig;
+import io.vertx.core.Future;
+import io.vertx.core.Vertx;
+import io.vertx.core.eventbus.DeliveryOptions;
+import io.vertx.junit5.VertxExtension;
+import io.vertx.junit5.VertxTestContext;
+import java.time.Instant;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Nested;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
+
+/**
+ * Tests for {@link DelayedJobPoller}: lifecycle, poll-dispatch-complete cycle, concurrency
+ * limit enforcement, backoff strategy resolution, and interceptor invocation.
+ */
+@DisplayName("DelayedJobPoller")
+@ExtendWith({VertxExtension.class, MockitoExtension.class})
+@MockitoSettings(strictness = Strictness.LENIENT)
+@Timeout(value = 15, unit = TimeUnit.SECONDS)
+class DelayedJobPollerTest {
+
+    /** Creates a test {@link EventBusClient} from the given Vert.x instance. */
+    private static EventBusClient testEventBusClient(Vertx vertx) {
+        return new EventBusClient(vertx, new EventBusExceptionMapper());
+    }
+
+    /** Creates a no-op {@link DurableContextPropagator} with no encoders or decoders. */
+    private static DurableContextPropagator noOpPropagator() {
+        DefaultContextHolder holder = new DefaultContextHolder();
+        return new DurableContextPropagator(
+                new DurableContextMetadataRegistry(Set.of(), Set.of()), holder, new ContextScopeBinder(holder));
+    }
+
+    @Mock
+    JobRepository repository;
+
+    @Mock
+    JobCompletionHandler completionHandler;
+
+    // --- Helpers ---
+
+    /** Creates a fast-polling config (short sleep delay for test speed). */
+    private static DelayedJobQueueConfig fastConfig() {
+        return DelayedJobQueueConfig.builder()
+                .sleepDelayMs(50L)
+                .maxConcurrentJobs(5)
+                .backoffStrategy("LINEAR")
+                .backoffBaseDelayMs(1000L)
+                .backoffMaxDelayMs(60_000L)
+                .build();
+    }
+
+    /** Creates a sample PROCESSING execution. */
+    private static JobExecution sampleExecution(String jobId, String handler) {
+        return new JobExecution(
+                UUID.randomUUID(),
+                jobId,
+                JobType.DELAYED,
+                handler,
+                "default",
+                JobState.PROCESSING,
+                0,
+                3,
+                null,
+                0,
+                null,
+                Instant.now(),
+                null,
+                null,
+                null,
+                null,
+                null,
+                ProgressSnapshot.EMPTY,
+                Map.of(),
+                Map.of(),
+                DurableMetadata.empty());
+    }
+
+    @BeforeEach
+    void registerCodec(Vertx vertx) {
+        try {
+            vertx.eventBus().registerCodec(new LocalMessageCodec<>("dispatch.envelope"));
+        } catch (IllegalStateException ignored) {
+            // Already registered
+        }
+    }
+
+    // --- Tests ---
+
+    @Nested
+    @DisplayName("lifecycle")
+    class Lifecycle {
+
+        @Test
+        @DisplayName("starts without error")
+        void startsWithoutError(Vertx vertx, VertxTestContext ctx) {
+            when(repository.claimNextJob(anyString(), anyInt())).thenReturn(Future.succeededFuture(List.of()));
+
+            DelayedJobPoller poller = new DelayedJobPoller(
+                    "default",
+                    fastConfig(),
+                    repository,
+                    completionHandler,
+                    Set.of(),
+                    testEventBusClient(vertx),
+                    DispatchEnvelopeBuilder.forTesting(),
+                    noOpPropagator());
+
+            vertx.deployVerticle(poller).onSuccess(id -> ctx.completeNow()).onFailure(ctx::failNow);
+        }
+
+        @Test
+        @DisplayName("stops cleanly")
+        void stopsCleanly(Vertx vertx, VertxTestContext ctx) {
+            when(repository.claimNextJob(anyString(), anyInt())).thenReturn(Future.succeededFuture(List.of()));
+
+            DelayedJobPoller poller = new DelayedJobPoller(
+                    "default",
+                    fastConfig(),
+                    repository,
+                    completionHandler,
+                    Set.of(),
+                    testEventBusClient(vertx),
+                    DispatchEnvelopeBuilder.forTesting(),
+                    noOpPropagator());
+
+            vertx.deployVerticle(poller)
+                    .compose(id -> vertx.undeploy(id))
+                    .onSuccess(v -> ctx.completeNow())
+                    .onFailure(ctx::failNow);
+        }
+
+        @Test
+        @DisplayName("exposes correct queue name")
+        void exposesQueueName() {
+            DelayedJobPoller poller = new DelayedJobPoller(
+                    "my-queue",
+                    fastConfig(),
+                    repository,
+                    completionHandler,
+                    Set.of(),
+                    null,
+                    DispatchEnvelopeBuilder.forTesting(),
+                    noOpPropagator());
+            assertEquals("my-queue", poller.queue());
+        }
+    }
+
+    @Nested
+    @DisplayName("poll-dispatch-complete cycle")
+    class PollDispatchComplete {
+
+        @Test
+        @DisplayName("dispatches claimed job and calls completion handler on success")
+        void dispatchesAndCompletesSuccessfully(Vertx vertx, VertxTestContext ctx) {
+            String handlerAddress = "test.delayed.handler";
+            JobExecution execution = sampleExecution("job-1", handlerAddress);
+
+            // First poll returns 1 job; subsequent polls (which may use different batchSize
+            // due to in-flight count changes) always return empty to avoid repeated dispatch.
+            when(repository.claimNextJob(anyString(), anyInt()))
+                    .thenReturn(Future.succeededFuture(List.of(execution)))
+                    .thenReturn(Future.succeededFuture(List.of()));
+            when(completionHandler.handleCompletion(any(), any(), any())).thenReturn(Future.succeededFuture());
+
+            // Register a handler that simulates ServiceMethodInvoker fire-and-report:
+            // reads the replyAddress from the DispatchEnvelope and sends the Result there
+            vertx.eventBus().consumer(handlerAddress, msg -> {
+                if (msg.body() instanceof DispatchEnvelope<?> receivedBody
+                        && receivedBody.replyAddress().isPresent()) {
+                    DispatchEnvelope<?> reply = DispatchEnvelope.of(
+                            Result.success(null), dev.vertique.core.eventbus.DispatchMetadata.empty());
+                    vertx.eventBus()
+                            .send(
+                                    receivedBody.replyAddress().orElseThrow(),
+                                    reply,
+                                    new DeliveryOptions().setCodecName("dispatch.envelope"));
+                }
+            });
+
+            DelayedJobPoller poller = new DelayedJobPoller(
+                    "default",
+                    fastConfig(),
+                    repository,
+                    completionHandler,
+                    Set.of(),
+                    testEventBusClient(vertx),
+                    DispatchEnvelopeBuilder.forTesting(),
+                    noOpPropagator());
+
+            vertx.deployVerticle(poller).onFailure(ctx::failNow);
+
+            // Wait for the completion handler to be invoked
+            vertx.setTimer(3000, id -> {
+                try {
+                    verify(completionHandler, atLeastOnce()).handleCompletion(any(), any(), any());
+                    ctx.completeNow();
+                } catch (Exception e) {
+                    ctx.failNow(e);
+                }
+            });
+        }
+
+        @Test
+        @DisplayName("claims with correct queue name and max concurrent slots")
+        void claimsWithCorrectParams(Vertx vertx, VertxTestContext ctx) {
+            when(repository.claimNextJob("special-queue", 3))
+                    .thenReturn(Future.succeededFuture(List.of()))
+                    .thenReturn(Future.succeededFuture(List.of()));
+
+            DelayedJobQueueConfig cfg = DelayedJobQueueConfig.builder()
+                    .sleepDelayMs(50L)
+                    .maxConcurrentJobs(3)
+                    .build();
+
+            DelayedJobPoller poller = new DelayedJobPoller(
+                    "special-queue",
+                    cfg,
+                    repository,
+                    completionHandler,
+                    Set.of(),
+                    testEventBusClient(vertx),
+                    DispatchEnvelopeBuilder.forTesting(),
+                    noOpPropagator());
+
+            vertx.deployVerticle(poller).onFailure(ctx::failNow);
+
+            // Give the poller time to poll at least once
+            vertx.setTimer(300L, id -> {
+                try {
+                    verify(repository, atLeastOnce()).claimNextJob("special-queue", 3);
+                    ctx.completeNow();
+                } catch (Exception e) {
+                    ctx.failNow(e);
+                }
+            });
+        }
+
+        @Test
+        @DisplayName("binds DeferredExecutionOrigin(delayed-job, handler) into the dispatch context")
+        void bindsDeferredExecutionOrigin(Vertx vertx, VertxTestContext ctx) {
+            String handlerAddress = "test.origin.handler";
+            JobExecution execution = sampleExecution("origin-job-1", handlerAddress);
+
+            when(repository.claimNextJob(anyString(), anyInt()))
+                    .thenReturn(Future.succeededFuture(List.of(execution)))
+                    .thenReturn(Future.succeededFuture(List.of()));
+
+            AtomicBoolean asserted = new AtomicBoolean(false);
+
+            // Inspect the FQCN-keyed dispatch-context map carried in the DispatchEnvelope: the
+            // delayed-job boundary must bind a DeferredExecutionOrigin proving deferred execution
+            // (W2/A6), keyed alongside the JobDispatchContext entry. The reference is the handler's
+            // event-bus address (a stable, resolver-mappable id), not the jobId.
+            vertx.eventBus().consumer(handlerAddress, msg -> {
+                if (!(msg.body() instanceof DispatchEnvelope<?> body) || !asserted.compareAndSet(false, true)) {
+                    return;
+                }
+                Object origin = body.metadata().dispatchContext().get(DeferredExecutionOrigin.class.getName());
+                ctx.verify(() -> {
+                    assertInstanceOf(DeferredExecutionOrigin.class, origin);
+                    DeferredExecutionOrigin deferredOrigin = (DeferredExecutionOrigin) origin;
+                    assertEquals("delayed-job", deferredOrigin.kind());
+                    assertEquals(handlerAddress, deferredOrigin.reference());
+                });
+                ctx.completeNow();
+            });
+
+            DelayedJobPoller poller = new DelayedJobPoller(
+                    "default",
+                    fastConfig(),
+                    repository,
+                    completionHandler,
+                    Set.of(),
+                    testEventBusClient(vertx),
+                    DispatchEnvelopeBuilder.forTesting(),
+                    noOpPropagator());
+
+            vertx.deployVerticle(poller).onFailure(ctx::failNow);
+        }
+
+        @Test
+        @DisplayName("origin reference is the stable handler address, not the auto-generated jobId")
+        void originReferenceIsStableHandlerNotGeneratedJobId(Vertx vertx, VertxTestContext ctx) {
+            String handlerAddress = "test.stable.handler";
+            // Auto-generated form produced by DelayedJobService: "delayed-" + UUID. It is distinct
+            // from the handler address and is NOT resolver-mappable, so the origin reference must be
+            // the handler address instead (Codex W2).
+            String generatedJobId = "delayed-" + UUID.randomUUID();
+            JobExecution execution = sampleExecution(generatedJobId, handlerAddress);
+
+            when(repository.claimNextJob(anyString(), anyInt()))
+                    .thenReturn(Future.succeededFuture(List.of(execution)))
+                    .thenReturn(Future.succeededFuture(List.of()));
+
+            AtomicBoolean asserted = new AtomicBoolean(false);
+
+            vertx.eventBus().consumer(handlerAddress, msg -> {
+                if (!(msg.body() instanceof DispatchEnvelope<?> body) || !asserted.compareAndSet(false, true)) {
+                    return;
+                }
+                Object origin = body.metadata().dispatchContext().get(DeferredExecutionOrigin.class.getName());
+                ctx.verify(() -> {
+                    assertInstanceOf(DeferredExecutionOrigin.class, origin);
+                    DeferredExecutionOrigin deferredOrigin = (DeferredExecutionOrigin) origin;
+                    assertEquals("delayed-job", deferredOrigin.kind());
+                    assertEquals(handlerAddress, deferredOrigin.reference(), "reference must be the stable handler");
+                    assertNotEquals(
+                            generatedJobId, deferredOrigin.reference(), "reference must not be the generated jobId");
+                });
+                ctx.completeNow();
+            });
+
+            DelayedJobPoller poller = new DelayedJobPoller(
+                    "default",
+                    fastConfig(),
+                    repository,
+                    completionHandler,
+                    Set.of(),
+                    testEventBusClient(vertx),
+                    DispatchEnvelopeBuilder.forTesting(),
+                    noOpPropagator());
+
+            vertx.deployVerticle(poller).onFailure(ctx::failNow);
+        }
+    }
+
+    @Nested
+    @DisplayName("carrier binding (F5 row binding, PRD-ID-002 §14.6/A9/F5)")
+    class CarrierBinding {
+
+        /** Test-only ContextValue whose decoder records the DurableDecodeContext it is handed. */
+        record RecCtx(String value) implements ContextValue {}
+
+        @Test
+        @DisplayName("dispatch builds the row's own carrier and threads it into decodeToDispatchContext")
+        void dispatchBindsExecutionCarrierIntoDecodeContext(Vertx vertx, VertxTestContext ctx) {
+            String handlerAddress = "test.carrier.handler";
+            JobExecution execution = sampleExecution("carrier-job", handlerAddress);
+
+            AtomicReference<DurableDecodeContext> observed = new AtomicReference<>();
+            DurableContextMetadataDecoder<RecCtx> recordingDecoder = new DurableContextMetadataDecoder<>() {
+                @Override
+                public Class<RecCtx> type() {
+                    return RecCtx.class;
+                }
+
+                @Override
+                public String namespace() {
+                    return "rec-ns";
+                }
+
+                @Override
+                public ContextDecodeResult<RecCtx> decode(DurableMetadata metadata, DurableDecodeContext context) {
+                    observed.set(context);
+                    return ContextDecodeResult.empty();
+                }
+            };
+            DefaultContextHolder holder = new DefaultContextHolder();
+            DurableContextPropagator propagator = new DurableContextPropagator(
+                    new DurableContextMetadataRegistry(Set.of(), Set.of(recordingDecoder)),
+                    holder,
+                    new ContextScopeBinder(holder));
+
+            when(repository.claimNextJob(anyString(), anyInt()))
+                    .thenReturn(Future.succeededFuture(List.of(execution)))
+                    .thenReturn(Future.succeededFuture(List.of()));
+
+            // Handler that never replies — we only need dispatch() to run decodeToDispatchContext.
+            vertx.eventBus().consumer(handlerAddress, msg -> {});
+
+            DelayedJobPoller poller = new DelayedJobPoller(
+                    "default",
+                    fastConfig(),
+                    repository,
+                    completionHandler,
+                    Set.of(),
+                    testEventBusClient(vertx),
+                    DispatchEnvelopeBuilder.forTesting(),
+                    propagator);
+
+            vertx.deployVerticle(poller).onFailure(ctx::failNow);
+
+            vertx.setTimer(
+                    1500,
+                    id -> ctx.verify(() -> {
+                        DurableDecodeContext decodeContext = observed.get();
+                        assertNotNull(decodeContext, "decoder must have been invoked during dispatch");
+                        assertTrue(
+                                decodeContext.carrier().isPresent(),
+                                "dispatch must thread the row's carrier into the decode context");
+                        DurableCarrierDescriptor carrier =
+                                decodeContext.carrier().orElseThrow();
+                        assertEquals(execution.id().toString(), carrier.carrierId(), "carrierId == executing row id");
+                        assertEquals("delayed-job", carrier.target().kind());
+                        assertEquals(
+                                handlerAddress, carrier.target().address(), "target address == executing row handler");
+                        ctx.completeNow();
+                    }));
+        }
+    }
+
+    @Nested
+    @DisplayName("concurrency limit")
+    class ConcurrencyLimit {
+
+        @Test
+        @DisplayName("starts with zero in-flight count")
+        void initialInFlightIsZero() {
+            // No mocks needed — we are testing the initial state before deployment
+            DelayedJobPoller poller = new DelayedJobPoller(
+                    "default",
+                    fastConfig(),
+                    repository,
+                    completionHandler,
+                    Set.of(),
+                    null,
+                    DispatchEnvelopeBuilder.forTesting(),
+                    noOpPropagator());
+            assertEquals(0, poller.inFlightCount());
+        }
+    }
+
+    @Nested
+    @DisplayName("interceptor invocation")
+    class InterceptorInvocation {
+
+        @Test
+        @DisplayName("fires onDispatch and onComplete interceptor callbacks")
+        void firesInterceptorCallbacks(Vertx vertx, VertxTestContext ctx) {
+            String handlerAddress = "test.interceptor.handler";
+            JobExecution execution = sampleExecution("intercepted-job", handlerAddress);
+
+            // First poll returns 1 job; subsequent polls always return empty
+            when(repository.claimNextJob(anyString(), anyInt()))
+                    .thenReturn(Future.succeededFuture(List.of(execution)))
+                    .thenReturn(Future.succeededFuture(List.of()));
+            when(completionHandler.handleCompletion(any(), any(), any())).thenReturn(Future.succeededFuture());
+
+            AtomicInteger dispatchCount = new AtomicInteger();
+            AtomicInteger completeCount = new AtomicInteger();
+
+            JobInterceptor interceptor = new JobInterceptor() {
+                @Override
+                public void onDispatch(JobDispatchContext ctx) {
+                    dispatchCount.incrementAndGet();
+                }
+
+                @Override
+                public void onComplete(JobDispatchContext ctx, Result<?> result, Instant startTime, Instant endTime) {
+                    completeCount.incrementAndGet();
+                }
+            };
+
+            // Simulate ServiceMethodInvoker fire-and-report: send Result to the replyAddress
+            vertx.eventBus().consumer(handlerAddress, msg -> {
+                if (msg.body() instanceof DispatchEnvelope<?> receivedBody
+                        && receivedBody.replyAddress().isPresent()) {
+                    DispatchEnvelope<?> reply = DispatchEnvelope.of(
+                            Result.success(null), dev.vertique.core.eventbus.DispatchMetadata.empty());
+                    vertx.eventBus()
+                            .send(
+                                    receivedBody.replyAddress().orElseThrow(),
+                                    reply,
+                                    new DeliveryOptions().setCodecName("dispatch.envelope"));
+                }
+            });
+
+            DelayedJobPoller poller = new DelayedJobPoller(
+                    "default",
+                    fastConfig(),
+                    repository,
+                    completionHandler,
+                    Set.of(interceptor),
+                    testEventBusClient(vertx),
+                    DispatchEnvelopeBuilder.forTesting(),
+                    noOpPropagator());
+
+            vertx.deployVerticle(poller).onFailure(ctx::failNow);
+
+            vertx.setTimer(2000, id -> {
+                ctx.verify(() -> {
+                    assertTrue(dispatchCount.get() >= 1, "Expected at least 1 dispatch interceptor call");
+                    assertTrue(completeCount.get() >= 1, "Expected at least 1 complete interceptor call");
+                });
+                ctx.completeNow();
+            });
+        }
+    }
+
+    @Nested
+    @DisplayName("backoff strategy resolution")
+    class BackoffStrategyResolution {
+
+        @Test
+        @DisplayName("resolves FIXED strategy without error")
+        void resolvesFixedStrategy(Vertx vertx, VertxTestContext ctx) {
+            when(repository.claimNextJob(anyString(), anyInt())).thenReturn(Future.succeededFuture(List.of()));
+
+            DelayedJobQueueConfig cfg = DelayedJobQueueConfig.builder()
+                    .sleepDelayMs(50L)
+                    .backoffStrategy("FIXED")
+                    .build();
+
+            DelayedJobPoller poller = new DelayedJobPoller(
+                    "default",
+                    cfg,
+                    repository,
+                    completionHandler,
+                    Set.of(),
+                    testEventBusClient(vertx),
+                    DispatchEnvelopeBuilder.forTesting(),
+                    noOpPropagator());
+
+            vertx.deployVerticle(poller)
+                    .onSuccess(id -> {
+                        vertx.setTimer(200, t -> ctx.completeNow());
+                    })
+                    .onFailure(ctx::failNow);
+        }
+
+        @Test
+        @DisplayName("resolves EXPONENTIAL strategy without error")
+        void resolvesExponentialStrategy(Vertx vertx, VertxTestContext ctx) {
+            when(repository.claimNextJob(anyString(), anyInt())).thenReturn(Future.succeededFuture(List.of()));
+
+            DelayedJobQueueConfig cfg = DelayedJobQueueConfig.builder()
+                    .sleepDelayMs(50L)
+                    .backoffStrategy("EXPONENTIAL")
+                    .build();
+
+            DelayedJobPoller poller = new DelayedJobPoller(
+                    "default",
+                    cfg,
+                    repository,
+                    completionHandler,
+                    Set.of(),
+                    testEventBusClient(vertx),
+                    DispatchEnvelopeBuilder.forTesting(),
+                    noOpPropagator());
+
+            vertx.deployVerticle(poller)
+                    .onSuccess(id -> {
+                        vertx.setTimer(200, t -> ctx.completeNow());
+                    })
+                    .onFailure(ctx::failNow);
+        }
+
+        @Test
+        @DisplayName("resolves LINEAR strategy (default) without error")
+        void resolvesLinearStrategy(Vertx vertx, VertxTestContext ctx) {
+            when(repository.claimNextJob(anyString(), anyInt())).thenReturn(Future.succeededFuture(List.of()));
+
+            DelayedJobQueueConfig cfg = DelayedJobQueueConfig.builder()
+                    .sleepDelayMs(50L)
+                    .backoffStrategy("LINEAR")
+                    .build();
+
+            DelayedJobPoller poller = new DelayedJobPoller(
+                    "default",
+                    cfg,
+                    repository,
+                    completionHandler,
+                    Set.of(),
+                    testEventBusClient(vertx),
+                    DispatchEnvelopeBuilder.forTesting(),
+                    noOpPropagator());
+
+            vertx.deployVerticle(poller)
+                    .onSuccess(id -> {
+                        vertx.setTimer(200, t -> ctx.completeNow());
+                    })
+                    .onFailure(ctx::failNow);
+        }
+    }
+
+    // --- Consumer timeout tests ---
+
+    @Nested
+    @DisplayName("consumer timeout")
+    @Timeout(value = 15, unit = TimeUnit.SECONDS)
+    class ConsumerTimeout {
+
+        @Test
+        @DisplayName(
+                "retryable timeout: calls abandonAndScheduleRetry atomically, never calls completeExecution or handleCompletion")
+        void retryableTimeoutCallsAbandonAndScheduleRetry(Vertx vertx, VertxTestContext ctx) {
+            String handlerAddress = "test.timeout.handler";
+            // attemptNumber=0, maxAttempts=3 — still retryable after one timeout
+            JobExecution execution = sampleExecution("timeout-job", handlerAddress);
+
+            when(repository.claimNextJob(anyString(), anyInt()))
+                    .thenReturn(Future.succeededFuture(List.of(execution)))
+                    .thenReturn(Future.succeededFuture(List.of()));
+            // abandonAndScheduleRetry is the new atomic op for retryable timeouts
+            when(repository.abandonAndScheduleRetry(
+                            any(UUID.class), anyString(), anyString(), any(), any(Instant.class), anyInt()))
+                    .thenReturn(Future.succeededFuture(Optional.of(execution)));
+
+            // Handler that intentionally never replies — let the timeout fire
+            vertx.eventBus().consumer(handlerAddress, msg -> {});
+
+            // Poller with 300 ms execution timeout
+            DelayedJobPoller poller = new DelayedJobPoller(
+                    "default",
+                    fastConfig(),
+                    repository,
+                    completionHandler,
+                    Set.of(),
+                    testEventBusClient(vertx),
+                    300L,
+                    0L,
+                    DispatchEnvelopeBuilder.forTesting(),
+                    noOpPropagator());
+
+            vertx.deployVerticle(poller).onFailure(ctx::failNow);
+
+            vertx.setTimer(2500, id -> {
+                try {
+                    // abandonAndScheduleRetry must be called — one atomic operation for timeout+retry
+                    verify(repository, timeout(1000).atLeastOnce())
+                            .abandonAndScheduleRetry(
+                                    eq(execution.id()), anyString(), anyString(), any(), any(Instant.class), eq(1));
+                    // completeExecution(ABANDONED) must never be called — replaced by atomic op
+                    verify(repository, never())
+                            .completeExecution(
+                                    eq(execution.id()), eq(JobState.ABANDONED), anyString(), anyString(), any());
+                    // scheduleRetry must never be called separately — replaced by atomic op
+                    verify(repository, never()).scheduleRetry(any(), any(), anyInt());
+                    // handleCompletion is not called from the timeout path
+                    verify(completionHandler, never()).handleCompletion(any(), any(), any());
+                    ctx.completeNow();
+                } catch (Exception e) {
+                    ctx.failNow(e);
+                }
+            });
+        }
+
+        @Test
+        @DisplayName("exhausted timeout: writes DEAD_LETTER directly, never calls handleCompletion or scheduleRetry")
+        void exhaustedTimeoutWritesDeadLetterDirectly(Vertx vertx, VertxTestContext ctx) {
+            String handlerAddress = "test.timeout.exhausted.handler";
+            // attemptNumber=2, maxAttempts=3 — no attempts remain after this timeout
+            JobExecution execution = new JobExecution(
+                    UUID.randomUUID(),
+                    "timeout-exhausted-job",
+                    JobType.DELAYED,
+                    handlerAddress,
+                    "default",
+                    JobState.PROCESSING,
+                    2,
+                    3,
+                    null,
+                    0,
+                    null,
+                    Instant.now(),
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    ProgressSnapshot.EMPTY,
+                    Map.of(),
+                    Map.of(),
+                    DurableMetadata.empty());
+
+            when(repository.claimNextJob(anyString(), anyInt()))
+                    .thenReturn(Future.succeededFuture(List.of(execution)))
+                    .thenReturn(Future.succeededFuture(List.of()));
+            when(repository.completeExecution(
+                            any(UUID.class), eq(JobState.DEAD_LETTER), anyString(), anyString(), any()))
+                    .thenReturn(Future.succeededFuture(Optional.of(execution)));
+
+            // Handler that intentionally never replies — let the timeout fire
+            vertx.eventBus().consumer(handlerAddress, msg -> {});
+
+            // Poller with 300 ms execution timeout
+            DelayedJobPoller poller = new DelayedJobPoller(
+                    "default",
+                    fastConfig(),
+                    repository,
+                    completionHandler,
+                    Set.of(),
+                    testEventBusClient(vertx),
+                    300L,
+                    0L,
+                    DispatchEnvelopeBuilder.forTesting(),
+                    noOpPropagator());
+
+            vertx.deployVerticle(poller).onFailure(ctx::failNow);
+
+            vertx.setTimer(2500, id -> {
+                try {
+                    // DEAD_LETTER must be written directly — one record, no ABANDONED step
+                    verify(repository, timeout(1000).atLeastOnce())
+                            .completeExecution(
+                                    eq(execution.id()), eq(JobState.DEAD_LETTER), anyString(), anyString(), any());
+                    // scheduleRetry must never be called — exhausted
+                    verify(repository, never()).scheduleRetry(any(), any(), anyInt());
+                    // abandonAndScheduleRetry must never be called — exhausted path goes to DEAD_LETTER
+                    verify(repository, never())
+                            .abandonAndScheduleRetry(any(), any(), any(), any(), any(Instant.class), anyInt());
+                    // handleCompletion is not called from the timeout path
+                    verify(completionHandler, never()).handleCompletion(any(), any(), any());
+                    ctx.completeNow();
+                } catch (Exception e) {
+                    ctx.failNow(e);
+                }
+            });
+        }
+    }
+
+    // --- Cancellation tests ---
+
+    @Nested
+    @DisplayName("cancellation")
+    @Timeout(value = 10, unit = TimeUnit.SECONDS)
+    class Cancellation {
+
+        @Test
+        @DisplayName("cancel listener sets isCancelled on the JobContext")
+        void cancelListenerSetsCancelledFlag(Vertx vertx, VertxTestContext ctx) {
+            String handlerAddress = "test.cancel.handler";
+            JobExecution execution = sampleExecution("cancel-job", handlerAddress);
+
+            when(repository.claimNextJob(anyString(), anyInt()))
+                    .thenReturn(Future.succeededFuture(List.of(execution)))
+                    .thenReturn(Future.succeededFuture(List.of()));
+            when(completionHandler.handleCompletion(any(), any(), any())).thenReturn(Future.succeededFuture());
+
+            AtomicBoolean cancelObserved = new AtomicBoolean(false);
+
+            // Handler that captures JobContext, publishes cancel, then checks the flag
+            vertx.eventBus().consumer(handlerAddress, msg -> {
+                if (msg.body() instanceof DispatchEnvelope<?> body) {
+                    // Extract JobContext from the dispatch context map
+                    dev.vertique.job.DefaultJobContext jobCtx = (dev.vertique.job.DefaultJobContext)
+                            body.metadata().dispatchContext().get(JobContext.class.getName());
+                    if (jobCtx != null) {
+                        // Publish cancel on the event bus
+                        vertx.eventBus().publish("job.cancel." + jobCtx.executionId(), "cancel");
+                        // Give the cancel message time to be delivered before checking
+                        vertx.setTimer(100, id -> {
+                            cancelObserved.set(jobCtx.isCancelled());
+                            // Reply to unblock the poller
+                            if (body.replyAddress().isPresent()) {
+                                vertx.eventBus()
+                                        .send(
+                                                body.replyAddress().orElseThrow(),
+                                                DispatchEnvelope.of(
+                                                        Result.success(null),
+                                                        dev.vertique.core.eventbus.DispatchMetadata.empty()),
+                                                new DeliveryOptions().setCodecName("dispatch.envelope"));
+                            }
+                        });
+                    }
+                }
+            });
+
+            DelayedJobPoller poller = new DelayedJobPoller(
+                    "default",
+                    fastConfig(),
+                    repository,
+                    completionHandler,
+                    Set.of(),
+                    testEventBusClient(vertx),
+                    DispatchEnvelopeBuilder.forTesting(),
+                    noOpPropagator());
+
+            vertx.deployVerticle(poller).onFailure(ctx::failNow);
+
+            vertx.setTimer(
+                    3000,
+                    id -> ctx.verify(() -> {
+                        assertTrue(cancelObserved.get(), "JobContext should have isCancelled=true after cancel signal");
+                        ctx.completeNow();
+                    }));
+        }
+    }
+}

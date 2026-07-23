@@ -1,0 +1,21 @@
+{
+  "openapi": "3.0.1",
+  "info": {
+    "title": "Action-Only Route Test API",
+    "description": "Minimal OpenAPI fixture used by ActionOnlyRouteAuthIT. The /content operation declares NO security requirement, modelling an action-only (@RequiresAction with SecurityPolicy.None) route.",
+    "version": "0.0.1"
+  },
+  "paths": {
+    "/content": {
+      "get": {
+        "summary": "Read content (action-gated, no OpenAPI security requirement)",
+        "operationId": "getContent",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    }
+  }
+}

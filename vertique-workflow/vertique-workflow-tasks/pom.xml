@@ -1,0 +1,135 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
+SPDX-License-Identifier: EUPL-1.2
+-->
+
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
+
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>dev.vertique</groupId>
+        <artifactId>vertique-parent</artifactId>
+        <version>${revision}</version>
+        <relativePath>../../pom.xml</relativePath>
+    </parent>
+
+    <artifactId>vertique-workflow-tasks</artifactId>
+    <name>Vertique Workflow Tasks</name>
+    <description>Human task action APIs: TaskService (list/get/complete/reassign), typed-per-decision payload binding, idempotent commands with WorkflowActor audit identity. Cycle-2 timer reuse for due-dates.</description>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-failsafe-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-enforcer-plugin</artifactId>
+                <version>3.4.1</version>
+                <executions>
+                    <execution>
+                        <id>enforce-workflow-tasks-boundaries</id>
+                        <goals><goal>enforce</goal></goals>
+                        <configuration>
+                            <rules>
+                                <bannedDependencies>
+                                    <excludes>
+                                        <exclude>dev.vertique:vertique-workflow-postgresql</exclude>
+                                        <exclude>dev.vertique:vertique-workflow-engine</exclude>
+                                        <exclude>dev.vertique:vertique-workflow-delayed</exclude>
+                                        <exclude>dev.vertique:vertique-services</exclude>
+                                        <exclude>dev.vertique:vertique-job-core</exclude>
+                                        <exclude>dev.vertique:vertique-job-delayed</exclude>
+                                        <exclude>dev.vertique:vertique-job-postgresql</exclude>
+                                        <exclude>dev.vertique:vertique-inbox-outbox-core</exclude>
+                                        <exclude>dev.vertique:vertique-inbox-outbox-services</exclude>
+                                        <exclude>dev.vertique:vertique-inbox-outbox-delayed-job</exclude>
+                                        <exclude>dev.vertique:vertique-inbox-outbox-postgresql</exclude>
+                                        <exclude>dev.vertique:vertique-inbox-outbox-kafka</exclude>
+                                    </excludes>
+                                    <message>
+                                        workflow-tasks must stay decoupled from workflow-postgresql, workflow-delayed,
+                                        services, job-*, and inbox-outbox-* (uses TaskStore&lt;TX&gt; and
+                                        TransactionalTaskCallbacks&lt;TX&gt; SPIs from workflow-core; the typed
+                                        TaskService is the only public contract — no service-contract surface,
+                                        no direct outbox or job-delayed coupling).
+                                    </message>
+                                </bannedDependencies>
+                            </rules>
+                            <fail>true</fail>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+
+    <dependencies>
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-workflow-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.vertx</groupId>
+            <artifactId>vertx-sql-client</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.vertx</groupId>
+            <artifactId>vertx-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.google.dagger</groupId>
+            <artifactId>dagger</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>jakarta.inject</groupId>
+            <artifactId>jakarta.inject-api</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>jakarta.annotation</groupId>
+            <artifactId>jakarta.annotation-api</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-api</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <scope>provided</scope>
+        </dependency>
+
+        <!-- Test -->
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.assertj</groupId>
+            <artifactId>assertj-core</artifactId>
+            <version>3.27.7</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.mockito</groupId>
+            <artifactId>mockito-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.mockito</groupId>
+            <artifactId>mockito-junit-jupiter</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.vertx</groupId>
+            <artifactId>vertx-junit5</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>ch.qos.logback</groupId>
+            <artifactId>logback-classic</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+</project>
