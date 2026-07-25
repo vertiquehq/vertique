@@ -22,6 +22,7 @@ SPDX-License-Identifier: EUPL-1.2
 
     <properties>
         <jacoco.skip>true</jacoco.skip>
+        <maven.invoker.plugin.version>3.10.1</maven.invoker.plugin.version>
     </properties>
 
     <dependencies>
@@ -41,9 +42,101 @@ SPDX-License-Identifier: EUPL-1.2
             <scope>test</scope>
         </dependency>
         <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-application</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter</artifactId>
             <scope>test</scope>
         </dependency>
     </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-enforcer-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>require-invoker-maven-version</id>
+                        <phase>validate</phase>
+                        <goals>
+                            <goal>enforce</goal>
+                        </goals>
+                        <configuration>
+                            <rules>
+                                <requireMavenVersion>
+                                    <version>[3.9.9]</version>
+                                    <message>CODEGEN-014 Maven Invoker fixtures require Maven 3.9.9 exactly.</message>
+                                </requireMavenVersion>
+                            </rules>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-invoker-plugin</artifactId>
+                <version>${maven.invoker.plugin.version}</version>
+                <executions>
+                    <execution>
+                        <id>stage-parent-contract-artifacts</id>
+                        <phase>pre-integration-test</phase>
+                        <goals>
+                            <goal>install</goal>
+                        </goals>
+                        <configuration>
+                            <localRepositoryPath>
+                                ${project.build.directory}/invoker-local-repository
+                            </localRepositoryPath>
+                            <extraArtifacts>
+                                <extraArtifact>
+                                    dev.vertique:vertique-app-parent:${revision}:pom
+                                </extraArtifact>
+                                <extraArtifact>
+                                    dev.vertique:vertique-bom:${revision}:pom
+                                </extraArtifact>
+                            </extraArtifacts>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>run-parent-contract-fixtures</id>
+                        <phase>integration-test</phase>
+                        <goals>
+                            <goal>run</goal>
+                        </goals>
+                        <configuration>
+                            <projectsDirectory>${project.basedir}/src/it</projectsDirectory>
+                            <cloneProjectsTo>${project.build.directory}/it</cloneProjectsTo>
+                            <localRepositoryPath>
+                                ${project.build.directory}/invoker-local-repository
+                            </localRepositoryPath>
+                            <settingsFile>${project.basedir}/src/it/settings.xml</settingsFile>
+                            <mergeUserSettings>false</mergeUserSettings>
+                            <mavenHome>${maven.home}</mavenHome>
+                            <goals>
+                                <goal>clean</goal>
+                                <goal>verify</goal>
+                            </goals>
+                            <pomIncludes>
+                                <pomInclude>*/pom.xml</pomInclude>
+                            </pomIncludes>
+                            <postBuildHookScript>verify.groovy</postBuildHookScript>
+                            <filterProperties>
+                                <vertiqueVersion>${revision}</vertiqueVersion>
+                            </filterProperties>
+                            <scriptVariables>
+                                <vertiqueVersion>${revision}</vertiqueVersion>
+                            </scriptVariables>
+                            <parallelThreads>1</parallelThreads>
+                            <failIfNoProjects>true</failIfNoProjects>
+                            <streamLogsOnFailures>true</streamLogsOnFailures>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
 </project>

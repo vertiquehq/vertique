@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
+SPDX-License-Identifier: EUPL-1.2
+-->
+
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
+
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>dev.vertique</groupId>
+        <artifactId>vertique-app-parent</artifactId>
+        <version>@vertiqueVersion@</version>
+        <relativePath/>
+    </parent>
+
+    <artifactId>codegen-it-parent-manual-parity</artifactId>
+    <version>1.0.0</version>
+
+    <dependencies>
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-rest-jaxrs</artifactId>
+        </dependency>
+    </dependencies>
+
+    <profiles>
+        <profile>
+            <id>parent</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-compiler-plugin</artifactId>
+                        <configuration>
+                            <generatedSourcesDirectory>
+                                ${project.basedir}/comparison/parent
+                            </generatedSourcesDirectory>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+        <profile>
+            <id>manual</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-compiler-plugin</artifactId>
+                        <configuration>
+                            <generatedSourcesDirectory>
+                                ${project.basedir}/comparison/manual
+                            </generatedSourcesDirectory>
+                            <annotationProcessorPaths combine.self="override">
+                                <path>
+                                    <groupId>com.google.dagger</groupId>
+                                    <artifactId>dagger-compiler</artifactId>
+                                    <version>2.59.2</version>
+                                </path>
+                                <path>
+                                    <groupId>dev.vertique</groupId>
+                                    <artifactId>vertique-codegen-application</artifactId>
+                                    <version>@vertiqueVersion@</version>
+                                </path>
+                                <path>
+                                    <groupId>dev.vertique</groupId>
+                                    <artifactId>vertique-codegen-dagger</artifactId>
+                                    <version>@vertiqueVersion@</version>
+                                </path>
+                                <path>
+                                    <groupId>dev.vertique</groupId>
+                                    <artifactId>vertique-codegen-jaxrs</artifactId>
+                                    <version>@vertiqueVersion@</version>
+                                </path>
+                            </annotationProcessorPaths>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
+</project>
