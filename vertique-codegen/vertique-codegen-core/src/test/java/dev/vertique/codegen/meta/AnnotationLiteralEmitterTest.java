@@ -9,6 +9,8 @@ import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 
 import dev.vertique.codegen.meta.AnnotationLiteralEmitter.UnsupportedAttribute;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
 import java.util.List;
 import java.util.Optional;
 import javax.lang.model.element.AnnotationMirror;
@@ -48,6 +50,25 @@ import org.mockito.quality.Strictness;
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
 class AnnotationLiteralEmitterTest {
+
+    @Test
+    @DisplayName("namespaced emitter entry points reject blank and invalid generator namespaces")
+    void rejectsBlankGeneratorNamespace() throws NoSuchMethodException {
+        Method literalClassName = AnnotationLiteralEmitter.class.getDeclaredMethod(
+                "literalClassName", TypeElement.class, Elements.class, String.class);
+        Method emit = AnnotationLiteralEmitter.class.getDeclaredMethod(
+                "emit", TypeElement.class, AnnotationMirror.class, Elements.class, Types.class, String.class);
+
+        TypeElement annotationType = mock(TypeElement.class);
+        AnnotationMirror mirror = mock(AnnotationMirror.class);
+        Elements elements = mock(Elements.class);
+        Types types = mock(Types.class);
+
+        for (String namespace : List.of("", " ", "not-valid")) {
+            assertIllegalArgument(literalClassName, annotationType, elements, namespace);
+            assertIllegalArgument(emit, annotationType, mirror, elements, types, namespace);
+        }
+    }
 
     @Test
     @DisplayName("firstUnsupportedAttribute flags an array-of-nested-annotation member")
@@ -153,5 +174,21 @@ class AnnotationLiteralEmitterTest {
                 invocation -> "toString".equals(invocation.getMethod().getName())
                         ? value
                         : org.mockito.Answers.RETURNS_DEFAULTS.answer(invocation));
+    }
+
+    /**
+     * Invokes a namespaced emitter entry point and verifies that it rejects the supplied namespace.
+     *
+     * @param method the reflected emitter method
+     * @param args   method arguments ending with an invalid generator namespace
+     */
+    private static void assertIllegalArgument(Method method, Object... args) {
+        InvocationTargetException thrown = assertThrows(
+                InvocationTargetException.class,
+                () -> method.invoke(null, args),
+                () -> method.getName() + " must reject namespace '" + args[args.length - 1] + "'");
+        assertTrue(
+                thrown.getCause() instanceof IllegalArgumentException,
+                () -> method.getName() + " must throw IllegalArgumentException, got " + thrown.getCause());
     }
 }
