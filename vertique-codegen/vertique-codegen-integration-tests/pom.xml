@@ -20,65 +20,14 @@ SPDX-License-Identifier: EUPL-1.2
     <name>Vertique Codegen Integration Tests</name>
     <description>Cross-processor integration tests for Vertique annotation processors</description>
 
+    <properties>
+        <jacoco.skip>true</jacoco.skip>
+    </properties>
+
     <dependencies>
         <dependency>
             <groupId>dev.vertique</groupId>
-            <artifactId>vertique-codegen-aop</artifactId>
-            <scope>test</scope>
-        </dependency>
-        <dependency>
-            <groupId>dev.vertique</groupId>
-            <artifactId>vertique-codegen-application</artifactId>
-            <scope>test</scope>
-        </dependency>
-        <dependency>
-            <groupId>dev.vertique</groupId>
-            <artifactId>vertique-codegen-cron</artifactId>
-            <scope>test</scope>
-        </dependency>
-        <dependency>
-            <groupId>dev.vertique</groupId>
-            <artifactId>vertique-codegen-dagger</artifactId>
-            <scope>test</scope>
-        </dependency>
-        <dependency>
-            <groupId>dev.vertique</groupId>
-            <artifactId>vertique-codegen-delayed-job</artifactId>
-            <scope>test</scope>
-        </dependency>
-        <dependency>
-            <groupId>dev.vertique</groupId>
-            <artifactId>vertique-codegen-events</artifactId>
-            <scope>test</scope>
-        </dependency>
-        <dependency>
-            <groupId>dev.vertique</groupId>
-            <artifactId>vertique-codegen-jaxrs</artifactId>
-            <scope>test</scope>
-        </dependency>
-        <dependency>
-            <groupId>dev.vertique</groupId>
-            <artifactId>vertique-codegen-kafka</artifactId>
-            <scope>test</scope>
-        </dependency>
-        <dependency>
-            <groupId>dev.vertique</groupId>
-            <artifactId>vertique-codegen-rest-client</artifactId>
-            <scope>test</scope>
-        </dependency>
-        <dependency>
-            <groupId>dev.vertique</groupId>
-            <artifactId>vertique-codegen-sanitization</artifactId>
-            <scope>test</scope>
-        </dependency>
-        <dependency>
-            <groupId>dev.vertique</groupId>
-            <artifactId>vertique-codegen-services</artifactId>
-            <scope>test</scope>
-        </dependency>
-        <dependency>
-            <groupId>dev.vertique</groupId>
-            <artifactId>vertique-codegen-workflow</artifactId>
+            <artifactId>vertique-codegen-all</artifactId>
             <scope>test</scope>
         </dependency>
         <dependency>

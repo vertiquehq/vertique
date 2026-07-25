@@ -27,9 +27,9 @@ import org.w3c.dom.NodeList;
 /**
  * Contract tests for the dependency-only {@code vertique-codegen-all} processor facade.
  *
- * <p>The integration-test module keeps the processor leaves on its test classpath so this class
- * compiles before the facade exists. Each test nevertheless requires the facade POM first, making
- * the missing facade an assertion-level RED rather than a test-compilation failure.
+ * <p>The integration-test module depends only on the facade and discovers the processor leaves
+ * through its transitive dependency graph. The POM assertion freezes that graph independently of
+ * service discovery.
  */
 class ProcessorFacadeDiscoveryTest {
 
@@ -72,10 +72,14 @@ class ProcessorFacadeDiscoveryTest {
                 .map(ProcessorFacadeDiscoveryTest::pomDependency)
                 .toList();
         List<PomDependency> expected = FROZEN_LEAVES.stream()
-                .map(leaf -> new PomDependency("dev.vertique", leaf.artifactId(), "compile"))
+                .map(leaf -> new PomDependency("dev.vertique", leaf.artifactId(), "compile", true))
                 .toList();
 
-        assertEquals(expected, actual, "Facade dependencies must be exactly the frozen ordered compile-scope leaves");
+        assertEquals(
+                expected,
+                actual,
+                "Facade dependencies must be exactly the frozen ordered compile-scope leaves"
+                        + " and must exclude transitive Lombok activation");
     }
 
     @Test
@@ -144,7 +148,18 @@ class ProcessorFacadeDiscoveryTest {
         return new PomDependency(
                 directChildText(dependency, "groupId"),
                 directChildText(dependency, "artifactId"),
-                scope.isBlank() ? "compile" : scope);
+                scope.isBlank() ? "compile" : scope,
+                excludesLombok(dependency));
+    }
+
+    private static boolean excludesLombok(Element dependency) {
+        Element exclusions = directChild(dependency, "exclusions");
+        if (exclusions == null) {
+            return false;
+        }
+        return directChildren(exclusions, "exclusion").stream()
+                .anyMatch(exclusion -> "org.projectlombok".equals(directChildText(exclusion, "groupId"))
+                        && "lombok".equals(directChildText(exclusion, "artifactId")));
     }
 
     private static String directChildText(Element parent, String localName) {
@@ -171,5 +186,5 @@ class ProcessorFacadeDiscoveryTest {
 
     private record FacadeLeaf(String artifactId, String processorClassName) {}
 
-    private record PomDependency(String groupId, String artifactId, String scope) {}
+    private record PomDependency(String groupId, String artifactId, String scope, boolean excludesLombok) {}
 }
