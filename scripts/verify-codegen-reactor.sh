@@ -7,6 +7,95 @@ set -euo pipefail
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repository_root="$(cd "$script_dir/.." && pwd)"
 maven_wrapper="$repository_root/mvnw"
+
+if [[ ! -x "$maven_wrapper" ]]; then
+    echo "Maven wrapper is not executable: $maven_wrapper" >&2
+    exit 1
+fi
+
+path_to_file_uri() {
+    local absolute_path="$1"
+    local character
+    local encoded_path=""
+    local hex
+    local index=0
+    local LC_ALL=C
+
+    if [[ "$absolute_path" != /* ]]; then
+        echo "Cannot create a file URI from a non-absolute path: $absolute_path" >&2
+        return 1
+    fi
+
+    while (( index < ${#absolute_path} )); do
+        character="${absolute_path:index:1}"
+        case "$character" in
+            [A-Za-z0-9._~-] | /)
+                encoded_path+="$character"
+                ;;
+            *)
+                printf -v hex '%02X' "'$character"
+                encoded_path+="%$hex"
+                ;;
+        esac
+        index=$((index + 1))
+    done
+
+    printf 'file://%s\n' "$encoded_path"
+}
+
+assert_xml_safe_element_text() {
+    local value="$1"
+
+    case "$value" in
+        *'&'* | *'<'* | *'>'*)
+            echo "Generated repository URI is not safe for XML element text: $value" >&2
+            return 1
+            ;;
+    esac
+}
+
+assert_repository_cache_uri_encoding() {
+    local smoke_path='/tmp/vertique cache & #?%[]'
+    local expected_uri='file:///tmp/vertique%20cache%20%26%20%23%3F%25%5B%5D'
+    local actual_uri
+
+    actual_uri="$(path_to_file_uri "$smoke_path")"
+    if [[ "$actual_uri" != "$expected_uri" ]]; then
+        echo "Repository URI encoding smoke test failed." >&2
+        echo "Expected: $expected_uri" >&2
+        echo "Actual:   $actual_uri" >&2
+        return 1
+    fi
+    assert_xml_safe_element_text "$actual_uri"
+}
+
+assert_repository_cache_uri_encoding
+if (( $# > 1 )) || { (( $# == 1 )) && [[ "$1" != "--repository-uri-smoke-test" ]]; }; then
+    echo "Usage: $0 [--repository-uri-smoke-test]" >&2
+    exit 2
+fi
+
+repository_cache_input="${MAVEN_REPOSITORY_CACHE:-${HOME:?HOME must be set when MAVEN_REPOSITORY_CACHE is unset}/.m2/repository}"
+if [[ "$repository_cache_input" != /* ]]; then
+    echo "MAVEN_REPOSITORY_CACHE must be an absolute path: $repository_cache_input" >&2
+    exit 1
+fi
+if [[ ! -d "$repository_cache_input" ]]; then
+    echo "Maven repository cache directory does not exist: $repository_cache_input" >&2
+    exit 1
+fi
+if ! repository_cache="$(cd "$repository_cache_input" && pwd -P)"; then
+    echo "Cannot resolve Maven repository cache directory: $repository_cache_input" >&2
+    exit 1
+fi
+repository_cache_uri="$(path_to_file_uri "$repository_cache")"
+assert_xml_safe_element_text "$repository_cache_uri"
+
+if [[ "${1:-}" == "--repository-uri-smoke-test" ]]; then
+    echo "Repository URI encoding smoke test passed: $repository_cache_uri"
+    exit 0
+fi
+
 temporary_root="${TMPDIR:-/tmp}"
 run_root="$(mktemp -d "$temporary_root/vertique-codegen-reactor-XXXXXXXX")"
 isolated_repository="$run_root/repository"
@@ -15,11 +104,6 @@ poison_payload="$run_root/poison-payload"
 poison_jar="$run_root/stale-processor.jar"
 poison_manifest_before="$run_root/poison-before.sha256"
 poison_manifest_after="$run_root/poison-after.sha256"
-
-if [[ ! -x "$maven_wrapper" ]]; then
-    echo "Maven wrapper is not executable: $maven_wrapper" >&2
-    exit 1
-fi
 
 resolve_reactor_revision() {
     awk '
@@ -89,7 +173,7 @@ done
     printf '%s\n' '    <mirror>'
     printf '%s\n' '      <id>existing-local-cache</id>'
     printf '%s\n' '      <mirrorOf>*</mirrorOf>'
-    printf '      <url>file://%s</url>\n' "${MAVEN_REPOSITORY_CACHE:-$HOME/.m2/repository}"
+    printf '      <url>%s</url>\n' "$repository_cache_uri"
     printf '%s\n' '    </mirror>'
     printf '%s\n' '  </mirrors>'
     printf '%s\n' '</settings>'

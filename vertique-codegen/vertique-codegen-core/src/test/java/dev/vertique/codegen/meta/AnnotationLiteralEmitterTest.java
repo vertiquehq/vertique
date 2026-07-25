@@ -3,11 +3,17 @@
 
 package dev.vertique.codegen.meta;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
+import com.palantir.javapoet.ClassName;
+import com.palantir.javapoet.JavaFile;
 import dev.vertique.codegen.meta.AnnotationLiteralEmitter.UnsupportedAttribute;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
@@ -17,8 +23,10 @@ import javax.lang.model.element.AnnotationMirror;
 import javax.lang.model.element.AnnotationValue;
 import javax.lang.model.element.Element;
 import javax.lang.model.element.ElementKind;
+import javax.lang.model.element.ElementVisitor;
 import javax.lang.model.element.ExecutableElement;
 import javax.lang.model.element.Name;
+import javax.lang.model.element.PackageElement;
 import javax.lang.model.element.TypeElement;
 import javax.lang.model.type.ArrayType;
 import javax.lang.model.type.DeclaredType;
@@ -50,6 +58,24 @@ import org.mockito.quality.Strictness;
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
 class AnnotationLiteralEmitterTest {
+
+    @Test
+    @DisplayName("valid generator namespace produces the exact processor-owned literal class name")
+    void usesGeneratorNamespaceInLiteralClassNameAndEmission() {
+        TypeElement annotationType = mockTypeElement("com.example.Audited", "Audited");
+        PackageElement annotationPackage = (PackageElement) annotationType.getEnclosingElement();
+        AnnotationMirror mirror = mock(AnnotationMirror.class);
+        Elements elements = mock(Elements.class);
+        Types types = mock(Types.class);
+        when(elements.getPackageOf(annotationType)).thenReturn(annotationPackage);
+        lenient().when(elements.getElementValuesWithDefaults(mirror)).thenReturn(java.util.Map.of());
+
+        ClassName literalClassName = AnnotationLiteralEmitter.literalClassName(annotationType, elements, "Aop");
+        JavaFile literal = AnnotationLiteralEmitter.emit(annotationType, mirror, elements, types, "Aop");
+
+        assertEquals(ClassName.get("com.example", "Audited$AopLiteral"), literalClassName);
+        assertEquals("Audited$AopLiteral", literal.typeSpec().name());
+    }
 
     @Test
     @DisplayName("namespaced emitter entry points reject blank and invalid generator namespaces")
@@ -160,6 +186,38 @@ class AnnotationLiteralEmitterTest {
         TypeElement annotationType = mock(TypeElement.class);
         org.mockito.Mockito.doReturn(members).when(annotationType).getEnclosedElements();
         return annotationType;
+    }
+
+    /**
+     * Creates a mock {@link TypeElement} whose enclosing package supports
+     * {@link ClassName#get(TypeElement)}.
+     *
+     * @param qualifiedName the annotation's fully-qualified name
+     * @param simpleName    the annotation's simple name
+     * @return the mock type element
+     */
+    @SuppressWarnings("unchecked")
+    private static TypeElement mockTypeElement(String qualifiedName, String simpleName) {
+        TypeElement element = mock(TypeElement.class);
+        when(element.getQualifiedName()).thenReturn(mockName(qualifiedName));
+        when(element.getSimpleName()).thenReturn(mockName(simpleName));
+
+        DeclaredType type = mock(DeclaredType.class);
+        when(type.getKind()).thenReturn(TypeKind.DECLARED);
+        when(type.asElement()).thenReturn(element);
+        when(element.asType()).thenReturn(type);
+
+        String packageName = qualifiedName.substring(0, qualifiedName.lastIndexOf('.'));
+        PackageElement pkg = mock(PackageElement.class);
+        when(pkg.getQualifiedName()).thenReturn(mockName(packageName));
+        doAnswer(invocation -> {
+                    ElementVisitor<?, ?> visitor = invocation.getArgument(0);
+                    return ((ElementVisitor<Object, Object>) visitor).visitPackage(pkg, invocation.getArgument(1));
+                })
+                .when(pkg)
+                .accept(any(), any());
+        when(element.getEnclosingElement()).thenReturn(pkg);
+        return element;
     }
 
     /**
