@@ -261,22 +261,11 @@ This means adding `vertique-codegen-sanitization` to a project is always additiv
 
 ## Enabling the Processor
 
-Add `vertique-codegen-sanitization` to `annotationProcessorPaths` in the module that contains the `@Path`-annotated resources. `vertique-codegen-core` arrives transitively.
-
-```xml
-<plugin>
-  <artifactId>maven-compiler-plugin</artifactId>
-  <configuration>
-    <annotationProcessorPaths combine.children="append">
-      <path>
-        <groupId>dev.vertique</groupId>
-        <artifactId>vertique-codegen-sanitization</artifactId>
-        <version>${project.version}</version>
-      </path>
-    </annotationProcessorPaths>
-  </configuration>
-</plugin>
-```
+Applications inheriting `vertique-app-parent` declare `vertique-sanitization` and the relevant
+REST runtime capabilities, then receive the complete processor facade automatically. Custom-parent
+applications import `vertique-bom` and configure only the versionless Dagger and
+`vertique-codegen-all` processor paths. The facade supplies `vertique-codegen-core` transitively.
+See `docs/packaging.md`.
 
 No `@Component` changes are required. The dispatcher self-bootstraps inside `DefaultInputObjectProcessor`'s existing 3-arg constructor; the `SanitizationModule` binding remains unchanged.
 

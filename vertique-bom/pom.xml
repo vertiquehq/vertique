@@ -518,6 +518,11 @@ SPDX-License-Identifier: EUPL-1.2
                 <artifactId>dagger</artifactId>
                 <version>${dagger.version}</version>
             </dependency>
+            <dependency>
+                <groupId>com.google.dagger</groupId>
+                <artifactId>dagger-compiler</artifactId>
+                <version>${dagger.version}</version>
+            </dependency>
 
             <!-- Jakarta -->
             <dependency>

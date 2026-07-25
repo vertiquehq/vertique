@@ -193,16 +193,10 @@ The generated proxy is always emitted into the contract's own package (`ctx.pack
 
 ## Adoption
 
-Add the processor to `<annotationProcessorPaths>`. Use `combine.children="append"` when the parent POM already declares processor paths (e.g., for Dagger or Lombok):
-
-```xml
-<annotationProcessorPaths combine.children="append">
-    <path>
-        <groupId>dev.vertique</groupId>
-        <artifactId>vertique-codegen-delayed-job</artifactId>
-    </path>
-</annotationProcessorPaths>
-```
+Applications inheriting `vertique-app-parent` declare `vertique-job-delayed` as a runtime
+dependency and receive the complete processor facade automatically. Custom-parent applications
+import `vertique-bom` and configure only the versionless Dagger and `vertique-codegen-all`
+processor paths. See `docs/packaging.md`.
 
 No `@Component` changes are required. Removing the processor reverts all contracts to the JDK reflective proxy — the existing `DelayedJobClientProxy` is retained and is not deprecated.
 

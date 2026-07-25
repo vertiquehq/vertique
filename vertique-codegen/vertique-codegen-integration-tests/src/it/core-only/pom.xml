@@ -24,5 +24,10 @@ SPDX-License-Identifier: EUPL-1.2
             <groupId>dev.vertique</groupId>
             <artifactId>vertique-core</artifactId>
         </dependency>
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-codegen-core</artifactId>
+            <scope>provided</scope>
+        </dependency>
     </dependencies>
 </project>

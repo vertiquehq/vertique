@@ -16,11 +16,19 @@ The processor generates two artifact types per compilation unit:
 - **`{Client}_RestClientProxy`** — a `public final` class implementing the `@RestClient` interface. It holds `ClientMethodMeta` references in `final` fields (resolved once at construction time from the pre-built `Map<Method, ClientMethodMeta>`) and calls accessor methods directly, with no per-call reflection.
 - **`{Bean}_BeanParamAccessor`** — a `public final` class implementing `BeanParamAccessor<T>`. It dispatches over field names via a `switch` expression calling record accessors, public getters, or direct field access — whichever is applicable — with no `setAccessible` or reflective dispatch on the hot path.
 
-Runtime selection is transparent: `RestClientBuilder.build()` and `RestClientFactory.builder()` both try `Class.forName(clientInterface.getName() + "_RestClientProxy")` before falling back to the existing JDK proxy. No opt-in beyond adding the processor to `annotationProcessorPaths` is required.
+Runtime selection is transparent: `RestClientBuilder.build()` and `RestClientFactory.builder()` both try `Class.forName(clientInterface.getName() + "_RestClientProxy")` before falling back to the existing JDK proxy. The application processor boundary described below is the only Maven setup required.
 
 In addition to the performance win, the processor lifts structural validation to compile time: `@Path` placeholder / `@PathParam` mismatches, missing HTTP verb annotations, and non-`Future<T>` return types all surface as build errors.
 
 See ADR-0026 for the discovery mechanism decisions and alternatives considered.
+
+## Adoption
+
+Applications inheriting `vertique-app-parent` declare `vertique-rest-client` as a runtime
+dependency and receive the complete processor facade automatically. Custom-parent applications
+import `vertique-bom` and configure only the versionless Dagger and `vertique-codegen-all`
+processor paths. See `docs/packaging.md`. The runtime selects generated proxies when present and
+retains the JDK proxy as its fallback.
 
 ---
 
@@ -280,16 +288,9 @@ This parity gap was previously documented as intentional: the generated path thr
 
 - **External `@BeanParam` types skip proxy emission for the interface.** If any `@BeanParam` type on an interface is not in the current compilation unit, the processor cannot scan its fields, so the entire `{Client}_RestClientProxy` is not emitted. A compile-time `WARNING` is emitted for the external type. The interface falls back to the JDK proxy at runtime, exactly as without the processor.
 
-- **`combine.children="append"` is required.** If the parent POM already declares `<annotationProcessorPaths>` (e.g. for Dagger or Lombok), child modules must extend rather than replace the list:
-  ```xml
-  <annotationProcessorPaths combine.children="append">
-      <path>
-          <groupId>dev.vertique</groupId>
-          <artifactId>vertique-codegen-rest-client</artifactId>
-      </path>
-  </annotationProcessorPaths>
-  ```
-  Without `combine.children="append"`, the child's `<annotationProcessorPaths>` replaces the parent's, dropping Dagger and/or Lombok.
+- **Lombok remains explicit.** The public application parent does not activate Lombok. A project
+  that uses it appends the Lombok processor path as the explicit opt-in documented in
+  `docs/packaging.md`.
 
 - **Bean-level fallback for un-accessible fields.** A bean with private fields and no getters (and no record components) will not receive a generated accessor. The processor emits a `NOTE` rather than a `WARNING` because the runtime handles such beans correctly via `ReflectiveBeanParamAccessor`. If maximum performance is required, add public getters or convert to a record.
 

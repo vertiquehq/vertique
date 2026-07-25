@@ -18,7 +18,7 @@ The design is reflection-free at dispatch time. The generated proxy calls `super
 
 ## When To Use It
 
-Add `vertique-aop` to any module that defines a custom aspect annotation (`@Timed` or any user-defined `@Aspect`-meta-annotated annotation), or to any module that implements `AspectProvider<A>` to supply the interceptor logic for an aspect. Application beans do not need to depend on this module directly — they only need the aspect annotation itself and the `vertique-codegen-aop` annotation processor.
+Add `vertique-aop` to any module that defines a custom aspect annotation (`@Timed` or any user-defined `@Aspect`-meta-annotated annotation), or to any module that implements `AspectProvider<A>` to supply the interceptor logic for an aspect. Applications inheriting `vertique-app-parent` declare runtime capabilities only and receive the complete processor facade automatically; custom-parent applications use the BOM plus `vertique-codegen-all` recipe in `docs/packaging.md`. `vertique-codegen-aop` remains the ownership boundary for generated AOP proxies.
 
 The open-core framework ships one built-in aspect that depends on this module:
 

@@ -762,7 +762,14 @@ There are two registration paths for service contract implementations.
 | Multi-impl, conditional candidates only | Walks all candidates; exactly 1 match wins; 0 matches → throws `ServiceRegistrationException`; >1 match → throws `ServiceRegistrationException` |
 | Multi-impl, conditional + unconditional default | As above; 0 conditional matches → default wins |
 
-To adopt: annotate conditional impls with `@ConditionalOnProperty` (from `vertique-codegen-core`), add `vertique-codegen-services` to `<annotationProcessorPaths>`, and include `GeneratedServicesModule.class` in your `@Component`. See `dev.vertique:vertique-codegen-services`.
+To adopt conditional implementations, annotate them with `@ConditionalOnProperty` and include
+`GeneratedServicesModule.class` in the `@Component`. Applications inheriting
+`vertique-app-parent` declare `vertique-services` as a runtime dependency and receive the complete
+processor facade automatically; custom-parent applications use the BOM plus
+`vertique-codegen-all` recipe in `docs/packaging.md`. `vertique-codegen-services` owns the
+generated contributor and module. Because `@ConditionalOnProperty` and `@NoAutoWire` are
+source-retained annotations, applications using either also declare `vertique-codegen-core` with
+`provided` scope as documented in `docs/packaging.md`.
 
 **Example — default + conditional override (codegen path):**
 

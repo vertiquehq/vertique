@@ -90,6 +90,27 @@ class CodegenDocumentationPolicyTest {
                 "Artifact ownership reference:"));
     }
 
+    @Test
+    void sourceRetainedAnnotationsDocumentCompileTimeCoreDependency() throws IOException {
+        List<Path> sourceAnnotationDocuments = List.of(
+                REACTOR_ROOT.resolve("docs/packaging.md"),
+                REACTOR_ROOT.resolve(
+                        "vertique-job/vertique-job-delayed/src/main/resources/META-INF/vertique/module.md"),
+                REACTOR_ROOT.resolve(
+                        "vertique-rest/vertique-rest-client/src/main/resources/META-INF/vertique/module.md"),
+                REACTOR_ROOT.resolve(
+                        "vertique-rest/vertique-rest-jaxrs/src/main/resources/META-INF/vertique/module.md"),
+                REACTOR_ROOT.resolve("vertique-services/src/main/resources/META-INF/vertique/module.md"));
+
+        for (Path document : sourceAnnotationDocuments) {
+            String markdown = Files.readString(document);
+            assertTrue(
+                    markdown.contains("vertique-codegen-core") && markdown.contains("provided"),
+                    () -> REACTOR_ROOT.relativize(document)
+                            + " must document vertique-codegen-core as a compile-time-only dependency");
+        }
+    }
+
     private static List<Path> policyDocuments() throws IOException {
         List<Path> documents = new ArrayList<>();
         documents.add(REACTOR_ROOT.resolve("README.md"));

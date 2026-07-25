@@ -668,9 +668,17 @@ public class AppModule {
 }
 ```
 
-**Auto-wiring opt-in:**
+**Generated auto-wiring:**
 
-The `vertique-codegen-dagger` annotation processor can generate `@Provides @Singleton {Interface} provideXxx(RestClientFactory factory)` bindings automatically for all `@RestClient`-annotated interfaces found in the compilation unit, using `factory.builder().build(Interface.class)` as the body. This eliminates the manual module above for standard configurations. Add `vertique-codegen-dagger` to `<annotationProcessorPaths>` (use `combine.children="append"` if the parent POM already declares Dagger/Lombok processors) and add `GeneratedRestClientsModule.class` to your `@Component`. For clients that need custom builder options (custom timeout, `onFailure`, per-client `ObjectMapper`), annotate the interface with `@NoAutoWire` and keep the manual `@Provides` method. See `dev.vertique:vertique-codegen-dagger` for setup and migration guidance.
+Applications inheriting `vertique-app-parent` declare `vertique-rest-client` as a runtime
+dependency and receive the complete processor facade automatically. Custom-parent applications
+use the BOM plus `vertique-codegen-all` recipe in `docs/packaging.md`.
+`vertique-codegen-dagger` owns generated
+`@Provides @Singleton {Interface} provideXxx(RestClientFactory factory)` bindings for
+`@RestClient` interfaces. Include `GeneratedRestClientsModule.class` in the `@Component`. For
+clients that need custom builder options, annotate the interface with `@NoAutoWire` and keep the
+manual `@Provides` method. Applications using that source-retained opt-out also declare
+`vertique-codegen-core` with `provided` scope as documented in `docs/packaging.md`.
 
 **4. Inject and call the proxy:**
 
@@ -687,25 +695,13 @@ For each `@RestClient` interface in the compilation unit, the processor emits:
 - **`{Client}_RestClientProxy`** — a `public final` class implementing the interface. Holds pre-cached `ClientMethodMeta` in `final` fields and calls bean accessor methods directly (no `Method.invoke`).
 - **`{Bean}_BeanParamAccessor`** — one per `@BeanParam` type referenced from any interface in the compilation unit. Uses a `switch` expression over field names, calling record accessors, public getters, or direct package-private field access. Deduplicated: one accessor emitted even when two interfaces share a bean type.
 
-### Opt-In: `annotationProcessorPaths`
+### Maven setup
 
-Add `vertique-codegen-rest-client` to the module's `<annotationProcessorPaths>` block. If a parent POM already declares processor paths (Dagger, Lombok), use `combine.children="append"` to extend rather than replace the parent list:
-
-```xml
-<plugin>
-    <artifactId>maven-compiler-plugin</artifactId>
-    <configuration>
-        <annotationProcessorPaths combine.children="append">
-            <path>
-                <groupId>dev.vertique</groupId>
-                <artifactId>vertique-codegen-rest-client</artifactId>
-            </path>
-        </annotationProcessorPaths>
-    </configuration>
-</plugin>
-```
-
-`vertique-codegen-core` arrives transitively; it does not need to be listed separately.
+The public `vertique-app-parent` supplies Dagger and `vertique-codegen-all`; application modules
+declare runtime dependencies only. Custom-parent applications import `vertique-bom` and configure
+the same two versionless processor paths. The facade supplies `vertique-codegen-core` only on the
+processor path; source code that imports its annotations declares it separately with `provided`
+scope. See `docs/packaging.md`.
 
 ### Transparent Runtime Selection
 

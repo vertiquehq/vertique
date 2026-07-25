@@ -20,8 +20,38 @@ Run the full unit and integration-test suite:
 Check formatting without changing files:
 
 ```bash
-./mvnw -ntp spotless:check
+./mvnw -ntp -pl '!vertique-app-parent' spotless:check
 ```
+
+## Application Maven Setup
+
+For a new application, inherit the public application parent and declare only the runtime
+capabilities the application uses:
+
+```xml
+<parent>
+    <groupId>dev.vertique</groupId>
+    <artifactId>vertique-app-parent</artifactId>
+    <version>0.0.0-SNAPSHOT</version> <!-- replace with the released Vertique version -->
+    <relativePath/>
+</parent>
+
+<dependencies>
+    <dependency>
+        <groupId>dev.vertique</groupId>
+        <artifactId>vertique-application</artifactId>
+    </dependency>
+    <dependency>
+        <groupId>dev.vertique</groupId>
+        <artifactId>vertique-rest-jaxrs</artifactId>
+    </dependency>
+</dependencies>
+```
+
+The parent imports the Vertique BOM and supplies Dagger plus the complete Vertique processor
+facade. Applications do not select individual processor artifacts. Projects that must retain a
+custom parent, applications that explicitly opt in to Lombok, and modules that intentionally
+disable annotation processing are covered in the [packaging guide](docs/packaging.md).
 
 ## Documentation
 

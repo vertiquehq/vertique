@@ -169,22 +169,10 @@ The processor always emits `WARNING` for unresolvable timezone strings. There is
 
 ## Enabling the Processor
 
-Add `vertique-codegen-cron` to `annotationProcessorPaths` in the module that contains the `@CronJob`-annotated services. `vertique-codegen-core` arrives transitively; `vertique-job-cron` must also be on the processor classpath (it is already a compile dependency if the module uses `@CronJob`).
-
-```xml
-<plugin>
-  <artifactId>maven-compiler-plugin</artifactId>
-  <configuration>
-    <annotationProcessorPaths combine.children="append">
-      <path>
-        <groupId>dev.vertique</groupId>
-        <artifactId>vertique-codegen-cron</artifactId>
-        <version>${project.version}</version>
-      </path>
-    </annotationProcessorPaths>
-  </configuration>
-</plugin>
-```
+Applications inheriting `vertique-app-parent` declare `vertique-job-cron` as a runtime dependency
+and receive the complete processor facade automatically. Custom-parent applications import
+`vertique-bom` and configure only the versionless Dagger and `vertique-codegen-all` processor
+paths. The facade supplies `vertique-codegen-core` transitively. See `docs/packaging.md`.
 
 The processor generates no classes, so no `@Component` changes are required.
 

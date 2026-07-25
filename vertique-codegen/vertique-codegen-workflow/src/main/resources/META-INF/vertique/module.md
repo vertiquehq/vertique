@@ -14,7 +14,7 @@ Annotation processor that eliminates per-call reflection in the workflow client 
 
 In addition to the performance win, the processor lifts contract-shape validation to compile time: a missing `@WorkflowStart` method, a signal missing a dedup source, conflicting operation-role annotations, or a disallowed `default` method all surface as build errors rather than startup failures. The STRUCTURAL subset of `WorkflowProxyValidator`'s rules is reproduced using the same `Diagnostics` wording so a violation reads identically at compile time and at runtime.
 
-The processor also generates a single aggregate `GeneratedWorkflowClientsModule` Dagger module whose `@Provides @Singleton` bindings each delegate to `WorkflowClientFactory.create({Contract}.class)`, so registry and plan validation (the four runtime-only rules) still run at application startup regardless of which path is taken. An application opts in by adding this leaf to `annotationProcessorPaths` and listing `GeneratedWorkflowClientsModule` in its `@Component` (ADR-0025 inclusion model).
+The processor also generates a single aggregate `GeneratedWorkflowClientsModule` Dagger module whose `@Provides @Singleton` bindings each delegate to `WorkflowClientFactory.create({Contract}.class)`, so registry and plan validation (the four runtime-only rules) still run at application startup regardless of which path is taken. Applications use the shared parent-or-facade processor boundary described below and list `GeneratedWorkflowClientsModule` in the `@Component` (ADR-0025 inclusion model).
 
 `WorkflowClientFactory` and `WorkflowProxyValidator` are preserved as the runtime fallback and the authoritative validation path. A generated proxy found on the classpath but impossible to instantiate causes a loud `WorkflowClientProxyLinkageException` rather than a silent fallback to the reflective proxy.
 
@@ -231,18 +231,12 @@ The body delegates to `WorkflowClientFactory.create({Contract}.class)` and never
 
 ## Adoption
 
-### Step 1 — Add the processor
+### Step 1 — use the application processor boundary
 
-Add the processor to `<annotationProcessorPaths>`. Use `combine.children="append"` when the parent POM already declares processor paths (e.g., for Dagger or Lombok):
-
-```xml
-<annotationProcessorPaths combine.children="append">
-    <path>
-        <groupId>dev.vertique</groupId>
-        <artifactId>vertique-codegen-workflow</artifactId>
-    </path>
-</annotationProcessorPaths>
-```
+Applications inheriting `vertique-app-parent` declare the workflow runtime capabilities they use
+and receive the complete processor facade automatically. Custom-parent applications import
+`vertique-bom` and configure only the versionless Dagger and `vertique-codegen-all` processor
+paths. See `docs/packaging.md`.
 
 ### Step 2 — Include the generated module
 

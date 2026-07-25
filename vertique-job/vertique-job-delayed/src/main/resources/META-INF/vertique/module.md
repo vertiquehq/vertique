@@ -354,9 +354,17 @@ ResolvedDelayedJobTarget target = resolver.resolve("deliver-webhook");
 
 Dagger `@Qualifier` for the executor multibinding set. Use `@Provides @IntoSet @DelayedJobs` to contribute executor instances. The `DelayedJobModule` declares the empty `@Multibinds` binding so applications can contribute zero or more executors.
 
-**Auto-wiring opt-in:**
+**Generated auto-wiring:**
 
-The `vertique-codegen-dagger` annotation processor generates `@Provides @IntoSet @DelayedJobs Object` bindings automatically for classes that implement `DelayedJobExecutor<P, C>` and carry a single `@Inject` constructor. Add `vertique-codegen-dagger` to `<annotationProcessorPaths>` (use `combine.children="append"` to preserve inherited Dagger/Lombok processor paths) and add `GeneratedDelayedJobsModule.class` to your `@Component`. Annotate any executor with `@NoAutoWire` to keep its manual binding canonical. See `dev.vertique:vertique-codegen-dagger` for setup and migration guidance.
+Applications inheriting `vertique-app-parent` declare `vertique-job-delayed` as a runtime
+dependency and receive the complete processor facade automatically. Custom-parent applications
+use the BOM plus `vertique-codegen-all` recipe in `docs/packaging.md`.
+`vertique-codegen-dagger` owns the generated `@Provides @IntoSet @DelayedJobs Object` bindings for
+classes that implement `DelayedJobExecutor<P, C>` and carry a single `@Inject` constructor. Include
+`GeneratedDelayedJobsModule.class` in the `@Component`; annotate an executor with `@NoAutoWire` to
+keep its manual binding canonical. Because `@NoAutoWire` is a source-retained annotation,
+applications using that opt-out also declare `vertique-codegen-core` with `provided` scope as
+documented in `docs/packaging.md`.
 
 ### Throughput Knobs
 

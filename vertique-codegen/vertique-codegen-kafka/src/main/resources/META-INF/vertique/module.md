@@ -14,7 +14,9 @@ Annotation processor that eliminates boot-time reflective scan and classify for 
 
 In addition to the performance win, the processor lifts consumer-shape validation to compile time: blank topic, conflicting match rules, duplicate route selectors, unsupported handler parameters, and mismatched direct-handler value types all surface as build errors rather than startup failures.
 
-The reflective `KafkaConsumerScanner` is retained as the runtime fallback; an application opts in by adding this processor to `annotationProcessorPaths`. No Dagger graph changes are required.
+The reflective `KafkaConsumerScanner` is retained as the runtime fallback. Applications use the
+shared parent-or-facade processor boundary described below; no processor-leaf selection or Dagger
+graph changes are required.
 
 See ADR-0072 for the metadata shape decisions, the three-way `Kind` discriminator rationale, and the dual-hook integration design.
 
@@ -149,16 +151,10 @@ The NFR's "≥50% lower scan time" is a scan/classify-fraction claim. Measuring 
 
 ## Adoption
 
-Add the processor to `<annotationProcessorPaths>`. Use `combine.children="append"` when the parent POM already declares processor paths (e.g., for Dagger or Lombok):
-
-```xml
-<annotationProcessorPaths combine.children="append">
-    <path>
-        <groupId>dev.vertique</groupId>
-        <artifactId>vertique-codegen-kafka</artifactId>
-    </path>
-</annotationProcessorPaths>
-```
+Applications inheriting `vertique-app-parent` declare the Kafka runtime capability they use and
+receive the complete processor facade automatically. Custom-parent applications import
+`vertique-bom` and configure only the versionless Dagger and `vertique-codegen-all` processor
+paths. See `docs/packaging.md`.
 
 No `@Component` changes are required. `KafkaConsumerScanner` automatically uses `GeneratedBindingMetaLoader` when a companion is present. Removing the processor reverts all consumers to reflective scanning — the existing reflective path is retained and is not deprecated.
 

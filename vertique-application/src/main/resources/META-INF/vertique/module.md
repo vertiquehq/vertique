@@ -106,11 +106,11 @@ standalone launcher.
 
 The `VertiqueComponentFactory` can be registered in two ways:
 
-- **`@VertiqueApp` (zero-boilerplate)** — add `vertique-codegen-application` to
-  `<annotationProcessorPaths>` and place `@VertiqueApp` on the `@Component` interface. The
-  processor generates the factory class and the `META-INF/services` file. See
-  `dev.vertique:vertique-codegen-application` and
-  ADR-0132.
+- **`@VertiqueApp` (zero-boilerplate)** — inherit `vertique-app-parent`, declare
+  `vertique-application` as a runtime dependency, and place `@VertiqueApp` on the `@Component`
+  interface. Custom-parent applications use the BOM plus `vertique-codegen-all` recipe in
+  `docs/packaging.md`. The `vertique-codegen-application` processor owns factory-class and
+  `META-INF/services` generation. See ADR-0132.
 - **Manual (explicit)** — write a `VertiqueComponentFactory` implementation and register it in
   `META-INF/services/dev.vertique.core.VertiqueComponentFactory` by hand. Both paths are
   supported simultaneously; only one may be registered per application (exactly-one rule).

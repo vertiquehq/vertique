@@ -18,7 +18,7 @@ The module provides notification-only semantics: `Event<T>.fire(T)` always succe
 
 ## When To Use It
 
-Install this module when application code needs to publish or observe typed events across bean boundaries without coupling publishers to observer lists. Pair it with `vertique-codegen-events` (the annotation processor) to generate publishers and registrations at compile time.
+Install this module when application code needs to publish or observe typed events across bean boundaries without coupling publishers to observer lists. Applications inheriting `vertique-app-parent` receive the complete processor facade automatically; custom-parent applications use the BOM plus `vertique-codegen-all` recipe in `docs/packaging.md`. Publisher and registration generation is owned by `vertique-codegen-events`.
 
 Common use cases:
 - Domain event fan-out (e.g., `OrderCreated` notifying audit, notification, and stock modules)

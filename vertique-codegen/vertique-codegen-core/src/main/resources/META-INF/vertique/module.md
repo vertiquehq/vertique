@@ -11,7 +11,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 `vertique-codegen-core` is a compile-time APT helper library that provides shared infrastructure for all annotation processors in the Vertique codegen series (CG-002 through CG-009). It wraps `javax.annotation.processing` with high-level utilities for type resolution, annotation mirror access, diagnostic formatting, and JavaPoet-backed Dagger module generation.
 
-The library has no runtime footprint: it contains no `Processor` registration, no `META-INF/services` entry, and is never placed on a runtime classpath. Each downstream feature module (`vertique-codegen-<feature>`) depends on it at compile scope and registers its own `Processor`. Consumers add only the per-feature leaf to `annotationProcessorPaths`; `vertique-codegen-core` arrives transitively.
+The library has no runtime footprint: it contains no `Processor` registration, no `META-INF/services` entry, and is never placed on a runtime classpath. Each downstream feature module (`vertique-codegen-<feature>`) depends on it at compile scope and registers its own `Processor`. Applications inherit `vertique-app-parent` and declare only runtime capabilities; custom-parent applications use the BOM plus `vertique-codegen-all` facade recipe in `docs/packaging.md`. This helper arrives transitively through the facade.
 
 ---
 

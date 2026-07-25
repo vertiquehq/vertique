@@ -22,24 +22,12 @@ The generated contributor delegates entry construction to the existing `ServiceC
 
 Two steps are required — leaving either one out produces a detectable failure:
 
-### Step 1 — add `vertique-codegen-services` to `annotationProcessorPaths`
+### Step 1 — use the application processor boundary
 
-```xml
-<plugin>
-  <artifactId>maven-compiler-plugin</artifactId>
-  <configuration>
-    <annotationProcessorPaths combine.children="append">
-      <path>
-        <groupId>dev.vertique</groupId>
-        <artifactId>vertique-codegen-services</artifactId>
-        <version>${project.version}</version>
-      </path>
-    </annotationProcessorPaths>
-  </configuration>
-</plugin>
-```
-
-Without `combine.children="append"`, the child POM's `<annotationProcessorPaths>` replaces the parent's, dropping Dagger and Lombok.
+Applications inheriting `vertique-app-parent` declare `vertique-services` as a runtime dependency
+and receive the complete processor facade automatically. Custom-parent applications import
+`vertique-bom` and configure only the versionless Dagger and `vertique-codegen-all` processor
+paths. See `docs/packaging.md`.
 
 ### Step 2 — add `GeneratedServicesModule` to `@Component`
 

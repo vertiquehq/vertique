@@ -727,9 +727,14 @@ static Object myHandler(MyHandler handler) {
 }
 ```
 
-**Auto-wiring opt-in (Models 1 and 4 only):**
+**Generated auto-wiring (Models 1 and 4 only):**
 
-The `vertique-codegen-dagger` annotation processor generates `@Provides @IntoSet @KafkaConsumers Object` bindings automatically for `@KafkaSource`-annotated classes (Model 1) and `@KafkaListener`-annotated **classes** (Model 4). Add `vertique-codegen-dagger` to `<annotationProcessorPaths>` (use `combine.children="append"` to preserve inherited Dagger/Lombok processor paths) and add `GeneratedKafkaConsumersModule.class` to your `@Component`.
+Applications inheriting `vertique-app-parent` declare the Kafka runtime capability they use and
+receive the complete processor facade automatically. Custom-parent applications use the BOM plus
+`vertique-codegen-all` recipe in `docs/packaging.md`. `vertique-codegen-dagger` owns generated
+`@Provides @IntoSet @KafkaConsumers Object` bindings for `@KafkaSource`-annotated classes (Model 1)
+and `@KafkaListener`-annotated **classes** (Model 4). Include
+`GeneratedKafkaConsumersModule.class` in the `@Component`.
 
 **Model 3 routing interfaces (`@KafkaListener` on an interface) are NOT auto-wired.** Their contribution to `@KafkaConsumers Set<Object>` is the router interface's `Class<?>` literal, not an instance — this must remain a manual `@Provides @IntoSet @KafkaConsumers Class<?>` binding that returns the router class (e.g. `return OrderEventRouter.class;`). See `dev.vertique:vertique-codegen-dagger` for the full setup guide.
 

@@ -18,39 +18,15 @@ Codegen is a **performance optimization, not a feature gate.** Both the generate
 
 ## Adoption
 
-Add `vertique-codegen-jaxrs` to `<annotationProcessorPaths>` in the module containing `@Path`-annotated resources. The parent POM already declares Dagger and Lombok in `<annotationProcessorPaths>`; use `combine.children="append"` to extend that block rather than replace it:
+Applications inheriting `vertique-app-parent` declare `vertique-rest-jaxrs` as a runtime dependency
+and receive the complete processor facade automatically. Custom-parent applications import
+`vertique-bom` and configure only the versionless Dagger and `vertique-codegen-all` processor
+paths. See `docs/packaging.md`. No `@Component` changes are required beyond including the generated
+`GeneratedJaxRsResourcesModule`.
 
-```xml
-<plugin>
-    <artifactId>maven-compiler-plugin</artifactId>
-    <configuration>
-        <annotationProcessorPaths combine.children="append">
-            <path>
-                <groupId>dev.vertique</groupId>
-                <artifactId>vertique-codegen-jaxrs</artifactId>
-                <version>${project.version}</version>
-            </path>
-        </annotationProcessorPaths>
-    </configuration>
-</plugin>
-```
-
-Without `combine.children="append"`, the child POM's `<annotationProcessorPaths>` replaces the parent's, dropping Dagger and Lombok.
-
-**Reactor edge.** `<annotationProcessorPaths>` does not create a Maven reactor build edge. Add a `provided`-scope dependency on `vertique-codegen-jaxrs` to ensure the processor JAR is built before your module in a clean reactor build:
-
-```xml
-<dependency>
-    <groupId>dev.vertique</groupId>
-    <artifactId>vertique-codegen-jaxrs</artifactId>
-    <version>${project.version}</version>
-    <scope>provided</scope>
-</dependency>
-```
-
-See `examples/vertique-example-hello/pom.xml` for a working reference. No `@Component` changes are required beyond including the generated `GeneratedJaxRsResourcesModule`.
-
-**Replacing `vertique-codegen-dagger` for JAX-RS resources.** CG-010 absorbs the `@Path`-resource binding from `vertique-codegen-dagger`. Users who previously paired both processors need only `vertique-codegen-jaxrs` for JAX-RS resource DI binding. `vertique-codegen-dagger` retains responsibility for `@RestClient`, `@KafkaListener`/`@KafkaSource`, and `DelayedJobExecutor` wiring.
+**Ownership change.** CG-010 moved `@Path`-resource binding from
+`vertique-codegen-dagger` to `vertique-codegen-jaxrs`. The former retains responsibility for
+`@RestClient`, `@KafkaListener`/`@KafkaSource`, and `DelayedJobExecutor` wiring.
 
 ---
 

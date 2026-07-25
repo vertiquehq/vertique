@@ -159,10 +159,10 @@ values.
 
 **Factory registration options:** the SPI file entry can be written in two ways:
 
-- **`@VertiqueApp` (zero-boilerplate)** — add `vertique-codegen-application` to
-  `<annotationProcessorPaths>` and place `@VertiqueApp` on the `@Component` interface. The
-  processor generates the factory class and the `META-INF/services` file at compile time. See
-  `dev.vertique:vertique-codegen-application` and
+- **`@VertiqueApp` (zero-boilerplate)** — inherit `vertique-app-parent`, declare the application
+  runtime capability, and place `@VertiqueApp` on the `@Component` interface. Custom-parent
+  applications use the BOM plus `vertique-codegen-all` recipe in `docs/packaging.md`.
+  `vertique-codegen-application` owns factory-class and `META-INF/services` generation. See
   ADR-0132.
 - **Manual** — write a `VertiqueComponentFactory` implementation and add it to the SPI file by
   hand. Both paths satisfy the same exactly-one discovery rule.

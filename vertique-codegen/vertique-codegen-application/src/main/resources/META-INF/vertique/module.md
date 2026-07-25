@@ -23,7 +23,7 @@ the application's own artifact.
 
 ## When To Use It
 
-Add `vertique-codegen-application` to `<annotationProcessorPaths>` when:
+This processor owns application-factory generation when:
 
 - The application uses the standalone launcher (`vertique-launcher`) and wants to eliminate the
   hand-written `VertiqueComponentFactory` and `META-INF/services` entry.
@@ -211,33 +211,11 @@ This is the exact resource `VertiqueComponentFactoryLoader` reads at standalone 
 
 ## Consumer Wiring
 
-Add the processor to `<annotationProcessorPaths>` in the application's `pom.xml` alongside
-`vertique-codegen-dagger` (the usual pattern for framework annotation processors):
-
-```xml
-<plugin>
-    <groupId>org.apache.maven.plugins</groupId>
-    <artifactId>maven-compiler-plugin</artifactId>
-    <configuration>
-        <annotationProcessorPaths>
-            <!-- Framework codegen processors -->
-            <path>
-                <groupId>dev.vertique</groupId>
-                <artifactId>vertique-codegen-dagger</artifactId>
-            </path>
-            <path>
-                <groupId>dev.vertique</groupId>
-                <artifactId>vertique-codegen-application</artifactId>
-            </path>
-            <!-- Dagger itself -->
-            <path>
-                <groupId>com.google.dagger</groupId>
-                <artifactId>dagger-compiler</artifactId>
-            </path>
-        </annotationProcessorPaths>
-    </configuration>
-</plugin>
-```
+Applications inheriting `vertique-app-parent` declare `vertique-application` as a runtime
+dependency and receive the complete processor facade automatically. Custom-parent applications
+import `vertique-bom` and configure only the versionless Dagger and `vertique-codegen-all`
+processor paths. Do not select processor leaves per feature. See `docs/packaging.md` for both
+recipes, explicit Lombok opt-in, and the annotation-processing escape hatch.
 
 Then annotate the `@Component`:
 

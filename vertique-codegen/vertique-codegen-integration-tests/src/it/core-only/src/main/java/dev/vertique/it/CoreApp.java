@@ -3,9 +3,11 @@
 
 package dev.vertique.it;
 
+import dev.vertique.codegen.NoAutoWire;
 import dev.vertique.core.codegen.MethodMetadata;
 
-/** Core-only consumer proving that unrelated feature processors remain inert. */
+/** Compile-time annotation consumer proving that unrelated feature processors remain inert. */
+@NoAutoWire
 public final class CoreApp {
 
     private final MethodMetadata methodMetadata;

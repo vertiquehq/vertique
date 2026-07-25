@@ -17,6 +17,143 @@ maven-shade fat-JARs.
 
 ---
 
+## Maven application setup
+
+### Recommended: public application parent
+
+Inherit `vertique-app-parent` and declare only runtime capabilities. The parent imports
+`vertique-bom`, targets Java 21, and configures Dagger together with the complete Vertique
+processor facade:
+
+```xml
+<parent>
+    <groupId>dev.vertique</groupId>
+    <artifactId>vertique-app-parent</artifactId>
+    <version>0.0.0-SNAPSHOT</version> <!-- replace with the released Vertique version -->
+    <relativePath/>
+</parent>
+
+<dependencies>
+    <dependency>
+        <groupId>dev.vertique</groupId>
+        <artifactId>vertique-application</artifactId>
+    </dependency>
+    <dependency>
+        <groupId>dev.vertique</groupId>
+        <artifactId>vertique-rest-jaxrs</artifactId>
+    </dependency>
+</dependencies>
+```
+
+Add or remove runtime dependencies as the application capabilities change. Do not mirror those
+choices with processor-leaf dependencies or processor-path entries; the facade is intentionally a
+stable, closed ledger, and processors ignore source sets that do not use their annotations.
+
+The runtime-only rule has one explicit source-API exception. Applications that write
+`@NoAutoWire` or `@ConditionalOnProperty` import those source-retained annotations from
+`vertique-codegen-core`, so they add that artifact as a compile-time-only dependency:
+
+```xml
+<dependency>
+    <groupId>dev.vertique</groupId>
+    <artifactId>vertique-codegen-core</artifactId>
+    <scope>provided</scope>
+</dependency>
+```
+
+This does not select a processor and does not add codegen classes to the runtime classpath.
+
+### Custom parent: BOM plus processor facade
+
+If an organization requires its own parent, import the Vertique BOM and configure Maven Compiler
+Plugin with exactly Dagger and the Vertique facade. Versions are intentionally omitted from
+`annotationProcessorPaths`; Maven Compiler Plugin resolves them from dependency management.
+
+```xml
+<dependencyManagement>
+    <dependencies>
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-bom</artifactId>
+            <version>0.0.0-SNAPSHOT</version> <!-- replace with the released Vertique version -->
+            <type>pom</type>
+            <scope>import</scope>
+        </dependency>
+    </dependencies>
+</dependencyManagement>
+
+<build>
+    <plugins>
+        <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-compiler-plugin</artifactId>
+            <version>3.15.0</version>
+            <configuration>
+                <release>21</release>
+                <annotationProcessorPaths>
+                    <path>
+                        <groupId>com.google.dagger</groupId>
+                        <artifactId>dagger-compiler</artifactId>
+                    </path>
+                    <path>
+                        <groupId>dev.vertique</groupId>
+                        <artifactId>vertique-codegen-all</artifactId>
+                    </path>
+                </annotationProcessorPaths>
+            </configuration>
+        </plugin>
+    </plugins>
+</build>
+```
+
+### Explicit Lombok opt-in
+
+Lombok is not active by default. Applications that deliberately use Lombok opt in with both a
+provided dependency and an appended processor path:
+
+```xml
+<dependencies>
+    <dependency>
+        <groupId>org.projectlombok</groupId>
+        <artifactId>lombok</artifactId>
+        <scope>provided</scope>
+    </dependency>
+</dependencies>
+
+<build>
+    <plugins>
+        <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-compiler-plugin</artifactId>
+            <configuration>
+                <annotationProcessorPaths combine.children="append">
+                    <path>
+                        <groupId>org.projectlombok</groupId>
+                        <artifactId>lombok</artifactId>
+                    </path>
+                </annotationProcessorPaths>
+            </configuration>
+        </plugin>
+    </plugins>
+</build>
+```
+
+### Disable annotation processing
+
+A module that intentionally uses no generated Dagger or Vertique code can disable annotation
+processing explicitly:
+
+```xml
+<properties>
+    <maven.compiler.proc>none</maven.compiler.proc>
+</properties>
+```
+
+This is an escape hatch, not an application default. It disables every annotation processor,
+including Dagger, so a module that references generated types will fail to compile.
+
+---
+
 ## The `@VertiqueApp` entry shape
 
 The minimal component declaration for a standalone application:
@@ -60,15 +197,16 @@ are `vertique-example-hello` and `vertique-example-services` in the `examples/` 
 
 ## Jib image build
 
-**`jib-maven-plugin`** is the standard packaging tool for `@VertiqueApp` applications. The version
-is managed in the parent `pom.xml` (`${jib-maven-plugin.version}`); module POMs supply only
-image-specific configuration:
+**`jib-maven-plugin`** is the standard packaging tool for `@VertiqueApp` applications. Repository
+examples inherit its version from the internal `vertique-parent`. The public
+`vertique-app-parent` deliberately does not manage packaging tools, so external applications must
+pin Jib themselves or obtain its version from their organization's parent:
 
 ```xml
 <plugin>
     <groupId>com.google.cloud.tools</groupId>
     <artifactId>jib-maven-plugin</artifactId>
-    <!-- version inherited from parent -->
+    <version>3.5.1</version>
     <configuration>
         <from>
             <image>eclipse-temurin:21-jre</image>   <!-- slim JRE-only base -->
@@ -185,38 +323,26 @@ the `@VertiqueApp` lifecycle (for example, a host bridge that drives its own sta
 To migrate an existing application from `maven-shade` + hand-written `MainVerticle` to `@VertiqueApp`
 + Jib:
 
-1. **Add `vertique-application` to `<dependencies>`** (if not already present).
+1. **Adopt the public application parent and add `vertique-application` to `<dependencies>`**
+   (if not already present). If the project must retain a custom parent, use the BOM-plus-facade
+   recipe above. In both cases application modules declare runtime capabilities only.
 
-2. **Add `vertique-codegen-application` to `<annotationProcessorPaths>` and as a `provided`
-   compile dep.** Use `combine.children="append"` on the `<annotationProcessorPaths>` element to
-   preserve the parent's Dagger and Lombok processors:
-
-   ```xml
-   <annotationProcessorPaths combine.children="append">
-       <path>
-           <groupId>dev.vertique</groupId>
-           <artifactId>vertique-codegen-application</artifactId>
-           <version>${project.version}</version>
-       </path>
-   </annotationProcessorPaths>
-   ```
-
-3. **Add `@VertiqueApp` and `extends VertiqueApplicationComponent` to the `@Component`.**
+2. **Add `@VertiqueApp` and `extends VertiqueApplicationComponent` to the `@Component`.**
    Include `CoreLifecycleStepsModule` in the module list if not already present.
 
-4. **Delete the hand-written `MainVerticle`** (and its corresponding `VerticleDeployment` binding
+3. **Delete the hand-written `MainVerticle`** (and its corresponding `VerticleDeployment` binding
    if you had one). The `VertiqueBootstrapVerticle` in `vertique-launcher` takes its place
    automatically.
 
-5. **Delete the `META-INF/services/dev.vertique.core.VertiqueComponentFactory`** file if you wrote
+4. **Delete the `META-INF/services/dev.vertique.core.VertiqueComponentFactory`** file if you wrote
    one manually — `vertique-codegen-application` generates it now.
 
-6. **Replace `maven-shade-plugin` with `jib-maven-plugin`** using the configuration shown above.
+5. **Replace `maven-shade-plugin` with `jib-maven-plugin`** using the configuration shown above.
    Remove the shade `<transformer>` and `<filter>` sections.
 
-7. **Update `exec-maven-plugin`** to point at `dev.vertique.launcher.VertiqueApplication` (it may
+6. **Update `exec-maven-plugin`** to point at `dev.vertique.launcher.VertiqueApplication` (it may
    already, if the example was previously using `VertiqueApplication`).
 
-8. **Remove `-Dvertique.bootstrap.verticle=false`** from `exec-maven-plugin` arguments if present.
+7. **Remove `-Dvertique.bootstrap.verticle=false`** from `exec-maven-plugin` arguments if present.
 
 ---

@@ -727,9 +727,15 @@ public abstract class ResourceModule {
 }
 ```
 
-**Auto-wiring opt-in:**
+**Generated auto-wiring:**
 
-The `vertique-codegen-dagger` annotation processor can generate `@Provides @IntoSet @JaxRsResources Object` bindings automatically for all `@Path`-annotated classes found in the compilation unit. Add `vertique-codegen-dagger` to `<annotationProcessorPaths>` (use `combine.children="append"` if the parent POM already declares Dagger/Lombok processors) and add `GeneratedJaxRsResourcesModule.class` to your `@Component`. Annotate any resource with `@NoAutoWire` to keep its manual binding canonical. See `dev.vertique:vertique-codegen-dagger` for setup and migration guidance.
+Applications inheriting `vertique-app-parent` declare `vertique-rest-jaxrs` as a runtime dependency
+and receive the complete processor facade automatically. Custom-parent applications use the BOM
+plus `vertique-codegen-all` recipe in `docs/packaging.md`. `vertique-codegen-jaxrs` owns generated
+`@Provides @IntoSet @JaxRsResources Object` bindings for `@Path` classes. Include
+`GeneratedJaxRsResourcesModule.class` in the `@Component`; annotate a resource with `@NoAutoWire`
+to keep its manual binding canonical. Applications using that source-retained opt-out also declare
+`vertique-codegen-core` with `provided` scope as documented in `docs/packaging.md`.
 
 **File upload resource example:**
 

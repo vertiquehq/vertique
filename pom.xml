@@ -24,6 +24,7 @@ SPDX-License-Identifier: EUPL-1.2
 
     <modules>
         <module>vertique-bom</module>
+        <module>vertique-app-parent</module>
         <module>vertique-core</module>
         <module>vertique-json</module>
         <module>vertique-security</module>

@@ -46,9 +46,13 @@ complete behavior.
 
 ## Extension Points
 
-Custom-parent applications add `dev.vertique:vertique-codegen-all` to Maven Compiler Plugin's
-`annotationProcessorPaths`. Applications that use Lombok declare Lombok themselves and append its
-processor path explicitly with `combine.children="append"`.
+Applications inheriting `dev.vertique:vertique-app-parent` receive this facade automatically and
+declare only runtime capabilities. Custom-parent applications import `dev.vertique:vertique-bom`
+and configure Maven Compiler Plugin with the versionless
+`com.google.dagger:dagger-compiler` and `dev.vertique:vertique-codegen-all` paths. Applications
+that use Lombok declare Lombok themselves and append its processor path as an explicit opt-in.
+The complete recipes and the `maven.compiler.proc=none` escape hatch are documented in
+`docs/packaging.md`.
 
 The facade is a closed ledger of Vertique-owned production processors, not a third-party processor
 SPI. Additions require updating the ordered dependency list and the facade discovery contract test.
