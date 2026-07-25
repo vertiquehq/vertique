@@ -18,15 +18,15 @@ class ExamplePomCodegenPolicyTest {
 
     private static final Path EXAMPLES_ROOT =
             Path.of("..", "..", "examples").toAbsolutePath().normalize();
-    private static final Pattern SHARED_PARENT = Pattern.compile(
-            "(?s)<parent>\\s*"
-                    + "<groupId>dev\\.vertique</groupId>\\s*"
-                    + "<artifactId>vertique-example-parent</artifactId>\\s*"
-                    + "<version>\\$\\{revision}</version>\\s*"
-                    + "<relativePath>\\.\\./vertique-example-parent/pom\\.xml</relativePath>\\s*"
-                    + "</parent>");
+    private static final Pattern SHARED_PARENT = Pattern.compile("(?s)<parent>\\s*"
+            + "<groupId>dev\\.vertique</groupId>\\s*"
+            + "<artifactId>vertique-example-parent</artifactId>\\s*"
+            + "<version>\\$\\{revision}</version>\\s*"
+            + "<relativePath>\\.\\./vertique-example-parent/pom\\.xml</relativePath>\\s*"
+            + "</parent>");
     private static final Pattern PROCESSOR_DEPENDENCY = Pattern.compile(
-            "(?s)<dependency>\\s*.*?<artifactId>vertique-codegen-[^<]+</artifactId>.*?</dependency>");
+            "(?s)<dependency>\\s*.*?<artifactId>vertique-codegen-(?!core</artifactId>)[^<]+</artifactId>"
+                    + ".*?</dependency>");
     private static final List<String> EXAMPLES = List.of(
             "vertique-example-aop",
             "vertique-example-custom-response",
@@ -55,7 +55,7 @@ class ExamplePomCodegenPolicyTest {
                 violations.add(example + ": does not inherit vertique-example-parent");
             }
             if (PROCESSOR_DEPENDENCY.matcher(xml).find()) {
-                violations.add(example + ": declares a vertique-codegen-* project dependency");
+                violations.add(example + ": declares a Vertique processor project dependency");
             }
             if (xml.contains("<annotationProcessorPaths")) {
                 violations.add(example + ": declares annotationProcessorPaths");

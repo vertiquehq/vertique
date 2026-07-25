@@ -11,9 +11,9 @@ SPDX-License-Identifier: EUPL-1.2
 
     <parent>
         <groupId>dev.vertique</groupId>
-        <artifactId>vertique-parent</artifactId>
+        <artifactId>vertique-example-parent</artifactId>
         <version>${revision}</version>
-        <relativePath>../../pom.xml</relativePath>
+        <relativePath>../vertique-example-parent/pom.xml</relativePath>
     </parent>
 
     <artifactId>vertique-example-webhook</artifactId>
@@ -111,29 +111,6 @@ SPDX-License-Identifier: EUPL-1.2
             <groupId>dev.vertique</groupId>
             <artifactId>vertique-launcher</artifactId>
         </dependency>
-        <!--
-          Provided-scope reactor edge so Maven builds vertique-codegen-delayed-job before this module.
-          Without it, <annotationProcessorPaths> alone does not create a reactor build edge and a clean
-          reactor build may pick up a stale processor JAR from a previous build.
-        -->
-        <dependency>
-            <groupId>dev.vertique</groupId>
-            <artifactId>vertique-codegen-delayed-job</artifactId>
-            <version>${project.version}</version>
-            <scope>provided</scope>
-        </dependency>
-        <!--
-          Provided-scope reactor edge so Maven builds vertique-codegen-application before this
-          module. Without it, <annotationProcessorPaths> alone does not create a reactor build edge
-          and a clean reactor build may pick up a stale processor JAR from a previous build.
-        -->
-        <dependency>
-            <groupId>dev.vertique</groupId>
-            <artifactId>vertique-codegen-application</artifactId>
-            <version>${project.version}</version>
-            <scope>provided</scope>
-        </dependency>
-
         <!-- Test -->
         <dependency>
             <groupId>dev.vertique</groupId>
@@ -149,29 +126,6 @@ SPDX-License-Identifier: EUPL-1.2
 
     <build>
         <plugins>
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-compiler-plugin</artifactId>
-                <configuration>
-                    <!--
-                      Append the delayed-job codegen processor to the parent's annotationProcessorPaths
-                      (Dagger + Lombok). combine.children="append" preserves the inherited processors;
-                      without it this example would lose Dagger/Lombok APT and fail to compile.
-                    -->
-                    <annotationProcessorPaths combine.children="append">
-                        <path>
-                            <groupId>dev.vertique</groupId>
-                            <artifactId>vertique-codegen-delayed-job</artifactId>
-                            <version>${project.version}</version>
-                        </path>
-                        <path>
-                            <groupId>dev.vertique</groupId>
-                            <artifactId>vertique-codegen-application</artifactId>
-                            <version>${project.version}</version>
-                        </path>
-                    </annotationProcessorPaths>
-                </configuration>
-            </plugin>
             <plugin>
                 <groupId>com.google.cloud.tools</groupId>
                 <artifactId>jib-maven-plugin</artifactId>
