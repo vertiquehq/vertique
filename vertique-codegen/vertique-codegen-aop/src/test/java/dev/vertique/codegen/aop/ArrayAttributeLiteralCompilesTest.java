@@ -16,7 +16,7 @@ import org.junit.jupiter.api.Test;
  * RED reproduction for Bug F1: {@code AnnotationLiteralEmitter.valueLiteral} falls through array
  * annotation attributes to {@code String.valueOf(raw)}. For a {@code String[]} member the raw value
  * is a {@code List<? extends AnnotationValue>} whose {@code toString()} renders {@code ["k", "v"]} —
- * not a valid Java array initializer — so the generated {@code <Ann>$Literal} constructor invocation
+ * not a valid Java array initializer — so the generated {@code <Ann>$AopLiteral} constructor invocation
  * does not compile.
  *
  * <p>The real {@code @Timed} aspect's {@code extraTags()} member is a {@code String[]}, so this is
@@ -24,7 +24,7 @@ import org.junit.jupiter.api.Test;
  * exercised through the real emitter.
  *
  * <p><strong>Expected RED behavior:</strong> the overall compilation FAILS (the emitted
- * {@code TestTagged$Literal} constructor args are uncompilable), so {@code assertSuccess()} throws,
+ * {@code TestTagged$AopLiteral} constructor args are uncompilable), so {@code assertSuccess()} throws,
  * and the assertion on a valid {@code new String[]{...}} / {@code {...}} array initializer cannot be
  * satisfied. Once F1 is fixed, the emitter must produce a real array initializer and the
  * compilation must succeed.
@@ -33,7 +33,7 @@ class ArrayAttributeLiteralCompilesTest {
 
     // The String[] array initializer (the F1 fix) is rendered by AnnotationLiteralEmitter.constructorArgs
     // at the literal's *construction site* — i.e. inside the generated AopProxy, where the proxy holds a
-    // `static final <Ann> ..._LITERAL = new TestTagged$Literal(new String[]{...})` constant. The literal
+    // `static final <Ann> ..._LITERAL = new TestTagged$AopLiteral(new String[]{...})` constant. The literal
     // class itself only stores `this.tags = tags`; the array initializer lives in the proxy. So the proof
     // of F1 (a valid array initializer that compiles) is read from the proxy source below.
     private static final String TAGGED_PROXY_FQN = "com.example.Tagged$AopProxy";
@@ -90,7 +90,7 @@ class ArrayAttributeLiteralCompilesTest {
 
     @Test
     @DisplayName(
-            "a String[] annotation attribute yields a TestTagged$Literal with a valid array initializer and compiles")
+            "a String[] annotation attribute yields a TestTagged$AopLiteral with a valid array initializer and compiles")
     void arrayAttributeLiteralCompiles() {
         var result = ProcessorTestHarness.run(new AopProcessor(), taggedBean()).assertSuccess();
 
@@ -98,7 +98,7 @@ class ArrayAttributeLiteralCompilesTest {
         boolean hasArrayInitializer = proxy.contains("new String[]{") || proxy.contains("new String[] {");
         assertTrue(
                 hasArrayInitializer,
-                "The proxy must construct the TestTagged$Literal tags() field via a valid String[] initializer "
+                "The proxy must construct the TestTagged$AopLiteral tags() field via a valid String[] initializer "
                         + "(e.g. new String[]{\"k\", \"v\"}); generated source:\n" + proxy);
     }
 
@@ -114,7 +114,7 @@ class ArrayAttributeLiteralCompilesTest {
                 || proxy.contains("new String[0]");
         assertTrue(
                 hasEmptyArrayInitializer,
-                "The proxy must construct the empty TestTagged$Literal tags() field via a valid empty String[] "
+                "The proxy must construct the empty TestTagged$AopLiteral tags() field via a valid empty String[] "
                         + "initializer; generated source:\n" + proxy);
     }
 }

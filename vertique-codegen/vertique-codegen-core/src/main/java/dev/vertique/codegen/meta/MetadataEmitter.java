@@ -79,18 +79,21 @@ public final class MetadataEmitter {
     /**
      * A materialized annotation literal for one of the method's runtime-retained annotations, used to
      * back the reflection-free {@code findAnnotation}/{@code hasAnnotation} lookup. The metadata impl
-     * bakes a {@code static final <Ann>} constant initialised to {@code new <Ann>$Literal(<args>)} and
+     * bakes a {@code static final <Ann>} constant initialised to
+     * {@code new <Ann>$<Namespace>Literal(<args>)} and
      * matches it against the looked-up {@code Class<A>} via {@code type == <Ann>.class}.
      *
      * <p>The caller ({@code AopProxyEmitter}) is responsible for emitting (and per-compilation
-     * deduplicating) the {@code <Ann>$Literal} <em>class</em> via {@link AnnotationLiteralEmitter} and
+     * deduplicating) the {@code <Ann>$<Namespace>Literal} <em>class</em> via
+     * {@link AnnotationLiteralEmitter} and
      * for rejecting unsupported attribute kinds before constructing one of these — by the time a
      * {@code AnnotationLiteralRef} reaches this emitter, its literal class is renderable.
      *
      * @param annotationType the annotation interface (e.g. {@code com.example.Marker}); the constant's
      *                       declared type and the {@code type == <Ann>.class} match target
-     * @param literalClass   the generated {@code <Ann>$Literal} class instantiated for the constant
-     * @param constructorArgs the comma-joined constructor arguments for {@code new <Ann>$Literal(...)},
+     * @param literalClass   the generated {@code <Ann>$<Namespace>Literal} class instantiated for the constant
+     * @param constructorArgs the comma-joined constructor arguments for
+     *                        {@code new <Ann>$<Namespace>Literal(...)},
      *                       in member-declaration order (from
      *                       {@link AnnotationLiteralEmitter#constructorArgs})
      */
@@ -504,7 +507,7 @@ public final class MetadataEmitter {
      * its materialized annotation literals, with the reflective {@code genericType()} accessor stubbed.
      *
      * <p>The constructor accepts a trailing {@code Annotation... annotations} array (the per-parameter
-     * {@code <Ann>$Literal} constants emitted on the outer metadata impl). The reflection-free
+     * {@code <Ann>$<Namespace>Literal} constants emitted on the outer metadata impl). The reflection-free
      * parameter-level {@code findAnnotation} matches the looked-up {@code type} against each literal's
      * {@link Annotation#annotationType()} — never {@code Parameter.getAnnotation} — returning the first
      * match; {@code hasAnnotation} delegates to it so the two stay consistent and neither reflects.

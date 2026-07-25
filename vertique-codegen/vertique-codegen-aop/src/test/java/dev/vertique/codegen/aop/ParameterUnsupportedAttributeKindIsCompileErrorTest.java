@@ -15,7 +15,7 @@ import org.junit.jupiter.api.Test;
  * {@link UnsupportedAttributeKindIsCompileErrorTest}.
  *
  * <p>When the generated proxy's nested {@code ParameterMetadataImpl} must materialize a parameter's
- * runtime-retained annotation into a {@code <Ann>$Literal} for the reflection-free parameter-level
+ * runtime-retained annotation into a {@code <Ann>$AopLiteral} for the reflection-free parameter-level
  * {@code findAnnotation} surface, an attribute of an unsupported kind ({@code char} / {@code float} /
  * {@code double}, here a {@code float} member) MUST be a hard compile error via {@code Diagnostics},
  * with a clear message naming the unsupported attribute / kind — never a silent reflective

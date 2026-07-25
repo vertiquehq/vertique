@@ -28,7 +28,7 @@ import org.junit.jupiter.api.Test;
  * <p>The bean's intercepted method carries an aspect trigger ({@code @TestTimed}) so the proxy is
  * generated, and its <em>parameter</em> carries a runtime-retained, {@code PARAMETER}-targeted
  * marker ({@link TestParamMarker}). The slice-2.1 GREEN step must, for each {@code @Retention(RUNTIME)}
- * parameter annotation, generate a {@code <Ann>$Literal} and have the nested
+ * parameter annotation, generate a {@code <Ann>$AopLiteral} and have the nested
  * {@code ParameterMetadataImpl}'s {@code findAnnotation(Class)} return the matching literal by
  * {@code annotationType()} — with no call to {@code Parameter.getAnnotation} /
  * {@code Method.getParameterAnnotations} / {@code Class.getDeclaredMethod} reflection. This mirrors
@@ -36,7 +36,7 @@ import org.junit.jupiter.api.Test;
  * surface.
  *
  * <p>{@link TestParamMarker} is the forcing case: it is neither an aspect trigger (whose literal
- * already exists for the around-chain) nor a method annotation, so its {@code <Ann>$Literal} is only
+ * already exists for the around-chain) nor a method annotation, so its {@code <Ann>$AopLiteral} is only
  * materialized if the generated {@code ParameterMetadataImpl} genuinely covers all runtime-retained
  * parameter annotations.
  *
@@ -107,16 +107,16 @@ class ParameterAnnotationLiteralTest {
         String proxy = generatedSource(result, PROXY_FQN);
 
         // The reflection-free parameter-level lookup must reference the materialized TestParamMarker
-        // literal — either the generated TestParamMarker$Literal type or a TestParamMarker-typed
+        // literal — either the generated TestParamMarker$AopLiteral type or a TestParamMarker-typed
         // literal constant the ParameterMetadataImpl returns. The current stub returns
         // Optional.<A>empty() and references no parameter-marker literal at all.
         boolean referencesParamMarkerLiteral =
-                proxy.contains("TestParamMarker$Literal") || proxy.contains("TestParamMarker.class");
+                proxy.contains("TestParamMarker$AopLiteral") || proxy.contains("TestParamMarker.class");
         assertTrue(
                 referencesParamMarkerLiteral,
                 "The generated proxy's ParameterMetadataImpl must materialize a TestParamMarker literal for the "
                         + "reflection-free parameter-level findAnnotation lookup (e.g. reference "
-                        + "TestParamMarker$Literal / TestParamMarker.class), not the Optional.empty() stub; "
+                        + "TestParamMarker$AopLiteral / TestParamMarker.class), not the Optional.empty() stub; "
                         + "generated source:\n" + proxy);
     }
 

@@ -176,7 +176,7 @@ final class TimedFixtures {
 
     /**
      * Builds a {@code @Timed} literal carrying the given {@code value()} and no extra tags, mirroring
-     * the generated {@code Timed$Literal} the real proxy would hold.
+     * the generated {@code Timed$AopLiteral} the real proxy would hold.
      *
      * @param value the {@code @Timed} metric name
      * @return a {@code @Timed} instance with that {@code value()} and empty {@code extraTags()}
@@ -187,7 +187,7 @@ final class TimedFixtures {
 
     /**
      * Builds a {@code @Timed} literal carrying the given {@code value()} and {@code extraTags()},
-     * mirroring the generated {@code Timed$Literal} the real proxy would hold. Used to exercise the
+     * mirroring the generated {@code Timed$AopLiteral} the real proxy would hold. Used to exercise the
      * {@link TimedAspect#interceptor} even-length validation (Bug F6).
      *
      * @param value the {@code @Timed} metric name

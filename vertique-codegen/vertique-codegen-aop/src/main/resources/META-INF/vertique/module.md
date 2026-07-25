@@ -14,7 +14,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 - `Bean$AopProxy extends Bean` — a subclass proxy that overrides each intercepted method to run the aspect chain via `Invocations.run(...)`.
 - A `MethodMetadata` implementation per intercepted method (via `MetadataEmitter` from `vertique-codegen-core`), including a nested per-parameter `ParameterMetadata` impl whose `findAnnotation`/`hasAnnotation` are backed by generated parameter-level annotation literals — not reflection.
-- An annotation-literal class (`Ann$Literal implements Ann`) per distinct aspect annotation type, plus one per distinct runtime-retained annotation type found on an intercepted method's parameters.
+- An AOP-owned annotation-literal class (`Ann$AopLiteral implements Ann`) per distinct aspect annotation type, plus one per distinct runtime-retained annotation type found on an intercepted method's parameters.
 - A single `GeneratedAopModule` Dagger `@Module` that substitutes each proxy for its bean via a `@Binds` method, replicating the bean's declared scope.
 
 ---
@@ -102,7 +102,7 @@ public final class UserService$AopProxy extends UserService {
     private static final MethodMetadata GREET_0_METADATA = new GreetMethod0Metadata();
 
     // Annotation-literal instance per aspect occurrence per method
-    private static final Timed GREET_0_TIMED = new Timed$Literal("user.greet");
+    private static final Timed GREET_0_TIMED = new Timed$AopLiteral("user.greet");
 
     // Interceptor chain field per intercepted method (resolved once in the constructor)
     private final MethodInterceptor[] greet_0_chain;
@@ -132,10 +132,10 @@ For sync-returning methods (non-`Future` return type), the generated override ca
 ### Annotation-Literal
 
 ```java
-public final class Timed$Literal implements Timed {
+public final class Timed$AopLiteral implements Timed {
     private final String value;
 
-    public Timed$Literal(String value) { this.value = value; }
+    public Timed$AopLiteral(String value) { this.value = value; }
 
     @Override public String value() { return value; }
     @Override public Class<? extends Annotation> annotationType() { return Timed.class; }
@@ -154,7 +154,7 @@ public final class Timed$Literal implements Timed {
 }
 ```
 
-One `Ann$Literal` class is written per distinct aspect annotation type (not per occurrence). Per-method literal instances are baked with the attribute values read from that method's annotation mirror. Two methods sharing the same aspect type but carrying different attribute values materialize distinct literal instances from the same literal class.
+One AOP-owned `Ann$AopLiteral` class is written per distinct aspect annotation type (not per occurrence). Per-method literal instances are baked with the attribute values read from that method's annotation mirror. Two methods sharing the same aspect type but carrying different attribute values materialize distinct literal instances from the same literal class. The `Aop` namespace is processor ownership: it keeps these generated types distinct from a literal emitted for the same annotation by another processor.
 
 The literal's `equals`/`hashCode` conform to the `java.lang.annotation.Annotation` contract, making a literal usable as a map key in caching-style aspects.
 
@@ -195,7 +195,7 @@ The module (`GeneratedAopModule`) is emitted in the **first round that yields an
 
 Generates the `Bean$AopProxy` class, its `MethodMetadata` implementations (via `MetadataEmitter`), and the annotation-literal instances. Per-method member names (metadata constant, chain field, nested metadata type) are disambiguated by an ordinal (position in the intercepted-method list) so overloaded intercepted methods — same simple name, different parameter types — never collide.
 
-For each intercepted method, `materializeParameterAnnotations` walks every parameter's `@Retention(RUNTIME)` annotations and emits one `<Ann>$Literal` per distinct annotation type encountered (deduplicated per compilation, same as the method-level literals), passing the per-parameter literal refs into `MetadataEmitter.methodMetadataType` so the nested `MethodMetadata`'s per-parameter `ParameterMetadata.findAnnotation`/`hasAnnotation` resolve from generated literals. An annotation carrying an unsupported attribute kind (`char`/`float`/`double`, a nested annotation, or an array of those) on a parameter is rejected with a compile error against that parameter — the same bounded-attribute-kind gate `AnnotationLiteralEmitter` applies to method-level literals — rather than silently falling back to reflection.
+For each intercepted method, `materializeParameterAnnotations` walks every parameter's `@Retention(RUNTIME)` annotations and emits one `<Ann>$AopLiteral` per distinct annotation type encountered (deduplicated per compilation, same as the method-level literals), passing the per-parameter literal refs into `MetadataEmitter.methodMetadataType` so the nested `MethodMetadata`'s per-parameter `ParameterMetadata.findAnnotation`/`hasAnnotation` resolve from generated literals. An annotation carrying an unsupported attribute kind (`char`/`float`/`double`, a nested annotation, or an array of those) on a parameter is rejected with a compile error against that parameter — the same bounded-attribute-kind gate `AnnotationLiteralEmitter` applies to method-level literals — rather than silently falling back to reflection.
 
 ### `GeneratedAopModuleEmitter`
 

@@ -14,7 +14,7 @@ import org.junit.jupiter.api.Test;
  * FR-013-09c).
  *
  * <p>When the generated proxy's {@code MethodMetadataImpl} must materialize a method's
- * runtime-retained annotation into a {@code <Ann>$Literal} for the reflection-free
+ * runtime-retained annotation into a {@code <Ann>$AopLiteral} for the reflection-free
  * {@code findAnnotation} surface, an attribute of an unsupported kind ({@code char} / {@code float} /
  * {@code double}, here a {@code float} member) MUST be a hard compile error via {@code Diagnostics},
  * with a clear message naming the unsupported attribute / kind — never a silent reflective

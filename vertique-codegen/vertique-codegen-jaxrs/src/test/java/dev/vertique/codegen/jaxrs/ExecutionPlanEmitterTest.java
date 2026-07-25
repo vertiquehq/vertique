@@ -934,12 +934,12 @@ class ExecutionPlanEmitterTest {
                             + "implementation for P0; generated source:\n" + planSrc);
 
             // That standalone implementation must materialize a TestParamMarker literal — either the
-            // generated TestParamMarker$Literal type or a TestParamMarker-typed constant — for the
+            // generated TestParamMarker$JaxRsLiteral type or a TestParamMarker-typed constant — for the
             // parameter's reflection-free findAnnotation lookup.
             String metaFqn = "dev.vertique.test.MarkedResource_getMarked_0_ExecutionPlan_P0Meta";
             String metaSrc = generatedSource(result, metaFqn);
             boolean referencesMarkerLiteral =
-                    metaSrc.contains("TestParamMarker$Literal") || metaSrc.contains("TestParamMarker.class");
+                    metaSrc.contains("TestParamMarker$JaxRsLiteral") || metaSrc.contains("TestParamMarker.class");
             assertTrue(
                     referencesMarkerLiteral,
                     "Generated per-parameter ParameterMetadata implementation must materialize a TestParamMarker "

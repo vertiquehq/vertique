@@ -144,7 +144,7 @@ public final class ExecutionPlanEmitter {
      *                            verb-bearing method ({@link EffectiveMethodContract#httpMethod()}
      *                            non-null)
      * @param methodIndex         zero-based index disambiguating overloaded methods with the same name
-     * @param emittedLiteralFqns  the per-round shared dedup set of {@code <Ann>$Literal} FQNs already
+     * @param emittedLiteralFqns  the per-round shared dedup set of {@code <Ann>$JaxRsLiteral} FQNs already
      *                            written to the {@code Filer}; this method adds each literal class it
      *                            writes and skips any already present (per-compilation dedup)
      * @return the {@link ClassName} of the emitted plan, or {@code null} if not eligible
@@ -340,7 +340,7 @@ public final class ExecutionPlanEmitter {
      *                            annotation fallback lookup — declaring class, name, param types)
      * @param planClass           the {@link ClassName} of the enclosing execution plan, used to name
      *                            the per-parameter standalone {@code ParameterMetadata} impls
-     * @param emittedLiteralFqns  the per-round shared dedup set for {@code <Ann>$Literal} classes
+     * @param emittedLiteralFqns  the per-round shared dedup set for {@code <Ann>$JaxRsLiteral} classes
      * @return the ordered list of field specs
      */
     private List<FieldSpec> buildParamMetaConstants(

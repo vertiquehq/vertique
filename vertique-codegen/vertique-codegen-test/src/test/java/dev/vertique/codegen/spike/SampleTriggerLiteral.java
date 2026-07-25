@@ -8,7 +8,8 @@ package dev.vertique.codegen.spike;
  * of the CODEGEN-013 Phase 0 slice 0.3 annotation-literal feasibility spike (OQ-2).
  *
  * <p>This class is the <strong>spike proof for OQ-2 branch (a)</strong>: it demonstrates that a
- * generated {@code Xxx$Literal implements Xxx} built from compile-time constants — with no {@code
+ * generated {@code Xxx$<Namespace>Literal implements Xxx} (where the emitting processor owns the
+ * namespace) built from compile-time constants — with no {@code
  * getAnnotation} reflection at call time — can satisfy the {@link java.lang.annotation.Annotation}
  * contract well enough to equal a reflectively-obtained instance (the JDK's dynamic proxy) and serve
  * as a {@code Set}/{@code Map} key interchangeably with it.

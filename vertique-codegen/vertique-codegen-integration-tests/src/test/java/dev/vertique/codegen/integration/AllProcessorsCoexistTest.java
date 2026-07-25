@@ -6,13 +6,24 @@ package dev.vertique.codegen.integration;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import dev.vertique.codegen.aop.AopProcessor;
+import dev.vertique.codegen.application.VertiqueAppProcessor;
+import dev.vertique.codegen.cron.processor.CronJobProcessor;
+import dev.vertique.codegen.dagger.processor.AutoWireProcessor;
+import dev.vertique.codegen.delayed.processor.DelayedJobContractProcessor;
+import dev.vertique.codegen.events.EventsProcessor;
 import dev.vertique.codegen.jaxrs.JaxRsPipelineProcessor;
+import dev.vertique.codegen.kafka.processor.KafkaConsumerProcessor;
+import dev.vertique.codegen.rest.client.processor.RestClientProcessor;
+import dev.vertique.codegen.sanitization.processor.SanitizationProcessor;
+import dev.vertique.codegen.services.processor.ServiceContractProcessor;
 import dev.vertique.codegen.test.ProcessorTestHarness;
 import dev.vertique.codegen.test.fixtures.SourceFiles;
+import dev.vertique.codegen.workflow.processor.WorkflowContractProcessor;
 import java.io.IOException;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
+import javax.annotation.processing.Processor;
 import javax.tools.JavaFileObject;
 import org.junit.jupiter.api.Test;
 
@@ -22,31 +33,54 @@ import org.junit.jupiter.api.Test;
  */
 class AllProcessorsCoexistTest {
 
+    private static final String AOP_LITERAL = "dev.vertique.test.SharedParameter$AopLiteral";
+    private static final String JAXRS_LITERAL = "dev.vertique.test.SharedParameter$JaxRsLiteral";
+
     @Test
     void aspectInterceptedJaxRsParameterGeneratesWithoutDuplicateLiteral() {
-        ProcessorTestHarness.run(
-                        List.of(new AopProcessor(), new JaxRsPipelineProcessor()),
-                        aspectAnnotation(),
-                        runtimeParameterAnnotation(),
-                        aspectInterceptedResource())
-                .assertSuccess();
+        ProcessorTestHarness.Result result = compile(processors());
+
+        result.assertSuccess();
+        assertOwnedLiteralsGenerated(result);
     }
 
     @Test
     void processorOrderDoesNotChangeGeneratedOutput() throws IOException {
-        ProcessorTestHarness.Result forward = compile(new AopProcessor(), new JaxRsPipelineProcessor());
-        ProcessorTestHarness.Result reverse = compile(new JaxRsPipelineProcessor(), new AopProcessor());
+        ProcessorTestHarness.Result forward = compile(processors());
+        ProcessorTestHarness.Result reverse = compile(processors().reversed());
 
         forward.assertSuccess();
         reverse.assertSuccess();
+        assertOwnedLiteralsGenerated(forward);
+        assertOwnedLiteralsGenerated(reverse);
 
         assertEquals(generatedSourceTree(forward), generatedSourceTree(reverse));
     }
 
-    private static ProcessorTestHarness.Result compile(
-            javax.annotation.processing.Processor first, javax.annotation.processing.Processor second) {
+    private static void assertOwnedLiteralsGenerated(ProcessorTestHarness.Result result) {
+        result.loadGeneratedClass(AOP_LITERAL);
+        result.loadGeneratedClass(JAXRS_LITERAL);
+    }
+
+    private static List<Processor> processors() {
+        return List.of(
+                new AopProcessor(),
+                new VertiqueAppProcessor(),
+                new CronJobProcessor(),
+                new AutoWireProcessor(),
+                new DelayedJobContractProcessor(),
+                new EventsProcessor(),
+                new JaxRsPipelineProcessor(),
+                new KafkaConsumerProcessor(),
+                new RestClientProcessor(),
+                new SanitizationProcessor(),
+                new ServiceContractProcessor(),
+                new WorkflowContractProcessor());
+    }
+
+    private static ProcessorTestHarness.Result compile(List<Processor> processors) {
         return ProcessorTestHarness.run(
-                List.of(first, second), aspectAnnotation(), runtimeParameterAnnotation(), aspectInterceptedResource());
+                processors, aspectAnnotation(), runtimeParameterAnnotation(), aspectInterceptedResource());
     }
 
     private static Map<String, String> generatedSourceTree(ProcessorTestHarness.Result result) throws IOException {

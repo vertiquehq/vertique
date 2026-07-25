@@ -15,7 +15,7 @@ import org.junit.jupiter.api.Test;
 /**
  * RED reproduction for P2R2-W1: {@code AnnotationLiteralEmitter.memberFieldType} normalizes every
  * {@code Class} member to {@code Class<?>}. For a bounded {@code Class<? extends Number> value()}
- * member the generated {@code <Ann>$Literal} accessor {@code public Class<?> value()} does NOT
+ * member the generated {@code <Ann>$AopLiteral} accessor {@code public Class<?> value()} does NOT
  * override the annotation interface method {@code Class<? extends Number> value()} — an incompatible
  * (non-covariant) return type — so the generated literal source fails to compile.
  *
@@ -23,14 +23,14 @@ import org.junit.jupiter.api.Test;
  * supported nor cleanly rejected: it silently emits non-compiling code.
  *
  * <p><strong>Expected RED behavior:</strong> the overall compilation FAILS (the emitted
- * {@code TestBoundedClass$Literal} accessor does not override the bounded interface method), so
+ * {@code TestBoundedClass$AopLiteral} accessor does not override the bounded interface method), so
  * {@code assertSuccess()} throws. Once W1 is fixed, the emitter must preserve the member's declared
  * type on the field/accessor (erasing only the {@code .class} value expression), so the accessor
  * overrides correctly and compilation succeeds.
  */
 class BoundedClassMemberLiteralCompilesTest {
 
-    private static final String BOUNDED_LITERAL_FQN = "dev.vertique.codegen.aop.TestBoundedClass$Literal";
+    private static final String BOUNDED_LITERAL_FQN = "dev.vertique.codegen.aop.TestBoundedClass$AopLiteral";
 
     /** Reads the full generated source of {@code fqn} from the compilation, failing if absent. */
     private static String generatedSource(ProcessorTestHarness.Result result, String fqn) {

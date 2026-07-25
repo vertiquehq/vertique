@@ -1187,7 +1187,7 @@ public final class Diagnostics {
 
     /**
      * Returns the standard compile-time error message when a method's runtime-retained annotation
-     * must be materialized into a reflection-free {@code <Ann>$Literal} (for the metadata
+     * must be materialized into a reflection-free {@code <Ann>$<Namespace>Literal} (for the metadata
      * {@code findAnnotation}/{@code hasAnnotation} surface) but carries a member of an unsupported
      * attribute kind ({@code char} / {@code float} / {@code double}, or an array of one of those).
      *

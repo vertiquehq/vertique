@@ -149,7 +149,7 @@ public final class JaxRsDescriptorEmitter {
      *                            each verb-bearing method; must have the same length as the list
      *                            returned by filtering {@code contract.methods()} to those with a
      *                            non-null {@code httpMethod}; must not be {@code null}
-     * @param emittedLiteralFqns  the per-round shared dedup set of {@code <Ann>$Literal} FQNs already
+     * @param emittedLiteralFqns  the per-round shared dedup set of {@code <Ann>$JaxRsLiteral} FQNs already
      *                            written to the {@code Filer} (GitHub issue #162); this method adds
      *                            each literal class it writes and skips any already present
      */
@@ -583,7 +583,7 @@ public final class JaxRsDescriptorEmitter {
      *                            parameter's standalone metadata-impl class name
      * @param methodIdx           zero-based method index (disambiguates the metadata-impl name
      *                            across overloaded/multiple methods on the same resource)
-     * @param emittedLiteralFqns  the per-round shared dedup set of {@code <Ann>$Literal} FQNs already
+     * @param emittedLiteralFqns  the per-round shared dedup set of {@code <Ann>$JaxRsLiteral} FQNs already
      *                            written to the {@code Filer}
      * @return the code block
      */

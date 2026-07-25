@@ -67,6 +67,8 @@ final class AopProxyEmitter {
 
     static final String PROXY_SUFFIX = "$AopProxy";
 
+    private static final String GENERATOR_NAMESPACE = "Aop";
+
     // --- Framework SPI ClassName constants (referenced, rendered into generated source) ---
     private static final ClassName INVOCATIONS = ClassName.get("dev.vertique.aop", "Invocations");
     private static final ClassName METHOD_INTERCEPTOR = ClassName.get("dev.vertique.aop", "MethodInterceptor");
@@ -91,7 +93,7 @@ final class AopProxyEmitter {
      * different parameters) never collide (Bug F4). The annotation literal <em>instance</em> baked
      * into each method's chain is built per annotation <em>occurrence</em> (from that method's own
      * mirror), so two methods carrying the same aspect with different attribute values materialize
-     * distinct literals (Bug F2); the {@code <Ann>$Literal} <em>class</em> itself is written at most
+     * distinct literals (Bug F2); the {@code <Ann>$AopLiteral} <em>class</em> itself is written at most
      * once per compilation via {@code emittedLiteralFqns}.
      *
      * @param bean             the target bean type element; must not be {@code null}
@@ -99,7 +101,7 @@ final class AopProxyEmitter {
      * @param interceptedMethods the bean's aspect-annotated methods (in declaration order); must not
      *                         be empty
      * @param aspectFqns       the set of aspect trigger-annotation FQNs the processor recognises
-     * @param emittedLiteralFqns the compilation-scoped set of {@code <Ann>$Literal} FQNs already
+     * @param emittedLiteralFqns the compilation-scoped set of {@code <Ann>$AopLiteral} FQNs already
      *                         written to the {@code Filer}; this method adds each literal class it
      *                         writes and skips any already present (per-compilation dedup, Bug F2)
      * @return the proxy's {@link ClassName} (binary-name style, with the {@code $AopProxy} suffix)
@@ -130,7 +132,7 @@ final class AopProxyEmitter {
         // land in the proxy's own source) and a static final MethodMetadata constant holding it.
         // Names are disambiguated by ordinal so overloads do not collide (Bug F4). The metadata impl's
         // reflection-free findAnnotation/hasAnnotation is backed by one materialized literal per
-        // runtime-retained method annotation (FR-013-13); each such <Ann>$Literal CLASS is written at
+        // runtime-retained method annotation (FR-013-13); each such <Ann>$AopLiteral CLASS is written at
         // most once per compilation via emittedLiteralFqns.
         Map<ExecutableElement, String> metaFieldNames = new LinkedHashMap<>();
         for (int i = 0; i < interceptedMethods.size(); i++) {
@@ -150,15 +152,20 @@ final class AopProxyEmitter {
             metaFieldNames.put(method, metaFieldName);
         }
 
-        // Emit each distinct aspect <Ann>$Literal CLASS at most once per compilation (shared dedup set
+        // Emit each distinct aspect <Ann>$AopLiteral CLASS at most once per compilation (shared dedup set
         // with the method-annotation materialization above). materializeMethodAnnotations already emits
         // the class for a runtime-retained aspect trigger, but this guarantees the class exists for the
         // occurrence INSTANCE fields below even for an aspect annotation that is not runtime-retained.
         for (AspectRef aspect : aspects.values()) {
-            ClassName literalClass = AnnotationLiteralEmitter.literalClassName(aspect.annotationType, ctx.elements());
+            ClassName literalClass = AnnotationLiteralEmitter.literalClassName(
+                    aspect.annotationType, ctx.elements(), GENERATOR_NAMESPACE);
             if (emittedLiteralFqns.add(literalClass.canonicalName())) {
                 write(AnnotationLiteralEmitter.emit(
-                        aspect.annotationType, aspect.representativeMirror, ctx.elements(), ctx.types()));
+                        aspect.annotationType,
+                        aspect.representativeMirror,
+                        ctx.elements(),
+                        ctx.types(),
+                        GENERATOR_NAMESPACE));
             }
         }
 
@@ -170,7 +177,8 @@ final class AopProxyEmitter {
             ExecutableElement method = interceptedMethods.get(i);
             for (AspectOnMethod occurrence : orderedAspects(method, aspects.keySet())) {
                 AspectRef ref = aspects.get(occurrence.fqn());
-                ClassName literalClass = AnnotationLiteralEmitter.literalClassName(ref.annotationType, ctx.elements());
+                ClassName literalClass = AnnotationLiteralEmitter.literalClassName(
+                        ref.annotationType, ctx.elements(), GENERATOR_NAMESPACE);
                 CodeBlock args =
                         AnnotationLiteralEmitter.constructorArgs(occurrence.mirror(), ctx.elements(), ctx.types());
                 String literalFieldName = occurrenceLiteralFieldName(ref, i);
@@ -215,7 +223,7 @@ final class AopProxyEmitter {
      * target.
      *
      * @param method             the intercepted method whose annotations to materialize
-     * @param emittedLiteralFqns the compilation-scoped set of already-written {@code <Ann>$Literal} FQNs
+     * @param emittedLiteralFqns the compilation-scoped set of already-written {@code <Ann>$AopLiteral} FQNs
      * @return the materialized literal refs, in annotation-declaration order (excluding skipped ones)
      */
     private List<MetadataEmitter.AnnotationLiteralRef> materializeMethodAnnotations(
@@ -233,7 +241,7 @@ final class AopProxyEmitter {
      * element (FR-013-13 / FR-013-09c) and skipped.
      *
      * @param method             the intercepted method whose parameters' annotations to materialize
-     * @param emittedLiteralFqns the compilation-scoped set of already-written {@code <Ann>$Literal} FQNs
+     * @param emittedLiteralFqns the compilation-scoped set of already-written {@code <Ann>$AopLiteral} FQNs
      * @return one materialized-literal list per parameter, in parameter order (each may be empty)
      */
     private List<List<MetadataEmitter.AnnotationLiteralRef>> materializeParameterAnnotations(
@@ -249,7 +257,7 @@ final class AopProxyEmitter {
      * Materializes the {@code @Retention(RUNTIME)} annotations on {@code annotated} into
      * {@link MetadataEmitter.AnnotationLiteralRef}s — the shared core of method-level and
      * parameter-level annotation materialization. For each runtime-retained annotation it emits
-     * (deduplicated per compilation via {@code emittedLiteralFqns}) the {@code <Ann>$Literal} class and
+     * (deduplicated per compilation via {@code emittedLiteralFqns}) the {@code <Ann>$AopLiteral} class and
      * returns a ref carrying the literal class plus this occurrence's constructor arguments.
      *
      * <p>{@code SOURCE}/{@code CLASS}-retained annotations are skipped. An annotation carrying a member
@@ -260,7 +268,7 @@ final class AopProxyEmitter {
      *
      * @param annotated          the annotated element (a method or a parameter) to read mirrors from
      * @param diagnosticTarget   the element the unsupported-kind diagnostic is attached to
-     * @param emittedLiteralFqns the compilation-scoped set of already-written {@code <Ann>$Literal} FQNs
+     * @param emittedLiteralFqns the compilation-scoped set of already-written {@code <Ann>$AopLiteral} FQNs
      * @return the materialized literal refs, in annotation-declaration order (excluding skipped ones)
      */
     private List<MetadataEmitter.AnnotationLiteralRef> materializeAnnotations(
@@ -285,9 +293,10 @@ final class AopProxyEmitter {
                                         annType.getQualifiedName().toString(), bad.member(), bad.kind()));
                 continue;
             }
-            ClassName literalClass = AnnotationLiteralEmitter.literalClassName(annType, ctx.elements());
+            ClassName literalClass =
+                    AnnotationLiteralEmitter.literalClassName(annType, ctx.elements(), GENERATOR_NAMESPACE);
             if (emittedLiteralFqns.add(literalClass.canonicalName())) {
-                write(AnnotationLiteralEmitter.emit(annType, mirror, ctx.elements(), ctx.types()));
+                write(AnnotationLiteralEmitter.emit(annType, mirror, ctx.elements(), ctx.types(), GENERATOR_NAMESPACE));
             }
             CodeBlock args = AnnotationLiteralEmitter.constructorArgs(mirror, ctx.elements(), ctx.types());
             refs.add(new MetadataEmitter.AnnotationLiteralRef(ClassName.get(annType), literalClass, args));
@@ -721,7 +730,7 @@ final class AopProxyEmitter {
     /**
      * A distinct aspect annotation TYPE used by the bean, with its stable {@code AspectProvider<A>}
      * constructor-parameter name. The {@code representativeMirror} is used only to emit the
-     * per-type {@code <Ann>$Literal} CLASS (whose shape is identical regardless of attribute values);
+     * per-type {@code <Ann>$AopLiteral} CLASS (whose shape is identical regardless of attribute values);
      * the per-occurrence literal INSTANCE constants are built separately from each method's own
      * mirror (Bug F2).
      */

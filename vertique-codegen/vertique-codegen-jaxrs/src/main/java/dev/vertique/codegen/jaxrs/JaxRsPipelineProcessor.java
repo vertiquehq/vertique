@@ -193,13 +193,13 @@ public final class JaxRsPipelineProcessor extends AbstractProcessor {
         // Collect validated contracts for step 4b descriptor emission.
         List<EffectiveResourceContract> validatedContracts = new java.util.ArrayList<>();
 
-        // Per-round dedup set for <Ann>$Literal classes materialized by both ExecutionPlanEmitter's
+        // Per-round dedup set for <Ann>$JaxRsLiteral classes materialized by both ExecutionPlanEmitter's
         // and JaxRsDescriptorEmitter's literal-backed parameter annotations (GitHub issue #162).
         // Scoped to a single process() round and shared across every emit(...) call to EITHER
         // emitter in that round, since the same parameter (hence the same annotation occurrence) is
         // visited by both emitters — without a shared set, a runtime-retained annotation type (e.g.
         // @PathParam itself, which is @Retention(RUNTIME)) used on more than one parameter/method
-        // visited by either emitter would attempt to write the same <Ann>$Literal class twice in one
+        // visited by either emitter would attempt to write the same <Ann>$JaxRsLiteral class twice in one
         // round, which the Filer rejects as a duplicate-write error.
         Set<String> emittedLiteralFqns = new LinkedHashSet<>();
 

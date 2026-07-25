@@ -15,7 +15,7 @@ import java.lang.annotation.Target;
  *
  * <p>It is {@link ElementType#PARAMETER PARAMETER}-targeted and carries a single
  * {@code String value()} of a supported attribute kind, so a generated JAX-RS execution plan or
- * descriptor must materialize a {@code TestParamMarker$Literal} and expose it via the parameter's
+ * descriptor must materialize a {@code TestParamMarker$JaxRsLiteral} and expose it via the parameter's
  * {@code ParameterMetadata.findAnnotation}/{@code hasAnnotation} — proving the literal-backed
  * lookup is genuinely reflection-free rather than a {@code null}/reflective-read placeholder
  * (mirrors {@code vertique-codegen-aop}'s {@code TestParamMarker} fixture for the same purpose).
@@ -32,7 +32,7 @@ public @interface TestParamMarker {
     /**
      * Returns the marker's string value.
      *
-     * @return the marker value baked into the generated {@code TestParamMarker$Literal} as a
+     * @return the marker value baked into the generated {@code TestParamMarker$JaxRsLiteral} as a
      *     {@code String} constant
      */
     String value();

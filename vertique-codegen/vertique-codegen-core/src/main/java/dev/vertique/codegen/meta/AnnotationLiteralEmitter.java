@@ -16,6 +16,7 @@ import java.lang.annotation.Annotation;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import javax.lang.model.SourceVersion;
 import javax.lang.model.element.AnnotationMirror;
 import javax.lang.model.element.AnnotationValue;
 import javax.lang.model.element.ExecutableElement;
@@ -31,7 +32,7 @@ import javax.lang.model.util.Types;
 
 /**
  * Reusable JavaPoet emitter that generates a contract-correct annotation literal — a
- * {@code final class <Ann>$Literal implements <Ann>} — whose member accessors return the
+ * {@code final class <Ann>$<Namespace>Literal implements <Ann>} — whose member accessors return the
  * processor-read attribute values baked as compile-time constants, with no {@code getAnnotation}
  * reflection at call time.
  *
@@ -50,20 +51,18 @@ import javax.lang.model.util.Types;
  * <p><strong>Supported attribute kinds:</strong> {@code int} (and the other integral primitives),
  * {@code String}, {@code Class<?>}, enum constants, and arrays of those. The remaining primitives
  * ({@code char} / {@code float} / {@code double}) and <em>nested-annotation</em> members (and arrays
- * of either) are <strong>not</strong> renderable in v1 and are rejected, never emitted as broken
- * code: callers run {@link #firstUnsupportedAttribute} first and route an offending member through
- * {@code Diagnostics.error} (a clean compile error, FR-013-13 / FR-013-09c). The {@link #emit} /
- * {@link #constructorArgs} methods themselves raise an {@link UnsupportedOperationException} on such a
- * kind as a defensive backstop, so an un-prechecked caller fails loudly rather than silently.
+ * of either) are <strong>not</strong> renderable in v1 and are never emitted as broken code. Callers
+ * run {@link #firstUnsupportedAttribute} first and apply their documented policy: AOP reports a
+ * compile error (FR-013-13 / FR-013-09c), while JAX-RS wires its lazy reflective fallback. The
+ * {@link #emit} / {@link #constructorArgs} methods themselves raise an
+ * {@link UnsupportedOperationException} on such a kind as a defensive backstop, so an un-prechecked
+ * caller fails loudly rather than silently.
  *
  * <p>The literal is emitted as a top-level class in the annotation's own package, named
- * {@code <AnnSimpleName>$Literal} (binary-name style); the consuming proxy references it as a
- * {@code static final <Ann>} constant.
+ * {@code <AnnSimpleName>$<Namespace>Literal} (binary-name style); the consuming processor
+ * references it as a {@code static final <Ann>} constant.
  */
 public final class AnnotationLiteralEmitter {
-
-    /** Suffix appended to the annotation simple name to form the generated literal class name. */
-    public static final String LITERAL_SUFFIX = "$Literal";
 
     private AnnotationLiteralEmitter() {}
 
@@ -148,20 +147,25 @@ public final class AnnotationLiteralEmitter {
 
     /**
      * Computes the binary class name of the literal generated for the given annotation type
-     * ({@code <annPackage>.<AnnSimpleName>$Literal}).
+     * ({@code <annPackage>.<AnnSimpleName>$<Namespace>Literal}).
      *
      * @param annotationType the aspect annotation type element; must not be {@code null}
      * @param elements       the {@link Elements} utility used to resolve the package; must not be
      *                       {@code null}
-     * @return the literal's {@link ClassName} (binary-name style, with the {@code $Literal} suffix)
+     * @param generatorNamespace the processor-owned namespace inserted into the generated type name
+     * @return the literal's {@link ClassName} (binary-name style, with a processor-owned namespace)
+     * @throws IllegalArgumentException when {@code generatorNamespace} is blank or is not a Java
+     *                                  identifier fragment
      */
-    public static ClassName literalClassName(TypeElement annotationType, Elements elements) {
+    public static ClassName literalClassName(TypeElement annotationType, Elements elements, String generatorNamespace) {
+        validateGeneratorNamespace(generatorNamespace);
         String pkg = elements.getPackageOf(annotationType).getQualifiedName().toString();
-        return ClassName.get(pkg, annotationType.getSimpleName() + LITERAL_SUFFIX);
+        return ClassName.get(pkg, annotationType.getSimpleName() + "$" + generatorNamespace + "Literal");
     }
 
     /**
-     * Emits the {@code <Ann>$Literal implements <Ann>} class for the given annotation mirror.
+     * Emits the {@code <Ann>$<Namespace>Literal implements <Ann>} class for the given annotation
+     * mirror.
      *
      * @param annotationType the aspect annotation type element; must not be {@code null}
      * @param mirror         the annotation mirror present on the intercepted method, read for its
@@ -170,11 +174,20 @@ public final class AnnotationLiteralEmitter {
      *                       be {@code null}
      * @param types          the {@link Types} utility (for erasing {@code Class} attribute values);
      *                       must not be {@code null}
+     * @param generatorNamespace the processor-owned namespace inserted into the generated type name
      * @return a {@link JavaFile} containing the generated literal class
+     * @throws IllegalArgumentException when {@code generatorNamespace} is blank or is not a Java
+     *                                  identifier fragment
      */
-    public static JavaFile emit(TypeElement annotationType, AnnotationMirror mirror, Elements elements, Types types) {
+    public static JavaFile emit(
+            TypeElement annotationType,
+            AnnotationMirror mirror,
+            Elements elements,
+            Types types,
+            String generatorNamespace) {
+        validateGeneratorNamespace(generatorNamespace);
         ClassName annClass = ClassName.get(annotationType);
-        ClassName literalClass = literalClassName(annotationType, elements);
+        ClassName literalClass = literalClassName(annotationType, elements, generatorNamespace);
 
         Map<? extends ExecutableElement, ? extends AnnotationValue> values =
                 elements.getElementValuesWithDefaults(mirror);
@@ -258,6 +271,15 @@ public final class AnnotationLiteralEmitter {
         return JavaFile.builder(literalClass.packageName(), type.build()).build();
     }
 
+    private static void validateGeneratorNamespace(String generatorNamespace) {
+        if (generatorNamespace == null
+                || generatorNamespace.isBlank()
+                || !SourceVersion.isIdentifier(generatorNamespace)) {
+            throw new IllegalArgumentException(
+                    "generatorNamespace must be a non-blank Java identifier fragment: " + generatorNamespace);
+        }
+    }
+
     // --- member rendering helpers ---
 
     /**
@@ -267,7 +289,7 @@ public final class AnnotationLiteralEmitter {
      * becomes its declared type.
      *
      * <p>The {@code Class} member's declared type is preserved — rather than normalized to
-     * {@code Class<?>} — so the generated {@code <Ann>$Literal} accessor's return type matches the
+     * {@code Class<?>} — so the generated {@code <Ann>$<Namespace>Literal} accessor's return type matches the
      * annotation interface method exactly and therefore overrides it. A normalized {@code Class<?>}
      * accessor is <em>not</em> covariant with a bounded {@code Class<? extends Number>} interface
      * method, so it would fail to override and the generated literal source would not compile. The

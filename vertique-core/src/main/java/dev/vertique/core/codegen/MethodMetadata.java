@@ -19,7 +19,8 @@ import java.util.Optional;
  * returns compile-time-captured constants and never reflects at call time. Method-level annotation
  * lookups ({@link #findAnnotation(Class)}/{@link #hasAnnotation(Class)}) are backed by generated
  * annotation-literals: for each {@code @Retention(RUNTIME)} method annotation the emitter materializes
- * a {@code <Ann>$Literal} constant and resolves {@link #findAnnotation(Class)} by matching the
+ * a processor-owned {@code <Ann>$<Namespace>Literal} constant and resolves
+ * {@link #findAnnotation(Class)} by matching the
  * requested {@code Class} against each literal's {@link java.lang.annotation.Annotation#annotationType()
  * annotationType()} — never {@link Method#getAnnotation(Class)}. {@code SOURCE}/{@code CLASS}-retained
  * annotations are not part of this surface (they are invisible at runtime).

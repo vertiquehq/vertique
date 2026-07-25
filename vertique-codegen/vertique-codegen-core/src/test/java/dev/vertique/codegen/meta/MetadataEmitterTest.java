@@ -99,7 +99,7 @@ class MetadataEmitterTest {
         ExecutableElement greet = mockMethod("greet", greeter, stringMirror, List.of(nameParam));
 
         ClassName annotationType = ClassName.get("com.example", "TestMarker");
-        ClassName literalClass = ClassName.get("com.example", "TestMarker$Literal");
+        ClassName literalClass = ClassName.get("com.example", "TestMarker$AopLiteral");
         AnnotationLiteralRef ref = new AnnotationLiteralRef(annotationType, literalClass, CodeBlock.of("$S", "x"));
 
         JavaFile file = JavaFile.builder(
@@ -113,8 +113,8 @@ class MetadataEmitterTest {
 
         assertTrue(source.contains("ANNOTATION_0"), "should emit a per-method-annotation literal constant field");
         assertTrue(
-                source.contains("TestMarker$Literal"),
-                "the literal constant's initializer should reference the generated <Ann>$Literal class");
+                source.contains("TestMarker$AopLiteral"),
+                "the literal constant's initializer should reference the generated <Ann>$AopLiteral class");
         assertTrue(
                 source.contains("if (type == TestMarker.class)"),
                 "findAnnotation should match the looked-up type against the literal's annotation type");
@@ -135,7 +135,7 @@ class MetadataEmitterTest {
         ExecutableElement greet = mockMethod("greet", greeter, stringMirror, List.of(nameParam));
 
         ClassName annotationType = ClassName.get("com.example", "ParamMarker");
-        ClassName literalClass = ClassName.get("com.example", "ParamMarker$Literal");
+        ClassName literalClass = ClassName.get("com.example", "ParamMarker$AopLiteral");
         AnnotationLiteralRef ref = new AnnotationLiteralRef(annotationType, literalClass, CodeBlock.of("$S", "p"));
 
         JavaFile file = JavaFile.builder(
@@ -151,8 +151,8 @@ class MetadataEmitterTest {
                 source.contains("PARAM_0_ANNOTATION_0"),
                 "should emit a per-parameter-annotation literal constant field named PARAM_<p>_ANNOTATION_<i>");
         assertTrue(
-                source.contains("ParamMarker$Literal"),
-                "the literal constant's initializer should reference the generated <Ann>$Literal class");
+                source.contains("ParamMarker$AopLiteral"),
+                "the literal constant's initializer should reference the generated <Ann>$AopLiteral class");
         assertTrue(
                 source.contains("PARAM_0_ANNOTATION_0)"),
                 "the ParameterMetadataImpl construction should pass the literal field as a trailing argument");

@@ -29,7 +29,7 @@ import javax.lang.model.element.VariableElement;
  * annotations are therefore materialized per-parameter as follows:
  * <ul>
  *   <li>every annotation whose member shape {@code AnnotationLiteralEmitter} <em>can</em> render is
- *       baked into a compile-time {@code <Ann>$Literal} constant (the reflection-free fast path);</li>
+ *       baked into a compile-time {@code <Ann>$JaxRsLiteral} constant (the reflection-free fast path);</li>
  *   <li>if <em>any</em> runtime-retained annotation on the parameter carries an unsupported member
  *       shape (a {@code char}/{@code float}/{@code double} member, a nested-annotation member, or an
  *       array of those — most commonly Swagger's {@code @Parameter}, whose {@code schema} member
@@ -51,6 +51,8 @@ import javax.lang.model.element.VariableElement;
  */
 final class ParameterAnnotationMaterializer {
 
+    private static final String GENERATOR_NAMESPACE = "JaxRs";
+
     private static final ClassName REFLECTIVE_ANNOTATIONS =
             ClassName.get("dev.vertique.rest.jaxrs.runtime", "GeneratedJaxRsReflectiveAnnotations");
 
@@ -67,7 +69,7 @@ final class ParameterAnnotationMaterializer {
 
     /**
      * Materializes {@code pc}'s annotations into a standalone {@code ParameterMetadata} implementation
-     * named {@code generatedName}, writing it (and any newly required {@code <Ann>$Literal} classes,
+     * named {@code generatedName}, writing it (and any newly required {@code <Ann>$JaxRsLiteral} classes,
      * deduplicated via {@code emittedLiteralFqns}) through {@code writer}, and returns a
      * {@code new <generatedName>()} expression for embedding in the caller's {@code ParamMeta}
      * constructor.
@@ -80,7 +82,7 @@ final class ParameterAnnotationMaterializer {
      *                             fallback lookup)
      * @param paramIndex           the zero-based parameter index
      * @param generatedName        the {@link ClassName} for the generated standalone impl
-     * @param emittedLiteralFqns   the per-round shared dedup set of {@code <Ann>$Literal} FQNs
+     * @param emittedLiteralFqns   the per-round shared dedup set of {@code <Ann>$JaxRsLiteral} FQNs
      * @param writer               sink for generated {@link com.palantir.javapoet.JavaFile}s (each
      *                             emitter routes {@code IOException} to its own diagnostic)
      * @return a {@code new <generatedName>()} {@link CodeBlock} expression
@@ -110,7 +112,7 @@ final class ParameterAnnotationMaterializer {
     /**
      * Materializes the union of runtime-retained annotations across {@code annotationSources} (by
      * annotation type, concrete-first precedence) into literal refs, writing each distinct
-     * {@code <Ann>$Literal} class once. An annotation with an unsupported member shape is skipped from
+     * {@code <Ann>$JaxRsLiteral} class once. An annotation with an unsupported member shape is skipped from
      * the literal set and flips {@code hasUnsupported[0]} so the caller wires a reflective fallback.
      *
      * <p><strong>Same-type / differing-member parity.</strong> This literal fast path dedups by
@@ -127,7 +129,7 @@ final class ParameterAnnotationMaterializer {
      *
      * @param annotationSources  the parameter elements to merge annotations from (precedence order)
      * @param emittedLiteralFqns the per-round shared dedup set
-     * @param writer             sink for emitted {@code <Ann>$Literal} classes
+     * @param writer             sink for emitted {@code <Ann>$JaxRsLiteral} classes
      * @param hasUnsupported     single-element flag set to {@code true} when any runtime-retained
      *                           annotation could not be materialized, or when a runtime-retained
      *                           annotation type appears more than once (forcing the reflective fallback)
@@ -163,9 +165,11 @@ final class ParameterAnnotationMaterializer {
                     hasUnsupported[0] = true;
                     continue;
                 }
-                ClassName literalClass = AnnotationLiteralEmitter.literalClassName(annType, ctx.elements());
+                ClassName literalClass =
+                        AnnotationLiteralEmitter.literalClassName(annType, ctx.elements(), GENERATOR_NAMESPACE);
                 if (emittedLiteralFqns.add(literalClass.canonicalName())) {
-                    writer.accept(AnnotationLiteralEmitter.emit(annType, mirror, ctx.elements(), ctx.types()));
+                    writer.accept(AnnotationLiteralEmitter.emit(
+                            annType, mirror, ctx.elements(), ctx.types(), GENERATOR_NAMESPACE));
                 }
                 CodeBlock args = AnnotationLiteralEmitter.constructorArgs(mirror, ctx.elements(), ctx.types());
                 refs.add(new MetadataEmitter.AnnotationLiteralRef(ClassName.get(annType), literalClass, args));

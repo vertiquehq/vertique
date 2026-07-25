@@ -12,15 +12,17 @@ import java.util.function.Supplier;
  * Neutral, runtime metadata view of a single method parameter, implemented and consumed by
  * codegen-generated code.
  *
- * <p>The constant-only accessors ({@link #index()}, {@link #name()}, {@link #type()},
- * {@link #findAnnotation(Class)}, {@link #hasAnnotation(Class)}) form the <em>reflection-free
- * core</em>: a generated implementation returns compile-time-captured constants and never reflects
- * at call time. The parameter name is captured from the {@code VariableElement} at compile time, so
- * it is available without the {@code -parameters} javac flag. <em>Parameter-level</em> annotation
- * lookups ({@link #findAnnotation(Class)}/{@link #hasAnnotation(Class)}) are now backed by generated
- * annotation-literals — for each {@code @Retention(RUNTIME)} parameter annotation the emitter bakes a
- * {@code <Ann>$Literal} constant and resolves the lookup by {@code annotationType()} match, with no
- * reflective read — mirroring the method-level lookup on {@link MethodMetadata}.
+ * <p>The constant accessors ({@link #index()}, {@link #name()}, and {@link #type()}) return
+ * compile-time-captured values in generated implementations. The parameter name is captured from
+ * the {@code VariableElement} at compile time, so it is available without the {@code -parameters}
+ * javac flag. Parameter-level annotation lookups ({@link #findAnnotation(Class)}/
+ * {@link #hasAnnotation(Class)}) are literal-first: an emitter can bake a processor-owned
+ * {@code <Ann>$<Namespace>Literal} constant for each renderable
+ * {@code @Retention(RUNTIME)} parameter annotation and resolve the lookup by
+ * {@code annotationType()} match, with no reflective read — mirroring the method-level lookup on
+ * {@link MethodMetadata}. A consumer may explicitly provide a reflective fallback for annotation
+ * shapes the emitter cannot render; the JAX-RS codegen path does this lazily, whereas AOP rejects
+ * unsupported shapes at compile time.
  *
  * <p>{@link #genericType()} and {@link #annotationsLazy()} form the opt-in
  * <em>reflective-accessor group</em>. They are <strong>not</strong> part of the reflection-free
@@ -59,9 +61,11 @@ public interface ParameterMetadata {
     /**
      * Looks up an annotation of the given type declared on the parameter.
      *
-     * <p>Backed by generated annotation-literals: the emitter bakes a {@code <Ann>$Literal} constant
-     * per {@code @Retention(RUNTIME)} parameter annotation and resolves the lookup by
-     * {@code annotationType()} match, performing no reflective annotation read.
+     * <p>Backed by generated annotation-literals: the emitter bakes a processor-owned
+     * {@code <Ann>$<Namespace>Literal} constant per renderable
+     * {@code @Retention(RUNTIME)} parameter annotation and resolves the lookup by
+     * {@code annotationType()} match. Consumers may supply an explicit fallback for annotations
+     * that cannot be literal-backed; see the interface-level contract.
      *
      * @param type the annotation type to look up
      * @param <A> the annotation type
@@ -72,8 +76,8 @@ public interface ParameterMetadata {
     /**
      * Reports whether an annotation of the given type is declared on the parameter.
      *
-     * <p>Backed by the same generated annotation-literals as {@link #findAnnotation(Class)}, with no
-     * reflective annotation read.
+     * <p>Uses the same literal-first policy as {@link #findAnnotation(Class)}, including any
+     * consumer-specific fallback documented by the implementation.
      *
      * @param type the annotation type to test for
      * @return {@code true} if the annotation is present, {@code false} otherwise

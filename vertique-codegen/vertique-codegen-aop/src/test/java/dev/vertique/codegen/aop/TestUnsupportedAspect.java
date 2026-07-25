@@ -16,7 +16,7 @@ import java.lang.annotation.Target;
  *
  * <p>{@code float} is one of the kinds {@link dev.vertique.codegen.meta.AnnotationLiteralEmitter}
  * cannot render (alongside {@code char} and {@code double}). Because this annotation is itself an
- * aspect trigger, the proxy emits a per-aspect {@code <Ann>$Literal} class and a per-occurrence
+ * aspect trigger, the proxy emits a per-aspect {@code <Ann>$AopLiteral} class and a per-occurrence
  * literal <em>instance</em> for it. Without an up-front precheck on the aspect's annotation type, the
  * literal emitter throws {@code UnsupportedOperationException} mid-emission (a processor crash with a
  * stack trace) instead of the clean {@code Diagnostics.error} FR-013-09c / FR-013-13 require.

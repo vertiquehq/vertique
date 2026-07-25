@@ -14,7 +14,7 @@ import org.junit.jupiter.api.Test;
 /**
  * Annotation-literal feasibility spike for CODEGEN-013 Phase 0 slice 0.3 (OQ-2).
  *
- * <p>The AOP codegen materializes an aspect-trigger annotation as a generated {@code Xxx$Literal
+ * <p>The AOP codegen materializes an aspect-trigger annotation as a generated {@code Xxx$AopLiteral
  * implements Xxx} of compile-time constants (no {@code getAnnotation} reflection at call time). OQ-2
  * asks whether such a generated literal can be made <strong>contract-correct</strong> per {@link
  * java.lang.annotation.Annotation} — i.e. {@link java.lang.annotation.Annotation#annotationType()}

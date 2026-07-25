@@ -83,7 +83,7 @@ public final class AopProcessor extends AbstractProcessor {
     private InjectConstructorValidator injectConstructorValidator;
 
     /**
-     * FQNs of {@code <Ann>$Literal} classes already written to the {@code Filer} this compilation.
+     * FQNs of {@code <Ann>$AopLiteral} classes already written to the {@code Filer} this compilation.
      * The literal class is per-aspect-type (its package and shape are stable regardless of attribute
      * values), so two beans sharing the same aspect must write it once — a second write triggers a
      * Filer "Attempt to recreate a file" error (Bug F2). This set deduplicates the writes across the
@@ -203,7 +203,7 @@ public final class AopProcessor extends AbstractProcessor {
 
                 // (6) An aspect TRIGGER annotation with a member of an unsupported attribute kind
                 // (char/float/double, a nested annotation, or an array of those) cannot be
-                // materialized into the per-aspect <Ann>$Literal the proxy bakes for it. Precheck the
+                // materialized into the per-aspect <Ann>$AopLiteral the proxy bakes for it. Precheck the
                 // aspect's annotation type up front so an unsupported kind is a clean Diagnostics.error
                 // rather than an UnsupportedOperationException crash mid-emission in
                 // AnnotationLiteralEmitter (P2-W2). Mirrors the method-annotation precheck in
@@ -386,7 +386,7 @@ public final class AopProcessor extends AbstractProcessor {
      * offending occurrence. Returns {@code true} if at least one such aspect was found, so the caller
      * skips emitting a proxy for the bean.
      *
-     * <p>The proxy bakes a per-aspect {@code <Ann>$Literal} class and a per-occurrence literal instance
+     * <p>The proxy bakes a per-aspect {@code <Ann>$AopLiteral} class and a per-occurrence literal instance
      * for every aspect trigger on the bean. An unsupported member kind makes
      * {@link dev.vertique.codegen.meta.AnnotationLiteralEmitter#emit} /
      * {@link dev.vertique.codegen.meta.AnnotationLiteralEmitter#constructorArgs} throw

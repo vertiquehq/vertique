@@ -15,7 +15,7 @@ import java.lang.annotation.Target;
  * {@link dev.vertique.codegen.meta.AnnotationLiteralEmitter} bounded-{@code Class} attribute path.
  *
  * <p>A bounded-{@code Class} member is a legal aspect-trigger attribute. The generated
- * {@code <Ann>$Literal} accessor must declare the member's <em>declared</em> return type
+ * {@code <Ann>$AopLiteral} accessor must declare the member's <em>declared</em> return type
  * ({@code Class<? extends Number>}) so it correctly overrides the annotation interface method — a
  * normalized {@code Class<?>} accessor is not covariant with {@code Class<? extends Number>} and would
  * not override, so the generated literal source would not compile. Like the other {@code Test*}

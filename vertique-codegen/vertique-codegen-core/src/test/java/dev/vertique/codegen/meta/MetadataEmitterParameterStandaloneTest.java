@@ -76,7 +76,7 @@ class MetadataEmitterParameterStandaloneTest {
         lenient().when(types.erasure(stringMirror)).thenReturn(stringMirror);
 
         ClassName annotationType = ClassName.get("com.example", "TestMarker");
-        ClassName literalClass = ClassName.get("com.example", "TestMarker$Literal");
+        ClassName literalClass = ClassName.get("com.example", "TestMarker$JaxRsLiteral");
         AnnotationLiteralRef ref = new AnnotationLiteralRef(annotationType, literalClass, CodeBlock.of("$S", "x"));
 
         JavaFile file =
@@ -85,8 +85,8 @@ class MetadataEmitterParameterStandaloneTest {
 
         assertTrue(source.contains("ANNOTATION_0"), "should emit a per-annotation literal constant field");
         assertTrue(
-                source.contains("TestMarker$Literal"),
-                "the literal constant's initializer should reference the generated <Ann>$Literal class");
+                source.contains("TestMarker$JaxRsLiteral"),
+                "the literal constant's initializer should reference the generated <Ann>$JaxRsLiteral class");
         assertTrue(source.contains("TestMarker.class"), "findAnnotation should match against the annotation type");
     }
 
@@ -162,7 +162,7 @@ class MetadataEmitterParameterStandaloneTest {
         lenient().when(types.erasure(stringMirror)).thenReturn(stringMirror);
 
         ClassName annotationType = ClassName.get("com.example", "TestMarker");
-        ClassName literalClass = ClassName.get("com.example", "TestMarker$Literal");
+        ClassName literalClass = ClassName.get("com.example", "TestMarker$JaxRsLiteral");
         AnnotationLiteralRef ref = new AnnotationLiteralRef(annotationType, literalClass, CodeBlock.of("$S", "x"));
         CodeBlock fallbackSupplier = CodeBlock.of("() -> new $T[0]", java.lang.annotation.Annotation.class);
 

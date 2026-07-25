@@ -19,7 +19,7 @@ import org.junit.jupiter.api.Test;
  *
  * <p>The bean's intercepted method carries an aspect trigger ({@code @TestTimed}) <em>and</em> a
  * runtime-retained, non-aspect {@link TestMarker} marker. The slice-2.1 GREEN step must, for each
- * {@code @Retention(RUNTIME)} method annotation, generate a {@code <Ann>$Literal} and have
+ * {@code @Retention(RUNTIME)} method annotation, generate a {@code <Ann>$AopLiteral} and have
  * {@code findAnnotation(Class)} return the matching literal by {@code annotationType()} — with no
  * call to {@code Method.getAnnotation} / {@code Class.getDeclaredMethod}. {@code @TestMarker} is the
  * forcing case: unlike an aspect trigger (whose literal already exists for the around-chain), a
@@ -86,13 +86,13 @@ class FindAnnotationReflectionFreeTest {
         String proxy = generatedSource(result, PROXY_FQN);
 
         // The reflection-free lookup must reference the materialized TestMarker literal — either the
-        // generated TestMarker$Literal type or a TestMarker-typed literal constant the metadata impl
+        // generated TestMarker$AopLiteral type or a TestMarker-typed literal constant the metadata impl
         // returns. The current stub returns Optional.empty() and references no Marker literal.
-        boolean referencesMarkerLiteral = proxy.contains("TestMarker$Literal") || proxy.contains("TestMarker.class");
+        boolean referencesMarkerLiteral = proxy.contains("TestMarker$AopLiteral") || proxy.contains("TestMarker.class");
         assertTrue(
                 referencesMarkerLiteral,
                 "The generated proxy's MethodMetadataImpl must materialize a TestMarker literal for the "
-                        + "reflection-free findAnnotation lookup (e.g. reference TestMarker$Literal / "
+                        + "reflection-free findAnnotation lookup (e.g. reference TestMarker$AopLiteral / "
                         + "TestMarker.class), not the Optional.empty() stub; generated source:\n" + proxy);
 
         // findAnnotation must no longer be the Optional.empty() stub.

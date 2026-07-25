@@ -15,7 +15,7 @@ import java.lang.annotation.Target;
  *
  * <p>It is {@link ElementType#PARAMETER PARAMETER}-targeted and carries a single
  * {@code String value()} of a supported attribute kind, so the generated proxy's nested
- * {@code ParameterMetadataImpl} must materialize a {@code TestParamMarker$Literal} and return it
+ * {@code ParameterMetadataImpl} must materialize a {@code TestParamMarker$AopLiteral} and return it
  * from {@code findAnnotation}/{@code hasAnnotation} — proving the reflection-free parameter-level
  * lookup is backed by a generated literal rather than the {@code Optional.empty()}/{@code false}
  * stub the v1 emitter still ships (the analogue of {@link TestMarker} for the method-level surface).
@@ -32,7 +32,7 @@ public @interface TestParamMarker {
     /**
      * Returns the marker's string value.
      *
-     * @return the marker value baked into the generated {@code TestParamMarker$Literal} as a
+     * @return the marker value baked into the generated {@code TestParamMarker$AopLiteral} as a
      *     {@code String} constant
      */
     String value();

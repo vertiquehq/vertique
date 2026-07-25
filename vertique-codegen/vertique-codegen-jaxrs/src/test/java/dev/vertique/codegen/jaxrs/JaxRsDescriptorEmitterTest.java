@@ -716,7 +716,7 @@ class JaxRsDescriptorEmitterTest {
             String metaFqn = "dev.vertique.test.DescMarkedResource_JaxRsDescriptor_M0P0Meta";
             String metaSrc = generatedSource(result, metaFqn);
             boolean referencesMarkerLiteral =
-                    metaSrc.contains("TestParamMarker$Literal") || metaSrc.contains("TestParamMarker.class");
+                    metaSrc.contains("TestParamMarker$JaxRsLiteral") || metaSrc.contains("TestParamMarker.class");
             assertTrue(
                     referencesMarkerLiteral,
                     "Generated standalone ParameterMetadata impl must materialize a TestParamMarker literal for the "

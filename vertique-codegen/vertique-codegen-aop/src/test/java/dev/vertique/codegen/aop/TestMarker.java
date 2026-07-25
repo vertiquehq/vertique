@@ -14,7 +14,7 @@ import java.lang.annotation.Target;
  * compile-tests.
  *
  * <p>It carries a single {@code String value()} of a {@link #SUPPORTED supported} attribute kind so
- * the generated proxy's nested {@code MethodMetadataImpl} must materialize a {@code Marker$Literal}
+ * the generated proxy's nested {@code MethodMetadataImpl} must materialize a {@code Marker$AopLiteral}
  * and return it from {@code findAnnotation}/{@code hasAnnotation} — proving the reflection-free
  * lookup works for a method annotation the proxy did not already materialize for the around-chain
  * (unlike the aspect triggers, whose literals already exist). Its presence alongside an aspect
@@ -36,7 +36,7 @@ public @interface TestMarker {
     /**
      * Returns the marker's string value.
      *
-     * @return the marker value baked into the generated {@code Marker$Literal} as a {@code String}
+     * @return the marker value baked into the generated {@code Marker$AopLiteral} as a {@code String}
      *     constant
      */
     String value();
