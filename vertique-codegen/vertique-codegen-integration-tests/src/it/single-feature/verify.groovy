@@ -4,6 +4,8 @@
 File generatedSources = new File(basedir, "target/generated-sources/annotations")
 List<String> expected = [
         "dev/vertique/it/GeneratedJaxRsResourcesModule.java",
+        "dev/vertique/it/GeneratedJaxRsResourcesModule_SingleFeatureAppBindingFactory.java",
+        "dev/vertique/it/SingleFeatureApp_Factory.java",
         "dev/vertique/it/SingleFeatureApp_JaxRsDescriptor.java",
         "dev/vertique/it/SingleFeatureApp_get_0_ExecutionPlan.java"
 ]

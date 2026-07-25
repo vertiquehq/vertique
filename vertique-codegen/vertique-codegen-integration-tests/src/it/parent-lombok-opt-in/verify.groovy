@@ -10,7 +10,9 @@ File effectivePomFile = new File(basedir, "target/effective-pom.xml")
 assert effectivePomFile.isFile(): "Missing effective POM"
 def effectivePom = new XmlSlurper(false, false).parse(effectivePomFile)
 def compilerPlugins = effectivePom.build.plugins.plugin.findAll {
-    it.groupId.text() == "org.apache.maven.plugins" && it.artifactId.text() == "maven-compiler-plugin"
+    String groupId = it.groupId.text()
+    (groupId.isEmpty() || groupId == "org.apache.maven.plugins")
+            && it.artifactId.text() == "maven-compiler-plugin"
 }
 assert compilerPlugins.size() == 1: "Expected one effective compiler plugin"
 

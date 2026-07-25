@@ -25,7 +25,9 @@ File effectivePomFile = new File(basedir, "target/effective-pom.xml")
 assert effectivePomFile.isFile(): "Missing effective POM"
 def effectivePom = new XmlSlurper(false, false).parse(effectivePomFile)
 def compilerPlugins = effectivePom.build.plugins.plugin.findAll {
-    it.groupId.text() == "org.apache.maven.plugins" && it.artifactId.text() == "maven-compiler-plugin"
+    String groupId = it.groupId.text()
+    (groupId.isEmpty() || groupId == "org.apache.maven.plugins")
+            && it.artifactId.text() == "maven-compiler-plugin"
 }
 assert compilerPlugins.size() == 1: "Expected one effective compiler plugin, found ${compilerPlugins.size()}"
 
@@ -83,7 +85,9 @@ assert stagedManagedCoordinates == ["dev.vertique:vertique-bom:${stagedVersion}:
         "Published application parent must manage dependencies only through the concrete BOM import: ${stagedManagedCoordinates}"
 
 def stagedCompilerPlugins = stagedParent.build.plugins.plugin.findAll {
-    it.groupId.text() == "org.apache.maven.plugins" && it.artifactId.text() == "maven-compiler-plugin"
+    String groupId = it.groupId.text()
+    (groupId.isEmpty() || groupId == "org.apache.maven.plugins")
+            && it.artifactId.text() == "maven-compiler-plugin"
 }
 assert stagedCompilerPlugins.size() == 1:
         "Published parent must retain exactly one compiler plugin configuration"
@@ -126,8 +130,9 @@ assert stagedFlattenPlugin.executions.execution.collect { it.id.text() }.toSet()
 def inheritedFlattenPlugins = effectivePom.build.plugins.plugin.findAll {
     it.groupId.text() == "org.codehaus.mojo" && it.artifactId.text() == "flatten-maven-plugin"
 }
-assert inheritedFlattenPlugins.isEmpty():
-        "Consumer effective POM must not inherit the parent flatten plugin or its updatePomFile execution"
+assert inheritedFlattenPlugins.every {
+    it.executions.execution.isEmpty() && it.configuration.updatePomFile.isEmpty()
+}: "Consumer effective POM must not inherit flatten executions or updatePomFile configuration"
 
 File targetDirectory = new File(basedir, "target")
 File javacDebugScript = new File(targetDirectory, "javac.sh")

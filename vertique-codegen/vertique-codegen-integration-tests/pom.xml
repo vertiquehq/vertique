@@ -28,6 +28,20 @@ SPDX-License-Identifier: EUPL-1.2
     <dependencies>
         <dependency>
             <groupId>dev.vertique</groupId>
+            <artifactId>vertique-app-parent</artifactId>
+            <version>${revision}</version>
+            <type>pom</type>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-bom</artifactId>
+            <version>${revision}</version>
+            <type>pom</type>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>dev.vertique</groupId>
             <artifactId>vertique-codegen-all</artifactId>
             <scope>test</scope>
         </dependency>
@@ -91,14 +105,7 @@ SPDX-License-Identifier: EUPL-1.2
                             <localRepositoryPath>
                                 ${project.build.directory}/invoker-local-repository
                             </localRepositoryPath>
-                            <extraArtifacts>
-                                <extraArtifact>
-                                    dev.vertique:vertique-app-parent:${revision}:pom
-                                </extraArtifact>
-                                <extraArtifact>
-                                    dev.vertique:vertique-bom:${revision}:pom
-                                </extraArtifact>
-                            </extraArtifacts>
+                            <scope>test</scope>
                         </configuration>
                     </execution>
                     <execution>

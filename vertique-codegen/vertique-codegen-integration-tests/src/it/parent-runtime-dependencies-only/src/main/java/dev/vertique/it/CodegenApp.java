@@ -12,6 +12,7 @@ import dev.vertique.core.VertxModule;
 import dev.vertique.core.lifecycle.ApplicationShutdownStep;
 import dev.vertique.core.lifecycle.ApplicationStartupStep;
 import dev.vertique.deploy.VerticleDeployment;
+import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
 import jakarta.ws.rs.GET;
 import jakarta.ws.rs.Path;
@@ -20,6 +21,9 @@ import java.util.Set;
 /** External application source compiled using runtime dependencies and the public parent only. */
 @Path("/codegen")
 public final class CodegenApp {
+
+    @Inject
+    public CodegenApp() {}
 
     @GET
     public String get() {
