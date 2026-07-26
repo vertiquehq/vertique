@@ -633,6 +633,11 @@ SPDX-License-Identifier: EUPL-1.2
                 <artifactId>vertique-starter-core</artifactId>
                 <version>${project.version}</version>
             </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-starter-rest</artifactId>
+                <version>${project.version}</version>
+            </dependency>
 
             <!-- HashiCorp Vault SDK (isolated to vertique-config-vault) -->
             <dependency>
