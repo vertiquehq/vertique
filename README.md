@@ -53,6 +53,29 @@ facade. Applications do not select individual processor artifacts. Projects that
 custom parent, applications that explicitly opt in to Lombok, and modules that intentionally
 disable annotation processing are covered in the [packaging guide](docs/packaging.md).
 
+## Starter Modules
+
+Each consumable starter publishes exactly one public Dagger aggregate that composes a fixed set of
+framework capabilities behind one class name. An application names the starter it needs in its
+`@Component` instead of repeating that capability's module list:
+
+- **[`vertique-starter-core`](vertique-starter/vertique-starter-core/src/main/resources/META-INF/vertique/module.md)** —
+  host-neutral lifecycle foundation: the Vert.x seam, config parsing, verticle deployment, and core
+  lifecycle steps.
+- **[`vertique-starter-rest`](vertique-starter/vertique-starter-rest/src/main/resources/META-INF/vertique/module.md)** —
+  mechanism-neutral REST composition on top of the core starter: JAX-RS routing, request
+  validation, the security runtime, and management.
+- **[`vertique-starter-services`](vertique-starter/vertique-starter-services/src/main/resources/META-INF/vertique/module.md)** —
+  headless event-bus services on top of the core starter: the dispatch runtime and management, with
+  no HTTP surface.
+- **[`vertique-starter-postgresql`](vertique-starter/vertique-starter-postgresql/src/main/resources/META-INF/vertique/module.md)** —
+  independent PostgreSQL pooling and application-owned Flyway migration wiring, composed alongside
+  an application starter rather than in place of one.
+
+The `vertique-starter` POM aggregator and `vertique-starter-integration-tests` module are internal,
+non-consumable reactor infrastructure: neither is published through the BOM, and neither carries a
+canonical module reference or a [module index](docs/modules.md) row.
+
 ## Documentation
 
 - [Module index](docs/modules.md)

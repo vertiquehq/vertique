@@ -59,6 +59,30 @@ Cross-cutting behavior uses neutral, ordered extension points. Producer modules 
 their events and SPIs, while metrics, tracing, logging, and application extensions
 contribute adapters without reversing dependency direction.
 
+## Starter aggregates
+
+The `vertique-starter` family publishes static Dagger aggregate modules that compose a fixed set of
+framework capabilities behind one class name, so an application component names one aggregate
+instead of repeating a capability's module list. Aggregate membership and each starter's direct
+dependency ledger are release-line compatibility surfaces: they change only as a
+compatibility-affecting release, never as an internal refactor.
+
+| Starter | Composes | Direct dependencies |
+|---|---|---|
+| `vertique-starter-core` | the Vert.x seam, config parsing, verticle deployment, and core lifecycle steps | `vertique-application`, `vertique-core`, `vertique-config-core`, `vertique-deploy` |
+| `vertique-starter-rest` | the core starter plus JAX-RS routing, request validation, the REST security runtime, and management | `vertique-starter-core`, `vertique-management`, `vertique-rest-jaxrs`, `vertique-rest-security`, `vertique-rest-validation` |
+| `vertique-starter-services` | the core starter plus the event-bus dispatch runtime and management | `vertique-starter-core`, `vertique-management`, `vertique-services` |
+| `vertique-starter-postgresql` | PostgreSQL connection pooling and application-owned Flyway migration wiring | `vertique-db-core`, `vertique-db-postgresql`, `vertique-db-flyway` |
+
+Every starter stops at composition: launcher choice, test libraries, deployment entries, and the
+annotation-processor-generated application module stay explicit application decisions, never
+supplied by a starter. `vertique-starter-postgresql` is an independent capability rather than an
+application foundation — it is composed alongside an application starter, not in place of one, and
+reaches no `Vertx` binding on its own.
+
+The `vertique-starter` POM aggregator and the `vertique-starter-integration-tests` module are
+internal, non-consumable reactor infrastructure: neither is part of the BOM or the module index.
+
 ## Module documentation
 
 The [module index](modules.md) links to the canonical reference document packaged
