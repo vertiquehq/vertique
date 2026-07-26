@@ -4,6 +4,8 @@
 package dev.vertique.archetype;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -19,6 +21,7 @@ class ArchetypeReadmeIT {
     private static final Path ARCHETYPE_README = Path.of("README.md");
     private static final Path GENERATED_README =
             Path.of("src", "main", "resources", "archetype-resources", "README.md");
+    private static final Path GENERATED_POM = Path.of("src", "main", "resources", "archetype-resources", "pom.xml");
     private static final Pattern COMMAND_BLOCK = Pattern.compile("```(?:bash|sh|shell)?\\R(.*?)```", Pattern.DOTALL);
     private static final Pattern LINE_CONTINUATION = Pattern.compile("\\\\\\R\\s*");
 
@@ -43,6 +46,16 @@ class ArchetypeReadmeIT {
         assertEquals(
                 List.of("mvn -ntp exec:java", "mvn -ntp verify", "mvn -ntp package", "mvn -ntp jib:dockerBuild"),
                 generatedApplicationCommands);
+    }
+
+    @Test
+    void inheritsTheCodegenApplicationParent() throws IOException {
+        String generatedPom = Files.readString(GENERATED_POM);
+
+        assertTrue(generatedPom.contains("<artifactId>vertique-app-parent</artifactId>"));
+        assertFalse(generatedPom.contains("<artifactId>maven-compiler-plugin</artifactId>"));
+        assertFalse(generatedPom.contains("<artifactId>vertique-codegen-jaxrs</artifactId>"));
+        assertFalse(generatedPom.contains("<artifactId>vertique-codegen-application</artifactId>"));
     }
 
     private static List<String> commandsIn(String readme) {

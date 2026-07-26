@@ -10,33 +10,17 @@ SPDX-License-Identifier: EUPL-1.2
 
     <modelVersion>4.0.0</modelVersion>
 
-    <groupId>${groupId}</groupId>
+    <parent>
+        <groupId>dev.vertique</groupId>
+        <artifactId>vertique-app-parent</artifactId>
+        <version>${vertiqueVersion}</version>
+        <relativePath/>
+    </parent>
+
     <artifactId>${artifactId}</artifactId>
     <version>0.1.0-SNAPSHOT</version>
 
-    <properties>
-        <maven.compiler.release>21</maven.compiler.release>
-        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
-    </properties>
-
-    <dependencyManagement>
-        <dependencies>
-            <dependency>
-                <groupId>dev.vertique</groupId>
-                <artifactId>vertique-bom</artifactId>
-                <version>${vertiqueVersion}</version>
-                <type>pom</type>
-                <scope>import</scope>
-            </dependency>
-        </dependencies>
-    </dependencyManagement>
-
     <dependencies>
-        <dependency>
-            <groupId>dev.vertique</groupId>
-            <artifactId>vertique-core</artifactId>
-        </dependency>
         <dependency>
             <groupId>dev.vertique</groupId>
             <artifactId>vertique-application</artifactId>
@@ -55,10 +39,6 @@ SPDX-License-Identifier: EUPL-1.2
         </dependency>
         <dependency>
             <groupId>dev.vertique</groupId>
-            <artifactId>vertique-rest-core</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>dev.vertique</groupId>
             <artifactId>vertique-rest-jaxrs</artifactId>
         </dependency>
         <dependency>
@@ -69,23 +49,6 @@ SPDX-License-Identifier: EUPL-1.2
             <groupId>dev.vertique</groupId>
             <artifactId>vertique-launcher</artifactId>
         </dependency>
-        <dependency>
-            <groupId>com.google.dagger</groupId>
-            <artifactId>dagger</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>jakarta.annotation</groupId>
-            <artifactId>jakarta.annotation-api</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>jakarta.inject</groupId>
-            <artifactId>jakarta.inject-api</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>jakarta.ws.rs</groupId>
-            <artifactId>jakarta.ws.rs-api</artifactId>
-        </dependency>
-
         <dependency>
             <groupId>dev.vertique</groupId>
             <artifactId>vertique-application-test</artifactId>
@@ -107,30 +70,7 @@ SPDX-License-Identifier: EUPL-1.2
         <plugins>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-compiler-plugin</artifactId>
-                <version>3.15.0</version>
-                <configuration>
-                    <release>${symbol_dollar}{maven.compiler.release}</release>
-                    <annotationProcessorPaths>
-                        <path>
-                            <groupId>com.google.dagger</groupId>
-                            <artifactId>dagger-compiler</artifactId>
-                        </path>
-                        <path>
-                            <groupId>dev.vertique</groupId>
-                            <artifactId>vertique-codegen-jaxrs</artifactId>
-                        </path>
-                        <path>
-                            <groupId>dev.vertique</groupId>
-                            <artifactId>vertique-codegen-application</artifactId>
-                        </path>
-                    </annotationProcessorPaths>
-                </configuration>
-            </plugin>
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-failsafe-plugin</artifactId>
-                <version>3.5.5</version>
                 <executions>
                     <execution>
                         <goals>
