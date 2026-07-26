@@ -54,6 +54,7 @@ SPDX-License-Identifier: EUPL-1.2
         <module>vertique-micrometer</module>
         <module>vertique-opentelemetry</module>
         <module>examples/vertique-example-parent</module>
+        <module>vertique-archetype</module>
         <module>examples/vertique-example-hello</module>
         <module>examples/vertique-example-services</module>
         <module>examples/vertique-example-db</module>

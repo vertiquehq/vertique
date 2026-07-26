@@ -1,0 +1,97 @@
+#!/bin/sh
+
+usage() {
+  printf '%s\n' \
+    'Usage: new-vertique-app --group-id <groupId> --artifact-id <artifactId> --package <packageName> --vertique-version <vertiqueVersion>'
+}
+
+fail() {
+  printf '%s\n' "$1" >&2
+  usage >&2
+  exit 2
+}
+
+is_java_package() {
+  printf '%s\n' "$1" | awk '
+    BEGIN {
+      split("abstract assert boolean break byte case catch char class const continue default do double else enum extends final finally float for goto if implements import instanceof int interface long native new package private protected public return short static strictfp super switch synchronized this throw throws transient try void volatile while true false null _", keywords, " ")
+      for (i in keywords) {
+        reserved[keywords[i]] = 1
+      }
+    }
+    !/^[A-Za-z_$][A-Za-z0-9_$]*(\.[A-Za-z_$][A-Za-z0-9_$]*)*$/ {
+      exit 1
+    }
+    {
+      segment_count = split($0, segments, ".")
+      for (i = 1; i <= segment_count; i++) {
+        if (segments[i] in reserved) {
+          exit 1
+        }
+      }
+    }
+  '
+}
+
+group_seen=0
+artifact_seen=0
+package_seen=0
+vertique_version_seen=0
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --group-id)
+      [ "$group_seen" -eq 0 ] || fail 'Duplicate argument: --group-id'
+      [ "$#" -ge 2 ] || fail 'Missing value for --group-id'
+      case "$2" in --*) fail 'Missing value for --group-id' ;; esac
+      group_id=$2
+      group_seen=1
+      shift 2
+      ;;
+    --artifact-id)
+      [ "$artifact_seen" -eq 0 ] || fail 'Duplicate argument: --artifact-id'
+      [ "$#" -ge 2 ] || fail 'Missing value for --artifact-id'
+      case "$2" in --*) fail 'Missing value for --artifact-id' ;; esac
+      artifact_id=$2
+      artifact_seen=1
+      shift 2
+      ;;
+    --package)
+      [ "$package_seen" -eq 0 ] || fail 'Duplicate argument: --package'
+      [ "$#" -ge 2 ] || fail 'Missing value for --package'
+      case "$2" in --*) fail 'Missing value for --package' ;; esac
+      package_name=$2
+      package_seen=1
+      shift 2
+      ;;
+    --vertique-version)
+      [ "$vertique_version_seen" -eq 0 ] || fail 'Duplicate argument: --vertique-version'
+      [ "$#" -ge 2 ] || fail 'Missing value for --vertique-version'
+      case "$2" in --*) fail 'Missing value for --vertique-version' ;; esac
+      vertique_version=$2
+      vertique_version_seen=1
+      shift 2
+      ;;
+    *)
+      fail "Unknown argument: $1"
+      ;;
+  esac
+done
+
+[ "$group_seen" -eq 1 ] || fail 'Missing argument: --group-id'
+[ "$artifact_seen" -eq 1 ] || fail 'Missing argument: --artifact-id'
+[ "$package_seen" -eq 1 ] || fail 'Missing argument: --package'
+[ "$vertique_version_seen" -eq 1 ] || fail 'Missing argument: --vertique-version'
+
+is_java_package "$package_name" || fail "Invalid Java package identifier: $package_name"
+
+exec mvn -B archetype:generate \
+  "-DarchetypeGroupId=dev.vertique" \
+  "-DarchetypeArtifactId=vertique-archetype" \
+  "-DarchetypeVersion=$vertique_version" \
+  "-DgroupId=$group_id" \
+  "-DartifactId=$artifact_id" \
+  "-Dpackage=$package_name" \
+  '-Dversion=0.1.0-SNAPSHOT' \
+  "-DvertiqueVersion=$vertique_version" \
+  '-DoutputDirectory=.'

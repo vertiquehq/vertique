@@ -1,0 +1,2 @@
+/** Application wiring. */
+package ${package};
