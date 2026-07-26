@@ -4,5 +4,13 @@ Generate a minimal Vertique application with its group ID, artifact ID, Java pac
 Vertique version:
 
 ```bash
-bin/new-vertique-app --group-id <groupId> --artifact-id <artifactId> --package <packageName> --vertique-version <vertiqueVersion>
+mvn -B archetype:generate \
+  -DarchetypeGroupId=dev.vertique \
+  -DarchetypeArtifactId=vertique-archetype \
+  -DarchetypeVersion=<vertiqueVersion> \
+  -DgroupId=<groupId> \
+  -DartifactId=<artifactId> \
+  -Dpackage=<packageName> \
+  -Dversion=0.1.0-SNAPSHOT \
+  -DvertiqueVersion=<vertiqueVersion>
 ```

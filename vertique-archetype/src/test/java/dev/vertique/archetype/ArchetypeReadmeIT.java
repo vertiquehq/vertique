@@ -34,8 +34,12 @@ class ArchetypeReadmeIT {
 
         // Then each README documents only the commands in its own responsibility.
         assertEquals(
-                List.of("bin/new-vertique-app --group-id <groupId> --artifact-id <artifactId> --package "
-                        + "<packageName> --vertique-version <vertiqueVersion>"),
+                List.of(
+                        "mvn -B archetype:generate -DarchetypeGroupId=dev.vertique "
+                                + "-DarchetypeArtifactId=vertique-archetype "
+                                + "-DarchetypeVersion=<vertiqueVersion> -DgroupId=<groupId> "
+                                + "-DartifactId=<artifactId> -Dpackage=<packageName> "
+                                + "-Dversion=0.1.0-SNAPSHOT -DvertiqueVersion=<vertiqueVersion>"),
                 generationCommands);
         assertEquals(
                 List.of("mvn -ntp exec:java", "mvn -ntp verify", "mvn -ntp package", "mvn -ntp jib:dockerBuild"),
@@ -52,6 +56,6 @@ class ArchetypeReadmeIT {
 
     private static String commandFrom(MatchResult commandBlock) {
         String contents = commandBlock.group(1);
-        return LINE_CONTINUATION.matcher(contents).replaceAll(" ").trim();
+        return LINE_CONTINUATION.matcher(contents).replaceAll(" ").trim().replaceAll("\\s+", " ");
     }
 }

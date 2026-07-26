@@ -18,14 +18,15 @@ Baseline: `main` at `133d754` (verified 2026-07-26).
 - `VertiqueAppExtension` boots a generated `@VertiqueApp` factory and exposes the HTTP port.
 - The BOM manages Dagger and Vertique code generators but not `dagger-compiler`.
 - Standard Maven Archetype batch generation also requires a generated-project version. The
-  supported wrapper supplies it as `0.1.0-SNAPSHOT`, leaving four user choices.
+  documented Maven invocation supplies it as `0.1.0-SNAPSHOT`, leaving four user choices.
 
 ## Frozen contract
 
 `dev.vertique:vertique-archetype` is a non-BOM `maven-archetype` module. The generated project:
 
-- takes exactly `groupId`, `artifactId`, `package`, and `vertiqueVersion` through
-  `bin/new-vertique-app`; the wrapper supplies `version=0.1.0-SNAPSHOT`;
+- takes exactly `groupId`, `artifactId`, `package`, and `vertiqueVersion` through a documented
+  non-interactive `mvn archetype:generate` command; that command supplies
+  `version=0.1.0-SNAPSHOT` and uses `vertiqueVersion` as the archetype version;
 - imports `dev.vertique:vertique-bom:${vertiqueVersion}` and uses versionless framework and
   Dagger dependencies;
 - pins compiler `3.15.0`, Failsafe `3.5.5`, exec `3.0.0`, and Jib `3.5.1`;
@@ -45,16 +46,13 @@ fully version-pinned by the selected BOM.
 
 ### Slice 1 — scaffold implementation (routine)
 
-**Red proof:** `ArchetypeGenerationIT#generatesMinimalApp` — given four wrapper values, a fixture
-directory, and a fake Maven executable, when the wrapper runs with closed standard input, then it
-passes the exact non-interactive archetype command, selected BOM version, and fixed generated
-project version without requesting another application value. The archetype is not yet released at
-this source-tree test point, so template rendering is proven by the Slice 2 integration fixture.
+**Red proof:** Maven Archetype's native `minimal` fixture — given the four caller-supplied values
+and its fixed generated-project version, when `mvn archetype:generate` renders the project
+non-interactively, then `verify` compiles it and executes the application integration test.
 
 **Green implementation:** Register the module and BOM compiler management; add archetype metadata,
-POM, templates, generated component/module/resource/configuration, generated-project POM, and the
-four-flag launcher. The generation proof depends on the launcher, so it is part of this slice rather
-than Slice 2.
+POM, templates, generated component/module/resource/configuration, generated-project POM, and its
+native Maven Archetype fixture.
 
 **Commit:** `feat(archetype): add minimal application scaffold`
 
@@ -66,7 +64,7 @@ ports set to zero, when `mvn -ntp verify` runs, then its application test return
 
 **Red proof:** `ArchetypeReadmeIT#documentsSupportedCommands` — given the archetype README and
 the generated application's README, when their text is parsed, then the former contains the
-four-flag launcher and the latter contains `mvn -ntp exec:java`, `mvn -ntp verify`,
+four-input `mvn archetype:generate` command and the latter contains `mvn -ntp exec:java`, `mvn -ntp verify`,
 `mvn -ntp package`, and `mvn -ntp jib:dockerBuild`. The generated project must not advertise a
 launcher it does not contain.
 
@@ -86,7 +84,6 @@ runs the generated project verification.
 
 - `vertique-archetype/pom.xml`
 - `vertique-archetype/README.md`
-- `vertique-archetype/bin/new-vertique-app`
 - `vertique-archetype/src/main/resources/META-INF/maven/archetype-metadata.xml`
 - `vertique-archetype/src/main/resources/archetype-resources/pom.xml`
 - `vertique-archetype/src/main/resources/archetype-resources/README.md`
@@ -97,7 +94,6 @@ runs the generated project verification.
 - `vertique-archetype/src/main/resources/archetype-resources/src/main/java/resource/package-info.java`
 - `vertique-archetype/src/main/resources/archetype-resources/src/main/resources/config/application.json`
 - `vertique-archetype/src/main/resources/archetype-resources/src/test/java/ApplicationIT.java`
-- `vertique-archetype/src/test/java/dev/vertique/archetype/ArchetypeGenerationIT.java`
 - `vertique-archetype/src/test/java/dev/vertique/archetype/ArchetypeReadmeIT.java`
 - `vertique-archetype/src/test/resources/projects/minimal/archetype.properties`
 - `vertique-archetype/src/test/resources/projects/minimal/goal.txt`
@@ -121,8 +117,8 @@ factory startup, hello and health responses, and all documented run/package comm
 
 ## Out of scope
 
-Create follow-up issues after the PR for alternate REST/auth/database archetypes, Maven Central
-archetype-catalog registration, and a Windows launcher.
+Create follow-up issues after the PR for alternate REST/auth/database archetypes and Maven Central
+archetype-catalog registration.
 
 ## Amendments
 
@@ -149,3 +145,7 @@ archetype-catalog registration, and a Windows launcher.
   JUnit Jupiter and Rest Assured were internally parent-managed but absent from the published BOM.
   Added them to the BOM management contract; the archetype's standalone test dependencies remain
   versionless and therefore correctly follow `vertiqueVersion`.
+- 2026-07-26 — Entry-point correction: removed the bespoke launcher. Consumers generate projects
+  through the standard non-interactive `mvn archetype:generate` command; its four variable values
+  are the frozen inputs, while the generated-project version is fixed. This removes an
+  undiscoverable second interface and keeps Maven Archetype as the sole creation mechanism.
