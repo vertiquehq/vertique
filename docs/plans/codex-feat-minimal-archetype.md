@@ -97,9 +97,9 @@ runs the generated project verification.
 - `vertique-archetype/src/main/resources/archetype-resources/src/test/java/ApplicationIT.java`
 - `vertique-archetype/src/test/java/dev/vertique/archetype/ArchetypeGenerationIT.java`
 - `vertique-archetype/src/test/java/dev/vertique/archetype/ArchetypeReadmeIT.java`
-- `vertique-archetype/src/it/projects/minimal/archetype.properties`
-- `vertique-archetype/src/it/projects/minimal/goal.txt`
-- `vertique-archetype/src/it/projects/minimal/verify.groovy`
+- `vertique-archetype/src/test/resources/projects/minimal/archetype.properties`
+- `vertique-archetype/src/test/resources/projects/minimal/goal.txt`
+- `vertique-archetype/src/test/resources/projects/minimal/verify.groovy`
 
 `vertique-archetype` is not BOM-managed, so no canonical module document or module-index change is
 required. `vertique-bom` has no canonical module document.
@@ -136,3 +136,7 @@ archetype-catalog registration, and a Windows launcher.
   with Maven Archetype's lifecycle-owned `src/it/projects` fixture (`archetype.properties`,
   `goal.txt`, `verify.groovy`). This makes `verify` generate from the just-built archetype and run
   the generated application's integration test without staging a separate local repository.
+- 2026-07-26 — Archetype discovery correction: Maven Archetype 3.4.1 discovers IT projects under
+  `${project.build.testOutputDirectory}/projects`; moved the native fixture to
+  `src/test/resources/projects` so Maven resources copies it to that required location. This
+  replaces the prior `src/it/projects` path and prevents an empty integration-test phase.
