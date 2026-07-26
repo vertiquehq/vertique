@@ -12,8 +12,10 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -30,8 +32,10 @@ class RestArchetypeContractTest {
     // --- Template locations (relative to the archetype module basedir) ---
 
     private static final Path ARCHETYPE_POM = Path.of("pom.xml");
+    private static final Path ARCHETYPE_README = Path.of("README.md");
     private static final Path ARCHETYPE_RESOURCES = Path.of("src", "main", "resources", "archetype-resources");
     private static final Path TEMPLATE_POM = ARCHETYPE_RESOURCES.resolve("pom.xml");
+    private static final Path TEMPLATE_README = ARCHETYPE_RESOURCES.resolve("README.md");
     private static final Path TEMPLATE_COMPONENT =
             ARCHETYPE_RESOURCES.resolve(Path.of("src", "main", "java", "AppComponent.java"));
     private static final Path TEMPLATE_APP_MODULE =
@@ -57,6 +61,33 @@ class RestArchetypeContractTest {
 
     /** Tokens that would indicate a concrete JWT/JOSE authentication mechanism. */
     private static final List<String> MECHANISM_TOKENS = List.of("jwt", "jose");
+
+    /** Matches a fenced {@code ```bash ... ```} code block within a markdown document. */
+    private static final Pattern FENCED_BASH_BLOCK = Pattern.compile("```bash\\R(.*?)```", Pattern.DOTALL);
+
+    /** Matches one {@code -DpropertyName=} generation-command flag. */
+    private static final Pattern GENERATE_PROPERTY = Pattern.compile("-D(\\w+)=");
+
+    /** Matches a {@code <plugin>...</plugin>} declaration. */
+    private static final Pattern PLUGIN_BLOCK = Pattern.compile("<plugin>(.*?)</plugin>", Pattern.DOTALL);
+
+    /** Matches the {@code <container>...</container>} block within a jib-maven-plugin configuration. */
+    private static final Pattern CONTAINER_BLOCK = Pattern.compile("<container>(.*?)</container>", Pattern.DOTALL);
+
+    /** Matches a {@code <mainClass>value</mainClass>} element. */
+    private static final Pattern MAIN_CLASS = Pattern.compile("<mainClass>([^<]+)</mainClass>");
+
+    /** The exact {@code -D} property set the frozen §4.6 non-interactive generation command must carry. */
+    private static final Set<String> EXPECTED_GENERATE_PROPERTIES = Set.of(
+            "archetypeGroupId",
+            "archetypeArtifactId",
+            "archetypeVersion",
+            "groupId",
+            "artifactId",
+            "version",
+            "package",
+            "vertiqueVersion",
+            "interactiveMode");
 
     // --- Tests ---
 
@@ -143,6 +174,56 @@ class RestArchetypeContractTest {
         assertEquals(List.of("http@EDGE", "management@INFRA"), deployments);
     }
 
+    @Test
+    @DisplayName("documents exactly one non-interactive REST generation command with the frozen §4.6 shape")
+    void documentsOnlyTheRestGenerationCommand() throws IOException {
+        // Given the REST archetype's own README.
+        String readme = read(ARCHETYPE_README);
+
+        // When its fenced generation command blocks are parsed.
+        List<String> generationCommands = fencedBashBlocksContaining(readme, "archetype:generate");
+
+        // Then exactly one generation command is documented.
+        assertEquals(1, generationCommands.size(), "README must document exactly one archetype:generate command");
+        String command = generationCommands.get(0);
+
+        // And it carries exactly the frozen §4.6 property set.
+        assertEquals(EXPECTED_GENERATE_PROPERTIES, propertyKeysOf(command));
+
+        // And it names the REST archetype coordinate and runs non-interactively.
+        assertEquals("dev.vertique", propertyValue(command, "archetypeGroupId"));
+        assertEquals("vertique-archetype-rest", propertyValue(command, "archetypeArtifactId"));
+        assertEquals("false", propertyValue(command, "interactiveMode"));
+
+        // And the JDK and Maven prerequisites are stated.
+        assertTrue(readme.contains("JDK 21"), "README must state the JDK 21 prerequisite");
+        assertTrue(readme.toLowerCase(Locale.ROOT).contains("maven"), "README must state the Maven prerequisite");
+    }
+
+    @Test
+    @DisplayName("documents the four supported generated-application commands with matching exec/Jib configuration")
+    void documentsSupportedGeneratedApplicationCommands() throws IOException {
+        // Given the generated project's README and POM templates.
+        String readme = read(TEMPLATE_README);
+        String templatePom = read(TEMPLATE_POM);
+
+        // When the supported commands are parsed.
+        List<String> requiredCommands =
+                List.of("mvn -ntp exec:java", "mvn -ntp verify", "mvn -ntp package", "mvn -ntp jib:dockerBuild");
+
+        // Then exactly those four commands are documented, alongside the JDK/Maven prerequisites.
+        requiredCommands.forEach(
+                command -> assertTrue(readme.contains(command), () -> "generated README must document: " + command));
+        assertTrue(readme.contains("JDK 21"), "generated README must state the JDK 21 prerequisite");
+        assertTrue(
+                readme.toLowerCase(Locale.ROOT).contains("maven"),
+                "generated README must state the Maven prerequisite");
+
+        // And exec-maven-plugin and jib-maven-plugin structurally launch the same main class.
+        assertEquals("dev.vertique.launcher.VertiqueApplication", execMainClassOf(templatePom));
+        assertEquals("dev.vertique.launcher.VertiqueApplication", jibContainerMainClassOf(templatePom));
+    }
+
     // --- Helpers ---
 
     /**
@@ -218,6 +299,90 @@ class RestArchetypeContractTest {
     private static String firstGroup(Pattern pattern, String text) {
         Matcher matcher = pattern.matcher(text);
         return matcher.find() ? matcher.group(1) : null;
+    }
+
+    /**
+     * Extracts the bodies of fenced {@code ```bash``` } blocks containing a given substring.
+     *
+     * @param markdown the markdown document text
+     * @param needle the substring a matching block must contain
+     * @return the matching block bodies, in document order
+     */
+    private static List<String> fencedBashBlocksContaining(String markdown, String needle) {
+        return FENCED_BASH_BLOCK
+                .matcher(markdown)
+                .results()
+                .map(match -> match.group(1))
+                .filter(block -> block.contains(needle))
+                .toList();
+    }
+
+    /**
+     * Extracts the set of {@code -D} property names set by a generation command.
+     *
+     * @param command the command block text
+     * @return the declared property names
+     */
+    private static Set<String> propertyKeysOf(String command) {
+        return GENERATE_PROPERTY
+                .matcher(command)
+                .results()
+                .map(match -> match.group(1))
+                .collect(Collectors.toSet());
+    }
+
+    /**
+     * Extracts the value assigned to one {@code -D} property within a generation command.
+     *
+     * @param command the command block text
+     * @param key the property name
+     * @return the assigned value
+     */
+    private static String propertyValue(String command, String key) {
+        Matcher matcher = Pattern.compile("-D" + Pattern.quote(key) + "=(\\S+)").matcher(command);
+        assertTrue(matcher.find(), () -> "generation command must set -D" + key);
+        return matcher.group(1);
+    }
+
+    /**
+     * Locates the {@code <plugin>} declaration for a given artifact identifier.
+     *
+     * @param pom the POM template text
+     * @param artifactId the plugin's artifact identifier
+     * @return the plugin's declaration body
+     */
+    private static String pluginBlockFor(String pom, String artifactId) {
+        Matcher plugins = PLUGIN_BLOCK.matcher(pom);
+        while (plugins.find()) {
+            String block = plugins.group(1);
+            if (block.contains("<artifactId>" + artifactId + "</artifactId>")) {
+                return block;
+            }
+        }
+        throw new AssertionError("template POM must declare " + artifactId);
+    }
+
+    /**
+     * Extracts the {@code exec-maven-plugin} main class configured in the template POM.
+     *
+     * @param pom the POM template text
+     * @return the configured main class
+     */
+    private static String execMainClassOf(String pom) {
+        return firstGroup(MAIN_CLASS, pluginBlockFor(pom, "exec-maven-plugin"));
+    }
+
+    /**
+     * Extracts the {@code jib-maven-plugin} container main class configured in the template POM.
+     *
+     * @param pom the POM template text
+     * @return the configured container main class
+     */
+    private static String jibContainerMainClassOf(String pom) {
+        String jibBlock = pluginBlockFor(pom, "jib-maven-plugin");
+        Matcher container = CONTAINER_BLOCK.matcher(jibBlock);
+        assertTrue(container.find(), "jib-maven-plugin must declare a <container> configuration");
+        return firstGroup(MAIN_CLASS, container.group(1));
     }
 
     /**

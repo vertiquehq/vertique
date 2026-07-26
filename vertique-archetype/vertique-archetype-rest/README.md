@@ -1,18 +1,25 @@
 # Vertique REST Application Archetype
 
-Generate a Vertique REST application with its group ID, artifact ID, Java package, and
-Vertique version:
+Generates a Vertique REST application on the REST application starter.
+
+## Prerequisites
+
+- JDK 21
+- Apache Maven
+
+## Generate
 
 ```bash
-mvn -B archetype:generate \
+mvn -B -ntp archetype:generate \
   -DarchetypeGroupId=dev.vertique \
   -DarchetypeArtifactId=vertique-archetype-rest \
   -DarchetypeVersion=<vertiqueVersion> \
   -DgroupId=<groupId> \
   -DartifactId=<artifactId> \
-  -Dpackage=<packageName> \
   -Dversion=0.1.0-SNAPSHOT \
-  -DvertiqueVersion=<vertiqueVersion>
+  -Dpackage=<packageName> \
+  -DvertiqueVersion=<vertiqueVersion> \
+  -DinteractiveMode=false
 ```
 
 The generated project depends on exactly `dev.vertique:vertique-starter-rest` and
