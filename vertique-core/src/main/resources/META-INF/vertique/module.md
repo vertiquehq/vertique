@@ -40,7 +40,7 @@ Security types (`SecurityContext`, `SecurityIdentity`, `AuthMethod`, the authz S
 | `dev.vertique.core.codegen` | `MethodMetadata`, `ParameterMetadata` — neutral, reflection-free metadata SPI for method-AOP and other codegen consumers (see below) |
 | `dev.vertique.core.resilience` | `@CircuitBreaker`, `@Retry`, `@Timeout`, `BackoffStrategy`, `RetryPolicy`, `ResilienceAnnotations`, `BackoffStrategyResolver` |
 | `dev.vertique.core.extension` | `OrderedExtension` (mix-in interface for deterministic extension ordering), `ExtensionPhase` (`SYSTEM_FIRST`, `APPLICATION`, `SYSTEM_LAST`) |
-| `dev.vertique.core.lifecycle` | `LifecyclePhase` (8-value enum: `CONFIGURE`, `VALIDATE`, `MIGRATE`, `BOOTSTRAP`, `INFRA`, `SERVICES`, `EDGE`, `AFTER_START`; `isVerticlePhase()` true for the four-value verticle subset), `LifecycleOrdered` (shared ordering contract: `phase()`, `priority()`, `orderKey()`, `comparator()`), `ApplicationStartupStep` (extends `LifecycleOrdered`; `start() → Future<Void>`), `ApplicationShutdownStep` (extends `LifecycleOrdered`; `stop() → Future<Void>`), `ComposeValidator` (behavior-free marker; modules join the `Set<ComposeValidator>` multibinding to participate in VALIDATE-phase fail-fast wiring checks), `JacksonConfigureStep` (CONFIGURE-phase `ApplicationStartupStep`; delegates to `JacksonConfigurer.configure()`; contributed by `CoreLifecycleStepsModule`), `ComposeValidationStep` (VALIDATE-phase `ApplicationStartupStep`; materializes `Set<ComposeValidator>` at construction, running all constructor-time checks; contributed by `CoreLifecycleStepsModule`), `CoreLifecycleStepsModule` (abstract Dagger `@Module`; declares `@Multibinds Set<ComposeValidator>`; contributes `JacksonConfigureStep` and `ComposeValidationStep` `@IntoSet`) |
+| `dev.vertique.core.lifecycle` | `LifecyclePhase` (8-value enum: `CONFIGURE`, `VALIDATE`, `MIGRATE`, `BOOTSTRAP`, `INFRA`, `SERVICES`, `EDGE`, `AFTER_START`; `isVerticlePhase()` true for the four-value verticle subset), `LifecycleOrdered` (shared ordering contract: `phase()`, `priority()`, `orderKey()`, `comparator()`), `ApplicationStartupStep` (extends `LifecycleOrdered`; `start() → Future<Void>`), `ApplicationShutdownStep` (extends `LifecycleOrdered`; `stop() → Future<Void>`), `ComposeValidator` (behavior-free marker; modules join the `Set<ComposeValidator>` multibinding to participate in VALIDATE-phase fail-fast wiring checks), `JacksonConfigureStep` (CONFIGURE-phase `ApplicationStartupStep`; delegates to `JacksonConfigurer.configure()`; contributed by `CoreLifecycleStepsModule`), `ComposeValidationStep` (VALIDATE-phase `ApplicationStartupStep`; materializes `Set<ComposeValidator>` at construction, running all constructor-time checks; contributed by `CoreLifecycleStepsModule`), `CoreLifecycleStepsModule` (abstract Dagger `@Module(includes = JsonModule.class)`; declares `@Multibinds Set<ComposeValidator>`; contributes `JacksonConfigureStep` and `ComposeValidationStep` `@IntoSet`; self-contained — the `JsonModule` include satisfies `JacksonConfigureStep`'s `JacksonConfigurer`/`Set<ObjectMapperCustomizer>` dependencies) |
 
 ---
 
@@ -401,7 +401,7 @@ requirement).
 
 ### JsonModule
 
-Abstract Dagger `@Module` that declares the `ObjectMapperCustomizer` multibinding set. Included automatically by `RestCoreModule`. Non-REST applications can include it directly in their `@Component`.
+Abstract Dagger `@Module` that declares the `ObjectMapperCustomizer` multibinding set. Included automatically by `RestCoreModule` and by `CoreLifecycleStepsModule` (which needs it for `JacksonConfigureStep`), so most applications get it transitively. An application that uses neither can include it directly in its `@Component`.
 
 ```java
 @Module
@@ -1135,7 +1135,7 @@ Abstract Dagger `@Module` that an application `@Component` includes to get the f
 built-in CONFIGURE and VALIDATE steps automatically.
 
 ```java
-@Module
+@Module(includes = JsonModule.class)
 public abstract class CoreLifecycleStepsModule {
     @Multibinds abstract Set<ComposeValidator> composeValidators(); // empty-by-default
     // contributes JacksonConfigureStep @IntoSet ApplicationStartupStep
@@ -1145,6 +1145,11 @@ public abstract class CoreLifecycleStepsModule {
 
 - Declares `@Multibinds Set<ComposeValidator>` so a component with no contributed validators
   compiles without error.
+- **Self-contained.** It includes `JsonModule`, which declares the empty-by-default
+  `Set<ObjectMapperCustomizer>` multibinding that `JacksonConfigurer` — and therefore
+  `JacksonConfigureStep` — requires. A component listing `CoreLifecycleStepsModule` alone resolves
+  `Set<ApplicationStartupStep>`; co-listing `JsonModule` is never required (listing it anyway is
+  harmless — Dagger de-duplicates module includes).
 - Takes no dependency on `vertique-deploy` or `vertique-application` — the `@IntoSet` contributions
   join whatever `Set<ApplicationStartupStep>` the application's component declares (typically the
   one from `DeployerModule`).

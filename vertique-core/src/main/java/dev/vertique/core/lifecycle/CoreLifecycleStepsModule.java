@@ -7,6 +7,7 @@ import dagger.Module;
 import dagger.Provides;
 import dagger.multibindings.IntoSet;
 import dagger.multibindings.Multibinds;
+import dev.vertique.core.json.JsonModule;
 import jakarta.inject.Singleton;
 import java.util.Set;
 
@@ -34,8 +35,15 @@ import java.util.Set;
  * empty-by-default, so a {@code @Component} that includes this module compiles even when no module
  * contributes a validator. Modules that own a compose validator contribute it via
  * {@code @Provides @IntoSet ComposeValidator}.
+ *
+ * <p>This module is <em>self-contained</em>: it includes {@link JsonModule} so that
+ * {@link JacksonConfigureStep}'s transitive dependencies —
+ * {@link dev.vertique.core.json.JacksonConfigurer} and the empty-by-default
+ * {@code Set<dev.vertique.core.json.ObjectMapperCustomizer>} multibinding {@code JsonModule}
+ * declares — are satisfied by the module itself. An application {@code @Component} therefore never
+ * has to co-list {@code JsonModule} to make this module's startup steps resolve.
  */
-@Module
+@Module(includes = JsonModule.class)
 public abstract class CoreLifecycleStepsModule {
 
     /**
