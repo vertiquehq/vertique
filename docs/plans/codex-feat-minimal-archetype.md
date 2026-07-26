@@ -37,7 +37,9 @@ Baseline: `main` at `133d754` (verified 2026-07-26).
 - enables management health endpoints and provides one integration-test class that verifies both
   `/hello` and `/health/live` on ephemeral ports.
 
-The BOM will also manage `dagger-compiler` at the framework's Dagger version.
+The BOM will also manage `dagger-compiler` at the framework's Dagger version plus the generated
+test dependencies `junit-jupiter` and `rest-assured`, so the standalone generated POM remains
+fully version-pinned by the selected BOM.
 
 ## Slice plan
 
@@ -143,3 +145,7 @@ archetype-catalog registration, and a Windows launcher.
 - 2026-07-26 — Archetype metadata correction: renamed the descriptor from legacy `archetype.xml`
   to `archetype-metadata.xml`, the current Maven Archetype descriptor name. The old name caused
   the plugin to parse modern `fileSets` metadata as a 1.x descriptor and fail before generation.
+- 2026-07-26 — BOM test-dependency correction: native generated-project verification found that
+  JUnit Jupiter and Rest Assured were internally parent-managed but absent from the published BOM.
+  Added them to the BOM management contract; the archetype's standalone test dependencies remain
+  versionless and therefore correctly follow `vertiqueVersion`.
