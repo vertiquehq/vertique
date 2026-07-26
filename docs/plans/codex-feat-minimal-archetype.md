@@ -43,9 +43,11 @@ The BOM will also manage `dagger-compiler` at the framework's Dagger version.
 
 ### Slice 1 — scaffold implementation (routine)
 
-**Red proof:** `ArchetypeGenerationIT#generatesMinimalApp` — given four wrapper values and a
-fixture directory, when the wrapper generates an application, then every template is substituted
-and no additional value is requested.
+**Red proof:** `ArchetypeGenerationIT#generatesMinimalApp` — given four wrapper values, a fixture
+directory, and a fake Maven executable, when the wrapper runs with closed standard input, then it
+passes the exact non-interactive archetype command, selected BOM version, and fixed generated
+project version without requesting another application value. The archetype is not yet released at
+this source-tree test point, so template rendering is proven by the Slice 2 integration fixture.
 
 **Green implementation:** Register the module and BOM compiler management; add archetype metadata,
 POM, templates, generated component/module/resource/configuration, generated-project POM, and the
@@ -104,7 +106,8 @@ required. `vertique-bom` has no canonical module document.
 - Resolve an external released Vertique fixture in isolation to catch publication or processor
   gaps.
 - Validate wrapper package/version values before invoking Maven.
-- Compile the generated fixture to catch archetype token escaping errors.
+- Compile the generated fixture in the Slice 2 integration fixture to catch archetype token
+  escaping errors.
 - Use port `0` and the management shared-data entry to prevent test port collisions.
 
 Run focused archetype verification, then `./mvnw -ntp clean verify` from the source root. The
@@ -120,3 +123,6 @@ archetype-catalog registration, and a Windows launcher.
 
 - 2026-07-26 — Plan gap: moved the launcher from Slice 2 to Slice 1 because the approved Slice 1
   red proof invokes it. This preserves the frozen public interface and all acceptance criteria.
+- 2026-07-26 — Test isolation: changed Slice 1's launcher proof to capture its Maven invocation
+  through a fake executable; source-tree tests cannot resolve an unreleased archetype remotely.
+  Slice 2 retains the real rendering and generated-application verification obligation.
