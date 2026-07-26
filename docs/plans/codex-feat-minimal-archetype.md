@@ -48,7 +48,9 @@ fixture directory, when the wrapper generates an application, then every templat
 and no additional value is requested.
 
 **Green implementation:** Register the module and BOM compiler management; add archetype metadata,
-POM, templates, generated component/module/resource/configuration, and generated-project POM.
+POM, templates, generated component/module/resource/configuration, generated-project POM, and the
+four-flag launcher. The generation proof depends on the launcher, so it is part of this slice rather
+than Slice 2.
 
 **Commit:** `feat(archetype): add minimal application scaffold`
 
@@ -62,8 +64,8 @@ ports set to zero, when `mvn -ntp verify` runs, then its application test return
 its text is parsed, then it contains the launcher, `mvn -ntp exec:java`, `mvn -ntp verify`,
 `mvn -ntp package`, and `mvn -ntp jib:dockerBuild`.
 
-**Green implementation:** Add the launcher, generated README, and Maven Archetype integration
-fixture that runs the generated project verification.
+**Green implementation:** Add the generated README and Maven Archetype integration fixture that
+runs the generated project verification.
 
 **Commit:** `test(archetype): verify generated minimal application`
 
@@ -113,3 +115,8 @@ factory startup, hello and health responses, and all documented run/package comm
 
 Create follow-up issues after the PR for alternate REST/auth/database archetypes, Maven Central
 archetype-catalog registration, and a Windows launcher.
+
+## Amendments
+
+- 2026-07-26 — Plan gap: moved the launcher from Slice 2 to Slice 1 because the approved Slice 1
+  red proof invokes it. This preserves the frozen public interface and all acceptance criteria.
