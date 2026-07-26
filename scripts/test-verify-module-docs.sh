@@ -60,29 +60,15 @@ fixture_add_index_row() {
     fixture_index_rows+=("$1|$2")
 }
 
-# Writes a module's pom.xml and canonical document.
+# Writes a module's canonical document.
 # $1 = module path relative to the fixture root
-# $2 = artifactId
-# $3 = packaging (jar|pom|maven-archetype)
-# $4 = document mode (present|empty|whitespace|missing)
-fixture_write_module() {
+# $2 = artifactId (document heading)
+# $3 = document mode (present|empty|whitespace|missing)
+fixture_write_document() {
     local module_path="$1"
     local artifact_id="$2"
-    local packaging="$3"
-    local document_mode="$4"
-    local module_directory="$fixture_root/$module_path"
-    local document="$module_directory/$canonical_suffix"
-
-    mkdir -p "$module_directory"
-    {
-        printf '%s\n' '<?xml version="1.0" encoding="UTF-8"?>'
-        printf '%s\n' '<project xmlns="http://maven.apache.org/POM/4.0.0">'
-        printf '%s\n' '    <modelVersion>4.0.0</modelVersion>'
-        printf '%s\n' '    <groupId>dev.vertique</groupId>'
-        printf '    <artifactId>%s</artifactId>\n' "$artifact_id"
-        printf '    <packaging>%s</packaging>\n' "$packaging"
-        printf '%s\n' '</project>'
-    } > "$module_directory/pom.xml"
+    local document_mode="$3"
+    local document="$fixture_root/$module_path/$canonical_suffix"
 
     case "$document_mode" in
         present)
@@ -106,6 +92,49 @@ fixture_write_module() {
             exit 1
             ;;
     esac
+}
+
+# Writes a module's pom.xml and canonical document.
+# $1 = module path relative to the fixture root
+# $2 = artifactId
+# $3 = packaging (jar|pom|maven-archetype)
+# $4 = document mode (present|empty|whitespace|missing)
+fixture_write_module() {
+    local module_path="$1"
+    local artifact_id="$2"
+    local packaging="$3"
+    local document_mode="$4"
+    local module_directory="$fixture_root/$module_path"
+
+    mkdir -p "$module_directory"
+    {
+        printf '%s\n' '<?xml version="1.0" encoding="UTF-8"?>'
+        printf '%s\n' '<project xmlns="http://maven.apache.org/POM/4.0.0">'
+        printf '%s\n' '    <modelVersion>4.0.0</modelVersion>'
+        printf '%s\n' '    <groupId>dev.vertique</groupId>'
+        printf '    <artifactId>%s</artifactId>\n' "$artifact_id"
+        printf '    <packaging>%s</packaging>\n' "$packaging"
+        printf '%s\n' '</project>'
+    } > "$module_directory/pom.xml"
+
+    fixture_write_document "$module_path" "$artifact_id" "$document_mode"
+}
+
+# Writes a module whose pom.xml is read verbatim from standard input, for pom
+# shapes the fixed template above cannot express — XML comments and
+# <dependencies> blocks that precede the project-level <artifactId>. The
+# canonical document is always written in present mode.
+# $1 = module path relative to the fixture root
+# $2 = artifactId (document heading only; the pom on stdin declares identity)
+fixture_write_module_with_pom() {
+    local module_path="$1"
+    local artifact_id="$2"
+    local module_directory="$fixture_root/$module_path"
+
+    mkdir -p "$module_directory"
+    cat > "$module_directory/pom.xml"
+
+    fixture_write_document "$module_path" "$artifact_id" present
 }
 
 # Adds an artifact that is in full BOM/root-pom/index/document parity.
@@ -428,6 +457,147 @@ fixture_add_aligned_artifact vertique-audit-core vertique-audit/vertique-audit-c
 fixture_finish
 run_case "private-artifact-row" fail "$fixture_root" \
     "vertique-audit-core must not be BOM-managed or indexed: non-public artifact"
+
+# A commented-out copy of a sibling's coordinates must never supply a module's
+# identity. The vertique-alpha row links at vertique-beta-core's document, and
+# that pom carries vertique-alpha's coordinates inside a multi-line comment
+# ahead of its own <artifactId>. Reading the pom line by line binds the row to
+# the commented decoy, accepts the mismatched link, and leaves vertique-alpha
+# with no canonical document of its own — the acceptance direction of the bug.
+fixture_reset commented-decoy-owner
+fixture_add_aligned_artifact vertique-gamma vertique-gamma
+fixture_add_bom_artifact vertique-alpha
+fixture_add_root_artifact vertique-alpha
+fixture_add_index_row vertique-alpha "../vertique-beta/vertique-beta-core/$canonical_suffix"
+fixture_write_module_with_pom vertique-beta/vertique-beta-core vertique-beta-core <<'POM'
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+    <modelVersion>4.0.0</modelVersion>
+    <!--
+    Superseded coordinates, retained for reference:
+        <groupId>dev.vertique</groupId>
+        <artifactId>vertique-alpha</artifactId>
+    -->
+    <groupId>dev.vertique</groupId>
+    <artifactId>vertique-beta-core</artifactId>
+    <packaging>jar</packaging>
+</project>
+POM
+fixture_finish
+run_case "commented-decoy-owner-accepted" fail "$fixture_root" \
+    "vertique-alpha links to a canonical document owned by vertique-beta-core"
+
+# A schema-valid pom may declare <dependencies> before the project-level
+# <artifactId>. The row is correct and the module is genuinely documented, so
+# binding the first dependency's artifactId would reject a compliant module.
+fixture_reset dependencies-before-artifact-id
+fixture_add_baseline_artifacts
+fixture_add_bom_artifact vertique-delta
+fixture_add_root_artifact vertique-delta
+fixture_add_index_row vertique-delta "../vertique-delta/$canonical_suffix"
+fixture_write_module_with_pom vertique-delta vertique-delta <<'POM'
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+    <modelVersion>4.0.0</modelVersion>
+    <groupId>dev.vertique</groupId>
+    <dependencies>
+        <dependency>
+            <groupId>com.example</groupId>
+            <artifactId>example-library</artifactId>
+            <version>1.0.0</version>
+        </dependency>
+    </dependencies>
+    <artifactId>vertique-delta</artifactId>
+    <packaging>jar</packaging>
+</project>
+POM
+fixture_finish
+run_case "dependencies-before-artifact-id" pass "$fixture_root" \
+    "PASS: 4 consumable artifacts"
+
+# A multi-line comment recording a former coordinate must not be mistaken for
+# the module's identity: the row is correct and the module must be accepted.
+fixture_reset multiline-comment-before-artifact-id
+fixture_add_baseline_artifacts
+fixture_add_bom_artifact vertique-epsilon
+fixture_add_root_artifact vertique-epsilon
+fixture_add_index_row vertique-epsilon "../vertique-epsilon/$canonical_suffix"
+fixture_write_module_with_pom vertique-epsilon vertique-epsilon <<'POM'
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+    <modelVersion>4.0.0</modelVersion>
+    <!--
+    Renamed before the first release; the previous coordinates were
+        <artifactId>vertique-epsilon-legacy</artifactId>
+    -->
+    <groupId>dev.vertique</groupId>
+    <artifactId>vertique-epsilon</artifactId>
+    <packaging>jar</packaging>
+</project>
+POM
+fixture_finish
+run_case "multiline-comment-before-artifact-id" pass "$fixture_root" \
+    "PASS: 4 consumable artifacts"
+
+# Packaging must not be read out of a comment either. This module really
+# declares <packaging>pom</packaging>, but an earlier comment quotes the jar
+# packaging it shipped with before the family gained variants. A line-oriented
+# scan binds the commented value and admits an aggregator into the consumable
+# set — the same silent-acceptance direction as the commented owner decoy.
+fixture_reset commented-decoy-packaging
+fixture_add_baseline_artifacts
+fixture_add_bom_artifact vertique-beta
+fixture_add_root_artifact vertique-beta
+fixture_add_index_row vertique-beta "../vertique-beta/$canonical_suffix"
+fixture_write_module_with_pom vertique-beta vertique-beta <<'POM'
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+    <modelVersion>4.0.0</modelVersion>
+    <groupId>dev.vertique</groupId>
+    <artifactId>vertique-beta</artifactId>
+    <!--
+    Published on its own before the family gained variants:
+        <packaging>jar</packaging>
+    -->
+    <packaging>pom</packaging>
+</project>
+POM
+fixture_finish
+run_case "commented-decoy-packaging-accepted" fail "$fixture_root" \
+    "vertique-beta is a packaging=pom aggregator"
+
+# A plugin may take a <packaging> parameter of its own — maven-install-plugin
+# does — and the pom schema lets <build> precede the project's own <packaging>.
+# The project is an aggregator, so binding the plugin's nested parameter admits
+# it as a consumable jar.
+fixture_reset nested-packaging-before-project
+fixture_add_baseline_artifacts
+fixture_add_bom_artifact vertique-epsilon
+fixture_add_root_artifact vertique-epsilon
+fixture_add_index_row vertique-epsilon "../vertique-epsilon/$canonical_suffix"
+fixture_write_module_with_pom vertique-epsilon vertique-epsilon <<'POM'
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+    <modelVersion>4.0.0</modelVersion>
+    <groupId>dev.vertique</groupId>
+    <artifactId>vertique-epsilon</artifactId>
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-install-plugin</artifactId>
+                <configuration>
+                    <packaging>jar</packaging>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+    <packaging>pom</packaging>
+</project>
+POM
+fixture_finish
+run_case "nested-packaging-before-project" fail "$fixture_root" \
+    "vertique-epsilon is a packaging=pom aggregator"
 
 # The real repository must always be in full parity.
 run_case "real-repository" pass "$repository_root"

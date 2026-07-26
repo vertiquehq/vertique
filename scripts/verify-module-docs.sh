@@ -104,36 +104,92 @@ index_rows() {
     ' "$1"
 }
 
-# Prints a Maven module's declared packaging, or nothing when it defaults to jar.
-module_packaging() {
-    awk '
-        /^[[:space:]]*<packaging>[^<]*<\/packaging>[[:space:]]*$/ {
-            value = $0
-            sub(/^[[:space:]]*<packaging>[[:space:]]*/, "", value)
-            sub(/[[:space:]]*<\/packaging>.*$/, "", value)
-            print value
-            exit
+# Prints the value of the element named $1 declared directly under <project> in
+# the pom at $2, or nothing when the pom declares no such element.
+#
+# Comments are removed and element depth is tracked, so a value quoted inside a
+# comment, one nested in <parent>, <dependencies> or a plugin <configuration>,
+# and an element spread over several lines can never be mistaken for the
+# project's own declaration. A line-oriented scan gets all three wrong, and the
+# dangerous direction is silent acceptance: a commented-out copy of a sibling's
+# coordinates lets a row claim another module's document, and a commented-out
+# <packaging>jar</packaging> lets an aggregator pass as a consumable module.
+project_element_value() {
+    local element_name="$1"
+    local pom="$2"
+
+    awk -v element="$element_name" '
+        # Removes XML comment spans from one line, carrying an unterminated
+        # comment over into the lines that follow.
+        function strip_comments(line,   kept, boundary) {
+            kept = ""
+            while (line != "") {
+                if (in_comment) {
+                    boundary = index(line, "-->")
+                    if (boundary == 0) { return kept }
+                    line = substr(line, boundary + 3)
+                    in_comment = 0
+                } else {
+                    boundary = index(line, "<!--")
+                    if (boundary == 0) { return kept line }
+                    kept = kept substr(line, 1, boundary - 1)
+                    line = substr(line, boundary + 4)
+                    in_comment = 1
+                }
+            }
+            return kept
         }
-    ' "$1"
+
+        # Line breaks carry no meaning in XML — a pom opens <project> across two
+        # lines — so the comment-free document is joined into a single buffer and
+        # scanned as a tag stream rather than line by line.
+        { document = document strip_comments($0) " " }
+
+        END {
+            # Every chunk after the first opens with a tag body that ends at the
+            # first ">"; the remainder of the chunk is that element content.
+            chunk_count = split(document, chunk, "<")
+            for (position = 2; position <= chunk_count; position++) {
+                boundary = index(chunk[position], ">")
+                if (boundary == 0) { break }
+                tag = substr(chunk[position], 1, boundary - 1)
+                content = substr(chunk[position], boundary + 1)
+
+                if (tag ~ /^[?!]/) { continue }
+                if (tag ~ /^\//) {
+                    if (depth > 0) { depth-- }
+                    continue
+                }
+
+                name = tag
+                sub(/[[:space:]].*$/, "", name)
+                sub(/\/$/, "", name)
+
+                # Depth 1 is the document element, so this is <project>s own
+                # declaration. First match wins; an empty one prints nothing and
+                # the caller applies its own default.
+                if (name == element && depth == 1 && open_element[1] == "project") {
+                    sub(/^[[:space:]]+/, "", content)
+                    sub(/[[:space:]]+$/, "", content)
+                    if (content != "") { print content }
+                    exit
+                }
+
+                # A self-closing element such as <relativePath/> opens no scope.
+                if (tag !~ /\/[[:space:]]*$/) { open_element[++depth] = name }
+            }
+        }
+    ' "$pom"
 }
 
-# Prints a Maven module's own artifactId. The <parent> block is skipped so an
-# inherited coordinate is never mistaken for the module's identity; only the
-# first top-level <artifactId> is read, which precedes <dependencies> and
-# <build> in every module pom.
+# Prints a Maven module's declared packaging, or nothing when it defaults to jar.
+module_packaging() {
+    project_element_value packaging "$1"
+}
+
+# Prints a Maven module's own artifactId, or nothing when the pom declares none.
 module_artifact_id() {
-    awk '
-        /<parent>/ { in_parent = 1 }
-        /<\/parent>/ { in_parent = 0; next }
-        in_parent { next }
-        /^[[:space:]]*<artifactId>[^<]*<\/artifactId>[[:space:]]*$/ {
-            value = $0
-            sub(/^[[:space:]]*<artifactId>[[:space:]]*/, "", value)
-            sub(/[[:space:]]*<\/artifactId>.*$/, "", value)
-            print value
-            exit
-        }
-    ' "$1"
+    project_element_value artifactId "$1"
 }
 
 # Prints why an artifactId may never be BOM-managed or indexed, or returns 1
