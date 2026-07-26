@@ -13,9 +13,10 @@ import java.util.regex.MatchResult;
 import java.util.regex.Pattern;
 import org.junit.jupiter.api.Test;
 
-/** Integration proof for the generated application's documented commands. */
+/** Integration proof for the archetype and generated application's documented commands. */
 class ArchetypeReadmeIT {
 
+    private static final Path ARCHETYPE_README = Path.of("README.md");
     private static final Path GENERATED_README =
             Path.of("src", "main", "resources", "archetype-resources", "README.md");
     private static final Pattern COMMAND_BLOCK = Pattern.compile("```(?:bash|sh|shell)?\\R(.*?)```", Pattern.DOTALL);
@@ -23,27 +24,30 @@ class ArchetypeReadmeIT {
 
     @Test
     void documentsSupportedCommands() throws IOException {
-        // Given the generated application's README.
-        String readme = Files.readString(GENERATED_README);
+        // Given the archetype's generation README and the generated application's README.
+        String archetypeReadme = Files.readString(ARCHETYPE_README);
+        String generatedReadme = Files.readString(GENERATED_README);
 
-        // When its shell command blocks are parsed.
-        List<String> commands = COMMAND_BLOCK
+        // When their shell command blocks are parsed.
+        List<String> generationCommands = commandsIn(archetypeReadme);
+        List<String> generatedApplicationCommands = commandsIn(generatedReadme);
+
+        // Then each README documents only the commands in its own responsibility.
+        assertEquals(
+                List.of("bin/new-vertique-app --group-id <groupId> --artifact-id <artifactId> --package "
+                        + "<packageName> --vertique-version <vertiqueVersion>"),
+                generationCommands);
+        assertEquals(
+                List.of("mvn -ntp exec:java", "mvn -ntp verify", "mvn -ntp package", "mvn -ntp jib:dockerBuild"),
+                generatedApplicationCommands);
+    }
+
+    private static List<String> commandsIn(String readme) {
+        return COMMAND_BLOCK
                 .matcher(readme)
                 .results()
                 .map(ArchetypeReadmeIT::commandFrom)
                 .toList();
-
-        // Then it documents exactly the supported generation, run, verification, package, and
-        // container-image commands.
-        assertEquals(
-                List.of(
-                        "bin/new-vertique-app --group-id <groupId> --artifact-id <artifactId> --package "
-                                + "<packageName> --vertique-version <vertiqueVersion>",
-                        "mvn -ntp exec:java",
-                        "mvn -ntp verify",
-                        "mvn -ntp package",
-                        "mvn -ntp jib:dockerBuild"),
-                commands);
     }
 
     private static String commandFrom(MatchResult commandBlock) {
