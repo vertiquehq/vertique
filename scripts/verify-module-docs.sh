@@ -58,15 +58,18 @@ report_failure() {
     failures=$((failures + 1))
 }
 
+report_violations_and_exit() {
+    printf '\n%d module-documentation parity violation(s) found.\n' "$failures" >&2
+    exit 1
+}
+
 # --- Parsing ---
 
 # Both pom parsers below read comment-free input, so a commented-out block can
 # never emit coordinates and a quoted coordinate can never claim an identity.
 # This awk source is prefixed to each of their programs: strip_comments() removes
 # the comment spans on one line and carries an unterminated span into the lines
-# that follow, and each caller checks in_comment at END. A parser that met a
-# construct it cannot scan prints a "!unsupported!<construct>" sentinel instead
-# of a value; both callers turn that into a reported failure.
+# that follow.
 strip_comments_awk='
     function strip_comments(line,   kept, boundary) {
         kept = ""
@@ -109,9 +112,6 @@ managed_vertique_artifacts() {
             if (value != "") { print value }
             pending = 0
         }
-        END {
-            if (in_comment) { print "!unsupported!an unterminated XML comment" }
-        }
     ' "$1"
 }
 
@@ -137,28 +137,27 @@ index_rows() {
     ' "$1"
 }
 
-# Prints the value of the element named $1 declared directly under <project> in
-# the pom at $2, or nothing when the pom declares no such element.
+# Prints "!unsupported!<construct>" when the pom at $1 uses markup outside the
+# plain element vocabulary the parsers above and below understand, or nothing
+# when the whole document is scannable.
 #
-# Comments are removed and element depth is tracked, so a value quoted inside a
-# comment, one nested in <parent>, <dependencies> or a plugin <configuration>,
-# and an element spread over several lines can never be mistaken for the
-# project's own declaration. A line-oriented scan gets all three wrong, and the
-# dangerous direction is silent acceptance: a commented-out copy of a sibling's
-# coordinates lets a row claim another module's document, and a commented-out
-# <packaging>jar</packaging> lets an aggregator pass as a consumable module.
-project_element_value() {
-    local element_name="$1"
-    local pom="$2"
-
-    awk -v element="$element_name" "$strip_comments_awk"'
+# This is the single authority on what those parsers may assume, and the main
+# script runs it against every pom it scans before any extraction. Both parsers
+# would otherwise mis-read these constructs into plausible values: CDATA and
+# processing instructions are well-formed XML that Maven happily accepts, so a
+# build cannot catch them, and their tag-shaped text reads as real markup —
+# coordinates quoted in a BOM usage example become managed entries, and CDATA
+# that closes and reopens elements walks the depth count until a quoted
+# coordinate surfaces at depth 1. Validating the ENTIRE document also matters:
+# extraction stops at the value it wants, so a construct after that value would
+# never be examined.
+validate_pom_markup() {
+    awk "$strip_comments_awk"'
         BEGIN { apostrophe = sprintf("%c", 39) }
 
-        # This scanner understands the plain element markup Maven poms are
-        # written in. Anything that would make it guess at the tree shape is
-        # refused by name rather than mis-parsed into a plausible value.
-        function unsupported(construct) {
+        function reject(construct) {
             print "!unsupported!" construct
+            exit
         }
 
         # True when a tag body ends inside a quoted attribute value, which means
@@ -178,53 +177,100 @@ project_element_value() {
             return quote != ""
         }
 
+        function element_name(tag,   name) {
+            name = tag
+            sub(/^\//, "", name)
+            sub(/[[:space:]].*$/, "", name)
+            sub(/\/$/, "", name)
+            return name
+        }
+
         # Line breaks carry no meaning in XML — a pom opens <project> across two
         # lines — so the comment-free document is joined into a single buffer and
         # scanned as a tag stream rather than line by line.
         { document = document strip_comments($0) " " }
 
         END {
-            if (in_comment) {
-                unsupported("an unterminated XML comment")
-                exit
-            }
+            if (in_comment) { reject("an unterminated XML comment") }
+            if (index(document, "<![CDATA[") > 0) { reject("a CDATA section") }
 
-            # CDATA is character data, but its text can be tag-shaped: it can
-            # close and reopen elements, corrupting the depth count until a
-            # quoted coordinate surfaces at depth 1, and it can wrap a real value
-            # that would then read as empty.
-            if (index(document, "<![CDATA[") > 0) {
-                unsupported("a CDATA section")
-                exit
-            }
-
-            # Every chunk after the first opens with a tag body that ends at the
-            # first ">"; the remainder of the chunk is that element content.
+            # Every chunk after the first opens with a tag body ending at the
+            # first ">". Unlike extraction, this loop never stops early.
             chunk_count = split(document, chunk, "<")
             for (position = 2; position <= chunk_count; position++) {
                 boundary = index(chunk[position], ">")
                 if (boundary == 0) {
-                    unsupported("an unterminated tag")
-                    exit
+                    # Data carrying "<" splits the instruction across chunks, so
+                    # the opener never reaches its own ">".
+                    if (substr(chunk[position], 1, 1) == "?") {
+                        reject("a processing instruction containing markup in its data")
+                    }
+                    reject("an unterminated tag")
                 }
                 tag = substr(chunk[position], 1, boundary - 1)
-                content = substr(chunk[position], boundary + 1)
 
                 if (ends_inside_quote(tag)) {
-                    unsupported("a greater-than sign inside a quoted attribute value")
-                    exit
+                    reject("a greater-than sign inside a quoted attribute value")
                 }
 
                 if (tag ~ /^\?/) {
                     # A well-formed processing instruction ends at "?>", so a
                     # body that does not is one whose data carries markup.
                     if (tag !~ /\?$/) {
-                        unsupported("a processing instruction containing markup in its data")
-                        exit
+                        reject("a processing instruction containing markup in its data")
                     }
                     continue
                 }
                 if (tag ~ /^!/) { continue }
+
+                name = element_name(tag)
+                if (tag ~ /^\//) {
+                    if (depth == 0) { reject("a closing tag with no open element") }
+                    # Element nesting must balance, or a lost closing tag lets a
+                    # truncated coordinate read as a complete one.
+                    if (open_element[depth] != name) {
+                        reject("an element that is never closed")
+                    }
+                    depth--
+                    continue
+                }
+
+                # A self-closing element such as <relativePath/> opens no scope.
+                if (tag !~ /\/[[:space:]]*$/) { open_element[++depth] = name }
+            }
+
+            if (depth > 0) { reject("an element that is never closed") }
+        }
+    ' "$1"
+}
+
+# Prints the value of the element named $1 declared directly under <project> in
+# the pom at $2, or nothing when the pom declares no such element. Callers must
+# have cleared the pom through validate_pom_markup first.
+#
+# Comments are removed and element depth is tracked, so a value quoted inside a
+# comment, one nested in <parent>, <dependencies> or a plugin <configuration>,
+# and an element spread over several lines can never be mistaken for the
+# project's own declaration. A line-oriented scan gets all three wrong, and the
+# dangerous direction is silent acceptance: a commented-out copy of a sibling's
+# coordinates lets a row claim another module's document, and a commented-out
+# <packaging>jar</packaging> lets an aggregator pass as a consumable module.
+project_element_value() {
+    local element_name="$1"
+    local pom="$2"
+
+    awk -v element="$element_name" "$strip_comments_awk"'
+        { document = document strip_comments($0) " " }
+
+        END {
+            chunk_count = split(document, chunk, "<")
+            for (position = 2; position <= chunk_count; position++) {
+                boundary = index(chunk[position], ">")
+                if (boundary == 0) { break }
+                tag = substr(chunk[position], 1, boundary - 1)
+                content = substr(chunk[position], boundary + 1)
+
+                if (tag ~ /^[?!]/) { continue }
                 if (tag ~ /^\//) {
                     if (depth > 0) { depth-- }
                     continue
@@ -262,17 +308,6 @@ report_unsupported_pom_construct() {
     report_failure "$pom_label cannot be parsed reliably: it contains ${parsed_value#'!unsupported!'}"
 }
 
-# Reports every unsupported-construct sentinel present in a parser's output file.
-report_unsupported_pom_constructs() {
-    local pom_label="$1"
-    local parser_output="$2"
-    local sentinel
-
-    while IFS= read -r sentinel; do
-        report_unsupported_pom_construct "$pom_label" "$sentinel"
-    done < <(grep '^!unsupported!' "$parser_output")
-}
-
 # Prints a Maven module's declared packaging, or nothing when it defaults to jar.
 module_packaging() {
     project_element_value packaging "$1"
@@ -304,17 +339,23 @@ forbidden_artifact_reason() {
 
 # --- Extraction ---
 
-managed_vertique_artifacts "$bom_pom" > "$work_dir/bom-parsed.txt"
-managed_vertique_artifacts "$root_pom" > "$work_dir/root-parsed.txt"
+# Both poms are rejected whole before either is scanned: parity computed from a
+# document the parser mis-read is meaningless, so no extraction is attempted and
+# the run ends here rather than reporting differences it cannot stand behind.
+unscannable=0
+if report_unsupported_pom_construct "vertique-bom/pom.xml" "$(validate_pom_markup "$bom_pom")"; then
+    unscannable=1
+fi
+if report_unsupported_pom_construct "pom.xml" "$(validate_pom_markup "$root_pom")"; then
+    unscannable=1
+fi
+if (( unscannable == 1 )); then
+    report_violations_and_exit
+fi
+
+managed_vertique_artifacts "$bom_pom" > "$work_dir/bom-artifacts.txt"
+managed_vertique_artifacts "$root_pom" > "$work_dir/root-artifacts.txt"
 index_rows "$index" > "$work_dir/index-rows.txt"
-
-# A pom the parser could not scan reliably is reported before its output is used
-# for parity, so a construct that hid coordinates never reads as an empty set.
-report_unsupported_pom_constructs "vertique-bom/pom.xml" "$work_dir/bom-parsed.txt"
-report_unsupported_pom_constructs "pom.xml" "$work_dir/root-parsed.txt"
-
-awk '!/^!unsupported!/' "$work_dir/bom-parsed.txt" > "$work_dir/bom-artifacts.txt"
-awk '!/^!unsupported!/' "$work_dir/root-parsed.txt" > "$work_dir/root-artifacts.txt"
 
 while IFS= read -r unparsed_line; do
     report_failure "module index line is not a parseable artifact row: ${unparsed_line#*$'\t'}"
@@ -451,19 +492,20 @@ while IFS=$'\t' read -r artifact_id link; do
     # Bind the row to its own module: a link that resolves to some other
     # module's document leaves this artifact undocumented even though every
     # existence and parity check above succeeds.
-    owning_artifact_id="$(module_artifact_id "$module_pom")"
-    if report_unsupported_pom_construct "$module_source_root/pom.xml" "$owning_artifact_id"; then
+    # Validate before extracting, so the checks below never run against a
+    # document this verifier cannot read.
+    if report_unsupported_pom_construct "$module_source_root/pom.xml" \
+        "$(validate_pom_markup "$module_pom")"; then
         continue
     fi
+
+    owning_artifact_id="$(module_artifact_id "$module_pom")"
     if [[ "$owning_artifact_id" != "$artifact_id" ]]; then
         report_failure "$artifact_id links to a canonical document owned by ${owning_artifact_id:-<no artifactId>} at $module_source_root/pom.xml"
         continue
     fi
 
     packaging="$(module_packaging "$module_pom")"
-    if report_unsupported_pom_construct "$module_source_root/pom.xml" "$packaging"; then
-        continue
-    fi
     case "$packaging" in
         pom)
             report_failure "$artifact_id is a packaging=pom aggregator and must not be BOM-managed or indexed"
@@ -477,8 +519,7 @@ done < "$work_dir/index-rows.txt"
 # --- Verdict ---
 
 if (( failures > 0 )); then
-    printf '\n%d module-documentation parity violation(s) found.\n' "$failures" >&2
-    exit 1
+    report_violations_and_exit
 fi
 
 printf 'PASS: %d consumable artifacts in exact BOM/root-pom/index/document parity\n' \

@@ -37,6 +37,7 @@ fixture_root=""
 fixture_bom_artifacts=()
 fixture_root_artifacts=()
 fixture_index_rows=()
+fixture_bom_pom_written=0
 
 # Starts a new fixture named $1 under the harness work directory.
 fixture_reset() {
@@ -45,6 +46,18 @@ fixture_reset() {
     fixture_bom_artifacts=()
     fixture_root_artifacts=()
     fixture_index_rows=()
+    fixture_bom_pom_written=0
+}
+
+# Writes the fixture's BOM pom verbatim from standard input, replacing the one
+# fixture_finish would generate. Used by cases whose BOM needs markup the
+# generator cannot express, such as a CDATA usage example or a processing
+# instruction. The case is then responsible for declaring every managed
+# coordinate the index expects.
+fixture_write_bom_pom() {
+    mkdir -p "$fixture_root/vertique-bom"
+    cat > "$fixture_root/vertique-bom/pom.xml"
+    fixture_bom_pom_written=1
 }
 
 fixture_add_bom_artifact() {
@@ -244,8 +257,10 @@ fixture_finish() {
 
     write_managed_pom "$fixture_root/pom.xml" vertique-parent \
         ${fixture_root_artifacts[@]+"${fixture_root_artifacts[@]}"}
-    write_managed_pom "$fixture_root/vertique-bom/pom.xml" vertique-bom \
-        ${fixture_bom_artifacts[@]+"${fixture_bom_artifacts[@]}"}
+    if (( fixture_bom_pom_written == 0 )); then
+        write_managed_pom "$fixture_root/vertique-bom/pom.xml" vertique-bom \
+            ${fixture_bom_artifacts[@]+"${fixture_bom_artifacts[@]}"}
+    fi
 
     {
         printf '%s\n' '<!--'
@@ -730,6 +745,179 @@ fixture_finish
 run_case "unterminated-comment-in-module-pom" fail "$fixture_root" \
     "cannot be parsed reliably: it contains an unterminated XML comment" \
     "vertique-phantom"
+
+# A BOM that documents its own usage in a CDATA description is well-formed XML
+# that Maven accepts, so the build cannot catch this: the example's coordinates
+# read as real managed entries. With a stale index row and the module directory
+# and document still on disk, every parity comparison balances and the verifier
+# certifies an artifact the BOM does not actually manage.
+fixture_reset cdata-in-bom-pom
+fixture_add_baseline_artifacts
+fixture_add_root_artifact vertique-phantom-bom
+fixture_add_index_row vertique-phantom-bom "../vertique-phantom-bom/$canonical_suffix"
+fixture_write_module vertique-phantom-bom vertique-phantom-bom jar present
+fixture_write_bom_pom <<'POM'
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+    <modelVersion>4.0.0</modelVersion>
+    <groupId>dev.vertique</groupId>
+    <artifactId>vertique-bom</artifactId>
+    <packaging>pom</packaging>
+    <description><![CDATA[
+        Import this BOM, then declare modules without versions:
+        <dependencyManagement>
+            <dependencies>
+                <dependency>
+                    <groupId>dev.vertique</groupId>
+                    <artifactId>vertique-phantom-bom</artifactId>
+                </dependency>
+            </dependencies>
+        </dependencyManagement>
+    ]]></description>
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-alpha</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-beta-core</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-gamma</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+</project>
+POM
+fixture_finish
+run_case "cdata-in-bom-pom" fail "$fixture_root" \
+    "vertique-bom/pom.xml cannot be parsed reliably: it contains a CDATA section"
+
+# A processing instruction's data may carry markup, and Maven ignores the whole
+# instruction. A line-oriented scan does not, so the coordinates quoted inside it
+# become managed entries backing a stale index row.
+fixture_reset pi-markup-in-bom-pom
+fixture_add_baseline_artifacts
+fixture_add_root_artifact vertique-phantom-pi
+fixture_add_index_row vertique-phantom-pi "../vertique-phantom-pi/$canonical_suffix"
+fixture_write_module vertique-phantom-pi vertique-phantom-pi jar present
+fixture_write_bom_pom <<'POM'
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+    <modelVersion>4.0.0</modelVersion>
+    <groupId>dev.vertique</groupId>
+    <artifactId>vertique-bom</artifactId>
+    <packaging>pom</packaging>
+    <dependencyManagement>
+        <dependencies>
+            <?release-tooling
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-phantom-pi</artifactId>
+            ?>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-alpha</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-beta-core</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-gamma</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+</project>
+POM
+fixture_finish
+run_case "pi-markup-in-bom-pom" fail "$fixture_root" \
+    "vertique-bom/pom.xml cannot be parsed reliably: it contains a processing instruction"
+
+# An <artifactId> whose closing tag was lost leaves the element open. The
+# line-oriented scan still yields a value for it, so the truncated coordinate
+# enters the managed set and backs a stale index row.
+fixture_reset unterminated-tag-in-bom-pom
+fixture_add_baseline_artifacts
+fixture_add_root_artifact vertique-phantom-tag
+fixture_add_index_row vertique-phantom-tag "../vertique-phantom-tag/$canonical_suffix"
+fixture_write_module vertique-phantom-tag vertique-phantom-tag jar present
+fixture_write_bom_pom <<'POM'
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+    <modelVersion>4.0.0</modelVersion>
+    <groupId>dev.vertique</groupId>
+    <artifactId>vertique-bom</artifactId>
+    <packaging>pom</packaging>
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-phantom-tag
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-alpha</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-beta-core</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-gamma</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+</project>
+POM
+fixture_finish
+run_case "unterminated-tag-in-bom-pom" fail "$fixture_root" \
+    "vertique-bom/pom.xml cannot be parsed reliably: it contains an element that is never closed"
+
+# Both extractions stop at the value they were looking for, so an unsupported
+# construct that appears after <artifactId> and <packaging> is never examined and
+# the module is accepted on a document the scanner cannot actually read.
+fixture_reset unsupported-construct-after-value
+fixture_add_baseline_artifacts
+fixture_add_bom_artifact vertique-kappa
+fixture_add_root_artifact vertique-kappa
+fixture_add_index_row vertique-kappa "../vertique-kappa/$canonical_suffix"
+fixture_write_module_with_pom vertique-kappa vertique-kappa <<'POM'
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+    <modelVersion>4.0.0</modelVersion>
+    <groupId>dev.vertique</groupId>
+    <artifactId>vertique-kappa</artifactId>
+    <packaging>jar</packaging>
+    <build>
+        <plugins>
+            <plugin>
+                <artifactId>maven-checkstyle-plugin</artifactId>
+                <configuration>
+                    <suppress files="src/generated" message="line is > 120 characters"/>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>
+POM
+fixture_finish
+run_case "unsupported-construct-after-extracted-value" fail "$fixture_root" \
+    "vertique-kappa/pom.xml cannot be parsed reliably: it contains a greater-than sign inside a quoted attribute value"
 
 # The real repository must always be in full parity.
 run_case "real-repository" pass "$repository_root"
