@@ -55,6 +55,16 @@ fixture_add_root_artifact() {
     fixture_root_artifacts+=("$1")
 }
 
+# Records a dependency entry that survives only inside a block comment. Maven
+# ignores it, so the artifact is not managed and must not reach the parsed set.
+fixture_add_commented_bom_artifact() {
+    fixture_bom_artifacts+=("!commented!$1")
+}
+
+fixture_add_commented_root_artifact() {
+    fixture_root_artifacts+=("!commented!$1")
+}
+
 # Records an index row: $1 = artifactId, $2 = link target as written in the index.
 fixture_add_index_row() {
     fixture_index_rows+=("$1|$2")
@@ -177,15 +187,27 @@ emit_decoy_dependency() {
 DECOY
 }
 
+# Emits one managed dev.vertique dependency per argument. An argument prefixed
+# with "!commented!" is wrapped in a block comment so the entry is inert.
 emit_managed_dependencies() {
     local artifact_id
+    local commented
     for artifact_id in "$@"; do
+        commented=0
+        if [[ "$artifact_id" == '!commented!'* ]]; then
+            commented=1
+            artifact_id="${artifact_id#'!commented!'}"
+            printf '%s\n' '            <!--'
+        fi
         printf '%s\n' '            <dependency>'
         printf '%s\n' '                <groupId>dev.vertique</groupId>'
         printf '                <artifactId>%s</artifactId>\n' "$artifact_id"
         # shellcheck disable=SC2016  # ${project.version} is literal pom text
         printf '%s\n' '                <version>${project.version}</version>'
         printf '%s\n' '            </dependency>'
+        if (( commented == 1 )); then
+            printf '%s\n' '            -->'
+        fi
     done
 }
 
@@ -253,13 +275,17 @@ print_indented_output() {
 }
 
 # $1 = case name, $2 = expected outcome (pass|fail), $3 = repository root,
-# $4 = substring the verifier's diagnostics must contain (required for fail cases).
-# Asserting the diagnostic keeps a case from passing for an incidental reason.
+# $4 = substring the verifier's diagnostics must contain (required for fail cases),
+# $5 = substring the verifier's diagnostics must never contain (optional).
+# Asserting the diagnostic keeps a case from passing for an incidental reason;
+# the forbidden substring pins a value that must not reach any diagnostic at all,
+# which a positive assertion alone cannot prove.
 run_case() {
     local case_name="$1"
     local expected_outcome="$2"
     local target_root="$3"
     local expected_diagnostic="${4:-}"
+    local forbidden_diagnostic="${5:-}"
     local output
     local status=0
     local observed_outcome
@@ -284,6 +310,14 @@ run_case() {
         unexpected_outcomes=$((unexpected_outcomes + 1))
         printf 'FAIL  %-34s verifier %sed but never reported %s\n' \
             "$case_name" "$observed_outcome" "$expected_diagnostic"
+        print_indented_output "$output"
+        return 0
+    fi
+
+    if [[ -n "$forbidden_diagnostic" && "$output" == *"$forbidden_diagnostic"* ]]; then
+        unexpected_outcomes=$((unexpected_outcomes + 1))
+        printf 'FAIL  %-34s verifier %sed but surfaced %s\n' \
+            "$case_name" "$observed_outcome" "$forbidden_diagnostic"
         print_indented_output "$output"
         return 0
     fi
@@ -598,6 +632,104 @@ POM
 fixture_finish
 run_case "nested-packaging-before-project" fail "$fixture_root" \
     "vertique-epsilon is a packaging=pom aggregator"
+
+# Commenting a dependency out of both the BOM and the root pom unmanages the
+# artifact, but the index row, module directory and canonical document all
+# survive the deletion. Reading the poms line by line still emits the commented
+# coordinate, so both set-parity comparisons balance and the verifier certifies
+# exact parity for an artifact nothing actually manages.
+fixture_reset commented-bom-dependency
+fixture_add_baseline_artifacts
+fixture_add_commented_bom_artifact vertique-zeta
+fixture_add_commented_root_artifact vertique-zeta
+fixture_add_index_row vertique-zeta "../vertique-zeta/$canonical_suffix"
+fixture_write_module vertique-zeta vertique-zeta jar present
+fixture_finish
+run_case "commented-bom-dependency-with-stale-index-row" fail "$fixture_root" \
+    "vertique-zeta has a docs/modules.md row but is not managed in vertique-bom/pom.xml"
+
+# CDATA may carry tag-shaped text. Here it closes <description> and <project>
+# and reopens a <project> wrapper, so a depth-tracking scan that treats CDATA as
+# markup surfaces the quoted <artifactId> at depth 1 and binds a value that is
+# not the module's identity at all. The scanner must refuse the pom instead.
+fixture_reset cdata-in-module-pom
+fixture_add_baseline_artifacts
+fixture_add_bom_artifact vertique-theta
+fixture_add_root_artifact vertique-theta
+fixture_add_index_row vertique-theta "../vertique-theta/$canonical_suffix"
+fixture_write_module_with_pom vertique-theta vertique-theta <<'POM'
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+    <modelVersion>4.0.0</modelVersion>
+    <groupId>dev.vertique</groupId>
+    <description><![CDATA[Renamed 1.0 > 2.0. </description></project><project><artifactId>vertique-theta</artifactId>]]></description>
+    <artifactId>vertique-theta-real</artifactId>
+    <packaging>jar</packaging>
+</project>
+POM
+fixture_finish
+run_case "cdata-in-module-pom" fail "$fixture_root" \
+    "cannot be parsed reliably: it contains a CDATA section"
+
+# A ">" inside a quoted attribute value is legal XML, but it truncates the tag
+# for any scanner that ends a tag at the first ">". The truncated self-closing
+# element then reads as an opening tag and inflates the depth count for the rest
+# of the pom. The scanner must refuse the pom rather than bind a mis-parsed
+# value or silently report no artifactId at all.
+fixture_reset quoted-gt-in-attribute
+fixture_add_baseline_artifacts
+fixture_add_bom_artifact vertique-eta
+fixture_add_root_artifact vertique-eta
+fixture_add_index_row vertique-eta "../vertique-eta/$canonical_suffix"
+fixture_write_module_with_pom vertique-eta vertique-eta <<'POM'
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+    <modelVersion>4.0.0</modelVersion>
+    <groupId>dev.vertique</groupId>
+    <build>
+        <plugins>
+            <plugin>
+                <artifactId>maven-checkstyle-plugin</artifactId>
+                <configuration>
+                    <suppress files="src/generated" message="line is > 120 characters"/>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+    <artifactId>vertique-eta</artifactId>
+    <packaging>jar</packaging>
+</project>
+POM
+fixture_finish
+run_case "quoted-gt-in-attribute" fail "$fixture_root" \
+    "cannot be parsed reliably: it contains a greater-than sign inside a quoted attribute value"
+
+# A comment that never closes swallows the rest of the pom, so everything after
+# it — including the </project> that ends the document — is invisible to the
+# parser. The scanner must refuse the pom by name rather than report on the
+# truncated fragment it managed to read, and the coordinate quoted inside the
+# unterminated comment must not reach any diagnostic.
+fixture_reset unterminated-comment
+fixture_add_baseline_artifacts
+fixture_add_bom_artifact vertique-iota
+fixture_add_root_artifact vertique-iota
+fixture_add_index_row vertique-iota "../vertique-iota/$canonical_suffix"
+fixture_write_module_with_pom vertique-iota vertique-iota <<'POM'
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+    <modelVersion>4.0.0</modelVersion>
+    <groupId>dev.vertique</groupId>
+    <artifactId>vertique-iota</artifactId>
+    <packaging>jar</packaging>
+    <!-- Superseded coordinates, kept for reference:
+        <artifactId>vertique-phantom</artifactId>
+        <packaging>pom</packaging>
+</project>
+POM
+fixture_finish
+run_case "unterminated-comment-in-module-pom" fail "$fixture_root" \
+    "cannot be parsed reliably: it contains an unterminated XML comment" \
+    "vertique-phantom"
 
 # The real repository must always be in full parity.
 run_case "real-repository" pass "$repository_root"

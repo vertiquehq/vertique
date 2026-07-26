@@ -60,10 +60,40 @@ report_failure() {
 
 # --- Parsing ---
 
+# Both pom parsers below read comment-free input, so a commented-out block can
+# never emit coordinates and a quoted coordinate can never claim an identity.
+# This awk source is prefixed to each of their programs: strip_comments() removes
+# the comment spans on one line and carries an unterminated span into the lines
+# that follow, and each caller checks in_comment at END. A parser that met a
+# construct it cannot scan prints a "!unsupported!<construct>" sentinel instead
+# of a value; both callers turn that into a reported failure.
+strip_comments_awk='
+    function strip_comments(line,   kept, boundary) {
+        kept = ""
+        while (line != "") {
+            if (in_comment) {
+                boundary = index(line, "-->")
+                if (boundary == 0) { return kept }
+                line = substr(line, boundary + 3)
+                in_comment = 0
+            } else {
+                boundary = index(line, "<!--")
+                if (boundary == 0) { return kept line }
+                kept = kept substr(line, 1, boundary - 1)
+                line = substr(line, boundary + 4)
+                in_comment = 1
+            }
+        }
+        return kept
+    }
+'
+
 # Prints the dev.vertique artifactIds managed in a pom's <dependencyManagement>
-# section, one per line. Coordinates inside <exclusions> are ignored.
+# section, one per line. Coordinates inside <exclusions> or inside a comment are
+# ignored.
 managed_vertique_artifacts() {
-    awk '
+    awk "$strip_comments_awk"'
+        { $0 = strip_comments($0) }
         /<dependencyManagement>/ { inside = 1; next }
         inside == 0 { next }
         /<\/dependencyManagement>/ { inside = 0; next }
@@ -78,6 +108,9 @@ managed_vertique_artifacts() {
             sub(/[[:space:]]*<\/artifactId>.*$/, "", value)
             if (value != "") { print value }
             pending = 0
+        }
+        END {
+            if (in_comment) { print "!unsupported!an unterminated XML comment" }
         }
     ' "$1"
 }
@@ -118,26 +151,31 @@ project_element_value() {
     local element_name="$1"
     local pom="$2"
 
-    awk -v element="$element_name" '
-        # Removes XML comment spans from one line, carrying an unterminated
-        # comment over into the lines that follow.
-        function strip_comments(line,   kept, boundary) {
-            kept = ""
-            while (line != "") {
-                if (in_comment) {
-                    boundary = index(line, "-->")
-                    if (boundary == 0) { return kept }
-                    line = substr(line, boundary + 3)
-                    in_comment = 0
-                } else {
-                    boundary = index(line, "<!--")
-                    if (boundary == 0) { return kept line }
-                    kept = kept substr(line, 1, boundary - 1)
-                    line = substr(line, boundary + 4)
-                    in_comment = 1
+    awk -v element="$element_name" "$strip_comments_awk"'
+        BEGIN { apostrophe = sprintf("%c", 39) }
+
+        # This scanner understands the plain element markup Maven poms are
+        # written in. Anything that would make it guess at the tree shape is
+        # refused by name rather than mis-parsed into a plausible value.
+        function unsupported(construct) {
+            print "!unsupported!" construct
+        }
+
+        # True when a tag body ends inside a quoted attribute value, which means
+        # the ">" it was cut at belongs to that value rather than closing the
+        # tag. Tracking the open quote keeps an apostrophe inside a double-quoted
+        # value from reading as an unbalanced quote.
+        function ends_inside_quote(text,   position, character, quote) {
+            quote = ""
+            for (position = 1; position <= length(text); position++) {
+                character = substr(text, position, 1)
+                if (quote == "") {
+                    if (character == "\"" || character == apostrophe) { quote = character }
+                } else if (character == quote) {
+                    quote = ""
                 }
             }
-            return kept
+            return quote != ""
         }
 
         # Line breaks carry no meaning in XML — a pom opens <project> across two
@@ -146,16 +184,47 @@ project_element_value() {
         { document = document strip_comments($0) " " }
 
         END {
+            if (in_comment) {
+                unsupported("an unterminated XML comment")
+                exit
+            }
+
+            # CDATA is character data, but its text can be tag-shaped: it can
+            # close and reopen elements, corrupting the depth count until a
+            # quoted coordinate surfaces at depth 1, and it can wrap a real value
+            # that would then read as empty.
+            if (index(document, "<![CDATA[") > 0) {
+                unsupported("a CDATA section")
+                exit
+            }
+
             # Every chunk after the first opens with a tag body that ends at the
             # first ">"; the remainder of the chunk is that element content.
             chunk_count = split(document, chunk, "<")
             for (position = 2; position <= chunk_count; position++) {
                 boundary = index(chunk[position], ">")
-                if (boundary == 0) { break }
+                if (boundary == 0) {
+                    unsupported("an unterminated tag")
+                    exit
+                }
                 tag = substr(chunk[position], 1, boundary - 1)
                 content = substr(chunk[position], boundary + 1)
 
-                if (tag ~ /^[?!]/) { continue }
+                if (ends_inside_quote(tag)) {
+                    unsupported("a greater-than sign inside a quoted attribute value")
+                    exit
+                }
+
+                if (tag ~ /^\?/) {
+                    # A well-formed processing instruction ends at "?>", so a
+                    # body that does not is one whose data carries markup.
+                    if (tag !~ /\?$/) {
+                        unsupported("a processing instruction containing markup in its data")
+                        exit
+                    }
+                    continue
+                }
+                if (tag ~ /^!/) { continue }
                 if (tag ~ /^\//) {
                     if (depth > 0) { depth-- }
                     continue
@@ -180,6 +249,28 @@ project_element_value() {
             }
         }
     ' "$pom"
+}
+
+# Reports the unsupported construct a pom parser named in $2 and returns 0 so the
+# caller can skip the pom; returns 1 when $2 is a usable value. Refusing to scan
+# is always louder than binding a value guessed from markup the parser mis-read.
+report_unsupported_pom_construct() {
+    local pom_label="$1"
+    local parsed_value="$2"
+
+    [[ "$parsed_value" == '!unsupported!'* ]] || return 1
+    report_failure "$pom_label cannot be parsed reliably: it contains ${parsed_value#'!unsupported!'}"
+}
+
+# Reports every unsupported-construct sentinel present in a parser's output file.
+report_unsupported_pom_constructs() {
+    local pom_label="$1"
+    local parser_output="$2"
+    local sentinel
+
+    while IFS= read -r sentinel; do
+        report_unsupported_pom_construct "$pom_label" "$sentinel"
+    done < <(grep '^!unsupported!' "$parser_output")
 }
 
 # Prints a Maven module's declared packaging, or nothing when it defaults to jar.
@@ -213,9 +304,17 @@ forbidden_artifact_reason() {
 
 # --- Extraction ---
 
-managed_vertique_artifacts "$bom_pom" > "$work_dir/bom-artifacts.txt"
-managed_vertique_artifacts "$root_pom" > "$work_dir/root-artifacts.txt"
+managed_vertique_artifacts "$bom_pom" > "$work_dir/bom-parsed.txt"
+managed_vertique_artifacts "$root_pom" > "$work_dir/root-parsed.txt"
 index_rows "$index" > "$work_dir/index-rows.txt"
+
+# A pom the parser could not scan reliably is reported before its output is used
+# for parity, so a construct that hid coordinates never reads as an empty set.
+report_unsupported_pom_constructs "vertique-bom/pom.xml" "$work_dir/bom-parsed.txt"
+report_unsupported_pom_constructs "pom.xml" "$work_dir/root-parsed.txt"
+
+awk '!/^!unsupported!/' "$work_dir/bom-parsed.txt" > "$work_dir/bom-artifacts.txt"
+awk '!/^!unsupported!/' "$work_dir/root-parsed.txt" > "$work_dir/root-artifacts.txt"
 
 while IFS= read -r unparsed_line; do
     report_failure "module index line is not a parseable artifact row: ${unparsed_line#*$'\t'}"
@@ -353,12 +452,18 @@ while IFS=$'\t' read -r artifact_id link; do
     # module's document leaves this artifact undocumented even though every
     # existence and parity check above succeeds.
     owning_artifact_id="$(module_artifact_id "$module_pom")"
+    if report_unsupported_pom_construct "$module_source_root/pom.xml" "$owning_artifact_id"; then
+        continue
+    fi
     if [[ "$owning_artifact_id" != "$artifact_id" ]]; then
         report_failure "$artifact_id links to a canonical document owned by ${owning_artifact_id:-<no artifactId>} at $module_source_root/pom.xml"
         continue
     fi
 
     packaging="$(module_packaging "$module_pom")"
+    if report_unsupported_pom_construct "$module_source_root/pom.xml" "$packaging"; then
+        continue
+    fi
     case "$packaging" in
         pom)
             report_failure "$artifact_id is a packaging=pom aggregator and must not be BOM-managed or indexed"
