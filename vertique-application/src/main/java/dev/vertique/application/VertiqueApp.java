@@ -18,9 +18,10 @@ import java.lang.annotation.Target;
  *   <li>is annotated with {@code dagger.Component},</li>
  *   <li>extends {@link VertiqueApplicationComponent} (so the generated factory's return type and the
  *       lifecycle runner's contract hold), and</li>
- *   <li>includes {@link dev.vertique.core.VertxModule} in its {@code @Component(modules = …)} list
- *       (the generated factory calls {@code .vertxModule(…)} on Dagger's builder; a component that
- *       omits {@code VertxModule} yields a clear generated-code compile error).</li>
+ *   <li>includes {@link dev.vertique.core.VertxModule} directly or transitively through a
+ *       component module's {@code @Module(includes = …)} graph (the generated factory calls
+ *       {@code .vertxModule(…)} on Dagger's builder; a component whose complete module graph omits
+ *       {@code VertxModule} yields a clear generated-code compile error).</li>
  * </ul>
  *
  * <p>The {@code vertique-codegen-application} annotation processor generates, in the component's own

@@ -450,6 +450,11 @@ SPDX-License-Identifier: EUPL-1.2
                 <artifactId>vertique-opentelemetry-prometheus</artifactId>
                 <version>${project.version}</version>
             </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-starter-core</artifactId>
+                <version>${project.version}</version>
+            </dependency>
 
             <!-- Micrometer BOM — declared before vertx-dependencies so micrometer versions win
                  over any transitive micrometer pinning from vertx-dependencies -->

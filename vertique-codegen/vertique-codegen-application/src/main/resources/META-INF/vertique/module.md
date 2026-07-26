@@ -27,7 +27,10 @@ This processor owns application-factory generation when:
 
 - The application uses the standalone launcher (`vertique-launcher`) and wants to eliminate the
   hand-written `VertiqueComponentFactory` and `META-INF/services` entry.
-- The `@Component` interface already extends `VertiqueApplicationComponent` and includes `VertxModule`.
+- The `@Component` interface already extends `VertiqueApplicationComponent` and includes
+  `VertxModule` directly or transitively through a component module's `@Module(includes = …)`
+  graph — for example, a component naming `dev.vertique.starter.core.CoreApplicationModule`
+  satisfies this because `CoreApplicationModule` includes `VertxModule`.
 
 Applications that manage their own factory (the manual Phase-3 path) do not need this module.
 Both paths satisfy the same `VertiqueComponentFactoryLoader` discovery contract, so the choice is
@@ -167,10 +170,14 @@ the method returns without throwing.
   If Dagger is not on the processor classpath or `@Component` is malformed, the reference will
   fail at the final compile with a standard "cannot find symbol" error pointing at the generated
   factory.
-- The `VertxModule` inclusion requirement is **not** validated by the processor. A component that
-  omits `VertxModule` compiles without error at the processor stage but fails at the final compile
-  with a "cannot find symbol: method vertxModule" error on the generated factory's builder chain.
-  This is by design: the generated-code error is more precise than a processor-level error.
+- The `VertxModule` inclusion requirement is **not** validated by the processor. `VertxModule` may
+  be included directly in the component's `modules = {...}` list or transitively through a
+  component module's `@Module(includes = …)` graph — for example, a component naming
+  `dev.vertique.starter.core.CoreApplicationModule` satisfies this because `CoreApplicationModule`
+  includes `VertxModule`. A component whose complete module graph omits `VertxModule` compiles
+  without error at the processor stage but fails at the final compile with a "cannot find symbol:
+  method vertxModule" error on the generated factory's builder chain. This is by design: the
+  generated-code error is more precise than a processor-level error.
 
 ---
 

@@ -1,0 +1,145 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
+SPDX-License-Identifier: EUPL-1.2
+-->
+
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
+
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>dev.vertique</groupId>
+        <artifactId>vertique-parent</artifactId>
+        <version>${revision}</version>
+        <relativePath>../../pom.xml</relativePath>
+    </parent>
+
+    <artifactId>vertique-starter-integration-tests</artifactId>
+    <name>Vertique Starter Integration Tests</name>
+    <description>Consumer integration tests proving starter aggregate composition and dependency ledgers</description>
+
+    <properties>
+        <jacoco.skip>true</jacoco.skip>
+        <maven.invoker.plugin.version>3.10.1</maven.invoker.plugin.version>
+    </properties>
+
+    <!--
+        Test-scope dependencies are the explicit staging edges for the isolated integration-test
+        repository: maven-invoker-plugin:install resolves this module's test scope and installs the
+        resulting artifacts, so every coordinate a fixture resolves must be reachable from here.
+        They do not change any starter's published dependency contract.
+    -->
+    <dependencies>
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-app-parent</artifactId>
+            <version>${revision}</version>
+            <type>pom</type>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-bom</artifactId>
+            <version>${revision}</version>
+            <type>pom</type>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-codegen-all</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-starter-core</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-enforcer-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>require-invoker-maven-version</id>
+                        <phase>validate</phase>
+                        <goals>
+                            <goal>enforce</goal>
+                        </goals>
+                        <configuration>
+                            <rules>
+                                <requireMavenVersion>
+                                    <version>[3.9.9]</version>
+                                    <message>Starter Maven Invoker fixtures require Maven 3.9.9 exactly.</message>
+                                </requireMavenVersion>
+                            </rules>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-invoker-plugin</artifactId>
+                <version>${maven.invoker.plugin.version}</version>
+                <executions>
+                    <execution>
+                        <id>stage-starter-consumer-artifacts</id>
+                        <phase>pre-integration-test</phase>
+                        <goals>
+                            <goal>install</goal>
+                        </goals>
+                        <configuration>
+                            <localRepositoryPath>
+                                ${project.build.directory}/invoker-local-repository
+                            </localRepositoryPath>
+                            <scope>test</scope>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>run-starter-consumer-fixtures</id>
+                        <phase>integration-test</phase>
+                        <goals>
+                            <goal>run</goal>
+                        </goals>
+                        <configuration>
+                            <projectsDirectory>${project.basedir}/src/it</projectsDirectory>
+                            <cloneProjectsTo>${project.build.directory}/it</cloneProjectsTo>
+                            <localRepositoryPath>
+                                ${project.build.directory}/invoker-local-repository
+                            </localRepositoryPath>
+                            <settingsFile>${project.basedir}/src/it/settings.xml</settingsFile>
+                            <mergeUserSettings>false</mergeUserSettings>
+                            <mavenHome>${maven.home}</mavenHome>
+                            <goals>
+                                <goal>clean</goal>
+                                <goal>verify</goal>
+                            </goals>
+                            <pomIncludes>
+                                <pomInclude>*/pom.xml</pomInclude>
+                            </pomIncludes>
+                            <postBuildHookScript>verify.groovy</postBuildHookScript>
+                            <filterProperties>
+                                <vertiqueVersion>${revision}</vertiqueVersion>
+                            </filterProperties>
+                            <scriptVariables>
+                                <vertiqueVersion>${revision}</vertiqueVersion>
+                            </scriptVariables>
+                            <parallelThreads>1</parallelThreads>
+                            <failIfNoProjects>true</failIfNoProjects>
+                            <streamLogsOnFailures>true</streamLogsOnFailures>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+</project>

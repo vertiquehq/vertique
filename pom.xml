@@ -53,6 +53,7 @@ SPDX-License-Identifier: EUPL-1.2
         <module>vertique-events</module>
         <module>vertique-micrometer</module>
         <module>vertique-opentelemetry</module>
+        <module>vertique-starter</module>
         <module>examples/vertique-example-parent</module>
         <module>vertique-archetype</module>
         <module>examples/vertique-example-hello</module>
@@ -623,6 +624,13 @@ SPDX-License-Identifier: EUPL-1.2
             <dependency>
                 <groupId>dev.vertique</groupId>
                 <artifactId>vertique-opentelemetry-prometheus</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+
+            <!-- Starter aggregates -->
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-starter-core</artifactId>
                 <version>${project.version}</version>
             </dependency>
 

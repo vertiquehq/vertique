@@ -81,6 +81,7 @@ SPDX-License-Identifier: EUPL-1.2
 | `vertique-security-core` | [module.md](../vertique-security/vertique-security-core/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-security-runtime` | [module.md](../vertique-security/vertique-security-runtime/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-services` | [module.md](../vertique-services/src/main/resources/META-INF/vertique/module.md) |
+| `vertique-starter-core` | [module.md](../vertique-starter/vertique-starter-core/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-validation` | [module.md](../vertique-validation/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-workflow-core` | [module.md](../vertique-workflow/vertique-workflow-core/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-workflow-definition` | [module.md](../vertique-workflow/vertique-workflow-definition/src/main/resources/META-INF/vertique/module.md) |
