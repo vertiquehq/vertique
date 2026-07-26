@@ -96,18 +96,15 @@ public class RestArchetypeReproducibilityCheck {
     private static Map<String, Path> trackedRegularFiles(Path root) throws IOException {
         Map<String, Path> tracked = new TreeMap<>();
         try (Stream<Path> walk = Files.walk(root)) {
-            for (Path path : (Iterable<Path>) walk::iterator) {
+            walk.forEach(path -> {
                 if (Files.isSymbolicLink(path)) {
                     fail("symlink is not permitted beneath a generated project: " + path);
                 }
                 String relative = normalizedRelative(root, path);
-                if (isExcluded(relative)) {
-                    continue;
-                }
-                if (Files.isRegularFile(path)) {
+                if (!isExcluded(relative) && Files.isRegularFile(path)) {
                     tracked.put(relative, path);
                 }
-            }
+            });
         }
         return tracked;
     }

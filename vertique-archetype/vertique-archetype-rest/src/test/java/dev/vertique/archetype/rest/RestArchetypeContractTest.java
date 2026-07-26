@@ -10,12 +10,13 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-import java.util.stream.Collectors;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -65,8 +66,8 @@ class RestArchetypeContractTest {
     /** Matches a fenced {@code ```bash ... ```} code block within a markdown document. */
     private static final Pattern FENCED_BASH_BLOCK = Pattern.compile("```bash\\R(.*?)```", Pattern.DOTALL);
 
-    /** Matches one {@code -DpropertyName=} generation-command flag. */
-    private static final Pattern GENERATE_PROPERTY = Pattern.compile("-D(\\w+)=");
+    /** Matches one {@code -DpropertyName=value} generation-command flag; the value may be empty. */
+    private static final Pattern GENERATE_PROPERTY = Pattern.compile("-D(\\w+)=(\\S*)");
 
     /** Matches a {@code <plugin>...</plugin>} declaration. */
     private static final Pattern PLUGIN_BLOCK = Pattern.compile("<plugin>(.*?)</plugin>", Pattern.DOTALL);
@@ -188,7 +189,8 @@ class RestArchetypeContractTest {
         String command = generationCommands.get(0);
 
         // And it carries exactly the frozen §4.6 property set.
-        assertEquals(EXPECTED_GENERATE_PROPERTIES, propertyKeysOf(command));
+        assertEquals(
+                EXPECTED_GENERATE_PROPERTIES, generationPropertiesOf(command).keySet());
 
         // And it names the REST archetype coordinate and runs non-interactively.
         assertEquals("dev.vertique", propertyValue(command, "archetypeGroupId"));
@@ -283,8 +285,8 @@ class RestArchetypeContractTest {
         return modules.group(1)
                 .lines()
                 .map(String::trim)
-                .filter(line -> line.endsWith(".class,") || line.endsWith(".class"))
                 .map(line -> line.endsWith(",") ? line.substring(0, line.length() - 1) : line)
+                .filter(line -> line.endsWith(".class"))
                 .sorted()
                 .toList();
     }
@@ -318,17 +320,19 @@ class RestArchetypeContractTest {
     }
 
     /**
-     * Extracts the set of {@code -D} property names set by a generation command.
+     * Parses every {@code -D} property set by a generation command; the first occurrence of a
+     * repeated key wins, matching single-{@code find()} lookup semantics.
      *
      * @param command the command block text
-     * @return the declared property names
+     * @return property names mapped to their assigned (possibly empty) values
      */
-    private static Set<String> propertyKeysOf(String command) {
-        return GENERATE_PROPERTY
+    private static Map<String, String> generationPropertiesOf(String command) {
+        Map<String, String> properties = new LinkedHashMap<>();
+        GENERATE_PROPERTY
                 .matcher(command)
                 .results()
-                .map(match -> match.group(1))
-                .collect(Collectors.toSet());
+                .forEach(match -> properties.putIfAbsent(match.group(1), match.group(2)));
+        return properties;
     }
 
     /**
@@ -339,9 +343,9 @@ class RestArchetypeContractTest {
      * @return the assigned value
      */
     private static String propertyValue(String command, String key) {
-        Matcher matcher = Pattern.compile("-D" + Pattern.quote(key) + "=(\\S+)").matcher(command);
-        assertTrue(matcher.find(), () -> "generation command must set -D" + key);
-        return matcher.group(1);
+        Map<String, String> properties = generationPropertiesOf(command);
+        assertTrue(properties.containsKey(key), () -> "generation command must set -D" + key);
+        return properties.get(key);
     }
 
     /**
