@@ -97,8 +97,9 @@ runs the generated project verification.
 - `vertique-archetype/src/main/resources/archetype-resources/src/test/java/ApplicationIT.java`
 - `vertique-archetype/src/test/java/dev/vertique/archetype/ArchetypeGenerationIT.java`
 - `vertique-archetype/src/test/java/dev/vertique/archetype/ArchetypeReadmeIT.java`
-- `vertique-archetype/src/it/minimal/invoker.properties`
-- `vertique-archetype/src/it/minimal/verify.groovy`
+- `vertique-archetype/src/it/projects/minimal/archetype.properties`
+- `vertique-archetype/src/it/projects/minimal/goal.txt`
+- `vertique-archetype/src/it/projects/minimal/verify.groovy`
 
 `vertique-archetype` is not BOM-managed, so no canonical module document or module-index change is
 required. `vertique-bom` has no canonical module document.
@@ -131,3 +132,7 @@ archetype-catalog registration, and a Windows launcher.
 - 2026-07-26 — Documentation correction: moved the generator launcher command from the generated
   README to the archetype README, because the generated application does not contain that launcher.
   The generated README retains its run, verification, package, and Jib commands.
+- 2026-07-26 — Native archetype verification: replaced an inactive generic Maven Invoker fixture
+  with Maven Archetype's lifecycle-owned `src/it/projects` fixture (`archetype.properties`,
+  `goal.txt`, `verify.groovy`). This makes `verify` generate from the just-built archetype and run
+  the generated application's integration test without staging a separate local repository.
