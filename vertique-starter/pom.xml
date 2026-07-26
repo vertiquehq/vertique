@@ -24,6 +24,7 @@ SPDX-License-Identifier: EUPL-1.2
     <modules>
         <module>vertique-starter-core</module>
         <module>vertique-starter-rest</module>
+        <module>vertique-starter-services</module>
         <module>vertique-starter-integration-tests</module>
     </modules>
 </project>
