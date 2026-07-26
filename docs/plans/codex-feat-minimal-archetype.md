@@ -85,7 +85,7 @@ runs the generated project verification.
 - `vertique-archetype/pom.xml`
 - `vertique-archetype/README.md`
 - `vertique-archetype/bin/new-vertique-app`
-- `vertique-archetype/src/main/resources/META-INF/maven/archetype.xml`
+- `vertique-archetype/src/main/resources/META-INF/maven/archetype-metadata.xml`
 - `vertique-archetype/src/main/resources/archetype-resources/pom.xml`
 - `vertique-archetype/src/main/resources/archetype-resources/README.md`
 - `vertique-archetype/src/main/resources/archetype-resources/src/main/java/AppComponent.java`
@@ -140,3 +140,6 @@ archetype-catalog registration, and a Windows launcher.
   `${project.build.testOutputDirectory}/projects`; moved the native fixture to
   `src/test/resources/projects` so Maven resources copies it to that required location. This
   replaces the prior `src/it/projects` path and prevents an empty integration-test phase.
+- 2026-07-26 — Archetype metadata correction: renamed the descriptor from legacy `archetype.xml`
+  to `archetype-metadata.xml`, the current Maven Archetype descriptor name. The old name caused
+  the plugin to parse modern `fileSets` metadata as a 1.x descriptor and fail before generation.
