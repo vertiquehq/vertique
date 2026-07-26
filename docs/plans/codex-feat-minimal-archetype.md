@@ -62,9 +62,11 @@ than Slice 2.
 ports set to zero, when `mvn -ntp verify` runs, then its application test returns 200 for
 `/hello` and `/health/live`.
 
-**Red proof:** `ArchetypeReadmeIT#documentsSupportedCommands` — given the generated README, when
-its text is parsed, then it contains the launcher, `mvn -ntp exec:java`, `mvn -ntp verify`,
-`mvn -ntp package`, and `mvn -ntp jib:dockerBuild`.
+**Red proof:** `ArchetypeReadmeIT#documentsSupportedCommands` — given the archetype README and
+the generated application's README, when their text is parsed, then the former contains the
+four-flag launcher and the latter contains `mvn -ntp exec:java`, `mvn -ntp verify`,
+`mvn -ntp package`, and `mvn -ntp jib:dockerBuild`. The generated project must not advertise a
+launcher it does not contain.
 
 **Green implementation:** Add the generated README and Maven Archetype integration fixture that
 runs the generated project verification.
@@ -126,3 +128,6 @@ archetype-catalog registration, and a Windows launcher.
 - 2026-07-26 — Test isolation: changed Slice 1's launcher proof to capture its Maven invocation
   through a fake executable; source-tree tests cannot resolve an unreleased archetype remotely.
   Slice 2 retains the real rendering and generated-application verification obligation.
+- 2026-07-26 — Documentation correction: moved the generator launcher command from the generated
+  README to the archetype README, because the generated application does not contain that launcher.
+  The generated README retains its run, verification, package, and Jib commands.
