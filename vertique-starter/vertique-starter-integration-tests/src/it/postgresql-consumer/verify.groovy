@@ -109,6 +109,22 @@ forbidden.each { String description, Closure<Boolean> matches ->
             "PostgreSQL starter leaks ${description} onto the compile/runtime classpath: ${leaked}"
 }
 
+// The exact dev.vertique closure this starter puts on a consumer's compile/runtime classpath. This
+// set is the release line's compatibility surface: any addition or removal is consumer-visible and
+// must be a deliberate, reviewed change to the ledger below. Test-scope graph-composition fixtures
+// are asserted separately above and are deliberately outside this set.
+Set<String> expectedVertique = [
+        "vertique-core",
+        "vertique-db-core",
+        "vertique-db-flyway",
+        "vertique-db-postgresql",
+        "vertique-starter-postgresql"
+] as Set
+Set<String> actualVertique = vertiqueOnClasspath.toSet()
+assert actualVertique == expectedVertique:
+        "PostgreSQL starter dev.vertique closure drifted from the frozen ledger: " +
+                "unexpected=${actualVertique - expectedVertique}, missing=${expectedVertique - actualVertique}"
+
 // The starter ships production persistence, never database test infrastructure: no Testcontainers
 // artifact from any group may reach the compile or runtime classpath.
 List<String> testcontainersOnClasspath =

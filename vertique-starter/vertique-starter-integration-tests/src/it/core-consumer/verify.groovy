@@ -82,4 +82,20 @@ forbidden.each { String description, Closure<Boolean> matches ->
             "Core starter leaks ${description} onto the compile/runtime classpath: ${leaked}"
 }
 
+// The exact dev.vertique closure this starter puts on a consumer's compile/runtime classpath. This
+// set is the release line's compatibility surface: any addition or removal is consumer-visible and
+// must be a deliberate, reviewed change to the ledger below.
+Set<String> expectedVertique = [
+        "vertique-application",
+        "vertique-config-core",
+        "vertique-core",
+        "vertique-deploy",
+        "vertique-json",
+        "vertique-starter-core"
+] as Set
+Set<String> actualVertique = vertiqueOnClasspath.toSet()
+assert actualVertique == expectedVertique:
+        "Core starter dev.vertique closure drifted from the frozen ledger: " +
+                "unexpected=${actualVertique - expectedVertique}, missing=${expectedVertique - actualVertique}"
+
 return true

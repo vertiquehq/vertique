@@ -117,6 +117,25 @@ module_packaging() {
     ' "$1"
 }
 
+# Prints a Maven module's own artifactId. The <parent> block is skipped so an
+# inherited coordinate is never mistaken for the module's identity; only the
+# first top-level <artifactId> is read, which precedes <dependencies> and
+# <build> in every module pom.
+module_artifact_id() {
+    awk '
+        /<parent>/ { in_parent = 1 }
+        /<\/parent>/ { in_parent = 0; next }
+        in_parent { next }
+        /^[[:space:]]*<artifactId>[^<]*<\/artifactId>[[:space:]]*$/ {
+            value = $0
+            sub(/^[[:space:]]*<artifactId>[[:space:]]*/, "", value)
+            sub(/[[:space:]]*<\/artifactId>.*$/, "", value)
+            print value
+            exit
+        }
+    ' "$1"
+}
+
 # Prints why an artifactId may never be BOM-managed or indexed, or returns 1
 # when the artifact is a legitimate consumable module.
 forbidden_artifact_reason() {
@@ -148,10 +167,13 @@ done < <(grep '^!unparsed!' "$work_dir/index-rows.txt")
 
 awk -F'\t' '$1 != "!unparsed!" { print $1 }' "$work_dir/index-rows.txt" \
     > "$work_dir/index-artifacts.txt"
+awk -F'\t' '$1 != "!unparsed!" { print $2 }' "$work_dir/index-rows.txt" \
+    > "$work_dir/index-links.txt"
 
 LC_ALL=C sort "$work_dir/bom-artifacts.txt" > "$work_dir/bom-sorted.txt"
 LC_ALL=C sort "$work_dir/root-artifacts.txt" > "$work_dir/root-sorted.txt"
 LC_ALL=C sort "$work_dir/index-artifacts.txt" > "$work_dir/index-sorted.txt"
+LC_ALL=C sort "$work_dir/index-links.txt" > "$work_dir/index-links-sorted.txt"
 LC_ALL=C sort -u "$work_dir/bom-artifacts.txt" > "$work_dir/bom-unique.txt"
 LC_ALL=C sort -u "$work_dir/root-artifacts.txt" > "$work_dir/root-unique.txt"
 LC_ALL=C sort -u "$work_dir/index-artifacts.txt" > "$work_dir/index-unique.txt"
@@ -176,6 +198,11 @@ report_duplicates() {
 report_duplicates "module index" "$work_dir/index-sorted.txt"
 report_duplicates "vertique-bom/pom.xml" "$work_dir/bom-sorted.txt"
 report_duplicates "root pom.xml" "$work_dir/root-sorted.txt"
+
+# Each canonical document belongs to exactly one artifact. Without this, two
+# rows can share one document and leave the other module undocumented while the
+# artifact sets still report exact parity.
+report_duplicates "module index canonical link" "$work_dir/index-links-sorted.txt"
 
 # --- Set parity ---
 
@@ -263,6 +290,15 @@ while IFS=$'\t' read -r artifact_id link; do
     module_pom="$repository_root/$module_source_root/pom.xml"
     if [[ ! -f "$module_pom" ]]; then
         report_failure "$artifact_id has no owning Maven module at $module_source_root/pom.xml"
+        continue
+    fi
+
+    # Bind the row to its own module: a link that resolves to some other
+    # module's document leaves this artifact undocumented even though every
+    # existence and parity check above succeeds.
+    owning_artifact_id="$(module_artifact_id "$module_pom")"
+    if [[ "$owning_artifact_id" != "$artifact_id" ]]; then
+        report_failure "$artifact_id links to a canonical document owned by ${owning_artifact_id:-<no artifactId>} at $module_source_root/pom.xml"
         continue
     fi
 

@@ -368,6 +368,23 @@ fixture_finish
 run_case "legacy-centralized-doc-path" fail "$fixture_root" \
     "vertique-legacy links to the legacy centralized module document"
 
+# Two aligned artifacts whose index links are crossed: every link resolves to an
+# existing, non-empty document, yet neither row documents its own module. The
+# verifier must bind each row to the artifactId its link's owning pom declares.
+fixture_reset swapped-canonical-links
+fixture_add_baseline_artifacts
+fixture_add_bom_artifact vertique-delta
+fixture_add_root_artifact vertique-delta
+fixture_add_bom_artifact vertique-epsilon
+fixture_add_root_artifact vertique-epsilon
+fixture_add_index_row vertique-delta "../vertique-epsilon/$canonical_suffix"
+fixture_add_index_row vertique-epsilon "../vertique-delta/$canonical_suffix"
+fixture_write_module vertique-delta vertique-delta jar present
+fixture_write_module vertique-epsilon vertique-epsilon jar present
+fixture_finish
+run_case "swapped-canonical-links" fail "$fixture_root" \
+    "vertique-delta links to a canonical document owned by vertique-epsilon"
+
 # An artifact may occur only once in the index.
 fixture_reset duplicate-index-row
 fixture_add_baseline_artifacts
@@ -375,6 +392,24 @@ fixture_add_index_row vertique-alpha "../vertique-alpha/$canonical_suffix"
 fixture_finish
 run_case "duplicate-index-row" fail "$fixture_root" \
     "module index lists vertique-alpha more than once"
+
+# Two distinct artifacts pointing at one canonical document, where the second
+# module ships no document of its own: per-row existence checks all succeed and
+# the artifact sets stay in exact parity, so only link uniqueness can catch that
+# vertique-epsilon has no packaged canonical document at all.
+fixture_reset duplicate-canonical-link
+fixture_add_baseline_artifacts
+fixture_add_bom_artifact vertique-delta
+fixture_add_root_artifact vertique-delta
+fixture_add_bom_artifact vertique-epsilon
+fixture_add_root_artifact vertique-epsilon
+fixture_add_index_row vertique-delta "../vertique-delta/$canonical_suffix"
+fixture_add_index_row vertique-epsilon "../vertique-delta/$canonical_suffix"
+fixture_write_module vertique-delta vertique-delta jar present
+fixture_write_module vertique-epsilon vertique-epsilon jar missing
+fixture_finish
+run_case "duplicate-canonical-link" fail "$fixture_root" \
+    "module index canonical link lists ../vertique-delta/$canonical_suffix more than once"
 
 # A BOM-managed artifact that the root pom does not manage must fail.
 fixture_reset root-pom-unmanaged-artifact

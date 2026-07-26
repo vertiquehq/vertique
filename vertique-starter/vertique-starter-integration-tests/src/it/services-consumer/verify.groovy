@@ -87,11 +87,37 @@ forbidden.each { String description, Closure<Boolean> matches ->
             "Services starter leaks ${description} onto the compile/runtime classpath: ${leaked}"
 }
 
-// The services starter is headless and mechanism-neutral: no JWT artifact from any group may reach
-// the classpath (dev.vertique:vertique-rest-auth-jwt, io.vertx:vertx-auth-jwt, com.nimbusds:nimbus-jose-jwt, …).
-List<String> jwtOnClasspath = classpathCoordinates.findAll { it.toLowerCase().contains("jwt") }.toList()
-assert jwtOnClasspath.isEmpty():
-        "Services starter leaks JWT artifacts onto the compile/runtime classpath: ${jwtOnClasspath}"
+// The exact dev.vertique closure this starter puts on a consumer's compile/runtime classpath. This
+// set is the release line's compatibility surface: any addition or removal is consumer-visible and
+// must be a deliberate, reviewed change to the ledger below.
+Set<String> expectedVertique = [
+        "vertique-application",
+        "vertique-config-core",
+        "vertique-context",
+        "vertique-core",
+        "vertique-correlation",
+        "vertique-deploy",
+        "vertique-json",
+        "vertique-logging",
+        "vertique-management",
+        "vertique-security-core",
+        "vertique-security-runtime",
+        "vertique-services",
+        "vertique-starter-core",
+        "vertique-starter-services"
+] as Set
+Set<String> actualVertique = vertiqueOnClasspath.toSet()
+assert actualVertique == expectedVertique:
+        "Services starter dev.vertique closure drifted from the frozen ledger: " +
+                "unexpected=${actualVertique - expectedVertique}, missing=${expectedVertique - actualVertique}"
+
+// Token-mechanism neutrality: the starter selects no token mechanism for the consumer, so no
+// artifact of the JWT/JOSE token-mechanism category may reach the compile or runtime classpath,
+// from any group.
+List<String> tokenMechanismOnClasspath =
+        classpathCoordinates.findAll { it =~ /(?i)(jwt|jose|jwks)/ }.toList()
+assert tokenMechanismOnClasspath.isEmpty():
+        "Starter leaks JWT/JOSE token-mechanism artifacts onto the compile/runtime classpath: ${tokenMechanismOnClasspath}"
 
 // No database test infrastructure may reach a headless services application either.
 List<String> testcontainersOnClasspath =
