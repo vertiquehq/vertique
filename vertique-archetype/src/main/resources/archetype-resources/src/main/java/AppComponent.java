@@ -9,6 +9,8 @@ import dev.vertique.core.lifecycle.CoreLifecycleStepsModule;
 import dev.vertique.deploy.DeployerModule;
 import dev.vertique.management.ManagementModule;
 import dev.vertique.rest.jaxrs.RestModule;
+import dev.vertique.rest.security.AuthModule;
+import dev.vertique.rest.security.SecurityModule;
 import dev.vertique.rest.validation.RestValidationModule;
 import ${package}.resource.GeneratedJaxRsResourcesModule;
 import jakarta.inject.Singleton;
@@ -21,6 +23,8 @@ import jakarta.inject.Singleton;
             ConfigParsingModule.class,
             RestModule.class,
             RestValidationModule.class,
+            AuthModule.class,
+            SecurityModule.class,
             ManagementModule.class,
             DeployerModule.class,
             CoreLifecycleStepsModule.class,

@@ -7,18 +7,10 @@ import dev.vertique.core.lifecycle.LifecyclePhase;
 import dev.vertique.deploy.VerticleDeployment;
 import dev.vertique.management.ManagementVerticle;
 import dev.vertique.rest.core.router.HttpVerticle;
-import dev.vertique.rest.core.security.SecurityPolicyValidator;
-import jakarta.annotation.Nullable;
 import jakarta.inject.Provider;
 
 @Module
 class AppModule {
-
-    @Provides
-    @Nullable
-    static SecurityPolicyValidator securityPolicyValidator() {
-        return null;
-    }
 
     @Provides
     @IntoSet
