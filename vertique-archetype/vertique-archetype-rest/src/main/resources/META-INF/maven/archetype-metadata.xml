@@ -7,7 +7,7 @@ SPDX-License-Identifier: EUPL-1.2
 <archetype-descriptor xmlns="http://maven.apache.org/plugins/maven-archetype-plugin/archetype/1.2"
                       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
                       xsi:schemaLocation="http://maven.apache.org/plugins/maven-archetype-plugin/archetype/1.2 https://maven.apache.org/xsd/archetype-1.2.0.xsd"
-                      name="vertique-archetype">
+                      name="vertique-archetype-rest">
 
     <requiredProperties>
         <requiredProperty key="vertiqueVersion"/>

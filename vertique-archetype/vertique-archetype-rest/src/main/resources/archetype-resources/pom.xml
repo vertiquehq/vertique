@@ -23,31 +23,7 @@ SPDX-License-Identifier: EUPL-1.2
     <dependencies>
         <dependency>
             <groupId>dev.vertique</groupId>
-            <artifactId>vertique-application</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>dev.vertique</groupId>
-            <artifactId>vertique-config-core</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>dev.vertique</groupId>
-            <artifactId>vertique-deploy</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>dev.vertique</groupId>
-            <artifactId>vertique-management</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>dev.vertique</groupId>
-            <artifactId>vertique-rest-jaxrs</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>dev.vertique</groupId>
-            <artifactId>vertique-rest-security</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>dev.vertique</groupId>
-            <artifactId>vertique-rest-validation</artifactId>
+            <artifactId>vertique-starter-rest</artifactId>
         </dependency>
         <dependency>
             <groupId>dev.vertique</groupId>

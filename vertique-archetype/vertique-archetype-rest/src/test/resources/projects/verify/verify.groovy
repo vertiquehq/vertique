@@ -1,4 +1,4 @@
-def failsafeReports = new File(basedir, "project/minimal-app/target/failsafe-reports")
+def failsafeReports = new File(basedir, "project/rest-app/target/failsafe-reports")
 
 assert failsafeReports.isDirectory()
 assert failsafeReports

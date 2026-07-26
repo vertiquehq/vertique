@@ -1,16 +1,11 @@
-# Vertique Minimal Application Archetype
+# Vertique Application Archetypes
 
-Generate a minimal Vertique application with its group ID, artifact ID, Java package, and
-Vertique version:
+`dev.vertique:vertique-archetype` is a `packaging=pom` aggregator. It groups the Vertique
+application Maven archetypes and is never published as a usable coordinate — always generate from
+one of its children.
 
-```bash
-mvn -B archetype:generate \
-  -DarchetypeGroupId=dev.vertique \
-  -DarchetypeArtifactId=vertique-archetype \
-  -DarchetypeVersion=<vertiqueVersion> \
-  -DgroupId=<groupId> \
-  -DartifactId=<artifactId> \
-  -Dpackage=<packageName> \
-  -Dversion=0.1.0-SNAPSHOT \
-  -DvertiqueVersion=<vertiqueVersion>
-```
+| Archetype | Generates |
+|---|---|
+| [`dev.vertique:vertique-archetype-rest`](vertique-archetype-rest/README.md) | A Vertique REST application on `vertique-starter-rest` |
+
+See the child's README for its generation command and required properties.
