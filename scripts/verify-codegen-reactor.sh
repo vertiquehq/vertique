@@ -18,6 +18,7 @@ path_to_file_uri() {
     local character
     local encoded_path=""
     local hex
+    local byte_value
     local index=0
     local LC_ALL=C
 
@@ -33,7 +34,8 @@ path_to_file_uri() {
                 encoded_path+="$character"
                 ;;
             *)
-                printf -v hex '%02X' "'$character"
+                printf -v byte_value '%d' "'$character"
+                printf -v hex '%02X' "$((byte_value & 0xff))"
                 encoded_path+="%$hex"
                 ;;
         esac
@@ -57,12 +59,23 @@ assert_xml_safe_element_text() {
 assert_repository_cache_uri_encoding() {
     local smoke_path='/tmp/vertique cache & #?%[]'
     local expected_uri='file:///tmp/vertique%20cache%20%26%20%23%3F%25%5B%5D'
+    local unicode_smoke_path='/tmp/vertique-é-cache'
+    local expected_unicode_uri='file:///tmp/vertique-%C3%A9-cache'
     local actual_uri
 
     actual_uri="$(path_to_file_uri "$smoke_path")"
     if [[ "$actual_uri" != "$expected_uri" ]]; then
         echo "Repository URI encoding smoke test failed." >&2
         echo "Expected: $expected_uri" >&2
+        echo "Actual:   $actual_uri" >&2
+        return 1
+    fi
+    assert_xml_safe_element_text "$actual_uri"
+
+    actual_uri="$(path_to_file_uri "$unicode_smoke_path")"
+    if [[ "$actual_uri" != "$expected_unicode_uri" ]]; then
+        echo "Repository URI Unicode encoding smoke test failed." >&2
+        echo "Expected: $expected_unicode_uri" >&2
         echo "Actual:   $actual_uri" >&2
         return 1
     fi
