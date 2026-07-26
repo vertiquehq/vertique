@@ -215,6 +215,14 @@ fixture_finish() {
 
 # --- Case execution ---
 
+print_indented_output() {
+    local line
+    while IFS= read -r line; do
+        [[ -n "$line" ]] && printf '        | %s\n' "$line"
+    done <<< "$1"
+    return 0
+}
+
 # $1 = case name, $2 = expected outcome (pass|fail), $3 = repository root,
 # $4 = substring the verifier's diagnostics must contain (required for fail cases).
 # Asserting the diagnostic keeps a case from passing for an incidental reason.
@@ -226,7 +234,6 @@ run_case() {
     local output
     local status=0
     local observed_outcome
-    local line
 
     executed_cases=$((executed_cases + 1))
     if output="$("$verifier" "$target_root" 2>&1)"; then
@@ -240,9 +247,7 @@ run_case() {
         unexpected_outcomes=$((unexpected_outcomes + 1))
         printf 'FAIL  %-34s expected verifier to %s, but it %sed (exit %d)\n' \
             "$case_name" "$expected_outcome" "$observed_outcome" "$status"
-        while IFS= read -r line; do
-            [[ -n "$line" ]] && printf '        | %s\n' "$line"
-        done <<< "$output"
+        print_indented_output "$output"
         return 0
     fi
 
@@ -250,9 +255,7 @@ run_case() {
         unexpected_outcomes=$((unexpected_outcomes + 1))
         printf 'FAIL  %-34s verifier %sed but never reported %s\n' \
             "$case_name" "$observed_outcome" "$expected_diagnostic"
-        while IFS= read -r line; do
-            [[ -n "$line" ]] && printf '        | %s\n' "$line"
-        done <<< "$output"
+        print_indented_output "$output"
         return 0
     fi
 

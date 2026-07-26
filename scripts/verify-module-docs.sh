@@ -142,11 +142,9 @@ managed_vertique_artifacts "$bom_pom" > "$work_dir/bom-artifacts.txt"
 managed_vertique_artifacts "$root_pom" > "$work_dir/root-artifacts.txt"
 index_rows "$index" > "$work_dir/index-rows.txt"
 
-if grep -q '^!unparsed!' "$work_dir/index-rows.txt"; then
-    while IFS= read -r unparsed_line; do
-        report_failure "module index line is not a parseable artifact row: ${unparsed_line#*$'\t'}"
-    done < <(grep '^!unparsed!' "$work_dir/index-rows.txt")
-fi
+while IFS= read -r unparsed_line; do
+    report_failure "module index line is not a parseable artifact row: ${unparsed_line#*$'\t'}"
+done < <(grep '^!unparsed!' "$work_dir/index-rows.txt")
 
 awk -F'\t' '$1 != "!unparsed!" { print $1 }' "$work_dir/index-rows.txt" \
     > "$work_dir/index-artifacts.txt"
@@ -218,9 +216,10 @@ while IFS= read -r artifact_id; do
     fi
 done < "$work_dir/all-artifacts.txt"
 
-if grep -Eq 'vertique-(audit|blob|camel)|benchmarks' "$index"; then
+non_public_matches="$(grep -nE 'vertique-(audit|blob|camel)|benchmarks' "$index" || true)"
+if [[ -n "$non_public_matches" ]]; then
     report_failure "module index references a non-public artifact"
-    grep -nE 'vertique-(audit|blob|camel)|benchmarks' "$index" >&2 || true
+    printf '%s\n' "$non_public_matches" >&2
 fi
 
 # --- Canonical documents ---

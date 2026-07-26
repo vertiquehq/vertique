@@ -56,7 +56,7 @@ class StarterAggregateSourceContractTest {
 
     @Test
     void aggregatesDeclareNoExplicitConstructors() throws IOException {
-        Path reactorRoot = reactorRoot();
+        Path reactorRoot = ReactorRootLocator.locate();
         List<Path> aggregateSources = aggregateSources(reactorRoot);
 
         assertFalse(
@@ -71,25 +71,6 @@ class StarterAggregateSourceContractTest {
     }
 
     // --- Discovery ---
-
-    /**
-     * Walks up from this module's base directory to the outer reactor root — the first ancestor
-     * holding both the Maven wrapper and a POM.
-     *
-     * @return the reactor root directory
-     */
-    private static Path reactorRoot() {
-        Path candidate = Path.of(System.getProperty("basedir", System.getProperty("user.dir")))
-                .toAbsolutePath()
-                .normalize();
-        while (candidate != null) {
-            if (Files.isRegularFile(candidate.resolve("mvnw")) && Files.isRegularFile(candidate.resolve("pom.xml"))) {
-                return candidate;
-            }
-            candidate = candidate.getParent();
-        }
-        throw new IllegalStateException("Could not locate the reactor root (no ancestor directory contains mvnw)");
-    }
 
     /**
      * Collects every aggregate module source under the starter family's production source roots.

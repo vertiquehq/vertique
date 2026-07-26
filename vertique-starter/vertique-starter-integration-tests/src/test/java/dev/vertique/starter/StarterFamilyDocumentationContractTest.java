@@ -14,6 +14,7 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.regex.Matcher;
@@ -55,7 +56,7 @@ class StarterFamilyDocumentationContractTest {
 
     @Test
     void listsExactlyConsumableStarters() throws IOException {
-        Path reactorRoot = reactorRoot();
+        Path reactorRoot = ReactorRootLocator.locate();
         Path readmePath = reactorRoot.resolve("README.md");
         Path architecturePath = reactorRoot.resolve("docs/architecture.md");
         Path modulesIndexPath = reactorRoot.resolve("docs/modules.md");
@@ -63,18 +64,21 @@ class StarterFamilyDocumentationContractTest {
         Set<String> allowedTokens = new HashSet<>(CONSUMABLE_STARTERS);
         allowedTokens.addAll(INFRASTRUCTURE_STARTERS);
 
-        for (Path document : List.of(readmePath, architecturePath)) {
-            String content = Files.readString(document, StandardCharsets.UTF_8);
-            Set<String> tokens = starterTokens(content);
+        String readmeContent = Files.readString(readmePath, StandardCharsets.UTF_8);
+        String architectureContent = Files.readString(architecturePath, StandardCharsets.UTF_8);
+
+        for (Map.Entry<Path, String> document :
+                List.of(Map.entry(readmePath, readmeContent), Map.entry(architecturePath, architectureContent))) {
+            Set<String> tokens = starterTokens(document.getValue());
             assertTrue(
                     tokens.containsAll(CONSUMABLE_STARTERS),
-                    document + " must mention every consumable starter, found: " + tokens);
+                    document.getKey() + " must mention every consumable starter, found: " + tokens);
             assertTrue(
                     allowedTokens.containsAll(tokens),
-                    document + " mentions unexpected starter-family artifact(s), presented as consumable: " + tokens);
+                    document.getKey() + " mentions unexpected starter-family artifact(s), presented as consumable: "
+                            + tokens);
         }
 
-        String readmeContent = Files.readString(readmePath, StandardCharsets.UTF_8);
         List<String> readmeLinks = markdownLinkTargets(readmeContent);
         boolean readmeLinksToModulesIndex = linksResolveTo(reactorRoot, readmeLinks, modulesIndexPath.normalize());
         List<String> modulesIndexLinks = readmeLinksToModulesIndex
@@ -98,7 +102,7 @@ class StarterFamilyDocumentationContractTest {
 
     @Test
     void excludesInfrastructureChildren() throws IOException {
-        Path reactorRoot = reactorRoot();
+        Path reactorRoot = ReactorRootLocator.locate();
         assertInfrastructureMarkedNonConsumable(reactorRoot.resolve("README.md"));
         assertInfrastructureMarkedNonConsumable(reactorRoot.resolve("docs/architecture.md"));
 
@@ -118,25 +122,6 @@ class StarterFamilyDocumentationContractTest {
     }
 
     // --- Discovery ---
-
-    /**
-     * Walks up from this module's base directory to the outer reactor root — the first ancestor
-     * holding both the Maven wrapper and a POM.
-     *
-     * @return the reactor root directory
-     */
-    private static Path reactorRoot() {
-        Path candidate = Path.of(System.getProperty("basedir", System.getProperty("user.dir")))
-                .toAbsolutePath()
-                .normalize();
-        while (candidate != null) {
-            if (Files.isRegularFile(candidate.resolve("mvnw")) && Files.isRegularFile(candidate.resolve("pom.xml"))) {
-                return candidate;
-            }
-            candidate = candidate.getParent();
-        }
-        throw new IllegalStateException("Could not locate the reactor root (no ancestor directory contains mvnw)");
-    }
 
     // --- Markdown navigation ---
 
