@@ -55,7 +55,7 @@ SPDX-License-Identifier: EUPL-1.2
                 <artifactId>maven-surefire-plugin</artifactId>
                 <configuration>
                     <includes>
-                        <include>**/*IT.java</include>
+                        <include>**/dev/vertique/archetype/**/*IT.java</include>
                     </includes>
                 </configuration>
                 <executions>
