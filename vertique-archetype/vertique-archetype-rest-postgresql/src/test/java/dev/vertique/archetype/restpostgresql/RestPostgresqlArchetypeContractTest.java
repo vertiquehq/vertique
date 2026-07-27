@@ -62,7 +62,7 @@ class RestPostgresqlArchetypeContractTest {
     private static final Path TEMPLATE_APP_MODULE =
             ARCHETYPE_RESOURCES.resolve(Path.of("src", "main", "java", "AppModule.java"));
     private static final Path TEMPLATE_APPLICATION_CONFIG =
-            ARCHETYPE_RESOURCES.resolve(Path.of("src", "main", "resources", "config", "application.json"));
+            ARCHETYPE_RESOURCES.resolve(Path.of("config", "application.json"));
     private static final Path TEMPLATE_MIGRATIONS =
             ARCHETYPE_RESOURCES.resolve(Path.of("src", "main", "resources", "db", "migration"));
     private static final Path TEMPLATE_APPLICATION_IT =
@@ -190,6 +190,20 @@ class RestPostgresqlArchetypeContractTest {
 
     /** Matches a {@code <user>value</user>} element. */
     private static final Pattern CONTAINER_USER = Pattern.compile("<user>([^<]+)</user>");
+
+    /** Matches the {@code <environmentVariables>...</environmentVariables>} block of a plugin configuration. */
+    private static final Pattern ENVIRONMENT_VARIABLES =
+            Pattern.compile("<environmentVariables>(.*?)</environmentVariables>", Pattern.DOTALL);
+
+    /**
+     * Matches the {@code VERTX_CONFIG_LOCATIONS} entry of an environment block in either the
+     * self-closing or the open/close form, capturing the declared value from the latter. Written to
+     * match <em>any</em> declared value rather than only the blank one, so a neutralization that
+     * regressed into a real redirect is captured and then fails the value assertion instead of
+     * vanishing from the proof.
+     */
+    private static final Pattern CONFIG_LOCATIONS_ENTRY = Pattern.compile(
+            "<VERTX_CONFIG_LOCATIONS\\s*/>|<VERTX_CONFIG_LOCATIONS>(.*?)</VERTX_CONFIG_LOCATIONS>", Pattern.DOTALL);
 
     /** Matches a level-2 markdown heading line, capturing nothing beyond the {@code ##} marker itself. */
     private static final Pattern HEADING_2 = Pattern.compile("(?m)^## ");
@@ -826,6 +840,26 @@ class RestPostgresqlArchetypeContractTest {
         }
     }
 
+    @Test
+    @DisplayName("neutralizes an ambient VERTX_CONFIG_LOCATIONS for the generated integration-test run")
+    void neutralizesAmbientConfigLocations() throws IOException {
+        // Given the generated project's POM template.
+        String templatePom = read(TEMPLATE_POM);
+
+        // When the value the failsafe plugin pins for VERTX_CONFIG_LOCATIONS is read.
+        String configLocations = failsafeConfigLocationsOf(templatePom);
+
+        // Then it is blank. ConfigBootstrap.resolveConfigDirs treats a blank value exactly as an
+        // unset one and falls back to the default config/ directory, so the generated tests resolve
+        // this project's own configuration whatever the surrounding environment sets. A non-blank
+        // value here would redirect the loader and make the working-directory proof either spuriously
+        // fail or vacuously pass against a foreign directory.
+        assertTrue(
+                configLocations.isBlank(),
+                () -> "failsafe must pin VERTX_CONFIG_LOCATIONS blank so the generated tests resolve this project's"
+                        + " own config/ directory, found: " + configLocations);
+    }
+
     // --- Helpers ---
 
     /**
@@ -1191,6 +1225,24 @@ class RestPostgresqlArchetypeContractTest {
      */
     private static String jibContainerUserOf(String pom) {
         return firstGroup(CONTAINER_USER, jibContainerOf(pom));
+    }
+
+    /**
+     * Extracts the {@code VERTX_CONFIG_LOCATIONS} value the failsafe plugin pins for the generated
+     * integration-test JVM.
+     *
+     * @param pom the POM template text
+     * @return the declared value — the empty string for the blank, neutralizing form
+     */
+    private static String failsafeConfigLocationsOf(String pom) {
+        Matcher environment = ENVIRONMENT_VARIABLES.matcher(pluginBlockFor(pom, "maven-failsafe-plugin"));
+        assertTrue(
+                environment.find(),
+                "maven-failsafe-plugin must declare an <environmentVariables> block for the generated tests");
+        Matcher entry = CONFIG_LOCATIONS_ENTRY.matcher(environment.group(1));
+        assertTrue(entry.find(), "failsafe <environmentVariables> must declare VERTX_CONFIG_LOCATIONS");
+        String declared = entry.group(1);
+        return declared == null ? "" : declared;
     }
 
     /**

@@ -7,7 +7,10 @@
 
 ## Run
 
-Runs the application locally.
+Runs the application locally. Startup configuration is read from the `config/` directory in the
+working directory — `config/application.json` here. Environment variables and system properties
+override the files, and `VERTX_CONFIG_LOCATIONS` points the loader at other directories instead
+(comma-separated).
 
 ```bash
 mvn -ntp exec:java
@@ -32,7 +35,9 @@ mvn -ntp package
 
 ## Build a container image
 
-Builds a local container image with Jib.
+Builds a local container image with Jib. The image contains no `config` directory: configure a
+containerized run through environment variables, or mount a directory and name it with
+`VERTX_CONFIG_LOCATIONS`.
 
 ```bash
 mvn -ntp jib:dockerBuild

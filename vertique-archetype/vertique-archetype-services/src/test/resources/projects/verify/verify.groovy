@@ -9,8 +9,12 @@ import groovy.xml.XmlSlurper
 // values a sibling archetype would rebind.
 
 String expectedReportPath = "project/services-app/target/failsafe-reports/TEST-com.example.servicesapp.ApplicationIT.xml"
-String expectedTestCount = "2"
-Set<String> expectedTestNames = ["invokesGreetingThroughTypedProxy", "keepsGreetingServiceOnEventLoopByDefault"] as Set
+String expectedTestCount = "3"
+Set<String> expectedTestNames = [
+        "invokesGreetingThroughTypedProxy",
+        "keepsGreetingServiceOnEventLoopByDefault",
+        "bootstrapReadsWorkingDirectoryConfig",
+] as Set
 
 // --- Test proof: the generated application's integration suite ran exactly those cases, all green ---
 

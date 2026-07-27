@@ -10,10 +10,10 @@ import groovy.xml.XmlSlurper
 
 String expectedReportPath =
         "project/rest-postgresql-app/target/failsafe-reports/TEST-com.example.restpostgresqlapp.ApplicationIT.xml"
-String expectedTestCount = "1"
-Set<String> expectedTestNames = ["supportsItemCrud"] as Set
+String expectedTestCount = "2"
+Set<String> expectedTestNames = ["supportsItemCrud", "bootstrapReadsWorkingDirectoryConfig"] as Set
 
-// --- Test proof: the generated application's integration suite ran exactly that case, all green ---
+// --- Test proof: the generated application's integration suite ran exactly those cases, all green ---
 //
 // The generated ApplicationIT drives a real Testcontainers PostgreSQL instance, so this report is
 // only produced by a Docker-backed run: without a reachable daemon the container start throws and

@@ -32,10 +32,12 @@ SPDX-License-Identifier: EUPL-1.2
                 <include>resource/package-info.java</include>
             </includes>
         </fileSet>
+        <!-- Startup configuration lives in the generated project's root config/ directory, not on
+             the classpath: the bootstrap loader scans config/ relative to the working directory. -->
         <fileSet filtered="true" encoding="UTF-8">
-            <directory>src/main/resources</directory>
+            <directory>config</directory>
             <includes>
-                <include>config/application.json</include>
+                <include>application.json</include>
             </includes>
         </fileSet>
         <fileSet filtered="true" packaged="true" encoding="UTF-8">

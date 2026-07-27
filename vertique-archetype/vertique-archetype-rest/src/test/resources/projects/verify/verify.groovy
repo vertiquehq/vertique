@@ -9,8 +9,8 @@ import groovy.xml.XmlSlurper
 // values a sibling archetype would rebind.
 
 String expectedReportPath = "project/rest-app/target/failsafe-reports/TEST-com.example.restapp.ApplicationIT.xml"
-String expectedTestCount = "2"
-Set<String> expectedTestNames = ["servesHello", "servesLiveness"] as Set
+String expectedTestCount = "3"
+Set<String> expectedTestNames = ["servesHello", "servesLiveness", "bootstrapReadsWorkingDirectoryConfig"] as Set
 
 // --- Test proof: the generated application's integration suite ran exactly those cases, all green ---
 

@@ -38,12 +38,20 @@ SPDX-License-Identifier: EUPL-1.2
                 <include>resource/package-info.java</include>
             </includes>
         </fileSet>
+        <!-- Startup configuration lives in the generated project's root config/ directory, not on
+             the classpath: the bootstrap loader scans config/ relative to the working directory. -->
+        <fileSet filtered="true" encoding="UTF-8">
+            <directory>config</directory>
+            <includes>
+                <include>application.json</include>
+            </includes>
+        </fileSet>
         <!-- The migration script is application-owned: Flyway runs it from the generated
-             application's MIGRATE startup phase, never from a test container. -->
+             application's MIGRATE startup phase, never from a test container. It stays on the
+             classpath, which is where the configured Flyway location resolves it. -->
         <fileSet filtered="true" encoding="UTF-8">
             <directory>src/main/resources</directory>
             <includes>
-                <include>config/application.json</include>
                 <include>db/migration/V1__create_items.sql</include>
             </includes>
         </fileSet>
