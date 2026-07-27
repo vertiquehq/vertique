@@ -614,3 +614,15 @@ substitute RATIFIED by the user (2026-07-27).**
 ## Amendments
 
 - 2026-07-27 (S0 drift check): ADR renumbered 0188 → 0189 — the concurrent session claimed 0188 (static-starter-aggregates) between plan approval and persistence. Verified-fact correction; no contract change, no sign-off required.
+- 2026-07-28 (S4 as-built): client-abort wire-failure classification is platform-
+  dependent — a hard RST surfaces as `SocketException` on macOS, `"ConnectionClosed"`
+  only when Vert.x's close path (NoStackTraceThrowable) delivers it. The §6 predicate
+  is unchanged (it is an iff-normalization, not a yield claim), but the IT asserts
+  non-null + low-cardinality shape instead of pinning the value, and S6 docs must not
+  claim a client abort *yields* "ConnectionClosed". Verified-fact correction.
+- 2026-07-28 (S4 discovery → review loop): a plain `ReadStream` entity through
+  `ReadStreamBodyEncoder` produces neither Content-Length nor chunked transfer
+  encoding (the IT wires `setChunked(true)` via an interceptor; SSE sets it itself).
+  Potential adjacent production defect in the same subsystem — handed to the
+  convergence-phase review/triage for fix-now-vs-defer adjudication, not silently
+  absorbed or dropped.
