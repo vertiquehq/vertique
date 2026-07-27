@@ -512,6 +512,17 @@ public class DefaultInputObjectProcessor implements InputObjectProcessor {
      * classloader-resolved generated processor exists for the nested type, preserving the
      * accumulated {@link InputTraversalContext} from the caller.
      *
+     * <p><strong>String fragments are chain-applied, not passed through.</strong> A generated
+     * processor's nested-DTO arm dispatches whatever the wire produced for that field — which
+     * is a plain string whenever the declared type is an opaque string-backed value type (for
+     * example {@code java.net.URI}) that has no generated processor. Mirroring
+     * {@link #walkUnknown}'s string branch here keeps the field's own chain (already folded into
+     * {@code ctx} by the arm's {@code descend(...)}) effective instead of silently dropping it.
+     * This is safe against double application: every reflective {@code dispatchNested} call site
+     * ({@link #processNestedMap}, {@link #processList}, {@link #processListOfObjects}) passes
+     * {@link Map} values, so the string branch is reachable only from generated arms where no
+     * chain has been applied yet.
+     *
      * @param intermediate the nested intermediate fragment
      * @param targetType   the nested type
      * @param ctx          the accumulated traversal context
@@ -542,6 +553,11 @@ public class DefaultInputObjectProcessor implements InputObjectProcessor {
         if (intermediate instanceof List<?> list) {
             InputPolicyMetadata metadata = metadataResolver.resolve(targetType);
             return processList(list, metadata, ctx, EffectiveInputPolicies.NONE, location, fieldPath, targetType);
+        }
+        if (intermediate instanceof String s) {
+            InputValueContext valueCtx = new InputValueContext(location, fieldPath, fieldPath, ownerType);
+            return applyChainsForResolver(
+                    s, ctx.inheritedCanonicalizerChain(), ctx.inheritedSanitizerChain(), valueCtx);
         }
         return intermediate;
     }

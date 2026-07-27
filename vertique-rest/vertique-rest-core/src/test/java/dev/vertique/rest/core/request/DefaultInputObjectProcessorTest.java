@@ -436,6 +436,59 @@ class DefaultInputObjectProcessorTest {
         }
     }
 
+    // --- Reflective continuation for opaque nested types ---
+
+    @Nested
+    @DisplayName("reflective continuation for a nested type with no generated processor")
+    class ContinuationForOpaqueNestedType {
+
+        @Test
+        @DisplayName("@Sanitize'd field of an opaque declared type receives its chain when the wire value is a string")
+        void opaqueNestedTypeStringValue_chainApplied() {
+            // UriHolder has a hand-written companion processor whose "homepage" arm mirrors the
+            // codegen NESTED_DTO shape: dispatchNested(v, URI.class, ...). No URI_InputProcessor
+            // exists, so the dispatcher falls through to DefaultInputObjectProcessor.continueAt
+            // with the raw string.
+            Map<String, Object> input = new LinkedHashMap<>();
+            input.put("homepage", "example.test");
+
+            Object result = processor.processStructuredBody(
+                    input, UriHolder.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
+            Map<?, ?> map = (Map<?, ?>) result;
+            assertEquals(
+                    "safe:example.test",
+                    map.get("homepage"),
+                    "Field-level @Sanitize must survive the dispatch into an opaque nested type");
+        }
+
+        @Test
+        @DisplayName("route-level chain composes ahead of the field chain on the continuation path")
+        void opaqueNestedTypeStringValue_routeChainComposedFirst() {
+            var policies = new EffectiveInputPolicies(List.of(TestTrimCanonicalizer.class), List.of());
+            Map<String, Object> input = new LinkedHashMap<>();
+            input.put("homepage", "  example.test  ");
+
+            Object result = processor.processStructuredBody(input, UriHolder.class, policies, InputLocation.BODY);
+            Map<?, ?> map = (Map<?, ?>) result;
+            assertEquals(
+                    "safe:example.test",
+                    map.get("homepage"),
+                    "Route canonicalizer then field sanitizer, in that order");
+        }
+
+        @Test
+        @DisplayName("non-string value on the continuation path passes through unchanged")
+        void opaqueNestedTypeNonStringValue_unchanged() {
+            Map<String, Object> input = new LinkedHashMap<>();
+            input.put("homepage", 42);
+
+            Object result = processor.processStructuredBody(
+                    input, UriHolder.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
+            Map<?, ?> map = (Map<?, ?>) result;
+            assertEquals(42, map.get("homepage"), "Non-string fragments are still returned unchanged");
+        }
+    }
+
     // =========================================================================
     // Test DTOs
     // =========================================================================
@@ -532,6 +585,17 @@ class DefaultInputObjectProcessorTest {
     static class OuterWithSkipField {
         @SkipCanonicalization
         InnerWithCanon inner;
+    }
+
+    /**
+     * DTO whose {@code @Sanitize}d field has an opaque, string-backed declared type with no
+     * generated processor. Paired with the hand-written
+     * {@link DefaultInputObjectProcessorTest_UriHolder_InputProcessor} companion, this is the
+     * shape that reaches {@code DefaultInputObjectProcessor.continueAt} with a raw string value.
+     */
+    static class UriHolder {
+        @Sanitize(TestPrefixSanitizer.class)
+        java.net.URI homepage;
     }
 
     // =========================================================================
