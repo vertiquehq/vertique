@@ -49,12 +49,12 @@ construction time (startup failure rather than silent data corruption at runtime
 | `DefaultJsonMapperProfileRegistry` | `class` | Internal | `@Singleton` registry impl; seeds the `vertx`, `vertique` and `vertique-strict` built-ins separately (probe-exempt); validates uniqueness + round-trip probe for each application-contributed profile at `@Inject` construction |
 | `VertxJsonMapperProfile` | `class` | Internal | Built-in `vertx` profile; delegates to `DatabindCodec.mapper()`; not overridable |
 | `VertiqueJsonMapperProfile` | `class` | Internal | Built-in `vertique` profile; owns an independent `ObjectMapper` configured via `JacksonDefaults.apply(new ObjectMapper())`; not overridable; probe-exempt |
-| `VertiqueStrictJsonMapperProfile` | `class` (package-private) | Internal | Built-in `vertique-strict` profile; owns a further independent `ObjectMapper` — `JacksonDefaults.apply(...)` plus the three opt-in serdes registered as one `SimpleModule`, with `USE_BIG_DECIMAL_FOR_FLOATS` disabled; not overridable; probe-exempt; see [The `vertique-strict` Profile](#the-vertique-strict-profile) |
+| `VertiqueStrictJsonMapperProfile` | `class` (package-private) | Internal | Built-in `vertique-strict` profile; owns a further independent `ObjectMapper` — `JacksonDefaults.apply(...)` plus the three opt-in serdes and a bounded `BigDecimal` key deserializer registered as one `SimpleModule`, with `USE_BIG_DECIMAL_FOR_FLOATS` disabled; not overridable; probe-exempt; see [The `vertique-strict` Profile](#the-vertique-strict-profile) |
 | `JacksonDefaults` | `class` (helper) | API | Applies the framework's broadly-safe opinionated defaults to any `ObjectMapper`; the `vertique` profile is exactly its output, and `vertique-strict` is its output plus the strict overlay; see [The `vertique` Profile Defaults](#the-vertique-profile-defaults) |
 | `JsonConfig` | record | API | Typed model of the `json` config section; carries `jsonProfile` (key `json.jsonProfile`), the global default profile id; `null`/blank means the `vertx` floor. Parsed at the `JsonRuntimeModule` boundary via `ConfigParser`. |
 | `JsonDefaultProfileValidator` | `class` | API | `@Singleton ComposeValidator` contributed to the `VALIDATE`-phase multibinding; resolves `JsonConfig.jsonProfile()` through the registry at `@Inject` construction — an unknown id throws `JsonProfileConfigurationException` immediately, failing startup even when the global default is shadowed by a more-specific per-binding value or when no boundary has active bindings. |
-| `BigDecimalAsStringSerializer` | `class` | API | Opt-in serializer: writes `BigDecimal` as a JSON string via `toPlainString()` (no scientific notation); not registered by `JacksonDefaults`; intended as a matched pair with `BigDecimalStrictStringDeserializer` |
-| `BigDecimalStrictStringDeserializer` | `class` | API | Opt-in deserializer: accepts only `VALUE_STRING` holding a plain decimal (`-?[0-9]+(\.[0-9]+)?`, ≤ 100 chars) → `BigDecimal`; rejects JSON numbers, exponent forms, and any other token with `MismatchedInputException`; not registered by `JacksonDefaults` |
+| `BigDecimalAsStringSerializer` | `class` | API | Opt-in serializer: writes `BigDecimal` as a JSON string via `toPlainString()` (no scientific notation); bounds the plain-string form to the same ≤ 100 characters `BigDecimalStrictStringDeserializer` enforces on read, rejecting a value that would exceed it with a value-free `JsonMappingException` before or after materializing `toPlainString()`; not registered by `JacksonDefaults`; intended as a matched pair with `BigDecimalStrictStringDeserializer` |
+| `BigDecimalStrictStringDeserializer` | `class` | API | Opt-in deserializer: accepts only `VALUE_STRING` holding a plain decimal (`-?[0-9]+(\.[0-9]+)?`, ≤ 100 chars) → `BigDecimal`; rejects JSON numbers, exponent forms, and any other token with a value-free `MismatchedInputException` naming only the rejected length; exposes the bound/grammar check as the package-private static `parseBounded(String)`, shared with `vertique-strict`'s `BigDecimal` map-key deserializer; not registered by `JacksonDefaults` |
 | `StrictStringDeserializer` | `class` | API | Opt-in deserializer: rejects scalar→`String` coercion; only `VALUE_STRING` accepted; other scalars (number, boolean) fail with `MismatchedInputException`; not registered by `JacksonDefaults` |
 | `JsonMapperProfiles` | `class` (factory) | API | Factory: `of(JsonProfileId, ObjectMapper)` — validates non-null, does not mutate mapper |
 | `VertxJsonSupport` | `class` (helper) | API | Re-exports Vert.x `VertxModule` so callers can register it without importing the class name |
@@ -125,9 +125,14 @@ application-owned mapper with other customizations.
   is deliberate — Jackson's `StreamReadConstraints` number limits do not apply to string tokens, and
   a short exponent literal would otherwise select an enormous scale that `toPlainString()` expands
   into gigabytes on the way back out. It costs no round-trip fidelity, because the paired serializer
-  never emits exponent notation. Use the pair when clients cannot safely represent large decimals as
-  IEEE-754 floats. Note: activating this pair changes the wire shape — clients must expect a string,
-  not a number.
+  never emits exponent notation. **The same ≤ 100-character bound applies on write**: the serializer
+  checks `scale()`/`precision()` cheaply before calling `toPlainString()`, rejecting any value whose
+  plain form would exceed the bound — including a value that was never parsed from a wire string at
+  all (e.g. constructed with a scale in the billions) — with a `JsonMappingException` before the
+  digit expansion ever happens. Every rejection on either side of the pair names only the bound and
+  the offending length/scale/precision, never the submitted text or the value's digits (log-injection
+  hygiene). Use the pair when clients cannot safely represent large decimals as IEEE-754 floats.
+  Note: activating this pair changes the wire shape — clients must expect a string, not a number.
 - **`StrictStringDeserializer`** — rejects scalar-to-`String` coercion. Jackson's default silently
   coerces a JSON number `123` or `true` targeting a `String` field to `"123"` or `"true"`.
   `StrictStringDeserializer` disables that: only `VALUE_STRING` is accepted; any other scalar
@@ -145,7 +150,7 @@ application-owned mapper with other customizations.
 |---|------|-----------|
 | 1 | Everything in [The `vertique` Profile Defaults](#the-vertique-profile-defaults) | `JacksonDefaults.apply(...)` on a fresh, profile-owned mapper |
 | 2 | Untyped decimals stay JSON numbers | Disable `USE_BIG_DECIMAL_FOR_FLOATS` (which step 1 had enabled) |
-| 3 | Strict decimal + strict string serdes | Register one `SimpleModule("vertique-strict")` carrying `BigDecimalAsStringSerializer`, `BigDecimalStrictStringDeserializer` and `StrictStringDeserializer` |
+| 3 | Strict decimal + strict string serdes, plus the bounded `BigDecimal` key deserializer | Register one `SimpleModule("vertique-strict")` carrying `BigDecimalAsStringSerializer`, `BigDecimalStrictStringDeserializer`, `StrictStringDeserializer`, and a `BigDecimal` `KeyDeserializer` (`addKeyDeserializer`) |
 
 The mapper is built once at profile construction and returned as-is; the shared Vert.x
 `DatabindCodec.mapper()` is never touched.
@@ -155,13 +160,26 @@ The mapper is built once at profile construction and returned as-is; the shared 
 - A **typed** `BigDecimal` property is written as a quoted JSON string via `toPlainString()` — never
   scientific notation, trailing zeros (the scale) preserved exactly — and is read **only** from a
   JSON string. A bare JSON number for a `BigDecimal` property is rejected with
-  `MismatchedInputException`.
+  `MismatchedInputException`. The written plain-string form itself is bounded to the same ≤ 100
+  characters the deserializer accepts on read: a value whose plain form would exceed that bound
+  (however it was constructed, not just parsed from the wire) is rejected before serialization with
+  a value-free `JsonMappingException` naming the bound and the offending scale/precision/length —
+  checked cheaply via `scale()`/`precision()` before `toPlainString()` is ever called, so a
+  pathological scale (e.g. in the billions) is rejected without materializing its digits.
 - A `String` property rejects scalar coercion: a JSON number or boolean targeting a `String` fails
   instead of silently becoming `"42"` / `"true"`.
 - The accepted decimal string grammar is the bounded one described under
   [Opt-in Serdes](#opt-in-serdes-not-in-vertique): plain decimals matching `-?[0-9]+(\.[0-9]+)?`, at
   most 100 characters — exponent forms, a leading `+`, `".5"` and `"1."` are all rejected. Because
   the paired serializer never emits exponent notation, the bound costs no round-trip fidelity.
+- A `Map<BigDecimal, ?>` **key** is bound by the exact same grammar and length bound as a
+  `BigDecimal` value — a JSON object key cannot smuggle an exponent-notation literal (e.g.
+  `"1e-2000000000"`) past the value-side bound. A rejected key surfaces as a `JsonMappingException`
+  naming only the rejected key's length, never the key text itself.
+- Every rejection message in this profile — value or key, read or write — states only the bound and
+  the offending length/scale/precision; it never echoes the submitted text, so a malicious or
+  malformed payload cannot smuggle attacker-controlled content into a log line via the exception
+  message.
 - Clients of a `vertique-strict` endpoint must expect decimals as JSON **strings**, not numbers.
 
 **The untyped pass-through trade.** `USE_BIG_DECIMAL_FOR_FLOATS` is disabled deliberately. A decimal

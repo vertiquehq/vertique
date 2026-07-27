@@ -3,11 +3,15 @@
 
 package dev.vertique.json;
 
+import com.fasterxml.jackson.databind.DeserializationContext;
 import com.fasterxml.jackson.databind.DeserializationFeature;
+import com.fasterxml.jackson.databind.JsonMappingException;
+import com.fasterxml.jackson.databind.KeyDeserializer;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.module.SimpleModule;
 import dev.vertique.core.json.JsonMapperProfile;
 import dev.vertique.core.json.JsonProfileId;
+import java.io.IOException;
 import java.math.BigDecimal;
 
 /**
@@ -37,6 +41,14 @@ import java.math.BigDecimal;
  *       number or boolean targeting a {@code String} fails instead of silently becoming
  *       {@code "42"} / {@code "true"}.
  * </ul>
+ *
+ * <p><strong>{@code BigDecimal} map keys are bounded too (json-004).</strong> A {@code Map<BigDecimal,
+ * ?>} key is parsed by the nested {@link BigDecimalKeyDeserializer}, registered on the same
+ * {@code vertique-strict} module via {@code SimpleModule.addKeyDeserializer}. It enforces the exact
+ * same bounded plain-decimal grammar as {@link BigDecimalStrictStringDeserializer} — by delegating to
+ * the shared {@link BigDecimalStrictStringDeserializer#parseBounded(String)} helper — so a JSON object
+ * key cannot smuggle an exponent-notation literal (e.g. {@code "1e-2000000000"}) past the value-side
+ * bound and amplify into a huge-scale {@code BigDecimal} on the way back out.
  *
  * <p><strong>{@code USE_BIG_DECIMAL_FOR_FLOATS} is deliberately disabled</strong> (the
  * {@code vertique} defaults enable it; this profile turns it back off). That keeps <em>untyped</em>
@@ -92,8 +104,48 @@ final class VertiqueStrictJsonMapperProfile implements JsonMapperProfile {
         strict.addSerializer(BigDecimal.class, new BigDecimalAsStringSerializer());
         strict.addDeserializer(BigDecimal.class, new BigDecimalStrictStringDeserializer());
         strict.addDeserializer(String.class, new StrictStringDeserializer());
+        strict.addKeyDeserializer(BigDecimal.class, new BigDecimalKeyDeserializer());
         m.registerModule(strict);
         return m;
+    }
+
+    // --- BigDecimal map-key bound (json-004) ---
+
+    /**
+     * Bounded {@link KeyDeserializer} for {@code Map<BigDecimal, ?>} keys under the
+     * {@code vertique-strict} profile.
+     *
+     * <p>Delegates to the shared {@link BigDecimalStrictStringDeserializer#parseBounded(String)}
+     * helper, so a map key is held to the exact same bounded plain-decimal grammar
+     * ({@code -?[0-9]+(\.[0-9]+)?}, at most {@value BigDecimalStrictStringDeserializer#MAX_LENGTH}
+     * characters) as a {@code BigDecimal} value — a JSON object key cannot bypass the value-side
+     * grammar bound and smuggle an exponent-notation literal into an amplification-prone
+     * {@code BigDecimal}.
+     *
+     * <p>A rejection is surfaced via {@link JsonMappingException#from(DeserializationContext, String)},
+     * the same clean, checked Jackson mapping exception the deserializer's grammar-mismatch branch
+     * uses — never a raw {@link NumberFormatException} or an unchecked type that would surface as an
+     * uncaught server error. The message never echoes the rejected key text (log-injection hygiene).
+     */
+    private static final class BigDecimalKeyDeserializer extends KeyDeserializer {
+
+        /**
+         * Parses {@code key} as a bounded plain-decimal {@link BigDecimal}.
+         *
+         * @param key  the JSON object's raw key text
+         * @param ctxt the active deserialization context, used only for clean error reporting
+         * @return the parsed {@link BigDecimal}
+         * @throws IOException if {@code key} violates the bounded plain-decimal grammar; the message
+         *     names the bound and the rejected key's length, never the key text itself
+         */
+        @Override
+        public Object deserializeKey(String key, DeserializationContext ctxt) throws IOException {
+            try {
+                return BigDecimalStrictStringDeserializer.parseBounded(key);
+            } catch (IllegalArgumentException rejected) {
+                throw JsonMappingException.from(ctxt, rejected.getMessage());
+            }
+        }
     }
 
     /**
