@@ -106,7 +106,7 @@ class DefaultJsonMapperProfileRegistryTest {
     }
 
     @Test
-    @DisplayName("profileIds includes both vertx and the application id")
+    @DisplayName("profileIds includes all three built-ins plus the application id")
     void profileIds_includesVertxPlusApp() {
         JsonMapperProfile app = JsonMapperProfiles.of(JsonProfileId.of("legacy-crm"), vertxAwareMapper());
         DefaultJsonMapperProfileRegistry registry = new DefaultJsonMapperProfileRegistry(Set.of(app));
@@ -114,7 +114,21 @@ class DefaultJsonMapperProfileRegistryTest {
         Set<JsonProfileId> ids = registry.profileIds();
 
         assertTrue(ids.contains(JsonProfileId.VERTX), "profileIds must contain vertx");
+        assertTrue(ids.contains(JsonProfileId.of("vertique")), "profileIds must contain vertique");
+        assertTrue(ids.contains(JsonProfileId.of("vertique-strict")), "profileIds must contain vertique-strict");
         assertTrue(ids.contains(JsonProfileId.of("legacy-crm")), "profileIds must contain the app id");
+    }
+
+    @Test
+    @DisplayName("application profile with reserved vertique-strict id fails construction")
+    void reservedIdVertiqueStrict_rejectedForAppProfiles() {
+        // Given: an application profile claiming the reserved vertique-strict id, backed by a
+        // vertx-aware mapper so any failure is unambiguously the reservation guard, not a probe
+        // failure.
+        JsonMapperProfile bad = JsonMapperProfiles.of(JsonProfileId.of("vertique-strict"), vertxAwareMapper());
+
+        // When/Then: constructing the registry rejects the reserved-id override.
+        assertThrows(JsonProfileConfigurationException.class, () -> new DefaultJsonMapperProfileRegistry(Set.of(bad)));
     }
 
     @Test

@@ -24,6 +24,7 @@ import org.junit.jupiter.api.Test;
  *   <li>a blank string is a no-op (does not throw);
  *   <li>a known built-in id ({@code vertx}) is resolved cleanly (does not throw);
  *   <li>a known built-in id ({@code vertique}) is resolved cleanly (does not throw);
+ *   <li>a known built-in id ({@code vertique-strict}) is resolved cleanly (does not throw);
  *   <li>an unknown non-blank id throws {@link JsonProfileConfigurationException}.
  * </ul>
  */
@@ -67,6 +68,14 @@ class JsonMapperProfileRegistryValidateConfiguredTest {
     void knownVertiqueId_passes() {
         assertDoesNotThrow(
                 () -> registry.validateConfigured("vertique"), "the built-in 'vertique' id must resolve cleanly");
+    }
+
+    @Test
+    @DisplayName("known vertique-strict id passes")
+    void knownVertiqueStrictId_passes() {
+        assertDoesNotThrow(
+                () -> registry.validateConfigured("vertique-strict"),
+                "the built-in 'vertique-strict' id must resolve cleanly");
     }
 
     @Test
