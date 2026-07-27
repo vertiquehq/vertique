@@ -118,21 +118,31 @@ application-owned mapper with other customizations.
 
 - **`BigDecimalAsStringSerializer` + `BigDecimalStrictStringDeserializer`** — a matched pair. The
   serializer writes `BigDecimal` as a quoted JSON string (`toPlainString()` — no scientific
-  notation, trailing zeros preserved). The deserializer accepts only `VALUE_STRING`; JSON numbers
-  and any other token cause `MismatchedInputException`. Its string grammar is bounded: only plain
-  decimals matching `-?[0-9]+(\.[0-9]+)?` and at most 100 characters long are accepted, so exponent
-  forms (`"1e5"`, `"1e-2000000000"`), a leading `+`, `".5"`, and `"1."` are all rejected. The bound
-  is deliberate — Jackson's `StreamReadConstraints` number limits do not apply to string tokens, and
-  a short exponent literal would otherwise select an enormous scale that `toPlainString()` expands
-  into gigabytes on the way back out. It costs no round-trip fidelity, because the paired serializer
-  never emits exponent notation. **The same ≤ 100-character bound applies on write**: the serializer
-  checks `scale()`/`precision()` cheaply before calling `toPlainString()`, rejecting any value whose
-  plain form would exceed the bound — including a value that was never parsed from a wire string at
-  all (e.g. constructed with a scale in the billions) — with a `JsonMappingException` before the
-  digit expansion ever happens. Every rejection on either side of the pair names only the bound and
-  the offending length/scale/precision, never the submitted text or the value's digits (log-injection
-  hygiene). Use the pair when clients cannot safely represent large decimals as IEEE-754 floats.
-  Note: activating this pair changes the wire shape — clients must expect a string, not a number.
+  notation). Numerical equality is always preserved; the scale is preserved exactly only for a
+  **non-negative** scale (e.g. `"1.50"`'s trailing zero round-trips as scale 2). A **negative**-scale
+  value is written in its expanded plain form instead — `new BigDecimal("1E+2")` writes `"100"`, and
+  a negative-scale zero (e.g. from `1E+200 - 1E+200`, which is still zero-valued but carries scale
+  −200) writes `"0"` — and both re-read with scale 0, not the original negative scale. The
+  deserializer accepts only `VALUE_STRING`; JSON numbers and any other token cause
+  `MismatchedInputException`. Its string grammar is bounded: only plain decimals matching
+  `-?[0-9]+(\.[0-9]+)?` and at most 100 characters long are accepted, so exponent forms (`"1e5"`,
+  `"1e-2000000000"`), a leading `+`, `".5"`, and `"1."` are all rejected. The bound is deliberate —
+  Jackson's `StreamReadConstraints` number limits do not apply to string tokens, and a short exponent
+  literal would otherwise select an enormous scale that `toPlainString()` expands into gigabytes on
+  the way back out. It costs no round-trip fidelity, because the paired serializer never emits
+  exponent notation. **The same ≤ 100-character bound applies on write**: the serializer checks
+  `scale()`/`precision()` cheaply before calling `toPlainString()`, rejecting any value whose plain
+  form would exceed the bound — including a value that was never parsed from a wire string at all
+  (e.g. constructed with a scale in the billions) — with a `JsonMappingException` before the digit
+  expansion ever happens. A negative scale beyond the bound is exempted for a **zero-valued** value
+  only: ordinary arithmetic (e.g. differencing two equal huge round numbers) can produce a zero with
+  an arbitrarily negative scale whose plain form is still just `"0"`, so the cheap pre-check does not
+  reject it; a positive scale beyond the bound is never exempted, zero-valued or not, since
+  `toPlainString()` always emits the scale's trailing zero digits regardless of sign. Every rejection
+  on either side of the pair names only the bound and the offending length/scale/precision, never the
+  submitted text or the value's digits (log-injection hygiene). Use the pair when clients cannot
+  safely represent large decimals as IEEE-754 floats. Note: activating this pair changes the wire
+  shape — clients must expect a string, not a number.
 - **`StrictStringDeserializer`** — rejects scalar-to-`String` coercion. Jackson's default silently
   coerces a JSON number `123` or `true` targeting a `String` field to `"123"` or `"true"`.
   `StrictStringDeserializer` disables that: only `VALUE_STRING` is accepted; any other scalar
@@ -150,7 +160,7 @@ application-owned mapper with other customizations.
 |---|------|-----------|
 | 1 | Everything in [The `vertique` Profile Defaults](#the-vertique-profile-defaults) | `JacksonDefaults.apply(...)` on a fresh, profile-owned mapper |
 | 2 | Untyped decimals stay JSON numbers | Disable `USE_BIG_DECIMAL_FOR_FLOATS` (which step 1 had enabled) |
-| 3 | Strict decimal + strict string serdes, plus the bounded `BigDecimal` key deserializer | Register one `SimpleModule("vertique-strict")` carrying `BigDecimalAsStringSerializer`, `BigDecimalStrictStringDeserializer`, `StrictStringDeserializer`, and a `BigDecimal` `KeyDeserializer` (`addKeyDeserializer`) |
+| 3 | Strict decimal + strict string serdes, plus the bounded `BigDecimal` key serializer/deserializer | Register one `SimpleModule("vertique-strict")` carrying `BigDecimalAsStringSerializer`, `BigDecimalStrictStringDeserializer`, `StrictStringDeserializer`, a bounded `BigDecimal` `JsonSerializer` (`addKeySerializer`), and a bounded `BigDecimal` `KeyDeserializer` (`addKeyDeserializer`) |
 
 The mapper is built once at profile construction and returned as-is; the shared Vert.x
 `DatabindCodec.mapper()` is never touched.
@@ -158,24 +168,31 @@ The mapper is built once at profile construction and returned as-is; the shared 
 **Wire contract.**
 
 - A **typed** `BigDecimal` property is written as a quoted JSON string via `toPlainString()` — never
-  scientific notation, trailing zeros (the scale) preserved exactly — and is read **only** from a
-  JSON string. A bare JSON number for a `BigDecimal` property is rejected with
-  `MismatchedInputException`. The written plain-string form itself is bounded to the same ≤ 100
-  characters the deserializer accepts on read: a value whose plain form would exceed that bound
-  (however it was constructed, not just parsed from the wire) is rejected before serialization with
-  a value-free `JsonMappingException` naming the bound and the offending scale/precision/length —
-  checked cheaply via `scale()`/`precision()` before `toPlainString()` is ever called, so a
-  pathological scale (e.g. in the billions) is rejected without materializing its digits.
+  scientific notation — and is read **only** from a JSON string. Numerical equality is always
+  preserved; the scale is preserved exactly for a non-negative scale, while a negative-scale value
+  (including a negative-scale zero) is written in expanded plain form and re-reads with scale 0 — see
+  [Opt-in Serdes](#opt-in-serdes-not-in-vertique) for the exact rule. A bare JSON number for a
+  `BigDecimal` property is rejected with `MismatchedInputException`. The written plain-string form
+  itself is bounded to the same ≤ 100 characters the deserializer accepts on read: a value whose
+  plain form would exceed that bound (however it was constructed, not just parsed from the wire) is
+  rejected before serialization with a value-free `JsonMappingException` naming the bound and the
+  offending scale/precision/length — checked cheaply via `scale()`/`precision()` before
+  `toPlainString()` is ever called, so a pathological scale (e.g. in the billions) is rejected without
+  materializing its digits.
 - A `String` property rejects scalar coercion: a JSON number or boolean targeting a `String` fails
   instead of silently becoming `"42"` / `"true"`.
 - The accepted decimal string grammar is the bounded one described under
   [Opt-in Serdes](#opt-in-serdes-not-in-vertique): plain decimals matching `-?[0-9]+(\.[0-9]+)?`, at
   most 100 characters — exponent forms, a leading `+`, `".5"` and `"1."` are all rejected. Because
   the paired serializer never emits exponent notation, the bound costs no round-trip fidelity.
-- A `Map<BigDecimal, ?>` **key** is bound by the exact same grammar and length bound as a
-  `BigDecimal` value — a JSON object key cannot smuggle an exponent-notation literal (e.g.
-  `"1e-2000000000"`) past the value-side bound. A rejected key surfaces as a `JsonMappingException`
-  naming only the rejected key's length, never the key text itself.
+- A `Map<BigDecimal, ?>` **key** is written and read by the exact same bound as a `BigDecimal`
+  value, in both directions. On write, the key is rendered through the same bounded plain-string form
+  as a value — **not** `BigDecimal.toString()` — so a small-scale key (e.g. `0.0000001`) is written
+  as `"0.0000001"`, not `"1E-7"`; without this, the profile could not read back its own output, since
+  `"1E-7"` fails the read-side grammar. On read, a JSON object key cannot smuggle an exponent-notation
+  literal (e.g. `"1e-2000000000"`) past the value-side bound. A rejected key — on either side —
+  surfaces as a `JsonMappingException` naming only the bound and the rejected key's length, never the
+  key text itself.
 - Every rejection message in this profile — value or key, read or write — states only the bound and
   the offending length/scale/precision; it never echoes the submitted text, so a malicious or
   malformed payload cannot smuggle attacker-controlled content into a log line via the exception

@@ -3,11 +3,14 @@
 
 package dev.vertique.json;
 
+import com.fasterxml.jackson.core.JsonGenerator;
 import com.fasterxml.jackson.databind.DeserializationContext;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonMappingException;
+import com.fasterxml.jackson.databind.JsonSerializer;
 import com.fasterxml.jackson.databind.KeyDeserializer;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializerProvider;
 import com.fasterxml.jackson.databind.module.SimpleModule;
 import dev.vertique.core.json.JsonMapperProfile;
 import dev.vertique.core.json.JsonProfileId;
@@ -30,7 +33,9 @@ import java.math.BigDecimal;
  * <ul>
  *   <li>{@link BigDecimalAsStringSerializer} — a typed {@link BigDecimal} property is written as a
  *       quoted JSON <em>string</em> via {@link BigDecimal#toPlainString()}: never scientific
- *       notation, trailing zeros (the scale) preserved exactly.
+ *       notation, and numerically exact — the scale is preserved exactly for a non-negative scale,
+ *       while a negative-scale value is written in expanded plain form and re-reads with scale 0
+ *       (json-004 R2-4).
  *   <li>{@link BigDecimalStrictStringDeserializer} — a typed {@link BigDecimal} property is read
  *       <em>only</em> from a JSON string matching the bounded plain-decimal grammar
  *       {@code -?[0-9]+(\.[0-9]+)?} of at most 100 characters. JSON numbers, exponent forms,
@@ -49,6 +54,18 @@ import java.math.BigDecimal;
  * the shared {@link BigDecimalStrictStringDeserializer#parseBounded(String)} helper — so a JSON object
  * key cannot smuggle an exponent-notation literal (e.g. {@code "1e-2000000000"}) past the value-side
  * bound and amplify into a huge-scale {@code BigDecimal} on the way back out.
+ *
+ * <p><strong>{@code BigDecimal} map keys are written in bounded plain form too (json-004 R2-3).</strong>
+ * The nested {@link BigDecimalKeySerializer}, registered via {@code SimpleModule.addKeySerializer},
+ * writes a {@code Map<BigDecimal, ?>} key through the same
+ * {@link BigDecimalAsStringSerializer#boundedPlainString(BigDecimal)} bound that the value-side
+ * serializer uses. Without this, Jackson's default key serializer writes {@link BigDecimal#toString()},
+ * which uses scientific notation for a small-scale value (e.g. {@code "0.0000001"} → {@code "1E-7"}) —
+ * a form {@link BigDecimalKeyDeserializer} would then reject, so the profile could not read back its
+ * own output. The same 100-character bound applies to a key as to a value: switching keys to
+ * {@code toPlainString()} without it would newly expose the egress amplification the value-side bound
+ * already prevents, since {@code toString()} stays compact for a huge-scale value where
+ * {@code toPlainString()} would not.
  *
  * <p><strong>{@code USE_BIG_DECIMAL_FOR_FLOATS} is deliberately disabled</strong> (the
  * {@code vertique} defaults enable it; this profile turns it back off). That keeps <em>untyped</em>
@@ -104,12 +121,54 @@ final class VertiqueStrictJsonMapperProfile implements JsonMapperProfile {
         strict.addSerializer(BigDecimal.class, new BigDecimalAsStringSerializer());
         strict.addDeserializer(BigDecimal.class, new BigDecimalStrictStringDeserializer());
         strict.addDeserializer(String.class, new StrictStringDeserializer());
+        strict.addKeySerializer(BigDecimal.class, new BigDecimalKeySerializer());
         strict.addKeyDeserializer(BigDecimal.class, new BigDecimalKeyDeserializer());
         m.registerModule(strict);
         return m;
     }
 
     // --- BigDecimal map-key bound (json-004) ---
+
+    /**
+     * Bounded {@code BigDecimal} key {@link JsonSerializer} for {@code Map<BigDecimal, ?>} keys under
+     * the {@code vertique-strict} profile (json-004 R2-3).
+     *
+     * <p>Delegates to the shared {@link BigDecimalAsStringSerializer#boundedPlainString(BigDecimal)}
+     * helper — the same write-side length bound a {@code BigDecimal} <em>value</em> is held to —
+     * writing the key via {@link JsonGenerator#writeFieldName(String)} rather than
+     * {@link JsonGenerator#writeString(String)}. Without this, Jackson's default key serializer for
+     * {@link BigDecimal} writes {@link BigDecimal#toString()}, which uses scientific notation for a
+     * small-scale value; {@link BigDecimalKeyDeserializer} would then reject that form on read, so the
+     * profile could not read back its own output. The bound must be enforced here too: switching keys
+     * to the unbounded {@code toPlainString()} would newly expose the egress amplification the
+     * value-side bound already prevents, since {@code toString()} stays compact for a huge-scale value
+     * where {@code toPlainString()} would not.
+     *
+     * <p>A rejection is surfaced via {@link JsonMappingException#from(JsonGenerator, String)}, the same
+     * clean, checked Jackson mapping exception the value-side serializer uses. The message never
+     * echoes the offending key's digits (log-injection hygiene).
+     */
+    private static final class BigDecimalKeySerializer extends JsonSerializer<BigDecimal> {
+
+        /**
+         * Writes {@code value} as a bounded plain-decimal JSON object field name.
+         *
+         * @param value      the {@link BigDecimal} map key to write; never {@code null}
+         * @param gen        the {@link JsonGenerator} to write into
+         * @param serializers the active {@link SerializerProvider} (unused)
+         * @throws IOException if the underlying generator throws, or {@code value}'s plain-string form
+         *     would exceed {@value BigDecimalStrictStringDeserializer#MAX_LENGTH} characters; the
+         *     message names the bound and the offending scale/precision/length, never the key's digits
+         */
+        @Override
+        public void serialize(BigDecimal value, JsonGenerator gen, SerializerProvider serializers) throws IOException {
+            try {
+                gen.writeFieldName(BigDecimalAsStringSerializer.boundedPlainString(value));
+            } catch (IllegalArgumentException rejected) {
+                throw JsonMappingException.from(gen, rejected.getMessage());
+            }
+        }
+    }
 
     /**
      * Bounded {@link KeyDeserializer} for {@code Map<BigDecimal, ?>} keys under the

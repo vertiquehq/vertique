@@ -15,8 +15,12 @@ import java.math.BigDecimal;
  * rather than a JSON number.
  *
  * <p>The string form uses {@link BigDecimal#toPlainString()}: scientific notation is never emitted
- * (e.g. {@code new BigDecimal("1.50")} → {@code "1.50"}), and trailing zeros in the scale are
- * preserved exactly as they appear on the source value.
+ * (e.g. {@code new BigDecimal("1.50")} → {@code "1.50"}). Numerical equality is always preserved,
+ * and the scale is preserved exactly for a <strong>non-negative</strong> scale (e.g. trailing zeros
+ * in {@code "1.50"} round-trip as scale 2). A <strong>negative</strong>-scale value is instead
+ * written in its expanded plain form — {@code new BigDecimal("1E+2")} writes {@code "100"}, and a
+ * negative-scale zero (e.g. from {@code 1E+200 - 1E+200}) writes {@code "0"} — and re-reads with
+ * scale 0, not the original negative scale (json-004 R2-4).
  *
  * <p>This serializer is part of a <strong>matched opt-in pair</strong> with
  * {@link BigDecimalStrictStringDeserializer}: register both together on an application-owned
@@ -45,20 +49,9 @@ import java.math.BigDecimal;
 public final class BigDecimalAsStringSerializer extends JsonSerializer<BigDecimal> {
 
     /**
-     * Serializes {@code value} as a JSON string using {@link BigDecimal#toPlainString()}, rejecting
-     * a value whose plain-string form would exceed
-     * {@value BigDecimalStrictStringDeserializer#MAX_LENGTH} characters.
-     *
-     * <p>The bound is enforced in two steps. First, a cheap check on {@link BigDecimal#scale()} and
-     * {@link BigDecimal#precision()} rejects any value whose plain-string length is <em>guaranteed</em>
-     * to exceed the bound, without ever calling {@link BigDecimal#toPlainString()}: a scale magnitude
-     * or precision beyond the bound already proves the plain form is too long, however far beyond it
-     * lies (this is what keeps a scale in the billions from materializing gigabytes of digits). Second,
-     * for the values that pass the cheap check — where scale and precision are individually within
-     * bound but their combination could still land on either side of the exact character bound (e.g. a
-     * precision-2, scale-98 value plain-string to exactly 100 characters) — the plain string is
-     * materialized (cheaply, since scale/precision are now known bounded) and its exact length is
-     * checked.
+     * Serializes {@code value} as a JSON string using its bounded {@link BigDecimal#toPlainString()}
+     * form, computed by {@link #boundedPlainString(BigDecimal)}; see that method's javadoc for the
+     * exact rejection bound (including the negative-scale zero exemption, json-004 R2-2).
      *
      * @param value the {@link BigDecimal} to serialize; never {@code null} (Jackson skips null values)
      * @param gen   the {@link JsonGenerator} to write into
@@ -71,19 +64,62 @@ public final class BigDecimalAsStringSerializer extends JsonSerializer<BigDecima
      */
     @Override
     public void serialize(BigDecimal value, JsonGenerator gen, SerializerProvider sp) throws IOException {
+        try {
+            gen.writeString(boundedPlainString(value));
+        } catch (IllegalArgumentException rejected) {
+            throw JsonMappingException.from(gen, rejected.getMessage());
+        }
+    }
+
+    // --- Shared bounded plain-string form ---
+
+    /**
+     * Computes {@code value}'s bounded {@link BigDecimal#toPlainString()} form, independent of any
+     * Jackson generator/provider.
+     *
+     * <p>Shared by {@link #serialize(BigDecimal, JsonGenerator, SerializerProvider)} (JSON string
+     * values) and the {@code vertique-strict} profile's {@code BigDecimal} map-key serializer
+     * (json-004 R2-3), so the write-side length bound is enforced identically for both a decimal
+     * <em>value</em> and a decimal <em>map key</em> — a map key cannot bypass the value-side bound
+     * and re-emerge from {@link BigDecimal#toString()}'s scientific notation, which the profile's own
+     * bounded key deserializer would then reject on read.
+     *
+     * <p>The bound is enforced in two steps, mirroring {@link #serialize(BigDecimal, JsonGenerator,
+     * SerializerProvider)}. First, a cheap check on {@link BigDecimal#scale()} and
+     * {@link BigDecimal#precision()} rejects any value whose plain-string length is <em>guaranteed</em>
+     * to exceed the bound, without ever calling {@link BigDecimal#toPlainString()}. A negative scale
+     * beyond the bound is exempted for a <strong>zero-valued</strong> {@code value}
+     * ({@link BigDecimal#signum()} {@code == 0}, json-004 R2-2): ordinary arithmetic (e.g. subtracting
+     * two equal huge round numbers) can produce a zero with an arbitrarily negative scale whose
+     * {@code toPlainString()} is still the single character {@code "0"} — the huge negative scale
+     * alone does not guarantee an over-length plain form for a zero value the way it does for a
+     * nonzero one. A <em>positive</em> scale beyond the bound is never exempted, zero-valued or not:
+     * {@link BigDecimal#toPlainString()} always emits scale trailing-zero digits after the decimal
+     * point regardless of sign, so a positive scale beyond the bound still guarantees an over-length
+     * form. Second, for the values that pass the cheap check, the plain string is materialized
+     * (cheaply, since scale/precision are now known bounded) and its exact length is checked.
+     *
+     * @param value the {@link BigDecimal} to render; never {@code null}
+     * @return the bounded {@link BigDecimal#toPlainString()} form
+     * @throws IllegalArgumentException if the plain-string form of {@code value} would exceed
+     *         {@value BigDecimalStrictStringDeserializer#MAX_LENGTH} characters; the message names the
+     *         bound and the offending scale/precision/length, never the value's digits
+     */
+    static String boundedPlainString(BigDecimal value) {
         int maxLength = BigDecimalStrictStringDeserializer.MAX_LENGTH;
         int scale = value.scale();
         int precision = value.precision();
         // Cheap pre-check: a scale magnitude or precision beyond maxLength already guarantees the
-        // plain-string form exceeds it, so reject before ever paying for toPlainString().
-        if (scale > maxLength || scale < -maxLength || precision > maxLength) {
-            throw JsonMappingException.from(gen, boundViolationMessage(maxLength, scale, precision, null));
+        // plain-string form exceeds it, so reject before ever paying for toPlainString() — except a
+        // negative scale on a zero-valued BigDecimal, whose plain form is always just "0" (R2-2).
+        if (scale > maxLength || (scale < -maxLength && value.signum() != 0) || precision > maxLength) {
+            throw new IllegalArgumentException(boundViolationMessage(maxLength, scale, precision, null));
         }
         String plain = value.toPlainString();
         if (plain.length() > maxLength) {
-            throw JsonMappingException.from(gen, boundViolationMessage(maxLength, scale, precision, plain.length()));
+            throw new IllegalArgumentException(boundViolationMessage(maxLength, scale, precision, plain.length()));
         }
-        gen.writeString(plain);
+        return plain;
     }
 
     /**
