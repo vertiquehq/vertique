@@ -8,7 +8,8 @@ SPDX-License-Identifier: EUPL-1.2
 > **Status:** Experimental
 > **Package:** `dev.vertique.json`
 > **Artifact:** `vertique-json`
-> **Depends on:** vertique-core, vertx-core, jackson-databind, jackson-datatype-jsr310, dagger
+> **Depends on:** vertique-core, vertx-core, jackson-databind, jackson-datatype-jsr310,
+> jackson-datatype-jdk8, dagger
 
 Runtime implementation of the Vertique JSON mapper profile system. **Contracts** (`JsonProfileId`,
 `JsonMapperProfile`, `JsonMapperProfileRegistry`, `JsonProfileConfigurationException`, `@JsonProfile`)
@@ -68,13 +69,32 @@ resource class or method. The `vertx` profile remains the zero-config default an
 | # | Default | Mechanism |
 |---|---------|-----------|
 | 1 | `java.time` → ISO-8601, original offset/zone preserved | Register `JavaTimeModule`; disable `WRITE_DATES_AS_TIMESTAMPS`; disable `ADJUST_DATES_TO_CONTEXT_TIME_ZONE`; re-register `VertxModule` **last** so Vert.x's `Instant` serializer remains authoritative (NFR-JSON-012) |
-| 2 | Unknown enum string → `@JsonEnumDefaultValue` fallback constant | Enable `READ_UNKNOWN_ENUM_VALUES_USING_DEFAULT_VALUE`; enums without that annotation still reject unknown values |
-| 3 | Decimal JSON numbers → `BigDecimal` | Enable `USE_BIG_DECIMAL_FOR_FLOATS` |
-| 4 | Null-valued fields omitted on serialization | `setSerializationInclusion(NON_NULL)` |
+| 2 | JDK8 `Optional` / `OptionalInt` / `OptionalLong` / `OptionalDouble` → contained value (both directions) | Register `Jdk8Module` — **before** the `VertxModule` re-registration, so Vert.x's `Instant` serializer still wins. `java.util.stream` types are **serialize-only** (a `Stream` field writes as a JSON array; deserialization is deliberately not provided — streams are one-shot) |
+| 3 | Empty optionals omitted from serialized bean/record properties | Per-type `configOverride(...).setInclude(NON_ABSENT)` on all four `Optional*` types (value-inclusion slot left at `USE_DEFAULTS`, so the mapper-wide `NON_NULL` still governs contained values). `NON_ABSENT` — not `NON_NULL` — is what reaches inside the reference type |
+| 4 | Unknown enum string → `@JsonEnumDefaultValue` fallback constant | Enable `READ_UNKNOWN_ENUM_VALUES_USING_DEFAULT_VALUE`; enums without that annotation still reject unknown values |
+| 5 | Decimal JSON numbers → `BigDecimal` | Enable `USE_BIG_DECIMAL_FOR_FLOATS` |
+| 6 | Null-valued fields omitted on serialization | `setSerializationInclusion(NON_NULL)` |
 
 `BigDecimal` serialization stays at Jackson's default (a JSON number), and `String` coercion is
-left stock. The profile is therefore fully symmetric: a `BigDecimal` round-trips as a JSON number
-with no wire-shape change.
+left stock. The profile is therefore fully symmetric for those types: a `BigDecimal` round-trips as
+a JSON number with no wire-shape change.
+
+**Optional support and the narrowed omission contract.** Optional-typed record/creator properties
+also round-trip symmetrically, but empty-optional *omission* applies only to bean/record
+**properties**. Precisely:
+
+- an empty optional held in a bean or record property is **omitted** from the output;
+- a **root-level** empty optional serializes as JSON `null` (there is no property to omit);
+- an empty optional **inside a collection or as a map value** serializes as a `null` element/value —
+  element inclusion is not governed by the property-level override;
+- a **missing** JSON property binds to `Optional.empty()` only through creator/record binding; on a
+  mutable POJO an unset setter/field is left at its Java `null` default. An **explicit** JSON `null`
+  binds to `Optional.empty()` on both shapes;
+- an explicit `@JsonInclude` on a property **wins** over the config override — e.g.
+  `@JsonInclude(ALWAYS)` makes an empty optional serialize as JSON `null`.
+
+`java.util.stream` types are the one deliberately asymmetric case: serialize-only, with no
+deserialization, because a stream is one-shot.
 
 The `VertxModule` re-registration must always win over `JavaTimeModule`'s `Instant` serializer.
 Because `MapperFeature.IGNORE_DUPLICATE_MODULE_REGISTRATIONS` is ON by default, `JacksonDefaults`
@@ -237,6 +257,7 @@ through the Dagger graph.
 | `io.vertx:vertx-core` | compile | `DatabindCodec.mapper()` (shared `ObjectMapper`), `VertxModule`, `JsonObject`, `JsonArray` |
 | `com.fasterxml.jackson.core:jackson-databind` | compile | `ObjectMapper`, `com.fasterxml.jackson.databind.Module`, `BeanDeserializerModifier`, `ContextualDeserializer` |
 | `com.fasterxml.jackson.datatype:jackson-datatype-jsr310` | compile | `JavaTimeModule` — registered by `JacksonDefaults` to enable ISO-8601 `java.time` serialization in the `vertique` profile |
+| `com.fasterxml.jackson.datatype:jackson-datatype-jdk8` | compile | `Jdk8Module` — registered by `JacksonDefaults` to enable `Optional*` serialization/deserialization (and serialize-only `java.util.stream` support) in the `vertique` profile |
 | `com.google.dagger:dagger` | compile | `@Module`, `@Multibinds`, `@Binds`, `@Singleton`, `@Inject` |
 | `jakarta.inject:jakarta.inject-api` | compile | `@Singleton`, `@Inject` (JSR-330) |
 
