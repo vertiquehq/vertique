@@ -2,8 +2,11 @@ package ${package};
 
 import static io.restassured.RestAssured.given;
 import static org.hamcrest.Matchers.equalTo;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 
 import dev.vertique.application.test.VertiqueAppExtension;
+import dev.vertique.config.bootstrap.BootstrapConfigLoader;
 import io.restassured.RestAssured;
 import io.vertx.core.json.JsonObject;
 import java.util.concurrent.TimeUnit;
@@ -54,5 +57,22 @@ class ApplicationIT {
                 .statusCode(200)
                 .contentType("application/json")
                 .body("status", equalTo("UP"));
+    }
+
+    @Test
+    void bootstrapReadsWorkingDirectoryConfig() {
+        // Startup configuration is read from the config/ directory in the working directory, through
+        // the same bootstrap loader the launcher runs. Failsafe runs this test with the project
+        // basedir as its working directory, so the loader must see config/application.json exactly as
+        // "mvn exec:java" does. The asserted value is deliberately one the framework does not default
+        // to, so a run that never read the file cannot satisfy it.
+        JsonObject config = BootstrapConfigLoader.load(new JsonObject()).config();
+
+        JsonObject http = config.getJsonObject("http");
+        assertNotNull(http, "the bootstrap loader must read the http section from config/application.json");
+        assertEquals(
+                60,
+                http.getInteger("idleTimeoutSeconds"),
+                "http.idleTimeoutSeconds must come from config/application.json, not from the framework default of 0");
     }
 }

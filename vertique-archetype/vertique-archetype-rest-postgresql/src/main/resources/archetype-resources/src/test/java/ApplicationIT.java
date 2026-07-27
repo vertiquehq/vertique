@@ -5,9 +5,11 @@ import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.notNullValue;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vertique.application.test.VertiqueAppExtension;
+import dev.vertique.config.bootstrap.BootstrapConfigLoader;
 import dev.vertique.db.DbPoolConfig;
 import dev.vertique.db.test.PostgresContainer;
 import io.restassured.RestAssured;
@@ -204,5 +206,31 @@ class ApplicationIT {
         assertTrue(deletedBody.isEmpty(), "a 204 response must carry no body");
 
         given().when().get("/items/" + id).then().statusCode(404);
+    }
+
+    /**
+     * Proves the shipped database configuration actually reaches the application.
+     *
+     * <p>Startup configuration is read from the {@code config/} directory in the working directory,
+     * through the same bootstrap loader the launcher runs — not from the packaged classpath. Failsafe
+     * runs this test with the project basedir as its working directory, so the loader sees
+     * {@code config/application.json} exactly as {@code mvn exec:java} does. The asserted value is
+     * deliberately one the framework does not default to ({@code DbPoolConfig.database} has no
+     * default), so a run that never read the file cannot satisfy it.
+     *
+     * <p>Only the loader is exercised here: the container-backed journey above already proves the
+     * application boots, and asserting the shipped local-PostgreSQL connection would otherwise
+     * require a database on the developer's own {@code localhost:5432}.
+     */
+    @Test
+    void bootstrapReadsWorkingDirectoryConfig() {
+        JsonObject config = BootstrapConfigLoader.load(new JsonObject()).config();
+
+        JsonObject db = config.getJsonObject("db");
+        assertNotNull(db, "the bootstrap loader must read the db section from config/application.json");
+        assertEquals(
+                "vertique",
+                db.getString("database"),
+                "db.database must come from config/application.json, which the framework does not default");
     }
 }
