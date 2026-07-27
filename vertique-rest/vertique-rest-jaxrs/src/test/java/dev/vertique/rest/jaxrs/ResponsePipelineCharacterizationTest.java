@@ -7,9 +7,11 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
+import dev.vertique.rest.core.events.RestRequestCompletionEmitter;
 import dev.vertique.rest.core.interceptor.RequestInterceptor;
 import dev.vertique.rest.core.response.ResponseSerializer;
 import io.vertx.core.Future;
+import io.vertx.core.Promise;
 import io.vertx.core.http.HttpMethod;
 import io.vertx.core.http.HttpServerResponse;
 import io.vertx.core.json.EncodeException;
@@ -44,6 +46,10 @@ import org.junit.jupiter.api.Test;
  *   <li>FR-CORE-001.4 — {@code afterResponse} (fallback-500 path) follows the same swallowing
  *       rule: every interceptor is invoked in order; a thrown exception does not prevent later
  *       interceptors from running or the bare-metal 500 from being written.</li>
+ *   <li>Wire handoff (OTel SP-4) — {@code afterResponse} fires as soon as the response is handed
+ *       off to the wire, while the serializer's wire-completion future may still be pending. A
+ *       later failure of that future is recorded on the {@link RoutingContext} and never re-fires
+ *       the hook.</li>
  * </ol>
  */
 class ResponsePipelineCharacterizationTest {
@@ -108,6 +114,9 @@ class ResponsePipelineCharacterizationTest {
     @BeforeEach
     void setUp() {
         serializer = mock(ResponseSerializer.class);
+        // The serializer SPI returns a wire-completion future; a clean pass-through keeps every
+        // pinned scenario on the success path once the pipeline observes that future.
+        when(serializer.serialize(any(), any())).thenReturn(Future.succeededFuture());
         ctx = mock(RoutingContext.class);
         httpResponse = mock(HttpServerResponse.class);
 
@@ -118,6 +127,9 @@ class ResponsePipelineCharacterizationTest {
         when(httpResponse.setStatusCode(anyInt())).thenReturn(httpResponse);
         when(httpResponse.putHeader(anyString(), anyString())).thenReturn(httpResponse);
         when(httpResponse.headers()).thenReturn(io.vertx.core.MultiMap.caseInsensitiveMultiMap());
+        // Wire terminations return futures the pipeline observes; individual tests override these.
+        when(httpResponse.end()).thenReturn(Future.succeededFuture());
+        when(httpResponse.end(anyString())).thenReturn(Future.succeededFuture());
 
         // RequestPreconditions.from() caches in ctx.data()
         when(ctx.data()).thenReturn(new HashMap<>());
@@ -344,7 +356,7 @@ class ResponsePipelineCharacterizationTest {
             List<String> events = new ArrayList<>();
             doAnswer(inv -> {
                         events.add("serialize");
-                        return null;
+                        return Future.succeededFuture();
                     })
                     .when(serializer)
                     .serialize(eq(ctx), any(Response.class));
@@ -362,6 +374,42 @@ class ResponsePipelineCharacterizationTest {
                     List.of("serialize", "after"),
                     events,
                     "afterResponse must fire exactly once, AFTER the successful wire write");
+        }
+
+        @Test
+        @DisplayName("afterResponse fires at wire handoff, while the wire-completion future is still pending")
+        void afterResponseFiresWhileCompletionFutureStillPending() {
+            // given a serializer whose wire-completion future is still pending at handoff
+            Promise<Void> wire = Promise.promise();
+            when(serializer.serialize(eq(ctx), any(Response.class))).thenReturn(wire.future());
+            List<String> events = new ArrayList<>();
+            RequestInterceptor observer = new RequestInterceptor() {
+                @Override
+                public void afterResponse(RoutingContext rc, Response response) {
+                    events.add(wire.future().isComplete() ? "after:settled" : "after:pending");
+                }
+            };
+            ResponsePipeline p = pipeline(List.of(observer));
+
+            // when the response is handed off to the wire
+            p.sendResponse(ctx, Response.ok("v").build());
+
+            // then afterResponse has already fired, with the wire still in flight (OTel SP-4 pin)
+            assertEquals(
+                    List.of("after:pending"),
+                    events,
+                    "afterResponse must fire at wire handoff, before the wire completion settles");
+
+            // and when the wire later fails, the observation records it without re-firing the hook
+            RuntimeException cause = new RuntimeException("client aborted mid-stream");
+            wire.fail(cause);
+
+            assertEquals(
+                    List.of("after:pending"), events, "the wire-completion observer must not re-fire afterResponse");
+            assertSame(
+                    cause,
+                    ctx.data().get(RestRequestCompletionEmitter.KEY_WIRE_FAILURE),
+                    "a post-handoff failure is reported on the routing context, not through the hook");
         }
     }
 

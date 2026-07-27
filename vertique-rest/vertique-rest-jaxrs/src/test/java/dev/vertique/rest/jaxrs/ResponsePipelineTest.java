@@ -7,13 +7,22 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
+import dev.vertique.rest.core.events.RestRequestCompletionEmitter;
 import dev.vertique.rest.core.interceptor.RequestInterceptor;
 import dev.vertique.rest.core.response.ResponseProducerBinding;
 import dev.vertique.rest.core.response.ResponseSerializer;
+import io.vertx.core.Context;
 import io.vertx.core.Future;
 import io.vertx.core.MultiMap;
+import io.vertx.core.Promise;
+import io.vertx.core.Vertx;
 import io.vertx.core.http.HttpMethod;
 import io.vertx.core.http.HttpServerResponse;
+import io.vertx.core.json.EncodeException;
 import io.vertx.ext.web.RoutingContext;
 import jakarta.ws.rs.core.EntityTag;
 import jakarta.ws.rs.core.Response;
@@ -24,11 +33,15 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.slf4j.LoggerFactory;
 
 /**
  * Unit tests for {@link ResponsePipeline}.
@@ -42,6 +55,12 @@ import org.junit.jupiter.api.Test;
  * <p>With the restructured pipeline, the pipeline sets status and headers on the HTTP response
  * directly, then either ends the response (for no-entity responses) or calls the serializer
  * (for responses with an entity). Tests verify the correct path is taken in each case.
+ *
+ * <p>The {@code wire-completion observation} group additionally verifies what the pipeline does
+ * with the serializer's wire-completion future <em>after</em> the response has been handed off:
+ * the {@link RestRequestCompletionEmitter#KEY_WIRE_FAILURE} marker, the class-only WARN, guarded
+ * terminal cleanup, redispatch onto the captured request context, and the error fail-open and
+ * fallback-500 completion paths.
  */
 class ResponsePipelineTest {
 
@@ -54,6 +73,9 @@ class ResponsePipelineTest {
     @BeforeEach
     void setUp() {
         serializer = mock(ResponseSerializer.class);
+        // The serializer SPI returns a wire-completion future; a clean pass-through keeps every
+        // pre-existing scenario on the success path once the pipeline observes that future.
+        when(serializer.serialize(any(), any())).thenReturn(Future.succeededFuture());
         pipeline = new ResponsePipeline(Set.of(), List.of(), serializer);
 
         ctx = mock(RoutingContext.class);
@@ -65,6 +87,9 @@ class ResponsePipelineTest {
         when(ctx.response()).thenReturn(httpResponse);
         when(httpResponse.setStatusCode(anyInt())).thenReturn(httpResponse);
         when(httpResponse.putHeader(anyString(), anyString())).thenReturn(httpResponse);
+        // Wire terminations return futures the pipeline observes; individual tests override these.
+        when(httpResponse.end()).thenReturn(Future.succeededFuture());
+        when(httpResponse.end(anyString())).thenReturn(Future.succeededFuture());
 
         responseHeaders = MultiMap.caseInsensitiveMultiMap();
         when(httpResponse.headers()).thenReturn(responseHeaders);
@@ -569,6 +594,237 @@ class ResponsePipelineTest {
 
             assertEquals(1, observed.size(), "afterResponse must fire exactly once on the error-mapped path");
             assertEquals(503, observed.get(0).getStatus());
+        }
+    }
+
+    // --- Wire-completion observation (post-handoff) ---
+
+    /**
+     * Tests for the pipeline's observation of the serializer's wire-completion future. A failure
+     * reported through that future happened <em>after</em> the response was handed off to the wire:
+     * the pipeline records it under {@link RestRequestCompletionEmitter#KEY_WIRE_FAILURE}, logs the
+     * cause class only, and performs guarded terminal cleanup — it never writes a bare 500, never
+     * re-fires {@code afterResponse}, and never re-enters {@code sendFallback500}.
+     */
+    @Nested
+    @DisplayName("wire-completion observation")
+    class WireCompletionObservation {
+
+        private Logger pipelineLogger;
+        private Level previousLevel;
+        private ListAppender<ILoggingEvent> appender;
+
+        @BeforeEach
+        void capturePipelineLogs() {
+            pipelineLogger = (Logger) LoggerFactory.getLogger(ResponsePipeline.class);
+            previousLevel = pipelineLogger.getLevel();
+            pipelineLogger.setLevel(Level.WARN);
+            appender = new ListAppender<>();
+            appender.start();
+            pipelineLogger.addAppender(appender);
+        }
+
+        @AfterEach
+        void releasePipelineLogs() {
+            pipelineLogger.detachAppender(appender);
+            appender.stop();
+            pipelineLogger.setLevel(previousLevel);
+        }
+
+        /**
+         * Returns the formatted WARN messages the pipeline emitted for a post-handoff wire failure.
+         *
+         * @return the wire-failure WARN messages, in emission order
+         */
+        private List<String> wireFailureWarnings() {
+            return appender.list.stream()
+                    .filter(event -> event.getLevel() == Level.WARN)
+                    .map(ILoggingEvent::getFormattedMessage)
+                    .filter(message -> message.contains("Wire write failed"))
+                    .toList();
+        }
+
+        @Test
+        @DisplayName("A wire failure after handoff sets the marker and logs the cause class, never its message")
+        void wireFailureAfterHandoffSetsMarkerAndLogsClassOnly() {
+            // given a response handed off to a serializer whose completion future is still pending
+            Promise<Void> wire = Promise.promise();
+            when(serializer.serialize(any(), any())).thenReturn(wire.future());
+            when(httpResponse.ended()).thenReturn(false);
+            IllegalStateException cause = new IllegalStateException("secret-token-42 leaked into the message");
+
+            pipeline.sendResponse(ctx, Response.ok("body").build());
+
+            // when the wire write fails after the handoff
+            wire.fail(cause);
+
+            // then the failure is recorded on the routing context and logged class-only
+            assertSame(
+                    cause,
+                    ctx.data().get(RestRequestCompletionEmitter.KEY_WIRE_FAILURE),
+                    "the post-handoff wire failure must be recorded under KEY_WIRE_FAILURE");
+            List<String> warnings = wireFailureWarnings();
+            assertEquals(1, warnings.size(), "exactly one WARN must report the wire failure");
+            assertTrue(
+                    warnings.get(0).contains("IllegalStateException"),
+                    "the WARN must name the cause class: " + warnings.get(0));
+            assertFalse(
+                    warnings.get(0).contains("secret-token-42"),
+                    "the WARN must never carry the raw cause message: " + warnings.get(0));
+        }
+
+        @Test
+        @DisplayName("An already-failed completion future ends the response without hooks or a bare 500")
+        void immediateFailedFutureEndsResponseWithoutHooks() {
+            // given a serializer that fails its completion future before returning
+            RuntimeException cause = new RuntimeException("pipe failed on resume");
+            when(serializer.serialize(any(), any())).thenReturn(Future.failedFuture(cause));
+            when(httpResponse.ended()).thenReturn(false);
+            List<Response> observed = new ArrayList<>();
+            RequestInterceptor observer = new RequestInterceptor() {
+                @Override
+                public void afterResponse(RoutingContext rc, Response response) {
+                    observed.add(response);
+                }
+            };
+            ResponsePipeline p = new ResponsePipeline(Set.of(), List.of(observer), serializer);
+
+            // when the response is sent
+            p.sendResponse(ctx, Response.ok("body").build());
+
+            // then the pipeline records the failure and owns terminal cleanup only
+            assertSame(
+                    cause,
+                    ctx.data().get(RestRequestCompletionEmitter.KEY_WIRE_FAILURE),
+                    "an immediately-failed completion future must still set the marker");
+            verify(httpResponse).end();
+            assertEquals(1, observed.size(), "afterResponse must fire exactly once, at wire handoff");
+            assertEquals(200, observed.get(0).getStatus(), "the single afterResponse reflects the handed-off outcome");
+            verify(httpResponse, never()).setStatusCode(500);
+            verify(httpResponse, never()).end(anyString());
+        }
+
+        @Test
+        @DisplayName("A completion future settled off-context redispatches cleanup onto the request context")
+        void workerThreadCompletionRedispatchesToRequestContext() throws Exception {
+            Vertx vertx = Vertx.vertx();
+            try {
+                // given a response handed off on a request context, with a context-free completion future
+                Promise<Void> wire = Promise.promise();
+                when(serializer.serialize(any(), any())).thenReturn(wire.future());
+                when(httpResponse.ended()).thenReturn(false);
+                AtomicReference<Context> cleanupContext = new AtomicReference<>();
+                CountDownLatch cleanupDone = new CountDownLatch(1);
+                when(httpResponse.end()).thenAnswer(invocation -> {
+                    cleanupContext.set(Vertx.currentContext());
+                    cleanupDone.countDown();
+                    return Future.succeededFuture();
+                });
+                Context requestContext = vertx.getOrCreateContext();
+                CountDownLatch handedOff = new CountDownLatch(1);
+                requestContext.runOnContext(v -> {
+                    pipeline.sendResponse(ctx, Response.ok("body").build());
+                    handedOff.countDown();
+                });
+                assertTrue(handedOff.await(5, TimeUnit.SECONDS), "the response must reach wire handoff");
+
+                // when the completion future fails on a foreign (non-Vert.x) thread
+                RuntimeException cause = new RuntimeException("client reset observed off-context");
+                Thread completer = new Thread(() -> wire.fail(cause), "wire-completion");
+                completer.start();
+                completer.join();
+
+                // then marker and terminal cleanup both run back on the captured request context
+                assertTrue(cleanupDone.await(5, TimeUnit.SECONDS), "terminal cleanup must run after a wire failure");
+                assertSame(
+                        requestContext,
+                        cleanupContext.get(),
+                        "terminal cleanup must be redispatched onto the captured request context");
+                assertSame(
+                        cause,
+                        ctx.data().get(RestRequestCompletionEmitter.KEY_WIRE_FAILURE),
+                        "the marker must be set on the request context, not the completing thread");
+            } finally {
+                vertx.close().toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS);
+            }
+        }
+
+        @Test
+        @DisplayName("A terminal end() that throws (declared Content-Length) is guarded and does not escape")
+        void declaredLengthStreamFailureEndGuarded() {
+            // given a streamed response with a declared Content-Length whose premature end() throws
+            Promise<Void> wire = Promise.promise();
+            when(serializer.serialize(any(), any())).thenReturn(wire.future());
+            when(httpResponse.ended()).thenReturn(false);
+            when(httpResponse.end())
+                    .thenThrow(new IllegalStateException(
+                            "You must set the Content-Length header to be the total size" + " of the message body"));
+            RuntimeException cause = new RuntimeException("stream aborted mid-body");
+            pipeline.sendResponse(ctx, Response.ok("body").build());
+
+            // when the wire write fails after the handoff
+            assertDoesNotThrow(() -> wire.fail(cause), "a guarded terminal end() must never escape the observer");
+
+            // then the failure is still recorded and the end attempt was made
+            assertSame(
+                    cause,
+                    ctx.data().get(RestRequestCompletionEmitter.KEY_WIRE_FAILURE),
+                    "a throwing terminal end() must not prevent the marker from being recorded");
+            verify(httpResponse).end();
+        }
+
+        @Test
+        @DisplayName("The error fail-open retry's completion future is the one the pipeline observes")
+        void errorPathFailOpenRetryReturnsRetryFuture() {
+            // given an error response whose profile mapper throws once, then serializes on retry
+            when(ctx.get(ResponsePipeline.KEY_ERROR_RESPONSE)).thenReturn(Boolean.TRUE);
+            when(httpResponse.ended()).thenReturn(false);
+            when(httpResponse.headWritten()).thenReturn(false);
+            Promise<Void> retryWire = Promise.promise();
+            when(serializer.serialize(any(), any()))
+                    .thenThrow(new EncodeException("profile mapper failed to encode the error body"))
+                    .thenReturn(retryWire.future());
+            RuntimeException cause = new RuntimeException("client vanished during the retry write");
+
+            pipeline.sendResponse(ctx, Response.status(409).entity("err").build());
+
+            // when the retry's wire write fails after the handoff
+            retryWire.fail(cause);
+
+            // then the pipeline observed the retry's future, not the throw
+            verify(serializer, times(2)).serialize(eq(ctx), any(Response.class));
+            assertSame(
+                    cause,
+                    ctx.data().get(RestRequestCompletionEmitter.KEY_WIRE_FAILURE),
+                    "the fail-open retry's completion future must be the observed one");
+            verify(httpResponse, never()).setStatusCode(500);
+        }
+
+        @Test
+        @DisplayName("The bare-metal 500 fallback observes its own end() future")
+        void sendFallback500EndFutureObserved() {
+            // given a transform-chain failure whose bare-metal 500 write fails on the wire
+            RuntimeException cause = new RuntimeException("connection closed before the fallback flushed");
+            when(httpResponse.ended()).thenReturn(false);
+            when(httpResponse.headWritten()).thenReturn(false);
+            when(httpResponse.end(anyString())).thenReturn(Future.failedFuture(cause));
+            RequestInterceptor failingTransform = new RequestInterceptor() {
+                @Override
+                public Future<Response> transformResponse(RoutingContext rc, Response response) {
+                    return Future.failedFuture(new RuntimeException("transform failed"));
+                }
+            };
+            ResponsePipeline p = new ResponsePipeline(Set.of(), List.of(failingTransform), serializer);
+
+            // when the fallback 500 is written
+            p.sendResponse(ctx, Response.ok("body").build());
+
+            // then its failed end() future is observed: logged always, marker best-effort
+            assertEquals(1, wireFailureWarnings().size(), "the failed fallback-500 write must be logged");
+            assertSame(
+                    cause,
+                    ctx.data().get(RestRequestCompletionEmitter.KEY_WIRE_FAILURE),
+                    "the fallback-500 end() failure must be recorded under KEY_WIRE_FAILURE");
         }
     }
 }

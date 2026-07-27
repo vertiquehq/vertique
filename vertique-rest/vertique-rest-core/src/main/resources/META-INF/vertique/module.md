@@ -1363,6 +1363,18 @@ Both sets are declared as empty `@Multibinds` in `RestCoreModule`. The native re
 
 `RestCoreModule` provides the `@Singleton ParamConverterRegistry` and `@Singleton ParamConversionResolver` built from these multibindings. Both `RestModule` (server, in `rest-jaxrs`) and `RestClientModule` (client, in `rest-client`) include `RestCoreModule`, so an application wiring both halves gets one shared conversion stack — a converter registered once applies identically to inbound JAX-RS parameter binding and outbound REST-client request serialization, with no duplicate-binding conflict.
 
+### RestRequestCompletionEmitter
+
+ROOT `Middleware` in `dev.vertique.rest.core.events` that emits exactly one `RestRequestCompletedEvent` per handled request from the response end handler. It publishes the routing-context keys that other modules read or write without depending on internal key names:
+
+| Constant | Key | Written by | Value |
+|----------|-----|------------|-------|
+| `KEY_OPERATION_ID` | `rest.events.operationId` | `OperationIdCaptureContributor` | the OpenAPI `operationId` of the matched operation |
+| `KEY_ROUTE_TEMPLATE` | `rest.events.routeTemplate` | `OperationIdCaptureContributor` | the OpenAPI path template of the matched operation |
+| `KEY_WIRE_FAILURE` | `vertique.rest.core.events.wireFailure` | the response pipeline in `rest-jaxrs` | the `Throwable` that failed the wire write **after** the response was handed off |
+
+`KEY_WIRE_FAILURE` marks a *post-handoff* wire failure — the status and headers (and possibly part of the body) already reached the client before the write failed, as with a truncated stream or a client abort. The marker is written at most once per request: **first writer wins**, so the first observed failure is the one preserved. Its absence means the write completed cleanly, or that the failure occurred on a path the pipeline cannot observe.
+
 ### RequestCompletionScope
 
 `Set<RequestCompletionScope>` multibinding (`@Multibinds` in `RestCoreModule`) for establishing one or more ambient scopes around the synchronous completion-listener dispatch loop inside `RestRequestCompletionEmitter`. Multiple integrations may contribute simultaneously.

@@ -92,6 +92,9 @@ public final class RestRequestCompletionEmitter implements Middleware {
      */
     public static final String KEY_ROUTE_TEMPLATE = "rest.events.routeTemplate";
 
+    /** Post-handoff wire-failure marker; value: Throwable; first writer wins. */
+    public static final String KEY_WIRE_FAILURE = "vertique.rest.core.events.wireFailure";
+
     /**
      * Execution order: runs after {@link RequestContextLifecycle} (ORDER = {@link Integer#MIN_VALUE})
      * and before {@code CorrelationIngressMiddleware} (ORDER + 10) so the end handler is registered
