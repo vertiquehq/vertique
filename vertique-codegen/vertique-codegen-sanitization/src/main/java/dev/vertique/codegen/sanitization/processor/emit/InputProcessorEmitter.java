@@ -508,8 +508,11 @@ public final class InputProcessorEmitter {
                         originClass);
             }
             case NESTED_DTO -> {
-                // Descend context + dispatch nested
-                String nestedTypeFqn = field.nestedTypeMirror().toString();
+                // Descend context + dispatch nested. The nested type mirror is erased via
+                // rawTypeName before being used as a class literal: Java forbids parameterized
+                // class literals (e.g. `Optional<String>.class` does not compile), and
+                // GeneratedInputProcessorDispatcher.dispatchNested takes a raw Class<?> anyway.
+                com.palantir.javapoet.TypeName nestedType = rawTypeName(field.nestedTypeMirror(), originClass);
                 arm.beginControlFlow("case $S ->", fieldName);
                 arm.addStatement(
                         "$T nestedCtx = rootCtx.descend(OBJ_CANON, OBJ_SANIT, OBJ_SKIP_CANON, OBJ_SKIP_SANIT, "
@@ -520,14 +523,17 @@ public final class InputProcessorEmitter {
                         field.skipCanon(),
                         field.skipSanit());
                 arm.addStatement(
-                        "out.put(k, dispatcher.dispatchNested(v, $L.class, policies, location, resolver, nestedCtx, childPath, $L.class))",
-                        nestedTypeFqn,
-                        nestedTypeFqn);
+                        "out.put(k, dispatcher.dispatchNested(v, $T.class, policies, location, resolver, nestedCtx, childPath, $T.class))",
+                        nestedType,
+                        nestedType);
                 arm.endControlFlow();
             }
             case COLLECTION_OF_DTO -> {
-                // Descend context + dispatch collection of objects
-                String elementTypeFqn = field.nestedTypeMirror().toString();
+                // Descend context + dispatch collection of objects. Erase the element type
+                // mirror for the same reason as NESTED_DTO above (e.g. a
+                // List<Optional<String>> element type must render as Optional.class, not
+                // Optional<String>.class).
+                com.palantir.javapoet.TypeName elementType = rawTypeName(field.nestedTypeMirror(), originClass);
                 arm.beginControlFlow("case $S ->", fieldName);
                 arm.addStatement(
                         "$T innerCtx = rootCtx.descend(OBJ_CANON, OBJ_SANIT, OBJ_SKIP_CANON, OBJ_SKIP_SANIT, "
@@ -538,10 +544,10 @@ public final class InputProcessorEmitter {
                         field.skipCanon(),
                         field.skipSanit());
                 arm.addStatement(
-                        "out.put(k, $L(v, $L.class, policies, location, resolver, dispatcher, innerCtx, childPath, $L.class))",
+                        "out.put(k, $L(v, $T.class, policies, location, resolver, dispatcher, innerCtx, childPath, $T.class))",
                         DISPATCH_OBJECT_COLLECTION,
-                        elementTypeFqn,
-                        elementTypeFqn);
+                        elementType,
+                        elementType);
                 arm.endControlFlow();
             }
             default -> {
