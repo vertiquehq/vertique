@@ -103,7 +103,7 @@ JavaPoet-based emitter. For each `DtoModel` in the emitted set, generates `{DTO}
   - Nested DTO fields: calls `rootCtx.descend(...)` then `dispatcher.dispatchNested(...)`.
   - Nested DTO collection fields: calls `rootCtx.descend(...)` then `GeneratedSupport.dispatchObjectCollection(...)`.
   - External-jar nested types: calls `dispatcher.dispatchNested(...)` directly (no `descend` with known chains — the reflective continuation handles them).
-  - Unknown keys fall through to `out.put(k, v)` (passthrough).
+  - Unknown keys flow through `GeneratedSupport.applyDefault(...)` with an empty field-level chain, so inherited route/object-level chains still apply.
 
 ### `DtoModel` / `FieldModel`
 
@@ -115,7 +115,7 @@ Immutable carriers populated by `DtoScanner` and `AnnotationCollector`, consumed
 | `DtoModel.fields` | `List<FieldModel>` | Ordered field list (superclass fields first) |
 | `DtoModel.objectLevelChains` | resolved chain lists | Type-level `@Canonicalize`/`@Sanitize` + skip flags |
 | `FieldModel.name` | `String` | Java field / record component name |
-| `FieldModel.kind` | `FieldKind` | `STRING`, `STRING_COLLECTION`, `NESTED_DTO`, `NESTED_DTO_COLLECTION`, `EXTERNAL_NESTED`, `PASSTHROUGH` |
+| `FieldModel.kind` | `FieldKind` | `STRING`, `COLLECTION_OF_STRINGS`, `NESTED_DTO`, `COLLECTION_OF_DTO`, `OTHER` |
 | `FieldModel.canonChain` | `List<TypeMirror>` | Per-field canonicalizer classes |
 | `FieldModel.sanitChain` | `List<TypeMirror>` | Per-field sanitizer classes |
 | `FieldModel.skipCanon` | `boolean` | `@SkipCanonicalization` present on field |
