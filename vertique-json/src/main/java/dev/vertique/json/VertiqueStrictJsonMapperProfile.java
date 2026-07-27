@@ -145,8 +145,17 @@ final class VertiqueStrictJsonMapperProfile implements JsonMapperProfile {
      * where {@code toPlainString()} would not.
      *
      * <p>A rejection is surfaced via {@link JsonMappingException#from(JsonGenerator, String)}, the same
-     * clean, checked Jackson mapping exception the value-side serializer uses. The message never
-     * echoes the offending key's digits (log-injection hygiene).
+     * clean, checked Jackson mapping exception the value-side serializer uses. The message this class
+     * produces is value-free: it names only the bound and the offending scale/precision/length, never
+     * the key's digits. Jackson then appends its own reference chain — {@code MapSerializer} catches
+     * the throw and calls {@code wrapAndThrow(provider, e, value, String.valueOf(keyElem))} under the
+     * default {@link com.fasterxml.jackson.databind.SerializationFeature#WRAP_EXCEPTIONS} — so the
+     * final {@link JsonMappingException#getMessage()} <strong>does</strong> carry the key's
+     * {@link BigDecimal#toString()} form in the {@code "(through reference chain: …)"} suffix. That
+     * suffix is bounded by the key's precision, never by the plain-form expansion this bound rejects,
+     * since {@code toString()} stays compact for a huge scale, and it contains only
+     * {@code [0-9.\-E+]} characters, so no control characters can ride along. The value-side serializer
+     * has no such exposure: there the chain names the enclosing property, not the rejected value.
      */
     private static final class BigDecimalKeySerializer extends JsonSerializer<BigDecimal> {
 
@@ -158,7 +167,9 @@ final class VertiqueStrictJsonMapperProfile implements JsonMapperProfile {
          * @param serializers the active {@link SerializerProvider} (unused)
          * @throws IOException if the underlying generator throws, or {@code value}'s plain-string form
          *     would exceed {@value BigDecimalStrictStringDeserializer#MAX_LENGTH} characters; the
-         *     message names the bound and the offending scale/precision/length, never the key's digits
+         *     message names the bound and the offending scale/precision/length; Jackson's reference
+         *     chain, appended downstream, additionally carries the key's {@code toString()} form — see
+         *     the class javadoc
          */
         @Override
         public void serialize(BigDecimal value, JsonGenerator gen, SerializerProvider serializers) throws IOException {

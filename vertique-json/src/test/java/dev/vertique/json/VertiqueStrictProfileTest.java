@@ -283,21 +283,52 @@ class VertiqueStrictProfileTest {
     }
 
     @Test
-    @DisplayName("over-bound BigDecimal map key is rejected on write with a digit-free message")
-    void bigDecimalMapKey_overBound_rejectedOnWrite() {
-        // Given: the vertique-strict mapper and a map keyed by a BigDecimal whose plain-string form
-        // would exceed the 100-character write-side bound (scale 200, well beyond the 100-char cap).
+    @DisplayName("over-bound BigDecimal map key rejection: this profile's own message names only the bound")
+    void bigDecimalMapKey_overBound_profileMessageIsDigitFree() {
+        // Given: the vertique-strict mapper and a map keyed by a 200-digit BigDecimal whose
+        // plain-string form (precision 200) exceeds the 100-character write-side bound.
         ObjectMapper mapper = strictMapper();
-        Map<BigDecimal, String> value = Map.of(new BigDecimal(BigInteger.ONE, 200), "x");
+        String digits = "9".repeat(200);
+        Map<BigDecimal, String> value = Map.of(new BigDecimal(new BigInteger(digits)), "x");
 
-        // When/Then: writing is rejected, and the rejection message names the bound but never the
-        // key's digits.
+        // When: writing is rejected.
         JsonProcessingException ex =
                 assertThrows(JsonProcessingException.class, () -> mapper.writeValueAsString(value));
+
+        // Then: the portion of the message this class itself produces — everything before Jackson's
+        // "(through reference chain: …)" suffix — names the bound and the offending precision, and
+        // never echoes the key's digits. This is what proves vertique's own hygiene; it must go red
+        // if anyone ever inlines the value into the bound-violation message.
         String message = ex.getMessage();
-        assertTrue(message.contains("100"), "message must name the 100-character bound: " + message);
-        assertFalse(
-                message.contains("0".repeat(100)), "message must never echo the offending key's digits: " + message);
+        String prefix = message.split(" \\(through reference chain:", 2)[0];
+        assertTrue(prefix.contains("100"), "message prefix must name the 100-character bound: " + prefix);
+        assertTrue(prefix.contains("precision=200"), "message prefix must name the offending precision: " + prefix);
+        assertFalse(prefix.contains(digits), "message prefix must never echo the offending key's digits: " + prefix);
+    }
+
+    @Test
+    @DisplayName("over-bound BigDecimal map key rejection: Jackson's reference chain still carries the key text")
+    void bigDecimalMapKey_overBound_jacksonAppendsKeyToReferenceChain() {
+        // Given: the vertique-strict mapper and a map keyed by a 200-digit BigDecimal whose
+        // plain-string form (precision 200) exceeds the 100-character write-side bound.
+        ObjectMapper mapper = strictMapper();
+        String digits = "9".repeat(200);
+        Map<BigDecimal, String> value = Map.of(new BigDecimal(new BigInteger(digits)), "x");
+
+        // When: writing is rejected.
+        JsonProcessingException ex =
+                assertThrows(JsonProcessingException.class, () -> mapper.writeValueAsString(value));
+
+        // Then: Jackson's MapSerializer wraps the throw under the default WRAP_EXCEPTIONS feature and
+        // appends a "(through reference chain: …)" suffix naming the offending key's toString() form —
+        // a boundary outside this profile's control. This pins that third-party behavior, so a Jackson
+        // upgrade or a future chain-suppression change turns it red.
+        String message = ex.getMessage();
+        assertTrue(
+                message.contains("through reference chain"),
+                "message must carry Jackson's reference chain: " + message);
+        assertTrue(
+                message.contains(digits), "reference chain must carry the offending key's toString() form: " + message);
     }
 
     @Test

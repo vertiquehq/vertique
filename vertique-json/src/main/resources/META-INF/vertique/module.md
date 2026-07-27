@@ -140,7 +140,8 @@ application-owned mapper with other customizations.
   reject it; a positive scale beyond the bound is never exempted, zero-valued or not, since
   `toPlainString()` always emits the scale's trailing zero digits regardless of sign. Every rejection
   on either side of the pair names only the bound and the offending length/scale/precision, never the
-  submitted text or the value's digits (log-injection hygiene). Use the pair when clients cannot
+  submitted text or the value's digits (log-injection hygiene) (see the `vertique-strict` notes below
+  for the one boundary Jackson's reference chain adds). Use the pair when clients cannot
   safely represent large decimals as IEEE-754 floats. Note: activating this pair changes the wire
   shape — clients must expect a string, not a number.
 - **`StrictStringDeserializer`** — rejects scalar-to-`String` coercion. Jackson's default silently
@@ -193,10 +194,18 @@ The mapper is built once at profile construction and returned as-is; the shared 
   literal (e.g. `"1e-2000000000"`) past the value-side bound. A rejected key — on either side —
   surfaces as a `JsonMappingException` naming only the bound and the rejected key's length, never the
   key text itself.
-- Every rejection message in this profile — value or key, read or write — states only the bound and
-  the offending length/scale/precision; it never echoes the submitted text, so a malicious or
-  malformed payload cannot smuggle attacker-controlled content into a log line via the exception
-  message.
+- Every rejection message **this profile's own code produces** — value or key, read or write — states
+  only the bound and the offending length/scale/precision; it never echoes the submitted text. The one
+  boundary outside this profile's control is Jackson's own `SerializationFeature.WRAP_EXCEPTIONS`
+  reference-chain wrapping: for a rejected `Map<BigDecimal, ?>` **key**, `MapSerializer` catches the
+  throw and calls `wrapAndThrow(provider, e, value, String.valueOf(keyElem))`, which appends the key's
+  `BigDecimal.toString()` form to `JsonMappingException#getMessage()`'s
+  `"(through reference chain: …)"` suffix; for a rejected **value**, the same wrapping instead appends
+  only the enclosing property name, never the value's digits. This wrapping is Jackson-wide behavior —
+  not specific to this profile or to `BigDecimal` — and it is not something this profile can suppress.
+  In this codebase the resulting message only ever reaches logs: `JsonBodyEncoder` wraps the
+  serialization failure as an `EncodeException`, which `ResponsePipeline.sendFallback500` logs and
+  replaces with a fixed fallback body — the raw message never reaches the HTTP response.
 - Clients of a `vertique-strict` endpoint must expect decimals as JSON **strings**, not numbers.
 
 **The untyped pass-through trade.** `USE_BIG_DECIMAL_FOR_FLOATS` is disabled deliberately. A decimal
