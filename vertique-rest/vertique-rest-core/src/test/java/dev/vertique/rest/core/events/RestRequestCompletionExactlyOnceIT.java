@@ -31,7 +31,9 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
@@ -70,6 +72,10 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * <p>Note: the real {@link CorrelationIngressMiddleware} is used for the REJECT scenario (not a
  * substitute) because it is constructable without Dagger using the same factory helpers already
  * established by {@code CorrelationIngressMiddlewareTest}.
+ *
+ * <p>A single {@link HttpClient} is shared across all test methods via {@code @BeforeAll} to avoid
+ * netty channel-pool churn under full-reactor load. Each test still creates its own
+ * {@code HttpServer} (torn down in {@code @AfterEach}) because route wiring differs per test.
  */
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
@@ -83,14 +89,44 @@ public class RestRequestCompletionExactlyOnceIT {
     // --- Raw exception message that must NOT appear in the emitted event ---
     private static final String BOOM_RAW_MESSAGE = "super secret upstream detail";
 
-    private HttpServer server;
-    private HttpClient client;
+    // --- Class-scoped resources (shared across all @Test methods) ---
 
+    private static HttpClient client;
+
+    // --- Per-test resources ---
+
+    private HttpServer server;
+
+    /**
+     * Creates the shared {@link HttpClient} once for the entire test class.
+     *
+     * @param vertx the class-scoped Vert.x instance injected by vertx-junit5
+     */
+    @BeforeAll
+    static void setUpClient(Vertx vertx) {
+        client = vertx.createHttpClient();
+    }
+
+    /**
+     * Closes the shared {@link HttpClient} after all tests in the class have run.
+     *
+     * @param ctx the test context used to signal teardown completion
+     */
+    @AfterAll
+    static void tearDownClient(VertxTestContext ctx) {
+        (client != null ? client.close() : Future.succeededFuture()).onComplete(ar -> ctx.completeNow());
+    }
+
+    /**
+     * Closes the per-test {@link HttpServer}. The shared {@link HttpClient} is left open and closed
+     * only in {@link #tearDownClient(VertxTestContext)}.
+     *
+     * @param ctx the test context used to signal teardown completion
+     */
     @AfterEach
     void tearDown(VertxTestContext ctx) {
         Future<?> serverClose = server != null ? server.close() : Future.succeededFuture();
-        Future<?> clientClose = client != null ? client.close() : Future.succeededFuture();
-        Future.join(serverClose, clientClose).onComplete(ar -> ctx.completeNow());
+        serverClose.onComplete(ar -> ctx.completeNow());
     }
 
     // --- Setup helpers ---
@@ -183,29 +219,34 @@ public class RestRequestCompletionExactlyOnceIT {
             }
         });
 
-        return vertx.createHttpServer().requestHandler(router).listen(0).map(s -> {
-            this.server = s;
-            this.client = vertx.createHttpClient();
-            return s.actualPort();
-        });
+        return vertx.createHttpServer()
+                .requestHandler(router)
+                .listen(0, "127.0.0.1")
+                .map(s -> {
+                    this.server = s;
+                    return s.actualPort();
+                });
     }
 
     /**
-     * Sends a single GET request to the given path on the given port and returns a future that
-     * resolves to the HTTP response status code.
+     * Sends a single GET request to the given path on the given port, drains the response body so
+     * the shared client's pooled connection is not left with an unread response, and returns a
+     * future that resolves to the HTTP response status code.
      *
      * @param port the server port
      * @param path the request path
      * @return a future resolving to the HTTP status code
      */
     private Future<Integer> get(int port, String path) {
-        return client.request(HttpMethod.GET, port, "localhost", path)
+        return client.request(HttpMethod.GET, port, "127.0.0.1", path)
                 .compose(req -> req.send())
-                .map(resp -> resp.statusCode());
+                .compose(resp -> resp.body().map(body -> resp.statusCode()));
     }
 
     /**
-     * Sends a single GET request to the given path with an extra HTTP header.
+     * Sends a single GET request to the given path with an extra HTTP header, drains the response
+     * body so the shared client's pooled connection is not left with an unread response, and returns
+     * a future that resolves to the HTTP response status code.
      *
      * @param port        the server port
      * @param path        the request path
@@ -214,12 +255,12 @@ public class RestRequestCompletionExactlyOnceIT {
      * @return a future resolving to the HTTP status code
      */
     private Future<Integer> getWithHeader(int port, String path, String headerName, String headerValue) {
-        return client.request(HttpMethod.GET, port, "localhost", path)
+        return client.request(HttpMethod.GET, port, "127.0.0.1", path)
                 .compose(req -> {
                     req.putHeader(headerName, headerValue);
                     return req.send();
                 })
-                .map(resp -> resp.statusCode());
+                .compose(resp -> resp.body().map(body -> resp.statusCode()));
     }
 
     // --- Polling helpers ---
@@ -231,10 +272,13 @@ public class RestRequestCompletionExactlyOnceIT {
      * Waits until {@code captured} holds at least {@code expected} events, then waits one short
      * settle window before completing. The unbounded poll removes the load-dependent miss-flake
      * (a fixed pre-assert delay was too short under CPU contention, so events arrived after the
-     * assertion and shifted index-based checks). The trailing {@link #SETTLE_MS} settle preserves
-     * the exactly-once proof strength: a duplicate/extra event emitted shortly after the threshold
-     * still lands before the {@code assertEquals(expected, captured.size())} check and fails it.
-     * The class-level {@code @Timeout} is the upper bound.
+     * assertion and shifted index-based checks). The trailing {@link #SETTLE_MS} settle is a
+     * bounded proof, not an unconditional one: it only catches a duplicate event emitted within
+     * {@link #SETTLE_MS} (50 ms) of the threshold being reached — a duplicate emitted later escapes
+     * this check entirely. The causal-barrier pattern in {@code RestRequestCompletionEmitterTest}
+     * (await {@code afterClose} rather than a settle window) is the stronger form of this proof;
+     * prefer it if this helper is ever replaced. The class-level {@code @Timeout} is the upper
+     * bound.
      *
      * @param vertx    the Vert.x instance
      * @param captured the list being populated by the event listener

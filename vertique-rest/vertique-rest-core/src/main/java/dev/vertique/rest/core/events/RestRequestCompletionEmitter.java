@@ -46,10 +46,12 @@ import lombok.extern.slf4j.Slf4j;
  *       handle) but before {@code CorrelationIngressMiddleware} (ORDER + 10). The earlier placement
  *       ensures the end handler is registered even for requests that are short-circuited by the
  *       correlation middleware's REJECT policy.</li>
- *   <li>Because Vert.x Web fires end handlers in reverse registration order, this end handler fires
- *       early relative to the end handlers registered later — but <em>after</em>
- *       {@link RequestContextLifecycle}'s own end handler. This means holder-bound values
- *       ({@link SecurityContext}, {@link CorrelationContext}) are still accessible at emit time.</li>
+ *   <li>{@link RequestContextLifecycle} registers its end handler first (at {@code ORDER =
+ *       Integer.MIN_VALUE}), and because Vert.x Web fires end handlers in reverse registration
+ *       order, its end handler fires <em>last</em>. This means this middleware's end handler fires
+ *       <em>before</em> {@link RequestContextLifecycle}'s own end handler — the lifecycle closes its
+ *       scopes last — which is why holder-bound values ({@link SecurityContext},
+ *       {@link CorrelationContext}) are still accessible at emit time.</li>
  * </ul>
  *
  * <p>Exactly-once guarantee: an idempotent flag ({@code KEY_EMITTED}) is stored on the routing

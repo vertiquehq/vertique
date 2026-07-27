@@ -4,6 +4,7 @@
 package dev.vertique.rest.jaxrs;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
@@ -20,7 +21,9 @@ import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
@@ -56,7 +59,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 public class FailureHandlerRouteIdentityCharacterizationIT {
 
     private HttpServer server;
-    private HttpClient client;
+    private static HttpClient client;
 
     /** Per-request record keyed by request path. */
     private final ConcurrentHashMap<String, Observation> observations = new ConcurrentHashMap<>();
@@ -77,11 +80,30 @@ public class FailureHandlerRouteIdentityCharacterizationIT {
             boolean catchAllCurrentRouteNull,
             String catchAllTag) {}
 
+    /**
+     * Creates the {@link HttpClient} shared across every test in this class.
+     *
+     * @param vertx the Vert.x instance injected by {@link VertxExtension}
+     */
+    @BeforeAll
+    static void setUpClient(Vertx vertx) {
+        client = vertx.createHttpClient();
+    }
+
+    /**
+     * Closes the shared {@link HttpClient}.
+     *
+     * @param ctx the test context used for async teardown assertion
+     */
+    @AfterAll
+    static void tearDownClient(VertxTestContext ctx) {
+        (client != null ? client.close() : Future.succeededFuture()).onComplete(ar -> ctx.completeNow());
+    }
+
     @AfterEach
     void tearDown(VertxTestContext ctx) {
         Future<?> serverClose = server != null ? server.close() : Future.succeededFuture();
-        Future<?> clientClose = client != null ? client.close() : Future.succeededFuture();
-        Future.join(serverClose, clientClose).onComplete(ar -> ctx.completeNow());
+        serverClose.onComplete(ar -> ctx.completeNow());
     }
 
     /** An auth provider that always rejects, so the BasicAuthHandler fails the request with 401. */
@@ -89,18 +111,37 @@ public class FailureHandlerRouteIdentityCharacterizationIT {
         return credentials -> Future.failedFuture(new RuntimeException("rejected"));
     }
 
-    private void recordPerRoute(io.vertx.ext.web.RoutingContext rc, String fallbackTag) {
+    private void recordPerRoute(io.vertx.ext.web.RoutingContext rc) {
         String path = rc.request().path();
         Route current = rc.currentRoute();
         String tag = current != null ? (String) current.getMetadata("routeTag") : null;
-        Observation prev = observations.getOrDefault(path, new Observation(false, null, false, false, null));
-        observations.put(
+        observations.merge(
                 path,
-                new Observation(true, tag, prev.catchAllFired(), prev.catchAllCurrentRouteNull(), prev.catchAllTag()));
+                new Observation(true, tag, false, false, null),
+                FailureHandlerRouteIdentityCharacterizationIT::merge);
         if (!rc.response().ended()) {
             int status = rc.statusCode() >= 400 ? rc.statusCode() : 500;
             rc.response().setStatusCode(status).end("failed");
         }
+    }
+
+    /**
+     * Symmetric combiner for the per-request {@link Observation} merge: each side carries
+     * {@code false}/{@code null} in the fields it doesn't own and each writer sees at most one
+     * write per site in these tests, so OR-ing booleans and coalescing nullable fields is
+     * behavior-identical to a directed overwrite regardless of which handler observes first.
+     *
+     * @param existing the previously recorded observation for the path
+     * @param incoming the newly recorded observation for the path
+     * @return the merged observation
+     */
+    private static Observation merge(Observation existing, Observation incoming) {
+        return new Observation(
+                existing.perRouteFired() || incoming.perRouteFired(),
+                existing.perRouteTag() != null ? existing.perRouteTag() : incoming.perRouteTag(),
+                existing.catchAllFired() || incoming.catchAllFired(),
+                existing.catchAllCurrentRouteNull() || incoming.catchAllCurrentRouteNull(),
+                existing.catchAllTag() != null ? existing.catchAllTag() : incoming.catchAllTag());
     }
 
     private Router buildRouter(Vertx vertx) {
@@ -111,7 +152,7 @@ public class FailureHandlerRouteIdentityCharacterizationIT {
         Route throwRoute = router.route(HttpMethod.GET, "/throw");
         throwRoute.putMetadata("routeTag", "throw-route");
         throwRoute.handler(rc -> rc.fail(new RuntimeException("boom")));
-        throwRoute.failureHandler(rc -> recordPerRoute(rc, "throw-route"));
+        throwRoute.failureHandler(this::recordPerRoute);
 
         // (b) auth rejection from a real AuthenticationHandler (401)
         Route authRoute = router.route(HttpMethod.GET, "/auth");
@@ -119,14 +160,14 @@ public class FailureHandlerRouteIdentityCharacterizationIT {
         AuthenticationHandler authHandler = BasicAuthHandler.create(alwaysReject());
         authRoute.handler(authHandler);
         authRoute.handler(rc -> rc.response().end("never reached"));
-        authRoute.failureHandler(rc -> recordPerRoute(rc, "auth-route"));
+        authRoute.failureHandler(this::recordPerRoute);
 
         // (c) 415-style rejection from a per-route USER handler
         Route consumesRoute = router.route(HttpMethod.POST, "/consumes");
         consumesRoute.putMetadata("routeTag", "consumes-route");
         consumesRoute.handler(rc -> rc.fail(415, new RuntimeException("unsupported media type")));
         consumesRoute.handler(rc -> rc.response().end("never reached"));
-        consumesRoute.failureHandler(rc -> recordPerRoute(rc, "consumes-route"));
+        consumesRoute.failureHandler(this::recordPerRoute);
 
         // Router-level catch-all failure handler — records what IT can recover. Runs only when no
         // per-route failure handler ended the response.
@@ -134,9 +175,10 @@ public class FailureHandlerRouteIdentityCharacterizationIT {
             String path = rc.request().path();
             Route current = rc.currentRoute();
             String tag = current != null ? (String) current.getMetadata("routeTag") : null;
-            Observation prev = observations.getOrDefault(path, new Observation(false, null, false, false, null));
-            observations.put(
-                    path, new Observation(prev.perRouteFired(), prev.perRouteTag(), true, current == null, tag));
+            observations.merge(
+                    path,
+                    new Observation(false, null, true, current == null, tag),
+                    FailureHandlerRouteIdentityCharacterizationIT::merge);
             if (!rc.response().ended()) {
                 int status = rc.statusCode() >= 400 ? rc.statusCode() : 500;
                 rc.response().setStatusCode(status).end("failed");
@@ -146,18 +188,20 @@ public class FailureHandlerRouteIdentityCharacterizationIT {
     }
 
     private void run(Vertx vertx, VertxTestContext ctx, HttpMethod method, String path, Runnable asserts) {
+        run(vertx, ctx, method, path, buildRouter(vertx), asserts);
+    }
+
+    private void run(
+            Vertx vertx, VertxTestContext ctx, HttpMethod method, String path, Router router, Runnable asserts) {
         server = null;
-        client = null;
-        vertx.createHttpServer()
-                .requestHandler(buildRouter(vertx))
-                .listen(0)
-                .compose(s -> {
-                    server = s;
-                    client = vertx.createHttpClient();
-                    return client.request(method, s.actualPort(), "localhost", path)
-                            .compose(req -> req.send())
-                            .compose(resp -> resp.body().map(b -> b.toString()));
-                })
+        Future<HttpServer> listenFuture = vertx.createHttpServer()
+                .requestHandler(router)
+                .listen(0, "127.0.0.1")
+                .onSuccess(s -> server = s);
+        listenFuture
+                .compose(s -> client.request(method, s.actualPort(), "127.0.0.1", path))
+                .compose(req -> req.send())
+                .compose(resp -> resp.body().map(b -> b.toString()))
                 .onComplete(ctx.succeeding(body -> {
                     ctx.verify(asserts::run);
                     ctx.completeNow();
@@ -168,8 +212,7 @@ public class FailureHandlerRouteIdentityCharacterizationIT {
     @DisplayName("(a) handler-throw: per-route failure handler recovers the matched route's metadata tag")
     void handlerThrow_perRoute(Vertx vertx, VertxTestContext ctx) {
         run(vertx, ctx, HttpMethod.GET, "/throw", () -> {
-            Observation o = observations.get("/throw");
-            System.out.println("[CHAR] /throw -> " + o);
+            Observation o = assertObservationRecorded("/throw");
             assertEquals("throw-route", o.perRouteTag(), "per-route handler must recover the throwing route's tag");
         });
     }
@@ -178,8 +221,7 @@ public class FailureHandlerRouteIdentityCharacterizationIT {
     @DisplayName("(b) auth rejection (401): per-route failure handler recovers the matched route's metadata tag")
     void authReject_perRoute(Vertx vertx, VertxTestContext ctx) {
         run(vertx, ctx, HttpMethod.GET, "/auth", () -> {
-            Observation o = observations.get("/auth");
-            System.out.println("[CHAR] /auth -> " + o);
+            Observation o = assertObservationRecorded("/auth");
             assertEquals("auth-route", o.perRouteTag(), "per-route handler must recover the auth route's tag");
         });
     }
@@ -188,10 +230,24 @@ public class FailureHandlerRouteIdentityCharacterizationIT {
     @DisplayName("(c) 415 rejection: per-route failure handler recovers the matched route's metadata tag")
     void consumes415_perRoute(Vertx vertx, VertxTestContext ctx) {
         run(vertx, ctx, HttpMethod.POST, "/consumes", () -> {
-            Observation o = observations.get("/consumes");
-            System.out.println("[CHAR] /consumes -> " + o);
+            Observation o = assertObservationRecorded("/consumes");
             assertEquals("consumes-route", o.perRouteTag(), "per-route handler must recover the 415 route's tag");
         });
+    }
+
+    /**
+     * Looks up the recorded {@link Observation} for the given path, printing the same {@code [CHAR]}
+     * diagnostic line the inline call sites used to print, then asserts a handler recorded it before
+     * returning it.
+     *
+     * @param path the request path to look up
+     * @return the recorded observation, never {@code null}
+     */
+    private Observation assertObservationRecorded(String path) {
+        Observation o = observations.get(path);
+        System.out.println("[CHAR] " + path + " -> " + o);
+        assertNotNull(o, "no failure handler recorded for " + path + "; observations=" + observations);
+        return o;
     }
 
     @Test
@@ -223,7 +279,7 @@ public class FailureHandlerRouteIdentityCharacterizationIT {
         Route op = router.route(HttpMethod.GET, "/op");
         op.putMetadata("routeTag", "op-route");
         op.handler(rc -> rc.response().end("op"));
-        op.failureHandler(rc -> recordPerRoute(rc, "op-route"));
+        op.failureHandler(this::recordPerRoute);
         // Catch-all /* that fails before any op matches (no routeTag metadata on it).
         router.route("/*").handler(rc -> rc.fail(404, new RuntimeException("no method")));
         router.route().failureHandler(rc -> {
@@ -235,28 +291,13 @@ public class FailureHandlerRouteIdentityCharacterizationIT {
                 rc.response().setStatusCode(404).end("failed");
             }
         });
-        server = null;
-        client = null;
-        vertx.createHttpServer()
-                .requestHandler(router)
-                .listen(0)
-                .compose(s -> {
-                    server = s;
-                    client = vertx.createHttpClient();
-                    return client.request(HttpMethod.GET, s.actualPort(), "localhost", "/totally-unmapped")
-                            .compose(req -> req.send())
-                            .compose(resp -> resp.body().map(b -> b.toString()));
-                })
-                .onComplete(ctx.succeeding(body -> {
-                    ctx.verify(() -> {
-                        Observation o = observations.get("/totally-unmapped");
-                        System.out.println("[CHAR] /totally-unmapped (middleware 404) -> " + o);
-                        assertEquals(
-                                null,
-                                o != null ? o.catchAllTag() : null,
-                                "a middleware-404 before any op match must not recover an operation route's tag");
-                    });
-                    ctx.completeNow();
-                }));
+        run(vertx, ctx, HttpMethod.GET, "/totally-unmapped", router, () -> {
+            Observation o = observations.get("/totally-unmapped");
+            System.out.println("[CHAR] /totally-unmapped (middleware 404) -> " + o);
+            assertEquals(
+                    null,
+                    o != null ? o.catchAllTag() : null,
+                    "a middleware-404 before any op match must not recover an operation route's tag");
+        });
     }
 }
