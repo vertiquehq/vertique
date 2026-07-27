@@ -5,6 +5,7 @@ package dev.vertique.archetype.services;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
@@ -12,8 +13,10 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.util.regex.MatchResult;
 import java.util.regex.Matcher;
@@ -45,12 +48,16 @@ class ServicesArchetypeContractTest {
     // --- Template locations (relative to the archetype module basedir) ---
 
     private static final Path ARCHETYPE_POM = Path.of("pom.xml");
+    private static final Path ARCHETYPE_README = Path.of("README.md");
     private static final Path ARCHETYPE_RESOURCES = Path.of("src", "main", "resources", "archetype-resources");
     private static final Path TEMPLATE_POM = ARCHETYPE_RESOURCES.resolve("pom.xml");
+    private static final Path TEMPLATE_README = ARCHETYPE_RESOURCES.resolve("README.md");
     private static final Path TEMPLATE_COMPONENT =
             ARCHETYPE_RESOURCES.resolve(Path.of("src", "main", "java", "AppComponent.java"));
     private static final Path TEMPLATE_APP_MODULE =
             ARCHETYPE_RESOURCES.resolve(Path.of("src", "main", "java", "AppModule.java"));
+    private static final Path TEMPLATE_APPLICATION_CONFIG =
+            ARCHETYPE_RESOURCES.resolve(Path.of("src", "main", "resources", "config", "application.json"));
 
     // --- Template parsing ---
 
@@ -118,6 +125,30 @@ class ServicesArchetypeContractTest {
     /** Matches the {@code static} modifier as a whole word. */
     private static final Pattern MODIFIER_STATIC = Pattern.compile("\\bstatic\\b");
 
+    /** Matches a fenced {@code ```bash ... ```} code block within a markdown document. */
+    private static final Pattern FENCED_BASH_BLOCK = Pattern.compile("```bash\\R(.*?)```", Pattern.DOTALL);
+
+    /** Matches a shell backslash line continuation together with the whitespace on either side of it. */
+    private static final Pattern LINE_CONTINUATION = Pattern.compile("[ \\t]*\\\\\\R[ \\t]*");
+
+    /** Matches one {@code -DpropertyName=value} generation-command flag; the value may be empty. */
+    private static final Pattern GENERATE_PROPERTY = Pattern.compile("-D(\\w+)=(\\S*)");
+
+    /** Matches a {@code <plugin>...</plugin>} declaration. */
+    private static final Pattern PLUGIN_BLOCK = Pattern.compile("<plugin>(.*?)</plugin>", Pattern.DOTALL);
+
+    /** Matches the {@code <container>...</container>} block within a jib-maven-plugin configuration. */
+    private static final Pattern CONTAINER_BLOCK = Pattern.compile("<container>(.*?)</container>", Pattern.DOTALL);
+
+    /** Matches a {@code <mainClass>value</mainClass>} element. */
+    private static final Pattern MAIN_CLASS = Pattern.compile("<mainClass>([^<]+)</mainClass>");
+
+    /** Matches a {@code <user>value</user>} element. */
+    private static final Pattern CONTAINER_USER = Pattern.compile("<user>([^<]+)</user>");
+
+    /** Matches a level-2 markdown heading line, capturing nothing beyond the {@code ##} marker itself. */
+    private static final Pattern HEADING_2 = Pattern.compile("(?m)^## ");
+
     // --- Frozen contracts ---
 
     /**
@@ -173,6 +204,45 @@ class ServicesArchetypeContractTest {
             "@DELETE",
             "@Produces",
             "@Consumes");
+
+    /** The exact {@code -D} property set and values of the frozen §4.6 non-interactive generation command. */
+    private static final Map<String, String> EXPECTED_GENERATE_PROPERTIES = Map.of(
+            "archetypeGroupId", "dev.vertique",
+            "archetypeArtifactId", "vertique-archetype-services",
+            "archetypeVersion", "<vertiqueVersion>",
+            "groupId", "<groupId>",
+            "artifactId", "<artifactId>",
+            "version", "0.1.0-SNAPSHOT",
+            "package", "<packageName>",
+            "vertiqueVersion", "<vertiqueVersion>",
+            "interactiveMode", "false");
+
+    /**
+     * The frozen leading tokens of the §4.6 generation command. Everything after them must be a
+     * {@code -D} flag from {@link #EXPECTED_GENERATE_PROPERTIES} — no extra goal, profile, or shell
+     * syntax may ride along in the documented command.
+     */
+    private static final List<String> EXPECTED_GENERATE_COMMAND_TOKENS =
+            List.of("mvn", "-B", "-ntp", "archetype:generate");
+
+    /** The complete ordered command list the generated project's README documents. */
+    private static final List<String> EXPECTED_GENERATED_APPLICATION_COMMANDS =
+            List.of("mvn -ntp exec:java", "mvn -ntp verify", "mvn -ntp package", "mvn -ntp jib:dockerBuild");
+
+    /** The frozen main class both {@code exec-maven-plugin} and {@code jib-maven-plugin} launch. */
+    private static final String EXPECTED_MAIN_CLASS = "dev.vertique.launcher.VertiqueApplication";
+
+    /**
+     * The non-root uid:gid the generated container image runs as. Pinned rather than left to Jib's
+     * default (root), so the image the archetype produces is not root-by-default.
+     */
+    private static final String EXPECTED_CONTAINER_USER = "65532:65532";
+
+    /**
+     * The exact application property that opts a generated service implementation into worker-thread
+     * (blocking) dispatch. Absence of this setting is the non-blocking event-loop default.
+     */
+    private static final String EXPECTED_WORKER_OPT_IN_PROPERTY = "services.contracts.sample.greeting.worker=true";
 
     // --- Tests ---
 
@@ -283,6 +353,109 @@ class ServicesArchetypeContractTest {
         assertFalse(
                 appModule.contains("new VerticleDeployment("),
                 "generated AppModule must build deployments through VerticleDeployment.of(…)");
+    }
+
+    @Test
+    @DisplayName(
+            "documents the non-blocking event-loop default and frames the worker property as a blocking-only opt-in")
+    void documentsWorkerAsBlockingOptIn() throws IOException {
+        // Given the generated project's README.
+        String readme = read(TEMPLATE_README);
+
+        // When the Threading section is isolated and its wrapped prose is collapsed to single
+        // spaces, so a phrase split across a markdown line wrap is still one contiguous match.
+        String threading = collapseWhitespace(sectionOf(readme, "## Threading"));
+
+        // Then it states the non-blocking event-loop default.
+        assertTrue(
+                threading.contains("non-blocking Vert.x event loop by default"),
+                "README Threading section must state the non-blocking event-loop default");
+
+        // And it documents the exact blocking-work opt-in property, exactly once in the whole document.
+        assertTrue(
+                threading.contains(EXPECTED_WORKER_OPT_IN_PROPERTY),
+                () -> "README Threading section must document the exact worker opt-in property: "
+                        + EXPECTED_WORKER_OPT_IN_PROPERTY);
+        assertEquals(
+                1,
+                occurrences(readme, EXPECTED_WORKER_OPT_IN_PROPERTY),
+                "README must set the worker opt-in property in exactly one place");
+
+        // And the opt-in is framed as conditional on blocking work, not as a default.
+        assertTrue(
+                threading.contains("only if"),
+                "README must frame the worker opt-in as conditional rather than default");
+        assertTrue(
+                threading.toLowerCase(Locale.ROOT).contains("not the default"),
+                "README must state that worker mode is not the default execution model");
+
+        // And the generated configuration template does not itself default-enable worker mode anywhere.
+        String applicationConfig = read(TEMPLATE_APPLICATION_CONFIG);
+        assertFalse(
+                applicationConfig.contains("worker"), "generated config template must not default-enable worker mode");
+    }
+
+    @Test
+    @DisplayName("documents the services generation command and the four supported generated-application commands")
+    void documentsSupportedCommands() throws IOException {
+        // Given the services archetype's own README and the generated project's README/POM templates.
+        String archetypeReadme = read(ARCHETYPE_README);
+        String generatedReadme = read(TEMPLATE_README);
+        String templatePom = read(TEMPLATE_POM);
+
+        // When the archetype README's documented commands are parsed, one command per
+        // continuation-joined line.
+        List<String> generationCommands = commandsIn(archetypeReadme).stream()
+                .filter(command -> command.contains("archetype:generate"))
+                .toList();
+
+        // Then exactly one generation command is documented.
+        assertEquals(
+                1, generationCommands.size(), "archetype README must document exactly one archetype:generate command");
+        String generationCommand = generationCommands.get(0);
+
+        // And its leading tokens are exactly the frozen batch-mode goal invocation.
+        List<String> tokens = List.of(generationCommand.split("\\s+"));
+        int goalTokens = EXPECTED_GENERATE_COMMAND_TOKENS.size();
+        assertEquals(
+                EXPECTED_GENERATE_COMMAND_TOKENS,
+                tokens.subList(0, Math.min(goalTokens, tokens.size())),
+                "generation command must invoke the frozen batch-mode goal");
+
+        // And every remaining token is a -D flag — no extra goal, profile, or shell syntax rides along.
+        List<String> flags = tokens.subList(goalTokens, tokens.size());
+        flags.forEach(flag -> assertTrue(
+                GENERATE_PROPERTY.matcher(flag).matches(),
+                () -> "generation command must carry only -Dkey=value flags after the goal, found: " + flag));
+
+        // And those flags are exactly the frozen §4.6 properties, each with its frozen value — a
+        // duplicated flag fails the parse rather than being silently collapsed.
+        assertEquals(EXPECTED_GENERATE_PROPERTIES, generationPropertiesOf(generationCommand));
+
+        // And the JDK and Maven prerequisites are stated on the archetype README.
+        assertTrue(archetypeReadme.contains("JDK 21"), "archetype README must state the JDK 21 prerequisite");
+        assertTrue(
+                archetypeReadme.toLowerCase(Locale.ROOT).contains("maven"),
+                "archetype README must state the Maven prerequisite");
+
+        // When every command the generated README documents is parsed, in document order.
+        List<String> documentedCommands = commandsIn(generatedReadme);
+
+        // Then exactly those four commands are documented — no more, in that order.
+        assertEquals(EXPECTED_GENERATED_APPLICATION_COMMANDS, documentedCommands);
+
+        // And the JDK/Maven prerequisites are stated on the generated README.
+        assertTrue(generatedReadme.contains("JDK 21"), "generated README must state the JDK 21 prerequisite");
+        assertTrue(
+                generatedReadme.toLowerCase(Locale.ROOT).contains("maven"),
+                "generated README must state the Maven prerequisite");
+
+        // And exec-maven-plugin and jib-maven-plugin structurally launch the same main class.
+        assertEquals(EXPECTED_MAIN_CLASS, execMainClassOf(templatePom));
+        assertEquals(EXPECTED_MAIN_CLASS, jibContainerMainClassOf(templatePom));
+
+        // And the container image structurally runs as a pinned non-root user rather than as root.
+        assertEquals(EXPECTED_CONTAINER_USER, jibContainerUserOf(templatePom));
     }
 
     // --- Helpers ---
@@ -486,6 +659,156 @@ class ServicesArchetypeContractTest {
     private static String firstGroup(Pattern pattern, String text) {
         Matcher matcher = pattern.matcher(text);
         return matcher.find() ? matcher.group(1) : null;
+    }
+
+    /**
+     * Normalizes every fenced {@code ```bash``` } block of a markdown document into individual
+     * commands: backslash-continued lines are joined into the command they belong to, and each
+     * remaining non-empty line is one command. Assertions can therefore count and compare commands
+     * rather than blocks.
+     *
+     * @param markdown the markdown document text
+     * @return the documented commands, in document order
+     */
+    private static List<String> commandsIn(String markdown) {
+        return FENCED_BASH_BLOCK
+                .matcher(markdown)
+                .results()
+                .map(match -> LINE_CONTINUATION.matcher(match.group(1)).replaceAll(" "))
+                .flatMap(String::lines)
+                .map(String::trim)
+                .filter(command -> !command.isEmpty())
+                .toList();
+    }
+
+    /**
+     * Parses every {@code -D} property set by a generation command. A repeated key fails the proof:
+     * a duplicated flag is ambiguous documentation, not a value to silently collapse.
+     *
+     * @param command the command text
+     * @return property names mapped to their assigned (possibly empty) values
+     */
+    private static Map<String, String> generationPropertiesOf(String command) {
+        Map<String, String> properties = new LinkedHashMap<>();
+        GENERATE_PROPERTY
+                .matcher(command)
+                .results()
+                .forEach(match -> assertNull(
+                        properties.put(match.group(1), match.group(2)),
+                        () -> "generation command must set -D" + match.group(1) + " exactly once"));
+        return properties;
+    }
+
+    /**
+     * Locates the {@code <plugin>} declaration for a given artifact identifier. XML comments are
+     * stripped first, so a commented-out element inside the plugin cannot be read as configured.
+     *
+     * @param pom the POM template text
+     * @param artifactId the plugin's artifact identifier
+     * @return the plugin's declaration body
+     */
+    private static String pluginBlockFor(String pom, String artifactId) {
+        Matcher plugins = PLUGIN_BLOCK.matcher(stripXmlComments(pom));
+        while (plugins.find()) {
+            String block = plugins.group(1);
+            if (block.contains("<artifactId>" + artifactId + "</artifactId>")) {
+                return block;
+            }
+        }
+        throw new AssertionError("template POM must declare " + artifactId);
+    }
+
+    /**
+     * Extracts the {@code exec-maven-plugin} main class configured in the template POM.
+     *
+     * @param pom the POM template text
+     * @return the configured main class
+     */
+    private static String execMainClassOf(String pom) {
+        return firstGroup(MAIN_CLASS, pluginBlockFor(pom, "exec-maven-plugin"));
+    }
+
+    /**
+     * Extracts the {@code jib-maven-plugin}'s {@code <container>} configuration body.
+     *
+     * @param pom the POM template text
+     * @return the container configuration body
+     */
+    private static String jibContainerOf(String pom) {
+        Matcher container = CONTAINER_BLOCK.matcher(pluginBlockFor(pom, "jib-maven-plugin"));
+        assertTrue(container.find(), "jib-maven-plugin must declare a <container> configuration");
+        return container.group(1);
+    }
+
+    /**
+     * Extracts the {@code jib-maven-plugin} container main class configured in the template POM.
+     *
+     * @param pom the POM template text
+     * @return the configured container main class
+     */
+    private static String jibContainerMainClassOf(String pom) {
+        return firstGroup(MAIN_CLASS, jibContainerOf(pom));
+    }
+
+    /**
+     * Extracts the {@code jib-maven-plugin} container user configured in the template POM.
+     *
+     * @param pom the POM template text
+     * @return the configured {@code uid:gid}, or {@code null} when the container declares no user
+     */
+    private static String jibContainerUserOf(String pom) {
+        return firstGroup(CONTAINER_USER, jibContainerOf(pom));
+    }
+
+    /**
+     * Isolates the text of one level-2 markdown section, from its heading line up to (but not
+     * including) the next level-2 heading or the end of the document.
+     *
+     * @param markdown the markdown document text
+     * @param heading the exact {@code "## Heading"} line that starts the section
+     * @return the section text, including its heading line
+     */
+    private static String sectionOf(String markdown, String heading) {
+        int start = markdown.indexOf(heading);
+        assertTrue(start >= 0, () -> "document must contain the section heading: " + heading);
+        Matcher nextHeading = HEADING_2.matcher(markdown);
+        int end = markdown.length();
+        while (nextHeading.find()) {
+            if (nextHeading.start() > start) {
+                end = nextHeading.start();
+                break;
+            }
+        }
+        return markdown.substring(start, end);
+    }
+
+    /**
+     * Collapses every run of whitespace — including a markdown line wrap's newline — into a single
+     * space, so a prose phrase split across a wrapped line is still one contiguous substring to match
+     * against.
+     *
+     * @param text the text to normalize
+     * @return the text with every whitespace run replaced by a single space
+     */
+    private static String collapseWhitespace(String text) {
+        return text.replaceAll("\\s+", " ");
+    }
+
+    /**
+     * Counts the non-overlapping occurrences of a literal substring within a document.
+     *
+     * @param text the document text to search
+     * @param literal the literal substring to count
+     * @return the number of occurrences
+     */
+    private static int occurrences(String text, String literal) {
+        int count = 0;
+        int index = text.indexOf(literal);
+        while (index >= 0) {
+            count++;
+            index = text.indexOf(literal, index + literal.length());
+        }
+        return count;
     }
 
     /**
