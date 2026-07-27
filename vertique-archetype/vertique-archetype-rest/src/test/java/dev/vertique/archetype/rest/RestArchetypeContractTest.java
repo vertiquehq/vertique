@@ -11,6 +11,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -59,6 +60,18 @@ class RestArchetypeContractTest {
      */
     private static final Pattern XML_COMMENT = Pattern.compile("<!--.*?-->", Pattern.DOTALL);
 
+    /**
+     * Matches a Java block or line comment. Stripped before any structural parse of a Java template
+     * for the same reason {@link #XML_COMMENT} is: a commented-out declaration is not a live one.
+     *
+     * <p>This is a deliberately simple lexer — it does not track string or character literals, so a
+     * literal containing Java comment delimiters would be mis-stripped. The REST templates carry only
+     * simple literals ({@code "management"}, {@code "http"}), none of which contain a delimiter, so
+     * the simple form is exact here. A template that gains such a literal must move to a
+     * literal-aware scan.
+     */
+    private static final Pattern JAVA_COMMENT = Pattern.compile("/\\*.*?\\*/|//[^\\n\\r]*", Pattern.DOTALL);
+
     /** Matches the {@code <dependencies>} block that is a direct child of {@code <project>}. */
     private static final Pattern PROJECT_DEPENDENCIES =
             Pattern.compile("\\R {4}<dependencies>\\R(.*?)\\R {4}</dependencies>", Pattern.DOTALL);
@@ -77,7 +90,8 @@ class RestArchetypeContractTest {
 
     /**
      * Matches one {@code @Provides @IntoSet static VerticleDeployment …(…)} provider method header,
-     * regardless of how the returned deployment is constructed.
+     * regardless of how the returned deployment is constructed. Each match anchors the per-provider
+     * body scan that binds a construction to the provider that returns it.
      */
     private static final Pattern DEPLOYMENT_PROVIDER =
             Pattern.compile("@Provides\\s+@IntoSet\\s+static\\s+VerticleDeployment\\s+\\w+\\s*\\(");
@@ -140,8 +154,13 @@ class RestArchetypeContractTest {
             "vertiqueVersion", "<vertiqueVersion>",
             "interactiveMode", "false");
 
-    /** The frozen §4.6 generation command prefix, ahead of its {@code -D} flags. */
-    private static final String EXPECTED_GENERATE_COMMAND_PREFIX = "mvn -B -ntp archetype:generate";
+    /**
+     * The frozen leading tokens of the §4.6 generation command. Everything after them must be a
+     * {@code -D} flag from {@link #EXPECTED_GENERATE_PROPERTIES} — no extra goal, profile, or shell
+     * syntax may ride along in the documented command.
+     */
+    private static final List<String> EXPECTED_GENERATE_COMMAND_TOKENS =
+            List.of("mvn", "-B", "-ntp", "archetype:generate");
 
     /** The complete ordered command list the generated project's README documents. */
     private static final List<String> EXPECTED_GENERATED_APPLICATION_COMMANDS =
@@ -223,28 +242,26 @@ class RestArchetypeContractTest {
     @Test
     @DisplayName("contributes exactly management at INFRA and http at EDGE")
     void usesExactDeploymentIdsAndPhases() throws IOException {
-        // Given the generated application module template.
-        String appModule = read(TEMPLATE_APP_MODULE);
+        // Given the generated application module template with its comments stripped, so only live
+        // code is parsed.
+        String appModule = stripJavaComments(read(TEMPLATE_APP_MODULE));
 
-        // When its VerticleDeployment contributions and provider methods are parsed.
-        List<String> deployments = DEPLOYMENT
-                .matcher(appModule)
-                .results()
-                .map(match -> match.group(1) + "@" + match.group(2))
+        // When each @Provides @IntoSet provider's own method body is isolated.
+        List<String> providerBodies = deploymentProviderBodiesOf(appModule);
+
+        // Then exactly the two frozen providers exist.
+        assertEquals(2, providerBodies.size(), "generated AppModule must declare exactly two deployment providers");
+
+        // And each one builds exactly one recognized deployment in its own body — a construction is
+        // bound to the provider that returns it, so a provider delegating elsewhere cannot borrow
+        // another provider's (or a comment's) construction to satisfy the identifier/phase proof.
+        List<String> deployments = providerBodies.stream()
+                .map(RestArchetypeContractTest::soleDeploymentIn)
                 .sorted()
                 .toList();
-        long providerMethods = DEPLOYMENT_PROVIDER.matcher(appModule).results().count();
-
-        // Then it contributes exactly the two frozen REST deployments.
         assertEquals(EXPECTED_DEPLOYMENTS, deployments);
 
-        // And every contributing provider method was parsed — a third contribution, or one built by
-        // any means other than VerticleDeployment.of(…), cannot slip past the identifier/phase proof.
-        assertEquals(2L, providerMethods, "generated AppModule must declare exactly two deployment providers");
-        assertEquals(
-                providerMethods,
-                deployments.size(),
-                "every @IntoSet VerticleDeployment provider must contribute a parsed VerticleDeployment.of(…)");
+        // And no deployment is built by direct construction anywhere in the module.
         assertFalse(
                 appModule.contains("new VerticleDeployment("),
                 "generated AppModule must build deployments through VerticleDeployment.of(…)");
@@ -265,12 +282,21 @@ class RestArchetypeContractTest {
         assertEquals(1, generationCommands.size(), "README must document exactly one archetype:generate command");
         String command = generationCommands.get(0);
 
-        // And it invokes the frozen §4.6 batch-mode goal.
-        assertTrue(
-                command.startsWith(EXPECTED_GENERATE_COMMAND_PREFIX),
-                () -> "generation command must start with '" + EXPECTED_GENERATE_COMMAND_PREFIX + "': " + command);
+        // And its leading tokens are exactly the frozen batch-mode goal invocation.
+        List<String> tokens = List.of(command.split("\\s+"));
+        int goalTokens = EXPECTED_GENERATE_COMMAND_TOKENS.size();
+        assertEquals(
+                EXPECTED_GENERATE_COMMAND_TOKENS,
+                tokens.subList(0, Math.min(goalTokens, tokens.size())),
+                "generation command must invoke the frozen batch-mode goal");
 
-        // And it carries exactly the frozen §4.6 properties, each with its frozen value.
+        // And every remaining token is a -D flag — no extra goal, profile, or shell syntax rides along.
+        List<String> flags = tokens.subList(goalTokens, tokens.size());
+        flags.forEach(flag -> assertTrue(
+                GENERATE_PROPERTY.matcher(flag).matches(),
+                () -> "generation command must carry only -Dkey=value flags after the goal, found: " + flag));
+
+        // And those flags are exactly the frozen §4.6 properties, each with its frozen value.
         assertEquals(EXPECTED_GENERATE_PROPERTIES, generationPropertiesOf(command));
 
         // And the JDK and Maven prerequisites are stated.
@@ -350,15 +376,26 @@ class RestArchetypeContractTest {
     }
 
     /**
+     * Removes every block and line comment from a Java template.
+     *
+     * @param java the template text
+     * @return the same text with all comment spans removed
+     */
+    private static String stripJavaComments(String java) {
+        return JAVA_COMMENT.matcher(java).replaceAll("");
+    }
+
+    /**
      * Extracts the module class literals named by the generated component's {@code @Component}. Every
      * non-empty comma-separated token must be a class literal — an entry the parse cannot classify
-     * fails the proof rather than being filtered away.
+     * fails the proof rather than being filtered away. Comments are stripped first, so a
+     * commented-out annotation cannot shadow the live one.
      *
      * @param component the component template text
      * @return the module class literals, sorted for order-independent comparison
      */
     private static List<String> componentModulesOf(String component) {
-        Matcher modules = COMPONENT_MODULES.matcher(component);
+        Matcher modules = COMPONENT_MODULES.matcher(stripJavaComments(component));
         assertTrue(modules.find(), "generated component must declare @Component(modules = { … })");
         List<String> entries = Arrays.stream(modules.group(1).split(","))
                 .map(String::trim)
@@ -369,6 +406,67 @@ class RestArchetypeContractTest {
                 entry.endsWith(".class"),
                 () -> "every @Component modules entry must be a class literal, found: " + entry));
         return entries;
+    }
+
+    /**
+     * Extracts the method body of every {@code @Provides @IntoSet} deployment provider, in
+     * declaration order. Bodies are isolated so a construction can be attributed to the provider that
+     * returns it rather than counted globally.
+     *
+     * @param appModule the comment-stripped application module template text
+     * @return one entry per provider, holding that provider's method body
+     */
+    private static List<String> deploymentProviderBodiesOf(String appModule) {
+        List<String> bodies = new ArrayList<>();
+        Matcher provider = DEPLOYMENT_PROVIDER.matcher(appModule);
+        while (provider.find()) {
+            bodies.add(methodBodyAfter(appModule, provider.end()));
+        }
+        return List.copyOf(bodies);
+    }
+
+    /**
+     * Returns the brace-balanced method body opening at or after {@code signatureStart}. Brace
+     * counting assumes no brace appears inside a string or character literal, which holds for these
+     * templates.
+     *
+     * @param source the comment-stripped template text
+     * @param signatureStart the index to begin searching for the body's opening brace
+     * @return the body text between the outermost braces
+     */
+    private static String methodBodyAfter(String source, int signatureStart) {
+        int open = source.indexOf('{', signatureStart);
+        assertTrue(open >= 0, "deployment provider must declare a method body");
+        int depth = 0;
+        for (int index = open; index < source.length(); index++) {
+            char character = source.charAt(index);
+            if (character == '{') {
+                depth++;
+            } else if (character == '}' && --depth == 0) {
+                return source.substring(open + 1, index);
+            }
+        }
+        throw new AssertionError("deployment provider method body is not brace-balanced");
+    }
+
+    /**
+     * Extracts the single {@code VerticleDeployment.of(…)} construction a provider body must contain.
+     *
+     * @param providerBody one provider's method body
+     * @return the construction's {@code id@phase}
+     */
+    private static String soleDeploymentIn(String providerBody) {
+        List<String> constructions = DEPLOYMENT
+                .matcher(providerBody)
+                .results()
+                .map(match -> match.group(1) + "@" + match.group(2))
+                .toList();
+        assertEquals(
+                1,
+                constructions.size(),
+                () -> "each deployment provider must build exactly one VerticleDeployment.of(…), found "
+                        + constructions.size() + " in:" + providerBody);
+        return constructions.get(0);
     }
 
     /**

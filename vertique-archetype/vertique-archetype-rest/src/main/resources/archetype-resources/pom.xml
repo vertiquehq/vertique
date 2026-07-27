@@ -81,7 +81,7 @@ SPDX-License-Identifier: EUPL-1.2
                     </to>
                     <container>
                         <mainClass>dev.vertique.launcher.VertiqueApplication</mainClass>
-                        <!-- Run as the distroless non-root user rather than as root. -->
+                        <!-- Run as a numeric non-root user rather than as root. -->
                         <user>65532:65532</user>
                     </container>
                 </configuration>
