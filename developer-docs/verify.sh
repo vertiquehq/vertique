@@ -201,6 +201,22 @@ check_frontmatter() {
   done
 }
 
+# Strips one layer of matching surrounding quotes (double or single) from a
+# frontmatter scalar value, so a quoted-empty value (`""` or `''`) is treated
+# as empty by the non-empty check below rather than as a non-empty two-quote
+# literal (frontmatter contract).
+strip_frontmatter_quotes() {
+  local v="$1"
+  local len="${#v}"
+  # Positive-length substring (offset 1, length len-2) rather than a
+  # negative-length form, so this runs unmodified under bash 3.2 (macOS
+  # /bin/bash), which rejects a negative substring length.
+  if [[ "$len" -ge 2 && "${v:0:1}" == "${v: -1}" && ("${v:0:1}" == '"' || "${v:0:1}" == "'") ]]; then
+    v="${v:1:$((len - 2))}"
+  fi
+  printf '%s' "$v"
+}
+
 # Parses and validates the frontmatter block of a single content page.
 check_frontmatter_of_file() {
   local f="$1"
@@ -233,11 +249,11 @@ check_frontmatter_of_file() {
       case "$key" in
       title)
         title_count=$((title_count + 1))
-        [[ -z "$value" ]] && title_empty=true
+        [[ -z "$(strip_frontmatter_quotes "$value")" ]] && title_empty=true
         ;;
       description)
         desc_count=$((desc_count + 1))
-        [[ -z "$value" ]] && desc_empty=true
+        [[ -z "$(strip_frontmatter_quotes "$value")" ]] && desc_empty=true
         ;;
       esac
     else
@@ -331,7 +347,7 @@ check_links_of_file() {
       target="${target%>}"
     fi
     check_link_target "$f" "$dir" "$target"
-  done < <(grep -oE '\]\(<[^>]*>|\]\([^)[:space:]]+' "$f")
+  done < <(strip_all_fences "$f" | grep -oE '\]\(<[^>]*>|\]\([^)[:space:]]+')
 
   while IFS= read -r line; do
     [[ "$line" =~ ^\[[^]]+\]:[[:space:]]*(.+)$ ]] || continue
@@ -341,7 +357,7 @@ check_links_of_file() {
       target="${target%>}"
     fi
     check_link_target "$f" "$dir" "$target"
-  done < <(strip_all_fences "$f" | grep -oE '^\[[^]]+\]:[[:space:]]*[^[:space:]]+')
+  done < <(strip_all_fences "$f" | grep -oE '^\[[^]]+\]:[[:space:]]*<[^>]*>|^\[[^]]+\]:[[:space:]]*[^[:space:]]+')
 }
 
 # --- (e) Forbidden tokens ---

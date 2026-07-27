@@ -11,17 +11,23 @@ SPDX-License-Identifier: EUPL-1.2
 # Vertique developer documentation
 
 Vertique is an opinionated Java 21 framework for building Vert.x applications. It lets you write
-REST APIs using JAX-RS annotations on Vert.x, validates every request and response against an
-OpenAPI specification generated at build time from those same annotations, and assembles your
-application with compile-time Dagger 2 dependency injection instead of a runtime container.
+REST APIs using JAX-RS annotations on Vert.x, generates an OpenAPI specification from those
+annotations at build time, validates incoming requests by default against JSON Schema synthesized
+from the same annotations (OpenAPI-contract request validation against the generated spec is
+available as a separate opt-in module), and assembles your application with compile-time Dagger 2
+dependency injection instead of a runtime container.
 
 ## Why Vertique
 
 - **JAX-RS annotations on Vert.x** — define resources with `@Path`, `@GET`, `@POST`, and the rest
   of the familiar JAX-RS annotation set; Vertique generates the Vert.x routing for you.
-- **Build-time OpenAPI generation and validation** — the OpenAPI specification is generated from
-  your annotated resources at build time, and every request and response is validated against it
-  at runtime.
+- **Build-time OpenAPI generation, annotation-driven request validation by default** — the OpenAPI
+  specification is generated from your annotated resources at build time. Incoming requests are
+  validated by default against JSON Schema synthesized from those same annotations (see the
+  [`vertique-rest-validation` module reference](../../vertique-rest/vertique-rest-validation/src/main/resources/META-INF/vertique/module.md)),
+  with contract validation against the generated spec available as an opt-in
+  [`vertique-rest-openapi-validation` module](../../vertique-rest/vertique-rest-openapi-validation/src/main/resources/META-INF/vertique/module.md).
+  There is no response validation.
 - **Compile-time dependency injection** — application wiring is assembled by Dagger 2 at compile
   time, so there is no runtime classpath scanning or reflection-based container to configure.
 - **Composable capability** — REST, services, persistence, jobs, workflows, security, and
@@ -55,7 +61,7 @@ time. The supported path is:
   component/module, generated modules, and starters fit together.
 - [Configuration](configuration.md) — JSON configuration sources, typed configuration, and
   secret providers.
-- [REST APIs](rest-apis.md) — add a JAX-RS resource with OpenAPI validation and error mapping.
+- [REST APIs](rest-apis.md) — add a JAX-RS resource with request validation and error mapping.
 - [Services](services.md) — define and call a service without REST-specific coupling.
 - [Persistence](persistence.md) — add PostgreSQL, own your migrations, and manage transactions.
 - [Workflows](workflows.md) — choose between durable workflows, jobs, and inbox/outbox.

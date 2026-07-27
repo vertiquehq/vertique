@@ -18,6 +18,24 @@ response from its generated `/hello` endpoint.
 
 - JDK 21
 - Apache Maven
+- A local checkout of this repository's source (see the next section)
+
+## Build and install the framework locally
+
+`vertique-archetype-rest` and the starter it depends on are not published to any remote Maven
+repository, so `archetype:generate` can only resolve them once they exist in your local Maven
+repository. Build and install the framework from this repository's source first.
+
+Working directory: this repository's root (the directory containing its top-level `pom.xml`).
+
+```bash
+./mvnw -ntp install -DskipTests
+```
+
+Expected result: `BUILD SUCCESS`, after several minutes. This installs every framework artifact —
+at the version matching this source revision — into your local Maven repository, including the
+`vertique-archetype-rest` archetype and the `vertique-starter-rest` starter the generated
+application depends on.
 
 ## Generate the application
 
@@ -81,9 +99,9 @@ mvn -ntp exec:java
 ```
 
 This starts the application in the foreground and keeps running until you stop it, so leave this
-terminal open. The generated `src/main/resources/config/application.json` configures two ports:
-the HTTP port (`8080`), which serves the REST API, and the management port (`9090`), which serves
-health and management endpoints.
+terminal open. The application starts on HTTP port `8080`, which serves the REST API, and
+management port `9090`, which serves health and management endpoints — see
+[Configuration](configuration.md) for how runtime configuration is actually loaded and changed.
 
 ## Call the hello endpoint
 

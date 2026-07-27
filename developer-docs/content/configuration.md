@@ -32,6 +32,15 @@ comma-separated list; later directories override earlier ones, and within one di
 `*.properties` overrides `*.json`). Nothing beyond this one file is required for the quickstart
 application to start.
 
+Each configured directory is resolved against the running process's own current working
+directory, not against the compiled classpath: starting the generated application with
+`mvn -ntp exec:java` from `rest-app/` (as in [Quickstart](quickstart.md)) looks for a `config/`
+directory directly under `rest-app/`, which does not exist there by default — only
+`src/main/resources/config/` and the compiled `target/classes/config/` do. Editing
+`src/main/resources/config/application.json` therefore has no observable effect on that run, even
+after `mvn compile`, until a real `config/` directory exists next to the process's working
+directory (or `VERTX_CONFIG_LOCATIONS` names one that does).
+
 ## Typed configuration at the Dagger boundary
 
 Your own Dagger modules read configuration by injecting the framework's `ConfigParser` and
