@@ -28,7 +28,8 @@ import org.junit.jupiter.api.Test;
  * the constructor-time validation contract: the built-in {@code vertx} profile is always seeded;
  * application profiles must not override {@code vertx}; duplicate application ids are rejected; each
  * non-{@code vertx} mapper passes a structural round-trip probe; and resolution of an unknown id
- * fails with a message listing the discovered ids.
+ * fails with a message listing the discovered ids. Also includes a characterization test pinning the
+ * probe's current behavior for an application profile built on {@link JacksonDefaults#apply(ObjectMapper)}.
  */
 class DefaultJsonMapperProfileRegistryTest {
 
@@ -134,6 +135,37 @@ class DefaultJsonMapperProfileRegistryTest {
                 JsonProcessingException.class,
                 ex.getCause(),
                 "getCause() must be the original JsonProcessingException thrown by the mapper");
+    }
+
+    /**
+     * Characterization: pins current probe behavior for NON_NULL app profiles — see ADR-0135
+     * contradiction, routed as follow-up issue (json-004 plan §11.1).
+     *
+     * <p>ADR-0135 suggests application profiles may build on {@link JacksonDefaults#apply(ObjectMapper)},
+     * but that helper sets {@code NON_NULL} serialization inclusion, and the round-trip probe below
+     * exercises a {@link JsonObject} sample carrying a null-valued field
+     * ({@code new JsonObject().putNull("nullField")}). {@code NON_NULL} drops that field on
+     * serialization, so the decoded structure no longer equals the original sample and the probe
+     * rejects construction — nobody had exercised this combination before this test.
+     */
+    @Test
+    @DisplayName(
+            "application profile built on JacksonDefaults.apply() is rejected by the round-trip probe (NON_NULL drops the null field)")
+    void appProfileOnJacksonDefaults_rejectedByRoundTripProbe() {
+        // Given: an application profile whose mapper is exactly JacksonDefaults.apply(new ObjectMapper()),
+        // as ADR-0135 suggests application profiles may build on the vertique defaults.
+        JsonMapperProfile app =
+                JsonMapperProfiles.of(JsonProfileId.of("app-on-defaults"), JacksonDefaults.apply(new ObjectMapper()));
+
+        // When: the registry is constructed (the probe runs eagerly).
+        JsonProfileConfigurationException ex = assertThrows(
+                JsonProfileConfigurationException.class, () -> new DefaultJsonMapperProfileRegistry(Set.of(app)));
+
+        // Then: NON_NULL inclusion drops the probe's null-valued field, so the round-trip probe
+        // observes a structural mismatch and rejects construction.
+        assertTrue(
+                ex.getMessage().contains("failed the round-trip probe"),
+                "a NON_NULL app profile must be rejected by the structural round-trip probe: " + ex.getMessage());
     }
 
     // --- Test helpers ---

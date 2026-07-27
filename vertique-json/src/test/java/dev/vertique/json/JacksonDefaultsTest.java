@@ -28,6 +28,11 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.ZonedDateTime;
+import java.util.Optional;
+import java.util.OptionalDouble;
+import java.util.OptionalInt;
+import java.util.OptionalLong;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -433,6 +438,214 @@ class JacksonDefaultsTest {
                     value,
                     "a decimal JSON number read as Object must bind to BigDecimal under USE_BIG_DECIMAL_FOR_FLOATS");
             assertEquals(new BigDecimal("1.5"), value, "the bound BigDecimal must equal the original decimal");
+        }
+    }
+
+    // --- JDK8 Optional / Stream support tests ---
+
+    @Nested
+    @DisplayName("JDK8 Optional support")
+    class Jdk8OptionalSupport {
+
+        /** Fixture pairing an optional nickname with a required name. */
+        record OptionalCarrier(Optional<String> nickname, String name) {}
+
+        /** Fixture carrying the three scalar {@code Optional*} variants. */
+        record ScalarOptionals(OptionalInt i, OptionalLong l, OptionalDouble d) {}
+
+        /**
+         * Fixture whose {@code tag} property is annotated {@code @JsonInclude(ALWAYS)}, used to prove
+         * a per-property annotation wins over the {@code NON_ABSENT} config override.
+         */
+        record AlwaysCarrier(
+                @JsonInclude(JsonInclude.Include.ALWAYS) Optional<String> tag) {}
+
+        /** Fixture carrying a JDK8 {@link Stream} field. */
+        record StreamCarrier(Stream<String> items) {}
+
+        @Test
+        @DisplayName("a present Optional<String> serializes as its contained value")
+        void presentOptional_serializesAsContainedValue() throws Exception {
+            // Given: a mapper with the vertique defaults and a carrier with a present nickname.
+            ObjectMapper mapper = applyDefaults();
+            OptionalCarrier carrier = new OptionalCarrier(Optional.of("zed"), "acme");
+
+            // When: the carrier is serialized.
+            JsonNode node = mapper.readTree(mapper.writeValueAsString(carrier));
+
+            // Then: the nickname property equals the Optional's contained value.
+            assertEquals(
+                    "zed",
+                    node.get("nickname").asText(),
+                    "a present Optional<String> must serialize as its contained value: " + node);
+        }
+
+        @Test
+        @DisplayName("an empty Optional<String> omits the property from the serialized JSON")
+        void emptyOptional_propertyOmitted() throws Exception {
+            // Given: a carrier with an empty nickname.
+            ObjectMapper mapper = applyDefaults();
+            OptionalCarrier carrier = new OptionalCarrier(Optional.empty(), "acme");
+
+            // When: the carrier is serialized.
+            JsonNode node = mapper.readTree(mapper.writeValueAsString(carrier));
+
+            // Then: the nickname property is omitted, but the required name property remains.
+            assertFalse(node.has("nickname"), "an empty Optional must omit its property under NON_ABSENT: " + node);
+            assertTrue(node.has("name"), "the required name property must still be present: " + node);
+        }
+
+        @Test
+        @DisplayName("an empty OptionalInt omits the property from the serialized JSON")
+        void emptyOptionalInt_propertyOmitted() throws Exception {
+            // Given: a ScalarOptionals fixture with all three Optional* fields empty.
+            ObjectMapper mapper = applyDefaults();
+            ScalarOptionals scalars =
+                    new ScalarOptionals(OptionalInt.empty(), OptionalLong.empty(), OptionalDouble.empty());
+
+            // When: the fixture is serialized.
+            JsonNode node = mapper.readTree(mapper.writeValueAsString(scalars));
+
+            // Then: the empty OptionalInt property is omitted.
+            assertFalse(node.has("i"), "an empty OptionalInt must omit its property under NON_ABSENT: " + node);
+        }
+
+        @Test
+        @DisplayName("an empty OptionalLong omits the property from the serialized JSON")
+        void emptyOptionalLong_propertyOmitted() throws Exception {
+            // Given: a ScalarOptionals fixture with all three Optional* fields empty.
+            ObjectMapper mapper = applyDefaults();
+            ScalarOptionals scalars =
+                    new ScalarOptionals(OptionalInt.empty(), OptionalLong.empty(), OptionalDouble.empty());
+
+            // When: the fixture is serialized.
+            JsonNode node = mapper.readTree(mapper.writeValueAsString(scalars));
+
+            // Then: the empty OptionalLong property is omitted.
+            assertFalse(node.has("l"), "an empty OptionalLong must omit its property under NON_ABSENT: " + node);
+        }
+
+        @Test
+        @DisplayName("an empty OptionalDouble omits the property from the serialized JSON")
+        void emptyOptionalDouble_propertyOmitted() throws Exception {
+            // Given: a ScalarOptionals fixture with all three Optional* fields empty.
+            ObjectMapper mapper = applyDefaults();
+            ScalarOptionals scalars =
+                    new ScalarOptionals(OptionalInt.empty(), OptionalLong.empty(), OptionalDouble.empty());
+
+            // When: the fixture is serialized.
+            JsonNode node = mapper.readTree(mapper.writeValueAsString(scalars));
+
+            // Then: the empty OptionalDouble property is omitted.
+            assertFalse(node.has("d"), "an empty OptionalDouble must omit its property under NON_ABSENT: " + node);
+        }
+
+        @Test
+        @DisplayName("present scalar Optionals serialize as their numeric JSON values")
+        void presentScalarOptionals_serializeAsNumbers() throws Exception {
+            // Given: a ScalarOptionals fixture with all three Optional* fields present.
+            ObjectMapper mapper = applyDefaults();
+            ScalarOptionals scalars =
+                    new ScalarOptionals(OptionalInt.of(7), OptionalLong.of(8L), OptionalDouble.of(1.5));
+
+            // When: the fixture is serialized.
+            JsonNode node = mapper.readTree(mapper.writeValueAsString(scalars));
+
+            // Then: each property is the plain numeric JSON value, not a wrapper object.
+            assertEquals(7, node.get("i").asInt(), "OptionalInt.of(7) must serialize as the numeric value 7: " + node);
+            assertEquals(
+                    8L, node.get("l").asLong(), "OptionalLong.of(8) must serialize as the numeric value 8: " + node);
+            assertEquals(
+                    1.5,
+                    node.get("d").asDouble(),
+                    0.0001,
+                    "OptionalDouble.of(1.5) must serialize as the numeric value 1.5: " + node);
+        }
+
+        @Test
+        @DisplayName("a missing nickname property binds to an empty Optional, not null")
+        void missingProperty_bindsEmptyOptional() throws Exception {
+            // Given: a mapper with the vertique defaults.
+            ObjectMapper mapper = applyDefaults();
+
+            // When: a JSON payload that omits the nickname property entirely is deserialized.
+            OptionalCarrier carrier = mapper.readValue("{\"name\":\"a\"}", OptionalCarrier.class);
+
+            // Then: the missing property binds to Optional.empty(), not a null Optional reference.
+            assertEquals(
+                    Optional.empty(), carrier.nickname(), "a missing nickname property must bind to Optional.empty()");
+        }
+
+        @Test
+        @DisplayName("an explicit null nickname property binds to an empty Optional")
+        void explicitNullProperty_bindsEmptyOptional() throws Exception {
+            // Given: a mapper with the vertique defaults.
+            ObjectMapper mapper = applyDefaults();
+
+            // When: a JSON payload with an explicit null nickname property is deserialized.
+            OptionalCarrier carrier = mapper.readValue("{\"name\":\"a\",\"nickname\":null}", OptionalCarrier.class);
+
+            // Then: the explicit null binds to Optional.empty(), not a null Optional reference.
+            assertEquals(
+                    Optional.empty(),
+                    carrier.nickname(),
+                    "an explicit null nickname property must bind to Optional.empty()");
+        }
+
+        @Test
+        @DisplayName("@JsonInclude(ALWAYS) on an Optional property wins over the NON_ABSENT config override")
+        void jsonIncludeAlways_onProperty_winsOverOverride() throws Exception {
+            // Given: a carrier whose tag property is annotated @JsonInclude(ALWAYS) and is empty.
+            ObjectMapper mapper = applyDefaults();
+            AlwaysCarrier carrier = new AlwaysCarrier(Optional.empty());
+
+            // When: the carrier is serialized.
+            JsonNode node = mapper.readTree(mapper.writeValueAsString(carrier));
+
+            // Then: the per-property annotation wins, so the tag property is present with a null value.
+            assertTrue(node.has("tag"), "@JsonInclude(ALWAYS) must win over the NON_ABSENT config override: " + node);
+            assertTrue(
+                    node.get("tag").isNull(),
+                    "the ALWAYS-included empty Optional must serialize as JSON null: " + node);
+        }
+
+        @Test
+        @DisplayName("a Stream<String> field serializes as a JSON array")
+        void streamField_serializesAsJsonArray() throws Exception {
+            // Given: a carrier whose items field is a JDK8 Stream of two strings.
+            ObjectMapper mapper = applyDefaults();
+            StreamCarrier carrier = new StreamCarrier(Stream.of("a", "b"));
+
+            // When: the carrier is serialized.
+            JsonNode node = mapper.readTree(mapper.writeValueAsString(carrier));
+            JsonNode items = node.get("items");
+
+            // Then: the items property is a JSON array containing the streamed elements in order.
+            assertTrue(items.isArray(), "a Stream<String> field must serialize as a JSON array: " + node);
+            assertEquals(2, items.size(), "the JSON array must contain both streamed elements: " + node);
+            assertEquals("a", items.get(0).asText(), "the first array element must be 'a': " + node);
+            assertEquals("b", items.get(1).asText(), "the second array element must be 'b': " + node);
+        }
+
+        @Test
+        @DisplayName("a present Optional round-trips through deserialize then serialize with the same value")
+        void optionalRoundTrip_presentValue() throws Exception {
+            // Given: a mapper with the vertique defaults.
+            ObjectMapper mapper = applyDefaults();
+
+            // When: a JSON payload with a present nickname property is deserialized, then re-serialized.
+            OptionalCarrier carrier = mapper.readValue("{\"name\":\"a\",\"nickname\":\"zed\"}", OptionalCarrier.class);
+            JsonNode node = mapper.readTree(mapper.writeValueAsString(carrier));
+
+            // Then: the deserialized value is present, and re-serializing reproduces the same value.
+            assertEquals(
+                    Optional.of("zed"),
+                    carrier.nickname(),
+                    "the deserialized nickname must be present with value 'zed'");
+            assertEquals(
+                    "zed",
+                    node.get("nickname").asText(),
+                    "re-serializing must reproduce the nickname value 'zed': " + node);
         }
     }
 
