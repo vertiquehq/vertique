@@ -116,9 +116,9 @@ public final class RestServerRequestMetricsListener implements RestRequestComple
             // error.type (D1=A): failureCode wins when present; otherwise fall back to
             // wireFailureCode (a truncated-response signal — see RestRequestCompletedEvent); a
             // 200-status series may therefore carry a non-"none" error.type.
-            String errorType = Optional.ofNullable(event.failureCode())
-                    .or(() -> Optional.ofNullable(event.wireFailureCode()))
-                    .orElse(NONE);
+            String errorType = event.failureCode() != null
+                    ? event.failureCode()
+                    : (event.wireFailureCode() != null ? event.wireFailureCode() : NONE);
 
             Tags tags = Tags.of(
                     TAG_METHOD, method,

@@ -8,17 +8,11 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vertique.context.DefaultContextHolder;
-import dev.vertique.json.DefaultJsonMapperProfileRegistry;
-import dev.vertique.json.JsonConfig;
-import dev.vertique.rest.core.config.HttpConfig;
 import dev.vertique.rest.core.config.JaxRsConfig;
-import dev.vertique.rest.core.context.RestContextResolution;
 import dev.vertique.rest.core.events.RestRequestCompletedEvent;
 import dev.vertique.rest.core.events.RestRequestCompletionEmitter;
 import dev.vertique.rest.core.interceptor.RequestInterceptor;
 import dev.vertique.rest.core.middleware.RequestContextLifecycle;
-import dev.vertique.rest.core.response.ResponseBodyEncoder;
-import dev.vertique.rest.jaxrs.convert.ConversionContexts;
 import dev.vertique.rest.jaxrs.validation.NoneValidationStrategy;
 import io.swagger.v3.oas.annotations.Operation;
 import io.vertx.core.Context;
@@ -309,45 +303,15 @@ public class StreamingWireFailureIT {
      */
     private static JaxRsRouterMount.Factory buildFactory() {
         ChunkedResponseInterceptor chunked = new ChunkedResponseInterceptor();
-        List<ResponseBodyEncoder> encoders = List.of(new ReadStreamBodyEncoder(), new JsonBodyEncoder());
-        DefaultExceptionMapper defaultMapper = new DefaultExceptionMapper();
-        ExceptionMapperRegistry registry = new ExceptionMapperRegistry(defaultMapper, Set.of());
-        DefaultResponseSerializer responseSerializer = new DefaultResponseSerializer(List.of(chunked), encoders);
         JaxRsConfig jaxRsConfig = JaxRsConfig.builder()
                 .validationStrategy(NoneValidationStrategy.ID)
                 .build();
 
-        return new JaxRsRouterMount.Factory(
-                Set.of(), // routerLifecycleHooks
-                Set.of(), // operationInterceptors
-                Set.of(), // errorInterceptors
-                Set.of(), // middlewares
-                Set.of(), // operationHandlerContributors
-                Set.of(), // securitySchemeHandlers
-                Set.of(chunked), // requestInterceptors
-                new RestExceptionMapper(),
-                registry,
-                Set.of(), // responseProducerBindings
-                responseSerializer,
-                new RestContextResolution(Set.of()),
-                ConversionContexts.defaultResolver(),
-                null, // securityPolicyValidator (nullable)
-                Optional.empty(), // authEnabled
-                List.of(), // sortedDecoders
-                encoders,
-                HttpConfig.builder().build(),
-                jaxRsConfig,
-                new DefaultJsonMapperProfileRegistry(Set.of()),
-                JsonConfig.defaults(),
-                Optional.empty(), // beanValidator
-                Optional.empty(), // objectProcessor
-                Set.of(), // evidenceCapturers
-                Optional.empty(), // actionRegistry
-                Optional.empty(), // authorizer
-                Set.of(), // fileContentVerifiers
-                Set.of(new NoneValidationStrategy()),
-                Optional.empty() // operationSchemaSource
-                );
+        return TestFactories.builder()
+                .requestInterceptors(Set.of(chunked))
+                .encoders(List.of(new ReadStreamBodyEncoder(), new JsonBodyEncoder()))
+                .jaxRsConfig(jaxRsConfig)
+                .build();
     }
 
     // --- Raw socket helpers ---
@@ -441,6 +405,11 @@ public class StreamingWireFailureIT {
      * length must declare chunked transfer encoding; a declared {@code Content-Length} would instead
      * make the pipeline's terminal {@code end()} illegal for a truncated body, which is not the
      * behavior under test here.
+     *
+     * <p>Stands in for {@link ReadStreamBodyEncoder}'s current default — a plain {@link ReadStream}
+     * entity yields a {@code StreamingBody} with neither {@code Content-Length} nor chunked encoding
+     * set, so production resources currently need an equivalent interceptor themselves; known gap
+     * tracked for triage (see the plan's Amendments log / follow-up issue).
      */
     private static final class ChunkedResponseInterceptor implements RequestInterceptor {
 

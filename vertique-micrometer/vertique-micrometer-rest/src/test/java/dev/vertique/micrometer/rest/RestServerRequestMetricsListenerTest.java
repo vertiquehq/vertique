@@ -50,7 +50,7 @@ class RestServerRequestMetricsListenerTest {
     // --- Helper builders ---
 
     /**
-     * Builds a minimal {@link RestRequestCompletedEvent}.
+     * Builds a minimal {@link RestRequestCompletedEvent} with no wire failure recorded.
      *
      * @param method        HTTP method
      * @param routeTemplate OpenAPI route template, or {@code null}
@@ -67,6 +67,30 @@ class RestServerRequestMetricsListenerTest {
             int statusCode,
             String failureCode,
             long durationMs) {
+        return event(method, routeTemplate, operationId, statusCode, failureCode, durationMs, null);
+    }
+
+    /**
+     * Builds a minimal {@link RestRequestCompletedEvent}, optionally carrying a {@code
+     * wireFailureCode} for asserting the {@code error.type} fallback.
+     *
+     * @param method          HTTP method
+     * @param routeTemplate   OpenAPI route template, or {@code null}
+     * @param operationId     OpenAPI operationId, or {@code null}
+     * @param statusCode      HTTP response status code
+     * @param failureCode     failure classification string, or {@code null}
+     * @param durationMs      duration in milliseconds (end = start + duration)
+     * @param wireFailureCode wire-failure classification string, or {@code null}
+     * @return a fully constructed event
+     */
+    private static RestRequestCompletedEvent event(
+            String method,
+            String routeTemplate,
+            String operationId,
+            int statusCode,
+            String failureCode,
+            long durationMs,
+            String wireFailureCode) {
         Instant start = BASE;
         Instant end = start.plusMillis(durationMs);
         return new RestRequestCompletedEvent(
@@ -76,34 +100,6 @@ class RestServerRequestMetricsListenerTest {
                 "/path",
                 routeTemplate,
                 operationId,
-                statusCode,
-                failureCode,
-                null,
-                null,
-                null,
-                null,
-                Optional.empty(),
-                Map.of());
-    }
-
-    /**
-     * Builds a minimal {@link RestRequestCompletedEvent} carrying a {@code wireFailureCode} and no
-     * curated {@code failureCode}, for asserting the {@code error.type} fallback.
-     *
-     * @param statusCode      HTTP response status code
-     * @param failureCode     failure classification string, or {@code null}
-     * @param wireFailureCode wire-failure classification string, or {@code null}
-     * @return a fully constructed event
-     */
-    private static RestRequestCompletedEvent eventWithWireFailureCode(
-            int statusCode, String failureCode, String wireFailureCode) {
-        return new RestRequestCompletedEvent(
-                BASE,
-                BASE.plusMillis(10),
-                "GET",
-                "/path",
-                "/orders/{id}",
-                "getOrder",
                 statusCode,
                 failureCode,
                 null,
@@ -493,7 +489,8 @@ class RestServerRequestMetricsListenerTest {
 
             // A truncated-response signature: 200 status, no curated failureCode, but a post-handoff
             // wire failure was recorded.
-            RestRequestCompletedEvent event = eventWithWireFailureCode(200, null, "ConnectionClosed");
+            RestRequestCompletedEvent event =
+                    event("GET", "/orders/{id}", "getOrder", 200, null, 10, "ConnectionClosed");
             listener.onCompleted(event);
 
             Timer timer = registry.find(RestServerRequestMetricsListener.METER_NAME)

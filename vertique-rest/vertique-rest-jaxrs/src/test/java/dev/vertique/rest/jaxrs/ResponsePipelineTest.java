@@ -644,13 +644,24 @@ class ResponsePipelineTest {
                     .toList();
         }
 
+        /**
+         * Stubs the serializer to hand back a pending completion future and marks the HTTP response
+         * as not yet ended, matching the state the pipeline observes immediately after wire handoff.
+         *
+         * @return the promise backing the serializer's completion future, for the test to settle
+         */
+        private Promise<Void> pendingWireCompletion() {
+            Promise<Void> wire = Promise.promise();
+            when(serializer.serialize(any(), any())).thenReturn(wire.future());
+            when(httpResponse.ended()).thenReturn(false);
+            return wire;
+        }
+
         @Test
         @DisplayName("A wire failure after handoff sets the marker and logs the cause class, never its message")
         void wireFailureAfterHandoffSetsMarkerAndLogsClassOnly() {
             // given a response handed off to a serializer whose completion future is still pending
-            Promise<Void> wire = Promise.promise();
-            when(serializer.serialize(any(), any())).thenReturn(wire.future());
-            when(httpResponse.ended()).thenReturn(false);
+            Promise<Void> wire = pendingWireCompletion();
             IllegalStateException cause = new IllegalStateException("secret-token-42 leaked into the message");
 
             pipeline.sendResponse(ctx, Response.ok("body").build());
@@ -710,9 +721,7 @@ class ResponsePipelineTest {
             Vertx vertx = Vertx.vertx();
             try {
                 // given a response handed off on a request context, with a context-free completion future
-                Promise<Void> wire = Promise.promise();
-                when(serializer.serialize(any(), any())).thenReturn(wire.future());
-                when(httpResponse.ended()).thenReturn(false);
+                Promise<Void> wire = pendingWireCompletion();
                 AtomicReference<Context> cleanupContext = new AtomicReference<>();
                 CountDownLatch cleanupDone = new CountDownLatch(1);
                 when(httpResponse.end()).thenAnswer(invocation -> {
@@ -753,9 +762,7 @@ class ResponsePipelineTest {
         @DisplayName("A terminal end() that throws (declared Content-Length) is guarded and does not escape")
         void declaredLengthStreamFailureEndGuarded() {
             // given a streamed response with a declared Content-Length whose premature end() throws
-            Promise<Void> wire = Promise.promise();
-            when(serializer.serialize(any(), any())).thenReturn(wire.future());
-            when(httpResponse.ended()).thenReturn(false);
+            Promise<Void> wire = pendingWireCompletion();
             when(httpResponse.end())
                     .thenThrow(new IllegalStateException(
                             "You must set the Content-Length header to be the total size" + " of the message body"));
