@@ -9,21 +9,24 @@ SPDX-License-Identifier: EUPL-1.2
 > **Package:** `dev.vertique.openapi`
 > **Artifact:** `rest-openapi-plugin`
 
-A thin build-time module that provides a custom Swagger ModelConverter for the swagger-maven-plugin. Its sole purpose is to unwrap `Future<T>` return types to `T` in the generated OpenAPI spec, so the spec reflects the actual response type rather than the Vert.x `Future` wrapper.
+A thin build-time module that provides Swagger `ModelConverter`s and an `OpenAPIExtension` for the swagger-maven-plugin. `FutureModelConverter` unwraps `Future<T>` return types to `T`, `SseModelConverter` resolves SSE `ReadStream` return types to a string schema, and `RequestParamsExtension` expands `@RequestParams`-annotated parameter objects into individual OpenAPI parameters — so the generated spec reflects the actual JAX-RS contract rather than the framework's internal wrapper/aggregation types.
 
 ---
 
 ## Model Converters
 
+Model converters are **not** auto-discovered — each application module's `pom.xml` must list the fully-qualified class name(s) under `swagger-maven-plugin`'s `<modelConverterClasses>` (see [Configuration](#configuration) below). Every converter must guard `chain.next()` with `chain.hasNext()`: a converter cannot know whether it is last in the configured chain, and an unconditional `chain.next()` throws `NoSuchElementException` when it is.
+
 ### FutureModelConverter
 
 ```java
-public class FutureModelConverter extends ModelResolverUtils implements ModelConverter {
+public class FutureModelConverter implements ModelConverter {
     @Override
-    public Schema resolve(AnnotatedType type, ModelConverterContext context,
+    public Schema<?> resolve(AnnotatedType type, ModelConverterContext context,
                           Iterator<ModelConverter> chain) {
         // If the type is Future<T>, unwrap to T and continue resolution
         // Otherwise, delegate to the next converter in the chain
+        // Returns null (not a chain.next() call) when this is the last converter
     }
 }
 ```
@@ -40,13 +43,14 @@ The swagger-maven-plugin runs during the Maven `compile` phase and loads ModelCo
 ### SseModelConverter
 
 ```java
-public class SseModelConverter extends ModelResolverUtils implements ModelConverter {
+public class SseModelConverter implements ModelConverter {
     @Override
-    public Schema resolve(AnnotatedType type, ModelConverterContext context,
+    public Schema<?> resolve(AnnotatedType type, ModelConverterContext context,
                           Iterator<ModelConverter> chain) {
         // If the type is ReadStream<SseEvent>, resolve to a string schema
         // (SSE responses are text/event-stream, not a structured JSON schema)
         // Otherwise, delegate to the next converter in the chain
+        // Returns null (not a chain.next() call) when this is the last converter
     }
 }
 ```
@@ -66,6 +70,38 @@ public class SseModelConverter extends ModelResolverUtils implements ModelConver
 ```
 
 Both converters must be listed when SSE endpoints are present in the application.
+
+---
+
+## OpenAPI Extensions
+
+Unlike model converters, `OpenAPIExtension`s are discovered automatically by swagger-core's `ServiceLoader` mechanism via `META-INF/services/io.swagger.v3.jaxrs2.ext.OpenAPIExtension`. Simply having this artifact on the swagger-maven-plugin classpath is enough — no `pom.xml` configuration entry is required, unlike `modelConverterClasses` above.
+
+### RequestParamsExtension
+
+```java
+public class RequestParamsExtension extends AbstractOpenAPIExtension {
+    @Override
+    public ResolvedParameter extractParameters(List<Annotation> annotations, Type type,
+            Set<Type> typesToSkip, Components components, Consumes classConsumes,
+            Consumes methodConsumes, boolean includeRequestBody, JsonView jsonViewAnnotation,
+            Iterator<OpenAPIExtension> chain) {
+        // If the parameter type carries the framework's @RequestParams annotation, expand its
+        // record components (or fields, for a regular POJO) into individual query/path/header/
+        // cookie OpenAPI parameters. Otherwise, delegate to the next extension in the chain.
+    }
+}
+```
+
+**What it does:**
+- Mirrors Swagger's built-in `@BeanParam` expansion for the framework's own `@RequestParams` class-level marker
+- Expands each `@QueryParam`/`@PathParam`/`@HeaderParam`/`@CookieParam`-annotated record component (or field, for non-record POJOs) into its own OpenAPI `Parameter`
+- Honors `@DefaultValue` (sets the schema default, marks the parameter optional) and `jakarta.annotation.@Nullable` (marks the schema `nullable` and the parameter optional)
+- Registers complex member types in `components/schemas` and references them by `$ref`, rather than inlining
+
+**Limitation:** `@FormParam` fields are not included in the generated spec because form parameters belong to a request body, not individual OpenAPI parameters. The runtime correctly binds `@FormParam` record components; only spec generation omits them.
+
+**Registration** — declared via `ServiceLoader`, so no `pom.xml` change is required in consumer modules beyond including `rest-openapi-plugin` on the swagger-maven-plugin classpath (see [Configuration](#configuration)); the service file is packaged at `META-INF/services/io.swagger.v3.jaxrs2.ext.OpenAPIExtension`.
 
 ---
 
@@ -109,28 +145,28 @@ The plugin is configured in the application module's `pom.xml`:
 
 **Key configuration points:**
 - `resourcePackages`: The Java package(s) to scan for JAX-RS annotated classes
-- `modelConverterClasses`: Must include `dev.vertique.openapi.FutureModelConverter`
+- `modelConverterClasses`: Must include `dev.vertique.openapi.FutureModelConverter` (and `SseModelConverter` when SSE endpoints are present)
 - `outputPath`: Set to `${project.build.directory}/classes` so the generated spec is on the runtime classpath
 - `outputFormat`: `JSONANDYAML` generates both `openapi.json` and `openapi.yaml`
+- `RequestParamsExtension` needs no entry here — it is picked up automatically via `ServiceLoader` once the `<dependency>` above is present
 
 ---
 
 ## Dependencies
 
 This module has deliberately minimal dependencies:
-- `swagger-core-jakarta` (for `ModelConverter` interface)
-- `vertx-core` (for `Future` class reference)
+- `swagger-core-jakarta` (for `ModelConverter`, `AnnotatedType`, `ModelConverterContext`)
+- `swagger-jaxrs2-jakarta` (for `OpenAPIExtension`, `AbstractOpenAPIExtension`, `ResolvedParameter`)
+- `jakarta.ws.rs-api` (for the `@QueryParam`/`@PathParam`/`@HeaderParam`/`@CookieParam`/`@DefaultValue`/`@Consumes` annotations inspected by `RequestParamsExtension`)
+- `vertx-core` (for the `Future` class reference in `FutureModelConverter`)
 
 It is not a runtime dependency of applications. It is only used as a `<dependency>` of the swagger-maven-plugin during the build.
 
 ---
 
-## Version History
+## Related ADRs
 
-| Date | Change |
-|------|--------|
-| 2026-03 | Initial implementation — `FutureModelConverter` for build-time `Future<T>` unwrapping in OpenAPI spec generation |
-| 2026-04-11 | `SseModelConverter` added — resolves `ReadStream<SseEvent>` return types to a `string` schema in the generated OpenAPI spec |
+- ADR-0121: `openapi.json` is documentation-only; binding is separate from validation — the spec this module's converters and extension shape is generated at build time for documentation/tooling only. The running framework builds routes directly from JAX-RS metadata and never loads `openapi.json`, so a defect in this module's output affects documentation accuracy, never runtime routing or validation.
 
 ---
 

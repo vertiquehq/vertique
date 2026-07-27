@@ -25,10 +25,10 @@ import java.util.Iterator;
  * {@code swagger-maven-plugin} configuration:
  *
  * <pre>{@code
- * <modelConverters>
+ * <modelConverterClasses>
  *     dev.vertique.openapi.FutureModelConverter
  *     dev.vertique.openapi.SseModelConverter
- * </modelConverters>
+ * </modelConverterClasses>
  * }</pre>
  *
  * <p>Note: {@code Future<ReadStream<SseEvent>>} is already unwrapped to
