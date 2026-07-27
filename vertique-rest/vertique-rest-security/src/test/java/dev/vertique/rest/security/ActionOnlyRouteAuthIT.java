@@ -236,10 +236,7 @@ public class ActionOnlyRouteAuthIT {
                             resp.status(),
                             () -> "an action-only route with a valid token must reach the handler — the gate must "
                                     + "see the real identity, not anonymous; got " + resp.status()
-                                    + (resp.fromThisServer()
-                                            ? " (marker present: response from this test's router — route "
-                                                    + "matching/auth behavior changed)"
-                                            : " (marker ABSENT: foreign response — misrouted request, see #186)"));
+                                    + diagnosticSuffix(resp));
                     ctx.completeNow();
                 })));
     }
@@ -261,10 +258,7 @@ public class ActionOnlyRouteAuthIT {
                             resp.status(),
                             () -> "a valid token lacking the required role must be denied by the action gate; got "
                                     + resp.status()
-                                    + (resp.fromThisServer()
-                                            ? " (marker present: response from this test's router — route "
-                                                    + "matching/auth behavior changed)"
-                                            : " (marker ABSENT: foreign response — misrouted request, see #186)"));
+                                    + diagnosticSuffix(resp));
                     ctx.completeNow();
                 })));
     }
@@ -285,10 +279,7 @@ public class ActionOnlyRouteAuthIT {
                             resp.status(),
                             () -> "an action-only route with no token must be denied (401), not anonymous-allowed; "
                                     + "got " + resp.status()
-                                    + (resp.fromThisServer()
-                                            ? " (marker present: response from this test's router — route "
-                                                    + "matching/auth behavior changed)"
-                                            : " (marker ABSENT: foreign response — misrouted request, see #186)"));
+                                    + diagnosticSuffix(resp));
                     ctx.completeNow();
                 })));
     }
@@ -323,6 +314,20 @@ public class ActionOnlyRouteAuthIT {
      * @param fromThisServer whether the marker header was present on the response
      */
     private record Resp(int status, boolean fromThisServer) {}
+
+    /**
+     * Builds the marker-diagnostic suffix appended to status-assertion failure messages, telling
+     * apart "this server answered but the route/auth outcome differed" from "a foreign process
+     * answered the request" (see #186).
+     *
+     * @param resp the response to describe
+     * @return the diagnostic suffix text
+     */
+    private static String diagnosticSuffix(Resp resp) {
+        return resp.fromThisServer()
+                ? " (marker present: response from this test's router — route matching/auth behavior changed)"
+                : " (marker ABSENT: foreign response — misrouted request, see #186)";
+    }
 
     // --- Test doubles ---
 
