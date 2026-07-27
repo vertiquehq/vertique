@@ -87,9 +87,10 @@ class RestArchetypeContractTest {
     private static final Pattern COMPONENT_MODULES = Pattern.compile("modules\\s*=\\s*\\{(.*?)}", Pattern.DOTALL);
 
     /**
-     * Matches a {@code return VerticleDeployment.of("id", …, LifecyclePhase.PHASE);} statement. The
-     * construction is bound to {@code return} rather than merely being present in the body, so a
-     * provider that constructs a deployment and then returns something else is not credited for it.
+     * Matches a {@code return VerticleDeployment.of("id", …, LifecyclePhase.PHASE);} statement. This
+     * is matched against a provider's <em>entire</em> trimmed body, so the construction is not merely
+     * bound to a {@code return} — it must be the provider's whole implementation. A body with any
+     * additional statement, branch, or nested return fails outright.
      */
     private static final Pattern RETURNED_DEPLOYMENT = Pattern.compile(
             "return\\s+VerticleDeployment\\.of\\(\\s*\"([^\"]+)\"\\s*,[^,]+,\\s*LifecyclePhase\\.([A-Z_]+)\\s*\\)\\s*;");
@@ -97,9 +98,12 @@ class RestArchetypeContractTest {
     /**
      * Matches a method declaration whose return type is {@code VerticleDeployment}, capturing the
      * method name. Discovery is keyed on the <em>return type</em>, not on an annotation prefix, so a
-     * contributed deployment cannot hide from the proof by reordering or omitting annotations.
+     * contributed deployment cannot hide from the proof by reordering or omitting annotations. The
+     * leading {@code \b} keeps a longer type such as {@code CustomVerticleDeployment} from
+     * suffix-matching.
      */
-    private static final Pattern DEPLOYMENT_RETURNING_METHOD = Pattern.compile("VerticleDeployment\\s+(\\w+)\\s*\\(");
+    private static final Pattern DEPLOYMENT_RETURNING_METHOD =
+            Pattern.compile("\\bVerticleDeployment\\s+(\\w+)\\s*\\(");
 
     /** Matches one annotation name within a member's modifier prefix. */
     private static final Pattern ANNOTATION = Pattern.compile("@\\w+");
@@ -289,12 +293,12 @@ class RestArchetypeContractTest {
             assertTrue(provider.isStatic(), () -> "deployment provider " + provider.name() + " must be static");
         });
 
-        // And each provider's returned expression is itself a recognized construction — the of(…) is
-        // bound to `return`, not merely present somewhere in the body, so a delegating return cannot
-        // be credited to a stray construction. The frozen id/phase set is derived from exactly those
-        // returned expressions.
+        // And each provider's entire body is a single recognized construction — not merely a body
+        // that contains one somewhere, so neither a delegating return beside a stray construction nor
+        // an extra return path can be credited. The frozen id/phase set is derived from exactly those
+        // whole-body constructions.
         List<String> deployments = providers.stream()
-                .map(RestArchetypeContractTest::soleReturnedDeploymentIn)
+                .map(RestArchetypeContractTest::returnedDeploymentOf)
                 .sorted()
                 .toList();
         assertEquals(EXPECTED_DEPLOYMENTS, deployments);
@@ -519,24 +523,27 @@ class RestArchetypeContractTest {
     }
 
     /**
-     * Extracts the single {@code return VerticleDeployment.of(…);} a provider must contribute.
+     * Extracts the {@code return VerticleDeployment.of(…);} that must constitute a provider's entire
+     * body.
+     *
+     * <p>The match is a <em>full</em> match against the trimmed body rather than a count of
+     * occurrences: counting would accept a body that reaches the expected construction down one path
+     * while returning something else down another (a guard clause returning early, or the expected
+     * construction buried in a nested lambda beside a delegating top-level return). Requiring the
+     * body to <em>be</em> the single statement rules all of those out at once, which the frozen
+     * single-statement provider shape makes the proportionate check.
      *
      * @param provider one discovered provider
      * @return the returned construction's {@code id@phase}
      */
-    private static String soleReturnedDeploymentIn(DeploymentProvider provider) {
-        List<String> returned = RETURNED_DEPLOYMENT
-                .matcher(provider.body())
-                .results()
-                .map(match -> match.group(1) + "@" + match.group(2))
-                .toList();
-        assertEquals(
-                1,
-                returned.size(),
+    private static String returnedDeploymentOf(DeploymentProvider provider) {
+        String body = provider.body().trim();
+        Matcher returned = RETURNED_DEPLOYMENT.matcher(body);
+        assertTrue(
+                returned.matches(),
                 () -> "deployment provider " + provider.name()
-                        + " must return exactly one VerticleDeployment.of(…), found " + returned.size() + " in:"
-                        + provider.body());
-        return returned.get(0);
+                        + " body must be exactly one return VerticleDeployment.of(…); statement, found:\n" + body);
+        return returned.group(1) + "@" + returned.group(2);
     }
 
     /**
