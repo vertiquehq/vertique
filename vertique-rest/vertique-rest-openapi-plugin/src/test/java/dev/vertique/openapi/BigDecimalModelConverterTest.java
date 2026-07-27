@@ -11,7 +11,6 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 
 import io.swagger.v3.core.converter.AnnotatedType;
 import io.swagger.v3.core.converter.ModelConverter;
-import io.swagger.v3.core.converter.ModelConverterContext;
 import io.swagger.v3.oas.models.media.Schema;
 import io.swagger.v3.oas.models.media.StringSchema;
 import java.math.BigDecimal;
@@ -38,11 +37,7 @@ class BigDecimalModelConverterTest {
 
         Schema<?> result = converter.resolve(type, null, emptyChain);
 
-        assertInstanceOf(StringSchema.class, result);
-        assertEquals("string", result.getType());
-        assertEquals("decimal", result.getFormat());
-        assertEquals("-?[0-9]+(\\.[0-9]+)?", result.getPattern());
-        assertEquals(100, result.getMaxLength());
+        assertDecimalStringSchema(result);
     }
 
     @Test
@@ -91,31 +86,21 @@ class BigDecimalModelConverterTest {
 
         Schema<?> result = futureConverter.resolve(type, null, chain);
 
-        assertInstanceOf(StringSchema.class, result);
-        assertEquals("string", result.getType());
-        assertEquals("decimal", result.getFormat());
-        assertEquals("-?[0-9]+(\\.[0-9]+)?", result.getPattern());
-        assertEquals(100, result.getMaxLength());
+        assertDecimalStringSchema(result);
     }
 
     /**
-     * Fake {@link ModelConverter} that records the {@link AnnotatedType} it was called with and
-     * returns a fixed marker {@link Schema}, so tests can assert what {@link BigDecimalModelConverter}
-     * delegated downstream without depending on Mockito.
+     * Asserts that the given schema is the decimal string schema this test class expects:
+     * {@code string} type, {@code decimal} format, the plain decimal pattern, and the 100-character
+     * max length.
+     *
+     * @param schema the schema to assert against
      */
-    private static class CapturingModelConverter implements ModelConverter {
-
-        private final Schema<?> marker;
-        private AnnotatedType capturedType;
-
-        CapturingModelConverter(Schema<?> marker) {
-            this.marker = marker;
-        }
-
-        @Override
-        public Schema<?> resolve(AnnotatedType type, ModelConverterContext context, Iterator<ModelConverter> chain) {
-            this.capturedType = type;
-            return marker;
-        }
+    private static void assertDecimalStringSchema(Schema<?> schema) {
+        assertInstanceOf(StringSchema.class, schema);
+        assertEquals("string", schema.getType());
+        assertEquals("decimal", schema.getFormat());
+        assertEquals("-?[0-9]+(\\.[0-9]+)?", schema.getPattern());
+        assertEquals(100, schema.getMaxLength());
     }
 }

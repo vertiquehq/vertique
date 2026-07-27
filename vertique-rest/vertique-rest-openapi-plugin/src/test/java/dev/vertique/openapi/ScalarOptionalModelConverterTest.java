@@ -11,7 +11,6 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 
 import io.swagger.v3.core.converter.AnnotatedType;
 import io.swagger.v3.core.converter.ModelConverter;
-import io.swagger.v3.core.converter.ModelConverterContext;
 import io.swagger.v3.oas.models.media.IntegerSchema;
 import io.swagger.v3.oas.models.media.NumberSchema;
 import io.swagger.v3.oas.models.media.Schema;
@@ -124,26 +123,5 @@ class ScalarOptionalModelConverterTest {
         Schema<?> result = converter.resolve(type, null, emptyChain);
 
         assertNull(result);
-    }
-
-    /**
-     * Fake {@link ModelConverter} that records the {@link AnnotatedType} it was called with and
-     * returns a fixed marker {@link Schema}, so tests can assert what {@link
-     * ScalarOptionalModelConverter} delegated downstream without depending on Mockito.
-     */
-    private static class CapturingModelConverter implements ModelConverter {
-
-        private final Schema<?> marker;
-        private AnnotatedType capturedType;
-
-        CapturingModelConverter(Schema<?> marker) {
-            this.marker = marker;
-        }
-
-        @Override
-        public Schema<?> resolve(AnnotatedType type, ModelConverterContext context, Iterator<ModelConverter> chain) {
-            this.capturedType = type;
-            return marker;
-        }
     }
 }

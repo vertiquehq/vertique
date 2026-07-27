@@ -12,7 +12,6 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import com.fasterxml.jackson.databind.JavaType;
 import io.swagger.v3.core.converter.AnnotatedType;
 import io.swagger.v3.core.converter.ModelConverter;
-import io.swagger.v3.core.converter.ModelConverterContext;
 import io.swagger.v3.core.util.Json;
 import io.swagger.v3.oas.models.media.Schema;
 import io.vertx.core.Future;
@@ -77,26 +76,5 @@ class FutureModelConverterTest {
         assertSame(marker, result);
         assertNotNull(next.capturedType);
         assertEquals(String.class, next.capturedType.getType());
-    }
-
-    /**
-     * Fake {@link ModelConverter} that records the {@link AnnotatedType} it was called with and
-     * returns a fixed marker {@link Schema}, so tests can assert what {@link FutureModelConverter}
-     * delegated downstream without depending on Mockito.
-     */
-    private static class CapturingModelConverter implements ModelConverter {
-
-        private final Schema<?> marker;
-        private AnnotatedType capturedType;
-
-        CapturingModelConverter(Schema<?> marker) {
-            this.marker = marker;
-        }
-
-        @Override
-        public Schema<?> resolve(AnnotatedType type, ModelConverterContext context, Iterator<ModelConverter> chain) {
-            this.capturedType = type;
-            return marker;
-        }
     }
 }

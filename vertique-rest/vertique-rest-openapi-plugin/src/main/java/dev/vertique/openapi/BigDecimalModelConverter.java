@@ -50,11 +50,9 @@ import java.util.Iterator;
  * characters. Keeping the spec bounds in lockstep with the deserializer's grammar means generated
  * client validation rejects the same inputs the server would reject.
  *
- * <p><strong>Chain-end contract:</strong> like every {@link ModelConverter}, this converter must
- * check {@link Iterator#hasNext()} before calling {@link Iterator#next()} on the chain — a
- * converter has no way to know whether it is last in the configured chain. When it is last, {@link
- * #resolve(AnnotatedType, ModelConverterContext, Iterator)} returns {@code null} rather than
- * throwing.
+ * <p><strong>Chain-end contract:</strong> delegates to the next converter via {@link
+ * ConverterChain#delegate}, which returns {@code null} rather than throwing when this converter is
+ * last in the configured chain.
  */
 public final class BigDecimalModelConverter implements ModelConverter {
 
@@ -81,9 +79,6 @@ public final class BigDecimalModelConverter implements ModelConverter {
         if (javaType != null && BigDecimal.class.equals(javaType.getRawClass())) {
             return new StringSchema().format("decimal").pattern(DECIMAL_PATTERN).maxLength(MAX_LENGTH);
         }
-        if (chain.hasNext()) {
-            return chain.next().resolve(type, context, chain);
-        }
-        return null;
+        return ConverterChain.delegate(type, context, chain);
     }
 }

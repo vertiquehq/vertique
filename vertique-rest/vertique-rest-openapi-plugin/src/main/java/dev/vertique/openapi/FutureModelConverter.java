@@ -28,11 +28,9 @@ import java.util.Iterator;
  * </modelConverterClasses>
  * }</pre>
  *
- * <p><strong>Chain-end contract:</strong> like every {@link ModelConverter}, this converter must
- * check {@link Iterator#hasNext()} before calling {@link Iterator#next()} on the chain — a
- * converter has no way to know whether it is last in the configured chain. When it is last, {@link
- * #resolve(AnnotatedType, ModelConverterContext, Iterator)} returns {@code null} rather than
- * throwing.
+ * <p><strong>Chain-end contract:</strong> delegates to the next converter via {@link
+ * ConverterChain#delegate}, which returns {@code null} rather than throwing when this converter is
+ * last in the configured chain.
  */
 public class FutureModelConverter implements ModelConverter {
 
@@ -73,9 +71,6 @@ public class FutureModelConverter implements ModelConverter {
     @Override
     public Schema<?> resolve(AnnotatedType type, ModelConverterContext context, Iterator<ModelConverter> chain) {
         AnnotatedType unwrapped = futureValue(type);
-        if (chain.hasNext()) {
-            return chain.next().resolve(unwrapped, context, chain);
-        }
-        return null;
+        return ConverterChain.delegate(unwrapped, context, chain);
     }
 }

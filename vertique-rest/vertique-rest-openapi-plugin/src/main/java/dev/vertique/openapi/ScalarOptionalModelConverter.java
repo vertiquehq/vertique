@@ -8,10 +8,10 @@ import io.swagger.v3.core.converter.AnnotatedType;
 import io.swagger.v3.core.converter.ModelConverter;
 import io.swagger.v3.core.converter.ModelConverterContext;
 import io.swagger.v3.core.util.Json;
-import io.swagger.v3.oas.models.media.IntegerSchema;
-import io.swagger.v3.oas.models.media.NumberSchema;
+import io.swagger.v3.core.util.PrimitiveType;
 import io.swagger.v3.oas.models.media.Schema;
 import java.util.Iterator;
+import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalDouble;
 import java.util.OptionalInt;
@@ -60,19 +60,26 @@ import java.util.OptionalLong;
  * the {@code web-validation} strategy an explicit {@code null} is rejected by the spec gate before
  * it ever reaches Jackson.
  *
- * <p><strong>Chain-end contract:</strong> like every {@link ModelConverter}, this converter must
- * check {@link Iterator#hasNext()} before calling {@link Iterator#next()} on the chain — a converter
- * has no way to know whether it is last in the configured chain. When it is last, {@link
- * #resolve(AnnotatedType, ModelConverterContext, Iterator)} returns {@code null} rather than
- * throwing.
+ * <p><strong>Chain-end contract:</strong> delegates to the next converter via {@link
+ * ConverterChain#delegate}, which returns {@code null} rather than throwing when this converter is
+ * last in the configured chain.
  */
 public final class ScalarOptionalModelConverter implements ModelConverter {
 
     /**
+     * Maps each JDK scalar optional to the primitive class whose {@link PrimitiveType} schema
+     * matches its JSON wire form.
+     */
+    private static final Map<Class<?>, Class<?>> SCALAR_OPTIONALS =
+            Map.of(OptionalInt.class, int.class, OptionalLong.class, long.class, OptionalDouble.class, double.class);
+
+    /**
      * Resolves the schema for the given type. {@link OptionalInt} resolves to {@code
      * integer/int32}, {@link OptionalLong} to {@code integer/int64}, and {@link OptionalDouble} to
-     * {@code number/double}. Every other type — including generic {@link Optional}, which
-     * swagger-core unwraps natively — is delegated to the next converter in the chain.
+     * {@code number/double}, each produced via {@link PrimitiveType#fromType(Class)} — the same
+     * primitive schema table used elsewhere in this module (see {@link RequestParamsExtension}).
+     * Every other type — including generic {@link Optional}, which swagger-core unwraps natively —
+     * is delegated to the next converter in the chain.
      *
      * @param type the annotated type being resolved
      * @param context the current model converter context
@@ -84,20 +91,11 @@ public final class ScalarOptionalModelConverter implements ModelConverter {
     public Schema<?> resolve(AnnotatedType type, ModelConverterContext context, Iterator<ModelConverter> chain) {
         JavaType javaType = Json.mapper().constructType(type.getType());
         if (javaType != null) {
-            Class<?> rawClass = javaType.getRawClass();
-            if (OptionalInt.class.equals(rawClass)) {
-                return new IntegerSchema();
-            }
-            if (OptionalLong.class.equals(rawClass)) {
-                return new IntegerSchema().format("int64");
-            }
-            if (OptionalDouble.class.equals(rawClass)) {
-                return new NumberSchema().format("double");
+            Class<?> mapped = SCALAR_OPTIONALS.get(javaType.getRawClass());
+            if (mapped != null) {
+                return PrimitiveType.fromType(mapped).createProperty();
             }
         }
-        if (chain.hasNext()) {
-            return chain.next().resolve(type, context, chain);
-        }
-        return null;
+        return ConverterChain.delegate(type, context, chain);
     }
 }

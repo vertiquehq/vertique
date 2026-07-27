@@ -56,10 +56,7 @@ public class SseModelConverter implements ModelConverter {
                 && isSseEventStream(javaType)) {
             return new StringSchema().description("SSE event stream");
         }
-        if (chain.hasNext()) {
-            return chain.next().resolve(type, context, chain);
-        }
-        return null;
+        return ConverterChain.delegate(type, context, chain);
     }
 
     /**
