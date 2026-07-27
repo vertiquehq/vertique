@@ -1,0 +1,6 @@
+{
+  "jaxrs": {
+    "validationStrategy": "openapi-contract",
+    "openapiPath": "openapi.json"
+  }
+}

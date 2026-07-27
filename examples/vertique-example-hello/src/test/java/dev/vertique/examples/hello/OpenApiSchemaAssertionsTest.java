@@ -26,24 +26,24 @@ import org.junit.jupiter.api.Test;
  * <p>The spec is regenerated at {@code compile} time by {@code swagger-maven-plugin-jakarta} into
  * {@code target/classes/openapi.json}; this test reads it straight off the test classpath.
  *
- * <p><strong>These assertions are the RED-phase proof for two independent, currently-partial
- * framework behaviors:</strong>
+ * <p><strong>These assertions pin two independent schema behaviors:</strong>
  *
  * <ul>
  *   <li><strong>JDK8 {@code Optional} unwrapping</strong> — swagger-core's Jackson-backed model
  *       resolver treats {@code java.util.Optional<T>} as a native Jackson {@code ReferenceType} and
  *       unwraps it to {@code T}'s schema directly (no {@code present}/{@code empty} wrapper object,
- *       no {@code required} entry). This holds for {@code Optional<String>} and
+ *       no {@code required} entry). This holds natively for {@code Optional<String>} and
  *       {@code Optional<List<String>>} (asserted in {@link #tags_isUnwrappedArrayOfString()}), but
  *       {@code NOT} for {@code java.util.OptionalInt} — a non-generic class with no
- *       {@code ReferenceType} registration, so it resolves as its own JavaBean schema
- *       ({@code empty}/{@code present}/{@code asInt} properties) rather than a scalar. See
- *       {@link #rank_isNotScalarUnwrapped_currentGap()} for the as-observed (non-conforming) shape.
- *   <li><strong>{@code BigDecimal} string wire form</strong> — {@code pom.xml}'s
- *       {@code modelConverterClasses} does not yet register {@code BigDecimalModelConverter}
- *       alongside {@code FutureModelConverter} (that registration is the green-phase change for this
- *       slice), so {@code PriceQuote.amount}/{@code discount} still resolve to the Jackson-default
- *       JSON {@code number} schema instead of the {@code vertique-strict} decimal-string schema.
+ *       {@code ReferenceType} registration, which without help resolves as its own JavaBean schema
+ *       ({@code empty}/{@code present}/{@code asInt} properties). {@code pom.xml} registers
+ *       {@code dev.vertique.openapi.ScalarOptionalModelConverter} to close that gap; see
+ *       {@link #rank_isScalarIntegerSchema()}.
+ *   <li><strong>{@code BigDecimal} string wire form</strong> — {@code pom.xml} registers
+ *       {@code dev.vertique.openapi.BigDecimalModelConverter} alongside
+ *       {@code FutureModelConverter}, so {@code PriceQuote.amount}/{@code discount} resolve to the
+ *       {@code vertique-strict} decimal-string schema rather than the Jackson-default JSON
+ *       {@code number} schema.
  * </ul>
  */
 class OpenApiSchemaAssertionsTest {
@@ -85,6 +85,9 @@ class OpenApiSchemaAssertionsTest {
         assertFalse(
                 isRequired(optionalGreeting, "nickname"),
                 "nickname must not appear in OptionalGreeting's required array");
+        // "omit, don't null": an empty Optional is omitted from the payload, never written as JSON
+        // null, so the schema stays non-nullable and a spec-validating client rejects an explicit null.
+        assertFalse(nickname.path("nullable").asBoolean(), "nickname schema must not be nullable");
     }
 
     // --- b. OptionalGreeting.tags: Optional<List<String>> unwraps to an array-of-string schema ---
@@ -103,26 +106,27 @@ class OpenApiSchemaAssertionsTest {
         assertFalse(isRequired(optionalGreeting, "tags"), "tags must not appear in OptionalGreeting's required array");
     }
 
-    // --- c. OptionalGreeting.rank: OptionalInt scalar-unwrap (current framework gap) ---
+    // --- c. OptionalGreeting.rank: OptionalInt scalar schema via ScalarOptionalModelConverter ---
 
     @Test
-    @DisplayName("OptionalGreeting.rank is a scalar integer/number schema (OptionalInt unwrapped) — currently a gap")
-    void rank_isNotScalarUnwrapped_currentGap() {
+    @DisplayName("OptionalGreeting.rank is a scalar integer/int32 schema (OptionalInt), not a present/empty bean")
+    void rank_isScalarIntegerSchema() {
         JsonNode optionalGreeting = schema("OptionalGreeting");
         JsonNode rank = property(optionalGreeting, "rank");
 
         String type = rank.path("type").asText();
         assertTrue(
                 "integer".equals(type) || "number".equals(type),
-                "rank should resolve to a scalar integer/number schema for a properly unwrapped OptionalInt, but was: "
-                        + rank);
+                "rank must resolve to a scalar integer/number schema (ScalarOptionalModelConverter), but was: " + rank);
+        assertFalse(rank.has("present"), "rank schema must not carry a present property");
+        assertFalse(rank.has("empty"), "rank schema must not carry an empty property");
+        assertFalse(isRequired(optionalGreeting, "rank"), "rank must not appear in OptionalGreeting's required array");
     }
 
-    // --- d. PriceQuote.amount: BigDecimal string wire form (red until BigDecimalModelConverter is registered) ---
+    // --- d. PriceQuote.amount: BigDecimal string wire form via BigDecimalModelConverter ---
 
     @Test
-    @DisplayName(
-            "PriceQuote.amount is the vertique-strict decimal-string schema — red until BigDecimalModelConverter is registered")
+    @DisplayName("PriceQuote.amount is the vertique-strict decimal-string schema")
     void amount_isDecimalStringSchema() {
         JsonNode priceQuote = schema("PriceQuote");
         JsonNode amount = property(priceQuote, "amount");
@@ -134,11 +138,10 @@ class OpenApiSchemaAssertionsTest {
         assertEquals(100, amount.path("maxLength").asInt(), "amount must carry the 100-character max length");
     }
 
-    // --- e. PriceQuote.discount: Optional<BigDecimal> unwrap + decimal string form (red until green phase) ---
+    // --- e. PriceQuote.discount: Optional<BigDecimal> unwrap + decimal string form ---
 
     @Test
-    @DisplayName(
-            "PriceQuote.discount is the vertique-strict decimal-string schema (Optional<BigDecimal> unwrapped) — red until BigDecimalModelConverter is registered")
+    @DisplayName("PriceQuote.discount is the vertique-strict decimal-string schema (Optional<BigDecimal> unwrapped)")
     void discount_isUnwrappedDecimalStringSchema() {
         JsonNode priceQuote = schema("PriceQuote");
         JsonNode discount = property(priceQuote, "discount");

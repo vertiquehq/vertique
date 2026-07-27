@@ -28,7 +28,8 @@ public class HelloResourceIT {
             .withConfig(new JsonObject()
                     .put("http", new JsonObject().put("port", 0))
                     .put("hello", "Hello, %s!")
-                    .put("management", new JsonObject().put("enabled", false)));
+                    .put("management", new JsonObject().put("enabled", false))
+                    .put("jaxrs", new JsonObject().put("validationStrategy", "openapi-contract")));
 
     @BeforeAll
     static void setUp() {

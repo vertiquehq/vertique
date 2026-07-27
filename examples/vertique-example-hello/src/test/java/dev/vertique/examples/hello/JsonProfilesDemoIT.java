@@ -33,13 +33,16 @@ import org.junit.jupiter.api.extension.RegisterExtension;
  * RestAssured, and the same {@link OpenApiValidationFilter} wired against the compile-time
  * generated {@code /openapi.json} on the classpath.
  *
- * <p><strong>Expected red before the green phase:</strong> {@code pom.xml}'s
- * {@code modelConverterClasses} does not yet register {@code BigDecimalModelConverter}, so the
- * generated spec still declares {@code PriceQuote.amount}/{@code discount} as JSON {@code number}
- * schemas. The {@code /price} endpoints' actual wire form under the {@code vertique-strict} profile
- * is a JSON <em>string</em> (e.g. {@code "amount":"1.50"}) — a genuine spec/wire mismatch that the
- * {@link OpenApiValidationFilter} is expected to flag as a validation failure. That failure is the
- * intended red-phase proof of the mismatch, not a defect in this test.
+ * <p><strong>Spec/wire alignment.</strong> Both this filter and — because the application selects
+ * the {@code openapi-contract} validation strategy — the server itself validate against the
+ * generated spec, so the spec must describe the profiles' real wire form. {@code pom.xml} therefore
+ * registers {@code dev.vertique.openapi.BigDecimalModelConverter} (so {@code PriceQuote.amount}/
+ * {@code discount} are decimal <em>strings</em>, matching {@code vertique-strict}) and
+ * {@code dev.vertique.openapi.ScalarOptionalModelConverter} (so {@code OptionalGreeting.rank} is a
+ * scalar {@code integer}, matching the {@code Jdk8Module} wire form) alongside
+ * {@code FutureModelConverter}. The converters and the strategy are one composition: the default
+ * {@code web-validation} strategy synthesizes schemas from the Java types and is profile-agnostic,
+ * so it would reject a correct {@code vertique-strict} decimal-string body.
  */
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
 class JsonProfilesDemoIT {
@@ -49,7 +52,8 @@ class JsonProfilesDemoIT {
             .withConfig(new JsonObject()
                     .put("http", new JsonObject().put("port", 0))
                     .put("hello", "Hello, %s!")
-                    .put("management", new JsonObject().put("enabled", false)));
+                    .put("management", new JsonObject().put("enabled", false))
+                    .put("jaxrs", new JsonObject().put("validationStrategy", "openapi-contract")));
 
     @BeforeAll
     static void setUp() {
@@ -123,17 +127,33 @@ class JsonProfilesDemoIT {
                 .body("nicknamePresent", equalTo(false));
     }
 
+    /**
+     * Pins the "omit, don't null" contract: {@code Optional<String>} unwraps to a plain,
+     * <em>non-nullable</em> {@code string} schema, so under this application's
+     * {@code openapi-contract} strategy the server rejects {@code "nickname": null} with a 400 at
+     * the contract gate, before Jackson ever binds the body. Clients omit the property instead —
+     * semantically equivalent and accepted on every path
+     * (see {@link #postOptionalGreeting_nicknameOmitted()}).
+     *
+     * <p>The client-side {@link OpenApiValidationFilter} is bypassed so the deliberately
+     * spec-invalid body actually reaches the server; with the filter on, the request is aborted
+     * client-side and the server gate is never exercised.
+     *
+     * <p>The runtime {@code null} → {@link java.util.Optional#empty()} binding still holds on
+     * non-contract-validated paths (the default {@code web-validation} strategy synthesizes schemas
+     * from the Java types and does not read {@code openapi.json}; ADR-0121) — which is precisely why
+     * omission, not {@code null}, is the portable form.
+     */
     @Test
-    @DisplayName("POST /json-demo/optional with an explicit null nickname binds Optional.empty()")
+    @DisplayName("POST /json-demo/optional with an explicit null nickname is rejected with 400 by the contract gate")
     void postOptionalGreeting_nicknameNull() {
-        given().contentType("application/json")
+        given().noFiltersOfType(OpenApiValidationFilter.class)
+                .contentType("application/json")
                 .body("{\"name\":\"Ada\",\"nickname\":null}")
                 .when()
                 .post("/json-demo/optional")
                 .then()
-                .statusCode(200)
-                .contentType("application/json")
-                .body("nicknamePresent", equalTo(false));
+                .statusCode(400);
     }
 
     @Test
@@ -196,10 +216,24 @@ class JsonProfilesDemoIT {
                 .body("plain", equalTo("1.50"));
     }
 
+    /**
+     * Proves the <em>server-side</em> rejection of a JSON number for a {@code vertique-strict}
+     * {@code BigDecimal} property. Under the {@code openapi-contract} strategy the rejecting gate is
+     * the contract validator — the response is the sanitized {@code "Request validation failed"}
+     * problem with {@code #/amount … "type": "type"}, not the strict deserializer's
+     * {@code "Request body rejected by JSON profile"}, because the contract gate runs before the
+     * body is bound. The strict deserializer remains the second line of defence on paths that do not
+     * validate against the contract.
+     *
+     * <p>The {@link OpenApiValidationFilter} is bypassed because the generated spec declares
+     * {@code amount} as a decimal string: with the filter on, this deliberately spec-invalid body is
+     * aborted client-side and the server is never reached.
+     */
     @Test
     @DisplayName("POST /json-demo/price with a numeric (non-string) amount is rejected with 400")
     void postPriceQuote_numericAmount_rejected() {
-        given().contentType("application/json")
+        given().noFiltersOfType(OpenApiValidationFilter.class)
+                .contentType("application/json")
                 .body("{\"sku\":\"SKU-1\",\"amount\":1.5}")
                 .when()
                 .post("/json-demo/price")

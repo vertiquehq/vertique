@@ -15,6 +15,7 @@ import dev.vertique.examples.hello.resource.ResourceModule;
 import dev.vertique.management.ManagementModule;
 import dev.vertique.rest.auth.jwt.JwtAuthModule;
 import dev.vertique.rest.jaxrs.RestModule;
+import dev.vertique.rest.openapi.validation.OpenApiContractValidationModule;
 import dev.vertique.rest.validation.RestValidationModule;
 import dev.vertique.security.runtime.authz.SecurityAuthzModule;
 import jakarta.inject.Singleton;
@@ -37,6 +38,10 @@ import jakarta.inject.Singleton;
  *   <li>{@link VertxModule} — Vert.x instance and configuration</li>
  *   <li>{@link RestModule} — JAX-RS annotation-driven routing</li>
  *   <li>{@link RestValidationModule} — default {@code web-validation} request-validation strategy</li>
+ *   <li>{@link OpenApiContractValidationModule} — opt-in {@code openapi-contract} strategy, selected
+ *       by this application's {@code jaxrs.validationStrategy} config so requests are validated
+ *       against the generated {@code openapi.json} (required for the {@code vertique-strict}
+ *       decimal-string request wire form; see {@code JsonProfilesDemoResource})</li>
  *   <li>{@link JwtAuthModule} — JWT bearer authentication, authorization, and security context</li>
  *   <li>{@link ManagementModule} — Health check endpoints on management port</li>
  *   <li>{@link DeployerModule} — Verticle deployment multibinding</li>
@@ -58,6 +63,7 @@ import jakarta.inject.Singleton;
             ConfigParsingModule.class,
             RestModule.class,
             RestValidationModule.class,
+            OpenApiContractValidationModule.class,
             JwtAuthModule.class,
             ManagementModule.class,
             DeployerModule.class,

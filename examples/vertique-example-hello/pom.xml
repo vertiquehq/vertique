@@ -38,6 +38,15 @@ SPDX-License-Identifier: EUPL-1.2
             <groupId>dev.vertique</groupId>
             <artifactId>vertique-rest-validation</artifactId>
         </dependency>
+        <!--
+          Opt-in openapi-contract strategy: this example validates requests against the generated
+          openapi.json so the vertique-strict decimal-string wire form is accepted on the way in
+          (the web-validation strategy synthesizes schemas from the Java types and is profile-agnostic).
+        -->
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-rest-openapi-validation</artifactId>
+        </dependency>
         <dependency>
             <groupId>dev.vertique</groupId>
             <artifactId>vertique-rest-auth-jwt</artifactId>
@@ -133,7 +142,9 @@ SPDX-License-Identifier: EUPL-1.2
                     </resourcePackages>
                     <prettyPrint>true</prettyPrint>
                     <modelConverterClasses>
-                        dev.vertique.openapi.FutureModelConverter
+                        <modelConverterClass>dev.vertique.openapi.FutureModelConverter</modelConverterClass>
+                        <modelConverterClass>dev.vertique.openapi.BigDecimalModelConverter</modelConverterClass>
+                        <modelConverterClass>dev.vertique.openapi.ScalarOptionalModelConverter</modelConverterClass>
                     </modelConverterClasses>
                 </configuration>
                 <dependencies>
