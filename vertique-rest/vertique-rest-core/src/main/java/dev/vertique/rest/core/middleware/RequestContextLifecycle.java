@@ -21,7 +21,7 @@ import lombok.extern.slf4j.Slf4j;
  * ROOT-scoped middleware that owns the per-request {@link ContextHolder.Scope} lifecycle.
  *
  * <p>This middleware runs first (order = {@link #ORDER} = {@code Integer.MIN_VALUE}) and registers
- * exactly one {@code ctx.addEndHandler} per request. Because Vert.x Web 5.0.8 fires end handlers
+ * exactly one {@code ctx.addEndHandler} per request. Because Vert.x Web 5.1.2 fires end handlers
  * in reverse registration order, this middleware's end handler fires <em>last</em> — after audit,
  * logging finalization, and every other end handler — so holder-bound values remain accessible to
  * downstream end handlers until the very end of the request.
@@ -99,7 +99,7 @@ public final class RequestContextLifecycle implements Middleware {
     public void handle(RoutingContext ctx) {
         Handle handle = new Handle();
         ctx.put(KEY, handle);
-        // Register first → fires last under Vert.x Web 5.0.8 reverse end-handler order.
+        // Register first → fires last under Vert.x Web 5.1.2 reverse end-handler order.
         // This ensures all downstream end handlers (audit emit, log finalization) still see
         // holder-bound context values when they run.
         ctx.addEndHandler(v -> handle.closeAll());
