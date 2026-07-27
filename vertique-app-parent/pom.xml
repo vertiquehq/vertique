@@ -69,6 +69,29 @@ SPDX-License-Identifier: EUPL-1.2
                 </configuration>
             </plugin>
             <plugin>
+                <!--
+                  Declared so the `spotless` goal prefix resolves for this module when the
+                  framework reactor is invoked from the root (`./mvnw spotless:apply`). This POM
+                  is deliberately standalone (no parent), so it inherits none of the framework's
+                  plugin declarations, and a missing prefix here fails the whole reactor.
+
+                  inherited=false: applications that use this POM as their parent are NOT
+                  subjected to the framework's own code-formatting policy.
+
+                  Keep the version in sync with `spotless.version` in the framework root POM.
+                -->
+                <groupId>com.diffplug.spotless</groupId>
+                <artifactId>spotless-maven-plugin</artifactId>
+                <version>3.3.0</version>
+                <inherited>false</inherited>
+                <configuration>
+                    <java>
+                        <palantirJavaFormat/>
+                        <removeUnusedImports/>
+                    </java>
+                </configuration>
+            </plugin>
+            <plugin>
                 <groupId>org.codehaus.mojo</groupId>
                 <artifactId>flatten-maven-plugin</artifactId>
                 <version>1.7.0</version>
