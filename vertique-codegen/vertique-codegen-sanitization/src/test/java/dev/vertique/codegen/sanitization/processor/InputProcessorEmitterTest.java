@@ -77,38 +77,51 @@ class InputProcessorEmitterTest {
             }
             """);
 
+    /** A user-defined generic wrapper used to build parameterized nested-DTO field types. */
+    private static final JavaFileObject HOLDER_DTO = SourceFiles.inline("com.example.dto.Holder", """
+            package com.example.dto;
+            public class Holder<T> {
+                public T value;
+            }
+            """);
+
     /**
-     * A body record whose fields are all declared with parameterized {@code Optional<T>} types —
-     * classified as {@code NESTED_DTO} by {@code AnnotationCollector} since {@code Optional} is a
-     * non-scalar, non-collection declared type. Reproduces the shape that surfaced the
-     * parameterized-type class-literal defect: {@code field.nestedTypeMirror()} is a
+     * A body record whose fields are all declared with a parameterized generic wrapper
+     * ({@code Holder<T>}) — classified as {@code NESTED_DTO} by {@code AnnotationCollector} since
+     * {@code Holder} is a non-scalar, non-collection declared type. Reproduces the shape that
+     * surfaced the parameterized-type class-literal defect: {@code field.nestedTypeMirror()} is a
      * {@code DeclaredType} with type arguments, and rendering it unerased into a {@code $L.class}
-     * literal produces invalid Java (e.g. {@code java.util.Optional<java.lang.String>.class}).
+     * literal produces invalid Java (e.g. {@code com.example.dto.Holder<java.lang.String>.class}).
+     *
+     * <p>The fixture deliberately does <em>not</em> use {@code java.util.Optional}:
+     * {@code AnnotationCollector} normalizes {@code Optional<T>} away before classification (so
+     * the wrapped value is sanitized rather than dispatched to a non-existent
+     * {@code Optional_InputProcessor}), which would leave no parameterized nested type here to
+     * prove erasure with.
      */
-    private static final JavaFileObject OPTIONAL_FIELDS_DTO =
-            SourceFiles.inline("com.example.dto.OptionalFieldsDto", """
+    private static final JavaFileObject WRAPPED_FIELDS_DTO =
+            SourceFiles.inline("com.example.dto.WrappedFieldsDto", """
             package com.example.dto;
             import java.math.BigDecimal;
             import java.util.List;
-            import java.util.Optional;
-            public record OptionalFieldsDto(
-                    Optional<String> nickname,
-                    Optional<List<String>> tags,
-                    Optional<BigDecimal> discount) {}
+            public record WrappedFieldsDto(
+                    Holder<String> nickname,
+                    Holder<List<String>> tags,
+                    Holder<BigDecimal> discount) {}
             """);
 
-    private static final JavaFileObject OPTIONAL_FIELDS_RESOURCE =
-            SourceFiles.inline("com.example.dto.OptionalFieldsResource", """
+    private static final JavaFileObject WRAPPED_FIELDS_RESOURCE =
+            SourceFiles.inline("com.example.dto.WrappedFieldsResource", """
             package com.example.dto;
             import jakarta.ws.rs.Consumes;
             import jakarta.ws.rs.POST;
             import jakarta.ws.rs.Path;
             import jakarta.ws.rs.core.MediaType;
-            @Path("/optional-fields")
-            public class OptionalFieldsResource {
+            @Path("/wrapped-fields")
+            public class WrappedFieldsResource {
                 @POST
                 @Consumes(MediaType.APPLICATION_JSON)
-                public String create(OptionalFieldsDto body) { return null; }
+                public String create(WrappedFieldsDto body) { return null; }
             }
             """);
 
@@ -309,18 +322,18 @@ class InputProcessorEmitterTest {
     // --- Parameterized nested-type fields (NESTED_DTO with generic type arguments) ---
 
     @Nested
-    @DisplayName("NESTED_DTO field with a parameterized declared type (e.g. Optional<T>)")
+    @DisplayName("NESTED_DTO field with a parameterized declared type (e.g. Holder<T>)")
     class ParameterizedNestedDtoFields {
 
         @Test
-        @DisplayName("Optional<String>, Optional<List<String>>, and Optional<BigDecimal> fields "
-                + "compile and emit an erased Optional.class literal")
-        void parameterizedOptionalFields_compileWithErasedClassLiteral() {
-            ProcessorTestHarness.run(new SanitizationProcessor(), OPTIONAL_FIELDS_DTO, OPTIONAL_FIELDS_RESOURCE)
+        @DisplayName("Holder<String>, Holder<List<String>>, and Holder<BigDecimal> fields "
+                + "compile and emit an erased Holder.class literal")
+        void parameterizedWrapperFields_compileWithErasedClassLiteral() {
+            ProcessorTestHarness.run(
+                            new SanitizationProcessor(), HOLDER_DTO, WRAPPED_FIELDS_DTO, WRAPPED_FIELDS_RESOURCE)
                     .assertSuccess()
-                    .assertGeneratedSourceContains("com.example.dto.OptionalFieldsDto_InputProcessor", "Optional.class")
-                    .assertGeneratedSourceDoesNotContain(
-                            "com.example.dto.OptionalFieldsDto_InputProcessor", "Optional<");
+                    .assertGeneratedSourceContains("com.example.dto.WrappedFieldsDto_InputProcessor", "Holder.class")
+                    .assertGeneratedSourceDoesNotContain("com.example.dto.WrappedFieldsDto_InputProcessor", "Holder<");
         }
     }
 

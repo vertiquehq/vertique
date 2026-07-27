@@ -12,6 +12,11 @@ import javax.lang.model.type.TypeMirror;
  * dev.vertique.codegen.sanitization.processor.emit.InputProcessorEmitter} to generate the
  * corresponding {@code switch} arm.
  *
+ * <p>Classification is performed against the field's <em>unwrapped</em> type:
+ * {@link AnnotationCollector} strips {@code java.util.Optional} layers first, so an
+ * {@code Optional<String>} field is a {@link FieldKind#STRING} and a
+ * {@code List<Optional<String>>} field is a {@link FieldKind#COLLECTION_OF_STRINGS}.
+ *
  * @param name             the JSON/field name (record component name or field name)
  * @param kind             the field kind, determining the code generation strategy
  * @param canonChain       class FQNs of canonicalizers declared on this field, in order; never
@@ -52,21 +57,29 @@ public record FieldModel(
      */
     public enum FieldKind {
 
-        /** A {@code String}-typed scalar field. */
+        /** A {@code String}-typed scalar field (also {@code Optional<String>}). */
         STRING,
 
-        /** A field typed as {@code Collection<String>} (list/set of strings). */
+        /**
+         * A field typed as {@code Collection<String>} (list/set of strings), including
+         * {@code Collection<Optional<String>>}.
+         */
         COLLECTION_OF_STRINGS,
 
-        /** A field typed as a nested DTO (non-scalar, non-collection). */
+        /**
+         * A field typed as a nested DTO (non-scalar, non-collection), including
+         * {@code Optional<NestedDto>}.
+         */
         NESTED_DTO,
 
         /** A field typed as {@code Collection<NestedDto>} (list/set of nested DTOs). */
         COLLECTION_OF_DTO,
 
         /**
-         * Any other type: primitives, boxed types, enums, {@code Map}, arrays, etc. The emitter
-         * passes these through unchanged.
+         * Any other type: primitives, boxed types, enums, {@code Map}, arrays,
+         * {@code OptionalInt}/{@code OptionalLong}/{@code OptionalDouble}, and raw
+         * {@code Optional}. The emitter passes these through unchanged (routing annotated ones
+         * through {@code GeneratedSupport.applyDefault}).
          */
         OTHER
     }

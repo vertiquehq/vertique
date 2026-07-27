@@ -38,6 +38,13 @@ import javax.tools.Diagnostic;
  * <p>Meta-annotation support: all annotation mirrors on each element are walked; if any annotation
  * is itself meta-annotated with {@code @Canonicalize}, {@code @Sanitize}, {@code @SkipCanonicalization},
  * or {@code @SkipSanitization}, it is treated as the effective source annotation.
+ *
+ * <p>Field classification normalizes {@code java.util.Optional<T>} away before deciding the
+ * {@link FieldKind}: the wire value of an {@code Optional<T>} field is the unwrapped {@code T},
+ * so {@code Optional<String>} classifies as {@link FieldKind#STRING},
+ * {@code Optional<NestedDto>} as {@link FieldKind#NESTED_DTO} for {@code NestedDto}, and
+ * {@code List<Optional<String>>} as {@link FieldKind#COLLECTION_OF_STRINGS}. See
+ * {@link #buildFieldModel} for the full rule, including raw {@code Optional} handling.
  */
 public final class AnnotationCollector {
 
@@ -69,7 +76,16 @@ public final class AnnotationCollector {
             "java.time.ZonedDateTime",
             "java.time.Instant",
             "java.util.UUID",
+            // Primitive Optional specializations carry no string payload and have no type
+            // argument to unwrap — treat them as scalar leaves so no dead nested-DTO arm is
+            // emitted for them.
+            "java.util.OptionalInt",
+            "java.util.OptionalLong",
+            "java.util.OptionalDouble",
             "java.lang.Object");
+
+    /** FQN of the {@code java.util.Optional} wrapper that is transparent for classification. */
+    private static final String OPTIONAL_FQN = "java.util.Optional";
 
     private final CodegenContext ctx;
 
@@ -223,6 +239,16 @@ public final class AnnotationCollector {
      * Builds a {@link FieldModel} for the given field type and annotation state. Returns
      * {@code null} for types that need no processing.
      *
+     * <p>{@code java.util.Optional<T>} is <em>transparent</em> here: the intermediate wire value
+     * of an {@code Optional<T>} field is the unwrapped {@code T} value (Jackson's
+     * {@code Jdk8Module} serializes the payload, not the wrapper), so the field is classified by
+     * {@code T}. Without this normalization {@code Optional<String>} would classify as
+     * {@link FieldKind#NESTED_DTO} and emit a {@code dispatchNested(v, Optional.class, …)} arm —
+     * for which no generated processor exists, silently dropping the field's chain. Nested
+     * wrappers ({@code Optional<Optional<T>>}) unwrap through the recursion; a raw
+     * {@code Optional} has no type argument to classify against and falls back to
+     * {@link FieldKind#OTHER} (or {@code null} when unannotated).
+     *
      * @param name       the field name
      * @param type       the field type mirror
      * @param canonChain field-level canonicalizer chain
@@ -242,6 +268,19 @@ public final class AnnotationCollector {
             String location) {
 
         boolean hasAnnotations = !canonChain.isEmpty() || !sanitChain.isEmpty() || skipCanon || skipSanit;
+
+        // Optional<T> wrapper — classify by the wrapped type (see method javadoc).
+        if (isOptionalWrapper(type)) {
+            TypeMirror wrapped = optionalTypeArgument(type);
+            if (wrapped == null) {
+                // Raw Optional (or a malformed type argument list) — nothing to classify against.
+                return hasAnnotations
+                        ? new FieldModel(
+                                name, FieldKind.OTHER, canonChain, sanitChain, skipCanon, skipSanit, null, type)
+                        : null;
+            }
+            return buildFieldModel(name, wrapped, canonChain, sanitChain, skipCanon, skipSanit, location);
+        }
 
         // String field
         if (isString(type)) {
@@ -468,7 +507,14 @@ public final class AnnotationCollector {
     }
 
     /**
-     * Extracts the element type from a parameterized {@link Collection} type mirror.
+     * Extracts the element type from a parameterized {@link Collection} type mirror, unwrapping
+     * any {@code java.util.Optional} layers so {@code List<Optional<String>>} yields
+     * {@code String} (and therefore classifies as {@link FieldKind#COLLECTION_OF_STRINGS}).
+     *
+     * <p>Returns {@code null} — meaning "element type not determinable", which routes the field
+     * to the raw-collection {@link FieldKind#OTHER}/{@code null} fallthrough — for raw
+     * collections, wildcard/type-variable element types, and raw or wildcard-parameterized
+     * {@code Optional} elements.
      *
      * @param type the collection type mirror
      * @return the element type mirror, or {@code null} if not determinable
@@ -477,7 +523,35 @@ public final class AnnotationCollector {
         if (!(type instanceof DeclaredType dt)) return null;
         if (dt.getTypeArguments().isEmpty()) return null;
         TypeMirror arg = dt.getTypeArguments().get(0);
-        return (arg.getKind() == TypeKind.DECLARED) ? arg : null;
+        if (arg.getKind() != TypeKind.DECLARED) return null;
+        while (isOptionalWrapper(arg)) {
+            TypeMirror wrapped = optionalTypeArgument(arg);
+            if (wrapped == null || wrapped.getKind() != TypeKind.DECLARED) return null;
+            arg = wrapped;
+        }
+        return arg;
+    }
+
+    /**
+     * Returns {@code true} if the type mirror is a (possibly parameterized) {@code java.util.Optional}.
+     *
+     * @param type the type mirror to test
+     * @return {@code true} for {@code java.util.Optional}
+     */
+    private static boolean isOptionalWrapper(TypeMirror type) {
+        return type.getKind() == TypeKind.DECLARED && OPTIONAL_FQN.equals(typeFqn(type));
+    }
+
+    /**
+     * Returns the single type argument of an {@code Optional<T>} type mirror.
+     *
+     * @param type the {@code Optional} type mirror
+     * @return the {@code T} mirror, or {@code null} for a raw {@code Optional}
+     */
+    private static TypeMirror optionalTypeArgument(TypeMirror type) {
+        if (!(type instanceof DeclaredType dt)) return null;
+        List<? extends TypeMirror> args = dt.getTypeArguments();
+        return args.size() == 1 ? args.get(0) : null;
     }
 
     /**

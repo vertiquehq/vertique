@@ -77,6 +77,19 @@ APT mirror of `InputPolicyMetadataResolver`. Collects per-type and per-field ann
 - Detects conflicting annotations on the same element (e.g., `@Canonicalize` and `@SkipCanonicalization` on the same field) and emits an `ERROR` diagnostic at compile time.
 - Produces `DtoModel` / `FieldModel` carriers consumed by the emitter.
 
+**`Optional<T>` is transparent for classification.** The intermediate wire value of an `Optional<T>` field is the unwrapped `T`, so the collector strips `java.util.Optional` layers before deciding the `FieldKind`:
+
+| Declared field type | Classified as |
+|---------------------|---------------|
+| `Optional<String>` | `STRING` |
+| `Optional<NestedDto>` | `NESTED_DTO` (nested type `NestedDto` — so `DtoScanner` also reaches it) |
+| `Collection<Optional<String>>` | `COLLECTION_OF_STRINGS` |
+| `Optional<Optional<T>>` | classified as `T` (unwrapping recurses) |
+| raw `Optional`, `Optional<?>` | `OTHER` (or omitted when unannotated) |
+| `OptionalInt` / `OptionalLong` / `OptionalDouble` | `OTHER` — scalar leaves, no string payload |
+
+Without this normalization `Optional` would classify as a nested DTO and emit `dispatcher.dispatchNested(v, Optional.class, …)`; no `Optional_InputProcessor` exists, so the field's chain would be silently dropped and nested DTO metadata would be resolved from `Optional` rather than the wrapped type. This also keeps the generated path aligned with the reflective `InputPolicyMetadataResolver`.
+
 ### `InputProcessorEmitter`
 
 JavaPoet-based emitter. For each `DtoModel` in the emitted set, generates `{DTO}_InputProcessor` in the DTO type's package:
