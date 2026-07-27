@@ -51,7 +51,7 @@ construction time (startup failure rather than silent data corruption at runtime
 | `JsonConfig` | record | API | Typed model of the `json` config section; carries `jsonProfile` (key `json.jsonProfile`), the global default profile id; `null`/blank means the `vertx` floor. Parsed at the `JsonRuntimeModule` boundary via `ConfigParser`. |
 | `JsonDefaultProfileValidator` | `class` | API | `@Singleton ComposeValidator` contributed to the `VALIDATE`-phase multibinding; resolves `JsonConfig.jsonProfile()` through the registry at `@Inject` construction — an unknown id throws `JsonProfileConfigurationException` immediately, failing startup even when the global default is shadowed by a more-specific per-binding value or when no boundary has active bindings. |
 | `BigDecimalAsStringSerializer` | `class` | API | Opt-in serializer: writes `BigDecimal` as a JSON string via `toPlainString()` (no scientific notation); not registered by `JacksonDefaults`; intended as a matched pair with `BigDecimalStrictStringDeserializer` |
-| `BigDecimalStrictStringDeserializer` | `class` | API | Opt-in deserializer: accepts only `VALUE_STRING` → `BigDecimal`; rejects JSON numbers and any other token with `MismatchedInputException`; not registered by `JacksonDefaults` |
+| `BigDecimalStrictStringDeserializer` | `class` | API | Opt-in deserializer: accepts only `VALUE_STRING` holding a plain decimal (`-?[0-9]+(\.[0-9]+)?`, ≤ 100 chars) → `BigDecimal`; rejects JSON numbers, exponent forms, and any other token with `MismatchedInputException`; not registered by `JacksonDefaults` |
 | `StrictStringDeserializer` | `class` | API | Opt-in deserializer: rejects scalar→`String` coercion; only `VALUE_STRING` accepted; other scalars (number, boolean) fail with `MismatchedInputException`; not registered by `JacksonDefaults` |
 | `JsonMapperProfiles` | `class` (factory) | API | Factory: `of(JsonProfileId, ObjectMapper)` — validates non-null, does not mutate mapper |
 | `VertxJsonSupport` | `class` (helper) | API | Re-exports Vert.x `VertxModule` so callers can register it without importing the class name |
@@ -110,9 +110,15 @@ profile mapper via a `SimpleModule`. None are registered by `JacksonDefaults` or
 - **`BigDecimalAsStringSerializer` + `BigDecimalStrictStringDeserializer`** — a matched pair. The
   serializer writes `BigDecimal` as a quoted JSON string (`toPlainString()` — no scientific
   notation, trailing zeros preserved). The deserializer accepts only `VALUE_STRING`; JSON numbers
-  and any other token cause `MismatchedInputException`. Use together when clients cannot safely
-  represent large decimals as IEEE-754 floats. Note: activating this pair changes the wire shape
-  — clients must expect a string, not a number.
+  and any other token cause `MismatchedInputException`. Its string grammar is bounded: only plain
+  decimals matching `-?[0-9]+(\.[0-9]+)?` and at most 100 characters long are accepted, so exponent
+  forms (`"1e5"`, `"1e-2000000000"`), a leading `+`, `".5"`, and `"1."` are all rejected. The bound
+  is deliberate — Jackson's `StreamReadConstraints` number limits do not apply to string tokens, and
+  a short exponent literal would otherwise select an enormous scale that `toPlainString()` expands
+  into gigabytes on the way back out. It costs no round-trip fidelity, because the paired serializer
+  never emits exponent notation. Use the pair when clients cannot safely represent large decimals as
+  IEEE-754 floats. Note: activating this pair changes the wire shape — clients must expect a string,
+  not a number.
 - **`StrictStringDeserializer`** — rejects scalar-to-`String` coercion. Jackson's default silently
   coerces a JSON number `123` or `true` targeting a `String` field to `"123"` or `"true"`.
   `StrictStringDeserializer` disables that: only `VALUE_STRING` is accepted; any other scalar

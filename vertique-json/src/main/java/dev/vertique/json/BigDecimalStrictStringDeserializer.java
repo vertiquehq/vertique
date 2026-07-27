@@ -10,18 +10,18 @@ import com.fasterxml.jackson.databind.JsonDeserializer;
 import com.fasterxml.jackson.databind.exc.MismatchedInputException;
 import java.io.IOException;
 import java.math.BigDecimal;
+import java.util.regex.Pattern;
 
 /**
  * Opt-in, <em>strict</em> Jackson deserializer for {@link BigDecimal} that accepts only a JSON
- * <strong>string</strong> token as input.
+ * <strong>string</strong> token as input, and only within a deliberately narrow decimal grammar.
  *
  * <p>This is the strict counterpart to {@link BigDecimalAsStringSerializer}. Accepted input: a JSON
- * string whose content is a valid {@link BigDecimal} literal with <strong>no surrounding
- * whitespace</strong> (e.g. {@code "1.50"} → {@code new BigDecimal("1.50")}). The string is
- * passed directly to {@code new BigDecimal(String)} without trimming; any leading or trailing
- * whitespace causes a {@link com.fasterxml.jackson.databind.exc.MismatchedInputException}.
- * All other tokens are rejected with a clean {@link com.fasterxml.jackson.databind.exc.MismatchedInputException},
- * including:
+ * string whose content is a <strong>plain decimal literal</strong> matching
+ * {@code -?[0-9]+(\.[0-9]+)?} and no longer than {@value #MAX_LENGTH} characters, with
+ * <strong>no surrounding whitespace</strong> (e.g. {@code "1.50"} → {@code new BigDecimal("1.50")}).
+ * The string is never trimmed, normalized, or coerced; anything outside the grammar is rejected
+ * with a clean {@link com.fasterxml.jackson.databind.exc.MismatchedInputException}, including:
  * <ul>
  *   <li>JSON numbers ({@code 1.5}) — rejected, even though they are valid decimals.</li>
  *   <li>{@code true} / {@code false} — rejected.</li>
@@ -29,9 +29,27 @@ import java.math.BigDecimal;
  *   <li>JSON arrays ({@code []}) — rejected.</li>
  *   <li>Whitespace-padded strings ({@code " 1.5 "}) — rejected; the string must be an exact
  *       decimal literal with no surrounding whitespace.</li>
+ *   <li>Exponent notation ({@code "1e5"}, {@code "1E+2"}, {@code "1e-2000000000"}) — rejected;
+ *       see the amplification note below.</li>
+ *   <li>Literals outside the plain grammar ({@code "+1.5"}, {@code ".5"}, {@code "1."},
+ *       {@code "0x1F"}) — rejected.</li>
+ *   <li>Literals longer than {@value #MAX_LENGTH} characters — rejected.</li>
  *   <li>Malformed numeric strings ({@code "abc"}) — rejected with a clean mapping error,
  *       never a raw {@link NumberFormatException} or {@code NullPointerException}.</li>
  * </ul>
+ *
+ * <p><strong>Why exponent notation is rejected.</strong> {@code new BigDecimal(String)} accepts
+ * scientific notation, where a handful of wire characters can select an enormous scale:
+ * {@code "1e-2000000000"} is 13 characters but yields a value of scale 2·10<sup>9</sup>. Because
+ * {@link BigDecimalAsStringSerializer} re-serializes via {@link BigDecimal#toPlainString()}, echoing
+ * such a value back would materialize gigabytes of digits — a wire-facing amplification denial of
+ * service. Jackson's {@code StreamReadConstraints} number limits do <em>not</em> apply to string
+ * tokens, so the bound is enforced here. Restricting the grammar to plain decimals of at most
+ * {@value #MAX_LENGTH} characters caps both the precision and the scale of any parsed value.
+ *
+ * <p>The bound costs no round-trip fidelity for the matched pair: {@link BigDecimalAsStringSerializer}
+ * emits {@link BigDecimal#toPlainString()}, which never produces exponent notation, so every value
+ * this framework writes re-parses through this deserializer (subject to the length bound).
  *
  * <p>A JSON {@code null} is <strong>allowed</strong> and yields {@code null} (the standard
  * "absent value" semantics): Jackson routes a {@code null} token through the null-value provider, so
@@ -49,12 +67,28 @@ import java.math.BigDecimal;
  */
 public final class BigDecimalStrictStringDeserializer extends JsonDeserializer<BigDecimal> {
 
+    // --- Grammar bounds ---
+
+    /** Maximum accepted length, in characters, of the decimal literal carried by the JSON string. */
+    private static final int MAX_LENGTH = 100;
+
+    /**
+     * The only accepted literal shape: an optionally negative integer part with an optional
+     * fraction part. Exponent notation, a leading {@code +}, a bare {@code .5}, and a trailing
+     * {@code 1.} are all outside this grammar.
+     */
+    private static final Pattern PLAIN_DECIMAL = Pattern.compile("-?[0-9]+(\\.[0-9]+)?");
+
+    // --- Deserialization ---
+
     /**
      * Deserializes a {@link BigDecimal} from a JSON string token only.
      *
-     * <p>Accepts {@code VALUE_STRING} with a valid decimal literal that contains no surrounding
-     * whitespace. Rejects every other token — including JSON numbers, booleans, objects, and arrays
-     * — and malformed or whitespace-padded decimal strings, with a clean
+     * <p>Accepts {@code VALUE_STRING} whose content is a plain decimal literal matching
+     * {@code -?[0-9]+(\.[0-9]+)?} and no longer than {@value #MAX_LENGTH} characters, with no
+     * surrounding whitespace. Rejects every other token — including JSON numbers, booleans,
+     * objects, and arrays — as well as whitespace-padded, over-length, exponent-bearing, and
+     * otherwise malformed decimal strings, with a clean
      * {@link com.fasterxml.jackson.databind.exc.MismatchedInputException} in all cases.
      *
      * @param p    the {@link JsonParser} positioned at the value token
@@ -62,7 +96,8 @@ public final class BigDecimalStrictStringDeserializer extends JsonDeserializer<B
      * @return the parsed {@link BigDecimal}
      * @throws IOException                                                     if the underlying parser throws
      * @throws com.fasterxml.jackson.databind.exc.MismatchedInputException    if the token is not a JSON string,
-     *                                                                          or the string is not a valid decimal
+     *                                                                          or the string is not an accepted
+     *                                                                          plain decimal literal
      */
     @Override
     public BigDecimal deserialize(JsonParser p, DeserializationContext ctxt) throws IOException {
@@ -73,6 +108,20 @@ public final class BigDecimalStrictStringDeserializer extends JsonDeserializer<B
                     "Expected a JSON string containing a decimal literal; got " + p.currentToken());
         }
         String text = p.getText();
+        if (text.length() > MAX_LENGTH) {
+            throw MismatchedInputException.from(
+                    p,
+                    BigDecimal.class,
+                    "Decimal string exceeds the maximum length of " + MAX_LENGTH + " characters: " + text.length()
+                            + " characters");
+        }
+        if (!PLAIN_DECIMAL.matcher(text).matches()) {
+            throw MismatchedInputException.from(
+                    p,
+                    BigDecimal.class,
+                    "Decimal string does not match the accepted plain decimal grammar -?[0-9]+(\\.[0-9]+)? "
+                            + "(exponent notation is deliberately rejected): \"" + text + "\"");
+        }
         try {
             return new BigDecimal(text);
         } catch (NumberFormatException e) {
