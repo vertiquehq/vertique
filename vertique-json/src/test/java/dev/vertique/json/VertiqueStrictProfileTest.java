@@ -10,7 +10,6 @@ import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import com.fasterxml.jackson.annotation.JsonEnumDefaultValue;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -181,9 +180,9 @@ class VertiqueStrictProfileTest {
     void inheritedDefaults_unknownEnum_fallsBackToDefault() throws Exception {
         ObjectMapper mapper = strictMapper();
 
-        SmokeColor decoded = mapper.readValue("\"PURPLE\"", SmokeColor.class);
+        VertiqueProfileTest.SmokeColor decoded = mapper.readValue("\"PURPLE\"", VertiqueProfileTest.SmokeColor.class);
 
-        assertEquals(SmokeColor.UNKNOWN, decoded);
+        assertEquals(VertiqueProfileTest.SmokeColor.UNKNOWN, decoded);
     }
 
     @Test
@@ -251,18 +250,4 @@ class VertiqueStrictProfileTest {
      * @param label a plain, always-present string property
      */
     record MaybePrice(Optional<BigDecimal> amount, String label) {}
-
-    /**
-     * Test enum carrying a Jackson default value, used to prove unknown enum strings fall back to
-     * the {@link JsonEnumDefaultValue}-annotated constant under the {@code vertique-strict} defaults.
-     */
-    enum SmokeColor {
-        /** A known colour. */
-        RED,
-        /** A known colour. */
-        GREEN,
-        /** The fallback constant returned for any unrecognized enum string. */
-        @JsonEnumDefaultValue
-        UNKNOWN
-    }
 }
