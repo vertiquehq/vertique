@@ -69,8 +69,13 @@ public final class BigDecimalStrictStringDeserializer extends JsonDeserializer<B
 
     // --- Grammar bounds ---
 
-    /** Maximum accepted length, in characters, of the decimal literal carried by the JSON string. */
-    private static final int MAX_LENGTH = 100;
+    /**
+     * Maximum accepted length, in characters, of the decimal literal carried by the JSON string.
+     *
+     * <p>Package-private (not {@code private}) so {@link BigDecimalAsStringSerializer} enforces the
+     * identical write-side bound off the same constant — the pair cannot drift apart (json-004).
+     */
+    static final int MAX_LENGTH = 100;
 
     /**
      * The only accepted literal shape: an optionally negative integer part with an optional
@@ -91,6 +96,11 @@ public final class BigDecimalStrictStringDeserializer extends JsonDeserializer<B
      * otherwise malformed decimal strings, with a clean
      * {@link com.fasterxml.jackson.databind.exc.MismatchedInputException} in all cases.
      *
+     * <p><strong>Message hygiene.</strong> The rejection message never echoes the submitted string —
+     * only its length and the expected grammar are named — so a malicious or malformed request body
+     * cannot smuggle attacker-controlled text into a log line via this exception's message
+     * (log-injection hygiene, json-004).
+     *
      * @param p    the {@link JsonParser} positioned at the value token
      * @param ctxt the {@link DeserializationContext} for error reporting
      * @return the parsed {@link BigDecimal}
@@ -107,25 +117,51 @@ public final class BigDecimalStrictStringDeserializer extends JsonDeserializer<B
                     BigDecimal.class,
                     "Expected a JSON string containing a decimal literal; got " + p.currentToken());
         }
-        String text = p.getText();
+        try {
+            return parseBounded(p.getText());
+        } catch (IllegalArgumentException rejected) {
+            throw MismatchedInputException.from(p, BigDecimal.class, rejected.getMessage());
+        }
+    }
+
+    // --- Shared bounded parsing ---
+
+    /**
+     * Parses {@code text} as a {@link BigDecimal} under this deserializer's bounded plain-decimal
+     * grammar, independent of any Jackson parser/context.
+     *
+     * <p>Shared by {@link #deserialize(JsonParser, DeserializationContext)} (JSON string values) and
+     * the {@code vertique-strict} profile's {@code BigDecimal} map-key deserializer, so the length and
+     * grammar bound is enforced identically for both a decimal <em>value</em> and a decimal
+     * <em>map key</em> — a JSON object key cannot smuggle an exponent-notation literal past the
+     * value-side bound (json-004).
+     *
+     * <p><strong>Message hygiene.</strong> The thrown message never echoes {@code text} — only its
+     * length and the expected grammar are named (log-injection hygiene, json-004).
+     *
+     * @param text the candidate decimal literal, exactly as read from a JSON string value or a JSON
+     *             object's map key
+     * @return the parsed {@link BigDecimal}
+     * @throws IllegalArgumentException if {@code text} is longer than {@value #MAX_LENGTH} characters,
+     *         does not match the plain decimal grammar {@code -?[0-9]+(\.[0-9]+)?}, or is not
+     *         parseable as a {@link BigDecimal}
+     */
+    static BigDecimal parseBounded(String text) {
         if (text.length() > MAX_LENGTH) {
-            throw MismatchedInputException.from(
-                    p,
-                    BigDecimal.class,
-                    "Decimal string exceeds the maximum length of " + MAX_LENGTH + " characters: " + text.length()
-                            + " characters");
+            throw new IllegalArgumentException("Decimal string exceeds the maximum length of " + MAX_LENGTH
+                    + " characters: " + text.length() + " characters");
         }
         if (!PLAIN_DECIMAL.matcher(text).matches()) {
-            throw MismatchedInputException.from(
-                    p,
-                    BigDecimal.class,
+            throw new IllegalArgumentException(
                     "Decimal string does not match the accepted plain decimal grammar -?[0-9]+(\\.[0-9]+)? "
-                            + "(exponent notation is deliberately rejected): \"" + text + "\"");
+                            + "(exponent notation is deliberately rejected); rejected value length: " + text.length()
+                            + " characters");
         }
         try {
             return new BigDecimal(text);
         } catch (NumberFormatException e) {
-            throw MismatchedInputException.from(p, BigDecimal.class, "Not a valid decimal string: \"" + text + "\"");
+            throw new IllegalArgumentException(
+                    "Not a valid decimal string; rejected value length: " + text.length() + " characters", e);
         }
     }
 }
