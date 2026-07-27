@@ -46,6 +46,15 @@ SPDX-License-Identifier: EUPL-1.2
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-failsafe-plugin</artifactId>
+                <configuration>
+                    <!-- The integration tests prove that startup configuration resolves from this
+                         project's own config/ directory, so the loader must not be redirected by an
+                         ambient VERTX_CONFIG_LOCATIONS. A blank value is treated as unset, which
+                         restores the default config/ resolution deterministically. -->
+                    <environmentVariables>
+                        <VERTX_CONFIG_LOCATIONS></VERTX_CONFIG_LOCATIONS>
+                    </environmentVariables>
+                </configuration>
                 <executions>
                     <execution>
                         <goals>
