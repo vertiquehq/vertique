@@ -1,4 +1,4 @@
 {
-  "http": { "port": 8080 },
+  "http": { "port": 8080, "idleTimeoutSeconds": 60 },
   "management": { "port": 9090, "enabled": true }
 }

@@ -3,7 +3,7 @@
   "services": {
     "contracts": {
       "sample": {
-        "greeting": { "instances": 1 }
+        "greeting": { "instances": 2 }
       }
     }
   }

@@ -11,7 +11,10 @@ A PostgreSQL-backed Vertique REST application exposing item CRUD under `/items`.
 
 ## Run
 
-Runs the application locally.
+Runs the application locally. Startup configuration is read from the `config/` directory in the
+working directory — `config/application.json` here. Environment variables and system properties
+override the files, and `VERTX_CONFIG_LOCATIONS` points the loader at other directories instead
+(comma-separated).
 
 ```bash
 mvn -ntp exec:java
@@ -36,7 +39,10 @@ mvn -ntp package
 
 ## Build a container image
 
-Builds a local container image with Jib.
+Builds a local container image with Jib. The image contains no `config` directory — the
+development-only database credentials below are deliberately never baked into it: configure a
+containerized run through environment variables, or mount a directory and name it with
+`VERTX_CONFIG_LOCATIONS`.
 
 ```bash
 mvn -ntp jib:dockerBuild
@@ -44,7 +50,7 @@ mvn -ntp jib:dockerBuild
 
 ## Database
 
-`src/main/resources/config/application.json` points at a local PostgreSQL instance and applies the
+`config/application.json` points at a local PostgreSQL instance and applies the
 application-owned migrations in `src/main/resources/db/migration` at startup
 (`flyway.mode=MIGRATE`). Its connection defaults to `localhost:5432/vertique` with
 `vertique`/`vertique` — development-only placeholders, unsuitable for production.

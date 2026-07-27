@@ -58,7 +58,7 @@ class ServicesArchetypeContractTest {
     private static final Path TEMPLATE_APP_MODULE =
             ARCHETYPE_RESOURCES.resolve(Path.of("src", "main", "java", "AppModule.java"));
     private static final Path TEMPLATE_APPLICATION_CONFIG =
-            ARCHETYPE_RESOURCES.resolve(Path.of("src", "main", "resources", "config", "application.json"));
+            ARCHETYPE_RESOURCES.resolve(Path.of("config", "application.json"));
 
     // --- Template parsing ---
 
@@ -271,7 +271,7 @@ class ServicesArchetypeContractTest {
      */
     private static final String EXPECTED_WORKER_OPT_IN_GUIDANCE_SENTENCE = "Set `"
             + EXPECTED_WORKER_OPT_IN_PROPERTY
-            + "` in `src/main/resources/config/application.json` only if the implementation is changed to"
+            + "` in `config/application.json` only if the implementation is changed to"
             + " perform genuinely blocking work — a JDBC call, a filesystem read, or CPU-bound computation.";
 
     /**

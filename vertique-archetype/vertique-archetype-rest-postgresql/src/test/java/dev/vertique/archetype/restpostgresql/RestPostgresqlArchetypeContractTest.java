@@ -62,7 +62,7 @@ class RestPostgresqlArchetypeContractTest {
     private static final Path TEMPLATE_APP_MODULE =
             ARCHETYPE_RESOURCES.resolve(Path.of("src", "main", "java", "AppModule.java"));
     private static final Path TEMPLATE_APPLICATION_CONFIG =
-            ARCHETYPE_RESOURCES.resolve(Path.of("src", "main", "resources", "config", "application.json"));
+            ARCHETYPE_RESOURCES.resolve(Path.of("config", "application.json"));
     private static final Path TEMPLATE_MIGRATIONS =
             ARCHETYPE_RESOURCES.resolve(Path.of("src", "main", "resources", "db", "migration"));
     private static final Path TEMPLATE_APPLICATION_IT =
