@@ -172,4 +172,4 @@ Testcontainers artifact leaks in.
 
 ## Related ADRs
 
-Decision: ADR-0187 — Static Starter Aggregates and Separate Archetypes.
+Decision: ADR-0188 — Static Starter Aggregates and Separate Archetypes.
