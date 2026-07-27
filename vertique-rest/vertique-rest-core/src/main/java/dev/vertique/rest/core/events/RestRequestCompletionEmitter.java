@@ -15,6 +15,7 @@ import dev.vertique.rest.core.security.SecurityRuntime;
 import dev.vertique.security.SecurityContext;
 import dev.vertique.security.SecurityContextSnapshot;
 import dev.vertique.security.origin.RequestOrigin;
+import io.vertx.core.AsyncResult;
 import io.vertx.ext.web.RoutingContext;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
@@ -210,7 +211,7 @@ public final class RestRequestCompletionEmitter implements Middleware {
     @Override
     public void handle(RoutingContext ctx) {
         ctx.put(KEY_START_TIME, Instant.now());
-        ctx.addEndHandler(v -> emit(ctx));
+        ctx.addEndHandler(ar -> emit(ctx, ar));
         ctx.next();
     }
 
@@ -220,9 +221,16 @@ public final class RestRequestCompletionEmitter implements Middleware {
      * Emits the {@link RestRequestCompletedEvent} exactly once for the given routing context.
      * Protected against double-invocation by an idempotent flag stored on the context.
      *
-     * @param ctx the routing context for the completed request
+     * <p>Package-private (not {@code private}) so {@code RestRequestCompletionEmitterTest} can
+     * drive it directly with a synthetic {@link AsyncResult} for wire-failure scenarios that
+     * cannot be produced deterministically over a real socket (e.g. an HTTP/2-only
+     * {@code StreamResetException} on an HTTP/1.1 test server).
+     *
+     * @param ctx       the routing context for the completed request
+     * @param endResult the outcome delivered to the response end handler; not yet consumed by
+     *                  this stub — {@code wireFailureCode} is always {@code null} for now
      */
-    private void emit(RoutingContext ctx) {
+    void emit(RoutingContext ctx, AsyncResult<Void> endResult) {
         // --- Exactly-once guard ---
         if (Boolean.TRUE.equals(ctx.get(KEY_EMITTED))) {
             return;
@@ -273,6 +281,7 @@ public final class RestRequestCompletionEmitter implements Middleware {
                 status,
                 failureCode,
                 safeFailureMessage,
+                null,
                 secSnapshot,
                 corr,
                 origin,

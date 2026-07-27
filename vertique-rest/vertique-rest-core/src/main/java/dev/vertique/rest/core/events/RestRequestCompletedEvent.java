@@ -61,6 +61,12 @@ import java.util.Optional;
  * @param safeFailureMessage a curated, bounded human-readable message describing the failure, or
  *                           {@code null} when no curated message is available — NEVER a raw
  *                           exception message or stack trace
+ * @param wireFailureCode    a low-cardinality post-handoff wire-failure classification (the
+ *                           failure cause's class simple name, or {@code "ConnectionClosed"} per
+ *                           the frozen close-normalization predicate), or {@code null} on clean
+ *                           wire completion; orthogonal to {@code failureCode} — a 200-status
+ *                           event carrying a non-null {@code wireFailureCode} is the
+ *                           truncated-response signature
  * @param securityContextSnapshot an immutable {@link SecurityContextSnapshot} captured at emission
  *                           time, isolating the event from any later rebind of the live security
  *                           context; {@code null} when the security module is not active or no
@@ -85,6 +91,7 @@ public record RestRequestCompletedEvent(
         int statusCode,
         @Nullable String failureCode,
         @Nullable String safeFailureMessage,
+        @Nullable String wireFailureCode,
         @Nullable SecurityContextSnapshot securityContextSnapshot,
         @Nullable CorrelationContextSnapshot correlationContext,
         Optional<RequestOrigin> origin,

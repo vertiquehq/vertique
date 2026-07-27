@@ -1375,6 +1375,29 @@ ROOT `Middleware` in `dev.vertique.rest.core.events` that emits exactly one `Res
 
 `KEY_WIRE_FAILURE` marks a *post-handoff* wire failure — the status and headers (and possibly part of the body) already reached the client before the write failed, as with a truncated stream or a client abort. The marker is written at most once per request: **first writer wins**, so the first observed failure is the one preserved. Its absence means the write completed cleanly, or that the failure occurred on a path the pipeline cannot observe.
 
+### RestRequestCompletedEvent
+
+Immutable completion event for a terminal HTTP request outcome, emitted exactly once per handled
+request by `RestRequestCompletionEmitter`.
+
+| Field | Type | Description |
+|-------|------|--------------|
+| `startTime` / `endTime` | `Instant` | Request registration / completion observation instants |
+| `method` / `path` | `String` | HTTP method name and raw request path |
+| `routeTemplate` / `operationId` | `String` (nullable) | OpenAPI path template / operationId; `null` when the request did not reach operation dispatch |
+| `statusCode` | `int` | HTTP status code actually sent |
+| `failureCode` | `String` (nullable) | Low-cardinality pipeline-mapped failure classification (e.g. the exception's simple class name) |
+| `safeFailureMessage` | `String` (nullable) | Curated, bounded human-readable message — NEVER raw exception text or a stack trace |
+| `wireFailureCode` | `String` (nullable) | Low-cardinality **post-handoff** wire-failure classification (the failure cause's class simple name, or `ConnectionClosed` per the close-normalization predicate documented above); orthogonal to `failureCode` — **a 200-status event carrying a non-null `wireFailureCode` is the truncated-response signature** |
+| `securityContextSnapshot` / `correlationContext` | snapshot types (nullable) | Immutable point-in-time snapshots, isolated from later rebind/mutation of the live holder-bound context |
+| `origin` | `Optional<RequestOrigin>` | Network-envelope origin; never `null` as an `Optional` |
+| `safeAttributes` | `Map<String, Object>` | Additional attributes contributed by the emitter or enrichment hooks; normalized to an unmodifiable copy, never `null` |
+
+`wireFailureCode` is populated by `RestRequestCompletionEmitter.emit()` from two inputs — the
+`KEY_WIRE_FAILURE` marker (streaming failures, wins when present) and a failed end-handler
+`AsyncResult` (client aborts) — normalized per the close-normalization predicate documented above.
+`vertique-micrometer-rest`'s `error.type` tag falls back to it when `failureCode` is absent.
+
 ### RequestCompletionScope
 
 `Set<RequestCompletionScope>` multibinding (`@Multibinds` in `RestCoreModule`) for establishing one or more ambient scopes around the synchronous completion-listener dispatch loop inside `RestRequestCompletionEmitter`. Multiple integrations may contribute simultaneously.

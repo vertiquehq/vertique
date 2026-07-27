@@ -37,6 +37,8 @@ import io.vertx.core.http.HttpClient;
 import io.vertx.core.http.HttpClientResponse;
 import io.vertx.core.http.HttpMethod;
 import io.vertx.core.http.HttpServer;
+import io.vertx.core.http.StreamResetException;
+import io.vertx.core.impl.NoStackTraceThrowable;
 import io.vertx.ext.web.Router;
 import io.vertx.ext.web.RoutingContext;
 import io.vertx.junit5.VertxExtension;
@@ -1265,6 +1267,173 @@ class RestRequestCompletionEmitterTest {
                         });
                         ctx.completeNow();
                     }));
+        }
+    }
+
+    @Nested
+    @DisplayName("Wire-failure enrichment")
+    class WireFailureEnrichment {
+
+        @Test
+        @DisplayName("KEY_WIRE_FAILURE marker present on an otherwise-clean completion populates wireFailureCode")
+        void emitPopulatesWireFailureCodeFromMarker(VertxTestContext ctx) {
+            List<RestRequestCompletedEvent> captured = new ArrayList<>();
+            RestRequestCompletionEmitter em = emitter(Set.of(captured::add));
+            RouterWithBarrier rb = routerWithBarrier(vertx, em, rc -> {
+                rc.put(RestRequestCompletionEmitter.KEY_WIRE_FAILURE, new IllegalStateException("truncated stream"));
+                rc.response().setStatusCode(200).end();
+            });
+
+            startServer(rb.router())
+                    .compose(port -> client.request(HttpMethod.GET, port, "127.0.0.1", "/test")
+                            .compose(req -> req.send()))
+                    .compose(resp -> {
+                        ctx.verify(() -> assertEquals(200, resp.statusCode()));
+                        return awaitBarrier(vertx, rb.barrier());
+                    })
+                    .onComplete(ctx.succeeding(v -> {
+                        ctx.verify(() -> {
+                            assertEquals(1, captured.size(), "exactly one event must be emitted");
+                            assertEquals(
+                                    "IllegalStateException",
+                                    captured.get(0).wireFailureCode(),
+                                    "marker present -> wireFailureCode set to the cause's simple class name");
+                        });
+                        ctx.completeNow();
+                    }));
+        }
+
+        @Test
+        @DisplayName("No marker and a clean end -> wireFailureCode stays null")
+        void emitLeavesWireFailureCodeNullOnCleanCompletion(VertxTestContext ctx) {
+            List<RestRequestCompletedEvent> captured = new ArrayList<>();
+            RestRequestCompletionEmitter em = emitter(Set.of(captured::add));
+            RouterWithBarrier rb = routerWithBarrier(vertx, em, rc -> {});
+
+            startServer(rb.router())
+                    .compose(port -> client.request(HttpMethod.GET, port, "127.0.0.1", "/test")
+                            .compose(req -> req.send()))
+                    .compose(resp -> {
+                        ctx.verify(() -> assertEquals(200, resp.statusCode()));
+                        return awaitBarrier(vertx, rb.barrier());
+                    })
+                    .onComplete(ctx.succeeding(v -> {
+                        ctx.verify(() -> {
+                            assertEquals(1, captured.size(), "exactly one event must be emitted");
+                            assertNull(
+                                    captured.get(0).wireFailureCode(),
+                                    "clean completion -> wireFailureCode must stay null");
+                        });
+                        ctx.completeNow();
+                    }));
+        }
+
+        @Test
+        @DisplayName("Marker present AND a failed end-handler result -> the marker's cause wins")
+        void markerWinsOverEndHandlerFailure(VertxTestContext ctx) {
+            List<RestRequestCompletedEvent> captured = new ArrayList<>();
+            RestRequestCompletionEmitter em = emitter(Set.of(captured::add));
+            // The end-handler-failure channel cannot be produced deterministically from a genuine
+            // socket failure (see emitNormalizesConnectionClosedFromFailedEndHandler below), so this
+            // drives it directly via the package-private emit(ctx, AsyncResult) seam. That call runs
+            // synchronously here, well before the router wrapper ends the response (which in turn
+            // fires the real ctx.addEndHandler-registered emit(ctx, ar) — a no-op thanks to the
+            // KEY_EMITTED guard already set by this manual call).
+            RouterWithBarrier rb = routerWithBarrier(vertx, em, rc -> {
+                rc.put(RestRequestCompletionEmitter.KEY_WIRE_FAILURE, new IllegalStateException("marker-cause"));
+                em.emit(rc, Future.failedFuture(new RuntimeException("end-handler-cause")));
+            });
+
+            startServer(rb.router())
+                    .compose(port -> client.request(HttpMethod.GET, port, "127.0.0.1", "/test")
+                            .compose(req -> req.send()))
+                    .compose(resp -> {
+                        ctx.verify(() -> assertEquals(200, resp.statusCode()));
+                        return awaitBarrier(vertx, rb.barrier());
+                    })
+                    .onComplete(ctx.succeeding(v -> {
+                        ctx.verify(() -> {
+                            assertEquals(1, captured.size(), "exactly one event must be emitted");
+                            assertEquals(
+                                    "IllegalStateException",
+                                    captured.get(0).wireFailureCode(),
+                                    "the marker's cause must win over the end-handler failure");
+                        });
+                        ctx.completeNow();
+                    }));
+        }
+
+        /**
+         * Drives {@code RestRequestCompletionEmitter#emit(RoutingContext, AsyncResult)} directly with
+         * a failed end-handler result carrying each cause, since two of the three causes below cannot
+         * be produced deterministically over a real HTTP/1.1 socket: a {@link StreamResetException} is
+         * an HTTP/2-only phenomenon, and no genuine Vert.x failure carries an unrelated exception type
+         * with the exact {@code "Connection closed"} message. The three requests run sequentially on
+         * the shared client; each {@code emit(...)} call happens synchronously inside its terminal
+         * handler, strictly before that request's response is sent, so awaiting each response body is
+         * a sufficient happens-before guarantee without a lifecycle barrier.
+         */
+        @Test
+        @DisplayName("NoStackTraceThrowable+\"Connection closed\" normalizes to ConnectionClosed; "
+                + "StreamResetException and an unrelated same-message exception do not")
+        void emitNormalizesConnectionClosedFromFailedEndHandler(VertxTestContext ctx) {
+            List<RestRequestCompletedEvent> captured = new ArrayList<>();
+            RestRequestCompletionEmitter em = emitter(Set.of(captured::add));
+
+            Router router = Router.router(vertx);
+            router.route().order(RequestContextLifecycle.ORDER).handler(new RequestContextLifecycle());
+            router.route().order(em.priority()).handler(em);
+            router.route("/close").handler(rc -> {
+                em.emit(rc, Future.failedFuture(new NoStackTraceThrowable("Connection closed")));
+                rc.response().setStatusCode(200).end();
+            });
+            router.route("/reset").handler(rc -> {
+                em.emit(rc, Future.failedFuture(new StreamResetException(0L)));
+                rc.response().setStatusCode(200).end();
+            });
+            router.route("/unrelated").handler(rc -> {
+                em.emit(rc, Future.failedFuture(new RuntimeException("Connection closed")));
+                rc.response().setStatusCode(200).end();
+            });
+
+            startServer(router)
+                    .compose(port -> sendGetAndDrain(port, "/close")
+                            .compose(v -> sendGetAndDrain(port, "/reset"))
+                            .compose(v -> sendGetAndDrain(port, "/unrelated")))
+                    .onComplete(ctx.succeeding(v -> {
+                        ctx.verify(() -> {
+                            assertEquals(3, captured.size(), "exactly one event per request");
+                            assertEquals(
+                                    "ConnectionClosed",
+                                    captured.get(0).wireFailureCode(),
+                                    "NoStackTraceThrowable+\"Connection closed\" must normalize");
+                            assertEquals(
+                                    "StreamResetException",
+                                    captured.get(1).wireFailureCode(),
+                                    "StreamResetException must keep its own simple class name");
+                            assertEquals(
+                                    "RuntimeException",
+                                    captured.get(2).wireFailureCode(),
+                                    "an unrelated exception with the same message must not normalize "
+                                            + "(class+message predicate)");
+                        });
+                        ctx.completeNow();
+                    }));
+        }
+
+        /**
+         * Sends a GET request to {@code path} on the shared client and drains the response body,
+         * returning a future that resolves once the response has been fully received.
+         *
+         * @param port the server port
+         * @param path the request path
+         * @return a future resolving once the response body has been drained
+         */
+        private Future<Void> sendGetAndDrain(int port, String path) {
+            return client.request(HttpMethod.GET, port, "127.0.0.1", path)
+                    .compose(req -> req.send())
+                    .compose(HttpClientResponse::body)
+                    .mapEmpty();
         }
     }
 

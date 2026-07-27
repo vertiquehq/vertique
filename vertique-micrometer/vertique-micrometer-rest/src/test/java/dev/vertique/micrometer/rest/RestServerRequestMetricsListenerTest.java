@@ -26,10 +26,8 @@ import org.junit.jupiter.api.Test;
  *
  * <p>Verifies timer recording with correct tags for success and failure paths, tag defaults when
  * route/operationId are absent, outcome bucketing, negative-duration clamping, registry deduplication,
- * throwing-registry isolation, and the {@code metricsEnabled} gate.
- *
- * <p>All tests are RED: the skeleton {@code onCompleted} is a no-op. Tests will go green when the
- * real implementation is added in a later slice.
+ * throwing-registry isolation, the {@code metricsEnabled} gate, and the {@code error.type} fallback
+ * from {@code failureCode} to {@code wireFailureCode} when no curated failure was recorded.
  */
 class RestServerRequestMetricsListenerTest {
 
@@ -83,6 +81,35 @@ class RestServerRequestMetricsListenerTest {
                 null,
                 null,
                 null,
+                null,
+                Optional.empty(),
+                Map.of());
+    }
+
+    /**
+     * Builds a minimal {@link RestRequestCompletedEvent} carrying a {@code wireFailureCode} and no
+     * curated {@code failureCode}, for asserting the {@code error.type} fallback.
+     *
+     * @param statusCode      HTTP response status code
+     * @param failureCode     failure classification string, or {@code null}
+     * @param wireFailureCode wire-failure classification string, or {@code null}
+     * @return a fully constructed event
+     */
+    private static RestRequestCompletedEvent eventWithWireFailureCode(
+            int statusCode, String failureCode, String wireFailureCode) {
+        return new RestRequestCompletedEvent(
+                BASE,
+                BASE.plusMillis(10),
+                "GET",
+                "/path",
+                "/orders/{id}",
+                "getOrder",
+                statusCode,
+                failureCode,
+                null,
+                wireFailureCode,
+                null,
+                null,
                 Optional.empty(),
                 Map.of());
     }
@@ -104,6 +131,7 @@ class RestServerRequestMetricsListenerTest {
                 "/orders/{id}",
                 "getOrder",
                 statusCode,
+                null,
                 null,
                 null,
                 null,
@@ -446,6 +474,33 @@ class RestServerRequestMetricsListenerTest {
                     .tag(RestServerRequestMetricsListener.TAG_STATUS, "200")
                     .timer();
             assertEquals(1, timer.count(), "Optional.empty() must default to enabled and record the timer");
+        }
+    }
+
+    // =========================================================================
+    // Test 11 — error.type falls back to wireFailureCode when failureCode is absent (D1=A)
+    // =========================================================================
+
+    @Nested
+    @DisplayName("Test 11: error.type falls back to wireFailureCode when failureCode is absent")
+    class ErrorTypeFallsBackToWireFailureCode {
+
+        @Test
+        @DisplayName("200 with null failureCode and non-null wireFailureCode → error.type = wireFailureCode")
+        void errorTypeFallsBackToWireFailureCode() {
+            RestServerRequestMetricsListener listener =
+                    new RestServerRequestMetricsListener(registry, Optional.empty());
+
+            // A truncated-response signature: 200 status, no curated failureCode, but a post-handoff
+            // wire failure was recorded.
+            RestRequestCompletedEvent event = eventWithWireFailureCode(200, null, "ConnectionClosed");
+            listener.onCompleted(event);
+
+            Timer timer = registry.find(RestServerRequestMetricsListener.METER_NAME)
+                    .tag(RestServerRequestMetricsListener.TAG_STATUS, "200")
+                    .tag(RestServerRequestMetricsListener.TAG_ERROR_TYPE, "ConnectionClosed")
+                    .timer();
+            assertEquals(1, timer.count(), "error.type must fall back to wireFailureCode when failureCode is null");
         }
     }
 }
