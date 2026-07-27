@@ -6,6 +6,8 @@ package dev.vertique.examples.hello;
 import static io.restassured.RestAssured.given;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.equalTo;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 
 import com.atlassian.oai.validator.OpenApiInteractionValidator;
 import com.atlassian.oai.validator.report.LevelResolver;
@@ -105,11 +107,10 @@ class JsonProfilesDemoIT {
                 .jsonPath()
                 .getMap("");
 
-        org.junit.jupiter.api.Assertions.assertEquals("Ada", body.get("name"), "name must still be present");
-        org.junit.jupiter.api.Assertions.assertFalse(
-                body.containsKey("nickname"), "nickname must be omitted when empty");
-        org.junit.jupiter.api.Assertions.assertFalse(body.containsKey("tags"), "tags must be omitted when empty");
-        org.junit.jupiter.api.Assertions.assertFalse(body.containsKey("rank"), "rank must be omitted when empty");
+        assertEquals("Ada", body.get("name"), "name must still be present");
+        assertFalse(body.containsKey("nickname"), "nickname must be omitted when empty");
+        assertFalse(body.containsKey("tags"), "tags must be omitted when empty");
+        assertFalse(body.containsKey("rank"), "rank must be omitted when empty");
     }
 
     // --- vertique profile: POST /json-demo/optional ---
@@ -196,8 +197,7 @@ class JsonProfilesDemoIT {
                 .jsonPath()
                 .getMap("");
 
-        org.junit.jupiter.api.Assertions.assertFalse(
-                body.containsKey("discount"), "discount must be omitted when empty");
+        assertFalse(body.containsKey("discount"), "discount must be omitted when empty");
     }
 
     // --- vertique-strict profile: POST /json-demo/price ---

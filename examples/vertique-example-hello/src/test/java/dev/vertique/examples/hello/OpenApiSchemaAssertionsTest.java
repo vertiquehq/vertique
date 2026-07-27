@@ -131,11 +131,7 @@ class OpenApiSchemaAssertionsTest {
         JsonNode priceQuote = schema("PriceQuote");
         JsonNode amount = property(priceQuote, "amount");
 
-        assertEquals("string", amount.path("type").asText(), "amount must resolve to a string schema");
-        assertEquals("decimal", amount.path("format").asText(), "amount must carry the decimal format");
-        assertEquals(
-                "-?[0-9]+(\\.[0-9]+)?", amount.path("pattern").asText(), "amount must carry the plain decimal pattern");
-        assertEquals(100, amount.path("maxLength").asInt(), "amount must carry the 100-character max length");
+        assertDecimalStringSchema(amount, "amount");
     }
 
     // --- e. PriceQuote.discount: Optional<BigDecimal> unwrap + decimal string form ---
@@ -146,13 +142,7 @@ class OpenApiSchemaAssertionsTest {
         JsonNode priceQuote = schema("PriceQuote");
         JsonNode discount = property(priceQuote, "discount");
 
-        assertEquals("string", discount.path("type").asText(), "discount must resolve to a string schema");
-        assertEquals("decimal", discount.path("format").asText(), "discount must carry the decimal format");
-        assertEquals(
-                "-?[0-9]+(\\.[0-9]+)?",
-                discount.path("pattern").asText(),
-                "discount must carry the plain decimal pattern");
-        assertEquals(100, discount.path("maxLength").asInt(), "discount must carry the 100-character max length");
+        assertDecimalStringSchema(discount, "discount");
         assertFalse(isRequired(priceQuote, "discount"), "discount must not appear in PriceQuote's required array");
     }
 
@@ -204,6 +194,24 @@ class OpenApiSchemaAssertionsTest {
         JsonNode node = schemaNode.path("properties").path(propertyName);
         assertTrue(node.isObject(), "property '" + propertyName + "' must be present on schema: " + schemaNode);
         return node;
+    }
+
+    /**
+     * Asserts that {@code propertyNode} is the {@code vertique-strict} decimal-string schema
+     * emitted by {@code BigDecimalModelConverter}: a {@code string} type, {@code decimal} format,
+     * the plain decimal pattern, and the 100-character max length.
+     *
+     * @param propertyNode the property schema node to assert against
+     * @param label        a human-readable property name used in assertion failure messages
+     */
+    private static void assertDecimalStringSchema(JsonNode propertyNode, String label) {
+        assertEquals("string", propertyNode.path("type").asText(), label + " must resolve to a string schema");
+        assertEquals("decimal", propertyNode.path("format").asText(), label + " must carry the decimal format");
+        assertEquals(
+                "-?[0-9]+(\\.[0-9]+)?",
+                propertyNode.path("pattern").asText(),
+                label + " must carry the plain decimal pattern");
+        assertEquals(100, propertyNode.path("maxLength").asInt(), label + " must carry the 100-character max length");
     }
 
     /**
