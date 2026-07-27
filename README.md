@@ -76,6 +76,26 @@ The `vertique-starter` POM aggregator and `vertique-starter-integration-tests` m
 non-consumable reactor infrastructure: neither is published through the BOM, and neither carries a
 canonical module reference or a [module index](docs/modules.md) row.
 
+## Application Archetypes
+
+Each application archetype generates a functional starting application on one or more starter
+modules via `mvn archetype:generate`; the generated project documents its own `exec:java`,
+`verify`, `package`, and `jib:dockerBuild` commands.
+
+- **[`vertique-archetype-rest`](vertique-archetype/vertique-archetype-rest/README.md)** — a REST API
+  application on `vertique-starter-rest`.
+- **[`vertique-archetype-services`](vertique-archetype/vertique-archetype-services/README.md)** — a
+  headless event-bus services application on `vertique-starter-services`.
+- **[`vertique-archetype-rest-postgresql`](vertique-archetype/vertique-archetype-rest-postgresql/README.md)** —
+  a PostgreSQL-backed REST application on `vertique-starter-rest` and `vertique-starter-postgresql`.
+  Generation needs no Docker; running the generated project's `mvn verify` requires a reachable
+  Docker daemon, because its integration test starts a real PostgreSQL container.
+
+Each child README documents the exact `archetype:generate` invocation for its coordinate. The
+`vertique-archetype` POM aggregator is internal, non-consumable reactor infrastructure: like the
+starter family's own aggregator, it is not published through the BOM and carries no canonical
+module reference or [module index](docs/modules.md) row.
+
 ## Documentation
 
 - [Module index](docs/modules.md)

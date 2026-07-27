@@ -28,8 +28,8 @@ import org.junit.jupiter.api.Test;
  * Source-template contract proof for the REST archetype.
  *
  * <p>Verifies that the archetype coordinate, the generated project's dependency contract, the
- * generated Dagger component's module set, and the generated deployment identifiers/phases match
- * the frozen REST contracts. The templates are Velocity sources rather than compilable Java, so
+ * archetype module's own staging set, the generated Dagger component's module set, and the
+ * generated deployment identifiers/phases match the frozen REST contracts. The templates are Velocity sources rather than compilable Java, so
  * every assertion is made against the template text.
  *
  * <p>Each parse is <em>exhaustive</em> rather than filtering: the full parsed dependency list,
@@ -81,6 +81,7 @@ class RestArchetypeContractTest {
     private static final Pattern DEPENDENCY = Pattern.compile("<dependency>(.*?)</dependency>", Pattern.DOTALL);
     private static final Pattern GROUP_ID = Pattern.compile("<groupId>([^<]+)</groupId>");
     private static final Pattern ARTIFACT_ID = Pattern.compile("<artifactId>([^<]+)</artifactId>");
+    private static final Pattern TYPE = Pattern.compile("<type>([^<]+)</type>");
     private static final Pattern SCOPE = Pattern.compile("<scope>([^<]+)</scope>");
 
     /** Matches the {@code modules = { … }} member of the generated component's {@code @Component}. */
@@ -139,16 +140,32 @@ class RestArchetypeContractTest {
 
     /**
      * The complete dependency contract of the generated project, in declaration order. Group,
-     * artifact, and scope are each load-bearing, and the list is exhaustive: any added, removed,
-     * re-grouped, or re-scoped declaration is a consumer-visible change to what the archetype
-     * generates.
+     * artifact, type, and scope are each load-bearing, and the list is exhaustive: any added,
+     * removed, re-grouped, re-typed, or re-scoped declaration is a consumer-visible change to what
+     * the archetype generates.
      */
     private static final List<Dependency> EXPECTED_TEMPLATE_DEPENDENCIES = List.of(
-            new Dependency("dev.vertique", "vertique-starter-rest", null),
-            new Dependency("dev.vertique", "vertique-launcher", null),
-            new Dependency("dev.vertique", "vertique-application-test", "test"),
-            new Dependency("org.junit.jupiter", "junit-jupiter", "test"),
-            new Dependency("io.rest-assured", "rest-assured", "test"));
+            new Dependency("dev.vertique", "vertique-starter-rest", null, null),
+            new Dependency("dev.vertique", "vertique-launcher", null, null),
+            new Dependency("dev.vertique", "vertique-application-test", null, "test"),
+            new Dependency("org.junit.jupiter", "junit-jupiter", null, "test"),
+            new Dependency("io.rest-assured", "rest-assured", null, "test"));
+
+    /**
+     * The complete dependency contract of the archetype module itself, in declaration order: one
+     * Surefire harness edge plus the frozen §4.5 staging set that populates the isolated
+     * integration-test repository. The list is exhaustive so a staging edge cannot be added or
+     * dropped silently — a missing edge would let the nested build fall back to a coordinate this
+     * reactor did not produce.
+     */
+    private static final List<Dependency> EXPECTED_ARCHETYPE_DEPENDENCIES = List.of(
+            new Dependency("org.junit.jupiter", "junit-jupiter", null, "test"),
+            new Dependency("dev.vertique", "vertique-app-parent", "pom", "test"),
+            new Dependency("dev.vertique", "vertique-bom", "pom", "test"),
+            new Dependency("dev.vertique", "vertique-codegen-all", null, "test"),
+            new Dependency("dev.vertique", "vertique-starter-rest", null, "test"),
+            new Dependency("dev.vertique", "vertique-launcher", null, "test"),
+            new Dependency("dev.vertique", "vertique-application-test", null, "test"));
 
     /** The exact module set the generated Dagger component names, sorted. */
     private static final List<String> EXPECTED_COMPONENT_MODULES =
@@ -203,8 +220,10 @@ class RestArchetypeContractTest {
         String templatePom = read(TEMPLATE_POM);
         String component = read(TEMPLATE_COMPONENT);
 
-        // When the coordinate, generated dependency contract, and component modules are parsed.
+        // When the coordinate, generated dependency contract, staging set, and component modules are
+        // parsed.
         List<Dependency> dependencies = dependenciesOf(templatePom);
+        List<Dependency> stagingDependencies = dependenciesOf(archetypePom);
         List<String> componentModules = componentModulesOf(component);
 
         // Then the archetype publishes the REST coordinate.
@@ -217,9 +236,14 @@ class RestArchetypeContractTest {
                 templatePom.contains("<artifactId>vertique-app-parent</artifactId>"),
                 "generated project must inherit vertique-app-parent");
 
-        // And its declared dependency contract is exactly the frozen list — group, artifact, scope,
-        // and count all pinned, so nothing can be added, dropped, re-grouped, or re-scoped silently.
+        // And its declared dependency contract is exactly the frozen list — group, artifact, type,
+        // scope, and count all pinned, so nothing can be added, dropped, re-grouped, re-typed, or
+        // re-scoped silently.
         assertEquals(EXPECTED_TEMPLATE_DEPENDENCIES, dependencies);
+
+        // And the archetype module declares exactly the frozen staging set, so the generated
+        // project's nested build resolves every internal coordinate from the isolated repository.
+        assertEquals(EXPECTED_ARCHETYPE_DEPENDENCIES, stagingDependencies);
 
         // And the component names exactly the three frozen modules.
         assertEquals(EXPECTED_COMPONENT_MODULES, componentModules);
@@ -396,13 +420,14 @@ class RestArchetypeContractTest {
      */
     private static List<Dependency> dependenciesOf(String pom) {
         Matcher block = PROJECT_DEPENDENCIES.matcher(stripXmlComments(pom));
-        assertTrue(block.find(), "template POM must declare a project-level <dependencies> block");
+        assertTrue(block.find(), "POM must declare a project-level <dependencies> block");
         return DEPENDENCY
                 .matcher(block.group(1))
                 .results()
                 .map(match -> new Dependency(
                         firstGroup(GROUP_ID, match.group(1)),
                         firstGroup(ARTIFACT_ID, match.group(1)),
+                        firstGroup(TYPE, match.group(1)),
                         firstGroup(SCOPE, match.group(1))))
                 .toList();
     }
@@ -662,9 +687,10 @@ class RestArchetypeContractTest {
      *
      * @param groupId the declared group identifier
      * @param artifactId the declared artifact identifier
+     * @param type the declared type, or {@code null} when the implicit {@code jar} type applies
      * @param scope the declared scope, or {@code null} when the implicit compile scope applies
      */
-    private record Dependency(String groupId, String artifactId, String scope) {}
+    private record Dependency(String groupId, String artifactId, String type, String scope) {}
 
     /**
      * One method discovered by its {@code VerticleDeployment} return type.

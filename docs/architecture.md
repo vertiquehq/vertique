@@ -83,6 +83,25 @@ reaches no `Vertx` binding on its own.
 The `vertique-starter` POM aggregator and the `vertique-starter-integration-tests` module are
 internal, non-consumable reactor infrastructure: neither is part of the BOM or the module index.
 
+## Application archetypes
+
+The `vertique-archetype` family publishes three independently runnable Maven archetypes, each
+generating a functional starting application by composing exactly the starter modules its persona
+needs. Generation replaces hand-assembling framework modules with one `archetype:generate`
+invocation per persona; every generated command is documented in the generated project's own
+README.
+
+| Archetype | Persona | Starters composed |
+|---|---|---|
+| `vertique-archetype-rest` | REST API application | `vertique-starter-rest` |
+| `vertique-archetype-services` | Headless event-bus services application | `vertique-starter-services` |
+| `vertique-archetype-rest-postgresql` | PostgreSQL-backed REST application | `vertique-starter-rest`, `vertique-starter-postgresql` |
+
+Each archetype's own README documents its exact `archetype:generate` command; the generated
+PostgreSQL REST project additionally requires a reachable Docker daemon to run its integration
+test. The `vertique-archetype` POM aggregator is internal, non-consumable reactor infrastructure,
+the same as the starter family's own aggregator: it is not part of the BOM or the module index.
+
 ## Module documentation
 
 The [module index](modules.md) links to the canonical reference document packaged

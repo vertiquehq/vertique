@@ -1,0 +1,12 @@
+{
+  "http": { "port": 8080 },
+  "management": { "port": 9090, "enabled": true },
+  "db": {
+    "host": "localhost",
+    "port": 5432,
+    "database": "vertique",
+    "user": "vertique",
+    "password": "vertique"
+  },
+  "flyway": { "mode": "MIGRATE" }
+}

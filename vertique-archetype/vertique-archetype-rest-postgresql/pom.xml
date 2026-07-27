@@ -1,0 +1,231 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
+SPDX-License-Identifier: EUPL-1.2
+-->
+
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
+
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>dev.vertique</groupId>
+        <artifactId>vertique-parent</artifactId>
+        <version>${revision}</version>
+        <relativePath>../../pom.xml</relativePath>
+    </parent>
+
+    <artifactId>vertique-archetype-rest-postgresql</artifactId>
+    <packaging>maven-archetype</packaging>
+    <name>Vertique REST PostgreSQL Application Archetype</name>
+    <description>Maven archetype generating a Vertique PostgreSQL-backed REST application on the REST application starter and the PostgreSQL persistence starter</description>
+
+    <properties>
+        <maven.invoker.plugin.version>3.10.1</maven.invoker.plugin.version>
+        <!-- Isolated Maven repository the generated project's nested build resolves from. It never
+             reads the developer's ~/.m2, so a stale internal SNAPSHOT cannot mask a template change. -->
+        <archetype.staged.repository>${project.build.directory}/archetype-local-repository</archetype.staged.repository>
+    </properties>
+
+    <dependencies>
+        <!--
+            Harness dependency: compiles and runs RestPostgresqlArchetypeContractTest under Surefire.
+            It is not a staging edge for the generated project (the generated project declares its own
+            JUnit Jupiter test dependency explicitly).
+        -->
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <!--
+            Staging edges: maven-invoker-plugin:install resolves this module's test scope and
+            installs the result into ${archetype.staged.repository}, so every internal coordinate
+            the generated project resolves must be reachable from here. They do not change the
+            generated application's explicit dependency contract. vertique-db-test is staged in
+            addition to the REST child's set because the generated integration test drives a real
+            Testcontainers PostgreSQL instance.
+        -->
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-app-parent</artifactId>
+            <version>${revision}</version>
+            <type>pom</type>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-bom</artifactId>
+            <version>${revision}</version>
+            <type>pom</type>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-codegen-all</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-starter-rest</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-starter-postgresql</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-launcher</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-application-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-db-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <extensions>
+            <extension>
+                <groupId>org.apache.maven.archetype</groupId>
+                <artifactId>archetype-packaging</artifactId>
+                <version>3.2.1</version>
+            </extension>
+        </extensions>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-enforcer-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>require-invoker-maven-version</id>
+                        <phase>validate</phase>
+                        <goals>
+                            <goal>enforce</goal>
+                        </goals>
+                        <configuration>
+                            <rules>
+                                <requireMavenVersion>
+                                    <version>[3.9.9]</version>
+                                    <message>Archetype Maven Invoker staging requires Maven 3.9.9 exactly.</message>
+                                </requireMavenVersion>
+                            </rules>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>compile-archetype-tests</id>
+                        <phase>test-compile</phase>
+                        <goals>
+                            <goal>testCompile</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <includes>
+                        <include>**/dev/vertique/archetype/restpostgresql/*Test.java</include>
+                    </includes>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>run-archetype-tests</id>
+                        <phase>test</phase>
+                        <goals>
+                            <goal>test</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-invoker-plugin</artifactId>
+                <version>${maven.invoker.plugin.version}</version>
+                <executions>
+                    <execution>
+                        <id>stage-generated-project-artifacts</id>
+                        <phase>pre-integration-test</phase>
+                        <goals>
+                            <goal>install</goal>
+                        </goals>
+                        <configuration>
+                            <localRepositoryPath>${archetype.staged.repository}</localRepositoryPath>
+                            <scope>test</scope>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-archetype-plugin</artifactId>
+                <version>3.4.1</version>
+                <configuration>
+                    <!-- archetype:integration-test generates and builds src/test/resources/projects/**
+                         against the staged repository, never ${settings.localRepository}. -->
+                    <localRepositoryPath>${archetype.staged.repository}</localRepositoryPath>
+                    <settingsFile>${project.basedir}/src/test/resources/settings.xml</settingsFile>
+                    <streamLogs>true</streamLogs>
+                </configuration>
+            </plugin>
+            <plugin>
+                <!--
+                    Inherits version and base configuration (argLine, forkedProcessTimeoutInSeconds)
+                    from vertique-parent pluginManagement, which also declares the default
+                    integration-test-phase and verify-phase executions. No *IT.java class is
+                    compiled directly for this module, but archetype:integration-test's nested
+                    builds leave the generated projects' own compiled test classes underneath this
+                    module's target/test-classes (e.g. projects/verify/project/rest-postgresql-app/
+                    target/test-classes/**). The default **/*IT.java include would otherwise recurse
+                    into that nested classpath and fail to classload it, so target/**/projects/** is
+                    excluded at the plugin level for every execution below.
+
+                    This one explicit execution is added alongside the inherited ones: it runs
+                    RestPostgresqlArchetypeReproducibilityCheck at post-integration-test, strictly
+                    after archetype:integration-test (bound to integration-test) has generated the
+                    reproducibility-a/reproducibility-b cases, so the comparator always sees both
+                    trees. failsafe:verify (inherited, bound to verify) fails the build on a
+                    recorded comparator failure.
+                -->
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-failsafe-plugin</artifactId>
+                <configuration>
+                    <excludes>
+                        <exclude>**/projects/**</exclude>
+                    </excludes>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>rest-postgresql-archetype-reproducibility-check</id>
+                        <phase>post-integration-test</phase>
+                        <goals>
+                            <goal>integration-test</goal>
+                        </goals>
+                        <configuration>
+                            <includes>
+                                <include>**/RestPostgresqlArchetypeReproducibilityCheck.java</include>
+                            </includes>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+</project>
