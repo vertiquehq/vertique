@@ -10,6 +10,7 @@ import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -205,6 +206,41 @@ class VertiqueStrictProfileTest {
                 MismatchedInputException.class,
                 () -> mapper.readValue("{\"amount\":\"1e5\"}", Price.class),
                 "exponent notation must be rejected by the strict decimal grammar under vertique-strict");
+    }
+
+    @Test
+    @DisplayName("BigDecimal map key with exponent notation is rejected (bounded, value-free error)")
+    void bigDecimalMapKey_exponentNotation_rejected() {
+        // Given: the vertique-strict mapper and a JSON object whose only key is an exponent-notation
+        // literal — the same amplification shape the value-side grammar bound rejects.
+        ObjectMapper mapper = strictMapper();
+
+        // When/Then: binding the object to Map<BigDecimal, String> is rejected, and the rejection
+        // message never echoes the offending key text.
+        JsonProcessingException ex = assertThrows(
+                JsonProcessingException.class,
+                () -> mapper.readValue("{\"1e-2000000000\":\"x\"}", new TypeReference<Map<BigDecimal, String>>() {}),
+                "an exponent-notation BigDecimal map key must be rejected under vertique-strict");
+        assertFalse(
+                ex.getMessage().contains("1e-2000000000"),
+                "the rejection message must never echo the offending map key: " + ex.getMessage());
+    }
+
+    @Test
+    @DisplayName("BigDecimal map key \"1.50\" binds with its scale preserved")
+    void bigDecimalMapKey_plainDecimal_accepted() throws Exception {
+        // Given: the vertique-strict mapper and a JSON object with a plain-decimal key.
+        ObjectMapper mapper = strictMapper();
+
+        // When: the object is bound to Map<BigDecimal, String>.
+        Map<BigDecimal, String> decoded =
+                mapper.readValue("{\"1.50\":\"x\"}", new TypeReference<Map<BigDecimal, String>>() {});
+
+        // Then: the key parses to 1.50 with its wire scale preserved.
+        assertEquals(1, decoded.size());
+        BigDecimal key = decoded.keySet().iterator().next();
+        assertEquals(0, key.compareTo(new BigDecimal("1.50")), "the map key must parse to 1.50");
+        assertEquals(2, key.scale(), "the wire scale of the map key must be preserved exactly");
     }
 
     @Test
