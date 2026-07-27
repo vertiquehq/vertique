@@ -347,12 +347,13 @@ class ResponsePipelineCharacterizationTest {
         }
 
         @Test
-        @DisplayName("afterResponse on the normal path fires AFTER the wire write, exactly once")
+        @DisplayName("afterResponse on the normal path fires AFTER the wire handoff, exactly once")
         void afterResponseFiresAfterSuccessfulWire() {
-            // Corrected single-fire contract: on the success path afterResponse fires AFTER a
-            // successful applyToWire (serializer.serialize). Re-pinned deliberately to the new
-            // order — the observer must see the serialize call already done by the time it runs,
-            // and it must fire exactly once.
+            // Corrected single-fire contract: on the success path afterResponse fires AFTER
+            // applyToWire has handed the response off to the serializer. Re-pinned deliberately to
+            // the new order — the observer must see the serialize call already done by the time it
+            // runs, and it must fire exactly once. The write itself may still be in flight; wire
+            // completion is a separate channel (see the pending-completion pin below).
             List<String> events = new ArrayList<>();
             doAnswer(inv -> {
                         events.add("serialize");
@@ -373,7 +374,7 @@ class ResponsePipelineCharacterizationTest {
             assertEquals(
                     List.of("serialize", "after"),
                     events,
-                    "afterResponse must fire exactly once, AFTER the successful wire write");
+                    "afterResponse must fire exactly once, AFTER the wire handoff");
         }
 
         @Test

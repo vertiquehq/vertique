@@ -501,14 +501,14 @@ Framework encoders (all priority `1000`, so an application encoder at the defaul
 
 ### ResponsePipeline
 
-Package-private internal orchestrator for the unified response pipeline. All responses (success and error) flow through the same path: `produce()` → `transformResponse` chain → `afterResponse` observers → serialize → wire.
+Package-private internal orchestrator for the unified response pipeline. All responses (success and error) flow through the same path: `produce()` → `transformResponse` chain → wire handoff (`applyToWire`) → `afterResponse` observers → wire-completion observation.
 
 ```java
 class ResponsePipeline {
     Response produce(RoutingContext ctx, Object result) { ... }
     void sendResponse(RoutingContext ctx, Response response) { ... }
     void handle(RoutingContext ctx, Object result) { ... }  // convenience: produce + sendResponse
-    static void sendFallback500(RoutingContext ctx, Throwable cause) { ... }
+    void sendFallback500(RoutingContext ctx, Throwable cause) { ... }
 }
 ```
 
@@ -520,8 +520,23 @@ class ResponsePipeline {
 
 **`sendResponse()` pipeline (unified for success + error):**
 1. **Transform** — chain `RequestInterceptor.transformResponse()` hooks (async, priority-ordered)
-2. **Observe** — fire `RequestInterceptor.afterResponse()` sync observers (both success and error)
-3. **Serialize** — delegate to `ResponseSerializer.serialize()` (invokes `onSerialize` hooks, then writes to wire)
+2. **Hand off to the wire** — `applyToWire()` writes status + headers, then ends the response (null entity) or delegates the body to `ResponseSerializer.serialize()` (which invokes `onSerialize` hooks). This *initiates* the write and returns its wire-completion future
+3. **Observe** — fire `RequestInterceptor.afterResponse()` sync observers (both success and error), **after** the handoff and **before** the wire completes
+4. **Observe wire completion** — attach a failure observer to the completion future from step 2
+
+A synchronous throw from step 2 means nothing was written: it routes to `sendFallback500()`, which fires the single `afterResponse` with a synthetic 500 (see the `afterResponse` contract in `dev.vertique:vertique-rest-core`).
+
+**Wire-completion observation (post-handoff failures).** Steps 3 and 4 encode the split between *handoff* and *completion*. `afterResponse` deliberately fires at handoff, while a streamed body may still be in flight, because observers need the routing context and the tracing span to still be active. A failure that surfaces afterwards — a truncated stream, a client abort — is therefore reported through a different channel:
+
+- The request `Context` is captured **before** the handoff. A custom serializer's completion future may settle on any thread, so failure handling is redispatched onto that context (run inline when already on it, or when there is no context).
+- The cause is stored on the routing context under `RestRequestCompletionEmitter.KEY_WIRE_FAILURE` (first writer wins) so the completion event can classify it.
+- A WARN names the method, path, status, and the cause's **class simple name** only — a wire failure message can echo peer or payload detail — with the full throwable at DEBUG.
+- **Termination is pipeline-owned.** The serializer never ends a failed response, so the pipeline ends it if it is not ended already. The `end()` is fully guarded: a declared `Content-Length` that the truncated body no longer satisfies throws `IllegalStateException` synchronously, and ending an already-dead connection fails the returned future; neither escapes.
+- Nothing else happens: no bare 500 (the client already has the status line), no `afterResponse` re-fire, and no `sendFallback500()` re-entry.
+
+`sendFallback500()` observes its own `end()` future the same way — a bare-metal 500 that never reached the client is logged and recorded under the same key. On that path the marker may land *after* the completion event was emitted, so logging is guaranteed while event enrichment is best-effort.
+
+**Error fail-open and completion.** `serializeErrorWithFailOpen()` retries only on a *synchronous* throw (nothing written yet, FR-JSON-058A) and returns the completion future of the attempt that actually ran, so the pipeline observes exactly one wire completion per response. A failed completion future is a post-handoff failure and is never retried.
 
 **Accept header negotiation:** when no `ResponseProducer` is registered for the result type, the handler negotiates `Content-Type` using `AcceptNegotiator.negotiate()`:
 - Candidates from `@Produces` or `["application/json"]` default

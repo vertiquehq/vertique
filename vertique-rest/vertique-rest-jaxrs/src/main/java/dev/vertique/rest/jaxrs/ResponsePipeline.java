@@ -6,6 +6,7 @@ package dev.vertique.rest.jaxrs;
 import dev.vertique.core.async.Combinators;
 import dev.vertique.core.util.TypeResolver;
 import dev.vertique.rest.core.ProblemDetail;
+import dev.vertique.rest.core.events.RestRequestCompletionEmitter;
 import dev.vertique.rest.core.interceptor.RequestInterceptor;
 import dev.vertique.rest.core.request.AcceptNegotiator;
 import dev.vertique.rest.core.request.RequestPreconditions;
@@ -13,6 +14,9 @@ import dev.vertique.rest.core.response.ResponseProducer;
 import dev.vertique.rest.core.response.ResponseProducerBinding;
 import dev.vertique.rest.core.response.ResponseSerializer;
 import dev.vertique.rest.jaxrs.request.BoundRequest;
+import io.vertx.core.Context;
+import io.vertx.core.Future;
+import io.vertx.core.Vertx;
 import io.vertx.core.http.HttpServerResponse;
 import io.vertx.ext.web.RoutingContext;
 import jakarta.ws.rs.core.Response;
@@ -35,9 +39,10 @@ import lombok.extern.slf4j.Slf4j;
  *       result via a registered {@link ResponseProducer}, evaluate conditional request headers,
  *       strip HEAD entity.</li>
  *   <li>{@link #sendResponse(RoutingContext, Response)} — chain {@link RequestInterceptor#transformResponse}
- *       hooks, serialize to wire, then fire {@link RequestInterceptor#afterResponse} sync observers
- *       exactly once with the outcome actually written (or, on a serialization failure, the synthetic
- *       500 via {@code sendFallback500}).</li>
+ *       hooks, hand the response off to the wire, fire {@link RequestInterceptor#afterResponse} sync
+ *       observers exactly once with the outcome written (or, on a serialization failure, the synthetic
+ *       500 via {@code sendFallback500}), then observe the wire-completion future and record any
+ *       post-handoff failure under {@link RestRequestCompletionEmitter#KEY_WIRE_FAILURE}.</li>
  *   <li>{@link #handle(RoutingContext, Object)} — convenience: {@code produce()} then
  *       {@code sendResponse()}; re-throws any exception from {@code produce()} so callers can
  *       route to the error pipeline.</li>
@@ -200,26 +205,38 @@ class ResponsePipeline {
     // --- Send ---
 
     /**
-     * Unified send pipeline: chains {@link RequestInterceptor#transformResponse} hooks, serializes
-     * to wire, then fires {@link RequestInterceptor#afterResponse} sync observers.
+     * Unified send pipeline: chains {@link RequestInterceptor#transformResponse} hooks, hands the
+     * response off to the wire, fires {@link RequestInterceptor#afterResponse} sync observers, and
+     * then observes the wire-completion future returned by the handoff.
      *
      * <p>This method handles <em>both</em> success and error responses. When a
      * {@code transformResponse} chain fails, or a success-entity write throws synchronously,
      * {@link #sendFallback500(RoutingContext, Throwable)} is called as a last-resort fallback —
      * which itself fires {@code afterResponse} hooks with a synthetic 500 {@link Response}.
      *
-     * <p><strong>{@code afterResponse} fires exactly once per request</strong>, reflecting the
-     * terminal outcome that actually reached the wire:
+     * <p><strong>{@code afterResponse} fires exactly once per request</strong>, at <em>wire
+     * handoff</em>, reflecting the terminal outcome that was written to the wire:
      * <ul>
-     *   <li>normal success — {@code afterResponse(finalResponse)} once, <em>after</em> a successful
-     *       {@link #applyToWire(RoutingContext, Response)};</li>
+     *   <li>normal success — {@code afterResponse(finalResponse)} once, <em>after</em>
+     *       {@link #applyToWire(RoutingContext, Response)} initiated the write;</li>
      *   <li>success-entity serialization throw, or transform-chain failure —
      *       {@code afterResponse(synthetic-500)} once via {@code sendFallback500} (the first and only
      *       {@code afterResponse} on the failure path).</li>
      * </ul>
-     * Because {@code afterResponse} is an observe-only hook (FR-CORE-001.3 — it does not mutate the
-     * response), firing it <em>after</em> the wire write is safe and lets observers report the
-     * outcome the client actually saw.
+     * "Wire handoff" means the write was <em>initiated</em>: for a streamed body the bytes may still
+     * be in flight when the hooks run. Wire completion is reported separately, through the
+     * completion event (see {@link RestRequestCompletionEmitter#KEY_WIRE_FAILURE}) — never by
+     * delaying or re-firing this hook, because observers must see the outcome while the routing
+     * context and the tracing span are still active. Because {@code afterResponse} is an
+     * observe-only hook (FR-CORE-001.3 — it does not mutate the response), firing it at handoff is
+     * safe and lets observers report the outcome the client was sent.
+     *
+     * <p><strong>Post-handoff wire failures</strong> are observed asynchronously: the completion
+     * future returned by {@code applyToWire} may settle on any thread (serializer SPI contract), so
+     * the request {@link Context} is captured before the handoff and the failure handling is
+     * redispatched onto it. Handling is deliberately minimal — record the marker, log the cause
+     * class, end the response if it is not ended — because the client already received the status
+     * line: no bare 500 is written, no hook re-fires, and {@code sendFallback500} is not re-entered.
      *
      * @param ctx      the current routing context
      * @param response the {@link Response} to transform and send
@@ -227,6 +244,9 @@ class ResponsePipeline {
     void sendResponse(RoutingContext ctx, Response response) {
         Combinators.foldSequential(hooks, response, (hook, r) -> hook.transformResponse(ctx, r))
                 .onSuccess(finalResponse -> {
+                    // Captured BEFORE the handoff: a custom serializer's completion future may settle
+                    // on any thread, and the terminal cleanup below must run on the request context.
+                    Context requestContext = Vertx.currentContext();
                     // A synchronous serialization failure of a success entity (e.g. the resolved
                     // @JsonProfile mapper throwing EncodeException from JsonBodyEncoder.encode) is raised
                     // inside this onSuccess handler — NOT through the fold future — so .onFailure below
@@ -235,20 +255,26 @@ class ResponsePipeline {
                     // body), so sendFallback500 can still set a 500. Route the throw there explicitly,
                     // and return so afterResponse is NOT also fired here — sendFallback500 fires it once
                     // with the synthetic 500 (the single, correct terminal outcome).
+                    Future<Void> wireCompletion;
                     try {
-                        applyToWire(ctx, finalResponse);
+                        wireCompletion = applyToWire(ctx, finalResponse);
                     } catch (RuntimeException wireFailure) {
                         sendFallback500(ctx, wireFailure);
                         return;
                     }
-                    // Fire afterResponse AFTER a successful wire write so the single invocation
-                    // reflects the outcome actually written. forEachSwallowSync catches Exception and
-                    // swallows per-hook failures, routing each to the onFailure logger so one throwing
-                    // observer cannot abort the rest. (FR-CORE-001.3)
+                    // Fire afterResponse AT WIRE HANDOFF so the single invocation reflects the outcome
+                    // written, while the completion future may still be pending (OTel SP-4).
+                    // forEachSwallowSync catches Exception and swallows per-hook failures, routing each
+                    // to the onFailure logger so one throwing observer cannot abort the rest.
+                    // (FR-CORE-001.3)
                     Combinators.forEachSwallowSync(
                             hooks,
                             hook -> hook.afterResponse(ctx, finalResponse),
                             (hook, e) -> log.warn("afterResponse observer threw: {}", e.getMessage(), e));
+                    // Attached last so a wire failure that is already settled cannot run terminal
+                    // cleanup before the handoff hooks have seen the outcome.
+                    wireCompletion.onFailure(
+                            cause -> runOnRequestContext(requestContext, () -> completeFailedWire(ctx, cause)));
                 })
                 .onFailure(cause -> sendFallback500(ctx, cause));
     }
@@ -284,7 +310,8 @@ class ResponsePipeline {
      * throw — {@link #sendResponse} does <em>not</em> fire {@code afterResponse} before delegating
      * here, so this method introduces the first and only {@code afterResponse} invocation on the
      * failure path (with a synthetic 500). The normal-success path fires its single
-     * {@code afterResponse} after a successful write and never reaches this method.
+     * {@code afterResponse} at wire handoff and never reaches this method — not even when the wire
+     * write later fails, which is handled by the completion observer instead.
      *
      * <p>The bare-metal write is skipped when the response is already ended <em>or its head is
      * already committed</em> ({@code headWritten()}). The {@code headWritten()} guard matters when a
@@ -293,6 +320,12 @@ class ResponsePipeline {
      * committed-but-not-ended response would raise {@link IllegalStateException} / split the
      * response. The single {@code afterResponse(500)} still fires — the request <em>did</em> fail
      * terminally — only the wire write is suppressed.
+     *
+     * <p>Like the normal path, the hooks fire at <em>wire handoff</em>: the bare-metal write is
+     * initiated after them and its own completion future is observed, so a 500 that never reaches
+     * the client is logged and recorded under {@link RestRequestCompletionEmitter#KEY_WIRE_FAILURE}.
+     * On this path the marker may land <em>after</em> the completion event was emitted (the end
+     * handler can fire first), so the logging is guaranteed while event enrichment is best-effort.
      *
      * @param ctx   the current routing context
      * @param cause the pipeline failure that triggered this fallback
@@ -305,7 +338,98 @@ class ResponsePipeline {
                 hook -> hook.afterResponse(ctx, synthetic),
                 (hook, e) -> log.warn("afterResponse observer threw during fallback-500: {}", e.getMessage(), e));
         if (!ctx.response().ended() && !ctx.response().headWritten()) {
-            ctx.response().setStatusCode(500).end(FALLBACK_500_BODY);
+            ctx.response()
+                    .setStatusCode(500)
+                    .end(FALLBACK_500_BODY)
+                    // The response is already terminal here — record and log only; no cleanup end().
+                    .onFailure(wireFailure -> recordWireFailure(ctx, wireFailure));
+        }
+    }
+
+    // --- Wire-completion observation ---
+
+    /**
+     * Runs {@code task} on {@code requestContext} — the Vert.x context the response was handed off
+     * on. Runs inline when already on that context (the common case) or when no context was
+     * captured (non-Vert.x caller); otherwise re-enters it via {@link Context#runOnContext}. Guards
+     * the wire-failure tail against a custom serializer's completion future settling on a foreign
+     * thread, where touching the routing context would be unsafe.
+     *
+     * @param requestContext the context captured before the wire handoff; may be {@code null}
+     * @param task           the wire-failure handling to run on the request context
+     */
+    private static void runOnRequestContext(Context requestContext, Runnable task) {
+        if (requestContext != null && Vertx.currentContext() != requestContext) {
+            requestContext.runOnContext(ignored -> task.run());
+        } else {
+            task.run();
+        }
+    }
+
+    /**
+     * Handles a wire failure reported <em>after</em> the response was handed off: records the cause
+     * for the completion event, logs it, and performs the terminal cleanup the serializer contract
+     * leaves to the caller. Never writes a status, never re-fires hooks.
+     *
+     * @param ctx   the current routing context
+     * @param cause the failure the wire-completion future settled with
+     */
+    private void completeFailedWire(RoutingContext ctx, Throwable cause) {
+        recordWireFailure(ctx, cause);
+        endAfterWireFailure(ctx);
+    }
+
+    /**
+     * Records a post-handoff wire failure under {@link RestRequestCompletionEmitter#KEY_WIRE_FAILURE}
+     * (first writer wins, so the first observed failure is the one reported) and logs it at WARN.
+     *
+     * <p>The WARN carries the request method, path, status, and the cause's <em>class simple
+     * name</em> only: a wire failure message may echo peer or payload detail, so the full throwable
+     * is logged at DEBUG instead.
+     *
+     * @param ctx   the current routing context
+     * @param cause the failure the wire-completion future settled with
+     */
+    private void recordWireFailure(RoutingContext ctx, Throwable cause) {
+        ctx.data().putIfAbsent(RestRequestCompletionEmitter.KEY_WIRE_FAILURE, cause);
+        String method = ctx.request().method().name();
+        String path = ctx.request().path();
+        log.warn(
+                "Wire write failed after response handoff: {} {} (status {}) — {}",
+                method,
+                path,
+                ctx.response().getStatusCode(),
+                cause.getClass().getSimpleName());
+        if (log.isDebugEnabled()) {
+            log.debug("Wire write failure detail for {} {}", method, path, cause);
+        }
+    }
+
+    /**
+     * Ends the response after a wire failure, unless it is already ended. Termination is
+     * pipeline-owned: the serializer deliberately leaves a failed response open (it cannot know
+     * whether the caller wants to end it), so this is the only place the truncated response is
+     * closed.
+     *
+     * <p>The {@code end()} is fully guarded. A response with a declared {@code Content-Length} that
+     * the truncated body no longer satisfies raises {@link IllegalStateException} synchronously, and
+     * ending a connection that is already gone fails the returned future — neither may escape into
+     * the completion future's failure handler.
+     *
+     * @param ctx the current routing context
+     */
+    private void endAfterWireFailure(RoutingContext ctx) {
+        HttpServerResponse httpResponse = ctx.response();
+        if (httpResponse.ended()) {
+            return;
+        }
+        try {
+            httpResponse
+                    .end()
+                    .onFailure(
+                            endFailure -> log.debug("Terminal cleanup end() failed after a wire failure", endFailure));
+        } catch (RuntimeException endFailure) {
+            log.debug("Terminal cleanup end() could not be initiated after a wire failure", endFailure);
         }
     }
 
@@ -315,10 +439,17 @@ class ResponsePipeline {
      * Writes the response status and headers to the HTTP response, then either ends
      * the response (when the entity is {@code null}) or delegates body encoding to the serializer.
      *
+     * <p>Returns the <em>wire-completion</em> future of whichever branch ran: the write has only
+     * been initiated when this method returns, and for a streamed body the bytes may still be in
+     * flight. The future succeeds once the response is fully written and ended, and fails on a
+     * post-handoff wire failure — see {@link ResponseSerializer#serialize} for the full contract.
+     *
      * @param ctx      the current routing context
      * @param response the final JAX-RS response to write
+     * @return the wire-completion future for the initiated write; never {@code null}
+     * @throws RuntimeException if the body could not be encoded, with nothing written to the wire
      */
-    private void applyToWire(RoutingContext ctx, Response response) {
+    private Future<Void> applyToWire(RoutingContext ctx, Response response) {
         HttpServerResponse httpResponse = ctx.response().setStatusCode(response.getStatus());
 
         // Copy JAX-RS response headers to the HTTP response
@@ -334,13 +465,13 @@ class ResponsePipeline {
         Object entity = response.getEntity();
         if (entity == null) {
             // No body: HEAD, 304, 204, 412, etc.
-            httpResponse.end();
+            return httpResponse.end();
         } else if (Boolean.TRUE.equals(ctx.get(KEY_ERROR_RESPONSE))) {
             // Error / ProblemDetail body: serialize with the FR-JSON-058A vertx fail-open.
-            serializeErrorWithFailOpen(ctx, response);
+            return serializeErrorWithFailOpen(ctx, response);
         } else {
             // Success entity: delegate directly (a serialization failure propagates as a 500 — slice 3.1).
-            serializer.serialize(ctx, response);
+            return serializer.serialize(ctx, response);
         }
     }
 
@@ -357,12 +488,19 @@ class ResponsePipeline {
      * and media type. The fail-open is confined to the body bytes; it never alters the status, the RFC
      * 9457 media type, or the exception-mapping chain (FR-JSON-059), and never escalates to a bare 500.
      *
+     * <p>Only a <em>synchronous</em> throw drives the fail-open: it means nothing was written, so the
+     * retry is safe. A failed wire-completion future is a post-handoff failure and is never retried —
+     * the returned future is the one of the attempt that actually ran (the retry's, when there was
+     * one), so the caller observes exactly one wire completion.
+     *
      * @param ctx      the current routing context
      * @param response the mapped error response to serialize
+     * @return the wire-completion future of the serialization attempt that ran; never {@code null}
+     * @throws RuntimeException if the fail-open retry is not possible or itself fails synchronously
      */
-    private void serializeErrorWithFailOpen(RoutingContext ctx, Response response) {
+    private Future<Void> serializeErrorWithFailOpen(RoutingContext ctx, Response response) {
         try {
-            serializer.serialize(ctx, response);
+            return serializer.serialize(ctx, response);
         } catch (RuntimeException profileFailure) {
             if (ctx.response().ended() || ctx.response().headWritten()) {
                 // The body was already (partially) written before the throw — re-emitting would corrupt
@@ -377,7 +515,7 @@ class ResponsePipeline {
             // Drop the resolved profile mapper so the JSON body encoder uses Json.encode (vertx), then
             // re-serialize the same mapped response (status + media type already set on the wire).
             ctx.data().remove(BoundRequest.KEY_RESOLVED_BODY_MAPPER);
-            serializer.serialize(ctx, response);
+            return serializer.serialize(ctx, response);
         }
     }
 
