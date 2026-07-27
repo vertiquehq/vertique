@@ -30,6 +30,8 @@ import dev.vertique.security.SecurityContext;
 import dev.vertique.security.SecurityContextSnapshot;
 import dev.vertique.security.SecurityIdentity;
 import io.vertx.core.Future;
+import io.vertx.core.Handler;
+import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
 import io.vertx.core.http.HttpClient;
 import io.vertx.core.http.HttpClientResponse;
@@ -173,7 +175,9 @@ class RestRequestCompletionEmitterTest {
 
     /**
      * Builds a {@link Router} with {@link RequestContextLifecycle} and the emitter mounted in order,
-     * plus a terminal route at {@code /test} that delegates to the supplied handler.
+     * plus a terminal route at {@code /test} that delegates to the supplied handler. No lifecycle
+     * barrier is installed; use {@link #router(Vertx, RestRequestCompletionEmitter, Promise,
+     * RouteHandler)} for tests that need to await lifecycle completion deterministically.
      *
      * @param vertx   the Vert.x instance
      * @param emitter the emitter to mount
@@ -181,9 +185,31 @@ class RestRequestCompletionEmitterTest {
      * @return the configured router
      */
     private static Router router(Vertx vertx, RestRequestCompletionEmitter emitter, RouteHandler handler) {
+        return router(vertx, emitter, Promise.promise(), handler);
+    }
+
+    /**
+     * Builds a {@link Router} with {@link RequestContextLifecycle}, the emitter, and a lifecycle
+     * barrier middleware mounted in order, plus a terminal route at {@code /test} that delegates to
+     * the supplied handler.
+     *
+     * <p>The barrier middleware runs on every request, after {@link RequestContextLifecycle} has
+     * installed its {@link RequestContextLifecycle.Handle} on the routing context. Callers await
+     * {@code barrier.future()} (via {@link #awaitBarrier(Vertx, Future)}) instead of a fixed settle
+     * window before asserting captured state — see {@link #barrierHandler(Promise)}.
+     *
+     * @param vertx   the Vert.x instance
+     * @param emitter the emitter to mount
+     * @param barrier the promise completed once the request's lifecycle handle has fully closed
+     * @param handler the terminal route handler
+     * @return the configured router
+     */
+    private static Router router(
+            Vertx vertx, RestRequestCompletionEmitter emitter, Promise<Void> barrier, RouteHandler handler) {
         Router router = Router.router(vertx);
         router.route().order(RequestContextLifecycle.ORDER).handler(new RequestContextLifecycle());
         router.route().order(emitter.priority()).handler(emitter);
+        router.route().handler(barrierHandler(barrier));
         router.route("/test").handler(rc -> {
             handler.handle(rc);
             if (!rc.response().ended()) {
@@ -202,10 +228,65 @@ class RestRequestCompletionEmitterTest {
      * @return a {@link Future} resolving to the bound port
      */
     private Future<Integer> startServer(Router router) {
-        return vertx.createHttpServer().requestHandler(router).listen(0).map(s -> {
-            this.server = s;
-            return s.actualPort();
+        return vertx.createHttpServer()
+                .requestHandler(router)
+                .listen(0, "127.0.0.1")
+                .map(s -> {
+                    this.server = s;
+                    return s.actualPort();
+                });
+    }
+
+    /** Timeout, in milliseconds, for {@link #awaitBarrier(Vertx, Future)}. */
+    private static final long BARRIER_TIMEOUT_MS = 5000;
+
+    /**
+     * Creates a middleware handler that, during the request, registers a
+     * {@link RequestContextLifecycle.Handle#afterClose(Runnable)} task completing the given
+     * {@code barrier}, then delegates to the next handler.
+     *
+     * <p>{@link RequestContextLifecycle} registers exactly one {@code ctx.addEndHandler} and, because
+     * Vert.x Web fires end handlers in reverse registration order, that handler — registered first —
+     * fires last. {@code afterClose} tasks run in phase 2 of that handler's cleanup, after every other
+     * end handler's synchronous work (including the completion emitter's listener dispatch) has
+     * finished. The barrier therefore completes strictly after all end-handler work for the request,
+     * with no settle window required.
+     *
+     * @param barrier the promise to complete once the request's lifecycle handle has fully closed
+     * @return a handler suitable for mounting as a catch-all route after {@link RequestContextLifecycle}
+     */
+    private static Handler<RoutingContext> barrierHandler(Promise<Void> barrier) {
+        return rc -> {
+            RequestContextLifecycle.fromRoutingContext(rc).afterClose(barrier::complete);
+            rc.next();
+        };
+    }
+
+    /**
+     * Awaits the given lifecycle barrier future, failing with a descriptive timeout message if it
+     * does not complete within {@link #BARRIER_TIMEOUT_MS} milliseconds. A lifecycle defect must
+     * surface as a diagnosable message naming the barrier, not an opaque class-level {@code @Timeout}.
+     *
+     * @param vertx   the Vert.x instance used to schedule the timeout timer
+     * @param barrier the barrier future to await
+     * @return a future that resolves once {@code barrier} completes, or fails with a descriptive
+     *     timeout message if it does not complete in time
+     */
+    private static Future<Void> awaitBarrier(Vertx vertx, Future<Void> barrier) {
+        Promise<Void> result = Promise.promise();
+        long timerId = vertx.setTimer(
+                BARRIER_TIMEOUT_MS,
+                id -> result.tryFail(
+                        "lifecycle afterClose barrier did not complete within " + BARRIER_TIMEOUT_MS + "ms"));
+        barrier.onComplete(ar -> {
+            vertx.cancelTimer(timerId);
+            if (ar.succeeded()) {
+                result.tryComplete();
+            } else {
+                result.tryFail(ar.cause());
+            }
         });
+        return result.future();
     }
 
     /** Simple functional interface for test route handlers. */
@@ -225,15 +306,15 @@ class RestRequestCompletionEmitterTest {
         void emitsOneEventOnSuccess(VertxTestContext ctx) {
             List<RestRequestCompletedEvent> captured = new ArrayList<>();
             RestRequestCompletionEmitter em = emitter(Set.of(captured::add));
-            Router router = router(vertx, em, rc -> {});
+            Promise<Void> barrier = Promise.promise();
+            Router router = router(vertx, em, barrier, rc -> {});
 
             startServer(router)
-                    .compose(port -> client.request(HttpMethod.GET, port, "localhost", "/test")
+                    .compose(port -> client.request(HttpMethod.GET, port, "127.0.0.1", "/test")
                             .compose(req -> req.send()))
                     .compose(resp -> {
                         ctx.verify(() -> assertEquals(200, resp.statusCode()));
-                        // Allow end handlers to complete before asserting
-                        return Future.<Void>future(p -> vertx.setTimer(50, id -> p.complete(null)));
+                        return awaitBarrier(vertx, barrier.future());
                     })
                     .onComplete(ctx.succeeding(v -> {
                         ctx.verify(() -> {
@@ -260,14 +341,15 @@ class RestRequestCompletionEmitterTest {
         void emitsOneEventOnFailureWithSafeFields(VertxTestContext ctx) {
             List<RestRequestCompletedEvent> captured = new ArrayList<>();
             RestRequestCompletionEmitter em = emitter(Set.of(captured::add));
-            Router router = router(vertx, em, rc -> rc.fail(500, new IllegalStateException("secret detail")));
+            Promise<Void> barrier = Promise.promise();
+            Router router = router(vertx, em, barrier, rc -> rc.fail(500, new IllegalStateException("secret detail")));
 
             startServer(router)
-                    .compose(port -> client.request(HttpMethod.POST, port, "localhost", "/test")
+                    .compose(port -> client.request(HttpMethod.POST, port, "127.0.0.1", "/test")
                             .compose(req -> req.send()))
                     .compose(resp -> {
                         ctx.verify(() -> assertEquals(500, resp.statusCode()));
-                        return Future.<Void>future(p -> vertx.setTimer(50, id -> p.complete(null)));
+                        return awaitBarrier(vertx, barrier.future());
                     })
                     .onComplete(ctx.succeeding(v -> {
                         ctx.verify(() -> {
@@ -318,15 +400,16 @@ class RestRequestCompletionEmitterTest {
         void emitsOneEventFor4xx(VertxTestContext ctx) {
             List<RestRequestCompletedEvent> captured = new ArrayList<>();
             RestRequestCompletionEmitter em = emitter(Set.of(captured::add));
-            Router router =
-                    router(vertx, em, rc -> rc.response().setStatusCode(400).end());
+            Promise<Void> barrier = Promise.promise();
+            Router router = router(
+                    vertx, em, barrier, rc -> rc.response().setStatusCode(400).end());
 
             startServer(router)
-                    .compose(port -> client.request(HttpMethod.GET, port, "localhost", "/test")
+                    .compose(port -> client.request(HttpMethod.GET, port, "127.0.0.1", "/test")
                             .compose(req -> req.send()))
                     .compose(resp -> {
                         ctx.verify(() -> assertEquals(400, resp.statusCode()));
-                        return Future.<Void>future(p -> vertx.setTimer(50, id -> p.complete(null)));
+                        return awaitBarrier(vertx, barrier.future());
                     })
                     .onComplete(ctx.succeeding(v -> {
                         ctx.verify(() -> {
@@ -350,7 +433,8 @@ class RestRequestCompletionEmitterTest {
         void onlyOneEventWhenEndHandlerFiresTwice(VertxTestContext ctx) {
             List<RestRequestCompletedEvent> captured = new ArrayList<>();
             RestRequestCompletionEmitter em = emitter(Set.of(captured::add));
-            Router router = router(vertx, em, rc -> {
+            Promise<Void> barrier = Promise.promise();
+            Router router = router(vertx, em, barrier, rc -> {
                 // Simulate a second end-handler invocation by triggering emit directly via the key
                 // already set — we do this by calling emit indirectly: put KEY_EMITTED=false first,
                 // call emit twice by adding a second end handler registration.
@@ -362,9 +446,9 @@ class RestRequestCompletionEmitterTest {
             });
 
             startServer(router)
-                    .compose(port -> client.request(HttpMethod.GET, port, "localhost", "/test")
+                    .compose(port -> client.request(HttpMethod.GET, port, "127.0.0.1", "/test")
                             .compose(req -> req.send()))
-                    .compose(resp -> Future.<Void>future(p -> vertx.setTimer(80, id -> p.complete(null))))
+                    .compose(resp -> awaitBarrier(vertx, barrier.future()))
                     .onComplete(ctx.succeeding(v -> {
                         ctx.verify(() -> {
                             // The reset above re-arms the flag so the emitter's handler produces one
@@ -384,7 +468,8 @@ class RestRequestCompletionEmitterTest {
         void guardPreventsDoubleEmit(VertxTestContext ctx) {
             List<RestRequestCompletedEvent> captured = new ArrayList<>();
             RestRequestCompletionEmitter em = emitter(Set.of(captured::add));
-            Router router = router(vertx, em, rc -> {
+            Promise<Void> barrier = Promise.promise();
+            Router router = router(vertx, em, barrier, rc -> {
                 // Pre-set the emitted flag so the emitter's end-handler fires as a no-op.
                 // A second end-handler (added AFTER the emitter's, fires first in reverse order)
                 // pre-sets KEY_EMITTED to verify the guard catches it.
@@ -398,9 +483,9 @@ class RestRequestCompletionEmitterTest {
             });
 
             startServer(router)
-                    .compose(port -> client.request(HttpMethod.GET, port, "localhost", "/test")
+                    .compose(port -> client.request(HttpMethod.GET, port, "127.0.0.1", "/test")
                             .compose(req -> req.send()))
-                    .compose(resp -> Future.<Void>future(p -> vertx.setTimer(50, id -> p.complete(null))))
+                    .compose(resp -> awaitBarrier(vertx, barrier.future()))
                     .onComplete(ctx.succeeding(v -> {
                         ctx.verify(() -> assertEquals(1, captured.size(), "exactly one event in normal flow"));
                         ctx.completeNow();
@@ -422,14 +507,15 @@ class RestRequestCompletionEmitterTest {
             RestRequestCompletedListener capturing = secondListenerCapture::add;
 
             RestRequestCompletionEmitter em = emitter(Set.of(throwing, capturing));
-            Router router = router(vertx, em, rc -> {});
+            Promise<Void> barrier = Promise.promise();
+            Router router = router(vertx, em, barrier, rc -> {});
 
             startServer(router)
-                    .compose(port -> client.request(HttpMethod.GET, port, "localhost", "/test")
+                    .compose(port -> client.request(HttpMethod.GET, port, "127.0.0.1", "/test")
                             .compose(req -> req.send()))
                     .compose(resp -> {
                         ctx.verify(() -> assertEquals(200, resp.statusCode()));
-                        return Future.<Void>future(p -> vertx.setTimer(50, id -> p.complete(null)));
+                        return awaitBarrier(vertx, barrier.future());
                     })
                     .onComplete(ctx.succeeding(v -> {
                         ctx.verify(() -> assertEquals(
@@ -445,12 +531,15 @@ class RestRequestCompletionEmitterTest {
             Router router = router(vertx, em, rc -> {});
 
             startServer(router)
-                    .compose(port -> client.request(HttpMethod.GET, port, "localhost", "/test")
+                    .compose(port -> client.request(HttpMethod.GET, port, "127.0.0.1", "/test")
                             .compose(req -> req.send()))
-                    .onComplete(ctx.succeeding((HttpClientResponse resp) -> {
+                    .compose((HttpClientResponse resp) -> {
                         ctx.verify(() -> assertEquals(200, resp.statusCode()));
-                        ctx.completeNow();
-                    }));
+                        // Drain the response body so the shared client's pooled connection isn't
+                        // left with an unread response.
+                        return resp.body();
+                    })
+                    .onComplete(ctx.succeeding(body -> ctx.completeNow()));
         }
     }
 
@@ -494,9 +583,11 @@ class RestRequestCompletionEmitterTest {
                 captured.add(event);
             }));
 
+            Promise<Void> barrier = Promise.promise();
             Router router = Router.router(vertx);
             router.route().order(RequestContextLifecycle.ORDER).handler(new RequestContextLifecycle());
             router.route().order(em.priority()).handler(em);
+            router.route().handler(barrierHandler(barrier));
             router.route("/test").handler(rc -> {
                 // Bind a CorrelationContext on the holder for this request
                 CorrelationIdentifier reqId = new CorrelationIdentifier("req-1", "test");
@@ -509,16 +600,12 @@ class RestRequestCompletionEmitterTest {
                 rc.response().setStatusCode(200).end();
             });
 
-            // Store server on the outer instance so @AfterEach closes it on any exit path.
-            vertx.createHttpServer()
-                    .requestHandler(router)
-                    .listen(0)
-                    .onSuccess(s -> RestRequestCompletionEmitterTest.this.server = s)
-                    .compose(s -> client.request(HttpMethod.GET, s.actualPort(), "localhost", "/test")
+            startServer(router)
+                    .compose(port -> client.request(HttpMethod.GET, port, "127.0.0.1", "/test")
                             .compose(req -> req.send()))
                     .compose(resp -> {
                         ctx.verify(() -> assertEquals(200, resp.statusCode()));
-                        return Future.<Void>future(p -> vertx.setTimer(50, id -> p.complete(null)));
+                        return awaitBarrier(vertx, barrier.future());
                     })
                     .onComplete(ctx.succeeding(v -> {
                         ctx.verify(() -> {
@@ -553,9 +640,11 @@ class RestRequestCompletionEmitterTest {
 
             RestRequestCompletionEmitter em = emitter(holder, captured::add);
 
+            Promise<Void> barrier = Promise.promise();
             Router router = Router.router(vertx);
             router.route().order(RequestContextLifecycle.ORDER).handler(new RequestContextLifecycle());
             router.route().order(em.priority()).handler(em);
+            router.route().handler(barrierHandler(barrier));
             router.route("/test").handler(rc -> {
                 // Bind the mutable stub as the live CorrelationContext for this request.
                 RequestContextLifecycle.Handle lifecycle = RequestContextLifecycle.fromRoutingContext(rc);
@@ -564,11 +653,11 @@ class RestRequestCompletionEmitterTest {
             });
 
             startServer(router)
-                    .compose(port -> client.request(HttpMethod.GET, port, "localhost", "/test")
+                    .compose(port -> client.request(HttpMethod.GET, port, "127.0.0.1", "/test")
                             .compose(req -> req.send()))
                     .compose(resp -> {
                         ctx.verify(() -> assertEquals(200, resp.statusCode()));
-                        return Future.<Void>future(p -> vertx.setTimer(50, id -> p.complete(null)));
+                        return awaitBarrier(vertx, barrier.future());
                     })
                     .onComplete(ctx.succeeding(v -> {
                         ctx.verify(() -> {
@@ -683,14 +772,15 @@ class RestRequestCompletionEmitterTest {
 
             RestRequestCompletionEmitter em =
                     emitterWithCoordinators(Set.of(listenerCapture::add), Set.of(coordinator));
-            Router router = router(vertx, em, rc -> {});
+            Promise<Void> barrier = Promise.promise();
+            Router router = router(vertx, em, barrier, rc -> {});
 
             startServer(router)
-                    .compose(port -> client.request(HttpMethod.GET, port, "localhost", "/test")
+                    .compose(port -> client.request(HttpMethod.GET, port, "127.0.0.1", "/test")
                             .compose(req -> req.send()))
                     .compose(resp -> {
                         ctx.verify(() -> assertEquals(200, resp.statusCode()));
-                        return Future.<Void>future(p -> vertx.setTimer(50, id -> p.complete(null)));
+                        return awaitBarrier(vertx, barrier.future());
                     })
                     .onComplete(ctx.succeeding(v -> {
                         ctx.verify(() -> {
@@ -716,15 +806,16 @@ class RestRequestCompletionEmitterTest {
             };
 
             RestRequestCompletionEmitter em = emitterWithCoordinators(Set.of(listenerCapture::add), Set.of(throwing));
-            Router router = router(vertx, em, rc -> {});
+            Promise<Void> barrier = Promise.promise();
+            Router router = router(vertx, em, barrier, rc -> {});
 
             startServer(router)
-                    .compose(port -> client.request(HttpMethod.GET, port, "localhost", "/test")
+                    .compose(port -> client.request(HttpMethod.GET, port, "127.0.0.1", "/test")
                             .compose(req -> req.send()))
                     .compose(resp -> {
                         // response must still complete normally despite the coordinator throwing
                         ctx.verify(() -> assertEquals(200, resp.statusCode()));
-                        return Future.<Void>future(p -> vertx.setTimer(50, id -> p.complete(null)));
+                        return awaitBarrier(vertx, barrier.future());
                     })
                     .onComplete(ctx.succeeding(v -> {
                         ctx.verify(() ->
@@ -738,14 +829,15 @@ class RestRequestCompletionEmitterTest {
         void noCoordinatorsIsNoOp(VertxTestContext ctx) {
             List<RestRequestCompletedEvent> listenerCapture = new ArrayList<>();
             RestRequestCompletionEmitter em = emitterWithCoordinators(Set.of(listenerCapture::add), Set.of());
-            Router router = router(vertx, em, rc -> {});
+            Promise<Void> barrier = Promise.promise();
+            Router router = router(vertx, em, barrier, rc -> {});
 
             startServer(router)
-                    .compose(port -> client.request(HttpMethod.GET, port, "localhost", "/test")
+                    .compose(port -> client.request(HttpMethod.GET, port, "127.0.0.1", "/test")
                             .compose(req -> req.send()))
                     .compose(resp -> {
                         ctx.verify(() -> assertEquals(200, resp.statusCode()));
-                        return Future.<Void>future(p -> vertx.setTimer(50, id -> p.complete(null)));
+                        return awaitBarrier(vertx, barrier.future());
                     })
                     .onComplete(ctx.succeeding(v -> {
                         ctx.verify(() ->
@@ -763,14 +855,15 @@ class RestRequestCompletionEmitterTest {
             RestRequestCaptureCoordinator coordinator = (event, rc) -> order.add("coordinator");
 
             RestRequestCompletionEmitter em = emitterWithCoordinators(Set.of(listener), Set.of(coordinator));
-            Router router = router(vertx, em, rc -> {});
+            Promise<Void> barrier = Promise.promise();
+            Router router = router(vertx, em, barrier, rc -> {});
 
             startServer(router)
-                    .compose(port -> client.request(HttpMethod.GET, port, "localhost", "/test")
+                    .compose(port -> client.request(HttpMethod.GET, port, "127.0.0.1", "/test")
                             .compose(req -> req.send()))
                     .compose(resp -> {
                         ctx.verify(() -> assertEquals(200, resp.statusCode()));
-                        return Future.<Void>future(p -> vertx.setTimer(50, id -> p.complete(null)));
+                        return awaitBarrier(vertx, barrier.future());
                     })
                     .onComplete(ctx.succeeding(v -> {
                         ctx.verify(() -> {
@@ -837,14 +930,15 @@ class RestRequestCompletionEmitterTest {
             };
 
             RestRequestCompletionEmitter em = emitterWithScope(scope, Set.of(listener));
-            Router router = router(vertx, em, rc -> {});
+            Promise<Void> barrier = Promise.promise();
+            Router router = router(vertx, em, barrier, rc -> {});
 
             startServer(router)
-                    .compose(port -> client.request(HttpMethod.GET, port, "localhost", "/test")
+                    .compose(port -> client.request(HttpMethod.GET, port, "127.0.0.1", "/test")
                             .compose(req -> req.send()))
                     .compose(resp -> {
                         ctx.verify(() -> assertEquals(200, resp.statusCode()));
-                        return Future.<Void>future(p -> vertx.setTimer(80, id -> p.complete(null)));
+                        return awaitBarrier(vertx, barrier.future());
                     })
                     .onComplete(ctx.succeeding(v -> {
                         ctx.verify(() -> {
@@ -866,14 +960,15 @@ class RestRequestCompletionEmitterTest {
             List<RestRequestCompletedEvent> captured = new ArrayList<>();
             // Use the convenience constructor — no scope
             RestRequestCompletionEmitter em = emitter(Set.of(captured::add));
-            Router router = router(vertx, em, rc -> {});
+            Promise<Void> barrier = Promise.promise();
+            Router router = router(vertx, em, barrier, rc -> {});
 
             startServer(router)
-                    .compose(port -> client.request(HttpMethod.GET, port, "localhost", "/test")
+                    .compose(port -> client.request(HttpMethod.GET, port, "127.0.0.1", "/test")
                             .compose(req -> req.send()))
                     .compose(resp -> {
                         ctx.verify(() -> assertEquals(200, resp.statusCode()));
-                        return Future.<Void>future(p -> vertx.setTimer(50, id -> p.complete(null)));
+                        return awaitBarrier(vertx, barrier.future());
                     })
                     .onComplete(ctx.succeeding(v -> {
                         ctx.verify(() ->
@@ -892,14 +987,15 @@ class RestRequestCompletionEmitterTest {
             };
 
             RestRequestCompletionEmitter em = emitterWithScope(throwingScope, Set.of(captured::add));
-            Router router = router(vertx, em, rc -> {});
+            Promise<Void> barrier = Promise.promise();
+            Router router = router(vertx, em, barrier, rc -> {});
 
             startServer(router)
-                    .compose(port -> client.request(HttpMethod.GET, port, "localhost", "/test")
+                    .compose(port -> client.request(HttpMethod.GET, port, "127.0.0.1", "/test")
                             .compose(req -> req.send()))
                     .compose(resp -> {
                         ctx.verify(() -> assertEquals(200, resp.statusCode()));
-                        return Future.<Void>future(p -> vertx.setTimer(50, id -> p.complete(null)));
+                        return awaitBarrier(vertx, barrier.future());
                     })
                     .onComplete(ctx.succeeding(v -> {
                         ctx.verify(() -> assertEquals(
@@ -920,14 +1016,15 @@ class RestRequestCompletionEmitterTest {
             };
 
             RestRequestCompletionEmitter em = emitterWithScope(throwingCloseScope, Set.of(captured::add));
-            Router router = router(vertx, em, rc -> {});
+            Promise<Void> barrier = Promise.promise();
+            Router router = router(vertx, em, barrier, rc -> {});
 
             startServer(router)
-                    .compose(port -> client.request(HttpMethod.GET, port, "localhost", "/test")
+                    .compose(port -> client.request(HttpMethod.GET, port, "127.0.0.1", "/test")
                             .compose(req -> req.send()))
                     .compose(resp -> {
                         ctx.verify(() -> assertEquals(200, resp.statusCode()));
-                        return Future.<Void>future(p -> vertx.setTimer(50, id -> p.complete(null)));
+                        return awaitBarrier(vertx, barrier.future());
                     })
                     .onComplete(ctx.succeeding(v -> {
                         ctx.verify(() -> assertEquals(
@@ -991,14 +1088,15 @@ class RestRequestCompletionEmitterTest {
             scopes.add(scopeB);
 
             RestRequestCompletionEmitter em = emitterWithScopes(scopes, Set.of(listener));
-            Router router = router(vertx, em, rc -> {});
+            Promise<Void> barrier = Promise.promise();
+            Router router = router(vertx, em, barrier, rc -> {});
 
             startServer(router)
-                    .compose(port -> client.request(HttpMethod.GET, port, "localhost", "/test")
+                    .compose(port -> client.request(HttpMethod.GET, port, "127.0.0.1", "/test")
                             .compose(req -> req.send()))
                     .compose(resp -> {
                         ctx.verify(() -> assertEquals(200, resp.statusCode()));
-                        return Future.<Void>future(p -> vertx.setTimer(80, id -> p.complete(null)));
+                        return awaitBarrier(vertx, barrier.future());
                     })
                     .onComplete(ctx.succeeding(v -> {
                         ctx.verify(() -> {
@@ -1076,14 +1174,15 @@ class RestRequestCompletionEmitterTest {
             scopes.add(goodScope);
 
             RestRequestCompletionEmitter em = emitterWithScopes(scopes, Set.of(listener));
-            Router router = router(vertx, em, rc -> {});
+            Promise<Void> barrier = Promise.promise();
+            Router router = router(vertx, em, barrier, rc -> {});
 
             startServer(router)
-                    .compose(port -> client.request(HttpMethod.GET, port, "localhost", "/test")
+                    .compose(port -> client.request(HttpMethod.GET, port, "127.0.0.1", "/test")
                             .compose(req -> req.send()))
                     .compose(resp -> {
                         ctx.verify(() -> assertEquals(200, resp.statusCode()));
-                        return Future.<Void>future(p -> vertx.setTimer(80, id -> p.complete(null)));
+                        return awaitBarrier(vertx, barrier.future());
                     })
                     .onComplete(ctx.succeeding(v -> {
                         ctx.verify(() -> {
@@ -1122,14 +1221,15 @@ class RestRequestCompletionEmitterTest {
             scopes.add(goodCloseScope);
 
             RestRequestCompletionEmitter em = emitterWithScopes(scopes, Set.of(captured::add));
-            Router router = router(vertx, em, rc -> {});
+            Promise<Void> barrier = Promise.promise();
+            Router router = router(vertx, em, barrier, rc -> {});
 
             startServer(router)
-                    .compose(port -> client.request(HttpMethod.GET, port, "localhost", "/test")
+                    .compose(port -> client.request(HttpMethod.GET, port, "127.0.0.1", "/test")
                             .compose(req -> req.send()))
                     .compose(resp -> {
                         ctx.verify(() -> assertEquals(200, resp.statusCode()));
-                        return Future.<Void>future(p -> vertx.setTimer(80, id -> p.complete(null)));
+                        return awaitBarrier(vertx, barrier.future());
                     })
                     .onComplete(ctx.succeeding(v -> {
                         ctx.verify(() -> {
