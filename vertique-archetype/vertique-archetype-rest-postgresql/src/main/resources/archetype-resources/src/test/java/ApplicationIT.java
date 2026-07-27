@@ -24,6 +24,13 @@ import org.junit.jupiter.api.extension.RegisterExtension;
  * Boots the whole application against a real PostgreSQL container and drives one ordered item CRUD
  * journey over HTTP.
  *
+ * <p><strong>Framework-owned rejections.</strong> The journey opens with the three requests the
+ * resource itself does not guard: an empty and a whitespace-only {@code name}, both rejected by the
+ * request-validation gate from the {@code @NotBlank} and {@code @Pattern} constraints on the request
+ * record, and a malformed {@code {id}}, rejected by the built-in {@code UUID} parameter converter.
+ * All must answer {@code 400}, so the template's reliance on the framework gates — rather than on
+ * hand-written checks — is proven rather than taken on trust.
+ *
  * <p><strong>Docker is required.</strong> The container start below propagates any discovery or
  * startup failure, so a missing daemon fails this build rather than skipping the proof.
  *
@@ -92,6 +99,28 @@ class ApplicationIT {
 
     @Test
     void supportsItemCrud() {
+        // The request-validation gate rejects an empty name before the resource method runs: the
+        // @NotBlank constraint on CreateItemRequest is the template's only presence check.
+        given().contentType(ContentType.JSON)
+                .body(new JsonObject().put("name", "").put("description", "x").encode())
+                .when()
+                .post("/items")
+                .then()
+                .statusCode(400);
+
+        // And a whitespace-only name is rejected too — @NotBlank alone only bounds length, so the
+        // companion @Pattern is what carries this case.
+        given().contentType(ContentType.JSON)
+                .body(new JsonObject().put("name", "   ").put("description", "x").encode())
+                .when()
+                .post("/items")
+                .then()
+                .statusCode(400);
+
+        // A malformed identifier is rejected by the built-in UUID parameter converter, which answers
+        // 400 without echoing the submitted value.
+        given().when().get("/items/not-a-uuid").then().statusCode(400);
+
         Response created = given().contentType(ContentType.JSON)
                 .body(new JsonObject()
                         .put("name", "Widget")

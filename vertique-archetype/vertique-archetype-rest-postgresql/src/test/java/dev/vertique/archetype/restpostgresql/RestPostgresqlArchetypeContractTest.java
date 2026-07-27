@@ -136,15 +136,6 @@ class RestPostgresqlArchetypeContractTest {
     private static final Pattern MODIFIER_STATIC = Pattern.compile("\\bstatic\\b");
 
     /**
-     * Matches the {@code "flyway"} object of the generated application config together with its body.
-     * The body is brace-free, so the non-greedy character class is exact for the frozen flat section.
-     */
-    private static final Pattern CONFIG_FLYWAY_SECTION = Pattern.compile("\"flyway\"\\s*:\\s*\\{([^{}]*)}");
-
-    /** Matches the {@code "mode"} entry of a JSON config section. */
-    private static final Pattern CONFIG_MODE = Pattern.compile("\"mode\"\\s*:\\s*\"([A-Z_]+)\"");
-
-    /**
      * Matches the generated integration test's injected Flyway configuration. The whole
      * {@code .put("flyway", new JsonObject().put("mode", "MIGRATE"))} construction is pinned — not
      * merely the literal {@code MIGRATE} somewhere in the file — so an injected config that drops or
@@ -197,25 +188,11 @@ class RestPostgresqlArchetypeContractTest {
     private static final Pattern HEADING_2 = Pattern.compile("(?m)^## ");
 
     /**
-     * Matches the {@code "db"} object of the generated application config together with its body. The
-     * body is brace-free, so the non-greedy character class is exact for the frozen flat section.
+     * Matches the {@code "port"} entry of a JSON config section. Kept as its own constant rather than
+     * built by {@link #scalarPattern(String)}: its value is an unquoted JSON number, so the quoted
+     * string-scalar shape that helper produces would not match it at all.
      */
-    private static final Pattern CONFIG_DB_SECTION = Pattern.compile("\"db\"\\s*:\\s*\\{([^{}]*)}");
-
-    /** Matches the {@code "host"} entry of a JSON config section. */
-    private static final Pattern CONFIG_HOST = Pattern.compile("\"host\"\\s*:\\s*\"([^\"]+)\"");
-
-    /** Matches the {@code "port"} entry of a JSON config section. */
     private static final Pattern CONFIG_PORT = Pattern.compile("\"port\"\\s*:\\s*(\\d+)");
-
-    /** Matches the {@code "database"} entry of a JSON config section. */
-    private static final Pattern CONFIG_DATABASE_NAME = Pattern.compile("\"database\"\\s*:\\s*\"([^\"]+)\"");
-
-    /** Matches the {@code "user"} entry of a JSON config section. */
-    private static final Pattern CONFIG_USER = Pattern.compile("\"user\"\\s*:\\s*\"([^\"]+)\"");
-
-    /** Matches the {@code "password"} entry of a JSON config section. */
-    private static final Pattern CONFIG_PASSWORD = Pattern.compile("\"password\"\\s*:\\s*\"([^\"]+)\"");
 
     /** Matches the {@code <modules>...</modules>} block of an aggregator POM. */
     private static final Pattern MODULES_BLOCK = Pattern.compile("<modules>(.*?)</modules>", Pattern.DOTALL);
@@ -443,9 +420,9 @@ class RestPostgresqlArchetypeContractTest {
 
         // And the generated application config selects the MIGRATE Flyway mode structurally, from the
         // flyway section itself rather than from an unanchored literal anywhere in the document.
-        Matcher flywaySection = CONFIG_FLYWAY_SECTION.matcher(applicationConfig);
+        Matcher flywaySection = sectionPattern("flyway").matcher(applicationConfig);
         assertTrue(flywaySection.find(), "generated config must declare a flyway section");
-        Matcher configuredMode = CONFIG_MODE.matcher(flywaySection.group(1));
+        Matcher configuredMode = scalarPattern("mode").matcher(flywaySection.group(1));
         assertTrue(configuredMode.find(), "generated flyway section must declare a mode");
         assertEquals(
                 EXPECTED_FLYWAY_MODE,
@@ -636,24 +613,28 @@ class RestPostgresqlArchetypeContractTest {
         // And the generated config's db section structurally carries the same local-only
         // placeholders, isolated from the sibling "http"/"management"/"flyway" sections so an
         // unrelated port cannot satisfy the check.
-        Matcher dbSection = CONFIG_DB_SECTION.matcher(applicationConfig);
+        Matcher dbSection = sectionPattern("db").matcher(applicationConfig);
         assertTrue(dbSection.find(), "generated config must declare a db section");
         String db = dbSection.group(1);
         assertEquals(
-                EXPECTED_LOCAL_DB_HOST, firstGroup(CONFIG_HOST, db), "generated config db.host must be local-only");
+                EXPECTED_LOCAL_DB_HOST,
+                firstGroup(scalarPattern("host"), db),
+                "generated config db.host must be local-only");
         assertEquals(
                 EXPECTED_LOCAL_DB_PORT,
                 Integer.parseInt(firstGroup(CONFIG_PORT, db)),
                 "generated config db.port must be local-only");
         assertEquals(
                 EXPECTED_LOCAL_DB_NAME,
-                firstGroup(CONFIG_DATABASE_NAME, db),
+                firstGroup(scalarPattern("database"), db),
                 "generated config db.database must be local-only");
         assertEquals(
-                EXPECTED_LOCAL_DB_USER, firstGroup(CONFIG_USER, db), "generated config db.user must be local-only");
+                EXPECTED_LOCAL_DB_USER,
+                firstGroup(scalarPattern("user"), db),
+                "generated config db.user must be local-only");
         assertEquals(
                 EXPECTED_LOCAL_DB_PASSWORD,
-                firstGroup(CONFIG_PASSWORD, db),
+                firstGroup(scalarPattern("password"), db),
                 "generated config db.password must be local-only");
     }
 
@@ -743,8 +724,8 @@ class RestPostgresqlArchetypeContractTest {
 
         // And no completed child republishes the retired top-level coordinate as a generator: every
         // child POM must declare its own distinct, longer artifactId, never the bare aggregator alias.
-        List<Path> childPoms = new ArrayList<>(SIBLING_ARCHETYPE_POMS);
-        childPoms.add(ARCHETYPE_POM);
+        List<Path> childPoms = Stream.concat(SIBLING_ARCHETYPE_POMS.stream(), Stream.of(ARCHETYPE_POM))
+                .toList();
         for (Path childPom : childPoms) {
             String childPomText = read(childPom);
             assertFalse(
@@ -984,6 +965,29 @@ class RestPostgresqlArchetypeContractTest {
                 () -> "deployment provider " + provider.name()
                         + " body must be exactly one return VerticleDeployment.of(…); statement, found:\n" + body);
         return returned.group(1) + "@" + returned.group(2);
+    }
+
+    /**
+     * Builds a pattern matching one named JSON object together with its body, capturing the body. The
+     * body is matched brace-free, so the pattern is exact for the frozen flat sections of the
+     * generated application config and stops at a nested object rather than swallowing it.
+     *
+     * @param name the object's key, matched literally
+     * @return a pattern whose first group is the section body
+     */
+    private static Pattern sectionPattern(String name) {
+        return Pattern.compile("\"" + Pattern.quote(name) + "\"\\s*:\\s*\\{([^{}]*)}");
+    }
+
+    /**
+     * Builds a pattern matching one string-valued scalar entry of a JSON config section, capturing the
+     * value. Numeric entries are not expressible here — see {@link #CONFIG_PORT}.
+     *
+     * @param key the entry's key, matched literally
+     * @return a pattern whose first group is the quoted value's content
+     */
+    private static Pattern scalarPattern(String key) {
+        return Pattern.compile("\"" + Pattern.quote(key) + "\"\\s*:\\s*\"([^\"]+)\"");
     }
 
     /**
