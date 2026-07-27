@@ -17,14 +17,17 @@ import java.math.BigDecimal;
 import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
  * Unit tests for {@link BigDecimalModelConverter}, verifying that it resolves {@link BigDecimal}
  * return/field types to the {@code vertique-strict} string wire-form schema, delegates unrelated
- * types unchanged to the next converter in the chain, terminates gracefully when it is last in an
- * empty chain, and composes correctly when chained after {@link FutureModelConverter}.
+ * types (including {@code Map<BigDecimal, ?>}, whose keys this converter never bounds — see the
+ * module doc's map-key caveat) unchanged to the next converter in the chain, terminates gracefully
+ * when it is last in an empty chain, and composes correctly when chained after
+ * {@link FutureModelConverter}.
  */
 class BigDecimalModelConverterTest {
 
@@ -87,6 +90,26 @@ class BigDecimalModelConverterTest {
         Schema<?> result = futureConverter.resolve(type, null, chain);
 
         assertDecimalStringSchema(result);
+    }
+
+    @Test
+    @DisplayName(
+            "resolve() on a Map<BigDecimal, ?> passes through to the next converter unchanged (keys are not bounded)")
+    void mapOfBigDecimalKeys_delegatesToChainUnchanged() {
+        BigDecimalModelConverter converter = new BigDecimalModelConverter();
+        Schema<?> marker = new Schema<>();
+        CapturingModelConverter next = new CapturingModelConverter(marker);
+        Iterator<ModelConverter> chain = List.<ModelConverter>of(next).iterator();
+
+        var mapType = io.swagger.v3.core.util.Json.mapper()
+                .getTypeFactory()
+                .constructMapType(Map.class, BigDecimal.class, String.class);
+        AnnotatedType type = new AnnotatedType().type(mapType);
+
+        Schema<?> result = converter.resolve(type, null, chain);
+
+        assertSame(marker, result);
+        assertSame(type, next.capturedType);
     }
 
     /**
