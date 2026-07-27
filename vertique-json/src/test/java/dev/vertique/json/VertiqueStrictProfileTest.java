@@ -18,6 +18,7 @@ import com.fasterxml.jackson.databind.exc.MismatchedInputException;
 import dev.vertique.core.json.JsonProfileId;
 import io.vertx.core.json.jackson.DatabindCodec;
 import java.math.BigDecimal;
+import java.math.BigInteger;
 import java.time.LocalDate;
 import java.util.Map;
 import java.util.Optional;
@@ -241,6 +242,77 @@ class VertiqueStrictProfileTest {
         BigDecimal key = decoded.keySet().iterator().next();
         assertEquals(0, key.compareTo(new BigDecimal("1.50")), "the map key must parse to 1.50");
         assertEquals(2, key.scale(), "the wire scale of the map key must be preserved exactly");
+    }
+
+    @Test
+    @DisplayName("BigDecimal map key \"0.0000001\" serializes in plain form, not scientific notation")
+    void bigDecimalMapKey_serializesInPlainForm() throws Exception {
+        // Given: the vertique-strict mapper and a map keyed by a small-scale BigDecimal whose
+        // default Object.toString() form would be scientific notation ("1E-7").
+        ObjectMapper mapper = strictMapper();
+        Map<BigDecimal, String> value = Map.of(new BigDecimal("0.0000001"), "x");
+
+        // When: the map is serialized.
+        String json = mapper.writeValueAsString(value);
+
+        // Then: the key is written in plain decimal form, matching what the value-side serializer
+        // would produce, and re-readable by the profile's own key deserializer.
+        assertEquals(
+                "{\"0.0000001\":\"x\"}",
+                json,
+                "the BigDecimal map key must serialize in plain decimal form, not scientific notation");
+    }
+
+    @Test
+    @DisplayName("BigDecimal map key round-trips through write then read on the same profile mapper")
+    void bigDecimalMapKey_writeThenRead_roundTrips() throws Exception {
+        // Given: the vertique-strict mapper and a map keyed by a BigDecimal that a naive
+        // Object.toString()-based key serializer would restring as scientific notation.
+        ObjectMapper mapper = strictMapper();
+        Map<BigDecimal, String> original = Map.of(new BigDecimal("0.0000001"), "x");
+
+        // When: the map is written, then read back through the same profile mapper.
+        String json = mapper.writeValueAsString(original);
+        Map<BigDecimal, String> roundTripped = mapper.readValue(json, new TypeReference<Map<BigDecimal, String>>() {});
+
+        // Then: the profile can read back its own output.
+        assertEquals(1, roundTripped.size());
+        BigDecimal key = roundTripped.keySet().iterator().next();
+        assertEquals(0, key.compareTo(new BigDecimal("0.0000001")), "the round-tripped key must equal 0.0000001");
+        assertEquals("x", roundTripped.get(key));
+    }
+
+    @Test
+    @DisplayName("over-bound BigDecimal map key is rejected on write with a digit-free message")
+    void bigDecimalMapKey_overBound_rejectedOnWrite() {
+        // Given: the vertique-strict mapper and a map keyed by a BigDecimal whose plain-string form
+        // would exceed the 100-character write-side bound (scale 200, well beyond the 100-char cap).
+        ObjectMapper mapper = strictMapper();
+        Map<BigDecimal, String> value = Map.of(new BigDecimal(BigInteger.ONE, 200), "x");
+
+        // When/Then: writing is rejected, and the rejection message names the bound but never the
+        // key's digits.
+        JsonProcessingException ex =
+                assertThrows(JsonProcessingException.class, () -> mapper.writeValueAsString(value));
+        String message = ex.getMessage();
+        assertTrue(message.contains("100"), "message must name the 100-character bound: " + message);
+        assertFalse(
+                message.contains("0".repeat(100)), "message must never echo the offending key's digits: " + message);
+    }
+
+    @Test
+    @DisplayName("a Map with BigDecimal values (not keys) still round-trips")
+    void mapWithBigDecimalValues_stillRoundTrips() throws Exception {
+        // Given: the vertique-strict mapper and a map with a BigDecimal value (not a key).
+        ObjectMapper mapper = strictMapper();
+        Map<String, BigDecimal> original = Map.of("x", new BigDecimal("1.50"));
+
+        // When: the map is written, then read back.
+        String json = mapper.writeValueAsString(original);
+        Map<String, BigDecimal> roundTripped = mapper.readValue(json, new TypeReference<Map<String, BigDecimal>>() {});
+
+        // Then: the value-side round-trip is unaffected by the new key serializer.
+        assertEquals(0, roundTripped.get("x").compareTo(new BigDecimal("1.50")));
     }
 
     @Test

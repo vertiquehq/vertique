@@ -418,6 +418,69 @@ class BigDecimalAsStringSerdeTest {
         }
     }
 
+    // --- Negative-scale zero exemption (json-004 R2-2) ---
+
+    @Nested
+    @DisplayName("Negative-scale zero exemption")
+    class NegativeScaleZeroExemption {
+
+        @Test
+        @DisplayName("1E+200 minus itself (negative-scale zero) serializes as \"0\"")
+        void negativeScaleZeroFromSubtraction_serializesAsZero() throws Exception {
+            BigDecimal huge = new BigDecimal("1E+200");
+            BigDecimal zero = huge.subtract(huge);
+            // Sanity check on the fixture: the difference really is a negative-scale zero, not the
+            // ordinary BigDecimal.ZERO (scale 0).
+            assertEquals(0, zero.signum(), "fixture sanity check: the difference must be zero-valued");
+            assertTrue(
+                    zero.scale() < -BigDecimalStrictStringDeserializer.MAX_LENGTH,
+                    "fixture sanity check: the difference must carry a scale beyond the negative bound");
+
+            String json = mapper.writeValueAsString(new MoneyWrapper(zero));
+
+            assertEquals("{\"amount\":\"0\"}", json, "a negative-scale zero must serialize as the plain string \"0\"");
+        }
+
+        @Test
+        @DisplayName("0E+5 times 1E+300 (scale -305 zero) serializes as \"0\"")
+        void negativeScaleZeroFromMultiplication_serializesAsZero() throws Exception {
+            BigDecimal zero = new BigDecimal("0E+5").multiply(new BigDecimal("1E+300"));
+            assertEquals(0, zero.signum(), "fixture sanity check: the product must be zero-valued");
+            assertEquals(-305, zero.scale(), "fixture sanity check: the product must carry scale -305");
+
+            String json = mapper.writeValueAsString(new MoneyWrapper(zero));
+
+            assertEquals("{\"amount\":\"0\"}", json, "a negative-scale zero must serialize as the plain string \"0\"");
+        }
+
+        @Test
+        @DisplayName("BigDecimal.ZERO.setScale(200) (positive-scale zero) is still rejected on write")
+        void positiveScaleZero_stillRejectedOnWrite() {
+            // The zero exemption applies only to the negative-scale branch. A positive scale beyond
+            // the bound still guarantees an over-length plain form (202 characters here) even for
+            // zero, so this rejection must be unaffected by the fix.
+            MoneyWrapper value = new MoneyWrapper(BigDecimal.ZERO.setScale(200));
+
+            assertThrows(
+                    JsonMappingException.class,
+                    () -> mapper.writeValueAsString(value),
+                    "a positive-scale zero beyond the bound must still be rejected on write");
+        }
+
+        @Test
+        @DisplayName("nonzero 1E+200 (negative-scale, nonzero) is still rejected on write")
+        void negativeScaleNonzero_stillRejectedOnWrite() {
+            // The zero exemption must not extend to a nonzero value: 1E+200 has scale -200 and a
+            // 201-character plain form, and must remain rejected.
+            MoneyWrapper value = new MoneyWrapper(new BigDecimal("1E+200"));
+
+            assertThrows(
+                    JsonMappingException.class,
+                    () -> mapper.writeValueAsString(value),
+                    "a nonzero negative-scale value beyond the bound must still be rejected on write");
+        }
+    }
+
     // --- Null handling ---
 
     @Nested
