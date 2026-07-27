@@ -1597,19 +1597,33 @@ public interface ResponseProducer<T> {
 
 ### ResponseSerializer
 
-Serializes a `jakarta.ws.rs.core.Response` to the HTTP wire. Implementations invoke all `RequestInterceptor.onSerialize()` hooks before writing. Injectable/replaceable via Dagger to support custom serialization formats (CBOR, XML, etc.).
+Serializes a `jakarta.ws.rs.core.Response` body to the HTTP wire and reports **wire completion** to the caller. Injectable/replaceable via Dagger to support custom serialization formats (CBOR, XML, etc.).
 
 ```java
 public interface ResponseSerializer {
-    void serialize(RoutingContext ctx, Response response);
+    Future<Void> serialize(RoutingContext ctx, Response response);
 }
 ```
 
-The default implementation (`DefaultResponseSerializer` in `rest-jaxrs`) handles:
-- `null` entity → `response.end()` (no body)
-- `Buffer` entity → writes the buffer directly (pre-serialized content)
-- `ReadStream<Buffer>` entity → pipes the stream to the HTTP response
-- Any other entity → JSON via `Json.encode()`, sets `Content-Type: application/json` if not already set
+**Invocation context.** Called by the response pipeline for responses requiring serializer-owned body handling, on the request's event-loop context, after the status code and headers have been written to the routing context's response and after `transformResponse` hooks have run. Normal empty-body and bare fallback paths bypass the serializer entirely; the error fail-open path may retry it exactly once after a synchronous pre-initiation failure (FR-JSON-058A). Implementations must not block the calling thread.
+
+**Completion contract (dual-channel):**
+
+| Channel | Meaning | Caller obligation |
+|---------|---------|-------------------|
+| Synchronous throw | No write or end was initiated (encode-time failure) | May retry against the same response head (fail-open, FR-JSON-058A) |
+| Returned future — success | The response has been fully written and ended | None |
+| Returned future — failure | The wire write failed after handoff; zero or more bytes may have been written | Never retry; the caller owns terminal cleanup (the response may still need ending) |
+
+The returned future is never `null` and **may complete on any thread** — callers must not assume context affinity; the framework pipeline redispatches handling onto the request context.
+
+The default implementation (`DefaultResponseSerializer` in `rest-jaxrs`) selects a `ResponseBodyEncoder` for the entity and returns, per branch:
+- `null` entity → the future of `response.end()` (no body)
+- no matching encoder → the future of `response.end(problemJson)` after switching the response to `500` / `application/problem+json`
+- `BufferedBody` → the future of `response.end(buffer)`
+- `StreamingBody` → the future of `stream.pipe().endOnFailure(false).to(httpResponse)` — the stream is never buffered (FR-RESTSER-013 / NFR-003) and the serializer never ends the response on pipe failure
+
+All `RequestInterceptor.onSerialize()` hooks are invoked before the body is handed to the wire.
 
 ### ResponseProducerBinding
 

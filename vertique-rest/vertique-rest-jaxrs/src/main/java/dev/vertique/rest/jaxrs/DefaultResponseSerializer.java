@@ -10,6 +10,7 @@ import dev.vertique.rest.core.response.ResponseBodyEncoder;
 import dev.vertique.rest.core.response.ResponseSerializer;
 import dev.vertique.rest.core.response.SerializedBody;
 import dev.vertique.rest.core.response.StreamingBody;
+import io.vertx.core.Future;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.http.HttpServerResponse;
 import io.vertx.core.json.Json;
@@ -69,9 +70,10 @@ public class DefaultResponseSerializer implements ResponseSerializer {
      *
      * @param ctx      the current routing context; provides access to the HTTP response
      * @param response the JAX-RS response whose entity is to be encoded and written
+     * @return an already-succeeded future; this stub does not yet mirror wire completion
      */
     @Override
-    public void serialize(RoutingContext ctx, Response response) {
+    public Future<Void> serialize(RoutingContext ctx, Response response) {
         HttpServerResponse httpResponse = ctx.response();
         Object entity = response.getEntity();
 
@@ -83,7 +85,7 @@ public class DefaultResponseSerializer implements ResponseSerializer {
                 hook.onSerialize(ctx, response, null);
             }
             httpResponse.end();
-            return;
+            return Future.succeededFuture();
         }
 
         // Determine effective content type from the already-set response headers
@@ -116,7 +118,7 @@ public class DefaultResponseSerializer implements ResponseSerializer {
 
             httpResponse.putHeader("Content-Type", "application/problem+json");
             httpResponse.end(errorJson);
-            return;
+            return Future.succeededFuture();
         }
 
         // Encode
@@ -138,6 +140,7 @@ public class DefaultResponseSerializer implements ResponseSerializer {
                 stream.pipeTo(httpResponse);
             }
         }
+        return Future.succeededFuture();
     }
 
     /**
