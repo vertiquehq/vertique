@@ -38,6 +38,14 @@ import org.slf4j.LoggerFactory;
  * <p>After the encoder encodes the entity, all {@link RequestInterceptor#onSerialize}
  * hooks are invoked in {@link dev.vertique.core.extension.OrderedExtension} order
  * (phase → priority → orderKey) for observability (logging, metrics, audit).
+ *
+ * <p>Per the {@link ResponseSerializer} dual-channel contract, {@link #serialize} returns the
+ * wire-completion future of the branch it took: the {@code end(...)} future for the null-entity,
+ * no-encoder and {@link BufferedBody} branches, and the pipe future for a {@link StreamingBody}.
+ * A streaming body is piped with {@code endOnFailure(false)} — this serializer never ends the
+ * response on a pipe failure, leaving terminal cleanup to the pipeline that observes the future.
+ * Encoder failures propagate as synchronous throws before any byte is written, which is what makes
+ * the error fail-open retry safe.
  */
 public class DefaultResponseSerializer implements ResponseSerializer {
 
@@ -70,7 +78,9 @@ public class DefaultResponseSerializer implements ResponseSerializer {
      *
      * @param ctx      the current routing context; provides access to the HTTP response
      * @param response the JAX-RS response whose entity is to be encoded and written
-     * @return an already-succeeded future; this stub does not yet mirror wire completion
+     * @return a future mirroring wire completion: the {@code end(...)} future for the buffered,
+     *         null-entity and no-encoder branches, and the pipe future for a streaming body.
+     *         An encoder failure propagates as a synchronous throw with nothing written
      */
     @Override
     public Future<Void> serialize(RoutingContext ctx, Response response) {
@@ -84,8 +94,7 @@ public class DefaultResponseSerializer implements ResponseSerializer {
             for (RequestInterceptor hook : hooks) {
                 hook.onSerialize(ctx, response, null);
             }
-            httpResponse.end();
-            return Future.succeededFuture();
+            return httpResponse.end();
         }
 
         // Determine effective content type from the already-set response headers
@@ -117,8 +126,7 @@ public class DefaultResponseSerializer implements ResponseSerializer {
             }
 
             httpResponse.putHeader("Content-Type", "application/problem+json");
-            httpResponse.end(errorJson);
-            return Future.succeededFuture();
+            return httpResponse.end(errorJson);
         }
 
         // Encode
@@ -130,17 +138,19 @@ public class DefaultResponseSerializer implements ResponseSerializer {
         }
 
         // Dispatch to wire
-        switch (body) {
+        return switch (body) {
             case BufferedBody(var buf, var ct, var len) -> {
                 applyEncoderHeaders(httpResponse, ct, len);
-                httpResponse.end(buf);
+                yield httpResponse.end(buf);
             }
             case StreamingBody(var stream, var ct, var len) -> {
                 applyEncoderHeaders(httpResponse, ct, len);
-                stream.pipeTo(httpResponse);
+                // endOnFailure(false): the pipeline — not the serializer — owns terminal cleanup for a
+                // failed stream, so the completion future can surface the wire failure before the
+                // response is ended. The stream is piped, never buffered (FR-RESTSER-013 / NFR-003).
+                yield stream.pipe().endOnFailure(false).to(httpResponse);
             }
-        }
-        return Future.succeededFuture();
+        };
     }
 
     /**

@@ -474,21 +474,30 @@ Package-private utility that resolves the exception type `T` from each `Exceptio
 
 ### DefaultResponseSerializer
 
-Concrete implementation of `ResponseSerializer` (defined in `rest-core`). Writes a `jakarta.ws.rs.core.Response` to the HTTP wire.
+Concrete implementation of `ResponseSerializer` (defined in `rest-core`). Encodes the entity of a `jakarta.ws.rs.core.Response` and writes it to the HTTP wire, returning the wire-completion future required by the SPI's dual-channel contract.
+
+The status code and the response headers are **already on the wire** when this serializer runs — `ResponsePipeline.applyToWire` writes them before delegating. The serializer only owns the body.
 
 **Pipeline:**
-1. Invoke all `RequestInterceptor.onSerialize()` hooks in `OrderedExtension.comparator()` order (phase → priority → orderKey; read-only, observability)
-2. Copy status code and headers to the HTTP response
-3. Serialize the entity:
+1. **Null entity** — invoke `RequestInterceptor.onSerialize()` with a `null` body, then `response.end()`
+2. **Select encoder** — first `ResponseBodyEncoder` in `OrderedExtension.comparator()` order (phase → priority → orderKey) whose `canEncode(entityType, effectiveContentType)` matches; the effective Content-Type is read from the already-written response headers
+3. **No encoder matches** — log a warning, switch the response to `500` / `application/problem+json`, invoke `onSerialize()` with the `ProblemDetail` body, and end with the problem JSON
+4. **Encode** — `encoder.encode(ctx, response, entity)` produces a `SerializedBody`; an encoder failure propagates as a **synchronous throw** with nothing written (this is what makes the `ResponsePipeline` error fail-open retry safe)
+5. **Observe** — invoke all `RequestInterceptor.onSerialize()` hooks with the encoded body (read-only: logging, metrics, audit)
+6. **Dispatch to wire** — apply the encoder's Content-Type (only when the response has none) and Content-Length, then write
 
-| Entity type | Behavior |
-|-------------|----------|
-| `null` | `response.end()` — no body |
-| `Buffer` | Write buffer directly (pre-serialized content) |
-| `ReadStream<Buffer>` | Pipe the stream to the HTTP response |
-| Any other object | `Json.encode(entity)`, sets `Content-Type: application/json` if not already set |
+| Encoded body | Wire write | Returned future |
+|--------------|-----------|-----------------|
+| `null` entity (step 1) | `response.end()` | the `end()` future |
+| No encoder matched (step 3) | `response.end(problemJson)` after status `500` | the `end(String)` future |
+| `BufferedBody` | `response.end(buffer)` | the `end(Buffer)` future |
+| `StreamingBody` | `stream.pipe().endOnFailure(false).to(response)` | the pipe future |
 
-`RestModule` provides `DefaultResponseSerializer` as the `ResponseSerializer` binding. Override with a custom `@Provides ResponseSerializer` to use CBOR, XML, or any other format.
+Framework encoders (all priority `1000`, so an application encoder at the default priority `0` wins): `BufferBodyEncoder`, `ByteArrayBodyEncoder`, `StringBodyEncoder`, `ReadStreamBodyEncoder` (`ReadStream<Buffer>` only), `JsonBodyEncoder` (fallback).
+
+**Streaming failure ownership.** A `StreamingBody` is piped, never buffered (FR-RESTSER-013 / NFR-003), and `endOnFailure(false)` means this serializer does **not** end the response when the pipe fails: the returned future fails with the source or (unwrapped) write cause, and terminal cleanup belongs to the caller observing that future. A successful pipe ends the response and succeeds the future.
+
+`RestModule` provides `DefaultResponseSerializer` as the `ResponseSerializer` binding. Override with a custom `@Provides ResponseSerializer` to use CBOR, XML, or any other format — a custom implementation must honor the same dual-channel contract (see the `ResponseSerializer` section of the `vertique-rest-core` module reference).
 
 ### ResponsePipeline
 
