@@ -17,6 +17,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
+import java.util.regex.MatchResult;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.junit.jupiter.api.DisplayName;
@@ -84,17 +86,26 @@ class RestArchetypeContractTest {
     /** Matches the {@code modules = { … }} member of the generated component's {@code @Component}. */
     private static final Pattern COMPONENT_MODULES = Pattern.compile("modules\\s*=\\s*\\{(.*?)}", Pattern.DOTALL);
 
-    /** Matches one {@code VerticleDeployment.of("id", …, LifecyclePhase.PHASE)} contribution. */
-    private static final Pattern DEPLOYMENT = Pattern.compile(
-            "VerticleDeployment\\.of\\(\\s*\"([^\"]+)\"\\s*,[^,]+,\\s*LifecyclePhase\\.([A-Z_]+)\\s*\\)");
+    /**
+     * Matches a {@code return VerticleDeployment.of("id", …, LifecyclePhase.PHASE);} statement. The
+     * construction is bound to {@code return} rather than merely being present in the body, so a
+     * provider that constructs a deployment and then returns something else is not credited for it.
+     */
+    private static final Pattern RETURNED_DEPLOYMENT = Pattern.compile(
+            "return\\s+VerticleDeployment\\.of\\(\\s*\"([^\"]+)\"\\s*,[^,]+,\\s*LifecyclePhase\\.([A-Z_]+)\\s*\\)\\s*;");
 
     /**
-     * Matches one {@code @Provides @IntoSet static VerticleDeployment …(…)} provider method header,
-     * regardless of how the returned deployment is constructed. Each match anchors the per-provider
-     * body scan that binds a construction to the provider that returns it.
+     * Matches a method declaration whose return type is {@code VerticleDeployment}, capturing the
+     * method name. Discovery is keyed on the <em>return type</em>, not on an annotation prefix, so a
+     * contributed deployment cannot hide from the proof by reordering or omitting annotations.
      */
-    private static final Pattern DEPLOYMENT_PROVIDER =
-            Pattern.compile("@Provides\\s+@IntoSet\\s+static\\s+VerticleDeployment\\s+\\w+\\s*\\(");
+    private static final Pattern DEPLOYMENT_RETURNING_METHOD = Pattern.compile("VerticleDeployment\\s+(\\w+)\\s*\\(");
+
+    /** Matches one annotation name within a member's modifier prefix. */
+    private static final Pattern ANNOTATION = Pattern.compile("@\\w+");
+
+    /** Matches the {@code static} modifier as a whole word. */
+    private static final Pattern MODIFIER_STATIC = Pattern.compile("\\bstatic\\b");
 
     /** Tokens that would indicate a concrete JWT/JOSE token mechanism. */
     private static final List<String> MECHANISM_TOKENS = List.of("jwt", "jose", "jwks");
@@ -141,6 +152,9 @@ class RestArchetypeContractTest {
 
     /** The exact {@code id@phase} deployments the generated application module contributes, sorted. */
     private static final List<String> EXPECTED_DEPLOYMENTS = List.of("http@EDGE", "management@INFRA");
+
+    /** The annotations every deployment provider must carry; membership is order-insensitive. */
+    private static final Set<String> REQUIRED_PROVIDER_ANNOTATIONS = Set.of("@Provides", "@IntoSet");
 
     /** The exact {@code -D} property set and values of the frozen §4.6 non-interactive generation command. */
     private static final Map<String, String> EXPECTED_GENERATE_PROPERTIES = Map.of(
@@ -239,6 +253,19 @@ class RestArchetypeContractTest {
                 "generated AppModule must not add a security-policy validator opt-out");
     }
 
+    /**
+     * Proves the generated application module contributes exactly the two frozen deployments.
+     *
+     * <p><strong>Deliberate bound.</strong> This is a structural <em>text</em> proof, not Java
+     * parsing. Its discovery key is the declared return type {@code VerticleDeployment}: any method
+     * declaring that return type is treated as a contribution and must satisfy the full contract, so
+     * a non-canonical addition is detected rather than ignored. A method that hides its return type
+     * behind a type alias, {@code var}, or a generic factory would evade discovery. That residual is
+     * accepted knowingly — closing it would require real Java parsing, which is disproportionate to
+     * the risk of a template this small and frozen.
+     *
+     * @throws IOException when a template cannot be read
+     */
     @Test
     @DisplayName("contributes exactly management at INFRA and http at EDGE")
     void usesExactDeploymentIdsAndPhases() throws IOException {
@@ -246,17 +273,28 @@ class RestArchetypeContractTest {
         // code is parsed.
         String appModule = stripJavaComments(read(TEMPLATE_APP_MODULE));
 
-        // When each @Provides @IntoSet provider's own method body is isolated.
-        List<String> providerBodies = deploymentProviderBodiesOf(appModule);
+        // When every method declaring a VerticleDeployment return type is isolated with its body.
+        List<DeploymentProvider> providers = deploymentProvidersOf(appModule);
 
-        // Then exactly the two frozen providers exist.
-        assertEquals(2, providerBodies.size(), "generated AppModule must declare exactly two deployment providers");
+        // Then exactly the two frozen contributions exist.
+        assertEquals(2, providers.size(), "generated AppModule must declare exactly two deployment providers");
 
-        // And each one builds exactly one recognized deployment in its own body — a construction is
-        // bound to the provider that returns it, so a provider delegating elsewhere cannot borrow
-        // another provider's (or a comment's) construction to satisfy the identifier/phase proof.
-        List<String> deployments = providerBodies.stream()
-                .map(RestArchetypeContractTest::soleDeploymentIn)
+        // And each is a static multibinding contribution — annotation order is irrelevant, presence
+        // is not.
+        providers.forEach(provider -> {
+            assertTrue(
+                    provider.annotations().containsAll(REQUIRED_PROVIDER_ANNOTATIONS),
+                    () -> "deployment provider " + provider.name() + " must carry " + REQUIRED_PROVIDER_ANNOTATIONS
+                            + ", found " + provider.annotations());
+            assertTrue(provider.isStatic(), () -> "deployment provider " + provider.name() + " must be static");
+        });
+
+        // And each provider's returned expression is itself a recognized construction — the of(…) is
+        // bound to `return`, not merely present somewhere in the body, so a delegating return cannot
+        // be credited to a stray construction. The frozen id/phase set is derived from exactly those
+        // returned expressions.
+        List<String> deployments = providers.stream()
+                .map(RestArchetypeContractTest::soleReturnedDeploymentIn)
                 .sorted()
                 .toList();
         assertEquals(EXPECTED_DEPLOYMENTS, deployments);
@@ -409,20 +447,51 @@ class RestArchetypeContractTest {
     }
 
     /**
-     * Extracts the method body of every {@code @Provides @IntoSet} deployment provider, in
-     * declaration order. Bodies are isolated so a construction can be attributed to the provider that
-     * returns it rather than counted globally.
+     * Discovers every method declaring a {@code VerticleDeployment} return type, in declaration
+     * order, capturing each one's annotations, {@code static} modifier, and body.
+     *
+     * <p>Discovery is by return type rather than by annotation prefix: a contribution that reorders
+     * or drops its annotations is still found, and then fails the annotation assertions, instead of
+     * disappearing from the proof entirely.
      *
      * @param appModule the comment-stripped application module template text
-     * @return one entry per provider, holding that provider's method body
+     * @return one entry per discovered method
      */
-    private static List<String> deploymentProviderBodiesOf(String appModule) {
-        List<String> bodies = new ArrayList<>();
-        Matcher provider = DEPLOYMENT_PROVIDER.matcher(appModule);
-        while (provider.find()) {
-            bodies.add(methodBodyAfter(appModule, provider.end()));
+    private static List<DeploymentProvider> deploymentProvidersOf(String appModule) {
+        List<DeploymentProvider> providers = new ArrayList<>();
+        Matcher signature = DEPLOYMENT_RETURNING_METHOD.matcher(appModule);
+        while (signature.find()) {
+            String prefix = appModule.substring(memberStartBefore(appModule, signature.start()), signature.start());
+            providers.add(new DeploymentProvider(
+                    signature.group(1),
+                    Set.copyOf(ANNOTATION
+                            .matcher(prefix)
+                            .results()
+                            .map(MatchResult::group)
+                            .toList()),
+                    MODIFIER_STATIC.matcher(prefix).find(),
+                    methodBodyAfter(appModule, signature.end())));
         }
-        return List.copyOf(bodies);
+        return List.copyOf(providers);
+    }
+
+    /**
+     * Locates the start of the member declaration containing {@code signatureStart} by scanning back
+     * to the preceding member boundary, so the returned span holds only that member's annotations and
+     * modifiers.
+     *
+     * @param source the comment-stripped template text
+     * @param signatureStart the index of the member's return type
+     * @return the index just past the preceding {@code &#123;}, {@code &#125;}, or {@code ;}
+     */
+    private static int memberStartBefore(String source, int signatureStart) {
+        for (int index = signatureStart - 1; index >= 0; index--) {
+            char character = source.charAt(index);
+            if (character == '{' || character == '}' || character == ';') {
+                return index + 1;
+            }
+        }
+        return 0;
     }
 
     /**
@@ -450,23 +519,24 @@ class RestArchetypeContractTest {
     }
 
     /**
-     * Extracts the single {@code VerticleDeployment.of(…)} construction a provider body must contain.
+     * Extracts the single {@code return VerticleDeployment.of(…);} a provider must contribute.
      *
-     * @param providerBody one provider's method body
-     * @return the construction's {@code id@phase}
+     * @param provider one discovered provider
+     * @return the returned construction's {@code id@phase}
      */
-    private static String soleDeploymentIn(String providerBody) {
-        List<String> constructions = DEPLOYMENT
-                .matcher(providerBody)
+    private static String soleReturnedDeploymentIn(DeploymentProvider provider) {
+        List<String> returned = RETURNED_DEPLOYMENT
+                .matcher(provider.body())
                 .results()
                 .map(match -> match.group(1) + "@" + match.group(2))
                 .toList();
         assertEquals(
                 1,
-                constructions.size(),
-                () -> "each deployment provider must build exactly one VerticleDeployment.of(…), found "
-                        + constructions.size() + " in:" + providerBody);
-        return constructions.get(0);
+                returned.size(),
+                () -> "deployment provider " + provider.name()
+                        + " must return exactly one VerticleDeployment.of(…), found " + returned.size() + " in:"
+                        + provider.body());
+        return returned.get(0);
     }
 
     /**
@@ -588,4 +658,14 @@ class RestArchetypeContractTest {
      * @param scope the declared scope, or {@code null} when the implicit compile scope applies
      */
     private record Dependency(String groupId, String artifactId, String scope) {}
+
+    /**
+     * One method discovered by its {@code VerticleDeployment} return type.
+     *
+     * @param name the method name
+     * @param annotations the annotation names preceding the signature, as an order-insensitive set
+     * @param isStatic whether the declaration carries the {@code static} modifier
+     * @param body the method's brace-balanced body text
+     */
+    private record DeploymentProvider(String name, Set<String> annotations, boolean isStatic, String body) {}
 }
