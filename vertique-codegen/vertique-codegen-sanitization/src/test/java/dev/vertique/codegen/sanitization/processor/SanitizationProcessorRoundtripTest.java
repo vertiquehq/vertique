@@ -167,6 +167,91 @@ class SanitizationProcessorRoundtripTest {
             }
             """);
 
+    // --- Bounded generic (wildcard / type-variable) fields ---
+
+    /**
+     * Generic superclass carrying an {@code Optional<T>} field whose type variable is upper-bounded
+     * by {@link #OPT_COMMENT_DTO}. Declared on a supertype so the concrete root DTO stays
+     * non-generic while the collector still sees a {@code TYPEVAR} type argument.
+     */
+    private static final JavaFileObject BOUNDED_BASE_DTO = SourceFiles.inline("com.example.rt.BoundedBaseDto", """
+            package com.example.rt;
+            import java.util.Optional;
+            public class BoundedBaseDto<T extends OptCommentDto> {
+                public Optional<T> typeVarComment;
+            }
+            """);
+
+    /**
+     * Root DTO whose nested-DTO fields are reachable only behind bounded generics — wildcard
+     * type arguments ({@code ? extends OptCommentDto}) directly, inside an {@code Optional}, and
+     * as a collection element. Jackson resolves each upper bound and materializes a real
+     * {@code OptCommentDto}, so classification must do the same.
+     */
+    private static final JavaFileObject BOUNDED_PROFILE_DTO =
+            SourceFiles.inline("com.example.rt.BoundedProfileDto", """
+            package com.example.rt;
+            import java.util.List;
+            import java.util.Optional;
+            public class BoundedProfileDto extends BoundedBaseDto<OptCommentDto> {
+                public Optional<? extends OptCommentDto> boundedComment;
+                public List<Optional<? extends OptCommentDto>> boundedOptionalComments;
+                public List<? extends OptCommentDto> boundedComments;
+            }
+            """);
+
+    private static final JavaFileObject BOUNDED_PROFILE_RESOURCE =
+            SourceFiles.inline("com.example.rt.BoundedProfileResource", """
+            package com.example.rt;
+            import jakarta.ws.rs.POST;
+            import jakarta.ws.rs.Path;
+            @Path("/bounded-profiles")
+            public class BoundedProfileResource {
+                @POST
+                public String create(BoundedProfileDto body) { return null; }
+            }
+            """);
+
+    // --- Unbounded / lower-bounded wildcards (negative pins) ---
+
+    /** Annotated DTO that must <em>not</em> become reachable through an unbounded wildcard. */
+    private static final JavaFileObject NEG_COMMENT_DTO = SourceFiles.inline("com.example.rt.NegCommentDto", """
+            package com.example.rt;
+            import dev.vertique.core.sanitization.Sanitize;
+            import dev.vertique.sanitization.sanitize.StripControlCharsSanitizer;
+            public class NegCommentDto {
+                @Sanitize(StripControlCharsSanitizer.class)
+                public String text;
+            }
+            """);
+
+    /**
+     * Root DTO whose only {@code Optional} fields carry an unbounded ({@code ?}) or lower-bounded
+     * ({@code ? super X}) wildcard. Neither carries an upper bound above {@code java.lang.Object},
+     * which is exactly what Jackson materializes for them — so both stay
+     * {@code FieldKind.OTHER} and never drag {@link #NEG_COMMENT_DTO} into the emit set.
+     */
+    private static final JavaFileObject NEG_PROFILE_DTO = SourceFiles.inline("com.example.rt.NegProfileDto", """
+            package com.example.rt;
+            import java.util.Optional;
+            public class NegProfileDto {
+                public Optional<?> anything;
+                public Optional<? super NegCommentDto> superComment;
+            }
+            """);
+
+    private static final JavaFileObject NEG_PROFILE_RESOURCE =
+            SourceFiles.inline("com.example.rt.NegProfileResource", """
+            package com.example.rt;
+            import jakarta.ws.rs.POST;
+            import jakarta.ws.rs.Path;
+            @Path("/neg-profiles")
+            public class NegProfileResource {
+                @POST
+                public String create(NegProfileDto body) { return null; }
+            }
+            """);
+
     // --- Simple flat string canonicalization ---
 
     @Nested
@@ -579,6 +664,168 @@ class SanitizationProcessorRoundtripTest {
             assertInstanceOf(List.class, out.get("aliases"));
             List<Object> processed = (List<Object>) out.get("aliases");
             assertEquals(List.of("alpha", "beta"), processed, "Each List<Optional<String>> element must be sanitized");
+        }
+
+        // --- Bounded generics: wildcard and type-variable upper bounds ---
+
+        @Test
+        @DisplayName("Optional<? extends OptCommentDto> field dispatches to OptCommentDto_InputProcessor")
+        @SuppressWarnings("unchecked")
+        void optionalWildcardBoundedNestedDto_dispatchedToNestedProcessor() throws Exception {
+            Map<String, Object> out = processBounded("boundedComment", nestedComment("hel\u0001lo"));
+
+            assertInstanceOf(Map.class, out.get("boundedComment"));
+            Map<String, Object> processed = (Map<String, Object>) out.get("boundedComment");
+            assertEquals(
+                    "hello",
+                    processed.get("text"),
+                    "Optional<? extends OptCommentDto> must classify against the wildcard's upper bound");
+        }
+
+        @Test
+        @DisplayName("Optional<T extends OptCommentDto> field dispatches to OptCommentDto_InputProcessor")
+        @SuppressWarnings("unchecked")
+        void optionalTypeVariableBoundedNestedDto_dispatchedToNestedProcessor() throws Exception {
+            Map<String, Object> out = processBounded("typeVarComment", nestedComment("wor\u0001ld"));
+
+            assertInstanceOf(Map.class, out.get("typeVarComment"));
+            Map<String, Object> processed = (Map<String, Object>) out.get("typeVarComment");
+            assertEquals(
+                    "world",
+                    processed.get("text"),
+                    "Optional<T extends OptCommentDto> must classify against the type variable's upper bound");
+        }
+
+        @Test
+        @DisplayName("List<Optional<? extends OptCommentDto>> field dispatches each element")
+        @SuppressWarnings("unchecked")
+        void listOfOptionalWildcardBoundedDto_eachElementDispatched() throws Exception {
+            List<Object> elements = new ArrayList<>(List.of(nestedComment("al\u0001pha"), nestedComment("be\u0001ta")));
+
+            Map<String, Object> out = processBounded("boundedOptionalComments", elements);
+
+            assertInstanceOf(List.class, out.get("boundedOptionalComments"));
+            List<Object> processed = (List<Object>) out.get("boundedOptionalComments");
+            assertEquals(
+                    List.of("alpha", "beta"),
+                    processed.stream()
+                            .map(e -> ((Map<String, Object>) e).get("text"))
+                            .toList(),
+                    "Each List<Optional<? extends OptCommentDto>> element must reach OptCommentDto_InputProcessor");
+        }
+
+        @Test
+        @DisplayName("List<? extends OptCommentDto> field dispatches each element")
+        @SuppressWarnings("unchecked")
+        void listOfWildcardBoundedDto_eachElementDispatched() throws Exception {
+            List<Object> elements = new ArrayList<>(List.of(nestedComment("ga\u0001mma")));
+
+            Map<String, Object> out = processBounded("boundedComments", elements);
+
+            assertInstanceOf(List.class, out.get("boundedComments"));
+            List<Object> processed = (List<Object>) out.get("boundedComments");
+            assertEquals(
+                    List.of("gamma"),
+                    processed.stream()
+                            .map(e -> ((Map<String, Object>) e).get("text"))
+                            .toList(),
+                    "Each List<? extends OptCommentDto> element must reach OptCommentDto_InputProcessor");
+        }
+
+        // --- Negative pins: unbounded and lower-bounded wildcards stay OTHER ---
+
+        @Test
+        @DisplayName("Optional<?> and Optional<? super X> stay OTHER — no nested dispatch, value passthrough")
+        @SuppressWarnings("unchecked")
+        void unboundedAndSuperWildcardOptionals_stayOtherAndPassThrough() throws Exception {
+            Result result = ProcessorTestHarness.run(
+                    new SanitizationProcessor(), NEG_COMMENT_DTO, NEG_PROFILE_DTO, NEG_PROFILE_RESOURCE);
+            result.assertSuccess();
+            result.assertGeneratedSourceDoesNotContain("com.example.rt.NegProfileDto_InputProcessor", "NegCommentDto");
+
+            GeneratedInputProcessor<?> processor = newProcessor(result, "com.example.rt.NegProfileDto_InputProcessor");
+
+            Map<String, Object> intermediate = new LinkedHashMap<>();
+            intermediate.put("anything", "a\u0001b");
+            intermediate.put("superComment", "x\u0001y");
+
+            Object output = processor.process(
+                    intermediate,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY,
+                    buildChainResolver(),
+                    GeneratedInputProcessorDispatcher.withoutContinuation(),
+                    null,
+                    "");
+
+            assertInstanceOf(Map.class, output);
+            Map<String, Object> out = (Map<String, Object>) output;
+            assertEquals("a\u0001b", out.get("anything"), "Optional<?> carries no upper bound — value passes through");
+            assertEquals(
+                    "x\u0001y",
+                    out.get("superComment"),
+                    "Optional<? super X> carries no upper bound above Object — value passes through");
+        }
+
+        // --- Bounded-fixture helpers ---
+
+        /**
+         * Compiles the bounded-generics fixture set, registers the generated
+         * {@code OptCommentDto_InputProcessor} with a continuation-free dispatcher, and runs the
+         * root processor over a single-entry intermediate map.
+         *
+         * @param fieldName the {@code BoundedProfileDto} field to populate
+         * @param value     the intermediate wire value for that field
+         * @return the processed output map
+         * @throws Exception if compilation or processor instantiation fails
+         */
+        @SuppressWarnings("unchecked")
+        private Map<String, Object> processBounded(String fieldName, Object value) throws Exception {
+            Result result = ProcessorTestHarness.run(
+                    new SanitizationProcessor(),
+                    OPT_COMMENT_DTO,
+                    BOUNDED_BASE_DTO,
+                    BOUNDED_PROFILE_DTO,
+                    BOUNDED_PROFILE_RESOURCE);
+            result.assertSuccess();
+
+            GeneratedInputProcessor<?> profileProcessor =
+                    newProcessor(result, "com.example.rt.BoundedProfileDto_InputProcessor");
+            GeneratedInputProcessor<?> commentProcessor =
+                    newProcessor(result, "com.example.rt.OptCommentDto_InputProcessor");
+
+            GeneratedInputProcessorDispatcher dispatcher = GeneratedInputProcessorDispatcher.withoutContinuation();
+            registerProcessor(dispatcher, commentProcessor.targetType(), commentProcessor);
+
+            Map<String, Object> intermediate = new LinkedHashMap<>();
+            intermediate.put(fieldName, value);
+
+            Object output = profileProcessor.process(
+                    intermediate,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY,
+                    buildChainResolver(),
+                    dispatcher,
+                    null,
+                    "");
+
+            assertInstanceOf(Map.class, output);
+            return (Map<String, Object>) output;
+        }
+
+        /**
+         * Builds a one-field intermediate map standing in for a serialized {@code OptCommentDto}.
+         * Callers embed a control character in {@code rawText} so that a successful dispatch to
+         * {@code OptCommentDto_InputProcessor} is observable — its
+         * {@code @Sanitize(StripControlCharsSanitizer)} chain strips it.
+         *
+         * @param rawText the un-sanitized {@code text} wire value
+         * @return the nested intermediate map
+         */
+        private Map<String, Object> nestedComment(String rawText) {
+            Map<String, Object> nested = new LinkedHashMap<>();
+            nested.put("text", rawText);
+            return nested;
         }
     }
 
