@@ -45,10 +45,12 @@ import org.junit.jupiter.api.extension.RegisterExtension;
  *
  * <p><strong>What each bound covers.</strong> Three spans are bounded by three different
  * mechanisms. The class-level {@code @Timeout} — 120 seconds rather than the usual 20 — bounds this
- * class's own lifecycle and test methods, that is the HTTP journey below. The container's startup
- * runs in the static initializer above, outside {@code @Timeout}, and is bounded instead by
+ * class's test method, that is the HTTP journey below (JUnit applies a class-level timeout to test
+ * methods only, never to {@code @BeforeAll}/{@code @AfterAll}). The container's startup runs in the
+ * static initializer above, outside {@code @Timeout}, and is bounded instead by
  * {@code vertique-db-test}'s own 120-second startup timeout. The application boot and its
- * {@code MIGRATE}-phase Flyway step run in the extension's {@code beforeAll}, outside both bounds.
+ * {@code MIGRATE}-phase Flyway step run in the extension's {@code beforeAll}, bounded by
+ * {@code VertiqueAppExtension}'s own 30-second start timeout.
  *
  * <p><strong>Static-initializer failure path.</strong> A failure there surfaces as a
  * class-initialization error, which skips {@code @AfterAll} — and nothing leaks: a failed

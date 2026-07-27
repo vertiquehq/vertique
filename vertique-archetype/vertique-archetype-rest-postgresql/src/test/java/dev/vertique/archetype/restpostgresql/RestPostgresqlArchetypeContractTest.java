@@ -532,17 +532,18 @@ class RestPostgresqlArchetypeContractTest {
                 "the container must be started before the VertiqueAppExtension is constructed, found start at "
                         + startAt + " and extension at " + extensionAt);
 
-        // And the class's own lifecycle and test methods carry the frozen bound — the HTTP journey,
-        // not the container start: the container is started from the static initializer, which runs
-        // outside @Timeout and is bounded instead by vertique-db-test's own 120-second startup
-        // timeout. This class is raised from the framework's 20-second default because it drives a
-        // journey against a freshly provisioned database rather than an in-process fixture.
+        // And the class's test method carries the frozen bound — the HTTP journey, not the
+        // container start: JUnit applies a class-level @Timeout to test methods only, the container
+        // is started from the static initializer (bounded by vertique-db-test's own 120-second
+        // startup timeout), and the extension's beforeAll carries its own 30-second start timeout.
+        // This class is raised from the framework's 20-second default because it drives a journey
+        // against a freshly provisioned database rather than an in-process fixture.
         Matcher timeout = CLASS_TIMEOUT.matcher(applicationIt);
         assertTrue(timeout.find(), "generated integration test must declare a class-level @Timeout");
         assertEquals(
                 EXPECTED_TIMEOUT_VALUE,
                 Integer.parseInt(timeout.group(1)),
-                "generated integration test must bound its lifecycle and test methods at the frozen allowance");
+                "generated integration test must bound its test method at the frozen allowance");
         assertEquals(EXPECTED_TIMEOUT_UNIT, timeout.group(2), "the frozen allowance is expressed in seconds");
 
         // And teardown always resets REST Assured and closes the container: the body is unconditional
