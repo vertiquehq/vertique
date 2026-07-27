@@ -37,5 +37,11 @@ SPDX-License-Identifier: EUPL-1.2
             <groupId>io.vertx</groupId>
             <artifactId>vertx-core</artifactId>
         </dependency>
+        <!-- Test -->
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 </project>
