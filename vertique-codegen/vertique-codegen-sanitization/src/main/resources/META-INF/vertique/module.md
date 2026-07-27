@@ -88,7 +88,22 @@ APT mirror of `InputPolicyMetadataResolver`. Collects per-type and per-field ann
 | raw `Optional`, `Optional<?>` | `OTHER` (or omitted when unannotated) |
 | `OptionalInt` / `OptionalLong` / `OptionalDouble` | `OTHER` — scalar leaves, no string payload |
 
-Without this normalization `Optional` would classify as a nested DTO and emit `dispatcher.dispatchNested(v, Optional.class, …)`; no `Optional_InputProcessor` exists, so the field's chain would be silently dropped and nested DTO metadata would be resolved from `Optional` rather than the wrapped type. This also keeps the generated path aligned with the reflective `InputPolicyMetadataResolver`.
+**Bounded type arguments are normalized to their upper bound.** Wildcard and type-variable type
+arguments carry no runtime identity of their own: javac erases them to their bound and Jackson
+binds the wire value against that bound. The collector therefore resolves the bound before
+classifying, so the generated path materializes the same type the runtime does:
+
+| Declared field type | Classified as |
+|---------------------|---------------|
+| `Optional<? extends NestedDto>` | `NESTED_DTO` (nested type `NestedDto`) |
+| `Optional<T>` where `T extends NestedDto` | `NESTED_DTO` (nested type `NestedDto`) |
+| `Collection<? extends NestedDto>` | `COLLECTION_OF_DTO` (element type `NestedDto`) |
+| `Collection<Optional<? extends NestedDto>>` | `COLLECTION_OF_DTO` (element type `NestedDto`) |
+| `Optional<? super NestedDto>` | `OTHER` — no upper bound above `java.lang.Object`, which is what Jackson materializes |
+| `Collection<?>` / `Collection<? super NestedDto>` | `OTHER` — the element normalizes to `java.lang.Object`, a scalar leaf |
+| `Optional<T>` where `T extends A & B` | classified against `A` — javac erases an intersection bound to its leftmost member, and that is the type in the erased field signature Jackson binds against |
+
+Without this normalization `Optional` would classify as a nested DTO and emit `dispatcher.dispatchNested(v, Optional.class, …)`; no `Optional_InputProcessor` exists, so the field's chain would be silently dropped and nested DTO metadata would be resolved from `Optional` rather than the wrapped type. Likewise, without bound normalization a bounded nested DTO would fall to the `OTHER` tail and never be discovered by `DtoScanner`, so its own chains would never be emitted while the runtime still materialized it. This keeps the generated path aligned with the reflective `InputPolicyMetadataResolver`, which applies the same `Optional`-stripping and bound-resolution rules.
 
 ### `InputProcessorEmitter`
 

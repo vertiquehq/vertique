@@ -22,6 +22,8 @@ import javax.lang.model.type.ArrayType;
 import javax.lang.model.type.DeclaredType;
 import javax.lang.model.type.TypeKind;
 import javax.lang.model.type.TypeMirror;
+import javax.lang.model.type.TypeVariable;
+import javax.lang.model.type.WildcardType;
 import javax.tools.Diagnostic;
 
 /**
@@ -43,8 +45,11 @@ import javax.tools.Diagnostic;
  * {@link FieldKind}: the wire value of an {@code Optional<T>} field is the unwrapped {@code T},
  * so {@code Optional<String>} classifies as {@link FieldKind#STRING},
  * {@code Optional<NestedDto>} as {@link FieldKind#NESTED_DTO} for {@code NestedDto}, and
- * {@code List<Optional<String>>} as {@link FieldKind#COLLECTION_OF_STRINGS}. See
- * {@link #buildFieldModel} for the full rule, including raw {@code Optional} handling.
+ * {@code List<Optional<String>>} as {@link FieldKind#COLLECTION_OF_STRINGS}. Bounded type
+ * arguments are normalized to their upper bound by {@link #normalizeToBound} first, so
+ * {@code Optional<? extends NestedDto>} and {@code List<? extends NestedDto>} classify against
+ * {@code NestedDto}. See {@link #buildFieldModel} for the full rule, including raw
+ * {@code Optional} handling.
  */
 public final class AnnotationCollector {
 
@@ -249,6 +254,12 @@ public final class AnnotationCollector {
      * {@code Optional} has no type argument to classify against and falls back to
      * {@link FieldKind#OTHER} (or {@code null} when unannotated).
      *
+     * <p>The unwrapped type argument is passed through {@link #normalizeToBound} before the
+     * recursive classification, so a bounded generic ({@code Optional<? extends Child>},
+     * {@code Optional<T extends Child>}) resolves to {@code Child} — the type Jackson
+     * materializes. {@code Optional<?>} and {@code Optional<? super Child>} normalize to
+     * {@code java.lang.Object} and therefore stay {@link FieldKind#OTHER}.
+     *
      * @param name       the field name
      * @param type       the field type mirror
      * @param canonChain field-level canonicalizer chain
@@ -269,9 +280,12 @@ public final class AnnotationCollector {
 
         boolean hasAnnotations = !canonChain.isEmpty() || !sanitChain.isEmpty() || skipCanon || skipSanit;
 
-        // Optional<T> wrapper — classify by the wrapped type (see method javadoc).
+        // Optional<T> wrapper — classify by the wrapped type (see method javadoc). The type
+        // argument is normalized to its upper bound first so bounded generics
+        // (Optional<? extends Child>, Optional<T extends Child>) classify against Child, the
+        // type Jackson actually materializes.
         if (isOptionalWrapper(type)) {
-            TypeMirror wrapped = optionalTypeArgument(type);
+            TypeMirror wrapped = normalizeToBound(optionalTypeArgument(type));
             if (wrapped == null) {
                 // Raw Optional (or a malformed type argument list) — nothing to classify against.
                 return hasAnnotations
@@ -511,10 +525,17 @@ public final class AnnotationCollector {
      * any {@code java.util.Optional} layers so {@code List<Optional<String>>} yields
      * {@code String} (and therefore classifies as {@link FieldKind#COLLECTION_OF_STRINGS}).
      *
+     * <p>Wildcard and type-variable element types are normalized to their upper bound first (see
+     * {@link #normalizeToBound}), so {@code List<? extends Child>} and
+     * {@code List<Optional<? extends Child>>} both yield {@code Child} — the element type Jackson
+     * materializes. An unbounded {@code ?} or a lower-bounded {@code ? super X} normalizes to
+     * {@code java.lang.Object}, which is a scalar leaf and therefore routes the field to the
+     * scalar-collection fallthrough.
+     *
      * <p>Returns {@code null} — meaning "element type not determinable", which routes the field
      * to the raw-collection {@link FieldKind#OTHER}/{@code null} fallthrough — for raw
-     * collections, wildcard/type-variable element types, and raw or wildcard-parameterized
-     * {@code Optional} elements.
+     * collections, element types that do not normalize to a declared type (e.g. nested arrays or
+     * primitives), and raw {@code Optional} elements.
      *
      * @param type the collection type mirror
      * @return the element type mirror, or {@code null} if not determinable
@@ -522,14 +543,71 @@ public final class AnnotationCollector {
     private TypeMirror extractCollectionElementType(TypeMirror type) {
         if (!(type instanceof DeclaredType dt)) return null;
         if (dt.getTypeArguments().isEmpty()) return null;
-        TypeMirror arg = dt.getTypeArguments().get(0);
-        if (arg.getKind() != TypeKind.DECLARED) return null;
+        TypeMirror arg = normalizeToBound(dt.getTypeArguments().get(0));
+        if (arg == null || arg.getKind() != TypeKind.DECLARED) return null;
         while (isOptionalWrapper(arg)) {
-            TypeMirror wrapped = optionalTypeArgument(arg);
+            TypeMirror wrapped = normalizeToBound(optionalTypeArgument(arg));
             if (wrapped == null || wrapped.getKind() != TypeKind.DECLARED) return null;
             arg = wrapped;
         }
         return arg;
+    }
+
+    /**
+     * Normalizes a type argument to the type Jackson actually materializes for it.
+     *
+     * <ul>
+     *   <li>{@link TypeKind#WILDCARD} — resolves to the {@code extends} bound. An unbounded
+     *       {@code ?} and a lower-bounded {@code ? super X} have no upper bound beyond
+     *       {@code java.lang.Object}, so they normalize to {@code java.lang.Object} (a scalar
+     *       leaf, i.e. {@link FieldKind#OTHER}).</li>
+     *   <li>{@link TypeKind#TYPEVAR} — resolves to the type variable's upper bound. An
+     *       intersection bound ({@code T extends A & B}) is erased via
+     *       {@link javax.lang.model.util.Types#erasure}, which yields the leftmost bound —
+     *       the same type javac writes into the erased field signature and therefore the same
+     *       type Jackson binds against.</li>
+     *   <li>Anything else is returned unchanged.</li>
+     * </ul>
+     *
+     * <p>Bounds may themselves be wildcards or type variables ({@code ? extends T},
+     * {@code T extends U}), so resolution recurses. Java forbids circular type-variable bounds,
+     * so the recursion terminates.
+     *
+     * @param t the type mirror to normalize; may be {@code null}
+     * @return the normalized type mirror, or {@code null} when {@code t} is {@code null}
+     */
+    private TypeMirror normalizeToBound(TypeMirror t) {
+        if (t == null) {
+            return null;
+        }
+        if (t instanceof WildcardType wildcard) {
+            TypeMirror extendsBound = wildcard.getExtendsBound();
+            return extendsBound == null ? objectType(t) : normalizeToBound(extendsBound);
+        }
+        if (t instanceof TypeVariable typeVar) {
+            TypeMirror upperBound = typeVar.getUpperBound();
+            if (upperBound == null) {
+                return objectType(t);
+            }
+            if (upperBound.getKind() == TypeKind.INTERSECTION) {
+                return ctx.types().erasure(upperBound);
+            }
+            return normalizeToBound(upperBound);
+        }
+        return t;
+    }
+
+    /**
+     * Returns the {@code java.lang.Object} type mirror, used as the upper bound of an unbounded
+     * or lower-bounded wildcard.
+     *
+     * @param fallback returned when {@code java.lang.Object} cannot be resolved from the
+     *                 processing environment (never expected in practice)
+     * @return the {@code java.lang.Object} mirror, or {@code fallback}
+     */
+    private TypeMirror objectType(TypeMirror fallback) {
+        TypeElement objectElement = ctx.elements().getTypeElement("java.lang.Object");
+        return objectElement != null ? objectElement.asType() : fallback;
     }
 
     /**
