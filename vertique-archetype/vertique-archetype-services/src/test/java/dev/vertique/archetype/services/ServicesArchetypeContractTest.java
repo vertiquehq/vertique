@@ -244,6 +244,26 @@ class ServicesArchetypeContractTest {
      */
     private static final String EXPECTED_WORKER_OPT_IN_PROPERTY = "services.contracts.sample.greeting.worker=true";
 
+    /**
+     * The frozen, whitespace-collapsed sentence that links {@link #EXPECTED_WORKER_OPT_IN_PROPERTY}
+     * to blocking work as the sole reason to set it. Pinned verbatim — rather than checked via a
+     * generic fragment like {@code "only if"} — so unrelated prose elsewhere in the section cannot
+     * satisfy the assertion, and so removing or rewording the guidance sentence fails the proof.
+     */
+    private static final String EXPECTED_WORKER_OPT_IN_GUIDANCE_SENTENCE = "Set `"
+            + EXPECTED_WORKER_OPT_IN_PROPERTY
+            + "` in `src/main/resources/config/application.json` only if the implementation is changed to"
+            + " perform genuinely blocking work — a JDBC call, a filesystem read, or CPU-bound computation.";
+
+    /**
+     * The frozen, whitespace-collapsed sentence stating that worker mode is a blocking-implementation
+     * opt-in and not the default execution model. Pinned verbatim so a rewording that presents worker
+     * mode as the default — rather than merely dropping the phrase {@code "not the default"} — still
+     * fails the proof.
+     */
+    private static final String EXPECTED_WORKER_NOT_DEFAULT_SENTENCE =
+            "Worker mode is an opt-in for blocking implementations, not the default execution model.";
+
     // --- Tests ---
 
     @Test
@@ -381,13 +401,21 @@ class ServicesArchetypeContractTest {
                 occurrences(readme, EXPECTED_WORKER_OPT_IN_PROPERTY),
                 "README must set the worker opt-in property in exactly one place");
 
-        // And the opt-in is framed as conditional on blocking work, not as a default.
+        // And the opt-in is framed as conditional on blocking work via the frozen guidance sentence
+        // that links the property to blocking work — not a generic fragment like "only if" that
+        // unrelated prose elsewhere in the section could satisfy.
         assertTrue(
-                threading.contains("only if"),
-                "README must frame the worker opt-in as conditional rather than default");
+                threading.contains(EXPECTED_WORKER_OPT_IN_GUIDANCE_SENTENCE),
+                () -> "README Threading section must state the frozen blocking-work opt-in sentence: "
+                        + EXPECTED_WORKER_OPT_IN_GUIDANCE_SENTENCE);
+
+        // And it explicitly states worker mode is not the default execution model, via the frozen
+        // sentence — a rewording that presents worker mode as the default fails this exact-text check
+        // even if it retains an unrelated "not the default" fragment elsewhere.
         assertTrue(
-                threading.toLowerCase(Locale.ROOT).contains("not the default"),
-                "README must state that worker mode is not the default execution model");
+                threading.contains(EXPECTED_WORKER_NOT_DEFAULT_SENTENCE),
+                () -> "README Threading section must state the frozen not-the-default sentence: "
+                        + EXPECTED_WORKER_NOT_DEFAULT_SENTENCE);
 
         // And the generated configuration template does not itself default-enable worker mode anywhere.
         String applicationConfig = read(TEMPLATE_APPLICATION_CONFIG);
