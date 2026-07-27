@@ -28,21 +28,26 @@ import java.util.Iterator;
  *
  * <pre>{@code
  * <modelConverterClasses>
- *     dev.vertique.openapi.FutureModelConverter
- *     dev.vertique.openapi.BigDecimalModelConverter
+ *     <modelConverterClass>dev.vertique.openapi.FutureModelConverter</modelConverterClass>
+ *     <modelConverterClass>dev.vertique.openapi.BigDecimalModelConverter</modelConverterClass>
  * </modelConverterClasses>
  * }</pre>
  *
  * <p><strong>Pairing contract.</strong> This converter is spec-global: it applies to every {@code
- * BigDecimal} occurrence in the generated document, producing one decimal wire-form policy per
- * spec. It is <strong>required</strong> when the application selects the {@code vertique-strict}
- * JSON profile, so the generated spec's schema type (a decimal string) matches the runtime wire
- * form the profile actually produces. Mixing string and number decimal wire forms within a single
- * application's spec is <strong>unsupported</strong> by this converter — an application with a
- * mixed profile posture (some {@code BigDecimal} fields as numbers, others as strings) should not
- * register this converter and instead annotate the string-form properties individually with
- * {@code @Schema(type = "string", format = "decimal")}, which is the escape hatch for mixed-profile
- * applications.
+ * BigDecimal} <em>schema</em> occurrence Swagger resolves (return types, properties, collection
+ * elements), producing one decimal wire-form policy per spec. It does <strong>not</strong> apply to
+ * {@code Map<BigDecimal, ?>} <strong>keys</strong> — Swagger resolves a map to {@code
+ * additionalProperties} describing only the value type, so this converter is never asked to
+ * resolve the key type; OAS 3.0.1 has no {@code propertyNames} keyword, so the generated spec
+ * leaves decimal map keys unbounded even though the runtime key deserializer still rejects a
+ * malformed key with a 400. It is <strong>required</strong> when the application selects the
+ * {@code vertique-strict} JSON profile, so the generated spec's schema type (a decimal string)
+ * matches the runtime wire form the profile actually produces. Mixing string and number decimal
+ * wire forms within a single application's spec is <strong>unsupported</strong> by this converter —
+ * an application with a mixed profile posture (some {@code BigDecimal} fields as numbers, others as
+ * strings) should not register this converter and instead annotate the string-form properties
+ * individually with {@code @Schema(type = "string", format = "decimal")}, which is the escape hatch
+ * for mixed-profile applications.
  *
  * <p><strong>Grammar mirror.</strong> The emitted {@code pattern} and {@code maxLength} describe the
  * same plain decimal literal grammar enforced at runtime by {@code

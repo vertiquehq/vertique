@@ -64,8 +64,8 @@ public class SseModelConverter implements ModelConverter {
 
 ```xml
 <modelConverterClasses>
-    dev.vertique.openapi.FutureModelConverter,
-    dev.vertique.openapi.SseModelConverter
+    <modelConverterClass>dev.vertique.openapi.FutureModelConverter</modelConverterClass>
+    <modelConverterClass>dev.vertique.openapi.SseModelConverter</modelConverterClass>
 </modelConverterClasses>
 ```
 
@@ -102,8 +102,8 @@ public final class BigDecimalModelConverter implements ModelConverter {
 
 ```xml
 <modelConverterClasses>
-    dev.vertique.openapi.FutureModelConverter,
-    dev.vertique.openapi.BigDecimalModelConverter
+    <modelConverterClass>dev.vertique.openapi.FutureModelConverter</modelConverterClass>
+    <modelConverterClass>dev.vertique.openapi.BigDecimalModelConverter</modelConverterClass>
 </modelConverterClasses>
 ```
 
@@ -255,7 +255,7 @@ It is not a runtime dependency of applications. It is only used as a `<dependenc
 
 ## Related ADRs
 
-- ADR-0121: `openapi.json` is documentation-only; binding is separate from validation — the spec this module's converters and extension shape is generated at build time for documentation/tooling only. The running framework builds routes directly from JAX-RS metadata and never loads `openapi.json`, so a defect in this module's output affects documentation accuracy, never runtime routing or validation.
+- ADR-0121: `openapi.json` is documentation-only; binding is separate from validation — the spec this module's converters and extension shape is generated at build time. Routing is always built directly from JAX-RS metadata, never from the spec. The default `web-validation` strategy does not load `openapi.json` either — it synthesizes request-body schemas from the Java types at runtime — so on that path a defect in this module's output affects documentation and generated clients only. The opt-in `openapi-contract` strategy (`vertique-rest-openapi-validation`) **does** load `openapi.json` at runtime and validates requests against it, so an application on that strategy also has its request validation shaped by this module's output.
 
 ---
 

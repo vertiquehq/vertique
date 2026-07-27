@@ -26,8 +26,8 @@ import java.util.Iterator;
  *
  * <pre>{@code
  * <modelConverterClasses>
- *     dev.vertique.openapi.FutureModelConverter
- *     dev.vertique.openapi.SseModelConverter
+ *     <modelConverterClass>dev.vertique.openapi.FutureModelConverter</modelConverterClass>
+ *     <modelConverterClass>dev.vertique.openapi.SseModelConverter</modelConverterClass>
  * </modelConverterClasses>
  * }</pre>
  *

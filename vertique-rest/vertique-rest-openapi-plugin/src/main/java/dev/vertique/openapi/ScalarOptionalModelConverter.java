@@ -57,8 +57,12 @@ import java.util.OptionalLong;
  * <p><strong>Presence semantics.</strong> A scalar optional property is not marked {@code required}
  * and not marked {@code nullable}: an empty value is <em>omitted</em> from the payload, it is not
  * written as JSON {@code null}. Clients omit the property rather than sending {@code null} — under
- * the {@code web-validation} strategy an explicit {@code null} is rejected by the spec gate before
- * it ever reaches Jackson.
+ * the opt-in {@code openapi-contract} strategy ({@code vertique-rest-openapi-validation}), which
+ * loads the generated {@code openapi.json} at runtime, an explicit {@code null} is rejected by that
+ * spec gate before it ever reaches Jackson. The default {@code web-validation} strategy never
+ * consults the generated spec at all — it synthesizes request-body schemas from the Java types at
+ * runtime — so this converter's schema shape affects documentation and generated clients on that
+ * path, not a runtime validation gate.
  *
  * <p><strong>Chain-end contract:</strong> delegates to the next converter via {@link
  * ConverterChain#delegate}, which returns {@code null} rather than throwing when this converter is
