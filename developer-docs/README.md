@@ -125,9 +125,14 @@ being silently accepted or silently mis-parsed:
   ordinary prose.
 - A reference-style link definition (`[label]: target`) must likewise start at column zero. An
   indented one is rejected rather than silently skipped.
-- A frontmatter `title` or `description` value must not carry a trailing comment, and a value of
-  `null` (in any case, quoted or not) counts as empty — both are rejected rather than silently
-  accepted or silently normalized to empty.
+- A frontmatter `title` or `description` value's surrounding whitespace is ignored before any
+  other rule below is applied. A bare (unquoted) value must not contain a literal `#` or a `"`
+  character — quote the value if it needs either. A quoted value (wrapped in one matching pair of
+  `"` or `'`) must not contain another embedded quote character, but it may contain a literal `#`,
+  since the surrounding quotes remove the ambiguity with a trailing comment. No value carries a
+  trailing comment after its closing quote, and an opening quote with no matching closing quote is
+  rejected outright. A value of `null`, in any case and whether quoted or not, is invalid. None of
+  these forms is silently accepted or silently normalized to empty.
 - A bare (non-angle-bracket) inline link destination must not contain a literal opening
   parenthesis. Use the CommonMark angle-bracket destination form instead — the same form the
   validator already recognizes in full, including embedded spaces, for a destination that

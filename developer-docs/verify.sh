@@ -10,12 +10,22 @@
 #                      in the frozen order, under a sole `pages:` key.
 #   (c) frontmatter - every content/*.md page opens with YAML frontmatter
 #                      containing exactly one non-empty `title` and one
-#                      non-empty `description`, and no other keys. A scalar
-#                      value of `null` (any case, quoted or not) counts as
-#                      empty. A scalar must not carry a trailing comment: a
-#                      quoted value followed by anything but whitespace, or
-#                      an unquoted value containing `#`, is rejected outright
-#                      rather than silently accepted or silently emptied.
+#                      non-empty `description`, and no other keys. Leading
+#                      and trailing whitespace around a scalar value is
+#                      trimmed before any other rule below is applied, so a
+#                      stray trailing space never masks an otherwise-invalid
+#                      value. A scalar value of `null` (any case, quoted or
+#                      not, once trimmed) counts as empty. A bare (unquoted)
+#                      value must not contain a literal `#` or a `"`
+#                      character (quote the value if it needs either); a
+#                      quoted value (wrapped in one matching pair of `"` or
+#                      `'`) must not contain another embedded `"` or `'`
+#                      character, but may contain a literal `#`, since the
+#                      surrounding quotes remove the ambiguity with a
+#                      trailing comment; an opening quote with no matching
+#                      closing quote is rejected outright rather than
+#                      accepted as a non-empty value. None of these forms is
+#                      silently accepted or silently normalized to empty.
 #   (d) links       - every relative Markdown link target (including targets
 #                      that point out of developer-docs/, e.g. into
 #                      docs/modules.md), whether an inline `](target)` link
@@ -47,12 +57,25 @@
 #                      "no other keys" rule, so it is not re-checked here.
 #   (g) corpus grammar - the corpus adopts a deliberately restricted subset
 #                      of Markdown so fence- and link-extraction never need a
-#                      real parser: every code fence opens with backticks at
-#                      column zero (a 1-3-space-indented ``` fence or any
-#                      '~~~' fence is rejected outright), every reference-
-#                      style link definition (`[label]: target`) starts at
-#                      column zero (an indented one is rejected outright
-#                      rather than silently skipped), and a bare
+#                      real parser, enforced by a single fence state machine
+#                      shared by grammar checking and stripping (so a
+#                      grammar decision and a stripping decision can never
+#                      disagree): every code fence opens with exactly three
+#                      backticks at column zero, optionally followed by an
+#                      info string. Four or more backticks at column zero,
+#                      any '~~~' fence, and a backtick/tilde fence indented
+#                      by any leading whitespace or hidden behind a
+#                      list/blockquote prefix (e.g. `- ``` ` or `> ``` `) are
+#                      all rejected outright rather than silently accepted
+#                      or mis-stripped; a fence-like line inside an
+#                      already-open fence (e.g. a nested ` ```lang ` line)
+#                      is rejected rather than treated as a new fence, and an
+#                      unclosed fence at end of file is rejected. Every
+#                      reference-style link definition (`[label]: target`)
+#                      starts at column zero (an indented one, or one hidden
+#                      behind a blockquote or list prefix, is rejected
+#                      outright rather than silently skipped or silently
+#                      passed through unresolved), and a bare
 #                      (non-angle-bracket) inline link destination must not
 #                      contain a literal '(' — use the angle-bracket
 #                      destination form (`](<target(with)parens>)`) instead.
@@ -231,57 +254,101 @@ check_frontmatter() {
   done
 }
 
-# Strips one layer of matching surrounding quotes (double or single) from a
-# frontmatter scalar value, so a quoted-empty value (`""` or `''`) is treated
-# as empty by the non-empty check below rather than as a non-empty two-quote
-# literal (frontmatter contract).
-strip_frontmatter_quotes() {
+# Trims ASCII leading and trailing whitespace from a frontmatter scalar's
+# raw captured text. Applied before every other frontmatter scalar rule
+# (quote-stripping, the unterminated-quote check, the empty/null check) so
+# a stray trailing space never masks an otherwise-invalid value — for
+# example `title: "" ` and `description: NuLl ` must both still fail
+# (frontmatter contract). Uses only parameter expansion (no external
+# process, no negative substring length) so this runs unmodified under
+# bash 3.2 (macOS /bin/bash).
+trim_frontmatter_value() {
   local v="$1"
-  local len="${#v}"
-  # Positive-length substring (offset 1, length len-2) rather than a
-  # negative-length form, so this runs unmodified under bash 3.2 (macOS
-  # /bin/bash), which rejects a negative substring length.
-  if [[ "$len" -ge 2 && "${v:0:1}" == "${v: -1}" && ("${v:0:1}" == '"' || "${v:0:1}" == "'") ]]; then
-    v="${v:1:$((len - 2))}"
-  fi
+  v="${v#"${v%%[![:space:]]*}"}"
+  v="${v%"${v##*[![:space:]]}"}"
   printf '%s' "$v"
 }
 
-# Reports (via exit status) whether a frontmatter scalar's raw, unstripped
-# text carries a disallowed trailing comment: a quoted value followed by
-# anything but whitespace after its closing quote (most commonly an
-# unquoted ' # comment' suffix), or a bare (unquoted) value containing a
-# literal '#' anywhere. This corpus's frontmatter never allows a YAML
-# comment on a `key: value` line, so either form is rejected outright
-# rather than silently accepted or silently normalized to empty
-# (frontmatter contract).
-frontmatter_scalar_has_trailing_comment() {
-  local v="$1" quote rest before trailing
+# Validates a single frontmatter scalar's already-captured raw text against
+# the corpus's restricted quoting grammar in one pass, reporting the
+# outcome via three globals (bash 3.2 has no local nameref/associative-array
+# return):
+#   FRONTMATTER_SCALAR_OK    - true or false
+#   FRONTMATTER_SCALAR_DIAG  - violation diagnostic when not OK
+#   FRONTMATTER_SCALAR_VALUE - the fully-unwrapped value when OK, for the
+#                              caller's empty/null check
+#
+# Surrounding whitespace is trimmed first (see trim_frontmatter_value). A
+# value whose first character is a quote (`"` or `'`) is a quoted value: an
+# opening quote with no matching closing quote is rejected outright as
+# unterminated rather than accepted as a non-empty value; anything but
+# whitespace after the closing quote is a disallowed trailing comment; and
+# the enclosed content must not itself contain another `"` or `'` character
+# — this restricted grammar has no escape-sequence support, so a quoted
+# value may contain a literal `#` (the closing quote already removes any
+# comment ambiguity) but never another embedded quote character. A value
+# that does not start with a quote is bare: it must not contain a literal
+# `#` (quote the value if it needs one) or a `"` character. A bare value
+# may contain a `'` (apostrophe) freely — this corpus's real prose
+# routinely uses English contractions/possessives (e.g. "application's"),
+# and a lone apostrophe is never ambiguous with this grammar's quoting,
+# which only ever wraps a value from its very first character.
+validate_frontmatter_scalar() {
+  local raw="$1"
+  local v quote rest before trailing
+  v="$(trim_frontmatter_value "$raw")"
+
   quote="${v:0:1}"
-  if [[ "$quote" == '"' || "$quote" == "'" ]]; then
+  if [[ -n "$v" && ("$quote" == '"' || "$quote" == "'") ]]; then
     rest="${v:1}"
     before="${rest%%"$quote"*}"
     if [[ "$before" == "$rest" ]]; then
-      return 1 # unterminated quote; not a trailing-comment case
+      FRONTMATTER_SCALAR_OK=false
+      FRONTMATTER_SCALAR_DIAG="frontmatter value has an unterminated quoted value, with no matching closing quote (frontmatter contract)"
+      return
     fi
     trailing="${rest:$((${#before} + 1))}"
-    [[ -n "${trailing//[[:space:]]/}" ]]
+    if [[ -n "${trailing//[[:space:]]/}" ]]; then
+      FRONTMATTER_SCALAR_OK=false
+      FRONTMATTER_SCALAR_DIAG="frontmatter value must not carry a trailing comment (frontmatter contract)"
+      return
+    fi
+    if [[ "$before" == *'"'* || "$before" == *"'"* ]]; then
+      FRONTMATTER_SCALAR_OK=false
+      FRONTMATTER_SCALAR_DIAG="quoted frontmatter values must not contain embedded quote characters (corpus grammar)"
+      return
+    fi
+    FRONTMATTER_SCALAR_OK=true
+    FRONTMATTER_SCALAR_VALUE="$before"
     return
   fi
-  [[ "$v" == *'#'* ]]
+
+  if [[ "$v" == *'#'* ]]; then
+    FRONTMATTER_SCALAR_OK=false
+    FRONTMATTER_SCALAR_DIAG="frontmatter value must not carry a trailing comment (frontmatter contract); quote the value if it needs a literal '#'"
+    return
+  fi
+
+  if [[ "$v" == *'"'* ]]; then
+    FRONTMATTER_SCALAR_OK=false
+    FRONTMATTER_SCALAR_DIAG="quoted frontmatter values must not contain embedded quote characters (corpus grammar)"
+    return
+  fi
+
+  FRONTMATTER_SCALAR_OK=true
+  FRONTMATTER_SCALAR_VALUE="$v"
 }
 
-# Reports (via exit status) whether a frontmatter scalar value is empty, or
-# is the literal `null` (case-insensitive, quoted or not) once one layer of
-# matching quotes is stripped — either form makes the value unusable as a
+# Reports (via exit status) whether an already-validated, fully-unwrapped
+# frontmatter scalar value is empty, or is the literal `null`
+# (case-insensitive) — either form makes the value unusable as a
 # `title`/`description` (frontmatter contract).
-frontmatter_scalar_is_empty_or_null() {
-  local stripped lowered
-  stripped="$(strip_frontmatter_quotes "$1")"
-  if [[ -z "$stripped" ]]; then
+frontmatter_value_is_empty_or_null() {
+  local v="$1" lowered
+  if [[ -z "$v" ]]; then
     return 0
   fi
-  lowered="$(printf '%s' "$stripped" | tr '[:upper:]' '[:lower:]')"
+  lowered="$(printf '%s' "$v" | tr '[:upper:]' '[:lower:]')"
   [[ "$lowered" == "null" ]]
 }
 
@@ -314,17 +381,27 @@ check_frontmatter_of_file() {
       key="${BASH_REMATCH[1]}"
       value="${BASH_REMATCH[2]}"
       keys+=("$key")
-      if frontmatter_scalar_has_trailing_comment "$value"; then
-        fail "$f: frontmatter value must not carry a trailing comment (frontmatter contract): '$line'"
+
+      # Count the key regardless of scalar validity, so an invalid value
+      # reports exactly one violation (its own) rather than also tripping
+      # the "found 0" key-count check below.
+      case "$key" in
+      title) title_count=$((title_count + 1)) ;;
+      description) desc_count=$((desc_count + 1)) ;;
+      esac
+
+      validate_frontmatter_scalar "$value"
+      if ! $FRONTMATTER_SCALAR_OK; then
+        fail "$f: $FRONTMATTER_SCALAR_DIAG: '$line'"
+        continue
       fi
+
       case "$key" in
       title)
-        title_count=$((title_count + 1))
-        frontmatter_scalar_is_empty_or_null "$value" && title_empty=true
+        frontmatter_value_is_empty_or_null "$FRONTMATTER_SCALAR_VALUE" && title_empty=true
         ;;
       description)
-        desc_count=$((desc_count + 1))
-        frontmatter_scalar_is_empty_or_null "$value" && desc_empty=true
+        frontmatter_value_is_empty_or_null "$FRONTMATTER_SCALAR_VALUE" && desc_empty=true
         ;;
       esac
     else
@@ -354,13 +431,108 @@ check_frontmatter_of_file() {
   fi
 }
 
-# --- (g) Fence grammar ---
+# --- (g) Fence grammar and stripping (shared state machine) ---
 
-# Confirms every code fence in the corpus opens with backticks at column
-# zero: a ``` fence indented by 1-3 spaces, or any '~~~' fence (indented or
-# not), is rejected outright rather than silently mis-stripped. This lets
-# strip_all_fences and strip_xml_fences below legitimately assume every real
-# fence is a column-zero backtick fence (corpus grammar).
+# A single fence state machine, shared by grammar checking and both
+# stripped views below (strip_all_fences, strip_xml_fences), so a grammar
+# decision and a stripping decision can never disagree — the round-3 review
+# finding this replaces was exactly that gap: the old grammar check and the
+# old stripping awk scripts encoded slightly different assumptions about
+# what counts as a fence. Applied line by line, outside a fence:
+#   - a line matching exactly three backticks at column zero, optionally
+#     followed by an info string (` ``` ` or ` ```lang `), opens a fence
+#     (valid).
+#   - a fence-like line that is NOT a valid opening — four or more
+#     backticks at column zero, any '~~~' fence, or a backtick/tilde fence
+#     indented by any leading whitespace or hidden behind a list/blockquote
+#     prefix (e.g. `- ``` ` or `> ``` `) — is a grammar violation; the line
+#     is treated as ordinary prose and the state stays outside.
+#   - every other line is ordinary prose.
+# Inside a fence:
+#   - a bare ``` (exactly three backticks, nothing else, column zero)
+#     closes the fence (valid).
+#   - a line starting with three backticks plus trailing text (would look
+#     like a nested opening) is a grammar violation — this restricted
+#     grammar has no nested fences; the state stays inside.
+#   - every other line (including indented backticks/tildes, or a ``` with
+#     leading spaces) is content: never flagged by the grammar scan, never
+#     toggles state.
+# An unclosed fence at end of file is a grammar violation.
+#
+# `mode` selects the output:
+#   grammar    - one "LINENO<TAB>message" per violation, nothing else
+#   strip_all  - every fence marker line and fence-interior line (content)
+#                is blanked; everything else is printed unchanged, so line
+#                numbers stay aligned with the original file
+#   strip_xml  - as strip_all, but the interior content of a non-```xml```
+#                fence is left in place; only a ```xml``` fence's interior
+#                (and every fence's marker lines) are blanked
+fence_state_machine() {
+  local f="$1" mode="$2"
+  awk -v mode="$mode" '
+    function is_open(l) { return (l ~ /^```([^`].*)?$/) }
+    function is_close(l) { return (l == "```") }
+    function is_nested(l) { return (l ~ /^```.+$/) }
+    function is_bad_outside(l) {
+      if (l ~ /^```/) return 1
+      if (l ~ /^~~~/) return 1
+      if (l ~ /^[[:space:]]+(```|~~~)/) return 1
+      if (l ~ /^[[:space:]]*>[[:space:]]*(```|~~~)/) return 1
+      if (l ~ /^[[:space:]]*[-*+][[:space:]]+(```|~~~)/) return 1
+      if (l ~ /^[[:space:]]*[0-9]+\.[[:space:]]+(```|~~~)/) return 1
+      return 0
+    }
+    BEGIN { in_fence = 0; in_xml = 0 }
+    {
+      line = $0
+      sub(/\r$/, "", line)
+
+      if (!in_fence) {
+        if (is_open(line)) {
+          in_fence = 1
+          info = line
+          sub(/^```/, "", info)
+          gsub(/^[ \t]+|[ \t]+$/, "", info)
+          in_xml = (tolower(info) == "xml")
+          if (mode == "strip_all" || mode == "strip_xml") print ""
+          next
+        }
+        if (is_bad_outside(line)) {
+          if (mode == "grammar") {
+            print NR "\tcode fences must open with exactly three backticks at column zero, with no leading whitespace and no list/blockquote prefix (corpus grammar)"
+          } else {
+            print $0
+          }
+          next
+        }
+        if (mode != "grammar") print $0
+        next
+      }
+
+      if (is_close(line)) {
+        in_fence = 0
+        if (mode == "strip_all" || mode == "strip_xml") print ""
+        in_xml = 0
+        next
+      }
+      if (is_nested(line) && mode == "grammar") {
+        print NR "\tfence-like content inside an open fence is not representable in the restricted grammar (corpus grammar)"
+        next
+      }
+      if (mode == "strip_all") { print ""; next }
+      if (mode == "strip_xml") { print (in_xml ? "" : $0); next }
+      next
+    }
+    END {
+      if (in_fence && mode == "grammar") {
+        print NR "\tcode fence is not closed before end of file (corpus grammar)"
+      }
+    }
+  ' "$f"
+}
+
+# Confirms every code fence in the corpus is representable in the
+# restricted fence grammar (see fence_state_machine above).
 check_fence_grammar() {
   local f
   while IFS= read -r -d '' f; do
@@ -368,20 +540,17 @@ check_fence_grammar() {
   done < <(find "$CORPUS_ROOT" -name '*.md' -print0)
 }
 
-# Scans a single file for non-canonical fence forms and reports each match.
+# Scans a single file for fence-grammar violations, via the shared state
+# machine, and reports each one.
 check_fence_grammar_of_file() {
   local f="$1"
-  local hit line_no
+  local hit line_no msg
 
   while IFS= read -r hit; do
-    line_no="${hit%%:*}"
-    fail "$f:$line_no: code fences must open with backticks at column zero (corpus grammar)"
-  done < <(grep -noE '^ {1,3}```' "$f")
-
-  while IFS= read -r hit; do
-    line_no="${hit%%:*}"
-    fail "$f:$line_no: '~~~' code fences are forbidden; use backtick fences at column zero (corpus grammar)"
-  done < <(grep -noE '^[[:space:]]*~~~' "$f")
+    line_no="${hit%%$'\t'*}"
+    msg="${hit#*$'\t'}"
+    fail "$f:$line_no: $msg"
+  done < <(fence_state_machine "$f" grammar)
 }
 
 # --- Fence handling ---
@@ -390,19 +559,11 @@ check_fence_grammar_of_file() {
 # and its fence marker lines — from a file, replacing them with blank lines
 # so downstream line numbers stay aligned with the original file. Used to
 # keep prose-only rules (renderer-neutrality, reference-style links) out of
-# legitimate code samples such as Java generics or JSON braces. Assumes
-# every real fence opens at column zero with backticks — check_fence_grammar
-# above rejects any file that violates that assumption.
+# legitimate code samples such as Java generics or JSON braces. Derived from
+# fence_state_machine above, so this can never disagree with what
+# check_fence_grammar accepts as a real fence.
 strip_all_fences() {
-  awk '
-    BEGIN { in_fence = 0 }
-    /^```/ {
-      in_fence = !in_fence
-      print ""
-      next
-    }
-    { print (in_fence ? "" : $0) }
-  ' "$1"
+  fence_state_machine "$1" strip_all
 }
 
 # --- (d) Links ---
@@ -438,11 +599,14 @@ check_link_target() {
 # inline `](target)` links — including the CommonMark angle-bracket
 # destination form `](<target with spaces.md>)` — and reference-style
 # `[label]: target` definitions found outside fenced code blocks, which must
-# start at column zero (an indented one is rejected as a corpus-grammar
-# violation rather than silently skipped). A bare (non-angle-bracket) inline
-# destination containing a literal '(' is rejected as a corpus-grammar
-# violation rather than silently truncated at the first ')' — such a target
-# must use the angle-bracket destination form instead.
+# start at column zero (an indented one, or one hidden behind a blockquote
+# or list prefix such as `> [label]: target`, `- [label]: target`,
+# `* [label]: target`, or `1. [label]: target`, is rejected as a
+# corpus-grammar violation rather than silently skipped or silently passed
+# through unresolved). A bare (non-angle-bracket) inline destination
+# containing a literal '(' is rejected as a corpus-grammar violation rather
+# than silently truncated at the first ')' — such a target must use the
+# angle-bracket destination form instead.
 check_links_of_file() {
   local f="$1"
   local dir raw target line hit
@@ -462,7 +626,7 @@ check_links_of_file() {
 
   while IFS= read -r hit; do
     fail "$f:${hit%%:*}: reference-style link definitions must start at column zero, not be indented (corpus grammar)"
-  done < <(strip_all_fences "$f" | grep -noE '^[ ]{1,3}\[[^]]+\]:')
+  done < <(strip_all_fences "$f" | grep -noE '^[[:space:]]+\[[^]]+\]:|^[[:space:]]*>[[:space:]]*\[[^]]+\]:|^[[:space:]]*[-*+][[:space:]]+\[[^]]+\]:|^[[:space:]]*[0-9]+\.[[:space:]]+\[[^]]+\]:')
 
   while IFS= read -r line; do
     [[ "$line" =~ ^\[[^]]+\]:[[:space:]]*(.+)$ ]] || continue
@@ -487,28 +651,13 @@ check_forbidden_tokens() {
   done < <(find "$CORPUS_ROOT" -name '*.md' -print0)
 }
 
-# Strips the content of ```xml fenced code blocks (and fence marker lines)
-# from a file, replacing them with blank lines so downstream line numbers
-# stay aligned with the original file. Assumes every real fence opens at
-# column zero with backticks — check_fence_grammar above rejects any file
-# that violates that assumption.
+# Strips the content of ```xml fenced code blocks (and every fence's marker
+# lines) from a file, replacing them with blank lines so downstream line
+# numbers stay aligned with the original file. Derived from
+# fence_state_machine above, so this can never disagree with what
+# check_fence_grammar accepts as a real fence.
 strip_xml_fences() {
-  awk '
-    BEGIN { in_xml = 0 }
-    /^```/ {
-      if (in_xml) {
-        in_xml = 0
-      } else {
-        info = $0
-        sub(/^```/, "", info)
-        gsub(/^[ \t]+|[ \t\r]+$/, "", info)
-        if (tolower(info) == "xml") { in_xml = 1 }
-      }
-      print ""
-      next
-    }
-    { print (in_xml ? "" : $0) }
-  ' "$1"
+  fence_state_machine "$1" strip_xml
 }
 
 # Scans a single file for forbidden tokens and reports each match.

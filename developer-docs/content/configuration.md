@@ -84,11 +84,12 @@ lower one.
 
 ## Secret providers
 
-Vertique publishes four secret providers. Three resolve secrets as property sources: they inject
-`${key}` placeholder references into the config tree, resolved against declared entries under
-`config.propertySources`. The fourth, AWS SSM Parameter Store, is instead a `config.stores` entry
-that eagerly merges a whole parameter subtree directly into the config tree (see
-[Configuration source precedence](#configuration-source-precedence) above).
+Vertique publishes four secret providers. Three resolve secrets as property sources: your
+application's own configuration declares a `${key}` placeholder reference, and the property source
+resolves it against declared entries under `config.propertySources`. The fourth, AWS SSM Parameter
+Store, is instead a `config.stores` entry that eagerly merges a whole parameter subtree directly
+into the config tree (see [Configuration source precedence](#configuration-source-precedence)
+above).
 
 | Provider | Artifact | Model |
 |---|---|---|
