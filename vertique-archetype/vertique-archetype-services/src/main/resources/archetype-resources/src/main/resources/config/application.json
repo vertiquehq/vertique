@@ -1,0 +1,10 @@
+{
+  "management": { "port": 9090, "enabled": true },
+  "services": {
+    "contracts": {
+      "sample": {
+        "greeting": { "instances": 1 }
+      }
+    }
+  }
+}

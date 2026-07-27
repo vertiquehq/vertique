@@ -7,5 +7,6 @@ one of its children.
 | Archetype | Generates |
 |---|---|
 | [`dev.vertique:vertique-archetype-rest`](vertique-archetype-rest/README.md) | A Vertique REST application on `vertique-starter-rest` |
+| [`dev.vertique:vertique-archetype-services`](vertique-archetype-services/README.md) | A headless Vertique event-bus services application on `vertique-starter-services` |
 
 See the child's README for its generation command and required properties.

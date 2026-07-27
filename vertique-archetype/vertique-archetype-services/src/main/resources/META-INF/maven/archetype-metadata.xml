@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
+SPDX-License-Identifier: EUPL-1.2
+-->
+
+<archetype-descriptor xmlns="http://maven.apache.org/plugins/maven-archetype-plugin/archetype/1.2"
+                      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                      xsi:schemaLocation="http://maven.apache.org/plugins/maven-archetype-plugin/archetype/1.2 https://maven.apache.org/xsd/archetype-1.2.0.xsd"
+                      name="vertique-archetype-services">
+
+    <requiredProperties>
+        <requiredProperty key="vertiqueVersion"/>
+    </requiredProperties>
+
+    <fileSets>
+        <fileSet filtered="true" encoding="UTF-8">
+            <includes>
+                <include>pom.xml</include>
+                <include>README.md</include>
+            </includes>
+        </fileSet>
+        <!-- packaged="true" renders this fileset below Maven Archetype's standard
+             ${packageInPathFormat} destination. -->
+        <fileSet filtered="true" packaged="true" encoding="UTF-8">
+            <directory>src/main/java</directory>
+            <includes>
+                <include>AppComponent.java</include>
+                <include>AppModule.java</include>
+                <include>package-info.java</include>
+                <include>service/GreetingService.java</include>
+                <include>service/GreetingServiceImpl.java</include>
+                <include>service/package-info.java</include>
+            </includes>
+        </fileSet>
+        <fileSet filtered="true" encoding="UTF-8">
+            <directory>src/main/resources</directory>
+            <includes>
+                <include>config/application.json</include>
+            </includes>
+        </fileSet>
+        <fileSet filtered="true" packaged="true" encoding="UTF-8">
+            <directory>src/test/java</directory>
+            <includes>
+                <include>ApplicationIT.java</include>
+            </includes>
+        </fileSet>
+    </fileSets>
+</archetype-descriptor>
