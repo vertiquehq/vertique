@@ -32,10 +32,15 @@ import java.util.stream.Collectors;
  *       <strong>separately</strong> and is <strong>not</strong> probed (FR-JSON-043, FR-JSON-045): its
  *       opinionated mapper applies {@code NON_NULL} inclusion, which the structural round-trip probe
  *       (it round-trips a {@code JsonObject} with a null field) would falsely reject.
+ *   <li>The built-in {@code vertique-strict} profile ({@link VertiqueStrictJsonMapperProfile}) is
+ *       likewise seeded <strong>separately</strong> and is <strong>not</strong> probed (json-004): it
+ *       inherits the same {@code NON_NULL} inclusion, and additionally requires the string wire form
+ *       for {@code BigDecimal} — neither of which the probe payload is written against.
  *   <li>Each application-contributed profile is validated: an id equal to {@link JsonProfileId#VERTX}
- *       or the reserved {@code vertique} id ({@link VertiqueJsonMapperProfile#ID}) is rejected
- *       (FR-JSON-005, FR-JSON-044); a duplicate application id is rejected (FR-JSON-004); the mapper is
- *       run through a structural round-trip probe (FR-JSON-015C).
+ *       or one of the reserved built-in ids ({@link VertiqueJsonMapperProfile#ID},
+ *       {@link VertiqueStrictJsonMapperProfile#ID}) is rejected (FR-JSON-005, FR-JSON-044, json-004);
+ *       a duplicate application id is rejected (FR-JSON-004); the mapper is run through a structural
+ *       round-trip probe (FR-JSON-015C).
  * </ol>
  *
  * <p>The resulting {@link JsonProfileId}-keyed map is immutable; lookups are {@code O(1)}
@@ -51,11 +56,11 @@ public final class DefaultJsonMapperProfileRegistry implements JsonMapperProfile
      * Builds and validates the registry from the application-contributed profile set.
      *
      * @param applicationProfiles the application {@code @IntoSet} profiles (may be empty); the
-     *     reserved {@code vertx} and {@code vertique} profiles are never expected here and are seeded
-     *     separately
+     *     reserved {@code vertx}, {@code vertique} and {@code vertique-strict} profiles are never
+     *     expected here and are seeded separately
      * @throws JsonProfileConfigurationException if an application profile uses the reserved
-     *     {@code vertx} or {@code vertique} id, two application profiles share an id, or a
-     *     non-built-in mapper fails the structural round-trip probe
+     *     {@code vertx}, {@code vertique} or {@code vertique-strict} id, two application profiles
+     *     share an id, or a non-built-in mapper fails the structural round-trip probe
      */
     @Inject
     public DefaultJsonMapperProfileRegistry(Set<JsonMapperProfile> applicationProfiles) {
@@ -70,10 +75,17 @@ public final class DefaultJsonMapperProfileRegistry implements JsonMapperProfile
         JsonMapperProfile vertiqueProfile = new VertiqueJsonMapperProfile();
         byId.put(vertiqueProfile.id(), vertiqueProfile);
 
+        // --- Seed the built-in vertique-strict profile separately; probe-exempt for the same
+        // NON_NULL reason, plus its BigDecimal properties require the string wire form. ---
+        JsonMapperProfile vertiqueStrictProfile = new VertiqueStrictJsonMapperProfile();
+        byId.put(vertiqueStrictProfile.id(), vertiqueStrictProfile);
+
         // --- Validate and register each application profile. ---
         for (JsonMapperProfile profile : applicationProfiles) {
             JsonProfileId id = profile.id();
-            if (JsonProfileId.VERTX.equals(id) || VertiqueJsonMapperProfile.ID.equals(id)) {
+            if (JsonProfileId.VERTX.equals(id)
+                    || VertiqueJsonMapperProfile.ID.equals(id)
+                    || VertiqueStrictJsonMapperProfile.ID.equals(id)) {
                 throw new JsonProfileConfigurationException(
                         "application profiles must not override the reserved '" + id.value() + "' profile");
             }
@@ -120,7 +132,8 @@ public final class DefaultJsonMapperProfileRegistry implements JsonMapperProfile
     /**
      * {@inheritDoc}
      *
-     * @return an immutable set of every registered profile id, including {@code vertx}
+     * @return an immutable set of every registered profile id, including the {@code vertx},
+     *     {@code vertique} and {@code vertique-strict} built-ins
      */
     @Override
     public Set<JsonProfileId> profileIds() {
@@ -166,7 +179,7 @@ public final class DefaultJsonMapperProfileRegistry implements JsonMapperProfile
     /**
      * Returns the sorted profile-id values as a bracketed list for inclusion in error messages.
      *
-     * @return e.g. {@code [legacy-crm, payments-v1, vertx]}
+     * @return e.g. {@code [legacy-crm, payments-v1, vertique, vertique-strict, vertx]}
      */
     private String sortedIdValues() {
         return profilesById.keySet().stream()

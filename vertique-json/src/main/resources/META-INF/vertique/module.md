@@ -14,9 +14,9 @@ SPDX-License-Identifier: EUPL-1.2
 Runtime implementation of the Vertique JSON mapper profile system. **Contracts** (`JsonProfileId`,
 `JsonMapperProfile`, `JsonMapperProfileRegistry`, `JsonProfileConfigurationException`, `@JsonProfile`)
 live in `dev.vertique.core.json` (in `vertique-core`) so that boundary modules can reference them
-without a runtime dependency on this module. The runtime — registry implementation, two built-in
-profiles (`vertx` and `vertique`), opinionated defaults helper, opt-in serdes, Vert.x JSON support
-helper, profile factory, and Dagger module — lives here.
+without a runtime dependency on this module. The runtime — registry implementation, three built-in
+profiles (`vertx`, `vertique` and `vertique-strict`), opinionated defaults helper, opt-in serdes,
+Vert.x JSON support helper, profile factory, and Dagger module — lives here.
 
 ---
 
@@ -29,14 +29,16 @@ delegates to `DatabindCodec.mapper()` — the same shared mapper Vert.x uses int
 preserving full backward compatibility for applications that do not opt into profiling.
 
 The framework ships a second built-in profile, `vertique`, that delivers the broadly-safe
-opinionated defaults defined by `JacksonDefaults` on an independent `ObjectMapper`. Both built-ins
-are seeded directly in the registry, separate from the application-contributed set, and are
-**probe-exempt** — neither is subjected to the structural round-trip probe.
+opinionated defaults defined by `JacksonDefaults` on an independent `ObjectMapper`, and a third,
+`vertique-strict`, that layers the strict-decimal / strict-string wire posture on those same
+defaults. All three built-ins are seeded directly in the registry, separate from the
+application-contributed set, and are **probe-exempt** — none is subjected to the structural
+round-trip probe.
 
 Applications contribute profiles via Dagger `@IntoSet` multibinding; the registry validates
 uniqueness and runs a structural round-trip probe for each application-contributed profile at
-construction time (startup failure rather than silent data corruption at runtime). Neither the
-`vertx` nor the `vertique` reserved id may be used by application profiles.
+construction time (startup failure rather than silent data corruption at runtime). None of the
+`vertx`, `vertique` and `vertique-strict` reserved ids may be used by application profiles.
 
 ---
 
@@ -44,10 +46,11 @@ construction time (startup failure rather than silent data corruption at runtime
 
 | Class | Kind | Visibility | Description |
 |---|---|---|---|
-| `DefaultJsonMapperProfileRegistry` | `class` | Internal | `@Singleton` registry impl; seeds `vertx` and `vertique` built-ins separately (probe-exempt); validates uniqueness + round-trip probe for each application-contributed profile at `@Inject` construction |
+| `DefaultJsonMapperProfileRegistry` | `class` | Internal | `@Singleton` registry impl; seeds the `vertx`, `vertique` and `vertique-strict` built-ins separately (probe-exempt); validates uniqueness + round-trip probe for each application-contributed profile at `@Inject` construction |
 | `VertxJsonMapperProfile` | `class` | Internal | Built-in `vertx` profile; delegates to `DatabindCodec.mapper()`; not overridable |
 | `VertiqueJsonMapperProfile` | `class` | Internal | Built-in `vertique` profile; owns an independent `ObjectMapper` configured via `JacksonDefaults.apply(new ObjectMapper())`; not overridable; probe-exempt |
-| `JacksonDefaults` | `class` (helper) | API | Applies the framework's broadly-safe opinionated defaults to any `ObjectMapper`; the `vertique` profile is exactly its output; see [The `vertique` Profile Defaults](#the-vertique-profile-defaults) |
+| `VertiqueStrictJsonMapperProfile` | `class` (package-private) | Internal | Built-in `vertique-strict` profile; owns a further independent `ObjectMapper` — `JacksonDefaults.apply(...)` plus the three opt-in serdes registered as one `SimpleModule`, with `USE_BIG_DECIMAL_FOR_FLOATS` disabled; not overridable; probe-exempt; see [The `vertique-strict` Profile](#the-vertique-strict-profile) |
+| `JacksonDefaults` | `class` (helper) | API | Applies the framework's broadly-safe opinionated defaults to any `ObjectMapper`; the `vertique` profile is exactly its output, and `vertique-strict` is its output plus the strict overlay; see [The `vertique` Profile Defaults](#the-vertique-profile-defaults) |
 | `JsonConfig` | record | API | Typed model of the `json` config section; carries `jsonProfile` (key `json.jsonProfile`), the global default profile id; `null`/blank means the `vertx` floor. Parsed at the `JsonRuntimeModule` boundary via `ConfigParser`. |
 | `JsonDefaultProfileValidator` | `class` | API | `@Singleton ComposeValidator` contributed to the `VALIDATE`-phase multibinding; resolves `JsonConfig.jsonProfile()` through the registry at `@Inject` construction — an unknown id throws `JsonProfileConfigurationException` immediately, failing startup even when the global default is shadowed by a more-specific per-binding value or when no boundary has active bindings. |
 | `BigDecimalAsStringSerializer` | `class` | API | Opt-in serializer: writes `BigDecimal` as a JSON string via `toPlainString()` (no scientific notation); not registered by `JacksonDefaults`; intended as a matched pair with `BigDecimalStrictStringDeserializer` |
@@ -105,7 +108,13 @@ registered `VertxModule` before calling `apply()`.
 #### Opt-in Serdes (not in `vertique`)
 
 Applications that need strict wire-shape control can register these building blocks on their own
-profile mapper via a `SimpleModule`. None are registered by `JacksonDefaults` or `vertique`:
+profile mapper via a `SimpleModule`. None are registered by `JacksonDefaults` or `vertique`.
+
+They are also available **without any application wiring** by selecting the built-in
+`vertique-strict` profile, which registers all three (see
+[The `vertique-strict` Profile](#the-vertique-strict-profile)). The standalone opt-in path below
+remains fully supported — use it when only one of the serdes is wanted, or when they must sit on an
+application-owned mapper with other customizations.
 
 - **`BigDecimalAsStringSerializer` + `BigDecimalStrictStringDeserializer`** — a matched pair. The
   serializer writes `BigDecimal` as a quoted JSON string (`toPlainString()` — no scientific
@@ -123,6 +132,49 @@ profile mapper via a `SimpleModule`. None are registered by `JacksonDefaults` or
   coerces a JSON number `123` or `true` targeting a `String` field to `"123"` or `"true"`.
   `StrictStringDeserializer` disables that: only `VALUE_STRING` is accepted; any other scalar
   raises `MismatchedInputException`.
+
+### The `vertique-strict` Profile
+
+`vertique-strict` is the third built-in profile. Like `vertique` it is opt-in — select it with
+`@JsonProfile("vertique-strict")`, a per-binding `jsonProfile` config value, or the global
+`json.jsonProfile` default. `vertx` remains the zero-config default and is never altered.
+
+**Composition.** `JacksonDefaults.apply(new ObjectMapper())`, then:
+
+| # | Step | Mechanism |
+|---|------|-----------|
+| 1 | Everything in [The `vertique` Profile Defaults](#the-vertique-profile-defaults) | `JacksonDefaults.apply(...)` on a fresh, profile-owned mapper |
+| 2 | Untyped decimals stay JSON numbers | Disable `USE_BIG_DECIMAL_FOR_FLOATS` (which step 1 had enabled) |
+| 3 | Strict decimal + strict string serdes | Register one `SimpleModule("vertique-strict")` carrying `BigDecimalAsStringSerializer`, `BigDecimalStrictStringDeserializer` and `StrictStringDeserializer` |
+
+The mapper is built once at profile construction and returned as-is; the shared Vert.x
+`DatabindCodec.mapper()` is never touched.
+
+**Wire contract.**
+
+- A **typed** `BigDecimal` property is written as a quoted JSON string via `toPlainString()` — never
+  scientific notation, trailing zeros (the scale) preserved exactly — and is read **only** from a
+  JSON string. A bare JSON number for a `BigDecimal` property is rejected with
+  `MismatchedInputException`.
+- A `String` property rejects scalar coercion: a JSON number or boolean targeting a `String` fails
+  instead of silently becoming `"42"` / `"true"`.
+- The accepted decimal string grammar is the bounded one described under
+  [Opt-in Serdes](#opt-in-serdes-not-in-vertique): plain decimals matching `-?[0-9]+(\.[0-9]+)?`, at
+  most 100 characters — exponent forms, a leading `+`, `".5"` and `"1."` are all rejected. Because
+  the paired serializer never emits exponent notation, the bound costs no round-trip fidelity.
+- Clients of a `vertique-strict` endpoint must expect decimals as JSON **strings**, not numbers.
+
+**The untyped pass-through trade.** `USE_BIG_DECIMAL_FOR_FLOATS` is disabled deliberately. A decimal
+read into an **untyped** target (`Object`, `Map<String, Object>`, `JsonObject`) stays a JSON number
+on the way back out — number-in, number-out — so documents this profile merely relays keep their
+wire shape. Were the feature left enabled, an untyped decimal would bind to `BigDecimal` and then be
+re-serialized as a string by `BigDecimalAsStringSerializer`, silently restringing pass-through
+payloads.
+
+The cost is a precision boundary: untyped decimals bind as `double`, so a value beyond IEEE-754
+double precision loses digits when relayed through an untyped target. Typed `BigDecimal` properties
+keep full precision in both directions. Declare the property as `BigDecimal` whenever arbitrary
+precision matters; untyped relay is explicitly a lossy-but-shape-stable path.
 
 ### Keyed-Collection Support (`dev.vertique.json.keyed`)
 
@@ -163,7 +215,7 @@ Each JSON boundary contributes its own parallel validator (`JaxRsDefaultProfileV
 }
 ```
 
-Setting `json.jsonProfile = "vertique"` activates the opinionated `vertique` profile as the global default at every boundary. Per-binding and per-boundary overrides remain fully operational. An unknown id fails startup immediately with a `JsonProfileConfigurationException`.
+Setting `json.jsonProfile = "vertique"` activates the opinionated `vertique` profile as the global default at every boundary. The selectable built-in ids are `vertx`, `vertique` and `vertique-strict`; any application-contributed id is equally valid here. Per-binding and per-boundary overrides remain fully operational. An unknown id fails startup immediately with a `JsonProfileConfigurationException`.
 
 ### Contracts in `vertique-core`
 
@@ -210,13 +262,14 @@ via `@Module(includes = JsonRuntimeModule.class)` — applications do not need t
 
 `DefaultJsonMapperProfileRegistry` performs all validation in its `@Inject` constructor (NFR-JSON-002A):
 
-1. **Built-in seeding** — the `vertx` and `vertique` profiles are seeded directly, separate from
-   the application set, and are **not** probed. `vertx` delegates to Vert.x's trusted shared
-   mapper; `vertique` sets `NON_NULL` inclusion which would make the null-bearing probe payload
-   falsely fail.
-2. **Reserved id check** — applications may not supply a profile with id `"vertx"` or
-   `"vertique"`; both are reserved and their violation raises `JsonProfileConfigurationException`
-   immediately.
+1. **Built-in seeding** — the `vertx`, `vertique` and `vertique-strict` profiles are seeded
+   directly, separate from the application set, and are **not** probed. `vertx` delegates to
+   Vert.x's trusted shared mapper; `vertique` sets `NON_NULL` inclusion which would make the
+   null-bearing probe payload falsely fail; `vertique-strict` inherits that inclusion and
+   additionally requires the string wire form for `BigDecimal`.
+2. **Reserved id check** — applications may not supply a profile with id `"vertx"`, `"vertique"`
+   or `"vertique-strict"`; all three are reserved and their violation raises
+   `JsonProfileConfigurationException` immediately.
 3. **Uniqueness** — duplicate application-supplied profile ids fail immediately.
 4. **Round-trip probe** — each **application-contributed** mapper is probed with a
    `JsonObject`/`JsonArray` payload (nested object, nested array, string/number/boolean/null
