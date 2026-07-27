@@ -17,15 +17,22 @@
 #                      value. A scalar value of `null` (any case, quoted or
 #                      not, once trimmed) counts as empty. A bare (unquoted)
 #                      value must not contain a literal `#` or a `"`
-#                      character (quote the value if it needs either); a
-#                      quoted value (wrapped in one matching pair of `"` or
-#                      `'`) must not contain another embedded `"` or `'`
-#                      character, but may contain a literal `#`, since the
-#                      surrounding quotes remove the ambiguity with a
-#                      trailing comment; an opening quote with no matching
-#                      closing quote is rejected outright rather than
-#                      accepted as a non-empty value. None of these forms is
-#                      silently accepted or silently normalized to empty.
+#                      character (quote the value if it needs either) — a
+#                      leading `'` is reserved quoting syntax (see below), so
+#                      a bare value may only carry a `'` elsewhere in the
+#                      value, never as its first character; a value wrapped
+#                      in one matching pair of `"` may contain an embedded
+#                      `'` but not another `"`, and a value wrapped in one
+#                      matching pair of `'` may contain an embedded `"` but
+#                      not another `'` (opposite-quote nesting only — a value
+#                      needing both quote characters is not representable in
+#                      this restricted grammar); a quoted value may contain a
+#                      literal `#`, since the surrounding quotes remove the
+#                      ambiguity with a trailing comment; an opening quote
+#                      with no matching closing quote is rejected outright
+#                      rather than accepted as a non-empty value. None of
+#                      these forms is silently accepted or silently
+#                      normalized to empty.
 #   (d) links       - every relative Markdown link target (including targets
 #                      that point out of developer-docs/, e.g. into
 #                      docs/modules.md), whether an inline `](target)` link
@@ -62,22 +69,28 @@
 #                      grammar decision and a stripping decision can never
 #                      disagree): every code fence opens with exactly three
 #                      backticks at column zero, optionally followed by an
-#                      info string. Four or more backticks at column zero,
-#                      any '~~~' fence, and a backtick/tilde fence indented
-#                      by any leading whitespace or hidden behind a
-#                      list/blockquote prefix (e.g. `- ``` ` or `> ``` `) are
-#                      all rejected outright rather than silently accepted
-#                      or mis-stripped; a fence-like line inside an
-#                      already-open fence (e.g. a nested ` ```lang ` line)
-#                      is rejected rather than treated as a new fence, and an
-#                      unclosed fence at end of file is rejected. Every
-#                      reference-style link definition (`[label]: target`)
-#                      starts at column zero (an indented one, or one hidden
-#                      behind a blockquote or list prefix, is rejected
-#                      outright rather than silently skipped or silently
-#                      passed through unresolved), and a bare
-#                      (non-angle-bracket) inline link destination must not
-#                      contain a literal '(' — use the angle-bracket
+#                      info string that must not itself contain a backtick.
+#                      Four or more backticks at column zero, any '~~~'
+#                      fence, a fence whose info string contains a backtick
+#                      (e.g. ` ```foo`bar `), and a backtick/tilde fence
+#                      indented by any leading whitespace or hidden behind
+#                      one or more container prefixes (a blockquote `>`, a
+#                      list marker `-`/`*`/`+`, or a dot- or paren-delimited
+#                      ordered-list marker such as `1.` or `1)`, repeated or
+#                      nested in any combination, e.g. `- ``` ` or
+#                      `> > ``` `) are all rejected outright rather than
+#                      silently accepted or mis-stripped; a fence-like line
+#                      inside an already-open fence (e.g. a nested ` ```lang `
+#                      line) is rejected rather than treated as a new fence,
+#                      and an unclosed fence at end of file is rejected.
+#                      Every reference-style link definition
+#                      (`[label]: target`) starts at column zero (an indented
+#                      one, or one hidden behind the same container-prefix
+#                      forms described above, repeated or nested in any
+#                      combination, is rejected outright rather than silently
+#                      skipped or silently passed through unresolved), and a
+#                      bare (non-angle-bracket) inline link destination must
+#                      not contain a literal '(' — use the angle-bracket
 #                      destination form (`](<target(with)parens>)`) instead.
 #
 # Every violation is reported (the run never stops at the first failure);
@@ -283,16 +296,22 @@ trim_frontmatter_value() {
 # opening quote with no matching closing quote is rejected outright as
 # unterminated rather than accepted as a non-empty value; anything but
 # whitespace after the closing quote is a disallowed trailing comment; and
-# the enclosed content must not itself contain another `"` or `'` character
-# — this restricted grammar has no escape-sequence support, so a quoted
-# value may contain a literal `#` (the closing quote already removes any
-# comment ambiguity) but never another embedded quote character. A value
-# that does not start with a quote is bare: it must not contain a literal
-# `#` (quote the value if it needs one) or a `"` character. A bare value
-# may contain a `'` (apostrophe) freely — this corpus's real prose
-# routinely uses English contractions/possessives (e.g. "application's"),
-# and a lone apostrophe is never ambiguous with this grammar's quoting,
-# which only ever wraps a value from its very first character.
+# — this restricted grammar has no escape-sequence support and allows only
+# opposite-quote nesting — a double-quoted value must not itself contain
+# another `"` character but may freely contain `'`, and a single-quoted
+# value must not itself contain another `'` character but may freely
+# contain `"`; a value needing both quote characters is not representable.
+# A quoted value may also contain a literal `#` (the closing quote already
+# removes any comment ambiguity). A value that does not start with a quote
+# is bare: it must not contain a literal `#` (quote the value if it needs
+# one) or a `"` character. A bare value may contain a `'` (apostrophe)
+# freely anywhere EXCEPT as its very first character — this corpus's real
+# prose routinely uses English contractions/possessives (e.g.
+# "application's"), and a non-leading apostrophe is never ambiguous with
+# this grammar's quoting; a leading `'` is reserved quoting syntax (it
+# always opens a single-quoted value), so a bare value that must start with
+# a literal apostrophe has to be wrapped in double quotes instead (e.g.
+# `"'90s migration"`).
 validate_frontmatter_scalar() {
   local raw="$1"
   local v quote rest before trailing
@@ -311,11 +330,6 @@ validate_frontmatter_scalar() {
     if [[ -n "${trailing//[[:space:]]/}" ]]; then
       FRONTMATTER_SCALAR_OK=false
       FRONTMATTER_SCALAR_DIAG="frontmatter value must not carry a trailing comment (frontmatter contract)"
-      return
-    fi
-    if [[ "$before" == *'"'* || "$before" == *"'"* ]]; then
-      FRONTMATTER_SCALAR_OK=false
-      FRONTMATTER_SCALAR_DIAG="quoted frontmatter values must not contain embedded quote characters (corpus grammar)"
       return
     fi
     FRONTMATTER_SCALAR_OK=true
@@ -440,13 +454,17 @@ check_frontmatter_of_file() {
 # old stripping awk scripts encoded slightly different assumptions about
 # what counts as a fence. Applied line by line, outside a fence:
 #   - a line matching exactly three backticks at column zero, optionally
-#     followed by an info string (` ``` ` or ` ```lang `), opens a fence
-#     (valid).
+#     followed by an info string that itself contains no backtick
+#     (` ``` ` or ` ```lang `), opens a fence (valid).
 #   - a fence-like line that is NOT a valid opening — four or more
-#     backticks at column zero, any '~~~' fence, or a backtick/tilde fence
-#     indented by any leading whitespace or hidden behind a list/blockquote
-#     prefix (e.g. `- ``` ` or `> ``` `) — is a grammar violation; the line
-#     is treated as ordinary prose and the state stays outside.
+#     backticks at column zero, any '~~~' fence, a backtick fence whose info
+#     string itself contains a backtick (e.g. ` ```foo`bar `), or a
+#     backtick/tilde fence indented by any leading whitespace or hidden
+#     behind one or more container prefixes (a blockquote `>`, a list
+#     marker `-`/`*`/`+`, or a dot- or paren-delimited ordered-list marker
+#     such as `1.` or `1)`, repeated or nested in any combination, e.g.
+#     `- ``` ` or `> > ``` `) — is a grammar violation; the line is treated
+#     as ordinary prose and the state stays outside.
 #   - every other line is ordinary prose.
 # Inside a fence:
 #   - a bare ``` (exactly three backticks, nothing else, column zero)
@@ -470,16 +488,14 @@ check_frontmatter_of_file() {
 fence_state_machine() {
   local f="$1" mode="$2"
   awk -v mode="$mode" '
-    function is_open(l) { return (l ~ /^```([^`].*)?$/) }
+    function is_open(l) { return (l ~ /^```[^`]*$/) }
     function is_close(l) { return (l == "```") }
     function is_nested(l) { return (l ~ /^```.+$/) }
     function is_bad_outside(l) {
       if (l ~ /^```/) return 1
       if (l ~ /^~~~/) return 1
       if (l ~ /^[[:space:]]+(```|~~~)/) return 1
-      if (l ~ /^[[:space:]]*>[[:space:]]*(```|~~~)/) return 1
-      if (l ~ /^[[:space:]]*[-*+][[:space:]]+(```|~~~)/) return 1
-      if (l ~ /^[[:space:]]*[0-9]+\.[[:space:]]+(```|~~~)/) return 1
+      if (l ~ /^([[:space:]]*(>|[-*+]|[0-9]+[.)])[[:space:]]+)+(```|~~~)/) return 1
       return 0
     }
     BEGIN { in_fence = 0; in_xml = 0 }
@@ -599,14 +615,16 @@ check_link_target() {
 # inline `](target)` links — including the CommonMark angle-bracket
 # destination form `](<target with spaces.md>)` — and reference-style
 # `[label]: target` definitions found outside fenced code blocks, which must
-# start at column zero (an indented one, or one hidden behind a blockquote
-# or list prefix such as `> [label]: target`, `- [label]: target`,
-# `* [label]: target`, or `1. [label]: target`, is rejected as a
-# corpus-grammar violation rather than silently skipped or silently passed
-# through unresolved). A bare (non-angle-bracket) inline destination
-# containing a literal '(' is rejected as a corpus-grammar violation rather
-# than silently truncated at the first ')' — such a target must use the
-# angle-bracket destination form instead.
+# start at column zero (an indented one, or one hidden behind one or more
+# container prefixes — a blockquote `>`, a list marker `-`/`*`/`+`, or a
+# dot- or paren-delimited ordered-list marker such as `1.` or `1)` —
+# repeated or nested in any combination, such as `> [label]: target`,
+# `- [label]: target`, `1) [label]: target`, or `> > [label]: target`, is
+# rejected as a corpus-grammar violation rather than silently skipped or
+# silently passed through unresolved). A bare (non-angle-bracket) inline
+# destination containing a literal '(' is rejected as a corpus-grammar
+# violation rather than silently truncated at the first ')' — such a target
+# must use the angle-bracket destination form instead.
 check_links_of_file() {
   local f="$1"
   local dir raw target line hit
@@ -626,7 +644,7 @@ check_links_of_file() {
 
   while IFS= read -r hit; do
     fail "$f:${hit%%:*}: reference-style link definitions must start at column zero, not be indented (corpus grammar)"
-  done < <(strip_all_fences "$f" | grep -noE '^[[:space:]]+\[[^]]+\]:|^[[:space:]]*>[[:space:]]*\[[^]]+\]:|^[[:space:]]*[-*+][[:space:]]+\[[^]]+\]:|^[[:space:]]*[0-9]+\.[[:space:]]+\[[^]]+\]:')
+  done < <(strip_all_fences "$f" | grep -noE '^[[:space:]]+\[[^]]+\]:|^([[:space:]]*(>|[-*+]|[0-9]+[.)])[[:space:]]+)+\[[^]]+\]:')
 
   while IFS= read -r line; do
     [[ "$line" =~ ^\[[^]]+\]:[[:space:]]*(.+)$ ]] || continue

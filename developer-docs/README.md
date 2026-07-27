@@ -122,17 +122,28 @@ being silently accepted or silently mis-parsed:
 
 - A code fence must open with three backticks at column zero. A fence indented by one to three
   spaces, or a fence that uses tildes instead of backticks, is rejected rather than treated as
-  ordinary prose.
+  ordinary prose. So is a fence hidden behind one or more container prefixes — a blockquote
+  marker, a list marker, or a dot- or paren-delimited ordered-list marker, repeated or nested in
+  any combination — rather than treated as ordinary prose.
 - A reference-style link definition (`[label]: target`) must likewise start at column zero. An
-  indented one is rejected rather than silently skipped.
+  indented one is rejected rather than silently skipped, and so is one hidden behind the same
+  container-prefix forms described above — a blockquote marker, a list marker, or a dot- or
+  paren-delimited ordered-list marker, repeated or nested in any combination — rather than
+  silently passed through unresolved.
 - A frontmatter `title` or `description` value's surrounding whitespace is ignored before any
-  other rule below is applied. A bare (unquoted) value must not contain a literal `#` or a `"`
-  character — quote the value if it needs either. A quoted value (wrapped in one matching pair of
-  `"` or `'`) must not contain another embedded quote character, but it may contain a literal `#`,
-  since the surrounding quotes remove the ambiguity with a trailing comment. No value carries a
-  trailing comment after its closing quote, and an opening quote with no matching closing quote is
-  rejected outright. A value of `null`, in any case and whether quoted or not, is invalid. None of
-  these forms is silently accepted or silently normalized to empty.
+  other rule below is applied. A bare (unquoted) value must not contain a literal `#` character —
+  quote the value, in either quote style, if it needs one. A value that must start with a literal
+  `'` (apostrophe), or that contains a `"` character anywhere, needs the opposite quote style
+  instead: wrap a value containing `"` in single quotes, and wrap a value that must start with `'`
+  in double quotes — for example, a title starting with an apostrophe is written as a
+  double-quoted value with the apostrophe as its first character. Concretely, this restricted
+  grammar allows only opposite-quote nesting: a double-quoted value may freely contain `'` but not
+  another `"`, and a single-quoted value may freely contain `"` but not another `'`; a value
+  needing both quote characters is not representable at all. A quoted value may also contain a
+  literal `#`, since the surrounding quotes remove the ambiguity with a trailing comment. No value
+  carries a trailing comment after its closing quote, and an opening quote with no matching
+  closing quote is rejected outright. A value of `null`, in any case and whether quoted or not, is
+  invalid. None of these forms is silently accepted or silently normalized to empty.
 - A bare (non-angle-bracket) inline link destination must not contain a literal opening
   parenthesis. Use the CommonMark angle-bracket destination form instead — the same form the
   validator already recognizes in full, including embedded spaces, for a destination that
