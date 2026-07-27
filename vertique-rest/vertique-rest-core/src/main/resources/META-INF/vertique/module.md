@@ -1908,6 +1908,30 @@ Cached per-type annotation metadata pre-computed from `@Canonicalize`, `@Sanitiz
 
 Resolves and caches `InputPolicyMetadata` per type. Provided as a `@Singleton` by `SanitizationModule`. Supports meta-annotation resolution — annotations composed from `@Canonicalize` / `@Sanitize` are unwrapped automatically.
 
+**Field classification sees through `Optional` and bounded type arguments.** The intermediate wire
+value of an `Optional<T>` field is the unwrapped `T`, and a wildcard / type-variable type argument
+is erased to its bound before Jackson binds it. The resolver therefore normalizes both away before
+deciding a field's shape:
+
+| Declared field type | Nested metadata resolved from |
+|---------------------|-------------------------------|
+| `Optional<String>` | classified as a `String` field |
+| `Optional<NestedDto>` | `NestedDto` |
+| `Optional<? extends NestedDto>` | `NestedDto` (wildcard upper bound) |
+| `Optional<T>` where `T extends NestedDto` | `NestedDto` (type-variable bound) |
+| `Collection<? extends NestedDto>` | `NestedDto` (collection element bound) |
+| `Collection<Optional<? extends NestedDto>>` | `NestedDto` |
+| `Collection<Optional<String>>` | classified as a collection of strings |
+| `Optional<T>` where `T extends A & B` | `A` — javac erases an intersection bound to its leftmost member |
+| raw `Optional`, `Optional<?>`, `Optional<? super NestedDto>` | no nested schema — the field falls back to inherited chains only |
+| raw `Collection`, `Collection<Object>`, `Collection<?>`, `Collection<? super NestedDto>` | no element schema — inherited chains still reach string elements |
+
+Without this normalization the resolver recurses into `Optional`'s own fields, produces empty
+metadata, and returns `null` for the field; `DefaultInputObjectProcessor` then walks the nested map
+with `InputPolicyMetadata.EMPTY`, so the nested DTO's own `@Canonicalize` / `@Sanitize` chains never
+run. `AnnotationCollector` in `vertique-codegen-sanitization` applies the same rules at APT time, so
+the generated and reflective paths classify every row above identically.
+
 ---
 
 ## Dependencies

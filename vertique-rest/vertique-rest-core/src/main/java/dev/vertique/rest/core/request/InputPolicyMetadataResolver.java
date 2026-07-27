@@ -16,12 +16,15 @@ import java.lang.reflect.Field;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.RecordComponent;
 import java.lang.reflect.Type;
+import java.lang.reflect.TypeVariable;
+import java.lang.reflect.WildcardType;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -36,6 +39,13 @@ import java.util.concurrent.ConcurrentHashMap;
  *
  * <p>Cycle detection: self-referential or mutually-referential types are handled by tracking
  * visited types and enforcing a maximum traversal depth of {@value #MAX_DEPTH}.
+ *
+ * <p>Field classification strips {@code java.util.Optional} layers and normalizes bounded type
+ * arguments to their upper bound before deciding a field's shape, so {@code Optional<NestedDto>},
+ * {@code Optional<? extends NestedDto>} and {@code List<? extends NestedDto>} all resolve nested
+ * metadata from {@code NestedDto}. See {@link #buildFieldMeta} for the full rule; the APT-time
+ * {@code AnnotationCollector} in {@code vertique-codegen-sanitization} applies the same rules so
+ * the generated and reflective paths agree.
  *
  * <p>Thread-safe: metadata is computed once per type and cached via {@link ConcurrentHashMap}.
  */
@@ -203,6 +213,23 @@ public class InputPolicyMetadataResolver {
      * Returns {@code null} for types that do not need processing (primitives, boxed types,
      * and non-container non-string types without annotations or skip flags).
      *
+     * <p>{@code java.util.Optional<T>} is <em>transparent</em> here: the intermediate wire value of
+     * an {@code Optional<T>} field is the unwrapped {@code T} (Jackson's {@code Jdk8Module}
+     * serializes the payload, not the wrapper), so the field is classified by {@code T}. Without
+     * this normalization, {@code Optional<NestedDto>} recurses into {@code Optional}'s own fields,
+     * yields empty metadata, and returns {@code null} — at which point
+     * {@link DefaultInputObjectProcessor} walks the nested map with
+     * {@link InputPolicyMetadata#EMPTY} and the nested DTO's own chains never run. A raw
+     * {@code Optional} has no type argument to classify against and falls back to the
+     * no-schema branch.
+     *
+     * <p>Bounded type arguments are normalized to their upper bound by {@link #normalizeToBound}
+     * first, so {@code Optional<? extends NestedDto>} and {@code Optional<T extends NestedDto>}
+     * classify against {@code NestedDto} — the type javac writes into the erased signature and
+     * therefore the type Jackson binds. {@code Optional<?>} and {@code Optional<? super X>}
+     * normalize to {@code java.lang.Object} and stay unclassified. These rules are symmetric with
+     * the APT-time {@code AnnotationCollector} in {@code vertique-codegen-sanitization}.
+     *
      * @param genericType the full generic type of the field
      * @param rawType     the raw (erased) class of the field
      * @param canon       {@code @Canonicalize} annotation, or {@code null}
@@ -227,6 +254,22 @@ public class InputPolicyMetadataResolver {
         List<Class<? extends Sanitizer>> sanitChain = sanit != null ? Arrays.asList(sanit.value()) : List.of();
 
         boolean hasAnnotations = !canonChain.isEmpty() || !sanitChain.isEmpty() || skipCanon || skipSanit;
+
+        // Optional<T> wrapper — classify by the wrapped type (see method javadoc).
+        if (rawType == Optional.class) {
+            Type wrapped = normalizeToBound(optionalTypeArgument(genericType));
+            Class<?> wrappedRaw = rawClassOf(wrapped);
+            if (wrappedRaw == null) {
+                // Raw Optional (or a type argument that does not resolve to a class) — nothing to
+                // classify against.
+                if (hasAnnotations) {
+                    return new FieldPolicyMetadata(
+                            canonChain, sanitChain, skipCanon, skipSanit, rawType, null, false, false, null);
+                }
+                return null;
+            }
+            return buildFieldMeta(wrapped, wrappedRaw, canon, sanit, skipCanon, skipSanit, visited, depth);
+        }
 
         // String field
         if (rawType == String.class) {
@@ -325,17 +368,106 @@ public class InputPolicyMetadataResolver {
     // --- Type classification helpers ---
 
     /**
-     * Extracts the element type from a generic {@link Collection} type.
+     * Extracts the element type from a generic {@link Collection} type, normalizing the element
+     * type argument to its upper bound and unwrapping any {@code java.util.Optional} layers.
+     *
+     * <p>So {@code List<Optional<String>>} yields {@code String}, and
+     * {@code List<? extends NestedDto>} and {@code List<Optional<? extends NestedDto>>} both yield
+     * {@code NestedDto}. This keeps the reflective walker symmetric with the APT-time
+     * {@code AnnotationCollector} in {@code vertique-codegen-sanitization}.
+     *
+     * <p>{@code java.lang.Object} carries no schema, so an element type that resolves to it —
+     * {@code List<Object>}, and {@code List<?>} / {@code List<? super X>} after bound
+     * normalization — is reported as not determinable. That mirrors both the nested-object
+     * branch's {@code rawType != Object.class} guard in {@link #buildFieldMeta} and the
+     * collector's treatment of {@code Object} as a scalar leaf, and it routes the field to the
+     * no-element-schema branch where inherited chains still reach string elements.
      *
      * @param type the generic type
-     * @return the element class, or {@code null} if not determinable
+     * @return the element class, or {@code null} if not determinable (raw collection, raw
+     *         {@code Optional} element, an {@code Object} element, or an element type that
+     *         resolves to no class)
      */
     private static Class<?> extractCollectionElementType(Type type) {
+        if (!(type instanceof ParameterizedType pt)) {
+            return null;
+        }
+        Type[] args = pt.getActualTypeArguments();
+        if (args.length != 1) {
+            return null;
+        }
+        Type element = normalizeToBound(args[0]);
+        Class<?> elementRaw = rawClassOf(element);
+        while (elementRaw == Optional.class) {
+            element = normalizeToBound(optionalTypeArgument(element));
+            elementRaw = rawClassOf(element);
+        }
+        return elementRaw == Object.class ? null : elementRaw;
+    }
+
+    /**
+     * Returns the single type argument of an {@code Optional<T>} generic type.
+     *
+     * @param type the {@code Optional} generic type
+     * @return the {@code T} type, or {@code null} for a raw {@code Optional}
+     */
+    private static Type optionalTypeArgument(Type type) {
         if (type instanceof ParameterizedType pt) {
             Type[] args = pt.getActualTypeArguments();
-            if (args.length == 1 && args[0] instanceof Class<?> cls) {
-                return cls;
+            if (args.length == 1) {
+                return args[0];
             }
+        }
+        return null;
+    }
+
+    /**
+     * Normalizes a type argument to the type Jackson actually binds against.
+     *
+     * <ul>
+     *   <li>{@link WildcardType} — resolves to the first upper bound. Reflection reports
+     *       {@code java.lang.Object} as the upper bound of an unbounded {@code ?} and of a
+     *       lower-bounded {@code ? super X}, so both normalize to {@code Object}.</li>
+     *   <li>{@link TypeVariable} — resolves to the first declared bound. For an intersection
+     *       bound ({@code T extends A & B}) that is {@code A}, which is also the type javac
+     *       writes into the erased field signature.</li>
+     *   <li>Anything else is returned unchanged.</li>
+     * </ul>
+     *
+     * <p>Bounds may themselves be wildcards or type variables, so resolution recurses. Java
+     * forbids circular type-variable bounds, so the recursion terminates.
+     *
+     * @param type the type to normalize; may be {@code null}
+     * @return the normalized type, or {@code null} when {@code type} is {@code null}
+     */
+    private static Type normalizeToBound(Type type) {
+        if (type == null) {
+            return null;
+        }
+        if (type instanceof WildcardType wildcard) {
+            Type[] upperBounds = wildcard.getUpperBounds();
+            return upperBounds.length == 0 ? Object.class : normalizeToBound(upperBounds[0]);
+        }
+        if (type instanceof TypeVariable<?> typeVariable) {
+            Type[] bounds = typeVariable.getBounds();
+            return bounds.length == 0 ? Object.class : normalizeToBound(bounds[0]);
+        }
+        return type;
+    }
+
+    /**
+     * Extracts the raw {@link Class} from a {@link Type}, handling plain classes and
+     * parameterized types.
+     *
+     * @param type the type to erase; may be {@code null}
+     * @return the raw class, or {@code null} when the type has no resolvable raw class
+     */
+    private static Class<?> rawClassOf(Type type) {
+        if (type instanceof Class<?> cls) {
+            return cls;
+        }
+        if (type instanceof ParameterizedType pt && pt.getRawType() instanceof Class<?> cls) {
+            return cls;
         }
         return null;
     }
