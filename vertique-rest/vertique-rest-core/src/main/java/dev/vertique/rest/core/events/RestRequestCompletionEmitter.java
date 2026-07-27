@@ -17,6 +17,7 @@ import dev.vertique.security.SecurityContextSnapshot;
 import dev.vertique.security.origin.RequestOrigin;
 import io.vertx.core.AsyncResult;
 import io.vertx.ext.web.RoutingContext;
+import jakarta.annotation.Nullable;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
 import java.time.Instant;
@@ -227,8 +228,8 @@ public final class RestRequestCompletionEmitter implements Middleware {
      * {@code StreamResetException} on an HTTP/1.1 test server).
      *
      * @param ctx       the routing context for the completed request
-     * @param endResult the outcome delivered to the response end handler; not yet consumed by
-     *                  this stub — {@code wireFailureCode} is always {@code null} for now
+     * @param endResult the outcome delivered to the response end handler; consulted for
+     *                  {@code wireFailureCode} when the {@link #KEY_WIRE_FAILURE} marker is absent
      */
     void emit(RoutingContext ctx, AsyncResult<Void> endResult) {
         // --- Exactly-once guard ---
@@ -270,6 +271,11 @@ public final class RestRequestCompletionEmitter implements Middleware {
         // safeFailureMessage: intentionally null. Raw exception messages are unsafe (§10.3).
         // A future curated source may populate this field via enrichment.
         String safeFailureMessage = null;
+        // wireFailureCode: post-handoff wire-failure classification. The KEY_WIRE_FAILURE marker
+        // (streaming failures, set by the response pipeline; first-writer-wins) takes precedence
+        // over a failed end-handler result (client aborts).
+        Throwable marker = ctx.get(KEY_WIRE_FAILURE);
+        String wireFailureCode = wireFailureCode(marker, endResult);
 
         RestRequestCompletedEvent event = new RestRequestCompletedEvent(
                 startTime,
@@ -281,7 +287,7 @@ public final class RestRequestCompletionEmitter implements Middleware {
                 status,
                 failureCode,
                 safeFailureMessage,
-                null,
+                wireFailureCode,
                 secSnapshot,
                 corr,
                 origin,
@@ -309,6 +315,52 @@ public final class RestRequestCompletionEmitter implements Middleware {
         } finally {
             closeScopesQuietly(opened);
         }
+    }
+
+    /**
+     * Derives the wire-failure classification for a completed request from the two input
+     * channels of the {@code ResponseSerializer} completion contract: the {@link #KEY_WIRE_FAILURE}
+     * marker (streaming failures, set by the response pipeline) and the end-handler
+     * {@link AsyncResult} (client aborts). The marker takes precedence when both carry a failure;
+     * when neither does, returns {@code null} (clean wire completion).
+     *
+     * @param marker    the {@link #KEY_WIRE_FAILURE} routing-context marker value, or {@code null}
+     *                  when absent
+     * @param endResult the outcome delivered to the response end handler
+     * @return the normalized wire-failure classification, or {@code null} on clean completion
+     */
+    static String wireFailureCode(@Nullable Throwable marker, AsyncResult<Void> endResult) {
+        if (marker != null) {
+            return normalizeWireFailureCause(marker);
+        }
+        if (endResult != null && endResult.failed()) {
+            return normalizeWireFailureCause(endResult.cause());
+        }
+        return null;
+    }
+
+    /**
+     * Normalizes a wire-failure cause to a low-cardinality classification string safe for use as
+     * a metric label: the cause's class simple name, except the Vert.x 5.1.2 connection-close
+     * signal — {@link io.vertx.core.impl.NoStackTraceThrowable} with the exact message
+     * {@code "Connection closed"} — which normalizes to {@code "ConnectionClosed"}. Matched by
+     * class name AND message (not message alone), so an unrelated exception carrying the same
+     * text is not misclassified. An HTTP/2 {@code StreamResetException} is intentionally NOT
+     * normalized and keeps its own simple class name.
+     *
+     * <p><strong>Version-coupled:</strong> the exact class name and message are Vert.x 5.1.2
+     * internals ({@code io.vertx.core.impl.NoStackTraceThrowable} is not part of the public API);
+     * revisit this predicate on a Vert.x upgrade.
+     *
+     * @param cause the wire-failure cause; never {@code null}
+     * @return the normalized classification string; never {@code null}
+     */
+    private static String normalizeWireFailureCause(Throwable cause) {
+        if (cause.getClass().getName().equals("io.vertx.core.impl.NoStackTraceThrowable")
+                && "Connection closed".equals(cause.getMessage())) {
+            return "ConnectionClosed";
+        }
+        return cause.getClass().getSimpleName();
     }
 
     // --- Scope helpers ---
