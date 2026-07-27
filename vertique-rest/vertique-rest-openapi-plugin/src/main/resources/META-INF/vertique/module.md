@@ -9,7 +9,7 @@ SPDX-License-Identifier: EUPL-1.2
 > **Package:** `dev.vertique.openapi`
 > **Artifact:** `rest-openapi-plugin`
 
-A thin build-time module that provides Swagger `ModelConverter`s and an `OpenAPIExtension` for the swagger-maven-plugin. `FutureModelConverter` unwraps `Future<T>` return types to `T`, `SseModelConverter` resolves SSE `ReadStream` return types to a string schema, and `RequestParamsExtension` expands `@RequestParams`-annotated parameter objects into individual OpenAPI parameters — so the generated spec reflects the actual JAX-RS contract rather than the framework's internal wrapper/aggregation types.
+A thin build-time module that provides Swagger `ModelConverter`s and an `OpenAPIExtension` for the swagger-maven-plugin. `FutureModelConverter` unwraps `Future<T>` return types to `T`, `SseModelConverter` resolves SSE `ReadStream` return types to a string schema, `BigDecimalModelConverter` resolves `BigDecimal` types to the `vertique-strict` string wire-form schema, and `RequestParamsExtension` expands `@RequestParams`-annotated parameter objects into individual OpenAPI parameters — so the generated spec reflects the actual JAX-RS contract rather than the framework's internal wrapper/aggregation types.
 
 ---
 
@@ -70,6 +70,41 @@ public class SseModelConverter implements ModelConverter {
 ```
 
 Both converters must be listed when SSE endpoints are present in the application.
+
+### BigDecimalModelConverter
+
+```java
+public final class BigDecimalModelConverter implements ModelConverter {
+    @Override
+    public Schema<?> resolve(AnnotatedType type, ModelConverterContext context,
+                          Iterator<ModelConverter> chain) {
+        // If the type is java.math.BigDecimal, resolve to a string schema with
+        // format "decimal", pattern "-?[0-9]+(\.[0-9]+)?", and maxLength 100
+        // Otherwise, delegate to the next converter in the chain
+        // Returns null (not a chain.next() call) when this is the last converter
+    }
+}
+```
+
+**What it does:**
+- Detects `java.math.BigDecimal` return/field types
+- Resolves them to a `string` schema (`format: decimal`) instead of Swagger's default `number` schema
+- Sets `pattern: -?[0-9]+(\.[0-9]+)?` and `maxLength: 100` so the generated spec's validation bounds mirror the runtime grammar enforced by `dev.vertique.json.BigDecimalStrictStringDeserializer` (`vertique-json` module)
+
+**`vertique-strict` pairing contract:**
+- This converter is **spec-global** — it applies to every `BigDecimal` occurrence in the document, producing one decimal wire-form policy per generated spec
+- It is **required** when the application selects the `vertique-strict` JSON profile, so the spec's schema type (a decimal string) matches the actual runtime wire form
+- Mixing string and number decimal wire forms within a single application's spec is **unsupported** by this converter — an application with a mixed-profile posture should not register it and instead annotate the string-form properties individually with `@Schema(type = "string", format = "decimal")`, which is the escape hatch for mixed-profile apps
+- The `pattern` and `maxLength` values mirror `BigDecimalStrictStringDeserializer`'s bounds (plain decimal literal, no exponent notation, ≤100 characters) — keep both in lockstep if either changes
+
+**Configuration** — add alongside `FutureModelConverter` when the application uses the `vertique-strict` JSON profile:
+
+```xml
+<modelConverterClasses>
+    dev.vertique.openapi.FutureModelConverter,
+    dev.vertique.openapi.BigDecimalModelConverter
+</modelConverterClasses>
+```
 
 ---
 
@@ -145,7 +180,7 @@ The plugin is configured in the application module's `pom.xml`:
 
 **Key configuration points:**
 - `resourcePackages`: The Java package(s) to scan for JAX-RS annotated classes
-- `modelConverterClasses`: Must include `dev.vertique.openapi.FutureModelConverter` (and `SseModelConverter` when SSE endpoints are present)
+- `modelConverterClasses`: Must include `dev.vertique.openapi.FutureModelConverter` (and `SseModelConverter` when SSE endpoints are present, and `BigDecimalModelConverter` when the application uses the `vertique-strict` JSON profile)
 - `outputPath`: Set to `${project.build.directory}/classes` so the generated spec is on the runtime classpath
 - `outputFormat`: `JSONANDYAML` generates both `openapi.json` and `openapi.yaml`
 - `RequestParamsExtension` needs no entry here — it is picked up automatically via `ServiceLoader` once the `<dependency>` above is present
