@@ -240,4 +240,26 @@ class JsonProfilesDemoIT {
                 .then()
                 .statusCode(400);
     }
+
+    /**
+     * Proves the contract gate rejects a request body missing the required {@code sku}/{@code
+     * amount} properties (400) instead of letting an empty {@link
+     * dev.vertique.examples.hello.resource.JsonProfilesDemoResource.PriceQuote} reach the handler and
+     * NPE while unboxing {@code amount} into a 500.
+     *
+     * <p>The {@link OpenApiValidationFilter} is bypassed because {@code {}} is deliberately
+     * spec-invalid: with the filter on, the request is aborted client-side and the server gate is
+     * never exercised.
+     */
+    @Test
+    @DisplayName("POST /json-demo/price with an empty body is rejected with 400, not a 500")
+    void postPriceQuote_emptyBody_rejected() {
+        given().noFiltersOfType(OpenApiValidationFilter.class)
+                .contentType("application/json")
+                .body("{}")
+                .when()
+                .post("/json-demo/price")
+                .then()
+                .statusCode(400);
+    }
 }

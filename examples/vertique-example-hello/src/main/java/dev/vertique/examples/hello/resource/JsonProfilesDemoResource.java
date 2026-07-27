@@ -183,7 +183,13 @@ public class JsonProfilesDemoResource {
      * @param rank an optional numeric rank; omitted from the response body when empty
      */
     public record OptionalGreeting(
-            String name, Optional<String> nickname, Optional<List<String>> tags, OptionalInt rank) {}
+            @Schema(requiredMode = Schema.RequiredMode.REQUIRED)
+            String name,
+            // Deliberately left unmarked: nickname/tags/rank are the demo's point — they show up as
+            // genuinely optional properties in the generated spec.
+            Optional<String> nickname,
+            Optional<List<String>> tags,
+            OptionalInt rank) {}
 
     /**
      * Echo DTO reporting whether an inbound {@code nickname} was bound present.
@@ -201,7 +207,14 @@ public class JsonProfilesDemoResource {
      * @param amount the price amount, serialized as a plain-decimal JSON string
      * @param discount an optional discount amount; omitted from the response body when empty
      */
-    public record PriceQuote(String sku, BigDecimal amount, Optional<BigDecimal> discount) {}
+    public record PriceQuote(
+            @Schema(requiredMode = Schema.RequiredMode.REQUIRED)
+            String sku,
+
+            @Schema(requiredMode = Schema.RequiredMode.REQUIRED)
+            BigDecimal amount,
+            // Deliberately left unmarked: discount is the demo's optional property.
+            Optional<BigDecimal> discount) {}
 
     /**
      * Echo DTO reporting the scale and plain string form of a bound {@link BigDecimal} amount.
