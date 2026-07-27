@@ -272,10 +272,13 @@ public class RestRequestCompletionExactlyOnceIT {
      * Waits until {@code captured} holds at least {@code expected} events, then waits one short
      * settle window before completing. The unbounded poll removes the load-dependent miss-flake
      * (a fixed pre-assert delay was too short under CPU contention, so events arrived after the
-     * assertion and shifted index-based checks). The trailing {@link #SETTLE_MS} settle preserves
-     * the exactly-once proof strength: a duplicate/extra event emitted shortly after the threshold
-     * still lands before the {@code assertEquals(expected, captured.size())} check and fails it.
-     * The class-level {@code @Timeout} is the upper bound.
+     * assertion and shifted index-based checks). The trailing {@link #SETTLE_MS} settle is a
+     * bounded proof, not an unconditional one: it only catches a duplicate event emitted within
+     * {@link #SETTLE_MS} (50 ms) of the threshold being reached — a duplicate emitted later escapes
+     * this check entirely. The causal-barrier pattern in {@code RestRequestCompletionEmitterTest}
+     * (await {@code afterClose} rather than a settle window) is the stronger form of this proof;
+     * prefer it if this helper is ever replaced. The class-level {@code @Timeout} is the upper
+     * bound.
      *
      * @param vertx    the Vert.x instance
      * @param captured the list being populated by the event listener

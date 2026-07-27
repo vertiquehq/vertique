@@ -173,7 +173,7 @@ public class ActionOnlyRouteAuthIT {
                             "getContent", new SecurityPolicy.None(), Optional.of(CONTENT_READ), descriptor, routeReg);
 
                     // Chain in OrderedExtension priority order, exactly as JaxRsRouteRegistrar would:
-                    // auth (70) → identity (80) → authorization (100), then the terminal handler.
+                    // auth (40) → identity (80) → authorization (100), then the terminal handler.
                     authContributor.contribute(registrationContext);
                     identityContributor.contribute(registrationContext);
                     authorizationContributor.contribute(registrationContext);
@@ -326,7 +326,8 @@ public class ActionOnlyRouteAuthIT {
     private static String diagnosticSuffix(Resp resp) {
         return resp.fromThisServer()
                 ? " (marker present: response from this test's router — route matching/auth behavior changed)"
-                : " (marker ABSENT: foreign response — misrouted request, see #186)";
+                : " (marker ABSENT: response was not stamped by this test's root handler (foreign"
+                        + " process, or a response written below the router) — see #186)";
     }
 
     // --- Test doubles ---

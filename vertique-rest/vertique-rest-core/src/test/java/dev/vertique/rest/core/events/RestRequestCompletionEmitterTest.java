@@ -174,21 +174,6 @@ class RestRequestCompletionEmitterTest {
     }
 
     /**
-     * Builds a {@link Router} with {@link RequestContextLifecycle} and the emitter mounted in order,
-     * plus a terminal route at {@code /test} that delegates to the supplied handler. No lifecycle
-     * barrier is installed; use {@link #router(Vertx, RestRequestCompletionEmitter, Promise,
-     * RouteHandler)} for tests that need to await lifecycle completion deterministically.
-     *
-     * @param vertx   the Vert.x instance
-     * @param emitter the emitter to mount
-     * @param handler the terminal route handler
-     * @return the configured router
-     */
-    private static Router router(Vertx vertx, RestRequestCompletionEmitter emitter, RouteHandler handler) {
-        return router(vertx, emitter, Promise.promise(), handler);
-    }
-
-    /**
      * Builds a {@link Router} with {@link RequestContextLifecycle}, the emitter, and a lifecycle
      * barrier middleware mounted in order, plus a terminal route at {@code /test} that delegates to
      * the supplied handler.
@@ -273,10 +258,14 @@ class RestRequestCompletionEmitterTest {
      *
      * <p>{@link RequestContextLifecycle} registers exactly one {@code ctx.addEndHandler} and, because
      * Vert.x Web fires end handlers in reverse registration order, that handler — registered first —
-     * fires last. {@code afterClose} tasks run in phase 2 of that handler's cleanup, after every other
-     * end handler's synchronous work (including the completion emitter's listener dispatch) has
-     * finished. The barrier therefore completes strictly after all end-handler work for the request,
-     * with no settle window required.
+     * fires last. By the time that handler's cleanup runs, every other end handler's synchronous work
+     * (including the completion emitter's listener dispatch) has already finished, and all
+     * {@code onClose} registrations have been closed. {@code afterClose} tasks then run in FIFO order,
+     * so this barrier completes only after all {@code ctx} end-handler work and all {@code onClose}
+     * cleanup for the request have finished — with no settle window required. Because
+     * {@code afterClose} tasks are FIFO, a task registered <em>after</em> this middleware's
+     * {@code afterClose} call would run after the barrier completes: do not register {@code
+     * afterClose} downstream of this middleware in these tests.
      *
      * @param barrier the promise to complete once the request's lifecycle handle has fully closed
      * @return a handler suitable for mounting as a catch-all route after {@link RequestContextLifecycle}
@@ -549,9 +538,10 @@ class RestRequestCompletionEmitterTest {
         @DisplayName("No listeners: emitter completes silently without exception")
         void noListenersCompleteSilently(VertxTestContext ctx) {
             RestRequestCompletionEmitter em = emitter(Set.of());
-            Router router = router(vertx, em, rc -> {});
+            // barrier unobserved: this test asserts via the drained response, not captured state
+            RouterWithBarrier rb = routerWithBarrier(vertx, em, rc -> {});
 
-            startServer(router)
+            startServer(rb.router())
                     .compose(port -> client.request(HttpMethod.GET, port, "127.0.0.1", "/test")
                             .compose(req -> req.send()))
                     .compose((HttpClientResponse resp) -> {
