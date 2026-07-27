@@ -181,6 +181,13 @@ public class ActionOnlyRouteAuthIT {
 
                     Router apiRouter = routerBuilder.createRouter();
                     Router root = Router.router(vertx);
+                    // Stamps every response from this test's router so a failing status assertion can tell
+                    // "this server answered but the route/auth outcome differed" from "a foreign process
+                    // answered the request" (see #186). Must run strictly before every other handler.
+                    root.route().order(Integer.MIN_VALUE).handler(rc -> {
+                        rc.response().putHeader("x-vq-test-server", "action-only-route-auth");
+                        rc.next();
+                    });
                     // RequestContextLifecycle must run first so the per-request scope exists for the
                     // identity middleware to register its SecurityContext cleanup.
                     root.route("/*").handler(new RequestContextLifecycle());
@@ -190,7 +197,7 @@ public class ActionOnlyRouteAuthIT {
                     // startup by JaxRsRouteRegistrar); it has no runtime role on this path.
                     assertEquals(true, actionRegistry.contains(CONTENT_READ));
 
-                    return vertx.createHttpServer().requestHandler(root).listen(0);
+                    return vertx.createHttpServer().requestHandler(root).listen(0, "127.0.0.1");
                 })
                 .onComplete(ctx.succeeding(s -> {
                     server = s;
@@ -223,12 +230,16 @@ public class ActionOnlyRouteAuthIT {
     @DisplayName("valid token with required role: action gate sees real identity and permits (200)")
     void validTokenWithRolePermitted(VertxTestContext ctx) {
         get("/content", "alice|editor")
-                .onComplete(ctx.succeeding(status -> ctx.verify(() -> {
+                .onComplete(ctx.succeeding(resp -> ctx.verify(() -> {
                     assertEquals(
                             200,
-                            status,
-                            "an action-only route with a valid token must reach the handler — the gate must see the "
-                                    + "real identity, not anonymous");
+                            resp.status(),
+                            () -> "an action-only route with a valid token must reach the handler — the gate must "
+                                    + "see the real identity, not anonymous; got " + resp.status()
+                                    + (resp.fromThisServer()
+                                            ? " (marker present: response from this test's router — route "
+                                                    + "matching/auth behavior changed)"
+                                            : " (marker ABSENT: foreign response — misrouted request, see #186)"));
                     ctx.completeNow();
                 })));
     }
@@ -244,9 +255,16 @@ public class ActionOnlyRouteAuthIT {
     @DisplayName("valid token without required role: action gate denies (403)")
     void validTokenWithoutRoleDenied(VertxTestContext ctx) {
         get("/content", "bob|viewer")
-                .onComplete(ctx.succeeding(status -> ctx.verify(() -> {
+                .onComplete(ctx.succeeding(resp -> ctx.verify(() -> {
                     assertEquals(
-                            403, status, "a valid token lacking the required role must be denied by the action gate");
+                            403,
+                            resp.status(),
+                            () -> "a valid token lacking the required role must be denied by the action gate; got "
+                                    + resp.status()
+                                    + (resp.fromThisServer()
+                                            ? " (marker present: response from this test's router — route "
+                                                    + "matching/auth behavior changed)"
+                                            : " (marker ABSENT: foreign response — misrouted request, see #186)"));
                     ctx.completeNow();
                 })));
     }
@@ -261,11 +279,16 @@ public class ActionOnlyRouteAuthIT {
     @DisplayName("no token: auth handler denies (401), not silently anonymous")
     void noTokenDenied(VertxTestContext ctx) {
         get("/content", null)
-                .onComplete(ctx.succeeding(status -> ctx.verify(() -> {
+                .onComplete(ctx.succeeding(resp -> ctx.verify(() -> {
                     assertEquals(
                             401,
-                            status,
-                            "an action-only route with no token must be denied (401), not anonymous-allowed");
+                            resp.status(),
+                            () -> "an action-only route with no token must be denied (401), not anonymous-allowed; "
+                                    + "got " + resp.status()
+                                    + (resp.fromThisServer()
+                                            ? " (marker present: response from this test's router — route "
+                                                    + "matching/auth behavior changed)"
+                                            : " (marker ABSENT: foreign response — misrouted request, see #186)"));
                     ctx.completeNow();
                 })));
     }
@@ -274,21 +297,32 @@ public class ActionOnlyRouteAuthIT {
 
     /**
      * Issues a {@code GET} to the given path, optionally with an {@code Authorization: Bearer} header,
-     * and resolves with the HTTP status code.
+     * drains the response body, and resolves with the response status plus marker-header presence.
      *
      * @param path  the request path
      * @param token the bearer token value (format {@code <sub>|<csv-roles>}), or {@code null} to send
      *              no {@code Authorization} header
-     * @return a future resolving with the response status code
+     * @return a future resolving with the {@link Resp}
      */
-    private Future<Integer> get(String path, String token) {
-        return client.request(HttpMethod.GET, port, "localhost", path).compose(req -> {
+    private Future<Resp> get(String path, String token) {
+        return client.request(HttpMethod.GET, port, "127.0.0.1", path).compose(req -> {
             if (token != null) {
                 req.putHeader("Authorization", "Bearer " + token);
             }
-            return req.send().map(resp -> resp.statusCode());
+            return req.send().compose(resp -> resp.body()
+                    .map(body -> new Resp(resp.statusCode(), resp.getHeader("x-vq-test-server") != null)));
         });
     }
+
+    /**
+     * Response status plus whether the {@code x-vq-test-server} marker header (stamped by this test's
+     * root router) was present. The marker exists only to enrich status-assertion failure messages — it
+     * is never asserted on independently (see #186).
+     *
+     * @param status         the HTTP status code
+     * @param fromThisServer whether the marker header was present on the response
+     */
+    private record Resp(int status, boolean fromThisServer) {}
 
     // --- Test doubles ---
 
