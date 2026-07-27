@@ -77,6 +77,41 @@ class InputProcessorEmitterTest {
             }
             """);
 
+    /**
+     * A body record whose fields are all declared with parameterized {@code Optional<T>} types —
+     * classified as {@code NESTED_DTO} by {@code AnnotationCollector} since {@code Optional} is a
+     * non-scalar, non-collection declared type. Reproduces the shape that surfaced the
+     * parameterized-type class-literal defect: {@code field.nestedTypeMirror()} is a
+     * {@code DeclaredType} with type arguments, and rendering it unerased into a {@code $L.class}
+     * literal produces invalid Java (e.g. {@code java.util.Optional<java.lang.String>.class}).
+     */
+    private static final JavaFileObject OPTIONAL_FIELDS_DTO =
+            SourceFiles.inline("com.example.dto.OptionalFieldsDto", """
+            package com.example.dto;
+            import java.math.BigDecimal;
+            import java.util.List;
+            import java.util.Optional;
+            public record OptionalFieldsDto(
+                    Optional<String> nickname,
+                    Optional<List<String>> tags,
+                    Optional<BigDecimal> discount) {}
+            """);
+
+    private static final JavaFileObject OPTIONAL_FIELDS_RESOURCE =
+            SourceFiles.inline("com.example.dto.OptionalFieldsResource", """
+            package com.example.dto;
+            import jakarta.ws.rs.Consumes;
+            import jakarta.ws.rs.POST;
+            import jakarta.ws.rs.Path;
+            import jakarta.ws.rs.core.MediaType;
+            @Path("/optional-fields")
+            public class OptionalFieldsResource {
+                @POST
+                @Consumes(MediaType.APPLICATION_JSON)
+                public String create(OptionalFieldsDto body) { return null; }
+            }
+            """);
+
     // --- Generated class name ---
 
     @Nested
@@ -268,6 +303,24 @@ class InputProcessorEmitterTest {
                     .assertGeneratedSourceContains("com.example.dto.ArticleDto_InputProcessor", "\"skipMe\"")
                     .assertGeneratedSourceContains(
                             "com.example.dto.ArticleDto_InputProcessor", "true"); // skipCanon flag
+        }
+    }
+
+    // --- Parameterized nested-type fields (NESTED_DTO with generic type arguments) ---
+
+    @Nested
+    @DisplayName("NESTED_DTO field with a parameterized declared type (e.g. Optional<T>)")
+    class ParameterizedNestedDtoFields {
+
+        @Test
+        @DisplayName("Optional<String>, Optional<List<String>>, and Optional<BigDecimal> fields "
+                + "compile and emit an erased Optional.class literal")
+        void parameterizedOptionalFields_compileWithErasedClassLiteral() {
+            ProcessorTestHarness.run(new SanitizationProcessor(), OPTIONAL_FIELDS_DTO, OPTIONAL_FIELDS_RESOURCE)
+                    .assertSuccess()
+                    .assertGeneratedSourceContains("com.example.dto.OptionalFieldsDto_InputProcessor", "Optional.class")
+                    .assertGeneratedSourceDoesNotContain(
+                            "com.example.dto.OptionalFieldsDto_InputProcessor", "Optional<");
         }
     }
 
