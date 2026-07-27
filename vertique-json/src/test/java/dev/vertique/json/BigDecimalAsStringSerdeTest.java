@@ -4,17 +4,23 @@
 package dev.vertique.json;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.fasterxml.jackson.databind.JsonMappingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.exc.MismatchedInputException;
 import com.fasterxml.jackson.databind.module.SimpleModule;
 import java.math.BigDecimal;
+import java.math.BigInteger;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 
 /**
  * Unit tests for the opt-in {@link BigDecimalAsStringSerializer} and
@@ -298,6 +304,117 @@ class BigDecimalAsStringSerdeTest {
 
             assertEquals(new BigDecimal(literal), result.amount(), "A long but legal plain decimal must be accepted");
             assertEquals(48, result.amount().scale(), "The wire scale must be preserved exactly");
+        }
+    }
+
+    // --- Read-side message hygiene (json-004) ---
+
+    @Nested
+    @DisplayName("Read-side rejection message hygiene")
+    class ReadRejectionMessageHygiene {
+
+        @Test
+        @DisplayName("malformed string \"abc\" rejection message states the rejected length, never echoes the value")
+        void malformedString_rejectionMessage_omitsValue() {
+            MismatchedInputException ex = assertThrows(
+                    MismatchedInputException.class, () -> mapper.readValue("{\"amount\":\"abc\"}", MoneyWrapper.class));
+
+            String message = ex.getMessage();
+            assertFalse(message.contains("abc"), "message must never echo the rejected value: " + message);
+            assertTrue(message.contains("3"), "message must name the rejected value's length (3): " + message);
+        }
+
+        @Test
+        @DisplayName("exponent literal \"1e-2000000000\" rejection message states the length, never echoes the value")
+        void exponentLiteral_rejectionMessage_omitsValue() {
+            MismatchedInputException ex = assertThrows(
+                    MismatchedInputException.class,
+                    () -> mapper.readValue("{\"amount\":\"1e-2000000000\"}", MoneyWrapper.class));
+
+            String message = ex.getMessage();
+            assertFalse(
+                    message.contains("1e-2000000000"),
+                    "message must never echo the rejected exponent literal: " + message);
+        }
+    }
+
+    // --- Write-side length bound (json-004) ---
+
+    @Nested
+    @DisplayName("Write-side length bound")
+    class WriteBound {
+
+        @Test
+        @DisplayName("101-character plain form (1E+100) rejected on write; message states the bound, not the digits")
+        void hugeScale_rejectedOnWrite_messageOmitsDigits() {
+            MoneyWrapper huge = new MoneyWrapper(new BigDecimal("1E+100"));
+
+            JsonMappingException ex = assertThrows(
+                    JsonMappingException.class,
+                    () -> mapper.writeValueAsString(huge),
+                    "a 101-character plain-string BigDecimal must be rejected on write");
+
+            String message = ex.getMessage();
+            assertTrue(message.contains("100"), "message must name the 100-character bound: " + message);
+            assertFalse(
+                    message.contains("1" + "0".repeat(100)),
+                    "message must never echo the offending value's digits: " + message);
+        }
+
+        @Test
+        @DisplayName("100-character plain form serializes fine (length boundary)")
+        void boundaryLength_serializesFine() throws Exception {
+            String literal = "1".repeat(100);
+            MoneyWrapper value = new MoneyWrapper(new BigDecimal(literal));
+
+            String json = mapper.writeValueAsString(value);
+
+            assertEquals("{\"amount\":\"" + literal + "\"}", json, "a 100-character plain form must serialize as-is");
+        }
+
+        @Test
+        @DisplayName("100-character signed fractional form serializes fine (large-precision boundary shape)")
+        void boundaryLengthSignedFraction_serializesFine() throws Exception {
+            // 1 sign + 50 integer digits + 1 point + 48 fraction digits = 100 characters
+            String literal = "-" + "9".repeat(50) + "." + "9".repeat(48);
+            MoneyWrapper value = new MoneyWrapper(new BigDecimal(literal));
+
+            String json = mapper.writeValueAsString(value);
+
+            assertEquals(
+                    "{\"amount\":\"" + literal + "\"}", json, "a 100-character signed fraction must serialize as-is");
+        }
+
+        @Test
+        @DisplayName("scale-98/precision-2 shape (\"0.0…01\") is exactly 100 characters and serializes fine")
+        void largeScaleShallowPrecision_serializesFine() throws Exception {
+            // unscaled value 1, scale 98: "0." (2 chars) + 97 zeros + "1" = 100 characters total.
+            BigDecimal value = new BigDecimal(BigInteger.ONE, 98);
+            String expectedPlain = value.toPlainString();
+            assertEquals(100, expectedPlain.length(), "test fixture sanity check: the plain form must be 100 chars");
+
+            String json = mapper.writeValueAsString(new MoneyWrapper(value));
+
+            assertEquals(
+                    "{\"amount\":\"" + expectedPlain + "\"}",
+                    json,
+                    "a 100-character large-scale shape must serialize as-is");
+        }
+
+        @Test
+        @Timeout(value = 2, unit = TimeUnit.SECONDS)
+        @DisplayName("huge-scale value (scale 2 billion) rejected without materializing toPlainString (bounded time)")
+        void hugeScale_rejectedWithoutMaterializing() {
+            // unscaled value 1, scale 2_000_000_000: toPlainString() would otherwise materialize
+            // ~2 billion characters. The cheap scale/precision pre-check must reject this before
+            // ever calling toPlainString(), so this test completes in milliseconds, not minutes.
+            BigDecimal pathological = new BigDecimal(BigInteger.ONE, 2_000_000_000);
+            MoneyWrapper value = new MoneyWrapper(pathological);
+
+            assertThrows(
+                    JsonMappingException.class,
+                    () -> mapper.writeValueAsString(value),
+                    "a BigDecimal with a 2-billion scale must be rejected before toPlainString() runs");
         }
     }
 
