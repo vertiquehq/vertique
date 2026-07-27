@@ -30,7 +30,12 @@ import javax.lang.model.type.TypeMirror;
  *                         reflective walker, which routes annotated {@code Object} / unknown-type
  *                         fields through {@code dispatchNested(map, fieldMeta.fieldType(), ...)}
  *                         and propagates that type as {@code ownerType}. May be {@code null}
- *                         when the field's declared type is not relevant to the emitter.
+ *                         when the field's declared type is not relevant to the emitter. Where
+ *                         populated with a type mirror that could otherwise be parameterized (the
+ *                         nested-DTO, collection-of-DTO, and annotated collection-of-scalars
+ *                         cases), {@link AnnotationCollector} erases it before construction, so
+ *                         both this component and {@code nestedTypeMirror} are already raw types
+ *                         safe for direct use as a {@code .class} literal target.
  */
 public record FieldModel(
         String name,

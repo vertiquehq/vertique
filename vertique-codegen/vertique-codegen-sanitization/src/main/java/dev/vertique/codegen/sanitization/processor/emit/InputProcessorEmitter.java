@@ -10,6 +10,7 @@ import com.palantir.javapoet.FieldSpec;
 import com.palantir.javapoet.JavaFile;
 import com.palantir.javapoet.MethodSpec;
 import com.palantir.javapoet.ParameterizedTypeName;
+import com.palantir.javapoet.TypeName;
 import com.palantir.javapoet.TypeSpec;
 import com.palantir.javapoet.WildcardTypeName;
 import dev.vertique.codegen.CodegenContext;
@@ -424,7 +425,7 @@ public final class InputProcessorEmitter {
         //   continues with targetType=fieldType and that same fieldType as ownerType.
         // Fall back to the enclosing DTO when the declared type isn't class-resolvable
         // (e.g. raw collections without an element type).
-        com.palantir.javapoet.TypeName nestedMapOwnerName =
+        TypeName nestedMapOwnerName =
                 field.declaredType() != null ? rawTypeName(field.declaredType(), originClass) : originClass;
         return CodeBlock.builder()
                 .addStatement(
@@ -445,7 +446,7 @@ public final class InputProcessorEmitter {
 
     /**
      * Resolves a {@link javax.lang.model.type.TypeMirror} to a non-parameterized
-     * {@link com.palantir.javapoet.TypeName} suitable for use as a class literal target. Strips
+     * {@link TypeName} suitable for use as a class literal target. Strips
      * type parameters via {@link javax.lang.model.util.Types#erasure} so generic types render
      * as the raw class.
      *
@@ -453,10 +454,10 @@ public final class InputProcessorEmitter {
      * @param fallback the fallback ClassName to use if conversion fails
      * @return a TypeName usable as the operand of {@code .class} in JavaPoet output
      */
-    private com.palantir.javapoet.TypeName rawTypeName(javax.lang.model.type.TypeMirror mirror, ClassName fallback) {
+    private TypeName rawTypeName(javax.lang.model.type.TypeMirror mirror, ClassName fallback) {
         try {
             javax.lang.model.type.TypeMirror erased = ctx.types().erasure(mirror);
-            return com.palantir.javapoet.TypeName.get(erased);
+            return TypeName.get(erased);
         } catch (RuntimeException e) {
             return fallback;
         }
@@ -512,7 +513,7 @@ public final class InputProcessorEmitter {
                 // rawTypeName before being used as a class literal: Java forbids parameterized
                 // class literals (e.g. `Optional<String>.class` does not compile), and
                 // GeneratedInputProcessorDispatcher.dispatchNested takes a raw Class<?> anyway.
-                com.palantir.javapoet.TypeName nestedType = rawTypeName(field.nestedTypeMirror(), originClass);
+                TypeName nestedType = rawTypeName(field.nestedTypeMirror(), originClass);
                 arm.beginControlFlow("case $S ->", fieldName);
                 arm.addStatement(
                         "$T nestedCtx = rootCtx.descend(OBJ_CANON, OBJ_SANIT, OBJ_SKIP_CANON, OBJ_SKIP_SANIT, "
@@ -533,7 +534,7 @@ public final class InputProcessorEmitter {
                 // mirror for the same reason as NESTED_DTO above (e.g. a
                 // List<Optional<String>> element type must render as Optional.class, not
                 // Optional<String>.class).
-                com.palantir.javapoet.TypeName elementType = rawTypeName(field.nestedTypeMirror(), originClass);
+                TypeName elementType = rawTypeName(field.nestedTypeMirror(), originClass);
                 arm.beginControlFlow("case $S ->", fieldName);
                 arm.addStatement(
                         "$T innerCtx = rootCtx.descend(OBJ_CANON, OBJ_SANIT, OBJ_SKIP_CANON, OBJ_SKIP_SANIT, "

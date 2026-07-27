@@ -277,19 +277,28 @@ public final class AnnotationCollector {
                         sanitChain,
                         skipCanon,
                         skipSanit,
-                        elementType,
+                        ctx.types().erasure(elementType),
                         type);
             }
             // Collection of scalars with annotations
             return hasAnnotations
                     ? new FieldModel(
-                            name, FieldKind.OTHER, canonChain, sanitChain, skipCanon, skipSanit, elementType, type)
+                            name,
+                            FieldKind.OTHER,
+                            canonChain,
+                            sanitChain,
+                            skipCanon,
+                            skipSanit,
+                            elementType,
+                            ctx.types().erasure(type))
                     : null;
         }
 
         // Nested object (non-scalar, non-collection, non-array)
         if (type.getKind() == TypeKind.DECLARED && !isScalarOrEnum(type)) {
-            return new FieldModel(name, FieldKind.NESTED_DTO, canonChain, sanitChain, skipCanon, skipSanit, type, type);
+            TypeMirror erasedType = ctx.types().erasure(type);
+            return new FieldModel(
+                    name, FieldKind.NESTED_DTO, canonChain, sanitChain, skipCanon, skipSanit, erasedType, erasedType);
         }
 
         // Arrays — treated as OTHER (not in scope per the plan)
