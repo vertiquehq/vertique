@@ -52,7 +52,7 @@ Service implementations run on the non-blocking Vert.x event loop by default, an
 `GreetingServiceImpl` is written for it: it returns an already-completed `Future` and never
 blocks. Keep that default.
 
-Set `services.contracts.sample.greeting.worker=true` in `config/application.json`
-only if the implementation is changed to perform genuinely blocking work — a JDBC call, a filesystem
-read, or CPU-bound computation. Worker mode is an opt-in for blocking implementations, not the
-default execution model.
+Set `services.contracts.sample.greeting.worker=true` in `config/application.json` only if the
+implementation is changed to perform genuinely blocking work — a JDBC call, a filesystem read, or
+CPU-bound computation. Worker mode is an opt-in for blocking implementations, not the default
+execution model.

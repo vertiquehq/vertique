@@ -50,10 +50,10 @@ mvn -ntp jib:dockerBuild
 
 ## Database
 
-`config/application.json` points at a local PostgreSQL instance and applies the
-application-owned migrations in `src/main/resources/db/migration` at startup
-(`flyway.mode=MIGRATE`). Its connection defaults to `localhost:5432/vertique` with
-`vertique`/`vertique` — development-only placeholders, unsuitable for production.
+`config/application.json` points at a local PostgreSQL instance and applies the application-owned
+migrations in `src/main/resources/db/migration` at startup (`flyway.mode=MIGRATE`). Its connection
+defaults to `localhost:5432/vertique` with `vertique`/`vertique` — development-only placeholders,
+unsuitable for production.
 
 ## Security
 
