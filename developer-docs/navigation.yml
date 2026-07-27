@@ -1,0 +1,16 @@
+# SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
+# SPDX-License-Identifier: EUPL-1.2
+
+pages:
+  - index.md
+  - quickstart.md
+  - application-model.md
+  - configuration.md
+  - rest-apis.md
+  - services.md
+  - persistence.md
+  - workflows.md
+  - security.md
+  - testing.md
+  - deployment.md
+  - artifacts.md
