@@ -114,7 +114,7 @@ public class RestRequestCompletionExactlyOnceIT {
      */
     @AfterAll
     static void tearDownClient(VertxTestContext ctx) {
-        client.close().onComplete(ar -> ctx.completeNow());
+        (client != null ? client.close() : Future.succeededFuture()).onComplete(ar -> ctx.completeNow());
     }
 
     /**
