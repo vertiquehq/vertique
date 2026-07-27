@@ -322,8 +322,9 @@ public class ActionOnlyRouteAuthIT {
 
     /**
      * Builds the marker-diagnostic suffix appended to status-assertion failure messages, telling
-     * apart "this server answered but the route/auth outcome differed" from "a foreign process
-     * answered the request" (see #186).
+     * apart "this test's router answered but the route/auth outcome differed" from "the response
+     * was not stamped by this test's root handler" — the latter meaning a foreign process, or a
+     * response written below the router (see #186).
      *
      * @param resp the response to describe
      * @return the diagnostic suffix text
