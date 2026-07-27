@@ -176,6 +176,14 @@ double precision loses digits when relayed through an untyped target. Typed `Big
 keep full precision in both directions. Declare the property as `BigDecimal` whenever arbitrary
 precision matters; untyped relay is explicitly a lossy-but-shape-stable path.
 
+**Validation-strategy interaction.** The default `web-validation` strategy synthesizes request
+schemas from the Java types at runtime and is profile-agnostic, so it types a `BigDecimal` property
+as a JSON **number** and rejects the strict string form with a 400 before this profile's
+deserializer ever runs. A REST endpoint that accepts `vertique-strict` decimal strings in a
+**request body** therefore needs the `openapi-contract` strategy
+(`vertique-rest-openapi-validation`) paired with `BigDecimalModelConverter` in the spec build, or no
+body validation at all. Response-side strict serialization is unaffected by the choice of strategy.
+
 ### Keyed-Collection Support (`dev.vertique.json.keyed`)
 
 `vertique-json` hosts the Jackson mechanism that deserializes `@KeyedBy`-annotated `List<T>` fields from keyed JSON objects (`{key:{...}}`). The `@KeyedBy` annotation itself lives in `dev.vertique.core.json` (in `vertique-core`), which `vertique-json` depends on; this placement lets `vertique-config-core` depend only on `vertique-json` for the deserializer without pulling in an extra layer.
