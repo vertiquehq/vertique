@@ -20,6 +20,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -489,6 +490,92 @@ class DefaultInputObjectProcessorTest {
         }
     }
 
+    // --- Optional-wrapped nested DTOs on the reflective path ---
+
+    @Nested
+    @DisplayName("Optional-wrapped and bounded nested DTOs (reflective path)")
+    class OptionalWrappedNestedDtos {
+
+        @Test
+        @DisplayName("Optional<Comment>: the nested type's own @Sanitize chain runs exactly once")
+        void optionalNestedDto_nestedChainAppliedExactlyOnce() {
+            Map<String, Object> nested = new LinkedHashMap<>();
+            nested.put("text", "ab");
+            Map<String, Object> input = new LinkedHashMap<>();
+            input.put("comment", nested);
+
+            Object result = processor.processStructuredBody(
+                    input, OptionalProfile.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
+
+            Map<?, ?> map = (Map<?, ?>) result;
+            Map<?, ?> commentMap = (Map<?, ?>) map.get("comment");
+            assertNotNull(commentMap);
+            // Exactly one "safe:" marker — a double application would read "safe:safe:ab".
+            assertEquals(
+                    "safe:ab",
+                    commentMap.get("text"),
+                    "Optional<Comment> must resolve field metadata from Comment, applying its chain once");
+        }
+
+        @Test
+        @DisplayName("Optional<? extends Comment>: the wildcard's upper bound supplies the nested metadata")
+        void boundedOptionalNestedDto_nestedChainAppliedExactlyOnce() {
+            Map<String, Object> nested = new LinkedHashMap<>();
+            nested.put("text", "ab");
+            Map<String, Object> input = new LinkedHashMap<>();
+            input.put("comment", nested);
+
+            Object result = processor.processStructuredBody(
+                    input, BoundedOptionalProfile.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
+
+            Map<?, ?> map = (Map<?, ?>) result;
+            Map<?, ?> commentMap = (Map<?, ?>) map.get("comment");
+            assertNotNull(commentMap);
+            assertEquals(
+                    "safe:ab",
+                    commentMap.get("text"),
+                    "Optional<? extends Comment> must classify against the wildcard's upper bound");
+        }
+
+        @Test
+        @DisplayName("List<? extends Comment>: each element's own @Sanitize chain runs exactly once")
+        void boundedCollectionOfNestedDtos_nestedChainAppliedExactlyOnce() {
+            Map<String, Object> first = new LinkedHashMap<>();
+            first.put("text", "ab");
+            Map<String, Object> second = new LinkedHashMap<>();
+            second.put("text", "cd");
+            Map<String, Object> input = new LinkedHashMap<>();
+            input.put("comments", new ArrayList<Object>(List.of(first, second)));
+
+            Object result = processor.processStructuredBody(
+                    input, BoundedCommentList.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
+
+            Map<?, ?> map = (Map<?, ?>) result;
+            List<?> comments = (List<?>) map.get("comments");
+            assertNotNull(comments);
+            assertEquals("safe:ab", ((Map<?, ?>) comments.get(0)).get("text"));
+            assertEquals("safe:cd", ((Map<?, ?>) comments.get(1)).get("text"));
+        }
+
+        @Test
+        @DisplayName("List<?> field: no element schema, so inherited route chain still reaches string elements")
+        void unboundedWildcardCollection_routeChainReachesStringElements() {
+            var policies = new EffectiveInputPolicies(List.of(TestTrimCanonicalizer.class), List.of());
+            Map<String, Object> input = new LinkedHashMap<>();
+            input.put("values", new ArrayList<Object>(List.of("  a  ", "  b  ")));
+
+            Object result =
+                    processor.processStructuredBody(input, WildcardValueHolder.class, policies, InputLocation.BODY);
+
+            Map<?, ?> map = (Map<?, ?>) result;
+            assertEquals(
+                    List.of("a", "b"),
+                    map.get("values"),
+                    "An Object-resolving element type must not be treated as a nested DTO schema — "
+                            + "that would pass string elements through untouched");
+        }
+    }
+
     // =========================================================================
     // Test DTOs
     // =========================================================================
@@ -585,6 +672,42 @@ class DefaultInputObjectProcessorTest {
     static class OuterWithSkipField {
         @SkipCanonicalization
         InnerWithCanon inner;
+    }
+
+    /**
+     * Nested DTO whose own {@code @Sanitize} chain must survive an {@code Optional} wrapper or a
+     * bounded type argument on the enclosing field.
+     */
+    static class OptionalComment {
+        @Sanitize(TestPrefixSanitizer.class)
+        String text;
+    }
+
+    /**
+     * DTO whose nested DTO is reachable only through {@code Optional}. Jackson's {@code Jdk8Module}
+     * materializes the unwrapped {@link OptionalComment}, so the resolver must too.
+     *
+     * @param comment the optionally-present nested comment
+     */
+    record OptionalProfile(Optional<OptionalComment> comment) {}
+
+    /**
+     * DTO whose nested DTO sits behind a bounded wildcard inside {@code Optional}.
+     *
+     * @param comment the optionally-present nested comment, typed by an upper bound
+     */
+    record BoundedOptionalProfile(Optional<? extends OptionalComment> comment) {}
+
+    /**
+     * DTO whose nested DTOs are collection elements behind a bounded wildcard.
+     *
+     * @param comments the nested comments, typed by an upper bound
+     */
+    record BoundedCommentList(List<? extends OptionalComment> comments) {}
+
+    /** DTO with an unbounded-wildcard collection — its element type carries no schema. */
+    static class WildcardValueHolder {
+        List<?> values;
     }
 
     /**
