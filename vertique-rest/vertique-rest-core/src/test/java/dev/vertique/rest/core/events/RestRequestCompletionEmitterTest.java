@@ -71,7 +71,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
  *       does not appear anywhere in the event.</li>
  *   <li>Exactly one event emitted for a 4xx request with {@code operationId} null when set by
  *       the contributor before the response.</li>
- *   <li>Idempotency: a second synthetic end-handler invocation does not produce a second event.</li>
+ *   <li>Idempotency: the {@code KEY_EMITTED} guard collapses a doubly-mounted emitter handler to
+ *       exactly one event.</li>
  *   <li>A throwing listener does not prevent other listeners from receiving the event.</li>
  *   <li>No listeners: emitter completes silently without error.</li>
  *   <li>{@link SecurityContext} and {@link CorrelationContext} are captured when bound.</li>
@@ -441,64 +442,40 @@ class RestRequestCompletionEmitterTest {
     @DisplayName("Idempotency")
     class Idempotency {
 
+        /**
+         * Mounts the same {@link RestRequestCompletionEmitter} instance on two routes at the same
+         * priority, so {@link RestRequestCompletionEmitter#handle(RoutingContext)} runs twice for a
+         * single request and registers two {@code ctx.addEndHandler} callbacks on one routing
+         * context. Both callbacks fire in the same end-handler cascade when the response ends. The
+         * {@code KEY_EMITTED} guard in {@code emit()} must collapse that double registration to
+         * exactly one event; without the guard this test observes two.
+         */
         @Test
-        @DisplayName("Invoking the end handler twice produces only one event")
-        void onlyOneEventWhenEndHandlerFiresTwice(VertxTestContext ctx) {
+        @DisplayName("Guard collapses double registration from a doubly-mounted emitter to one event")
+        void guardPreventsDoubleEmitWhenHandlerMountedTwice(VertxTestContext ctx) {
             List<RestRequestCompletedEvent> captured = new ArrayList<>();
             RestRequestCompletionEmitter em = emitter(Set.of(captured::add));
-            RouterWithBarrier rb = routerWithBarrier(vertx, em, rc -> {
-                // Simulate a second end-handler invocation by triggering emit directly via the key
-                // already set — we do this by calling emit indirectly: put KEY_EMITTED=false first,
-                // call emit twice by adding a second end handler registration.
-                rc.addEndHandler(v -> {
-                    // This second end handler fires first (reverse order), simulating double-emit.
-                    // The emitter's own end handler will fire after and must be a no-op.
-                    rc.put(RestRequestCompletionEmitter.KEY_EMITTED, Boolean.FALSE);
-                });
-            });
 
-            startServer(rb.router())
+            Promise<Void> barrier = Promise.promise();
+            Router router = Router.router(vertx);
+            router.route().order(RequestContextLifecycle.ORDER).handler(new RequestContextLifecycle());
+            router.route().order(em.priority()).handler(em);
+            router.route().order(em.priority()).handler(em);
+            router.route().handler(barrierHandler(barrier));
+            router.route("/test").handler(rc -> rc.response().setStatusCode(200).end());
+
+            startServer(router)
                     .compose(port -> client.request(HttpMethod.GET, port, "127.0.0.1", "/test")
                             .compose(req -> req.send()))
-                    .compose(resp -> awaitBarrier(vertx, rb.barrier()))
+                    .compose(resp -> {
+                        ctx.verify(() -> assertEquals(200, resp.statusCode()));
+                        return awaitBarrier(vertx, barrier.future());
+                    })
                     .onComplete(ctx.succeeding(v -> {
-                        ctx.verify(() -> {
-                            // The reset above re-arms the flag so the emitter's handler produces one
-                            // event for the reset + the original registration. This test specifically
-                            // tests the emitter's own guard by producing a scenario where emit() can
-                            // be called multiple times. The simplest direct test: call emitter logic
-                            // by registering a second addEndHandler that calls emit-equivalent steps.
-                            // The captured list should have exactly 1 (the guard fires once per reset).
-                            assertEquals(1, captured.size(), "exactly one event must be produced");
-                        });
-                        ctx.completeNow();
-                    }));
-        }
-
-        @Test
-        @DisplayName("Guard works: no second event when KEY_EMITTED is already true")
-        void guardPreventsDoubleEmit(VertxTestContext ctx) {
-            List<RestRequestCompletedEvent> captured = new ArrayList<>();
-            RestRequestCompletionEmitter em = emitter(Set.of(captured::add));
-            RouterWithBarrier rb = routerWithBarrier(vertx, em, rc -> {
-                // Pre-set the emitted flag so the emitter's end-handler fires as a no-op.
-                // A second end-handler (added AFTER the emitter's, fires first in reverse order)
-                // pre-sets KEY_EMITTED to verify the guard catches it.
-                // Note: end handlers fire in reverse registration order, so this handler fires
-                // BEFORE the emitter's handler — but since the emitter's handler was registered
-                // first, the emitter runs last.  We need to test the opposite: register a second
-                // end handler AFTER the emitter that fires BEFORE it.
-                //
-                // This test uses a simpler approach: fire the emitter's own handle() twice
-                // on a synthetic routing context.
-            });
-
-            startServer(rb.router())
-                    .compose(port -> client.request(HttpMethod.GET, port, "127.0.0.1", "/test")
-                            .compose(req -> req.send()))
-                    .compose(resp -> awaitBarrier(vertx, rb.barrier()))
-                    .onComplete(ctx.succeeding(v -> {
-                        ctx.verify(() -> assertEquals(1, captured.size(), "exactly one event in normal flow"));
+                        ctx.verify(() -> assertEquals(
+                                1,
+                                captured.size(),
+                                "the KEY_EMITTED guard must collapse the double registration to one event"));
                         ctx.completeNow();
                     }));
         }
@@ -698,60 +675,61 @@ class RestRequestCompletionEmitterTest {
     class WebSocketUpgradeExclusion {
 
         /**
-         * Proves the mechanism behind the WebSocket upgrade exclusion without a real HTTP
-         * server: the emitter registers its completion callback via
-         * {@code ctx.addEndHandler(...)}, which is a Vert.x routing-context end handler.
-         * {@link RequestContextLifecycle.Handle#completeNow()} runs the {@code Handle}'s own
-         * {@code onClose}/{@code afterClose} registrations — it does NOT fire the Vert.x
-         * routing-context end handlers. Therefore the emitter's callback never executes and
-         * no {@link RestRequestCompletedEvent} is emitted.
+         * Proves the mechanism behind the WebSocket upgrade exclusion against a real router and
+         * HTTP server: the emitter registers its completion callback via
+         * {@code ctx.addEndHandler(...)}, a Vert.x routing-context end handler distinct from
+         * {@link RequestContextLifecycle.Handle#completeNow()}, which drives only the
+         * {@code Handle}'s own {@code onClose}/{@code afterClose} registrations. Calling
+         * {@code completeNow()} therefore does not, by itself, fire the emitter's callback — the
+         * callback still fires, exactly once, when the response actually ends via the normal
+         * {@code ctx.addEndHandler} path.
+         *
+         * <p>{@code Handle} completion semantics in isolation (idempotency, late-registration
+         * guards, {@code afterClose} ordering relative to {@code completeNow()}) are proven by
+         * {@code RequestContextLifecycleTest#completeNowShouldDriveCleanupSynchronously},
+         * {@code #completeNowTwiceShouldBeNoOp}, and
+         * {@code #endHandlerAfterCompleteNowShouldBeNoOp}. This class proves the
+         * emitter-specific consequence: {@code completeNow()} neither emits nor suppresses the
+         * end-handler-driven {@link RestRequestCompletedEvent}.
          *
          * <p>A successful WebSocket 101 upgrade calls {@code lifecycle.completeNow()} because
-         * Vert.x Web 5.0.8's {@code Http1xServerResponse.completeHandshake()} writes the 101
-         * response without firing the normal response end handler. The real-server variant of
-         * this property is exercised by the WebSocket ITs in {@code vertique-rest-websocket}.
+         * Vert.x Web 5.1.2's {@code Http1xServerResponse.completeHandshake()} writes the 101
+         * response without firing the normal response end handler. No test in
+         * {@code vertique-rest-websocket} references {@link RestRequestCompletedEvent} or
+         * {@link RestRequestCompletionEmitter}; the end-to-end real-server upgrade-exclusion proof
+         * is deferred (release-triage ledger).
          *
          * <p>Cross-reference: {@code WebSocketEndpointRegistrar.handleUpgrade()} (line ~298).
          */
         @Test
-        @DisplayName("completeNow() does not fire addEndHandler callbacks (mechanism proof)")
-        void completeNowDoesNotFireEndHandlers() {
+        @DisplayName("completeNow() neither emits nor suppresses the end-handler-driven completion event")
+        void completeNowNeitherEmitsNorSuppressesCompletionEvent(VertxTestContext ctx) {
             List<RestRequestCompletedEvent> captured = new ArrayList<>();
-            // The emitter registers its callback via ctx.addEndHandler — a Vert.x mechanism
-            // that fires only when the routing-context response end handler fires.
-            // completeNow() runs the RequestContextLifecycle.Handle's own registrations but
-            // does NOT trigger the Vert.x ctx.addEndHandler callbacks.
-            RequestContextLifecycle.Handle handle = new RequestContextLifecycle.Handle();
-
-            // Simulate: the emitter called ctx.addEndHandler(endCallback) but that callback
-            // is wired to the Vert.x response-close machinery, not to Handle.completeNow().
-            // We prove this by showing that calling handle.completeNow() does NOT invoke
-            // any runnable the handle itself does not own.
-            AtomicBoolean externalEndHandlerFired = new AtomicBoolean(false);
-            // Register an afterClose task (owned by the Handle) — this WILL fire.
-            handle.afterClose(() -> {
-                // intentionally empty — proves afterClose does run
+            RestRequestCompletionEmitter em = emitter(Set.of(captured::add));
+            RouterWithBarrier rb = routerWithBarrier(vertx, em, rc -> {
+                RequestContextLifecycle.fromRoutingContext(rc).completeNow();
+                // Non-vacuous: an implementation that wired the emitter's emission to
+                // Handle.completeNow() instead of ctx.addEndHandler would already have
+                // populated captured by this point, before the response has even ended.
+                ctx.verify(() -> assertTrue(
+                        captured.isEmpty(), "completeNow() must not trigger the emitter's completion event"));
             });
 
-            // The emitter's addEndHandler is a Vert.x ctx-level mechanism; it is NOT
-            // registered on the Handle and therefore never fires when completeNow() is called.
-            // We verify this by confirming the captured list is empty after completeNow().
-
-            // Drive the lifecycle to completion without the Vert.x response end handler.
-            handle.completeNow();
-
-            // The emitter's end-handler never fired → no event in the captured list.
-            // externalEndHandlerFired proves the separation: nothing on the Handle fired
-            // the external callback.
-            assertEquals(
-                    false,
-                    externalEndHandlerFired.get(),
-                    "completeNow() must not fire Vert.x ctx.addEndHandler callbacks");
-            assertEquals(
-                    0,
-                    captured.size(),
-                    "no RestRequestCompletedEvent must be emitted via the completeNow() path "
-                            + "(simulates successful WebSocket 101 upgrade)");
+            startServer(rb.router())
+                    .compose(port -> client.request(HttpMethod.GET, port, "127.0.0.1", "/test")
+                            .compose(req -> req.send()))
+                    .compose(resp -> {
+                        ctx.verify(() -> assertEquals(200, resp.statusCode()));
+                        return awaitBarrier(vertx, rb.barrier());
+                    })
+                    .onComplete(ctx.succeeding(v -> {
+                        ctx.verify(() -> assertEquals(
+                                1,
+                                captured.size(),
+                                "the end-handler-driven emission must still fire exactly once after the "
+                                        + "response ends; completeNow() neither emits nor suppresses it"));
+                        ctx.completeNow();
+                    }));
         }
     }
 
