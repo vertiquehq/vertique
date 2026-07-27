@@ -30,11 +30,11 @@ import org.junit.jupiter.api.Test;
  *
  * <p>Verifies that the archetype coordinate, the generated project's dependency contract, the
  * generated Dagger component's four-module set, the application-owned migration contract, the
- * generated integration test's Docker-backed container lifecycle, the generated deployment
- * identifiers/phases, the documented generation/exec/Jib commands, the local-only PostgreSQL
- * placeholders, and the completed archetype family's aggregator catalog match the frozen PostgreSQL
- * REST contracts. The templates are Velocity sources rather than compilable Java, so every assertion
- * is made against the template text.
+ * generated integration test's Docker-backed container lifecycle, the framework-delegated request
+ * validation and id conversion, the generated deployment identifiers/phases, the documented
+ * generation/exec/Jib commands, the local-only PostgreSQL placeholders, and the completed archetype
+ * family's aggregator catalog match the frozen PostgreSQL REST contracts. The templates are Velocity
+ * sources rather than compilable Java, so every assertion is made against the template text.
  *
  * <p>Each parse is <em>exhaustive</em> rather than filtering: the full parsed dependency list, the
  * component module set, the migration file set, the deployment set, and the aggregator's module list
@@ -67,6 +67,12 @@ class RestPostgresqlArchetypeContractTest {
             ARCHETYPE_RESOURCES.resolve(Path.of("src", "main", "resources", "db", "migration"));
     private static final Path TEMPLATE_APPLICATION_IT =
             ARCHETYPE_RESOURCES.resolve(Path.of("src", "test", "java", "ApplicationIT.java"));
+    private static final Path TEMPLATE_CREATE_REQUEST =
+            ARCHETYPE_RESOURCES.resolve(Path.of("src", "main", "java", "model", "CreateItemRequest.java"));
+    private static final Path TEMPLATE_UPDATE_REQUEST =
+            ARCHETYPE_RESOURCES.resolve(Path.of("src", "main", "java", "model", "UpdateItemRequest.java"));
+    private static final Path TEMPLATE_ITEM_RESOURCE =
+            ARCHETYPE_RESOURCES.resolve(Path.of("src", "main", "java", "resource", "ItemResource.java"));
 
     /** The archetype family aggregator's POM, one directory above this module's basedir. */
     private static final Path AGGREGATOR_POM = Path.of("..", "pom.xml");
@@ -92,8 +98,9 @@ class RestPostgresqlArchetypeContractTest {
      * <p>This is a deliberately simple lexer — it does not track string or character literals, so a
      * literal containing Java comment delimiters would be mis-stripped. The PostgreSQL REST templates
      * carry only simple literals (SQL statements, {@code "management"}, {@code "http"}, {@code
-     * "/items/"}), none of which contain a delimiter, so the simple form is exact here. A template
-     * that gains such a literal must move to a literal-aware scan.
+     * "/items/"}, {@code "/items/not-a-uuid"}, the {@code @Pattern} regexp), none of which contain a
+     * delimiter, so the simple form is exact here. A template that gains such a literal — a URL
+     * carrying {@code //}, for instance — must move to a literal-aware scan.
      */
     private static final Pattern JAVA_COMMENT = Pattern.compile("/\\*.*?\\*/|//[^\\n\\r]*", Pattern.DOTALL);
 
@@ -193,6 +200,14 @@ class RestPostgresqlArchetypeContractTest {
      * string-scalar shape that helper produces would not match it at all.
      */
     private static final Pattern CONFIG_PORT = Pattern.compile("\"port\"\\s*:\\s*(\\d+)");
+
+    /**
+     * Matches every {@code @PathParam("id")} declaration together with the declared type that
+     * follows it, capturing that type. Discovery is keyed on the annotation rather than on a method
+     * signature, so an id parameter that regressed to another type is found and then fails the type
+     * assertion instead of disappearing from the proof.
+     */
+    private static final Pattern ID_PATH_PARAM = Pattern.compile("@PathParam\\(\\s*\"id\"\\s*\\)\\s+(\\w+)\\s+id");
 
     /** Matches the {@code <modules>...</modules>} block of an aggregator POM. */
     private static final Pattern MODULES_BLOCK = Pattern.compile("<modules>(.*?)</modules>", Pattern.DOTALL);
@@ -362,6 +377,30 @@ class RestPostgresqlArchetypeContractTest {
     private static final List<String> EXPECTED_AGGREGATOR_MODULES =
             List.of("vertique-archetype-rest", "vertique-archetype-services", "vertique-archetype-rest-postgresql");
 
+    /**
+     * The frozen, whitespace-collapsed constraint declaration both request records must carry on
+     * their {@code name} component. Pinned as one contiguous sequence rather than as three
+     * independent token probes, so the constraints are proven to sit on {@code name} — not on the
+     * unconstrained {@code description} — and in the frozen order.
+     */
+    private static final String EXPECTED_NAME_CONSTRAINTS =
+            "@NotBlank @Pattern(regexp = \"\\\\S\") @Size(max = 255) String name";
+
+    /** The declared type every {@code @PathParam("id")} parameter must carry. */
+    private static final String EXPECTED_ID_PARAM_TYPE = "UUID";
+
+    /** The number of id-taking resource methods: {@code getById}, {@code update}, {@code delete}. */
+    private static final int EXPECTED_ID_PARAM_COUNT = 3;
+
+    /**
+     * Tokens proving a hand-rolled guard has come back. Name presence and identifier parsing are the
+     * framework's job — the request-validation gate and the built-in {@code UUID} parameter
+     * converter — so a template that parses an id itself or re-checks a name in-resource has
+     * silently taken back a responsibility the generated application must delegate.
+     */
+    private static final List<String> FORBIDDEN_HANDROLLED_GUARD_TOKENS =
+            List.of("parseId", "UUID.fromString", "isBlank", "BadRequestException");
+
     /** The retired top-level archetype coordinate tag; no live generator may republish it. */
     private static final String LEGACY_ARCHETYPE_COORDINATE_TAG = "<artifactId>vertique-archetype</artifactId>";
 
@@ -493,17 +532,18 @@ class RestPostgresqlArchetypeContractTest {
                 "the container must be started before the VertiqueAppExtension is constructed, found start at "
                         + startAt + " and extension at " + extensionAt);
 
-        // And class execution carries the frozen bound: a PostgreSQL cold start is slower than the
-        // framework's 20-second non-Docker default, so this class — and only this class — is bounded
-        // at 120 seconds.
+        // And the class's own lifecycle and test methods carry the frozen bound — the HTTP journey,
+        // not the container start: the container is started from the static initializer, which runs
+        // outside @Timeout and is bounded instead by vertique-db-test's own 120-second startup
+        // timeout. This class is raised from the framework's 20-second default because it drives a
+        // journey against a freshly provisioned database rather than an in-process fixture.
         Matcher timeout = CLASS_TIMEOUT.matcher(applicationIt);
         assertTrue(timeout.find(), "generated integration test must declare a class-level @Timeout");
         assertEquals(
                 EXPECTED_TIMEOUT_VALUE,
                 Integer.parseInt(timeout.group(1)),
-                "generated integration test must bound class execution at the frozen cold-start allowance");
-        assertEquals(
-                EXPECTED_TIMEOUT_UNIT, timeout.group(2), "the frozen cold-start allowance is expressed in seconds");
+                "generated integration test must bound its lifecycle and test methods at the frozen allowance");
+        assertEquals(EXPECTED_TIMEOUT_UNIT, timeout.group(2), "the frozen allowance is expressed in seconds");
 
         // And teardown always resets REST Assured and closes the container: the body is unconditional
         // (no branch can skip either call) and the close sits in a finally block, so a failing reset
@@ -701,6 +741,57 @@ class RestPostgresqlArchetypeContractTest {
 
         // And the container image structurally runs as a pinned non-root user rather than as root.
         assertEquals(EXPECTED_CONTAINER_USER, jibContainerUserOf(templatePom));
+    }
+
+    @Test
+    @DisplayName("delegates name validation and id conversion to the framework, leaving no hand-rolled guard")
+    void delegatesValidationAndIdConversionToTheFramework() throws IOException {
+        // Given the two request records and the resource template, comments stripped and whitespace
+        // collapsed so a formatter line wrap cannot break a contiguous match.
+        String createRequest = collapseWhitespace(stripJavaComments(read(TEMPLATE_CREATE_REQUEST)));
+        String updateRequest = collapseWhitespace(stripJavaComments(read(TEMPLATE_UPDATE_REQUEST)));
+        String itemResource = stripJavaComments(read(TEMPLATE_ITEM_RESOURCE));
+
+        // Then both request records constrain name — and only name — with the frozen trio: presence
+        // and non-emptiness (@NotBlank), whitespace-only rejection (@Pattern), and the column width
+        // (@Size). Each is what one of the generated integration test's 400 steps proves.
+        assertTrue(
+                createRequest.contains(EXPECTED_NAME_CONSTRAINTS),
+                () -> "CreateItemRequest must declare " + EXPECTED_NAME_CONSTRAINTS + ", found:\n" + createRequest);
+        assertTrue(
+                updateRequest.contains(EXPECTED_NAME_CONSTRAINTS),
+                () -> "UpdateItemRequest must declare " + EXPECTED_NAME_CONSTRAINTS + ", found:\n" + updateRequest);
+
+        // And every id path parameter is declared as a UUID, so conversion — and the 400 for a
+        // malformed value — is the built-in converter's rather than the resource's. The count is
+        // pinned too: an id-taking method that regressed to a raw String is caught by the type
+        // assertion, and one that lost its @PathParam entirely is caught by the count.
+        List<String> idParamTypes = ID_PATH_PARAM
+                .matcher(itemResource)
+                .results()
+                .map(match -> match.group(1))
+                .toList();
+        assertEquals(
+                EXPECTED_ID_PARAM_COUNT,
+                idParamTypes.size(),
+                () -> "ItemResource must declare exactly " + EXPECTED_ID_PARAM_COUNT
+                        + " id path parameters (getById, update, delete), found " + idParamTypes);
+        idParamTypes.forEach(type -> assertEquals(
+                EXPECTED_ID_PARAM_TYPE, type, "every id path parameter must be converted by the framework"));
+
+        // And no generated Java source anywhere reinstates a hand-rolled guard: no identifier
+        // parsing, no in-resource name check, no directly thrown 400. Comments are stripped first,
+        // so prose explaining why the framework owns these checks is not mistaken for one of them.
+        for (Path template : templateFiles()) {
+            if (!template.toString().endsWith(".java")) {
+                continue;
+            }
+            String code = stripJavaComments(read(template));
+            FORBIDDEN_HANDROLLED_GUARD_TOKENS.forEach(token -> assertFalse(
+                    code.contains(token),
+                    () -> "template " + template + " must leave validation and conversion to the framework, found: "
+                            + token));
+        }
     }
 
     @Test

@@ -4,6 +4,7 @@ import static io.restassured.RestAssured.given;
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.notNullValue;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vertique.application.test.VertiqueAppExtension;
@@ -24,12 +25,13 @@ import org.junit.jupiter.api.extension.RegisterExtension;
  * Boots the whole application against a real PostgreSQL container and drives one ordered item CRUD
  * journey over HTTP.
  *
- * <p><strong>Framework-owned rejections.</strong> The journey opens with the three requests the
- * resource itself does not guard: an empty and a whitespace-only {@code name}, both rejected by the
- * request-validation gate from the {@code @NotBlank} and {@code @Pattern} constraints on the request
- * record, and a malformed {@code {id}}, rejected by the built-in {@code UUID} parameter converter.
- * All must answer {@code 400}, so the template's reliance on the framework gates — rather than on
- * hand-written checks — is proven rather than taken on trust.
+ * <p><strong>Framework-owned rejections.</strong> The journey opens with the four requests the
+ * resource itself does not guard: an empty, a whitespace-only, and an over-length {@code name}, all
+ * rejected by the request-validation gate from the {@code @NotBlank}, {@code @Pattern}, and
+ * {@code @Size} constraints on the request record, and a malformed {@code {id}}, rejected by the
+ * built-in {@code UUID} parameter converter without echoing the submitted value into its failure
+ * detail. All must answer {@code 400}, so the template's reliance on the framework gates — rather
+ * than on hand-written checks — is proven rather than taken on trust.
  *
  * <p><strong>Docker is required.</strong> The container start below propagates any discovery or
  * startup failure, so a missing daemon fails this build rather than skipping the proof.
@@ -41,8 +43,17 @@ import org.junit.jupiter.api.extension.RegisterExtension;
  * {@code MIGRATE}-phase Flyway step connects. The container deliberately runs no migrations of its
  * own; the application owns them through {@code flyway.mode=MIGRATE}.
  *
- * <p><strong>Timeout.</strong> The class-level bound is 120 seconds rather than the usual 20,
- * because a cold PostgreSQL image pull and container start happen inside it.
+ * <p><strong>What each bound covers.</strong> Three spans are bounded by three different
+ * mechanisms. The class-level {@code @Timeout} — 120 seconds rather than the usual 20 — bounds this
+ * class's own lifecycle and test methods, that is the HTTP journey below. The container's startup
+ * runs in the static initializer above, outside {@code @Timeout}, and is bounded instead by
+ * {@code vertique-db-test}'s own 120-second startup timeout. The application boot and its
+ * {@code MIGRATE}-phase Flyway step run in the extension's {@code beforeAll}, outside both bounds.
+ *
+ * <p><strong>Static-initializer failure path.</strong> A failure there surfaces as a
+ * class-initialization error, which skips {@code @AfterAll} — and nothing leaks: a failed
+ * {@code start()} drops the database it had provisioned, and the shared PostgreSQL server is reaped
+ * by Testcontainers' Ryuk sidecar when the JVM exits.
  */
 @Timeout(value = 120, unit = TimeUnit.SECONDS)
 class ApplicationIT {
@@ -117,9 +128,31 @@ class ApplicationIT {
                 .then()
                 .statusCode(400);
 
+        // And a name past the column width is rejected by @Size before any insert is attempted, so
+        // the database never sees a value it would have to truncate or reject itself.
+        given().contentType(ContentType.JSON)
+                .body(new JsonObject()
+                        .put("name", "x".repeat(256))
+                        .put("description", "x")
+                        .encode())
+                .when()
+                .post("/items")
+                .then()
+                .statusCode(400);
+
         // A malformed identifier is rejected by the built-in UUID parameter converter, which answers
-        // 400 without echoing the submitted value.
-        given().when().get("/items/not-a-uuid").then().statusCode(400);
+        // 400 with a detail naming the parameter and its target type rather than echoing the
+        // submitted value. (The RFC 9457 "instance" member still carries the request URI, as that
+        // specification intends — only the failure detail is asserted here.)
+        String malformedIdDetail = given().when()
+                .get("/items/not-a-uuid")
+                .then()
+                .statusCode(400)
+                .extract()
+                .path("detail");
+        assertFalse(
+                malformedIdDetail.contains("not-a-uuid"),
+                "the 400 detail for a malformed id must not echo the submitted value, found: " + malformedIdDetail);
 
         Response created = given().contentType(ContentType.JSON)
                 .body(new JsonObject()

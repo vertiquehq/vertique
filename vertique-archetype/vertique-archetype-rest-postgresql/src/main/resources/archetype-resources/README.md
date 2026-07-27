@@ -48,3 +48,9 @@ mvn -ntp jib:dockerBuild
 application-owned migrations in `src/main/resources/db/migration` at startup
 (`flyway.mode=MIGRATE`). Its connection defaults to `localhost:5432/vertique` with
 `vertique`/`vertique` — development-only placeholders, unsuitable for production.
+
+## Security
+
+The `/items` endpoints ship without authentication: anyone who can reach the port can read and
+modify every item. Add a security mechanism module — for example `dev.vertique:vertique-rest-auth-jwt`
+— and a security policy before exposing this application beyond local development.

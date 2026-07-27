@@ -27,8 +27,9 @@ import java.util.UUID;
  * <p>Request validation is the framework's, not the resource's: the request-validation gate rejects
  * a body that violates the constraints on {@link CreateItemRequest} and
  * {@link UpdateItemRequest} with {@code 400}, and the built-in {@link UUID} parameter converter
- * rejects a malformed {@code {id}} with {@code 400} without echoing the raw value. Only the
- * application-specific outcome is left to this class: a missing item is reported as {@code 404}.
+ * rejects a malformed {@code {id}} with {@code 400}, naming the parameter and its target type
+ * instead of echoing the raw value. Only the application-specific outcome is left to this class: a
+ * missing item is reported as {@code 404}.
  */
 @Path("/items")
 @Produces(MediaType.APPLICATION_JSON)

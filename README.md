@@ -87,8 +87,9 @@ modules via `mvn archetype:generate`; the generated project documents its own `e
 - **[`vertique-archetype-services`](vertique-archetype/vertique-archetype-services/README.md)** — a
   headless event-bus services application on `vertique-starter-services`.
 - **[`vertique-archetype-rest-postgresql`](vertique-archetype/vertique-archetype-rest-postgresql/README.md)** —
-  a PostgreSQL-backed REST application on `vertique-starter-rest` and `vertique-starter-postgresql`;
-  generating and verifying it requires a reachable Docker daemon.
+  a PostgreSQL-backed REST application on `vertique-starter-rest` and `vertique-starter-postgresql`.
+  Generation needs no Docker; running the generated project's `mvn verify` requires a reachable
+  Docker daemon, because its integration test starts a real PostgreSQL container.
 
 Each child README documents the exact `archetype:generate` invocation for its coordinate. The
 `vertique-archetype` POM aggregator is internal, non-consumable reactor infrastructure: like the
