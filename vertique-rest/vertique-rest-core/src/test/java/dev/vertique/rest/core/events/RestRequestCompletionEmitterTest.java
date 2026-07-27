@@ -268,6 +268,17 @@ class RestRequestCompletionEmitterTest {
      * {@code afterClose} call would run after the barrier completes: do not register {@code
      * afterClose} downstream of this middleware in these tests.
      *
+     * <p><strong>Caveat — an explicit {@code completeNow()} call breaks this guarantee.</strong> The
+     * "completes only after all {@code ctx} end-handler work" claim above holds only on the normal
+     * response-end path. If a request handler calls
+     * {@link RequestContextLifecycle.Handle#completeNow()} explicitly, {@code completeNow()} drives
+     * {@code closeAll()} — and therefore this barrier's {@code afterClose} task — synchronously at
+     * that moment, before the response has even ended and independently of whether the emitter's
+     * {@code ctx.addEndHandler}-driven callback has run yet. On that path this barrier is burned
+     * early and proves nothing about end-handler-driven work; see
+     * {@code completeNowNeitherEmitsNorSuppressesCompletionEvent} for the sentinel-middleware
+     * pattern used instead when a proof must survive an explicit {@code completeNow()} call.
+     *
      * @param barrier the promise to complete once the request's lifecycle handle has fully closed
      * @return a handler suitable for mounting as a catch-all route after {@link RequestContextLifecycle}
      */
@@ -283,17 +294,35 @@ class RestRequestCompletionEmitterTest {
      * does not complete within {@link #BARRIER_TIMEOUT_MS} milliseconds. A lifecycle defect must
      * surface as a diagnosable message naming the barrier, not an opaque class-level {@code @Timeout}.
      *
+     * <p>Delegates to {@link #awaitBarrier(Vertx, Future, String)} with the label
+     * {@code "lifecycle afterClose barrier"}.
+     *
      * @param vertx   the Vert.x instance used to schedule the timeout timer
      * @param barrier the barrier future to await
      * @return a future that resolves once {@code barrier} completes, or fails with a descriptive
      *     timeout message if it does not complete in time
      */
     private static Future<Void> awaitBarrier(Vertx vertx, Future<Void> barrier) {
+        return awaitBarrier(vertx, barrier, "lifecycle afterClose barrier");
+    }
+
+    /**
+     * Awaits the given future, failing with a descriptive timeout message naming {@code label} if it
+     * does not complete within {@link #BARRIER_TIMEOUT_MS} milliseconds. A defect in the awaited
+     * mechanism must surface as a diagnosable message, not an opaque class-level {@code @Timeout}.
+     *
+     * @param vertx   the Vert.x instance used to schedule the timeout timer
+     * @param barrier the future to await
+     * @param label   a short description of what {@code barrier} represents, used in the timeout
+     *                failure message
+     * @return a future that resolves once {@code barrier} completes, or fails with a descriptive
+     *     timeout message if it does not complete in time
+     */
+    private static Future<Void> awaitBarrier(Vertx vertx, Future<Void> barrier, String label) {
         Promise<Void> result = Promise.promise();
         long timerId = vertx.setTimer(
                 BARRIER_TIMEOUT_MS,
-                id -> result.tryFail(
-                        "lifecycle afterClose barrier did not complete within " + BARRIER_TIMEOUT_MS + "ms"));
+                id -> result.tryFail(label + " did not complete within " + BARRIER_TIMEOUT_MS + "ms"));
         barrier.onComplete(ar -> {
             vertx.cancelTimer(timerId);
             if (ar.succeeded()) {
@@ -706,21 +735,49 @@ class RestRequestCompletionEmitterTest {
         void completeNowNeitherEmitsNorSuppressesCompletionEvent(VertxTestContext ctx) {
             List<RestRequestCompletedEvent> captured = new ArrayList<>();
             RestRequestCompletionEmitter em = emitter(Set.of(captured::add));
-            RouterWithBarrier rb = routerWithBarrier(vertx, em, rc -> {
+
+            // The lifecycle barrier (barrierHandler / routerWithBarrier) is not a useful signal for
+            // this test: the terminal handler below calls Handle.completeNow(), which drives
+            // closeAll() — and therefore any afterClose-registered barrier — synchronously, before
+            // the response even ends (see the caveat on barrierHandler's javadoc). Instead, this
+            // test builds its router inline with a sentinel middleware mounted between
+            // RequestContextLifecycle and the emitter, registering its own ctx.addEndHandler that
+            // completes `sentinel`. Because Vert.x Web fires end handlers in reverse registration
+            // order, and this sentinel middleware registers its end handler AFTER the lifecycle but
+            // BEFORE the emitter, the firing order is: emitter's end handler (populates `captured`)
+            // first, this sentinel's end handler second, RequestContextLifecycle's end handler last.
+            // Completing `sentinel` therefore happens-after the emitter's captured.add(...) call, on
+            // the same event-loop thread — giving the final assertion a real happens-before edge
+            // instead of racing an early-burned lifecycle barrier. completeNow() cannot prematurely
+            // satisfy `sentinel` because completeNow() drives only the Handle's own onClose/afterClose
+            // registrations, never ctx end handlers.
+            Promise<Void> sentinel = Promise.promise();
+
+            Router router = Router.router(vertx);
+            router.route().order(RequestContextLifecycle.ORDER).handler(new RequestContextLifecycle());
+            router.route().order(RequestContextLifecycle.ORDER + 1).handler(rc -> {
+                rc.addEndHandler(v -> sentinel.complete());
+                rc.next();
+            });
+            router.route().order(em.priority()).handler(em);
+            router.route("/test").handler(rc -> {
                 RequestContextLifecycle.fromRoutingContext(rc).completeNow();
                 // Non-vacuous: an implementation that wired the emitter's emission to
                 // Handle.completeNow() instead of ctx.addEndHandler would already have
                 // populated captured by this point, before the response has even ended.
                 ctx.verify(() -> assertTrue(
                         captured.isEmpty(), "completeNow() must not trigger the emitter's completion event"));
+                if (!rc.response().ended()) {
+                    rc.response().setStatusCode(200).end();
+                }
             });
 
-            startServer(rb.router())
+            startServer(router)
                     .compose(port -> client.request(HttpMethod.GET, port, "127.0.0.1", "/test")
                             .compose(req -> req.send()))
                     .compose(resp -> {
                         ctx.verify(() -> assertEquals(200, resp.statusCode()));
-                        return awaitBarrier(vertx, rb.barrier());
+                        return awaitBarrier(vertx, sentinel.future(), "sentinel end handler");
                     })
                     .onComplete(ctx.succeeding(v -> {
                         ctx.verify(() -> assertEquals(

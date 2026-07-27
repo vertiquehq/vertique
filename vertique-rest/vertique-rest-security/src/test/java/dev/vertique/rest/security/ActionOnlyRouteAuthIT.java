@@ -182,8 +182,10 @@ public class ActionOnlyRouteAuthIT {
                     Router apiRouter = routerBuilder.createRouter();
                     Router root = Router.router(vertx);
                     // Stamps every response from this test's router so a failing status assertion can tell
-                    // "this server answered but the route/auth outcome differed" from "a foreign process
-                    // answered the request" (see #186). Must run strictly before every other handler.
+                    // "this server answered but the route/auth outcome differed" (marker present) from "this
+                    // response was not stamped by this test's root handler" (marker absent — a foreign
+                    // process, or a response written below the router; see #186). Must run strictly before
+                    // every other handler.
                     root.route().order(Integer.MIN_VALUE).handler(rc -> {
                         rc.response().putHeader("x-vq-test-server", "action-only-route-auth");
                         rc.next();
@@ -307,8 +309,11 @@ public class ActionOnlyRouteAuthIT {
 
     /**
      * Response status plus whether the {@code x-vq-test-server} marker header (stamped by this test's
-     * root router) was present. The marker exists only to enrich status-assertion failure messages — it
-     * is never asserted on independently (see #186).
+     * root router) was present. Marker presence distinguishes "stamped by this test's root handler"
+     * from "not stamped" — the latter covers both a foreign process answering the request and a
+     * response written below the router, so absence does not by itself conclusively prove a foreign
+     * process. The marker exists only to enrich status-assertion failure messages — it is never
+     * asserted on independently (see #186).
      *
      * @param status         the HTTP status code
      * @param fromThisServer whether the marker header was present on the response
