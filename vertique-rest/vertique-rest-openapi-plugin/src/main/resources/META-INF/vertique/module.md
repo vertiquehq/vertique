@@ -9,7 +9,7 @@ SPDX-License-Identifier: EUPL-1.2
 > **Package:** `dev.vertique.openapi`
 > **Artifact:** `rest-openapi-plugin`
 
-A thin build-time module that provides Swagger `ModelConverter`s and an `OpenAPIExtension` for the swagger-maven-plugin. `FutureModelConverter` unwraps `Future<T>` return types to `T`, `SseModelConverter` resolves SSE `ReadStream` return types to a string schema, `BigDecimalModelConverter` resolves `BigDecimal` types to the `vertique-strict` string wire-form schema, and `RequestParamsExtension` expands `@RequestParams`-annotated parameter objects into individual OpenAPI parameters — so the generated spec reflects the actual JAX-RS contract rather than the framework's internal wrapper/aggregation types.
+A thin build-time module that provides Swagger `ModelConverter`s and an `OpenAPIExtension` for the swagger-maven-plugin. `FutureModelConverter` unwraps `Future<T>` return types to `T`, `SseModelConverter` resolves SSE `ReadStream` return types to a string schema, `BigDecimalModelConverter` resolves `BigDecimal` types to the `vertique-strict` string wire-form schema, `ScalarOptionalModelConverter` resolves `OptionalInt`/`OptionalLong`/`OptionalDouble` to scalar schemas, and `RequestParamsExtension` expands `@RequestParams`-annotated parameter objects into individual OpenAPI parameters — so the generated spec reflects the actual JAX-RS contract rather than the framework's internal wrapper/aggregation types.
 
 ---
 
@@ -106,6 +106,59 @@ public final class BigDecimalModelConverter implements ModelConverter {
 </modelConverterClasses>
 ```
 
+### ScalarOptionalModelConverter
+
+```java
+public final class ScalarOptionalModelConverter implements ModelConverter {
+    @Override
+    public Schema<?> resolve(AnnotatedType type, ModelConverterContext context,
+                          Iterator<ModelConverter> chain) {
+        // OptionalInt    -> integer / int32
+        // OptionalLong   -> integer / int64
+        // OptionalDouble -> number  / double
+        // Otherwise, delegate to the next converter in the chain
+        // Returns null (not a chain.next() call) when this is the last converter
+    }
+}
+```
+
+**What it does:**
+- Detects the JDK's three non-generic scalar optionals — `java.util.OptionalInt`, `java.util.OptionalLong`, `java.util.OptionalDouble`
+- Resolves them to the scalar schema matching their real wire form instead of Swagger's default JavaBean schema (`{empty, present, asInt}`)
+- Leaves generic `Optional<T>` untouched — swagger-core already unwraps it natively (see [Optional properties in generated specs](#optional-properties-in-generated-specs))
+
+**Why it is needed:** swagger-core's Jackson-backed model resolver unwraps `java.util.Optional<T>` because Jackson registers it as a `ReferenceType`. The scalar optionals are not generic types and carry no such registration, so the resolver falls back to bean introspection and emits their accessor surface. At runtime, Jackson's `Jdk8Module` (registered by `dev.vertique.json.JacksonDefaults` in `vertique-json`) writes a present scalar optional as a plain JSON number and omits an empty one — so the bean schema is a pure spec/wire mismatch.
+
+**Pairing contract:**
+- Unlike `BigDecimalModelConverter`, this converter encodes **no profile-specific policy** — the scalar wire form it describes is what `Jdk8Module` produces under every profile built on `JacksonDefaults`, both `vertique` and `vertique-strict`
+- Register it whenever any DTO in the scanned `resourcePackages` exposes an `OptionalInt`, `OptionalLong`, or `OptionalDouble` property
+
+**Configuration** — add alongside `FutureModelConverter`:
+
+```xml
+<modelConverterClasses>
+    <modelConverterClass>dev.vertique.openapi.FutureModelConverter</modelConverterClass>
+    <modelConverterClass>dev.vertique.openapi.ScalarOptionalModelConverter</modelConverterClass>
+</modelConverterClasses>
+```
+
+### Optional properties in generated specs
+
+How an optional property surfaces in the generated spec depends on which optional type it uses:
+
+| Java property type | Generated schema | Converter needed |
+|---|---|---|
+| `Optional<String>` | `string` | none — unwrapped natively |
+| `Optional<List<String>>` | `array` of `string` | none — unwrapped natively |
+| `Optional<BigDecimal>` | the `BigDecimal` schema for the app's profile | `BigDecimalModelConverter` only for the `vertique-strict` string form |
+| `OptionalInt` | `integer` / `int32` | `ScalarOptionalModelConverter` |
+| `OptionalLong` | `integer` / `int64` | `ScalarOptionalModelConverter` |
+| `OptionalDouble` | `number` / `double` | `ScalarOptionalModelConverter` |
+
+In every case the property is **neither `required` nor `nullable`**. That matches the runtime wire form: `JacksonDefaults` sets `NON_ABSENT` inclusion, so an empty optional is **omitted** from the payload rather than written as JSON `null`.
+
+**Clients omit, they do not send `null`.** The generated schema is not nullable, so any consumer that validates against this spec — a generated client, an API gateway, a contract test's request-validation filter, or the opt-in `openapi-contract` strategy — rejects an explicit `"prop": null`. The default `web-validation` strategy does *not* read `openapi.json` (ADR-0121; `vertique-rest-validation` synthesizes its schemas from the Java types at runtime), so on that path an explicit `null` is accepted and bound to `Optional.empty()`. Omitting the property is therefore the portable form — accepted on every path, and binding identically.
+
 ---
 
 ## OpenAPI Extensions
@@ -180,7 +233,7 @@ The plugin is configured in the application module's `pom.xml`:
 
 **Key configuration points:**
 - `resourcePackages`: The Java package(s) to scan for JAX-RS annotated classes
-- `modelConverterClasses`: Must include `dev.vertique.openapi.FutureModelConverter` (and `SseModelConverter` when SSE endpoints are present, and `BigDecimalModelConverter` when the application uses the `vertique-strict` JSON profile)
+- `modelConverterClasses`: Must include `dev.vertique.openapi.FutureModelConverter` (and `SseModelConverter` when SSE endpoints are present, `BigDecimalModelConverter` when the application uses the `vertique-strict` JSON profile, and `ScalarOptionalModelConverter` when any DTO exposes an `OptionalInt`/`OptionalLong`/`OptionalDouble` property). With more than one entry, prefer the nested `<modelConverterClass>` element form
 - `outputPath`: Set to `${project.build.directory}/classes` so the generated spec is on the runtime classpath
 - `outputFormat`: `JSONANDYAML` generates both `openapi.json` and `openapi.yaml`
 - `RequestParamsExtension` needs no entry here — it is picked up automatically via `ServiceLoader` once the `<dependency>` above is present
