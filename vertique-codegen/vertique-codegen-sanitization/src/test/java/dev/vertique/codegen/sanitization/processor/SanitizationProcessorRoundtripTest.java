@@ -117,6 +117,56 @@ class SanitizationProcessorRoundtripTest {
             }
             """);
 
+    // --- Optional-wrapped fields ---
+
+    /**
+     * Nested DTO reachable from {@link #OPT_PROFILE_DTO} only through an {@code Optional<...>}
+     * wrapper. Carries its own {@code @Sanitize} so the scanner must emit
+     * {@code OptCommentDto_InputProcessor} for the nested dispatch to have a target.
+     */
+    private static final JavaFileObject OPT_COMMENT_DTO = SourceFiles.inline("com.example.rt.OptCommentDto", """
+            package com.example.rt;
+            import dev.vertique.core.sanitization.Sanitize;
+            import dev.vertique.sanitization.sanitize.StripControlCharsSanitizer;
+            public class OptCommentDto {
+                @Sanitize(StripControlCharsSanitizer.class)
+                public String text;
+            }
+            """);
+
+    /**
+     * DTO whose sanitized fields are all wrapped in {@link java.util.Optional} — directly
+     * ({@code Optional<String>}, {@code Optional<OptCommentDto>}) and as a collection element
+     * ({@code List<Optional<String>>}). The wire representation of each is the unwrapped value,
+     * so classification must see through the wrapper.
+     */
+    private static final JavaFileObject OPT_PROFILE_DTO = SourceFiles.inline("com.example.rt.OptProfileDto", """
+            package com.example.rt;
+            import dev.vertique.core.sanitization.Sanitize;
+            import dev.vertique.sanitization.sanitize.StripControlCharsSanitizer;
+            import java.util.List;
+            import java.util.Optional;
+            public class OptProfileDto {
+                @Sanitize(StripControlCharsSanitizer.class)
+                public Optional<String> nickname;
+                public Optional<OptCommentDto> comment;
+                @Sanitize(StripControlCharsSanitizer.class)
+                public List<Optional<String>> aliases;
+            }
+            """);
+
+    private static final JavaFileObject OPT_PROFILE_RESOURCE =
+            SourceFiles.inline("com.example.rt.OptProfileResource", """
+            package com.example.rt;
+            import jakarta.ws.rs.POST;
+            import jakarta.ws.rs.Path;
+            @Path("/opt-profiles")
+            public class OptProfileResource {
+                @POST
+                public String create(OptProfileDto body) { return null; }
+            }
+            """);
+
     // --- Simple flat string canonicalization ---
 
     @Nested
@@ -417,6 +467,121 @@ class SanitizationProcessorRoundtripTest {
         }
     }
 
+    // --- Optional-wrapped fields ---
+
+    /**
+     * Proves that {@code Optional<...>}-wrapped fields are sanitized on the generated path.
+     *
+     * <p>Every test here runs against a dispatcher whose reflective continuation
+     * <em>throws</em> ({@link GeneratedInputProcessorDispatcher#withoutContinuation()}), so a
+     * generated arm that falls back to {@code continueAt} / {@code walkUnknown} fails loudly
+     * instead of silently returning the value untouched.
+     */
+    @Nested
+    @DisplayName("Optional-wrapped fields")
+    class OptionalWrappedFields {
+
+        @Test
+        @DisplayName("@Sanitize on Optional<String> field — control characters stripped, no reflective fallback")
+        @SuppressWarnings("unchecked")
+        void optionalStringField_sanitized() throws Exception {
+            Result result = ProcessorTestHarness.run(
+                    new SanitizationProcessor(), OPT_COMMENT_DTO, OPT_PROFILE_DTO, OPT_PROFILE_RESOURCE);
+            result.assertSuccess();
+
+            GeneratedInputProcessor<?> processor = newProcessor(result, "com.example.rt.OptProfileDto_InputProcessor");
+
+            Map<String, Object> intermediate = new LinkedHashMap<>();
+            intermediate.put("nickname", "nick\u0001name");
+
+            Object output = processor.process(
+                    intermediate,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY,
+                    buildChainResolver(),
+                    GeneratedInputProcessorDispatcher.withoutContinuation(),
+                    null,
+                    "");
+
+            assertInstanceOf(Map.class, output);
+            Map<String, Object> out = (Map<String, Object>) output;
+            assertEquals(
+                    "nickname",
+                    out.get("nickname"),
+                    "@Sanitize on Optional<String> must apply to the unwrapped string value");
+        }
+
+        @Test
+        @DisplayName("Optional<CommentDto> field dispatches to OptCommentDto_InputProcessor")
+        @SuppressWarnings("unchecked")
+        void optionalNestedDtoField_dispatchedToNestedProcessor() throws Exception {
+            Result result = ProcessorTestHarness.run(
+                    new SanitizationProcessor(), OPT_COMMENT_DTO, OPT_PROFILE_DTO, OPT_PROFILE_RESOURCE);
+            result.assertSuccess();
+
+            GeneratedInputProcessor<?> profileProcessor =
+                    newProcessor(result, "com.example.rt.OptProfileDto_InputProcessor");
+            GeneratedInputProcessor<?> commentProcessor =
+                    newProcessor(result, "com.example.rt.OptCommentDto_InputProcessor");
+
+            GeneratedInputProcessorDispatcher dispatcher = GeneratedInputProcessorDispatcher.withoutContinuation();
+            registerProcessor(dispatcher, commentProcessor.targetType(), commentProcessor);
+
+            Map<String, Object> nested = new LinkedHashMap<>();
+            nested.put("text", "hel\u0001lo");
+            Map<String, Object> intermediate = new LinkedHashMap<>();
+            intermediate.put("comment", nested);
+
+            Object output = profileProcessor.process(
+                    intermediate,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY,
+                    buildChainResolver(),
+                    dispatcher,
+                    null,
+                    "");
+
+            assertInstanceOf(Map.class, output);
+            Map<String, Object> out = (Map<String, Object>) output;
+            assertInstanceOf(Map.class, out.get("comment"));
+            Map<String, Object> processedComment = (Map<String, Object>) out.get("comment");
+            assertEquals(
+                    "hello",
+                    processedComment.get("text"),
+                    "Optional<OptCommentDto> must resolve field metadata from OptCommentDto, not Optional");
+        }
+
+        @Test
+        @DisplayName("@Sanitize on List<Optional<String>> field — each element sanitized")
+        @SuppressWarnings("unchecked")
+        void listOfOptionalStrings_eachElementSanitized() throws Exception {
+            Result result = ProcessorTestHarness.run(
+                    new SanitizationProcessor(), OPT_COMMENT_DTO, OPT_PROFILE_DTO, OPT_PROFILE_RESOURCE);
+            result.assertSuccess();
+
+            GeneratedInputProcessor<?> processor = newProcessor(result, "com.example.rt.OptProfileDto_InputProcessor");
+
+            List<Object> aliases = new ArrayList<>(List.of("a\u0001lpha", "be\u0001ta"));
+            Map<String, Object> intermediate = new LinkedHashMap<>();
+            intermediate.put("aliases", aliases);
+
+            Object output = processor.process(
+                    intermediate,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY,
+                    buildChainResolver(),
+                    GeneratedInputProcessorDispatcher.withoutContinuation(),
+                    null,
+                    "");
+
+            assertInstanceOf(Map.class, output);
+            Map<String, Object> out = (Map<String, Object>) output;
+            assertInstanceOf(List.class, out.get("aliases"));
+            List<Object> processed = (List<Object>) out.get("aliases");
+            assertEquals(List.of("alpha", "beta"), processed, "Each List<Optional<String>> element must be sanitized");
+        }
+    }
+
     // --- Null value passthrough ---
 
     @Nested
@@ -517,6 +682,21 @@ class SanitizationProcessorRoundtripTest {
             }
             return result;
         };
+    }
+
+    /**
+     * Loads a generated processor class from the harness classloader and instantiates it via its
+     * public no-arg constructor.
+     *
+     * @param result       the compilation result holding the harness classloader
+     * @param generatedFqn the fully-qualified name of the generated {@code _InputProcessor} class
+     * @return a freshly constructed processor instance
+     * @throws Exception if the class cannot be loaded or instantiated
+     */
+    private static GeneratedInputProcessor<?> newProcessor(Result result, String generatedFqn) throws Exception {
+        Class<?> processorClass = result.loadGeneratedClass(generatedFqn);
+        return (GeneratedInputProcessor<?>)
+                processorClass.getDeclaredConstructor().newInstance();
     }
 
     /**
