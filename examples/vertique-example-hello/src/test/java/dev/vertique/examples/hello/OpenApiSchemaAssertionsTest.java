@@ -167,6 +167,33 @@ class OpenApiSchemaAssertionsTest {
         }
     }
 
+    // --- g. PriceQuote.required: sku and amount are required (discount stays optional) ---
+
+    @Test
+    @DisplayName("PriceQuote's required array contains sku and amount")
+    void priceQuote_requiredContainsSkuAndAmount() {
+        JsonNode priceQuote = schema("PriceQuote");
+
+        assertTrue(isRequired(priceQuote, "sku"), "sku must appear in PriceQuote's required array");
+        assertTrue(isRequired(priceQuote, "amount"), "amount must appear in PriceQuote's required array");
+    }
+
+    // --- h. OptionalGreeting.required: only name is required (Optional-typed properties are
+    // deliberately left unmarked, to demonstrate optionality) ---
+
+    @Test
+    @DisplayName("OptionalGreeting's required array contains only name")
+    void optionalGreeting_requiredContainsOnlyName() {
+        JsonNode optionalGreeting = schema("OptionalGreeting");
+
+        assertTrue(isRequired(optionalGreeting, "name"), "name must appear in OptionalGreeting's required array");
+        assertFalse(
+                isRequired(optionalGreeting, "nickname"),
+                "nickname must not appear in OptionalGreeting's required array");
+        assertFalse(isRequired(optionalGreeting, "tags"), "tags must not appear in OptionalGreeting's required array");
+        assertFalse(isRequired(optionalGreeting, "rank"), "rank must not appear in OptionalGreeting's required array");
+    }
+
     // --- Helpers ---
 
     /**
@@ -208,9 +235,9 @@ class OpenApiSchemaAssertionsTest {
         assertEquals("string", propertyNode.path("type").asText(), label + " must resolve to a string schema");
         assertEquals("decimal", propertyNode.path("format").asText(), label + " must carry the decimal format");
         assertEquals(
-                "-?[0-9]+(\\.[0-9]+)?",
+                "^-?[0-9]+(\\.[0-9]+)?$",
                 propertyNode.path("pattern").asText(),
-                label + " must carry the plain decimal pattern");
+                label + " must carry the anchored plain decimal pattern");
         assertEquals(100, propertyNode.path("maxLength").asInt(), label + " must carry the 100-character max length");
     }
 

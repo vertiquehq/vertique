@@ -100,7 +100,7 @@ class BigDecimalModelConverterTest {
         assertInstanceOf(StringSchema.class, schema);
         assertEquals("string", schema.getType());
         assertEquals("decimal", schema.getFormat());
-        assertEquals("-?[0-9]+(\\.[0-9]+)?", schema.getPattern());
+        assertEquals("^-?[0-9]+(\\.[0-9]+)?$", schema.getPattern());
         assertEquals(100, schema.getMaxLength());
     }
 }

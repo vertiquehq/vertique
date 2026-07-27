@@ -44,11 +44,23 @@ import java.util.Iterator;
  * {@code @Schema(type = "string", format = "decimal")}, which is the escape hatch for mixed-profile
  * applications.
  *
- * <p><strong>Grammar mirror.</strong> The emitted {@code pattern} and {@code maxLength} mirror the
- * bounds enforced at runtime by {@code dev.vertique.json.BigDecimalStrictStringDeserializer}: a
- * plain decimal literal ({@code -?[0-9]+(\.[0-9]+)?}, no exponent notation) of at most 100
- * characters. Keeping the spec bounds in lockstep with the deserializer's grammar means generated
- * client validation rejects the same inputs the server would reject.
+ * <p><strong>Grammar mirror.</strong> The emitted {@code pattern} and {@code maxLength} describe the
+ * same plain decimal literal grammar enforced at runtime by {@code
+ * dev.vertique.json.BigDecimalStrictStringDeserializer} (no exponent notation, at most 100
+ * characters) — but the spec-side pattern is deliberately <strong>anchored</strong>
+ * ({@code ^-?[0-9]+(\.[0-9]+)?$}), unlike the deserializer's unanchored {@code -?[0-9]+(\.[0-9]+)?}.
+ * JSON Schema {@code pattern} has ECMA-262 <em>search</em> semantics — like {@link
+ * java.util.regex.Matcher#find()} — so an unanchored pattern would match any string that merely
+ * <em>contains</em> a digit run (e.g. {@code "not 1.50 a number"} would incorrectly validate).
+ * {@link java.util.regex.Matcher#matches()}, which the deserializer uses, is implicitly anchored to
+ * the whole input, so it needs no {@code ^}/{@code $}. Anchoring the spec pattern is what makes
+ * generated client validation reject the malformed inputs the server would reject — but honestly,
+ * it is not a perfect substitute for the runtime check: a JVM-based ECMA/Java regex validator can
+ * still accept a value with a trailing newline (e.g. {@code "1.50\n"}), because Java's {@code $} — by
+ * default — matches either at the end of input or immediately before a final line terminator. The
+ * deserializer's own unanchored {@code matches()} call has no such gap: it requires the entire input,
+ * including the trailing {@code \n}, to fall inside the grammar, so that same value is rejected with
+ * a 400.
  *
  * <p><strong>Chain-end contract:</strong> delegates to the next converter via {@link
  * ConverterChain#delegate}, which returns {@code null} rather than throwing when this converter is
@@ -59,13 +71,18 @@ public final class BigDecimalModelConverter implements ModelConverter {
     /** Maximum accepted length, in characters, of the decimal literal (mirrors the deserializer). */
     private static final int MAX_LENGTH = 100;
 
-    /** The plain decimal literal grammar (mirrors the deserializer). */
-    private static final String DECIMAL_PATTERN = "-?[0-9]+(\\.[0-9]+)?";
+    /**
+     * The plain decimal literal grammar, anchored with {@code ^}/{@code $} because JSON Schema
+     * {@code pattern} has ECMA-262 search (unanchored) semantics — see the class-level "Grammar
+     * mirror" note.
+     */
+    private static final String DECIMAL_PATTERN = "^-?[0-9]+(\\.[0-9]+)?$";
 
     /**
      * Resolves the schema for the given type. If the type is {@link BigDecimal}, this converter
-     * returns a string schema with the {@code decimal} format, the plain decimal pattern, and the
-     * matching max length. Otherwise, the call is delegated to the next converter in the chain.
+     * returns a string schema with the {@code decimal} format, the anchored plain decimal pattern,
+     * and the matching max length. Otherwise, the call is delegated to the next converter in the
+     * chain.
      *
      * @param type the annotated type being resolved
      * @param context the current model converter context
