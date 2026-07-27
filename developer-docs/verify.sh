@@ -495,7 +495,7 @@ fence_state_machine() {
       if (l ~ /^```/) return 1
       if (l ~ /^~~~/) return 1
       if (l ~ /^[[:space:]]+(```|~~~)/) return 1
-      if (l ~ /^([[:space:]]*(>|[-*+]|[0-9]+[.)])[[:space:]]+)+(```|~~~)/) return 1
+      if (l ~ /^([[:space:]]*(>[[:space:]]*|[-*+][[:space:]]+|[0-9]+[.)][[:space:]]+))+(```|~~~)/) return 1
       return 0
     }
     BEGIN { in_fence = 0; in_xml = 0 }
@@ -644,7 +644,7 @@ check_links_of_file() {
 
   while IFS= read -r hit; do
     fail "$f:${hit%%:*}: reference-style link definitions must start at column zero, not be indented (corpus grammar)"
-  done < <(strip_all_fences "$f" | grep -noE '^[[:space:]]+\[[^]]+\]:|^([[:space:]]*(>|[-*+]|[0-9]+[.)])[[:space:]]+)+\[[^]]+\]:')
+  done < <(strip_all_fences "$f" | grep -noE '^[[:space:]]+\[[^]]+\]:|^([[:space:]]*(>[[:space:]]*|[-*+][[:space:]]+|[0-9]+[.)][[:space:]]+))+\[[^]]+\]:')
 
   while IFS= read -r line; do
     [[ "$line" =~ ^\[[^]]+\]:[[:space:]]*(.+)$ ]] || continue
