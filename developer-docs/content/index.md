@@ -27,7 +27,7 @@ dependency injection instead of a runtime container.
   [`vertique-rest-validation` module reference](../../vertique-rest/vertique-rest-validation/src/main/resources/META-INF/vertique/module.md)),
   with contract validation against the generated spec available as an opt-in
   [`vertique-rest-openapi-validation` module](../../vertique-rest/vertique-rest-openapi-validation/src/main/resources/META-INF/vertique/module.md).
-  There is no response validation.
+  Neither server-side validation strategy validates responses against the OpenAPI contract.
 - **Compile-time dependency injection** — application wiring is assembled by Dagger 2 at compile
   time, so there is no runtime classpath scanning or reflection-based container to configure.
 - **Composable capability** — REST, services, persistence, jobs, workflows, security, and
@@ -38,6 +38,9 @@ dependency injection instead of a runtime container.
 
 - JDK 21
 - Apache Maven
+- This framework built and installed into your local Maven repository from this repository's own
+  source — no published artifacts exist yet; see [Quickstart](quickstart.md) for the one-time
+  build step
 
 ## The supported path
 

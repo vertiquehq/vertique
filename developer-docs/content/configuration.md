@@ -29,17 +29,20 @@ The REST application generated in [Quickstart](quickstart.md) ships one configur
 Vertique reads every `*.json` and `*.properties` file from each configured directory — `config/`
 by default, or the directories named by the `VERTX_CONFIG_LOCATIONS` environment variable (a
 comma-separated list; later directories override earlier ones, and within one directory
-`*.properties` overrides `*.json`). Nothing beyond this one file is required for the quickstart
-application to start.
+`*.properties` overrides `*.json`). No configuration file is required at all: when no `config/`
+directory exists next to the running process, framework defaults apply and the application still
+starts. To override a default, create `config/application.json` under the application's own
+working directory — for the quickstart application, `rest-app/config/application.json`.
 
-Each configured directory is resolved against the running process's own current working
-directory, not against the compiled classpath: starting the generated application with
-`mvn -ntp exec:java` from `rest-app/` (as in [Quickstart](quickstart.md)) looks for a `config/`
-directory directly under `rest-app/`, which does not exist there by default — only
-`src/main/resources/config/` and the compiled `target/classes/config/` do. Editing
-`src/main/resources/config/application.json` therefore has no observable effect on that run, even
-after `mvn compile`, until a real `config/` directory exists next to the process's working
-directory (or `VERTX_CONFIG_LOCATIONS` names one that does).
+Each *relative* configured directory is resolved against the running process's own current
+working directory, not against the compiled classpath; an absolute `VERTX_CONFIG_LOCATIONS` entry
+is used as-is instead. Starting the generated application with `mvn -ntp exec:java` from
+`rest-app/` (as in [Quickstart](quickstart.md)) looks for a `config/` directory directly under
+`rest-app/`, which does not exist there by default — only `src/main/resources/config/` and the
+compiled `target/classes/config/` do. The packaged `src/main/resources/config/application.json` is
+therefore never read on that run: editing it has no observable effect, even after `mvn compile`,
+until a real `config/` directory exists next to the process's working directory (or
+`VERTX_CONFIG_LOCATIONS` names one that does, whether given as a relative or an absolute path).
 
 ## Typed configuration at the Dagger boundary
 
@@ -54,11 +57,15 @@ HelloConfig helloConfig(@VertxConfig JsonObject config, ConfigParser parser) {
 }
 ```
 
-`ConfigParser` is provided by `ConfigParsingModule`, which every starter aggregate already
-includes transitively through `CoreApplicationModule` — you never list it again yourself. The
-parser uses an isolated, coercion-lenient object mapper independent of the mapper your REST layer
-uses for request and response bodies, so a config-parsing decision never leaks into your API's
-JSON behavior.
+`ConfigParser` is provided by `ConfigParsingModule`, which each of the three application
+starters — `vertique-starter-core`, `vertique-starter-rest`, and `vertique-starter-services` —
+already includes transitively through `CoreApplicationModule`, so you never list it again
+yourself when building on one of them. A capability starter such as `vertique-starter-postgresql`
+supplies no config parser on its own; see [Application model](application-model.md) for the full
+starter table and which starters must be paired with an application starter. The parser uses an
+isolated, coercion-lenient object mapper independent of the mapper your REST layer uses for
+request and response bodies, so a config-parsing decision never leaks into your API's JSON
+behavior.
 
 ## Configuration source precedence
 
@@ -77,19 +84,22 @@ lower one.
 
 ## Secret providers
 
-Secrets are injected into the config tree through `${key}` placeholder references, resolved
-against declared property sources under `config.propertySources`. Vertique publishes four:
+Vertique publishes four secret providers. Three resolve secrets as property sources: they inject
+`${key}` placeholder references into the config tree, resolved against declared entries under
+`config.propertySources`. The fourth, AWS SSM Parameter Store, is instead a `config.stores` entry
+that eagerly merges a whole parameter subtree directly into the config tree (see
+[Configuration source precedence](#configuration-source-precedence) above).
 
 | Provider | Artifact | Model |
 |---|---|---|
-| HashiCorp Vault (KV v2) | `vertique-config-vault` | Eager — every declared path is read once at bootstrap |
-| AWS Secrets Manager | `vertique-config-aws-secrets` | Eager — every declared secret is fetched once at bootstrap |
-| AWS SSM Parameter Store | `vertique-config-aws-ssm` | A `config.stores` entry, not a property source — merges a whole parameter subtree into the tree |
-| Azure Key Vault | `vertique-config-azure-keyvault` | On-demand — only keys actually referenced by a placeholder are fetched |
+| HashiCorp Vault (KV v2) | `vertique-config-vault` | Property source — eager; every declared path is read once at bootstrap |
+| AWS Secrets Manager | `vertique-config-aws-secrets` | Property source — eager; every declared secret is fetched once at bootstrap |
+| AWS SSM Parameter Store | `vertique-config-aws-ssm` | Config store, not a property source — merges a whole parameter subtree into the tree |
+| Azure Key Vault | `vertique-config-azure-keyvault` | Property source — on-demand; only keys actually referenced by a placeholder are fetched |
 
-Each property-source provider supports the same self-reference idiom for pulling a secret into
-the tree without writing its value into any file: declare the placeholder under its own key, and
-the recursive tree probe falls through to the declared source instead of looping.
+Each of the three property-source providers supports the same self-reference idiom for pulling a
+secret into the tree without writing its value into any file: declare the placeholder under its
+own key, and the recursive tree probe falls through to the declared source instead of looping.
 
 ```json
 {

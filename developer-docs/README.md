@@ -113,6 +113,26 @@ example:
 Outside such a fence, describe a placeholder in words (as this paragraph does) rather than writing
 its literal syntax.
 
+### Restricted corpus grammar
+
+The corpus is written in a deliberately restricted subset of Markdown, so the validator's fence
+and link extraction never need a real Markdown parser. A few forms that are otherwise valid
+Markdown are rejected outright as a grammar violation, with their own diagnostic, rather than
+being silently accepted or silently mis-parsed:
+
+- A code fence must open with three backticks at column zero. A fence indented by one to three
+  spaces, or a fence that uses tildes instead of backticks, is rejected rather than treated as
+  ordinary prose.
+- A reference-style link definition (`[label]: target`) must likewise start at column zero. An
+  indented one is rejected rather than silently skipped.
+- A frontmatter `title` or `description` value must not carry a trailing comment, and a value of
+  `null` (in any case, quoted or not) counts as empty — both are rejected rather than silently
+  accepted or silently normalized to empty.
+- A bare (non-angle-bracket) inline link destination must not contain a literal opening
+  parenthesis. Use the CommonMark angle-bracket destination form instead — the same form the
+  validator already recognizes in full, including embedded spaces, for a destination that
+  contains them.
+
 ## Running the validator
 
 `developer-docs/verify.sh` checks the whole contract above: the file inventory, the navigation

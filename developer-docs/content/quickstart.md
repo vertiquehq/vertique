@@ -11,8 +11,8 @@ SPDX-License-Identifier: EUPL-1.2
 # Quickstart
 
 By the end of this page you will have generated a Vertique REST application from the REST
-archetype, run its unit and integration test suite, started it locally, and received a JSON
-response from its generated `/hello` endpoint.
+archetype, run its integration test suite, started it locally, and received a JSON response from
+its generated `/hello` endpoint.
 
 ## Prerequisites
 

@@ -10,7 +10,12 @@
 #                      in the frozen order, under a sole `pages:` key.
 #   (c) frontmatter - every content/*.md page opens with YAML frontmatter
 #                      containing exactly one non-empty `title` and one
-#                      non-empty `description`, and no other keys.
+#                      non-empty `description`, and no other keys. A scalar
+#                      value of `null` (any case, quoted or not) counts as
+#                      empty. A scalar must not carry a trailing comment: a
+#                      quoted value followed by anything but whitespace, or
+#                      an unquoted value containing `#`, is rejected outright
+#                      rather than silently accepted or silently emptied.
 #   (d) links       - every relative Markdown link target (including targets
 #                      that point out of developer-docs/, e.g. into
 #                      docs/modules.md), whether an inline `](target)` link
@@ -40,6 +45,17 @@
 #                      locale/version/redirect/sidebar key in frontmatter or
 #                      navigation.yml is already rejected by (b)/(c)'s
 #                      "no other keys" rule, so it is not re-checked here.
+#   (g) corpus grammar - the corpus adopts a deliberately restricted subset
+#                      of Markdown so fence- and link-extraction never need a
+#                      real parser: every code fence opens with backticks at
+#                      column zero (a 1-3-space-indented ``` fence or any
+#                      '~~~' fence is rejected outright), every reference-
+#                      style link definition (`[label]: target`) starts at
+#                      column zero (an indented one is rejected outright
+#                      rather than silently skipped), and a bare
+#                      (non-angle-bracket) inline link destination must not
+#                      contain a literal '(' — use the angle-bracket
+#                      destination form (`](<target(with)parens>)`) instead.
 #
 # Every violation is reported (the run never stops at the first failure);
 # the process exit code is non-zero whenever at least one violation fires.
@@ -106,6 +122,20 @@ resolve_corpus_root() {
 
 # --- (a) Inventory ---
 
+# Reports whether needle exactly equals one element of the remaining
+# arguments. Used instead of a `"${arr[*]}"` substring-membership test,
+# which is unsafe once an element's name contains a space (a space-joined
+# haystack can't tell "a b" as one element from "a" and "b" as two).
+array_contains_exact() {
+  local needle="$1"
+  shift
+  local item
+  for item in "$@"; do
+    [[ "$item" == "$needle" ]] && return 0
+  done
+  return 1
+}
+
 # Confirms the corpus contains exactly the frozen fifteen-file inventory:
 # missing files and unexpected extra files are both violations.
 check_inventory() {
@@ -129,12 +159,12 @@ check_inventory() {
   done < <(cd "$CORPUS_ROOT" && find . -type f -print0 | sort -z)
 
   for f in "${expected_sorted[@]}"; do
-    if [[ ! " ${actual[*]} " == *" $f "* ]]; then
+    if ! array_contains_exact "$f" "${actual[@]}"; then
       fail "$CORPUS_ROOT/$f: expected corpus file is missing (inventory contract)"
     fi
   done
   for f in "${actual[@]}"; do
-    if [[ ! " ${expected_sorted[*]} " == *" $f "* ]]; then
+    if ! array_contains_exact "$f" "${expected_sorted[@]}"; then
       fail "$CORPUS_ROOT/$f: file is not part of the frozen corpus inventory (inventory contract)"
     fi
   done
@@ -217,6 +247,44 @@ strip_frontmatter_quotes() {
   printf '%s' "$v"
 }
 
+# Reports (via exit status) whether a frontmatter scalar's raw, unstripped
+# text carries a disallowed trailing comment: a quoted value followed by
+# anything but whitespace after its closing quote (most commonly an
+# unquoted ' # comment' suffix), or a bare (unquoted) value containing a
+# literal '#' anywhere. This corpus's frontmatter never allows a YAML
+# comment on a `key: value` line, so either form is rejected outright
+# rather than silently accepted or silently normalized to empty
+# (frontmatter contract).
+frontmatter_scalar_has_trailing_comment() {
+  local v="$1" quote rest before trailing
+  quote="${v:0:1}"
+  if [[ "$quote" == '"' || "$quote" == "'" ]]; then
+    rest="${v:1}"
+    before="${rest%%"$quote"*}"
+    if [[ "$before" == "$rest" ]]; then
+      return 1 # unterminated quote; not a trailing-comment case
+    fi
+    trailing="${rest:$((${#before} + 1))}"
+    [[ -n "${trailing//[[:space:]]/}" ]]
+    return
+  fi
+  [[ "$v" == *'#'* ]]
+}
+
+# Reports (via exit status) whether a frontmatter scalar value is empty, or
+# is the literal `null` (case-insensitive, quoted or not) once one layer of
+# matching quotes is stripped — either form makes the value unusable as a
+# `title`/`description` (frontmatter contract).
+frontmatter_scalar_is_empty_or_null() {
+  local stripped lowered
+  stripped="$(strip_frontmatter_quotes "$1")"
+  if [[ -z "$stripped" ]]; then
+    return 0
+  fi
+  lowered="$(printf '%s' "$stripped" | tr '[:upper:]' '[:lower:]')"
+  [[ "$lowered" == "null" ]]
+}
+
 # Parses and validates the frontmatter block of a single content page.
 check_frontmatter_of_file() {
   local f="$1"
@@ -246,14 +314,17 @@ check_frontmatter_of_file() {
       key="${BASH_REMATCH[1]}"
       value="${BASH_REMATCH[2]}"
       keys+=("$key")
+      if frontmatter_scalar_has_trailing_comment "$value"; then
+        fail "$f: frontmatter value must not carry a trailing comment (frontmatter contract): '$line'"
+      fi
       case "$key" in
       title)
         title_count=$((title_count + 1))
-        [[ -z "$(strip_frontmatter_quotes "$value")" ]] && title_empty=true
+        frontmatter_scalar_is_empty_or_null "$value" && title_empty=true
         ;;
       description)
         desc_count=$((desc_count + 1))
-        [[ -z "$(strip_frontmatter_quotes "$value")" ]] && desc_empty=true
+        frontmatter_scalar_is_empty_or_null "$value" && desc_empty=true
         ;;
       esac
     else
@@ -283,13 +354,45 @@ check_frontmatter_of_file() {
   fi
 }
 
+# --- (g) Fence grammar ---
+
+# Confirms every code fence in the corpus opens with backticks at column
+# zero: a ``` fence indented by 1-3 spaces, or any '~~~' fence (indented or
+# not), is rejected outright rather than silently mis-stripped. This lets
+# strip_all_fences and strip_xml_fences below legitimately assume every real
+# fence is a column-zero backtick fence (corpus grammar).
+check_fence_grammar() {
+  local f
+  while IFS= read -r -d '' f; do
+    check_fence_grammar_of_file "$f"
+  done < <(find "$CORPUS_ROOT" -name '*.md' -print0)
+}
+
+# Scans a single file for non-canonical fence forms and reports each match.
+check_fence_grammar_of_file() {
+  local f="$1"
+  local hit line_no
+
+  while IFS= read -r hit; do
+    line_no="${hit%%:*}"
+    fail "$f:$line_no: code fences must open with backticks at column zero (corpus grammar)"
+  done < <(grep -noE '^ {1,3}```' "$f")
+
+  while IFS= read -r hit; do
+    line_no="${hit%%:*}"
+    fail "$f:$line_no: '~~~' code fences are forbidden; use backtick fences at column zero (corpus grammar)"
+  done < <(grep -noE '^[[:space:]]*~~~' "$f")
+}
+
 # --- Fence handling ---
 
 # Strips the content of every fenced code block (any info-string, or none) —
 # and its fence marker lines — from a file, replacing them with blank lines
 # so downstream line numbers stay aligned with the original file. Used to
 # keep prose-only rules (renderer-neutrality, reference-style links) out of
-# legitimate code samples such as Java generics or JSON braces.
+# legitimate code samples such as Java generics or JSON braces. Assumes
+# every real fence opens at column zero with backticks — check_fence_grammar
+# above rejects any file that violates that assumption.
 strip_all_fences() {
   awk '
     BEGIN { in_fence = 0 }
@@ -334,10 +437,15 @@ check_link_target() {
 # Extracts and resolves every relative link target in a single file: both
 # inline `](target)` links — including the CommonMark angle-bracket
 # destination form `](<target with spaces.md>)` — and reference-style
-# `[label]: target` definitions found outside fenced code blocks.
+# `[label]: target` definitions found outside fenced code blocks, which must
+# start at column zero (an indented one is rejected as a corpus-grammar
+# violation rather than silently skipped). A bare (non-angle-bracket) inline
+# destination containing a literal '(' is rejected as a corpus-grammar
+# violation rather than silently truncated at the first ')' — such a target
+# must use the angle-bracket destination form instead.
 check_links_of_file() {
   local f="$1"
-  local dir raw target line
+  local dir raw target line hit
   dir=$(dirname "$f")
 
   while IFS= read -r raw; do
@@ -345,9 +453,16 @@ check_links_of_file() {
     if [[ "$target" == '<'*'>' ]]; then
       target="${target#<}"
       target="${target%>}"
+    elif [[ "$target" == *'('* ]]; then
+      fail "$f: bare link destination contains '(' ('$target'); use the angle-bracket destination form '(<target>)' instead (corpus grammar)"
+      continue
     fi
     check_link_target "$f" "$dir" "$target"
   done < <(strip_all_fences "$f" | grep -oE '\]\(<[^>]*>|\]\([^)[:space:]]+')
+
+  while IFS= read -r hit; do
+    fail "$f:${hit%%:*}: reference-style link definitions must start at column zero, not be indented (corpus grammar)"
+  done < <(strip_all_fences "$f" | grep -noE '^[ ]{1,3}\[[^]]+\]:')
 
   while IFS= read -r line; do
     [[ "$line" =~ ^\[[^]]+\]:[[:space:]]*(.+)$ ]] || continue
@@ -374,7 +489,9 @@ check_forbidden_tokens() {
 
 # Strips the content of ```xml fenced code blocks (and fence marker lines)
 # from a file, replacing them with blank lines so downstream line numbers
-# stay aligned with the original file.
+# stay aligned with the original file. Assumes every real fence opens at
+# column zero with backticks — check_fence_grammar above rejects any file
+# that violates that assumption.
 strip_xml_fences() {
   awk '
     BEGIN { in_xml = 0 }
@@ -463,6 +580,7 @@ main() {
   check_inventory
   check_navigation
   check_frontmatter
+  check_fence_grammar
   check_links
   check_forbidden_tokens
   check_renderer_metadata
