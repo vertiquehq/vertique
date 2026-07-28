@@ -536,13 +536,13 @@ ADR **0190** (§7) in the meta repo; the doc corrections in §8; bump the stale
   — the `:231` coercion claim now scopes itself correctly instead of implying FORM.
 - `scripts/verify-module-docs.sh` exits 0 (BOM/document/index parity, packaged-link
   containment, no legacy paths).
-- `adr/product/0190-jaxrs-collection-parameter-binding.md` exists with
+- `adr/product/0191-jaxrs-collection-parameter-binding.md` exists with
   `Status: Accepted`, and `adr/product/README.md` says "Next ADR number: 0191".
-Commits: `docs: add ADR 0190 …` / `docs(rest-jaxrs,codegen-jaxrs): correct param-shape documentation`
+Commits: `docs: add ADR 0191 …` / `docs(rest-jaxrs,codegen-jaxrs): correct param-shape documentation`
 
 ## 7. ADRs to write
 
-**ADR-0190 — JAX-RS collection parameter binding model** (S6; decisions frozen in §4).
+**ADR-0191 — JAX-RS collection parameter binding model** (S6; decisions frozen in §4).
 Records: the `componentType != null` multiplicity gate as the single trigger across all
 bindable sources; the absent/default/present state machine and read-only materialization as
 Jakarta REST 4.0 conformance (F12), including the two places the framework deliberately
@@ -571,7 +571,7 @@ Paths are repo-relative. Code repo = `sources/vertique`; meta repo = `vertique-d
 - `docs/plans/feat-param-shape-parity.md` *(removed in the final docs commit)*
 
 **New — meta repo**
-- `adr/product/0190-jaxrs-collection-parameter-binding.md`
+- `adr/product/0191-jaxrs-collection-parameter-binding.md`
 
 **Modified — code repo**
 - `vertique-rest/vertique-rest-jaxrs/src/main/java/dev/vertique/rest/jaxrs/runtime/GeneratedJaxRsDescriptorSupport.java`
@@ -592,9 +592,9 @@ Paths are repo-relative. Code repo = `sources/vertique`; meta repo = `vertique-d
 - `vertique-rest/vertique-rest-jaxrs/src/main/resources/META-INF/vertique/module.md` —
   shapes table row 5 (FORM collections), the collection-coercion claim at `:231`, the new
   violation type, the collection state machine + read-only contract, input-policy scope,
-  `List`-only native multipart, ADR-0190 reference.
+  `List`-only native multipart, ADR-0191 reference.
 - `vertique-codegen/vertique-codegen-jaxrs/src/main/resources/META-INF/vertique/module.md` —
-  remove the false `T[]` "Known Gaps" entry (line 287), note `T[]` supported, ADR-0190 reference.
+  remove the false `T[]` "Known Gaps" entry (line 287), note `T[]` supported, ADR-0191 reference.
 - `vertique-rest-validation`: **no documentation impact** — `WebValidationStrategy` is read
   as-is; no behavior or contract change in that module.
 - `vertique-rest-core`: **no documentation impact** — `ConversionContexts` and the converter
@@ -712,7 +712,7 @@ Each item routes to a GitHub issue in `vertiquehq/vertique-dev` (no backing PRD)
 
 ## Amendments
 
-Entries 1–5 and 7 are as-built notes and corrections of verified facts, so they neither
+Entries 1–5 and 7–9 are as-built notes and corrections of verified facts, so they neither
 re-freeze a contract nor change scope — no sign-off required (`planning.md` § Mid-flight
 amendments). **Entry 6 reduces scope and was user-approved before execution continued.**
 The Contract Appendix (§4) is untouched throughout.
@@ -769,3 +769,18 @@ The Contract Appendix (§4) is untouched throughout.
    `vertique-codegen/vertique-codegen-jaxrs/src/main/java/dev/vertique/codegen/jaxrs/EffectiveParamContract.java`
    (javadoc only, widened `componentType` contract); `emit/ExecutionPlanEmitter.java` was
    already added by amendment 3.
+8. **2026-07-28 — ADR renumbered 0190 → 0191 (correction of a verified fact).** A concurrent
+   session on this machine claimed `0190` for
+   `0190-service-client-companion-selection-and-create-time-fail-fast.md` (CG-015) while this
+   branch was in flight — the collision that memory `adr-number-collisions-parallel-sessions`
+   predicts. This plan's ADR is **0191**, and the renumber covered the source javadoc references
+   in `ParameterExtractor`, `ResourceScanner`, and `RouteValidator` as well as this plan file, not
+   just the ADR filename. The `adr/product/README.md` marker was stale at `0189` and is now
+   `0192`; a missing `0189` index row was backfilled in the same edit.
+
+9. **2026-07-28 — §4 decision 2's source list is right; a doc instruction was not (as-built).**
+   While correcting `vertique-rest-jaxrs`'s `module.md` it emerged that `@PathParam` never resolves
+   a component type at all (`ResourceScanner:397-406` does not call `resolveComponentType`), so the
+   collection state machine covers QUERY/HEADER/COOKIE/FORM only. §4 decision 2 and the S4 tests
+   already scoped it that way; the error was in a delegated instruction that said "path/query/
+   header/cookie/form", and it was caught rather than propagated into the doc.

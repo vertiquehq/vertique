@@ -446,7 +446,7 @@ class ResourceScanner {
                         param.getType(),
                         componentType,
                         // genericType stays null for FORM: ResourceMethodMeta.ParamMeta documents it as
-                        // the full generic type for BODY parameters only (ADR-0190), and the FORM
+                        // the full generic type for BODY parameters only (ADR-0191), and the FORM
                         // collection path needs only type() + componentType() to materialize.
                         null,
                         resolveDefaultValue(mergedParamAnnotations),

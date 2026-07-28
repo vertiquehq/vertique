@@ -79,7 +79,7 @@ class RouteValidator {
      * ({@link FileUpload} / {@link EntityPart}) but whose declared type is a collection shape other
      * than {@link List} — {@code Set}, {@code SortedSet}, {@code NavigableSet}, {@code Collection}.
      * {@code ParameterExtractor.extractFormParam} materializes only a scalar target and
-     * {@code List<T>} natively (ADR-0190 decision 6); any other shape would fall through to string
+     * {@code List<T>} natively (ADR-0191 decision 6); any other shape would fall through to string
      * conversion and fail per-request, so startup fails fast instead.
      *
      * <p>Running from {@link #validateMethodParams} places this check <em>before</em> the

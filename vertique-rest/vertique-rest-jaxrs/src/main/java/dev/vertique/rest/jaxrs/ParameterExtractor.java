@@ -383,7 +383,7 @@ final class ParameterExtractor {
     private Object extractScalarValue(
             ResourceMethodMeta.ParamMeta paramMeta, EffectiveInputPolicies policies, RequestValue rv) {
         if (rv == null || rv.isNull()) {
-            // A collection-valued parameter has its own absence contract (ADR-0190 / Jakarta REST 4.0):
+            // A collection-valued parameter has its own absence contract (ADR-0191 / Jakarta REST 4.0):
             // it must never ask for a converter targeting the *collection* type, which is what
             // coerceString would do (there is none, so it would 500).
             if (paramMeta.componentType() != null) {
@@ -494,7 +494,7 @@ final class ParameterExtractor {
      * Applies the absence contract for a collection-valued parameter — a parameter whose
      * {@code componentType()} is non-{@code null} — when the request supplied no value for its name.
      *
-     * <p>Per Jakarta REST 4.0 (and ADR-0190):
+     * <p>Per Jakarta REST 4.0 (and ADR-0191):
      * <ul>
      *   <li>with a {@code @DefaultValue}, the result is a <em>single-entry</em> collection holding the
      *       default converted through the same per-element context {@link #coerceCollection} uses (the
@@ -507,7 +507,7 @@ final class ParameterExtractor {
      * </ul>
      *
      * <p>A {@code @DefaultValue} on an array is not covered by the spec; the framework materialises a
-     * single-element array by analogy with the single-entry collection rule (ADR-0190). Defaults are
+     * single-element array by analogy with the single-entry collection rule (ADR-0191). Defaults are
      * <em>not</em> submitted to the input-policy chain, mirroring the scalar rule in
      * {@link #extractScalarValue}.
      *
@@ -854,7 +854,7 @@ final class ParameterExtractor {
      *   <li>a native multipart <em>collection</em> target — {@code List<FileUpload>} or
      *       {@code List<EntityPart>}. These guards are keyed on the native component type
      *       <em>together with</em> {@code type() == List.class}: {@link List} is the only collection
-     *       shape with a native materialization (ADR-0190 decision 6), and any other collection shape
+     *       shape with a native materialization (ADR-0191 decision 6), and any other collection shape
      *       carrying a native component type is rejected at startup by {@link RouteValidator} rather
      *       than silently falling through to string conversion here;</li>
      *   <li>a text collection target — any {@code componentType() != null} shape
@@ -893,7 +893,7 @@ final class ParameterExtractor {
             return null;
         }
         // Native multipart collections: List-only by contract, and read-only like every other
-        // injected collection (ADR-0190 decision 3).
+        // injected collection (ADR-0191 decision 3).
         if (pm.componentType() == FileUpload.class && pm.type() == List.class) {
             // Stream.toList() is already unmodifiable.
             return ctx.fileUploads().stream()
@@ -917,7 +917,7 @@ final class ParameterExtractor {
         }
         // Text collection form field: bind ALL submitted values for the name, so a repeated
         // x-www-form-urlencoded/multipart field materialises the declared collection shape exactly as
-        // the equivalent @QueryParam would (ADR-0190 decision 2).
+        // the equivalent @QueryParam would (ADR-0191 decision 2).
         if (pm.componentType() != null) {
             // getAll() returns an EMPTY list — never null — for an absent field, so emptiness MUST be
             // tested before materializing: otherwise the absence contract (empty collection, or a
@@ -954,7 +954,7 @@ final class ParameterExtractor {
      *
      * <p>The returned list is <em>read-only</em>: an aggregate {@code List<EntityPart>} is a
      * {@code @FormParam} collection injection target like any other, so it carries the same
-     * read-only guarantee (ADR-0190 decision 3).
+     * read-only guarantee (ADR-0191 decision 3).
      *
      * @param ctx the current routing context
      * @return an unmodifiable list of all entity parts
