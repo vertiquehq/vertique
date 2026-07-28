@@ -110,6 +110,13 @@ module reference or [module index](docs/modules.md) row.
 Each published module owns its detailed reference documentation at
 `src/main/resources/META-INF/vertique/module.md`.
 
+## Coding agents
+
+The companion [vertique-skills](https://github.com/vertiquehq/vertique-skills) repository ships
+agent skills for Claude Code, Codex CLI, GitHub Copilot, and Cursor. Its knowledge skill reads the
+canonical `module.md` inside the exact artifact versions your application resolves, so an agent's
+answers stay version-matched to your build rather than to whichever documentation is newest.
+
 ## Examples
 
 The `examples/` directory contains standalone applications for REST, services,

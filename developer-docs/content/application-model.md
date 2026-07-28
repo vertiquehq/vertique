@@ -21,8 +21,10 @@ order verticle deployment. It uses the REST application generated in
 Before the section-by-section detail below, here is how the pieces fit together — each one
 explained in full further down this page, in its own module reference, or on its own corpus page:
 
-- **Application component.** Every application supplies its own Dagger `@Component` annotated
-  `@VertiqueApp` — see [What your application owns](#what-your-application-owns).
+- **Application component.** Every application supplies its own Dagger `@Component`; on the
+  supported path it is annotated `@VertiqueApp`, which generates the component factory a manual
+  registration would otherwise supply — see
+  [What your application owns](#what-your-application-owns).
 - **Verticles and deployments.** Your application contributes `VerticleDeployment` entries into a
   named lifecycle phase; the framework deploys each phase's verticles in order — see
   [How lifecycle phases order deployments](#how-lifecycle-phases-order-deployments).

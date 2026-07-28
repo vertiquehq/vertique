@@ -17,7 +17,11 @@ durability stack for workflows, jobs, and transactional inbox/outbox messaging. 
 configuration, and observability compose around that foundation.
 
 Vertique is designed so humans and coding agents work from the same versioned contracts, generated
-application model, compile-time guardrails, and executable verification paths. The framework grows
+application model, compile-time guardrails, and executable verification paths. The companion
+[vertique-skills](https://github.com/vertiquehq/vertique-skills) repository packages that design
+for agent harnesses — Claude Code, Codex CLI, GitHub Copilot, and Cursor — answering module
+questions from the canonical reference inside the exact artifact versions your application
+resolves, alongside starter and archetype selection guidance. The framework grows
 out of years of building production microservices, carried forward into this same explicit,
 non-blocking design.
 
@@ -31,9 +35,10 @@ non-blocking design.
   an explicit worker opt-in instead of running on the event loop by accident. These guardrails
   cover the code you write; a module you forget to list in your own
   [application component](application-model.md) is a gap this generation does not yet close.
-- **One stateful-service spine.** Durable workflows, scheduled and delayed jobs, and transactional
-  inbox/outbox messaging (see [Workflows](workflows.md)) share one PostgreSQL database (see
-  [Persistence](persistence.md)), one Dagger object graph, and the same transaction-consistent
+- **One stateful-service spine.** In their PostgreSQL-backed composition, durable workflows,
+  scheduled and delayed jobs, and transactional inbox/outbox messaging (see
+  [Workflows](workflows.md)) share one PostgreSQL database (see [Persistence](persistence.md)),
+  one Dagger object graph, and the same transaction-consistent
   semantics: outbox delivery is at-least-once, with inbox-side deduplication as the framework's one
   exactly-once effect seam — stated precisely, not oversold. There is no operations UI; these are
   engines and APIs your application composes, not a console handed to you. PostgreSQL is a
