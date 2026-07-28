@@ -11,6 +11,7 @@ import dev.vertique.rest.core.convert.ParamConverterRegistry;
 import dev.vertique.rest.core.interceptor.RequestInterceptor;
 import dev.vertique.rest.core.middleware.Middleware;
 import dev.vertique.rest.core.request.RequestBodyDecoder;
+import dev.vertique.rest.core.response.ResponseBodyEncoder;
 import dev.vertique.rest.core.router.OperationHandlerContributor;
 import dev.vertique.rest.core.security.SecuritySchemeHandler;
 import dev.vertique.rest.jaxrs.validation.FileContentVerifier;
@@ -52,6 +53,7 @@ final class TestFactories {
         private Set<Middleware> middlewares = Set.of();
         private Set<RequestInterceptor> requestInterceptors = Set.of();
         private List<RequestBodyDecoder> sortedDecoders = List.of(new JsonRequestBodyDecoder());
+        private List<ResponseBodyEncoder> encoders = List.of(new StringBodyEncoder(), new JsonBodyEncoder());
         private JaxRsConfig jaxRsConfig = JaxRsConfig.builder()
                 .validationStrategy(NoneValidationStrategy.ID)
                 .build();
@@ -151,6 +153,19 @@ final class TestFactories {
         }
 
         /**
+         * Sets the priority-sorted response body encoders used by both the response serializer and
+         * the factory's {@code sortedEncoders} (defaults to a string encoder plus a JSON encoder).
+         * Override to exercise a non-default encoder such as {@link ReadStreamBodyEncoder}.
+         *
+         * @param encoders the priority-sorted encoders
+         * @return this builder
+         */
+        Builder encoders(List<ResponseBodyEncoder> encoders) {
+            this.encoders = encoders;
+            return this;
+        }
+
+        /**
          * Sets the JAX-RS config (e.g. to select a validation strategy by id).
          *
          * @param config the JAX-RS config
@@ -212,8 +227,6 @@ final class TestFactories {
                     : new ExceptionMapperRegistry(defaultMapper, Set.of());
             RestExceptionMapper restExceptionMapper = new RestExceptionMapper();
             RestContextResolution restContextResolution = new RestContextResolution(Set.of());
-            List<dev.vertique.rest.core.response.ResponseBodyEncoder> encoders =
-                    List.of(new StringBodyEncoder(), new JsonBodyEncoder());
             DefaultResponseSerializer responseSerializer = new DefaultResponseSerializer(List.of(), encoders);
             HttpConfig httpConfig = HttpConfig.builder().build();
 

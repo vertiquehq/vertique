@@ -23,9 +23,9 @@ import jakarta.ws.rs.core.Response;
  *       error metrics or alerting</li>
  *   <li>{@link #onSerialize} — called read-only just before the serialized body is written
  *       to the wire; suitable for digest or checksum computation</li>
- *   <li>{@link #afterResponse} — called for every terminal outcome: success responses, mapped
- *       error responses, and the fallback-500 path when {@link #transformResponse} fails
- *       catastrophically; suitable for audit emission</li>
+ *   <li>{@link #afterResponse} — called at wire handoff for every terminal outcome: success
+ *       responses, mapped error responses, and the fallback-500 path when
+ *       {@link #transformResponse} fails catastrophically; suitable for audit emission</li>
  * </ul>
  *
  * <h3>Async handlers (can affect outcome)</h3>
@@ -133,10 +133,17 @@ public interface RequestInterceptor extends OrderedExtension {
     default void onSerialize(RoutingContext rc, Response response, SerializedBody body) {}
 
     /**
-     * Synchronous observer called after the response pipeline completes, for
-     * <strong>every</strong> terminal outcome — success responses, error responses, and the
-     * bare-metal fallback 500 that fires when the {@link #transformResponse} chain fails
-     * catastrophically.
+     * Synchronous observer called at <strong>wire handoff</strong>, for <strong>every</strong>
+     * terminal outcome — success responses, error responses, and the bare-metal fallback 500 that
+     * fires when the {@link #transformResponse} chain fails catastrophically.
+     *
+     * <p>"Wire handoff" means the response write has been <em>initiated</em>: the status and headers
+     * are on the wire and the body write has started. For a streamed body the bytes may still be in
+     * flight when this hook runs, so a response observed here can still be truncated by a mid-stream
+     * failure or a client abort. That is deliberate — the hook fires while the routing context and
+     * the tracing span are still active, which is what lets observers attribute the outcome to the
+     * request. Wire <em>completion</em> is reported separately, through the completion event's
+     * wire-failure classification, not by delaying or re-firing this hook.
      *
      * <p>For the fallback-500 path the {@code response} argument is a synthetic
      * {@code Response.status(500)} with no entity. The response is final and cannot be modified
@@ -148,8 +155,8 @@ public interface RequestInterceptor extends OrderedExtension {
      * <p>Exceptions thrown here are swallowed — use {@link #transformResponse} to modify responses.
      *
      * @param rc       the current routing context
-     * @param response the final response after all transformations; on the fallback-500 path this
-     *                 is a synthetic {@code 500} with no entity
+     * @param response the final response after all transformations, as handed off to the wire; on
+     *                 the fallback-500 path this is a synthetic {@code 500} with no entity
      */
     default void afterResponse(RoutingContext rc, Response response) {}
 

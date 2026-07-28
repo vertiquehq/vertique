@@ -37,6 +37,8 @@ import io.vertx.core.http.HttpClient;
 import io.vertx.core.http.HttpClientResponse;
 import io.vertx.core.http.HttpMethod;
 import io.vertx.core.http.HttpServer;
+import io.vertx.core.http.StreamResetException;
+import io.vertx.core.impl.NoStackTraceThrowable;
 import io.vertx.ext.web.Router;
 import io.vertx.ext.web.RoutingContext;
 import io.vertx.junit5.VertxExtension;
@@ -1262,6 +1264,137 @@ class RestRequestCompletionEmitterTest {
                             // Both close() were invoked regardless of the first one throwing
                             assertEquals(1, closedBadCount.get(), "throwing scope's close must have been called");
                             assertEquals(1, closedGoodCount.get(), "good scope's close must also have been called");
+                        });
+                        ctx.completeNow();
+                    }));
+        }
+    }
+
+    @Nested
+    @DisplayName("Wire-failure enrichment")
+    class WireFailureEnrichment {
+
+        @Test
+        @DisplayName("KEY_WIRE_FAILURE marker present on an otherwise-clean completion populates wireFailureCode")
+        void emitPopulatesWireFailureCodeFromMarker(VertxTestContext ctx) {
+            List<RestRequestCompletedEvent> captured = new ArrayList<>();
+            RestRequestCompletionEmitter em = emitter(Set.of(captured::add));
+            RouterWithBarrier rb = routerWithBarrier(vertx, em, rc -> {
+                rc.put(RestRequestCompletionEmitter.KEY_WIRE_FAILURE, new IllegalStateException("truncated stream"));
+                rc.response().setStatusCode(200).end();
+            });
+
+            startServer(rb.router())
+                    .compose(port -> client.request(HttpMethod.GET, port, "127.0.0.1", "/test")
+                            .compose(req -> req.send()))
+                    .compose(resp -> {
+                        ctx.verify(() -> assertEquals(200, resp.statusCode()));
+                        return awaitBarrier(vertx, rb.barrier());
+                    })
+                    .onComplete(ctx.succeeding(v -> {
+                        ctx.verify(() -> {
+                            assertEquals(1, captured.size(), "exactly one event must be emitted");
+                            assertEquals(
+                                    "IllegalStateException",
+                                    captured.get(0).wireFailureCode(),
+                                    "marker present -> wireFailureCode set to the cause's simple class name");
+                        });
+                        ctx.completeNow();
+                    }));
+        }
+
+        @Test
+        @DisplayName("No marker and a clean end -> wireFailureCode stays null")
+        void emitLeavesWireFailureCodeNullOnCleanCompletion(VertxTestContext ctx) {
+            List<RestRequestCompletedEvent> captured = new ArrayList<>();
+            RestRequestCompletionEmitter em = emitter(Set.of(captured::add));
+            RouterWithBarrier rb = routerWithBarrier(vertx, em, rc -> {});
+
+            startServer(rb.router())
+                    .compose(port -> client.request(HttpMethod.GET, port, "127.0.0.1", "/test")
+                            .compose(req -> req.send()))
+                    .compose(resp -> {
+                        ctx.verify(() -> assertEquals(200, resp.statusCode()));
+                        return awaitBarrier(vertx, rb.barrier());
+                    })
+                    .onComplete(ctx.succeeding(v -> {
+                        ctx.verify(() -> {
+                            assertEquals(1, captured.size(), "exactly one event must be emitted");
+                            assertNull(
+                                    captured.get(0).wireFailureCode(),
+                                    "clean completion -> wireFailureCode must stay null");
+                        });
+                        ctx.completeNow();
+                    }));
+        }
+
+        /**
+         * The precedence and normalization rules exercised here are pure branches of
+         * {@link RestRequestCompletionEmitter#wireFailureCode(Throwable, io.vertx.core.AsyncResult)}
+         * — asserted directly against the static method rather than through a router/socket, since
+         * neither input requires a live request to construct.
+         */
+        @Test
+        @DisplayName("Marker present AND a failed end-handler result -> the marker's cause wins")
+        void markerWinsOverEndHandlerFailure() {
+            Throwable marker = new IllegalStateException("marker-cause");
+            Future<Void> endResult = Future.failedFuture(new RuntimeException("end-handler-cause, ignored"));
+
+            String wireFailureCode = RestRequestCompletionEmitter.wireFailureCode(marker, endResult);
+
+            assertEquals(
+                    "IllegalStateException",
+                    wireFailureCode,
+                    "the marker's cause must win over the end-handler failure, regardless of either message");
+        }
+
+        @Test
+        @DisplayName("NoStackTraceThrowable+\"Connection closed\" normalizes to ConnectionClosed; "
+                + "StreamResetException and an unrelated same-message exception do not")
+        void emitNormalizesConnectionClosedFromFailedEndHandler() {
+            assertEquals(
+                    "ConnectionClosed",
+                    RestRequestCompletionEmitter.wireFailureCode(
+                            null, Future.failedFuture(new NoStackTraceThrowable("Connection closed"))),
+                    "NoStackTraceThrowable+\"Connection closed\" must normalize");
+            assertEquals(
+                    "StreamResetException",
+                    RestRequestCompletionEmitter.wireFailureCode(
+                            null, Future.failedFuture(new StreamResetException(0L))),
+                    "StreamResetException must keep its own simple class name");
+            assertEquals(
+                    "RuntimeException",
+                    RestRequestCompletionEmitter.wireFailureCode(
+                            null, Future.failedFuture(new RuntimeException("Connection closed"))),
+                    "an unrelated exception with the same message must not normalize (class+message predicate)");
+        }
+
+        @Test
+        @DisplayName("emit(ctx, endResult) wiring: a failed end-handler result with no marker populates "
+                + "wireFailureCode on the emitted event")
+        void emitPopulatesWireFailureCodeFromFailedEndHandlerWiring(VertxTestContext ctx) {
+            List<RestRequestCompletedEvent> captured = new ArrayList<>();
+            RestRequestCompletionEmitter em = emitter(Set.of(captured::add));
+            // No KEY_WIRE_FAILURE marker is set here — only the endResult channel carries a failure,
+            // proving emit(ctx, endResult) actually threads that argument into the emitted event
+            // (the seam markerWinsOverEndHandlerFailure above no longer exercises end-to-end).
+            RouterWithBarrier rb = routerWithBarrier(
+                    vertx, em, rc -> em.emit(rc, Future.failedFuture(new RuntimeException("client vanished"))));
+
+            startServer(rb.router())
+                    .compose(port -> client.request(HttpMethod.GET, port, "127.0.0.1", "/test")
+                            .compose(req -> req.send()))
+                    .compose(resp -> {
+                        ctx.verify(() -> assertEquals(200, resp.statusCode()));
+                        return awaitBarrier(vertx, rb.barrier());
+                    })
+                    .onComplete(ctx.succeeding(v -> {
+                        ctx.verify(() -> {
+                            assertEquals(1, captured.size(), "exactly one event must be emitted");
+                            assertEquals(
+                                    "RuntimeException",
+                                    captured.get(0).wireFailureCode(),
+                                    "the endResult channel must populate wireFailureCode when no marker is set");
                         });
                         ctx.completeNow();
                     }));

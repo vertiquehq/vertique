@@ -474,32 +474,41 @@ Package-private utility that resolves the exception type `T` from each `Exceptio
 
 ### DefaultResponseSerializer
 
-Concrete implementation of `ResponseSerializer` (defined in `rest-core`). Writes a `jakarta.ws.rs.core.Response` to the HTTP wire.
+Concrete implementation of `ResponseSerializer` (defined in `rest-core`). Encodes the entity of a `jakarta.ws.rs.core.Response` and writes it to the HTTP wire, returning the wire-completion future required by the SPI's dual-channel contract.
+
+The status code and the response headers are **already on the wire** when this serializer runs — `ResponsePipeline.applyToWire` writes them before delegating. The serializer only owns the body.
 
 **Pipeline:**
-1. Invoke all `RequestInterceptor.onSerialize()` hooks in `OrderedExtension.comparator()` order (phase → priority → orderKey; read-only, observability)
-2. Copy status code and headers to the HTTP response
-3. Serialize the entity:
+1. **Null entity** — invoke `RequestInterceptor.onSerialize()` with a `null` body, then `response.end()`
+2. **Select encoder** — first `ResponseBodyEncoder` in `OrderedExtension.comparator()` order (phase → priority → orderKey) whose `canEncode(entityType, effectiveContentType)` matches; the effective Content-Type is read from the already-written response headers
+3. **No encoder matches** — log a warning, switch the response to `500` / `application/problem+json`, invoke `onSerialize()` with the `ProblemDetail` body, and end with the problem JSON
+4. **Encode** — `encoder.encode(ctx, response, entity)` produces a `SerializedBody`; an encoder failure propagates as a **synchronous throw** with nothing written (this is what makes the `ResponsePipeline` error fail-open retry safe)
+5. **Observe** — invoke all `RequestInterceptor.onSerialize()` hooks with the encoded body (read-only: logging, metrics, audit)
+6. **Dispatch to wire** — apply the encoder's Content-Type (only when the response has none) and Content-Length, then write
 
-| Entity type | Behavior |
-|-------------|----------|
-| `null` | `response.end()` — no body |
-| `Buffer` | Write buffer directly (pre-serialized content) |
-| `ReadStream<Buffer>` | Pipe the stream to the HTTP response |
-| Any other object | `Json.encode(entity)`, sets `Content-Type: application/json` if not already set |
+| Encoded body | Wire write | Returned future |
+|--------------|-----------|-----------------|
+| `null` entity (step 1) | `response.end()` | the `end()` future |
+| No encoder matched (step 3) | `response.end(problemJson)` after status `500` | the `end(String)` future |
+| `BufferedBody` | `response.end(buffer)` | the `end(Buffer)` future |
+| `StreamingBody` | `stream.pipe().endOnFailure(false).to(response)` | the pipe future |
 
-`RestModule` provides `DefaultResponseSerializer` as the `ResponseSerializer` binding. Override with a custom `@Provides ResponseSerializer` to use CBOR, XML, or any other format.
+Framework encoders (all priority `1000`, so an application encoder at the default priority `0` wins): `BufferBodyEncoder`, `ByteArrayBodyEncoder`, `StringBodyEncoder`, `ReadStreamBodyEncoder` (`ReadStream<Buffer>` only), `JsonBodyEncoder` (fallback).
+
+**Streaming failure ownership.** A `StreamingBody` is piped, never buffered (FR-RESTSER-013 / NFR-003), and `endOnFailure(false)` means this serializer does **not** end the response when the pipe fails: the returned future fails with the source or (unwrapped) write cause, and terminal cleanup belongs to the caller observing that future. A successful pipe ends the response and succeeds the future.
+
+`RestModule` provides `DefaultResponseSerializer` as the `ResponseSerializer` binding. Override with a custom `@Provides ResponseSerializer` to use CBOR, XML, or any other format — a custom implementation must honor the same dual-channel contract (see the `ResponseSerializer` section of the `vertique-rest-core` module reference).
 
 ### ResponsePipeline
 
-Package-private internal orchestrator for the unified response pipeline. All responses (success and error) flow through the same path: `produce()` → `transformResponse` chain → `afterResponse` observers → serialize → wire.
+Package-private internal orchestrator for the unified response pipeline. All responses (success and error) flow through the same path: `produce()` → `transformResponse` chain → wire handoff (`applyToWire`) → `afterResponse` observers → wire-completion observation.
 
 ```java
 class ResponsePipeline {
     Response produce(RoutingContext ctx, Object result) { ... }
     void sendResponse(RoutingContext ctx, Response response) { ... }
     void handle(RoutingContext ctx, Object result) { ... }  // convenience: produce + sendResponse
-    static void sendFallback500(RoutingContext ctx, Throwable cause) { ... }
+    void sendFallback500(RoutingContext ctx, Throwable cause) { ... }
 }
 ```
 
@@ -511,8 +520,27 @@ class ResponsePipeline {
 
 **`sendResponse()` pipeline (unified for success + error):**
 1. **Transform** — chain `RequestInterceptor.transformResponse()` hooks (async, priority-ordered)
-2. **Observe** — fire `RequestInterceptor.afterResponse()` sync observers (both success and error)
-3. **Serialize** — delegate to `ResponseSerializer.serialize()` (invokes `onSerialize` hooks, then writes to wire)
+2. **Hand off to the wire** — `applyToWire()` writes status + headers, then ends the response (null entity) or delegates the body to `ResponseSerializer.serialize()` (which invokes `onSerialize` hooks). This *initiates* the write and returns its wire-completion future
+3. **Observe** — fire `RequestInterceptor.afterResponse()` sync observers (both success and error), **after** the handoff and **before** the wire completes
+4. **Observe wire completion** — attach a failure observer to the completion future from step 2
+
+A synchronous throw from step 2 means nothing was written: it routes to `sendFallback500()`, which fires the single `afterResponse` with a synthetic 500 (see the `afterResponse` contract in `dev.vertique:vertique-rest-core`).
+
+**Wire-completion observation (post-handoff failures).** Steps 3 and 4 encode the split between *handoff* and *completion*. `afterResponse` deliberately fires at handoff, while a streamed body may still be in flight, because observers need the routing context and the tracing span to still be active. A failure that surfaces afterwards — a truncated stream, a client abort — is therefore reported through a different channel:
+
+- The request `Context` is captured **before** the handoff. A custom serializer's completion future may settle on any thread, so failure handling is redispatched onto that context (run inline when already on it, or when there is no context).
+- The cause is stored on the routing context under `RestRequestCompletionEmitter.KEY_WIRE_FAILURE` (first writer wins) so the completion event can classify it.
+- A WARN names the method, path, status, and the cause's **class simple name** only — a wire failure message can echo peer or payload detail — with the full throwable at DEBUG.
+- **Termination is pipeline-owned.** The serializer never ends a failed response, so the pipeline closes it if it is not closed already — but *how* it closes depends on whether the truncated response can still be framed honestly:
+  - **Fixed-length mismatch → reset.** Vert.x performs no `Content-Length`-satisfaction check in `end()`. Ending a non-chunked response that declared `Content-Length: N` after `M != N` body bytes were written *succeeds*, fires the end handlers, and leaves the keep-alive connection open carrying a body that violates its own framing — a peer or intermediary then reads the next response's head as this body's remainder (response desync). The pipeline therefore calls `HttpServerResponse.reset()` instead: stream-scoped (RST_STREAM on HTTP/2, connection close on HTTP/1.1), so the client observes an incomplete transfer rather than a well-framed lie. The guard fires for **any** non-chunked response whose declared `Content-Length` does not equal `bytesWritten()` — short *or* surplus, head committed *or* not (Vert.x preserves the explicit header, so an uncommitted `end()` would ship a zero-byte body advertised as a complete `N`-byte one) — and an unparseable declared length **fails closed** (reset), since a length the guard cannot parse is one it cannot verify. Accounting limit: `bytesWritten()` counts *initiated* writes and is not rolled back when a write fails, so equality proves the framing consistency of the initiated writes, not peer delivery.
+  - **Chunked → clean `end()`.** The terminal zero-length chunk frames the truncation honestly, so a chunked stream is simply ended.
+  - The `end()` itself remains fully guarded: it can still raise `IllegalStateException` synchronously (an already-written race, or a write initiated from a foreign thread) and can fail its returned future on a dead connection. Neither escapes into the completion observer, and both fall back to a reset.
+  - **The reset has its own backstop.** Its returned future is observed: when the reset fails (or throws) and the response is still not ended, an **HTTP/1** request closes the connection as the last resort, because that connection is the transport for this one response and leaving it open is the desync this path exists to prevent. **HTTP/2** does nothing further — the connection multiplexes sibling streams that have nothing to do with this response, and a stream reset that could not be delivered means the connection is already gone. The honest guarantee is therefore *reset-or-close* on HTTP/1 and *stream-reset* on HTTP/2; a connection that is already dead needs neither. All of this stays at DEBUG and never escapes into the completion observer.
+- Nothing else happens: no bare 500 (the client already has the status line), no `afterResponse` re-fire, and no `sendFallback500()` re-entry.
+
+`sendFallback500()` observes its own `end()` future the same way — a bare-metal 500 that never reached the client is logged and recorded under the same key. That path is one instance of a wider class: a write failure that surfaces only on the **terminal `end()`** — a buffered `end(buf)`, a null-entity `end()`, or a stream's final `end()` — may settle *after* the response end handler has already emitted the completion event, because Vert.x runs the end handlers inline before `end()` returns. For every such late-`end()` failure the WARN is guaranteed while completion-event enrichment is best-effort.
+
+**Error fail-open and completion.** `serializeErrorWithFailOpen()` retries only on a *synchronous* throw (nothing written yet, FR-JSON-058A) and returns the completion future of the attempt that actually ran, so the pipeline observes exactly one wire completion per response. A failed completion future is a post-handoff failure and is never retried.
 
 **Accept header negotiation:** when no `ResponseProducer` is registered for the result type, the handler negotiates `Content-Type` using `AcceptNegotiator.negotiate()`:
 - Candidates from `@Produces` or `["application/json"]` default

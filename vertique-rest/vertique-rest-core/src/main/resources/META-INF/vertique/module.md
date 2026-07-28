@@ -1363,6 +1363,50 @@ Both sets are declared as empty `@Multibinds` in `RestCoreModule`. The native re
 
 `RestCoreModule` provides the `@Singleton ParamConverterRegistry` and `@Singleton ParamConversionResolver` built from these multibindings. Both `RestModule` (server, in `rest-jaxrs`) and `RestClientModule` (client, in `rest-client`) include `RestCoreModule`, so an application wiring both halves gets one shared conversion stack — a converter registered once applies identically to inbound JAX-RS parameter binding and outbound REST-client request serialization, with no duplicate-binding conflict.
 
+### RestRequestCompletionEmitter
+
+ROOT `Middleware` in `dev.vertique.rest.core.events` that emits exactly one `RestRequestCompletedEvent` per handled request from the response end handler. It publishes the routing-context keys that other modules read or write without depending on internal key names:
+
+| Constant | Key | Written by | Value |
+|----------|-----|------------|-------|
+| `KEY_OPERATION_ID` | `rest.events.operationId` | `OperationIdCaptureContributor` | the OpenAPI `operationId` of the matched operation |
+| `KEY_ROUTE_TEMPLATE` | `rest.events.routeTemplate` | `OperationIdCaptureContributor` | the OpenAPI path template of the matched operation |
+| `KEY_WIRE_FAILURE` | `vertique.rest.core.events.wireFailure` | the response pipeline in `rest-jaxrs` | the `Throwable` that failed the wire write **after** the response was handed off |
+
+`KEY_WIRE_FAILURE` marks a *post-handoff* wire failure — the status and headers (and possibly part of the body) already reached the client before the write failed, as with a truncated stream or a client abort. The marker is written at most once per request: **first writer wins**, so the first observed failure is the one preserved.
+
+Its absence means either that the write completed cleanly, or that the failure surfaced only on the **terminal `end()`** — a buffered `end(buffer)`, a null-entity `end()`, or a stream's final `end()` — and settled after the completion event had already been emitted. Vert.x runs the response end handlers inline before `end()` returns, so such a late-`end()` failure cannot be captured by the exactly-once event; the response pipeline always logs it at `WARN`, and event enrichment on that path is best-effort.
+
+### RestRequestCompletedEvent
+
+Immutable completion event for a terminal HTTP request outcome, emitted exactly once per handled
+request by `RestRequestCompletionEmitter`.
+
+| Field | Type | Description |
+|-------|------|--------------|
+| `startTime` / `endTime` | `Instant` | Request registration / completion observation instants |
+| `method` / `path` | `String` | HTTP method name and raw request path |
+| `routeTemplate` / `operationId` | `String` (nullable) | OpenAPI path template / operationId; `null` when the request did not reach operation dispatch |
+| `statusCode` | `int` | HTTP status code actually sent |
+| `failureCode` | `String` (nullable) | Low-cardinality pipeline-mapped failure classification (e.g. the exception's simple class name) |
+| `safeFailureMessage` | `String` (nullable) | Curated, bounded human-readable message — NEVER raw exception text or a stack trace |
+| `wireFailureCode` | `String` (nullable) | Low-cardinality **post-handoff** wire-failure classification (the failure cause's class simple name, or `ConnectionClosed` per the close-normalization predicate documented above); `null` when no wire failure was *observed* (see the late-`end()` carve-out below); orthogonal to `failureCode` — **a 200-status event carrying a non-null `wireFailureCode` is the truncated-response signature** |
+| `securityContextSnapshot` / `correlationContext` | snapshot types (nullable) | Immutable point-in-time snapshots, isolated from later rebind/mutation of the live holder-bound context |
+| `origin` | `Optional<RequestOrigin>` | Network-envelope origin; never `null` as an `Optional` |
+| `safeAttributes` | `Map<String, Object>` | Additional attributes contributed by the emitter or enrichment hooks; normalized to an unmodifiable copy, never `null` |
+
+`wireFailureCode` is populated by `RestRequestCompletionEmitter.emit()` from two inputs — the
+`KEY_WIRE_FAILURE` marker (streaming failures, wins when present) and a failed end-handler
+`AsyncResult` (client aborts) — normalized per the close-normalization predicate documented above.
+`vertique-micrometer-rest`'s `error.type` tag falls back to it when `failureCode` is absent.
+
+**Late-`end()` carve-out.** Neither input covers a write failure that surfaces *only* on the
+terminal `end()` — a buffered `end(buffer)`, a null-entity `end()`, or a stream's final `end()`.
+Vert.x runs the response end handlers inline before `end()` returns, so such a failure can settle
+after this event was emitted and is therefore not captured by `wireFailureCode`. It is always
+logged at `WARN` by the response pipeline in `vertique-rest-jaxrs`; only event enrichment is
+best-effort on that path.
+
 ### RequestCompletionScope
 
 `Set<RequestCompletionScope>` multibinding (`@Multibinds` in `RestCoreModule`) for establishing one or more ambient scopes around the synchronous completion-listener dispatch loop inside `RestRequestCompletionEmitter`. Multiple integrations may contribute simultaneously.
@@ -1597,19 +1641,33 @@ public interface ResponseProducer<T> {
 
 ### ResponseSerializer
 
-Serializes a `jakarta.ws.rs.core.Response` to the HTTP wire. Implementations invoke all `RequestInterceptor.onSerialize()` hooks before writing. Injectable/replaceable via Dagger to support custom serialization formats (CBOR, XML, etc.).
+Serializes a `jakarta.ws.rs.core.Response` body to the HTTP wire and reports **wire completion** to the caller. Injectable/replaceable via Dagger to support custom serialization formats (CBOR, XML, etc.).
 
 ```java
 public interface ResponseSerializer {
-    void serialize(RoutingContext ctx, Response response);
+    Future<Void> serialize(RoutingContext ctx, Response response);
 }
 ```
 
-The default implementation (`DefaultResponseSerializer` in `rest-jaxrs`) handles:
-- `null` entity → `response.end()` (no body)
-- `Buffer` entity → writes the buffer directly (pre-serialized content)
-- `ReadStream<Buffer>` entity → pipes the stream to the HTTP response
-- Any other entity → JSON via `Json.encode()`, sets `Content-Type: application/json` if not already set
+**Invocation context.** Called by the response pipeline for responses requiring serializer-owned body handling, on the request's event-loop context, after the status code and headers have been written to the routing context's response and after `transformResponse` hooks have run. Normal empty-body and bare fallback paths bypass the serializer entirely; the error fail-open path may retry it exactly once after a synchronous pre-initiation failure (FR-JSON-058A). Implementations must not block the calling thread.
+
+**Completion contract (dual-channel):**
+
+| Channel | Meaning | Caller obligation |
+|---------|---------|-------------------|
+| Synchronous throw | No write or end was initiated (encode-time failure) | May retry against the same response head (fail-open, FR-JSON-058A) |
+| Returned future — success | The response has been fully written and ended | None |
+| Returned future — failure | The wire write failed after handoff; zero or more bytes may have been written | Never retry; the caller owns terminal cleanup (the response may still need ending) |
+
+The returned future is never `null` and **may complete on any thread** — callers must not assume context affinity; the framework pipeline redispatches handling onto the request context.
+
+The default implementation (`DefaultResponseSerializer` in `rest-jaxrs`) selects a `ResponseBodyEncoder` for the entity and returns, per branch:
+- `null` entity → the future of `response.end()` (no body)
+- no matching encoder → the future of `response.end(problemJson)` after switching the response to `500` / `application/problem+json`
+- `BufferedBody` → the future of `response.end(buffer)`
+- `StreamingBody` → the future of `stream.pipe().endOnFailure(false).to(httpResponse)` — the stream is never buffered (FR-RESTSER-013 / NFR-003) and the serializer never ends the response on pipe failure
+
+All `RequestInterceptor.onSerialize()` hooks are invoked before the body is handed to the wire.
 
 ### ResponseProducerBinding
 

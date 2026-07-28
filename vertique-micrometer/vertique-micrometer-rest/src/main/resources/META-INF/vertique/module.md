@@ -144,7 +144,17 @@ Per-request timer. One sample is recorded per `RestRequestCompletedEvent`.
 | `operation` | OpenAPI operationId | `UNKNOWN` for auth-rejected and pre-dispatch requests |
 | `status` | HTTP response status code as a string, e.g. `200` | Always a numeric string |
 | `outcome` | Low-cardinality bucket: `INFORMATIONAL`, `SUCCESS`, `REDIRECTION`, `CLIENT_ERROR`, `SERVER_ERROR`, `UNKNOWN` | Derived by integer division of the status code by 100; status 0 or outside 100–599 → `UNKNOWN` |
-| `error.type` | Simple class name of the failure, e.g. `IllegalStateException` | `none` when no failure was recorded |
+| `error.type` | `failureCode`, else `wireFailureCode`, else `none` | Simple class name of the pipeline-mapped failure (e.g. `IllegalStateException`); when absent, falls back to the post-handoff wire-failure classification on `RestRequestCompletedEvent` (e.g. `ConnectionClosed`) |
+
+**`error.type` on a 200-status series.** Because `error.type` falls back to `wireFailureCode`, a
+timer sample tagged `status=200` MAY carry a non-`none` `error.type` — that combination (`status`
+200 with a non-`none` `error.type`) is the truncated-response signature: the client received a 200
+response head, but the wire write failed after handoff (a mid-stream failure or a client abort).
+The fallback inherits `wireFailureCode`'s coverage limit: a write failure that surfaces only on the
+terminal `end()` (buffered, null-entity, or a stream's final `end()`) can settle after the
+completion event was emitted, so `error.type` stays `none` for it even though the response pipeline
+logs it. See `wireFailureCode` on `RestRequestCompletedEvent` in `vertique-rest-core`'s module
+reference for the derivation, the close-normalization predicate, and the late-`end()` carve-out.
 
 Outcome mapping (class `HttpOutcome`, package-private):
 

@@ -15,7 +15,9 @@ import dev.vertique.rest.core.security.SecurityRuntime;
 import dev.vertique.security.SecurityContext;
 import dev.vertique.security.SecurityContextSnapshot;
 import dev.vertique.security.origin.RequestOrigin;
+import io.vertx.core.AsyncResult;
 import io.vertx.ext.web.RoutingContext;
+import jakarta.annotation.Nullable;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
 import java.time.Instant;
@@ -91,6 +93,9 @@ public final class RestRequestCompletionEmitter implements Middleware {
      * {@code ResourceMethodInvoker} can read the value without depending on internal keys.
      */
     public static final String KEY_ROUTE_TEMPLATE = "rest.events.routeTemplate";
+
+    /** Post-handoff wire-failure marker; value: Throwable; first writer wins. */
+    public static final String KEY_WIRE_FAILURE = "vertique.rest.core.events.wireFailure";
 
     /**
      * Execution order: runs after {@link RequestContextLifecycle} (ORDER = {@link Integer#MIN_VALUE})
@@ -207,7 +212,7 @@ public final class RestRequestCompletionEmitter implements Middleware {
     @Override
     public void handle(RoutingContext ctx) {
         ctx.put(KEY_START_TIME, Instant.now());
-        ctx.addEndHandler(v -> emit(ctx));
+        ctx.addEndHandler(ar -> emit(ctx, ar));
         ctx.next();
     }
 
@@ -217,9 +222,16 @@ public final class RestRequestCompletionEmitter implements Middleware {
      * Emits the {@link RestRequestCompletedEvent} exactly once for the given routing context.
      * Protected against double-invocation by an idempotent flag stored on the context.
      *
-     * @param ctx the routing context for the completed request
+     * <p>Package-private (not {@code private}) so {@code RestRequestCompletionEmitterTest} can
+     * drive it directly with a synthetic {@link AsyncResult} for wire-failure scenarios that
+     * cannot be produced deterministically over a real socket (e.g. an HTTP/2-only
+     * {@code StreamResetException} on an HTTP/1.1 test server).
+     *
+     * @param ctx       the routing context for the completed request
+     * @param endResult the outcome delivered to the response end handler; consulted for
+     *                  {@code wireFailureCode} when the {@link #KEY_WIRE_FAILURE} marker is absent
      */
-    private void emit(RoutingContext ctx) {
+    void emit(RoutingContext ctx, AsyncResult<Void> endResult) {
         // --- Exactly-once guard ---
         if (Boolean.TRUE.equals(ctx.get(KEY_EMITTED))) {
             return;
@@ -259,6 +271,11 @@ public final class RestRequestCompletionEmitter implements Middleware {
         // safeFailureMessage: intentionally null. Raw exception messages are unsafe (§10.3).
         // A future curated source may populate this field via enrichment.
         String safeFailureMessage = null;
+        // wireFailureCode: post-handoff wire-failure classification. The KEY_WIRE_FAILURE marker
+        // (streaming failures, set by the response pipeline; first-writer-wins) takes precedence
+        // over a failed end-handler result (client aborts).
+        Throwable marker = ctx.get(KEY_WIRE_FAILURE);
+        String wireFailureCode = wireFailureCode(marker, endResult);
 
         RestRequestCompletedEvent event = new RestRequestCompletedEvent(
                 startTime,
@@ -270,6 +287,7 @@ public final class RestRequestCompletionEmitter implements Middleware {
                 status,
                 failureCode,
                 safeFailureMessage,
+                wireFailureCode,
                 secSnapshot,
                 corr,
                 origin,
@@ -297,6 +315,52 @@ public final class RestRequestCompletionEmitter implements Middleware {
         } finally {
             closeScopesQuietly(opened);
         }
+    }
+
+    /**
+     * Derives the wire-failure classification for a completed request from the two input
+     * channels of the {@code ResponseSerializer} completion contract: the {@link #KEY_WIRE_FAILURE}
+     * marker (streaming failures, set by the response pipeline) and the end-handler
+     * {@link AsyncResult} (client aborts). The marker takes precedence when both carry a failure;
+     * when neither does, returns {@code null} (clean wire completion).
+     *
+     * @param marker    the {@link #KEY_WIRE_FAILURE} routing-context marker value, or {@code null}
+     *                  when absent
+     * @param endResult the outcome delivered to the response end handler
+     * @return the normalized wire-failure classification, or {@code null} on clean completion
+     */
+    static String wireFailureCode(@Nullable Throwable marker, AsyncResult<Void> endResult) {
+        if (marker != null) {
+            return normalizeWireFailureCause(marker);
+        }
+        if (endResult != null && endResult.failed()) {
+            return normalizeWireFailureCause(endResult.cause());
+        }
+        return null;
+    }
+
+    /**
+     * Normalizes a wire-failure cause to a low-cardinality classification string safe for use as
+     * a metric label: the cause's class simple name, except the Vert.x 5.1.2 connection-close
+     * signal — {@link io.vertx.core.impl.NoStackTraceThrowable} with the exact message
+     * {@code "Connection closed"} — which normalizes to {@code "ConnectionClosed"}. Matched by
+     * class name AND message (not message alone), so an unrelated exception carrying the same
+     * text is not misclassified. An HTTP/2 {@code StreamResetException} is intentionally NOT
+     * normalized and keeps its own simple class name.
+     *
+     * <p><strong>Version-coupled:</strong> the exact class name and message are Vert.x 5.1.2
+     * internals ({@code io.vertx.core.impl.NoStackTraceThrowable} is not part of the public API);
+     * revisit this predicate on a Vert.x upgrade.
+     *
+     * @param cause the wire-failure cause; never {@code null}
+     * @return the normalized classification string; never {@code null}
+     */
+    private static String normalizeWireFailureCause(Throwable cause) {
+        if (cause.getClass().getName().equals("io.vertx.core.impl.NoStackTraceThrowable")
+                && "Connection closed".equals(cause.getMessage())) {
+            return "ConnectionClosed";
+        }
+        return cause.getClass().getSimpleName();
     }
 
     // --- Scope helpers ---

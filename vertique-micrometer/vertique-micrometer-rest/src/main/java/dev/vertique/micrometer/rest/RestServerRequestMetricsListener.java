@@ -29,7 +29,10 @@ import lombok.extern.slf4j.Slf4j;
  *   <li>{@code operation} — OpenAPI operationId, or {@code UNKNOWN} when unavailable</li>
  *   <li>{@code status} — HTTP response status code as a string (e.g. {@code 200})</li>
  *   <li>{@code outcome} — low-cardinality {@link HttpOutcome} bucket (e.g. {@code SUCCESS})</li>
- *   <li>{@code error.type} — simple class name of the failure, or {@code none} on success</li>
+ *   <li>{@code error.type} — {@code failureCode} when present, else {@code wireFailureCode}
+ *       (a post-handoff wire failure — see {@code RestRequestCompletedEvent}), else {@code none}.
+ *       A {@code 200}-status series may therefore carry a non-{@code none} {@code error.type}:
+ *       that combination is the truncated-response signature.</li>
  * </ul>
  *
  * <p>When {@code metricsConfig} is present and {@link MetricsConfig#enabled()} returns
@@ -110,7 +113,12 @@ public final class RestServerRequestMetricsListener implements RestRequestComple
             String operation = event.operationId() != null ? event.operationId() : UNKNOWN;
             String status = String.valueOf(event.statusCode());
             String outcome = HttpOutcome.from(event.statusCode()).name();
-            String errorType = event.failureCode() != null ? event.failureCode() : NONE;
+            // error.type (D1=A): failureCode wins when present; otherwise fall back to
+            // wireFailureCode (a truncated-response signal — see RestRequestCompletedEvent); a
+            // 200-status series may therefore carry a non-"none" error.type.
+            String errorType = event.failureCode() != null
+                    ? event.failureCode()
+                    : (event.wireFailureCode() != null ? event.wireFailureCode() : NONE);
 
             Tags tags = Tags.of(
                     TAG_METHOD, method,

@@ -139,6 +139,12 @@ scope. A completion listener has no `RoutingContext` and may run after the trace
 the server span. Using `onError`/`afterResponse` ensures the span is still recording when the
 outcome is written.
 
+`afterResponse` fires at *wire handoff*, so a streamed body may still be in flight when the span
+outcome is recorded: a response that is later truncated is recorded here as the status the client was
+sent. Wire completion is reported instead on `RestRequestCompletedEvent.wireFailureCode`, consumed by
+metrics and audit. That does not change the pre-write rationale above — moving this interceptor to the
+completion listener to catch truncations would lose the span entirely.
+
 **Outcome recording rules:**
 
 | Trigger | Span status | `error.type` attribute |
