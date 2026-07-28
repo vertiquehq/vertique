@@ -10,7 +10,7 @@ SPDX-License-Identifier: EUPL-1.2
 > **Artifact:** `vertique-job-cron`
 > **Depends on:** job-core, services, logging, deploy
 
-Timer-based cron scheduler for recurring jobs. Parses 6-field cron expressions, registers self-rescheduling Vert.x timers, and dispatches executions via fire-and-report over the event bus to service operation handlers. Jobs are discovered at startup by scanning service implementations for `@CronJob` annotations. Config-only jobs (without annotations) can be registered via the `cron.jobs` config subtree. Supports both in-memory (`CronModule`) and DB-backed (`CronPersistenceModule`) operation. `SINGLE_INSTANCE` mode uses INSERT ON CONFLICT leader election for cluster-wide singletons. Misfire recovery fires executions missed while all nodes were down.
+Timer-based cron scheduler for recurring jobs. Parses 6-field cron expressions, registers self-rescheduling Vert.x timers, and dispatches executions via fire-and-report over the event bus to service operation handlers (the reply-address delivery mode documented in `vertique-services`'s module reference). Jobs are discovered at startup by scanning service implementations for `@CronJob` annotations. Config-only jobs (without annotations) can be registered via the `cron.jobs` config subtree. Supports both in-memory (`CronModule`) and DB-backed (`CronPersistenceModule`) operation. `SINGLE_INSTANCE` mode uses INSERT ON CONFLICT leader election for cluster-wide singletons. Misfire recovery fires executions missed while all nodes were down.
 
 ---
 

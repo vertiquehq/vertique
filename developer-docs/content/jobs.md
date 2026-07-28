@@ -87,6 +87,10 @@ linear, or exponential — up to a maximum attempt count before moving the row t
 A future-scheduled job uses the same enqueued state as immediate work, just with a future eligible
 time, so the one claim query picks up both.
 
+Both this poller and cron scheduling report that success-or-failure outcome back over the event bus
+through the dispatch envelope's reply-address mechanism, which the [`vertique-services` module
+reference](../../vertique-services/src/main/resources/META-INF/vertique/module.md) documents in full.
+
 ## Typed job contracts and generated proxies
 
 A typed job contract separates the enqueue API from the execution logic using a pair of linked
