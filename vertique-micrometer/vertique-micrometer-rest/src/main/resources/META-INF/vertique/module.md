@@ -150,8 +150,11 @@ Per-request timer. One sample is recorded per `RestRequestCompletedEvent`.
 timer sample tagged `status=200` MAY carry a non-`none` `error.type` — that combination (`status`
 200 with a non-`none` `error.type`) is the truncated-response signature: the client received a 200
 response head, but the wire write failed after handoff (a mid-stream failure or a client abort).
-See `wireFailureCode` on `RestRequestCompletedEvent` in `vertique-rest-core`'s module reference for
-the derivation and the close-normalization predicate.
+The fallback inherits `wireFailureCode`'s coverage limit: a write failure that surfaces only on the
+terminal `end()` (buffered, null-entity, or a stream's final `end()`) can settle after the
+completion event was emitted, so `error.type` stays `none` for it even though the response pipeline
+logs it. See `wireFailureCode` on `RestRequestCompletedEvent` in `vertique-rest-core`'s module
+reference for the derivation, the close-normalization predicate, and the late-`end()` carve-out.
 
 Outcome mapping (class `HttpOutcome`, package-private):
 

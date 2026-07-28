@@ -816,13 +816,11 @@ class ResponsePipelineTest {
         }
 
         @Test
-        @DisplayName("A terminal end() that throws (declared Content-Length) is guarded and does not escape")
-        void declaredLengthStreamFailureEndGuarded() {
-            // given a streamed response with a declared Content-Length whose premature end() throws
+        @DisplayName("A terminal end() that throws (already-written race) is guarded and does not escape")
+        void throwingTerminalEndGuarded() {
+            // given a response whose terminal end() loses an already-written race and throws
             Promise<Void> wire = pendingWireCompletion();
-            when(httpResponse.end())
-                    .thenThrow(new IllegalStateException(
-                            "You must set the Content-Length header to be the total size" + " of the message body"));
+            when(httpResponse.end()).thenThrow(new IllegalStateException("Response has already been written"));
             RuntimeException cause = new RuntimeException("stream aborted mid-body");
             pipeline.sendResponse(ctx, Response.ok("body").build());
 

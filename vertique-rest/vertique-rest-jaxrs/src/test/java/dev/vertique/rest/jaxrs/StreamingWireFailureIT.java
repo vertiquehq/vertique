@@ -403,8 +403,9 @@ public class StreamingWireFailureIT {
     /**
      * Marks every response as chunked before the body is written. A streamed response of unknown
      * length must declare chunked transfer encoding; a declared {@code Content-Length} would instead
-     * make the pipeline's terminal {@code end()} illegal for a truncated body, which is not the
-     * behavior under test here.
+     * put the truncated response on the pipeline's <em>reset</em> path (an under-length fixed-length
+     * body cannot be framed honestly by {@code end()}), which is not the behavior under test here —
+     * these tests pin the clean-end path for a chunked stream.
      *
      * <p>Stands in for {@link ReadStreamBodyEncoder}'s current default — a plain {@link ReadStream}
      * entity yields a {@code StreamingBody} with neither {@code Content-Length} nor chunked encoding

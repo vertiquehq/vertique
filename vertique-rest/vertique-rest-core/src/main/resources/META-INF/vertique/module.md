@@ -1373,7 +1373,9 @@ ROOT `Middleware` in `dev.vertique.rest.core.events` that emits exactly one `Res
 | `KEY_ROUTE_TEMPLATE` | `rest.events.routeTemplate` | `OperationIdCaptureContributor` | the OpenAPI path template of the matched operation |
 | `KEY_WIRE_FAILURE` | `vertique.rest.core.events.wireFailure` | the response pipeline in `rest-jaxrs` | the `Throwable` that failed the wire write **after** the response was handed off |
 
-`KEY_WIRE_FAILURE` marks a *post-handoff* wire failure — the status and headers (and possibly part of the body) already reached the client before the write failed, as with a truncated stream or a client abort. The marker is written at most once per request: **first writer wins**, so the first observed failure is the one preserved. Its absence means the write completed cleanly, or that the failure occurred on a path the pipeline cannot observe.
+`KEY_WIRE_FAILURE` marks a *post-handoff* wire failure — the status and headers (and possibly part of the body) already reached the client before the write failed, as with a truncated stream or a client abort. The marker is written at most once per request: **first writer wins**, so the first observed failure is the one preserved.
+
+Its absence means either that the write completed cleanly, or that the failure surfaced only on the **terminal `end()`** — a buffered `end(buffer)`, a null-entity `end()`, or a stream's final `end()` — and settled after the completion event had already been emitted. Vert.x runs the response end handlers inline before `end()` returns, so such a late-`end()` failure cannot be captured by the exactly-once event; the response pipeline always logs it at `WARN`, and event enrichment on that path is best-effort.
 
 ### RestRequestCompletedEvent
 
@@ -1388,7 +1390,7 @@ request by `RestRequestCompletionEmitter`.
 | `statusCode` | `int` | HTTP status code actually sent |
 | `failureCode` | `String` (nullable) | Low-cardinality pipeline-mapped failure classification (e.g. the exception's simple class name) |
 | `safeFailureMessage` | `String` (nullable) | Curated, bounded human-readable message — NEVER raw exception text or a stack trace |
-| `wireFailureCode` | `String` (nullable) | Low-cardinality **post-handoff** wire-failure classification (the failure cause's class simple name, or `ConnectionClosed` per the close-normalization predicate documented above); orthogonal to `failureCode` — **a 200-status event carrying a non-null `wireFailureCode` is the truncated-response signature** |
+| `wireFailureCode` | `String` (nullable) | Low-cardinality **post-handoff** wire-failure classification (the failure cause's class simple name, or `ConnectionClosed` per the close-normalization predicate documented above); `null` when no wire failure was *observed* (see the late-`end()` carve-out below); orthogonal to `failureCode` — **a 200-status event carrying a non-null `wireFailureCode` is the truncated-response signature** |
 | `securityContextSnapshot` / `correlationContext` | snapshot types (nullable) | Immutable point-in-time snapshots, isolated from later rebind/mutation of the live holder-bound context |
 | `origin` | `Optional<RequestOrigin>` | Network-envelope origin; never `null` as an `Optional` |
 | `safeAttributes` | `Map<String, Object>` | Additional attributes contributed by the emitter or enrichment hooks; normalized to an unmodifiable copy, never `null` |
@@ -1397,6 +1399,13 @@ request by `RestRequestCompletionEmitter`.
 `KEY_WIRE_FAILURE` marker (streaming failures, wins when present) and a failed end-handler
 `AsyncResult` (client aborts) — normalized per the close-normalization predicate documented above.
 `vertique-micrometer-rest`'s `error.type` tag falls back to it when `failureCode` is absent.
+
+**Late-`end()` carve-out.** Neither input covers a write failure that surfaces *only* on the
+terminal `end()` — a buffered `end(buffer)`, a null-entity `end()`, or a stream's final `end()`.
+Vert.x runs the response end handlers inline before `end()` returns, so such a failure can settle
+after this event was emitted and is therefore not captured by `wireFailureCode`. It is always
+logged at `WARN` by the response pipeline in `vertique-rest-jaxrs`; only event enrichment is
+best-effort on that path.
 
 ### RequestCompletionScope
 
