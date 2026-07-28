@@ -20,7 +20,7 @@ SPDX-License-Identifier: EUPL-1.2
 | `dev.vertique.services.policy` | `PolicyStage`, `PolicyChainBuilder`, `DispatchPipeline` |
 | `dev.vertique.core.resilience` | `@Timeout`, `@CircuitBreaker`, `@Retry` — shared with `rest-client`; see `dev.vertique:vertique-core` |
 
-Event bus-based service dispatch with contract-first interfaces and declarative resilience policies. Defines services as annotated Java interfaces, deploys them as isolated Vert.x verticles, and provides JDK dynamic proxy clients for transparent event bus communication.
+Event bus-based service dispatch with contract-first interfaces and declarative resilience policies. Defines services as annotated Java interfaces, deploys them as isolated Vert.x verticles, and provides typed clients for transparent event bus communication — generated `{Contract}_ServiceClientProxy` companions when `vertique-codegen-services` is on the build path, with a JDK dynamic proxy fallback otherwise.
 
 ---
 
