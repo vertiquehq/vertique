@@ -98,6 +98,7 @@ module reference or [module index](docs/modules.md) row.
 
 ## Documentation
 
+- [Developer documentation](developer-docs/content/index.md)
 - [Module index](docs/modules.md)
 - [Architecture](docs/architecture.md)
 - [Coding conventions](docs/coding-conventions.md)

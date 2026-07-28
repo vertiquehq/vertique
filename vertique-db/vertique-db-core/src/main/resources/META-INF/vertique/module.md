@@ -151,7 +151,7 @@ static PoolConnectHandler timezoneHandler() {
 
 ### `SqlRepository`
 
-Base interface for database repositories. Exposes factory methods for fluent query builders, `pool()`, `exceptionMapper()`, `inTransaction()`, and `withConnection()`.
+Base interface for database repositories. Exposes factory methods for fluent query builders, `pool()`, `exceptionMapper()`, `transaction()`, and `withConnection()`.
 
 ```java
 public interface SqlRepository {
@@ -262,7 +262,7 @@ Future<Long> count = this.<Void>query("SELECT COUNT(*) FROM items WHERE status =
     .count();
 
 // Inside a transaction with a lock clause
-inTransaction(conn ->
+transaction().execute(conn ->
     this.<Item>query("SELECT id, name FROM items WHERE id = $1")
         .on(conn)
         .params(Tuple.of(id))

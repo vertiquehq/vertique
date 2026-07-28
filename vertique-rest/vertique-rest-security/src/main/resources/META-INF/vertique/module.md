@@ -117,7 +117,7 @@ For the one scoped case V1 supports (single-scheme set with scopes), `EffectiveS
 
 ### SecurityIdentity and SecurityContext
 
-The typed security model is defined in `dev.vertique.security`. See `dev.vertique:vertique-core` for the
+The typed security model is defined in `dev.vertique.security`. See `dev.vertique:vertique-security-core` for the
 full reference. At the REST layer, `IdentityResolutionMiddleware` builds an
 `AuthenticatedSecurityContext` from:
 - `SecurityIdentity` — resolved by the `SecurityIdentityResolver` chain
