@@ -168,5 +168,5 @@ step that runs schema migrations before any of these verticle phases deploy.
 
 ## Continue reading
 
-- Previous: [Quickstart](quickstart.md)
+- Previous: [Core concepts](concepts.md)
 - Next: [Configuration](configuration.md)

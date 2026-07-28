@@ -7,10 +7,17 @@ SPDX-License-Identifier: EUPL-1.2
 
 Use this template when creating a new module doc at the owning consumable module's canonical path, `src/main/resources/META-INF/vertique/module.md`. Add the artifact's direct canonical-resource link to `docs/modules.md` when the artifact or path is new. Not all sections are required — omit empty ones (e.g., skip JAX-RS Integration for non-REST modules).
 
+The audience is an application developer or coding agent using the artifact. Keep framework
+implementation topology, maintainer-only invariants, source-navigation notes, test maps, and ADR
+traceability out of this packaged document. A complex module may keep those details in a
+source-only `DEVELOPMENT.md` at the module root; use `docs/module-development-template.md`.
+
 Module docs are **evergreen reference**: they describe the current state of the module. Do not embed change history, "cycle N additions", or roadmap entries inline.
 
 - **History** belongs in git (`git log -- <canonical module.md path>`).
 - **Decisions and planned work** stay in the private governance repository. Public module documents describe only shipped behavior.
+- **Source-maintainer guidance** belongs in the module-root `DEVELOPMENT.md` when the module needs
+  it. Do not duplicate consumer guidance there.
 
 ---
 
@@ -79,5 +86,8 @@ Which other framework modules this module depends on, and why each dependency ex
 - **Packaged links** may use same-document anchors, external URIs, or module-local files inside the owning `META-INF/vertique/` tree. Use textual Maven coordinates for cross-module references, fully qualified names for source references, and backticked repository-relative paths for repository-only material. Never use `../` traversal.
 - **Index changes** are limited to artifact inventory or canonical-path changes; ordinary content edits do not change `docs/modules.md`.
 - **No `## Version History`**, **no `## Planned Additions`**, and **no `## Related ADRs`** — internal decisions and plans are kept private.
+- **No implementation tour** — package inventories, internal collaborators, generated metadata
+  mechanics, and test topology belong in `DEVELOPMENT.md`. Mention an implementation type only
+  when an application must call, implement, configure, or deliberately replace it.
 - **Status header** uses blockquote: `> **Status:** Stable`.
 - **Evergreen tone** — describe the current behavior. Do not write "as of cycle N" or "added in version X". If a fact will rot the moment the next change lands, it does not belong here.

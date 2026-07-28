@@ -10,9 +10,9 @@ SPDX-License-Identifier: EUPL-1.2
 
 # Quickstart
 
-Quickstart is the fastest way to run a Vertique application: by the end of this page you will have
-generated a REST application from the archetype, run its integration test suite, started it
-locally, and received a JSON response from its generated `/hello` endpoint.
+This REST path is the fastest visible way to see Vertique running. By the end of this page you will
+have generated an application, run its integration test suite, started it locally, and received a
+JSON response from its `/hello` endpoint.
 
 ## Choose your path
 
@@ -145,4 +145,4 @@ Return to the terminal running `mvn -ntp exec:java` and press `Ctrl+C`.
 ## Continue reading
 
 - Previous: [Documentation overview](index.md)
-- Next: [Application model](application-model.md)
+- Next: [Core concepts](concepts.md)

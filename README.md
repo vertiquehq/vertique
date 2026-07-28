@@ -5,11 +5,17 @@ SPDX-License-Identifier: EUPL-1.2
 
 # Vertique
 
-Vertique is a Vert.x-native Java 21 framework for teams building services that must coordinate
-durable work without giving up an explicit, non-blocking architecture. It combines compile-time
-application assembly and diagnostics with typed event-bus services and a PostgreSQL-backed
-durability stack for workflows, jobs, and transactional inbox/outbox messaging. REST, security,
-configuration, observability, and Kafka integration compose around that foundation.
+Vertique is an opinionated, agent-native, Vert.x-native Java 21 framework for teams building
+microservices that must coordinate durable work without giving up an explicit, non-blocking
+architecture. It combines compile-time application assembly and diagnostics with typed event-bus
+services and a PostgreSQL-backed durability stack for workflows, jobs, and transactional
+inbox/outbox messaging. REST, security, configuration, observability, and Kafka integration
+compose around that foundation.
+
+Every consumable artifact carries version-matched module documentation. The companion
+[Vertique skills](https://github.com/vertiquehq/vertique-skills) resolve an application's Maven
+versions and read the references from those exact artifacts, giving coding agents the same
+release-specific contract as developers.
 
 ## Build
 
