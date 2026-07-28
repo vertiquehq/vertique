@@ -17,26 +17,26 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * RED tests for array-typed parameter FQN resolution in generated JAX-RS descriptors (legacy
- * issue #153 / plan finding F1, S1).
+ * Verifies array-typed parameter FQN resolution in generated JAX-RS descriptors (legacy issue
+ * #153 / plan findings F1 and F4).
  *
  * <p>{@code JaxRsDescriptorEmitter} emits a parameter's erased type as a string FQN constant and
  * resolves it inside the generated {@code describe()} body via
- * {@link GeneratedJaxRsDescriptorSupport#resolveClass(String, ClassLoader)}. For array-typed
- * parameters, {@code TypeMirrorFqn.erasedFqn} falls through to {@code TypeMirror.toString()},
- * which yields Java <em>source</em> form (e.g. {@code "java.lang.String[]"}). {@code resolveClass}
- * passes that string straight to {@code Class.forName}, which cannot load source-array form —
- * the generated helper wraps the resulting {@link ClassNotFoundException} in an
- * {@link IllegalStateException} and rethrows it, so {@code describe()} throws.
+ * {@link GeneratedJaxRsDescriptorSupport#resolveClass(String, ClassLoader)}. That wire format is
+ * Java <em>source</em> array form — a base name plus one {@code []} pair per dimension — which
+ * {@code Class.forName} cannot load directly; {@code resolveClass} therefore strips the brackets
+ * and rebuilds the array class via {@code Array.newInstance} (F1). The stripped base name must be
+ * the <em>binary</em> one, so an array of a nested type emits {@code Outer$Inner[]} rather than the
+ * dotted source form {@code TypeMirror.toString()} would yield (F4).
  *
  * <p>Each test compiles a small resource fixture through {@link JaxRsPipelineProcessor}, then
  * invokes the generated descriptor's {@code describe(...)} method reflectively (mirroring
  * {@code JaxRsDescriptorEmitterTest}'s {@code callDescribe} helper) — asserting only that
- * compilation succeeds would NOT reproduce this defect, since the FQN string is resolved lazily
- * inside {@code describe()}, not at annotation-processing time.
- *
- * <p>These tests assert the desired SUCCESS behavior (no throw, correct resolved type) and are
- * therefore expected to FAIL until the fix lands.
+ * compilation succeeds would NOT reproduce these defects, since the FQN string is resolved lazily
+ * inside {@code describe()}, not at annotation-processing time. Two emitter-level tests complement
+ * that by pinning the emitted string itself: the binary base name in runtime-resolved positions,
+ * and the dotted source form in the one position that is interpolated into generated source (a
+ * BODY parameter's Jackson {@code TypeReference} literal).
  */
 class JaxRsDescriptorArrayParamTest {
 
@@ -215,5 +215,85 @@ class JaxRsDescriptorArrayParamTest {
                 "describe() must not throw for a nested-element-type array param (F4) — the emitted array "
                         + "FQN's base name must resolve to the nested type, whether that requires binary "
                         + "Outer$Inner form or is already handled by dimension-stripping alone");
+    }
+
+    // --- F4 (emitter level): the emitted FQN string itself ---
+
+    @Test
+    @DisplayName("nested-type array param — the emitted descriptor FQN constant uses the binary Outer$Inner base")
+    void nestedTypeArrayParam_emittedFqnUsesBinaryBaseName() {
+        // Emitter-level companion to nestedTypeArrayParam_describe_resolves: pins the exact wire
+        // format TypeMirrorFqn.erasedFqn produces for an array whose base is a nested type — the
+        // BINARY base name plus source-form [] suffixes. The runtime resolver strips the brackets
+        // and hands the base to Class.forName, which only accepts the $ form.
+        var result = ProcessorTestHarness.run(
+                new JaxRsPipelineProcessor(), SourceFiles.inline("dev.vertique.test.NestedArrayEmitOuter", """
+                        package dev.vertique.test;
+
+                        import jakarta.ws.rs.GET;
+                        import jakarta.ws.rs.Path;
+                        import jakarta.ws.rs.QueryParam;
+
+                        @Path("/nested-emit")
+                        public class NestedArrayEmitOuter {
+                            public NestedArrayEmitOuter() {}
+
+                            public enum Inner { A, B }
+
+                            @GET
+                            public String list(@QueryParam("v") Inner[] v) { return ""; }
+                        }
+                        """));
+
+        result.assertSuccess();
+
+        String descriptorFqn = "dev.vertique.test.NestedArrayEmitOuter_JaxRsDescriptor";
+        result.assertGeneratedSourceContains(descriptorFqn, "\"dev.vertique.test.NestedArrayEmitOuter$Inner[]\"");
+        result.assertGeneratedSourceDoesNotContain(descriptorFqn, "\"dev.vertique.test.NestedArrayEmitOuter.Inner[]\"");
+    }
+
+    // --- Guard: array type arguments in a BODY genericType stay in SOURCE form ---
+
+    @Test
+    @DisplayName("List<Inner[]> body param — the emitted TypeReference literal keeps the dotted Outer.Inner form")
+    void nestedTypeArrayInBodyGenericType_emittedTypeReferenceUsesSourceForm() {
+        // The binary base name is correct only for strings the generated code RESOLVES at runtime.
+        // A BODY param's genericType is interpolated into a Jackson TypeReference literal inside the
+        // generated source, where "Outer$Inner[]" would not compile — so that position must keep the
+        // dotted source form. assertSuccess() is the load-bearing assertion here: compile-testing
+        // compiles the generated sources, so a binary base name in this position fails the build.
+        // This fixture pins BOTH forms coexisting in one generated file: the componentType slot
+        // (a runtime resolveClass(...) argument) carries the binary Inner$-form array FQN, while the
+        // TypeReference generic argument carries the dotted source-form one.
+        var result = ProcessorTestHarness.run(
+                new JaxRsPipelineProcessor(), SourceFiles.inline("dev.vertique.test.NestedArrayBodyOuter", """
+                        package dev.vertique.test;
+
+                        import jakarta.ws.rs.Consumes;
+                        import jakarta.ws.rs.POST;
+                        import jakarta.ws.rs.Path;
+                        import jakarta.ws.rs.core.MediaType;
+                        import java.util.List;
+
+                        @Path("/nested-body")
+                        public class NestedArrayBodyOuter {
+                            public NestedArrayBodyOuter() {}
+
+                            public enum Inner { A, B }
+
+                            @POST
+                            @Consumes(MediaType.APPLICATION_JSON)
+                            public String post(List<Inner[]> body) { return "ok"; }
+                        }
+                        """));
+
+        result.assertSuccess();
+
+        String descriptorFqn = "dev.vertique.test.NestedArrayBodyOuter_JaxRsDescriptor";
+        // Source position: the TypeReference generic argument, dotted.
+        result.assertGeneratedSourceContains(
+                descriptorFqn, "TypeReference<java.util.List<dev.vertique.test.NestedArrayBodyOuter.Inner[]>>");
+        // Runtime-resolved position: the componentType string constant, binary.
+        result.assertGeneratedSourceContains(descriptorFqn, "\"dev.vertique.test.NestedArrayBodyOuter$Inner[]\"");
     }
 }
