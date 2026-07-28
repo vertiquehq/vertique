@@ -144,6 +144,8 @@ The exception message names only the destination TYPE and reason category — ne
 
 ### `OutboxRelayConfig`
 
+Deserialized from `inboxOutbox.relay`.
+
 | Field | Default | Description |
 |-------|---------|-------------|
 | `strategy` | `LISTEN_NOTIFY` | `POLLING` or `LISTEN_NOTIFY` |
@@ -153,8 +155,18 @@ The exception message names only the destination TYPE and reason category — ne
 | `maxAttempts` | `20` | Default max attempts for outbox rows |
 | `backoffBaseDelayMs` | `1000` | Base delay for exponential backoff |
 | `backoffMaxDelayMs` | `300000` | Maximum backoff cap in ms |
-| `publishedRetentionDays` | `7` | Days to retain `PUBLISHED` rows before cleanup |
-| `deadLetterRetentionDays` | `30` | Days to retain `DEAD_LETTER` rows before cleanup |
+| `instances` | `1` | Number of `OutboxRelay` verticle instances to deploy |
+
+### `InboxOutboxCleanupConfig`
+
+Deserialized from `inboxOutbox.cleanup`.
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `publishedRetentionDays` | `7` | Days to retain `PUBLISHED` outbox rows before cleanup |
+| `deadLetterRetentionDays` | `30` | Days to retain `DEAD_LETTER` outbox rows before cleanup |
+| `inboxRetentionDays` | `30` | Days to retain processed inbox dedup records before cleanup |
+| `cleanupBatchSize` | `1000` | Maximum records deleted per cleanup batch, across each table |
 
 ---
 
@@ -239,7 +251,7 @@ public interface AppComponent { ... }
 
 ```json
 {
-  "transactionalMessaging": {
+  "inboxOutbox": {
     "relay": {
       "strategy": "LISTEN_NOTIFY",
       "pollingIntervalMs": 1000,
@@ -248,11 +260,13 @@ public interface AppComponent { ... }
       "maxAttempts": 20,
       "backoffBaseDelayMs": 1000,
       "backoffMaxDelayMs": 300000,
-      "publishedRetentionDays": 7,
-      "deadLetterRetentionDays": 30
+      "instances": 1
     },
-    "inbox": {
-      "retentionDays": 30
+    "cleanup": {
+      "publishedRetentionDays": 7,
+      "deadLetterRetentionDays": 30,
+      "inboxRetentionDays": 30,
+      "cleanupBatchSize": 1000
     }
   },
   "cron": {
@@ -264,7 +278,7 @@ public interface AppComponent { ... }
 }
 ```
 
-The previous `inbox.cleanupIntervalHours` field is removed; the configuration object still accepts it for upgrade compatibility (`@JsonIgnoreProperties(ignoreUnknown = true)`) but the value is ignored. Maintenance cadence is now controlled by `cron.jobs.outbox-cleanup.cron` (default `0 0 */6 * * *` — every 6h on wall-clock boundaries) and `cron.jobs.outbox-stale-lease-recovery.cron` (default `*/30 * * * * *` — every 30s). The cron periods match the prior `setPeriodic` defaults, but first-fire timing is wall-clock-aligned rather than uptime-relative.
+The previous `cleanupIntervalHours` field on `InboxOutboxCleanupConfig` is removed; the configuration object still accepts it for upgrade compatibility (`@JsonIgnoreProperties(ignoreUnknown = true)`) but the value is ignored. Maintenance cadence is now controlled by `cron.jobs.outbox-cleanup.cron` (default `0 0 */6 * * *` — every 6h on wall-clock boundaries) and `cron.jobs.outbox-stale-lease-recovery.cron` (default `*/30 * * * * *` — every 30s). The cron periods match the prior `setPeriodic` defaults, but first-fire timing is wall-clock-aligned rather than uptime-relative.
 
 `InboxOutboxPostgresqlComposeValidator` requires `CronJobRegistrar`, `CronScheduler`, and `CronPersistenceMarker`. The marker is bound exclusively by `CronPersistenceModule`, so installing `TransactionalMessagingPostgresqlModule` without it — including the case where the in-memory `CronModule` is installed instead — fails at Dagger codegen.
 

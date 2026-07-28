@@ -73,7 +73,7 @@ intentional ordering behavior, not a bug.
 ## Relay delivery strategies
 
 The PostgreSQL relay supports two claim strategies, configured via
-`transactionalMessaging.relay.strategy`: `LISTEN_NOTIFY` (the default) has the relay listen for a
+`inboxOutbox.relay.strategy`: `LISTEN_NOTIFY` (the default) has the relay listen for a
 PostgreSQL notification so a newly inserted outbox row is claimed close to immediately, with
 periodic polling still running underneath as a safety net for a missed notification or a dropped
 connection; `POLLING` claims purely on a fixed-interval timer. When `LISTEN_NOTIFY` is configured
@@ -83,9 +83,9 @@ transparently, with no manual intervention required.
 ## Retention
 
 Published and dead-lettered outbox rows are not kept forever:
-`transactionalMessaging.relay.publishedRetentionDays` (default 7) and
-`transactionalMessaging.relay.deadLetterRetentionDays` (default 30) bound how long `PUBLISHED` and
-`DEAD_LETTER` rows survive, and `transactionalMessaging.inbox.retentionDays` (default 30) bounds how
+`inboxOutbox.cleanup.publishedRetentionDays` (default 7) and
+`inboxOutbox.cleanup.deadLetterRetentionDays` (default 30) bound how long `PUBLISHED` and
+`DEAD_LETTER` rows survive, and `inboxOutbox.cleanup.inboxRetentionDays` (default 30) bounds how
 long processed inbox rows are kept. Cleanup and stale-lease recovery run as cluster-singleton cron
 jobs rather than a per-node timer — `cron.jobs.outbox-cleanup` (default every 6 hours) and
 `cron.jobs.outbox-stale-lease-recovery` (default every 30 seconds) — so an application installs
