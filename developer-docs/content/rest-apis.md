@@ -154,7 +154,9 @@ annotations on your resource methods and request bodies — including `@NotBlank
 `vertx-json-schema` on every request. This does not consult `openapi.json` at all; the two are
 independent, and OpenAPI-contract validation against the generated document is available as a
 separate opt-in strategy (see [`vertique-rest-openapi-validation`](../../vertique-rest/vertique-rest-openapi-validation/src/main/resources/META-INF/vertique/module.md)
-below) selected with `jaxrs.validationStrategy = "openapi-contract"` in configuration.
+below) selected with `jaxrs.validationStrategy = "openapi-contract"` in configuration. Neither
+strategy validates a resource method's response against the OpenAPI contract — both gate the
+request only.
 
 Posting a blank `name` to `/hello/greetings` is rejected before `createGreeting` ever runs — see
 [Map failures to HTTP responses](#map-failures-to-http-responses) for the exact response body.

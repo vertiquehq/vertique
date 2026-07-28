@@ -10,30 +10,45 @@ SPDX-License-Identifier: EUPL-1.2
 
 # Vertique developer documentation
 
-Vertique is an opinionated Java 21 framework for building Vert.x applications. It lets you write
-REST APIs using JAX-RS annotations on Vert.x, generates an OpenAPI specification from those
-annotations at build time, validates incoming requests by default against JSON Schema synthesized
-from the same annotations (OpenAPI-contract request validation against the generated spec is
-available as a separate opt-in module), and assembles your application with compile-time Dagger 2
-dependency injection instead of a runtime container.
+Vertique is a Vert.x-native Java 21 framework for teams building services that must coordinate
+durable work without giving up an explicit, non-blocking architecture. It combines compile-time
+application assembly and diagnostics with typed event-bus services and a PostgreSQL-backed
+durability stack for workflows, jobs, and transactional inbox/outbox messaging. REST, security,
+configuration, and observability compose around that foundation.
+
+Vertique is designed so humans and coding agents work from the same versioned contracts, generated
+application model, compile-time guardrails, and executable verification paths. The companion
+[vertique-skills](https://github.com/vertiquehq/vertique-skills) repository packages that design
+for agent harnesses — Claude Code, Codex CLI, GitHub Copilot, and Cursor — answering module
+questions from the canonical reference inside the exact artifact versions your application
+resolves, alongside starter and archetype selection guidance. The framework grows
+out of years of building production microservices, carried forward into this same explicit,
+non-blocking design.
 
 ## Why Vertique
 
-- **JAX-RS annotations on Vert.x** — define resources with `@Path`, `@GET`, `@POST`, and the rest
-  of the familiar JAX-RS annotation set; Vertique generates the Vert.x routing for you.
-- **Build-time OpenAPI generation, annotation-driven request validation by default** — the OpenAPI
-  specification is generated from your annotated resources at build time. Incoming requests are
-  validated by default against JSON Schema synthesized from those same annotations (see the
-  [`vertique-rest-validation` module reference](../../vertique-rest/vertique-rest-validation/src/main/resources/META-INF/vertique/module.md)),
-  with contract validation against the generated spec available as an opt-in
-  [`vertique-rest-openapi-validation` module](../../vertique-rest/vertique-rest-openapi-validation/src/main/resources/META-INF/vertique/module.md).
-  Neither server-side validation strategy validates responses against the OpenAPI contract.
-- **Compile-time dependency injection** — application wiring is assembled by Dagger 2 at compile
-  time, so there is no runtime classpath scanning or reflection-based container to configure.
-- **Composable capability** — REST, services, and PostgreSQL persistence compose through starters;
-  security mechanisms, the durable-work families (jobs, workflows, inbox/outbox), and observability
-  (metrics, tracing) compose through direct capability modules named in your own component instead,
-  since none of them publishes a starter of its own.
+- **Failures move earlier.** Dagger resolves your application's object graph at compile time, and
+  the framework's own annotation processors emit diagnostics attributed to your source elements —
+  a missing binding or a malformed contract fails the build, not the running process. A
+  restrictive [security](security.md) annotation with no matching mechanism module fails
+  application startup rather than silently allowing the request through, and blocking work needs
+  an explicit worker opt-in instead of running on the event loop by accident. These guardrails
+  cover the code you write; a module you forget to list in your own
+  [application component](application-model.md) is a gap this generation does not yet close.
+- **One stateful-service spine.** In their PostgreSQL-backed composition, durable workflows,
+  scheduled and delayed jobs, and transactional inbox/outbox messaging (see
+  [Workflows](workflows.md)) share one PostgreSQL database (see [Persistence](persistence.md)),
+  one Dagger object graph, and the same transaction-consistent
+  semantics: outbox delivery is at-least-once, with inbox-side deduplication as the framework's one
+  exactly-once effect seam — stated precisely, not oversold. There is no operations UI; these are
+  engines and APIs your application composes, not a console handed to you. PostgreSQL is a
+  deliberate platform choice, not a constraint discovered later.
+- **Ownership stays explicit.** The framework owns lifecycle machinery, integration plumbing, and
+  request validation; your [application](application-model.md) owns its own component, its
+  deployments, its migrations, its configuration, and where its platform boundaries sit. Every page
+  in this documentation is written from that same split, naming exactly which side does the work —
+  from [REST APIs](rest-apis.md) and [services](services.md) to [persistence](persistence.md) and
+  [workflows](workflows.md).
 
 ## Prerequisites
 

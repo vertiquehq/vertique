@@ -16,6 +16,36 @@ generation produces for you, how starters compose framework capability, and how 
 order verticle deployment. It uses the REST application generated in
 [Quickstart](quickstart.md) as its running example.
 
+## Mental model
+
+Before the section-by-section detail below, here is how the pieces fit together — each one
+explained in full further down this page, in its own module reference, or on its own corpus page:
+
+- **Application component.** Every application supplies its own Dagger `@Component`; on the
+  supported path it is annotated `@VertiqueApp`, which generates the component factory a manual
+  registration would otherwise supply — see
+  [What your application owns](#what-your-application-owns).
+- **Verticles and deployments.** Your application contributes `VerticleDeployment` entries into a
+  named lifecycle phase; the framework deploys each phase's verticles in order — see
+  [How lifecycle phases order deployments](#how-lifecycle-phases-order-deployments).
+- **Launcher vs. runner.** `vertique-launcher`'s `VertiqueApplication` is the host-specific
+  entrypoint that builds the real `Vertx` instance and discovers your component; it hands off to
+  the host-neutral lifecycle runner that actually drives the phases — see
+  [What the launcher owns](#what-the-launcher-owns) and the
+  [`vertique-application` module reference](../../vertique-application/src/main/resources/META-INF/vertique/module.md).
+- **Starters vs. direct modules.** A starter composes a fixed set of framework modules behind one
+  class name, and which modules it includes is a release-line compatibility surface; capability
+  with no starter is instead named directly as a framework module in your own component — see
+  [What starters own](#what-starters-own) and [the supported path](index.md#the-supported-path).
+- **Code generation.** Annotation processors emit Dagger modules — such as
+  `GeneratedJaxRsResourcesModule` — from your own annotated classes at compile time, so you never
+  hand-write their bindings — see [What code generation produces](#what-code-generation-produces).
+- **Configuration.** Your Dagger modules read typed configuration parsed from the merged
+  JSON/properties/environment/system-property tree — see [Configuration](configuration.md).
+- **Durable work.** Workflows, jobs, and inbox/outbox messaging plug into the same component and
+  lifecycle phases as everything else, composed as direct modules rather than through a starter —
+  see [Workflows](workflows.md).
+
 ## What the launcher owns
 
 `vertique-launcher` supplies `VertiqueApplication`, the framework-owned entrypoint every generated
