@@ -21,7 +21,7 @@ SPDX-License-Identifier: EUPL-1.2
             </includes>
         </fileSet>
         <!-- AGENTS.md is unfiltered: Velocity treats "##" as its comment token, so a filtered
-             fileset silently strips every markdown heading from a rendered file (as it already
+             fileset silently strips level-two and deeper markdown headings from a rendered file (as it already
              does to README.md above). AGENTS.md carries no ${...} substitution, so filtering buys
              it nothing and only risks the same heading loss. -->
         <fileSet filtered="false" encoding="UTF-8">

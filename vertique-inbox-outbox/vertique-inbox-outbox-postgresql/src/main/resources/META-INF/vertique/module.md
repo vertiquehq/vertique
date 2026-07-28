@@ -152,7 +152,7 @@ Deserialized from `inboxOutbox.relay`.
 | `pollingIntervalMs` | `1000` | Milliseconds between poll cycles |
 | `batchSize` | `50` | Maximum rows to claim per cycle |
 | `leaseTimeoutMs` | `30000` | Stale lease recovery threshold in ms |
-| `maxAttempts` | `20` | Default max attempts for outbox rows |
+| `maxAttempts` | `20` | Currently unread by any runtime path — the per-row attempt limit is fixed at `20` by `OutboxEntry`'s own default at insert time; setting this key has no effect today |
 | `backoffBaseDelayMs` | `1000` | Base delay for exponential backoff |
 | `backoffMaxDelayMs` | `300000` | Maximum backoff cap in ms |
 | `instances` | `1` | Number of `OutboxRelay` verticle instances to deploy |
@@ -257,7 +257,6 @@ public interface AppComponent { ... }
       "pollingIntervalMs": 1000,
       "batchSize": 50,
       "leaseTimeoutMs": 30000,
-      "maxAttempts": 20,
       "backoffBaseDelayMs": 1000,
       "backoffMaxDelayMs": 300000,
       "instances": 1
