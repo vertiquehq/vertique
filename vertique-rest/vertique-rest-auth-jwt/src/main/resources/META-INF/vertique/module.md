@@ -142,7 +142,7 @@ Standalone utility class for creating `JWTAuth` instances from common key source
 | Prefix | Source |
 |--------|--------|
 | `classpath:` | Classpath resource (reads via `Thread.currentThread().getContextClassLoader()`) |
-| `http://` or `https://` | HTTP fetch with 10-second timeout |
+| `http://` or `https://` | HTTP fetch with 10-second timeout (use `https://` in production; `http://` is local-development only — an on-path attacker could substitute the signing keys) |
 | _(anything else)_ | Filesystem path via `vertx.fileSystem().readFileBlocking()` |
 
 **Usage in `AppModule`:**

@@ -302,29 +302,50 @@ running in the foreground until stopped.
 In a separate terminal, with the application still running:
 
 ```bash
-curl -s -w '\nHTTP_STATUS:%{http_code}\n' -X POST http://localhost:8080/items \
+curl -s -i -X POST http://localhost:8080/items \
   -H 'Content-Type: application/json' \
   -d '{"name":"Widget","description":"A sample widget"}'
 ```
 
-Expected result: `HTTP_STATUS:201`, and a JSON body carrying a server-generated `id` plus a
-`Location: /items/{id}` response header — for example:
+Expected result: a `201 Created` status line, a `Location: /items/{id}` response header, and a JSON
+body carrying a server-generated `id` — for example:
 
 ```text
-{"id":"5125f761-88af-4484-afdf-53d4feb1e14e","name":"Widget","description":"A sample widget"}
-HTTP_STATUS:201
+HTTP/1.1 201 Created
+Cache-Control: no-store
+X-Content-Type-Options: nosniff
+X-Frame-Options: DENY
+Location: /items/d781c3a3-2ec6-4bc3-a1ac-d2a4f5f8b50a
+Content-Type: application/json
+content-length: 93
+X-Request-Id: 09bb7eb0-48d3-4720-aea2-05f85af016b6
+
+{"id":"d781c3a3-2ec6-4bc3-a1ac-d2a4f5f8b50a","name":"Widget","description":"A sample widget"}
 ```
 
 Substitute the `id` your own request returned into the read call:
 
 ```bash
-curl -s -w '\nHTTP_STATUS:%{http_code}\n' http://localhost:8080/items/5125f761-88af-4484-afdf-53d4feb1e14e
+curl -s -i http://localhost:8080/items/d781c3a3-2ec6-4bc3-a1ac-d2a4f5f8b50a
 ```
 
-Expected result: the same JSON body, with `HTTP_STATUS:200`. An empty, whitespace-only, or
-over-length `name`, and a malformed identifier, are all rejected before either reaches the database
-— see [REST APIs](rest-apis.md) for the request-validation gate that guards this and every other
-generated resource.
+Expected result: a `200 OK` status line and the same JSON body:
+
+```text
+HTTP/1.1 200 OK
+Cache-Control: no-store
+X-Content-Type-Options: nosniff
+X-Frame-Options: DENY
+Content-Type: application/json
+content-length: 93
+X-Request-Id: dc94975f-d9ca-446e-9a3a-a5633b1d4042
+
+{"id":"d781c3a3-2ec6-4bc3-a1ac-d2a4f5f8b50a","name":"Widget","description":"A sample widget"}
+```
+
+An empty, whitespace-only, or over-length `name`, and a malformed identifier, are all rejected
+before either reaches the database — see [REST APIs](rest-apis.md) for the request-validation gate
+that guards this and every other generated resource.
 
 ## Stop the application
 

@@ -217,8 +217,8 @@ Return to the terminal running `mvn -ntp exec:java` and press `Ctrl+C` to stop i
 
 Service implementations run on the non-blocking Vert.x event loop by default, and
 `GreetingServiceImpl` above is written for it: it returns an already-completed `Future` and never
-blocks. The packaged `src/main/resources/config/application.json` reflects this — its
-`services.contracts.sample.greeting` section sets only `instances`:
+blocks. The packaged `src/main/resources/config/application.json` reflects this as a shape
+reference only — its `services.contracts.sample.greeting` section sets only `instances`:
 
 ```json
 {
@@ -233,11 +233,15 @@ blocks. The packaged `src/main/resources/config/application.json` reflects this 
 }
 ```
 
-Set `services.contracts.sample.greeting.worker` to `true` in that same file only once
-`GreetingServiceImpl` is changed to perform genuinely blocking work — a JDBC call, a filesystem
-read, or CPU-bound computation. Worker mode is an opt-in for blocking implementations, not the
-default execution model; the generated project's own `README.md` documents this alongside its run,
-verify, package, and container-image commands.
+As [Configuration](configuration.md) explains, `mvn -ntp exec:java` resolves `config/` against the
+running process's own working directory, not the packaged classpath resource, so editing the
+packaged file above has no observable effect on that run. Set
+`services.contracts.sample.greeting.worker` to `true` in `services-app/config/application.json`
+under the project's own working directory instead, and only once `GreetingServiceImpl` is changed
+to perform genuinely blocking work — a JDBC call, a filesystem read, or CPU-bound computation.
+Worker mode is an opt-in for blocking implementations, not the default execution model; the
+generated project's own `README.md` documents this alongside its run, verify, package, and
+container-image commands.
 
 ## Keep REST optional
 

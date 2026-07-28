@@ -30,9 +30,10 @@ dependency injection instead of a runtime container.
   Neither server-side validation strategy validates responses against the OpenAPI contract.
 - **Compile-time dependency injection** — application wiring is assembled by Dagger 2 at compile
   time, so there is no runtime classpath scanning or reflection-based container to configure.
-- **Composable capability** — REST, services, persistence, jobs, workflows, security, and
-  observability are assembled through starters rather than by hand-wiring individual framework
-  modules together.
+- **Composable capability** — REST, services, and PostgreSQL persistence compose through starters;
+  security mechanisms, the durable-work families (jobs, workflows, inbox/outbox), and observability
+  (metrics, tracing) compose through direct capability modules named in your own component instead,
+  since none of them publishes a starter of its own.
 
 ## Prerequisites
 

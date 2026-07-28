@@ -96,7 +96,10 @@ your identity provider's JWKS document instead: `fromJwks(vertx, location)` for 
 filesystem location, `fromJwksAsync(vertx, location)` to fetch an `http://`/`https://` location
 without blocking the event loop during startup, or `fromJwksRefreshing(vertx, location, interval)`
 when the provider rotates its signing keys, so token validation keeps working through a rotation
-without restarting the application. See the
+without restarting the application. A production JWKS location must be `https://`: `JwtAuthFactory`
+logs a startup warning when a JWKS fetch uses plain `http://`, because an on-path attacker could
+substitute the signing keys in transit; a plain-HTTP location is acceptable only for local
+development. See the
 [`vertique-rest-auth-jwt` module reference](../../vertique-rest/vertique-rest-auth-jwt/src/main/resources/META-INF/vertique/module.md)
 for the full method reference and the async startup sequence.
 
@@ -125,9 +128,12 @@ accepted with the `jwt` section of your application config:
 ```
 
 Every field is optional and defaults when omitted — `clockSkewSeconds` defaults to `30` even when
-the whole `validation` object is left out. See the module reference's configuration table for every
-key, and its "Extension Points" section for overriding the whole `JwtAuthConfig` from a
-`@Provides` binding instead of the config file.
+the whole `validation` object is left out — but omitting `issuer` or `audience` means the resulting
+`JWTAuth` accepts tokens from any issuer or audience: `JwtAuthFactory` logs a startup warning for
+each one left unset, and a production configuration should set both to prevent token substitution
+attacks. See the module reference's configuration table for every key, and its "Extension Points"
+section for overriding the whole `JwtAuthConfig` from a `@Provides` binding instead of the config
+file.
 
 ## Enforce authorization on a resource method
 

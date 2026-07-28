@@ -106,12 +106,13 @@ exactly as [Quickstart](quickstart.md), [Services](services.md), and
 
 ## Discover every artifact
 
-[`docs/modules.md`](../../docs/modules.md) is the canonical index of every published Vertique
-artifact: one row per artifact, sorted by artifact id, linking directly to that artifact's own
-canonical `module.md` reference — the same kind of reference every "module reference" link
-elsewhere on this page and throughout this corpus points at. This corpus's own pages walk specific
-journeys through a subset of that index; `docs/modules.md` is where to look up any other Vertique
-artifact by name.
+[`docs/modules.md`](../../docs/modules.md) is the canonical index of every BOM-managed consumable
+Vertique artifact: one row per artifact, sorted by artifact id, linking directly to that artifact's
+own canonical `module.md` reference — the same kind of reference every "module reference" link
+elsewhere on this page and throughout this corpus points at. The application parent, the BOM, and
+the three archetypes above each have no canonical `module.md` of their own and are documented on
+this page instead. This corpus's own pages walk specific journeys through a subset of that index;
+`docs/modules.md` is where to look up any other Vertique artifact by name.
 
 ## Compatibility
 
@@ -135,7 +136,8 @@ guarantee from them:
 - [Packaging guide](../../docs/packaging.md) — the parent and BOM recipes in full, including
   Lombok opt-in and disabling annotation processing.
 - [Root README — Application Maven Setup](../../README.md#application-maven-setup)
-- [Module index](../../docs/modules.md) — every published artifact, one row each.
+- [Module index](../../docs/modules.md) — every BOM-managed consumable artifact with a canonical
+  module reference, one row each; the parent, BOM, and archetypes are covered above instead.
 - [`vertique-starter-core` module reference](../../vertique-starter/vertique-starter-core/src/main/resources/META-INF/vertique/module.md)
 - [`vertique-starter-rest` module reference](../../vertique-starter/vertique-starter-rest/src/main/resources/META-INF/vertique/module.md)
 - [`vertique-starter-services` module reference](../../vertique-starter/vertique-starter-services/src/main/resources/META-INF/vertique/module.md)
