@@ -669,7 +669,16 @@ Mechanical completeness checks:
 Acceptance, criterion by criterion:
 - **#153** — a codegen'd resource with `String[]`/`Integer[]` query/header params binds all
   values identically to reflective dispatch (S3 matrix + parity); a codegen'd resource with a
-  `byte[]` body **starts** (S1) **and serves** (S3 e2e).
+  `byte[]` body **starts** (S1 descriptor test) and its generated **execution plan extracts
+  and passes the bytes** (S3 regression pin, at `ExecutionPlan` level).
+  *Amendment 6, user-approved:* the criterion originally said "and serves (S3 e2e)". A true
+  HTTP-transport e2e is not constructible in `vertique-codegen-jaxrs` — `registerAll` needs
+  ~20 collaborators absent from its test scope, and no server-bearing module carries the
+  processor on its `annotationProcessorPaths`, so there is no running consumer to drive. Every
+  `byte[]`-specific link *is* proven (descriptor resolution, array class-literal emission,
+  BODY extraction — the last already covered reflectively by `AnnotationDrivenRoutingIT:429`
+  over shared code). The unproven seam is generated-descriptor-plus-real-server, a
+  pre-existing gap affecting every generated shape, routed to an issue in §11.
 - **#155** — `@FormParam` `List`/`Set`/`SortedSet`/`NavigableSet`/`Collection`/`T[]` bind all
   submitted values into the declared type on both paths (S5); native `List` multipart shapes
   unchanged; non-`List` native shapes rejected at startup.
@@ -696,13 +705,17 @@ Each item routes to a GitHub issue in `vertiquehq/vertique-dev` (no backing PRD)
 | A framework-level element **ordering guarantee** for multi-value params | Neither Vert.x nor Jakarta REST documents one (F8, F12); promising one would pin one version's observed behavior | Issue: "Decide whether multi-value param ordering is a framework guarantee" |
 | Native multipart in non-`List` collection shapes (`Set<FileUpload>` …) | **Not deferred silently** — now rejected loudly at startup (§4 decision 6). Promoting it to supported would need native materialization, `@FilePart` validation, and security tests | Issue: "Decide whether non-List multipart collection shapes become supported" |
 | Reflective QUERY/HEADER/COOKIE populate `genericType` although the record documents it as BODY-only | Pre-existing inconsistency, untouched by this change; FORM deliberately does **not** join it | Issue: "Reconcile ParamMeta.genericType contract with non-BODY sources" |
+| **HTTP-transport e2e coverage for generated dispatch** (any shape, not just `byte[]`) | Not constructible in `vertique-codegen-jaxrs`; needs an invoker project under `vertique-codegen-integration-tests` that runs the processor and boots a server. Pre-existing gap, not introduced here (Amendment 6, user-approved) | Issue: "Add HTTP-transport e2e coverage for generated JAX-RS dispatch" |
+| **BODY `componentType` diverges between paths** — the codegen resolver computes it source-independently while `ResourceScanner:474-481` hard-codes `null` for BODY, so a BODY `List<Foo>` already carries `componentType=Foo` generated vs `null` reflectively. S3 extends this to `String[]`/boxed-array bodies (primitive-array bodies stay `null`, so `byte[]` is unaffected) | Pre-existing and audited **inert**: `ResourceMethodMetaToDescriptorAdapter.mapParameters` skips non-bindable sources so no `ParamDescriptor` is produced and `wrapValues` never sees it; `mapFileParts`/`RouteValidator` only compare against `FileUpload`/`EntityPart`; both BODY paths pass only `type()`/`genericType()` into `deserializeBody`. Source-gating it would also change BODY *collection* `componentType` — a consumer-visible change to the public `ParamMeta` record that §4 does not decide | Issue: "Reconcile BODY componentType between generated and reflective paths" |
+| **Generated `loadClass` resolution order** — now TCCL-first with the plan's own loader as fallback. Own-loader-*first* is arguably more correct, since the plan is compiled into the same artifact as the resource and multi-classloader deployments can resolve one FQN to two different `Class` objects | The S3 fix chose minimal blast radius: TCCL-first preserves resolution for everything that worked before. Reordering is a production-semantics change with no test pinning it | Issue: "Decide classloader precedence in generated loadClass helpers" |
 | Legacy tracker hygiene | Post-merge per handoff ruling 2 | Close legacy #153 and #155 with pointers once merged |
 
 ## Amendments
 
-All five below are as-built notes and corrections of verified facts, so none re-freezes a
-contract or changes scope — no sign-off required (`planning.md` § Mid-flight amendments).
-The Contract Appendix (§4) is untouched.
+Entries 1–5 and 7 are as-built notes and corrections of verified facts, so they neither
+re-freeze a contract nor change scope — no sign-off required (`planning.md` § Mid-flight
+amendments). **Entry 6 reduces scope and was user-approved before execution continued.**
+The Contract Appendix (§4) is untouched throughout.
 
 1. **2026-07-28 — S1 test sequencing (as-built).** The plan listed
    `arrayFqns_referenceBase_initializationSemanticsPreserved` / `ArrayFqnsTest` among S1's
@@ -737,3 +750,22 @@ The Contract Appendix (§4) is untouched.
    `vertique-rest-jaxrs` SNAPSHOT from the shared `~/.m2` and produces spurious failures —
    the cross-worktree contamination §9 warns about. Every Maven invocation in this branch
    uses `-am`.
+
+6. **2026-07-28 — #153 acceptance criterion narrowed (USER-APPROVED; scope reduction).**
+   Unlike amendments 1–5 this one reduces scope, so it was signed off before execution
+   continued. The `byte[]`-body "and serves" criterion is discharged at `ExecutionPlan` level
+   rather than over HTTP; see §10 for the reasoning and §11 for the routed coverage gap. Two
+   further findings from S3 execution were routed to §11 at the same time: the pre-existing
+   BODY `componentType` divergence (audited inert; not source-gated because that would change
+   BODY collection `componentType`, a public-record change §4 does not decide) and the
+   generated `loadClass` classloader precedence question.
+
+7. **2026-07-28 — S3 adjacent defect fixed in-slice (as-built).** Making `componentType`
+   non-null for arrays exposed a real defect in the emitted `loadClass` helper: it resolved
+   only through the thread context classloader, so a component type nested inside the resource
+   failed at plan class-init. Not test-only — the hello example already emits a nested BODY
+   type through the same helper. Fixed additively in `cfbb05d` per the Adjacent Defects Rule.
+   **Added to §8 Modified:**
+   `vertique-codegen/vertique-codegen-jaxrs/src/main/java/dev/vertique/codegen/jaxrs/EffectiveParamContract.java`
+   (javadoc only, widened `componentType` contract); `emit/ExecutionPlanEmitter.java` was
+   already added by amendment 3.
