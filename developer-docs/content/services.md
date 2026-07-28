@@ -271,3 +271,8 @@ JAX-RS resource — see [REST APIs](rest-apis.md) for adding that resource.
 - [Application model](application-model.md)
 - [REST APIs](rest-apis.md) — add a JAX-RS resource that calls a service.
 - [Documentation overview](index.md)
+
+## Continue reading
+
+- Previous: [REST APIs](rest-apis.md)
+- Next: [Persistence](persistence.md)

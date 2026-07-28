@@ -217,3 +217,8 @@ implementation should follow the same discipline.
 - [REST APIs](rest-apis.md)
 - [Services](services.md)
 - [Documentation overview](index.md)
+
+## Continue reading
+
+- Previous: [Workflows](workflows.md)
+- Next: [Testing](testing.md)

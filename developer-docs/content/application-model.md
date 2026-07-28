@@ -135,3 +135,8 @@ step that runs schema migrations before any of these verticle phases deploy.
 - [`vertique-starter-postgresql` module reference](../../vertique-starter/vertique-starter-postgresql/src/main/resources/META-INF/vertique/module.md)
 - [Configuration](configuration.md) — how the config tree these components inject gets built.
 - [Documentation overview](index.md)
+
+## Continue reading
+
+- Previous: [Quickstart](quickstart.md)
+- Next: [Configuration](configuration.md)

@@ -360,3 +360,8 @@ docker rm -f rest-postgresql-app-db
 - [Configuration](configuration.md)
 - [REST APIs](rest-apis.md)
 - [Documentation overview](index.md)
+
+## Continue reading
+
+- Previous: [Services](services.md)
+- Next: [Workflows](workflows.md)

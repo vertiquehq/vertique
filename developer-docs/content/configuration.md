@@ -132,3 +132,8 @@ own key, and the recursive tree probe falls through to the declared source inste
 - [`vertique-config-azure-keyvault` module reference](../../vertique-config/vertique-config-azure-keyvault/src/main/resources/META-INF/vertique/module.md)
 - [Application model](application-model.md)
 - [Documentation overview](index.md)
+
+## Continue reading
+
+- Previous: [Application model](application-model.md)
+- Next: [REST APIs](rest-apis.md)

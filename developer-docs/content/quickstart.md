@@ -129,3 +129,8 @@ Return to the terminal running `mvn -ntp exec:java` and press `Ctrl+C`.
 - [`vertique-starter-rest` module reference](../../vertique-starter/vertique-starter-rest/src/main/resources/META-INF/vertique/module.md)
   — the starter the generated application depends on.
 - [Documentation overview](index.md)
+
+## Continue reading
+
+- Previous: [Documentation overview](index.md)
+- Next: [Application model](application-model.md)

@@ -87,6 +87,11 @@ Every page in the corpus follows the same authoring rules:
   example — every value shown must be a concrete one that was actually exercised.
 - Never mention a private repository path, an internal architecture-decision record or product
   specification, a private artifact coordinate, or proprietary/enterprise implementation detail.
+- Keep a bare, single-type-parameter Java generic — a capitalized type name wrapped in angle
+  brackets, with no leading lowercase segment — out of unfenced prose entirely, including inside a
+  single-backtick inline code span: the renderer-neutrality scan reads that shape as JSX
+  component-tag syntax and rejects it. Put the generic inside a fenced code block instead, or
+  reword the sentence to describe it without the literal syntax.
 
 The validator (below) enforces the mechanical half of this policy. It also rejects a short list
 of reserved English words that signal an unfinished or unpinned draft; their exact spellings live

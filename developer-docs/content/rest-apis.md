@@ -227,3 +227,8 @@ covered in the [`vertique-rest-jaxrs` module reference](../../vertique-rest/vert
 - [Application model](application-model.md)
 - [Services](services.md) — build a headless capability without a REST adapter.
 - [Documentation overview](index.md)
+
+## Continue reading
+
+- Previous: [Configuration](configuration.md)
+- Next: [Services](services.md)

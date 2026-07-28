@@ -214,3 +214,8 @@ framework's or the application's:
 - [Configuration](configuration.md)
 - [Testing](testing.md)
 - [Documentation overview](index.md)
+
+## Continue reading
+
+- Previous: [Testing](testing.md)
+- Next: [Artifacts](artifacts.md)

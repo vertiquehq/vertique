@@ -73,3 +73,7 @@ time. The supported path is:
   commands.
 - [Deployment](deployment.md) — package, configure, and run a Vertique application.
 - [Artifacts](artifacts.md) — the parent, BOM, starters, archetypes, and how to discover them.
+
+## Continue reading
+
+- Next: [Quickstart](quickstart.md)
