@@ -141,7 +141,7 @@ Scans JAX-RS annotated classes and registers handlers on the plain Vert.x `Route
 **Scanning process:**
 1. Iterates over `Set<Object>` resources
 2. Finds classes annotated with `@Path`
-3. For each public method with an HTTP method annotation (`@GET`, `@POST`, `@PUT`, `@DELETE`, `@PATCH`):
+3. For each public method with an HTTP method annotation (`@GET`, `@POST`, `@PUT`, `@DELETE`, `@PATCH`, `@HEAD`, `@OPTIONS`):
    - Resolves the `operationId` from `@Operation(operationId=...)` or falls back to the method name
    - Builds `ResourceMethodMeta` with method metadata, parameter info, and `@Consumes`/`@Produces` lists (method-level overrides class-level)
    - **Startup validation** (all violations collected and thrown as `RouteRegistrationException` after all resources are scanned):

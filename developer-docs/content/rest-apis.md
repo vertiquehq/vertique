@@ -15,6 +15,10 @@ By the end of this page you will have extended the generated REST application fr
 request body, and you will understand how that method is registered, validated, serialized, and how
 its failures become HTTP responses.
 
+This page uses a bounded subset of JAX-RS 4.0 annotations; see
+[JAX-RS compatibility](rest-jaxrs-compatibility.md) for exactly what is supported, where Vertique
+diverges, and what is not supported.
+
 ## Add a resource
 
 `HelloResource`, generated into `rest-app/src/main/java/com/example/restapp/resource/HelloResource.java`
@@ -233,4 +237,4 @@ covered in the [`vertique-rest-jaxrs` module reference](../../vertique-rest/vert
 ## Continue reading
 
 - Previous: [Configuration](configuration.md)
-- Next: [Services](services.md)
+- Next: [JAX-RS compatibility](rest-jaxrs-compatibility.md)
