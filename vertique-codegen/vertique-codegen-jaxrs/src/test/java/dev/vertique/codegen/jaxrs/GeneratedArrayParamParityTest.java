@@ -5,14 +5,18 @@ package dev.vertique.codegen.jaxrs;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 
 import dev.vertique.codegen.test.ProcessorTestHarness;
 import dev.vertique.codegen.test.fixtures.SourceFiles;
+import dev.vertique.rest.core.convert.ConversionContext;
+import dev.vertique.rest.core.convert.ParamConversionResolver;
 import dev.vertique.rest.core.request.EffectiveInputPolicies;
 import dev.vertique.rest.core.request.RequestValue;
 import dev.vertique.rest.jaxrs.JaxRsRouteRegistrar;
 import dev.vertique.rest.jaxrs.ResourceMethodMeta;
+import dev.vertique.rest.jaxrs.convert.ConversionContexts;
 import dev.vertique.rest.jaxrs.request.BoundRequest;
 import dev.vertique.rest.jaxrs.runtime.BeanParamFieldMeta;
 import dev.vertique.rest.jaxrs.runtime.GeneratedJaxRsDescriptorSupport;
@@ -24,10 +28,13 @@ import io.vertx.ext.web.RoutingContext;
 import jakarta.annotation.Nullable;
 import jakarta.annotation.security.PermitAll;
 import jakarta.ws.rs.Consumes;
+import jakarta.ws.rs.CookieParam;
+import jakarta.ws.rs.FormParam;
 import jakarta.ws.rs.GET;
 import jakarta.ws.rs.HeaderParam;
 import jakarta.ws.rs.POST;
 import jakarta.ws.rs.Path;
+import jakarta.ws.rs.PathParam;
 import jakarta.ws.rs.QueryParam;
 import jakarta.ws.rs.core.MediaType;
 import java.util.Collections;
@@ -46,13 +53,14 @@ import org.junit.jupiter.params.provider.MethodSource;
  * Verifies that generated JAX-RS dispatch treats {@code T[]} query/header/body params at parity
  * with the reflective path (legacy issue #153; plan findings F8, decision 8; S3).
  *
- * <p>{@code S1}/{@code S2} already made array-typed parameter FQNs resolve inside generated
- * {@code describe()} bodies (no more startup crash). What remains broken is that
- * {@code EffectiveJaxRsContractResolver.resolveComponentType} unconditionally returns {@code null}
- * for any {@link javax.lang.model.type.ArrayType}, so the generated {@code componentType()} never
- * gates the multiplicity path the way the reflective {@code ResourceScanner.resolveComponentType} /
- * {@code isScalarArrayComponent} policy does. This class pins that shared policy as a parity
- * contract between the two paths, using two independently-declared representations of each
+ * <p>{@code S1}/{@code S2} made array-typed parameter FQNs resolve inside generated
+ * {@code describe()} bodies (no more startup crash), and {@code S3} made
+ * {@code EffectiveJaxRsContractResolver.resolveComponentType} recognize scalar
+ * {@link javax.lang.model.type.ArrayType} element types so the generated {@code componentType()}
+ * gates the multiplicity path exactly where the reflective
+ * {@code ResourceScanner.resolveComponentType} / {@code isScalarArrayComponent} policy does. This
+ * class pins that shared policy as a parity contract between the two paths, using two
+ * independently-declared representations of each
  * parameter shape — one plain compiled fixture (scanned via the real, public
  * {@link JaxRsRouteRegistrar#scanResource(Object)} entry point) and one source-text fixture
  * compiled through the real {@link JaxRsPipelineProcessor} — mirroring the dual-representation
@@ -61,6 +69,28 @@ import org.junit.jupiter.params.provider.MethodSource;
  * real {@code _JaxRsDescriptor} companion in its own classloader, so
  * {@code GeneratedJaxRsDescriptorRegistry}'s classloader-keyed lookup would transparently
  * short-circuit {@code scanResource} to the generated fast path and defeat the parity comparison.
+ *
+ * <p>Because the two implementations of the policy are hand-mirrored — the runtime one reasons over
+ * {@link Class}, the processor one over {@link javax.lang.model.type.TypeMirror} — the matrix in
+ * {@link #matrixCases()} is the only mechanism holding them equal, so it spans <em>three</em>
+ * dimensions rather than element types alone:
+ *
+ * <ul>
+ *   <li><b>parameter source</b> — every bindable source that can carry an array-typed declaration
+ *       ({@code @PathParam}, {@code @QueryParam}, {@code @HeaderParam}, {@code @CookieParam},
+ *       {@code @FormParam}) plus the unannotated BODY shapes. PATH is the load-bearing row: the
+ *       reflective scanner never resolves a {@code componentType} for it (a path parameter is not
+ *       multi-valued — {@code RoutingContext.pathParams()} is a {@code Map<String, String>}), so
+ *       the generated side must not either;</li>
+ *   <li><b>element type</b> — {@code String} and every boxed scalar the policy accepts
+ *       ({@code Integer}, {@code Long}, {@code Short}, {@code Double}, {@code Float},
+ *       {@code Boolean}, {@code Character}), plus an {@code enum} and a bounded type variable whose
+ *       erasure is an {@code enum};</li>
+ *   <li><b>shapes that must stay non-multi-value</b> — primitive-array bodies
+ *       ({@code int[]}/{@code char[]}/{@code byte[]}/{@code short[]}, decision 8's carve-out) and a
+ *       nested array ({@code String[][]}), whose element type is itself an array and therefore not a
+ *       scalar component on either path.</li>
+ * </ul>
  *
  * <p>{@code ParameterExtractor} and its {@code GeneratedJaxRsSupport} adapter
  * ({@code ParameterExtractorBackedSupport}) are package-private in {@code vertique-rest-jaxrs} and
@@ -93,10 +123,13 @@ class GeneratedArrayParamParityTest {
      *                                    (the primitive-array carve-out)
      * @param expectedPlatformComponentType a cross-compilation-safe exact element type
      *                                    ({@code java.lang.*}) asserted on BOTH sides once fixed;
-     *                                    {@code null} for primitive and user-enum rows, where only
-     *                                    the {@code componentType() != null} nullity is compared
-     *                                    (a nested {@code enum} declared independently in each
-     *                                    compilation unit is never the same {@code Class} object)
+     *                                    {@code null} for the primitive-body, user-enum, and
+     *                                    non-multi-value rows, where only the
+     *                                    {@code componentType() != null} nullity is compared (a
+     *                                    nested {@code enum} declared independently in each
+     *                                    compilation unit is never the same {@code Class} object,
+     *                                    and a row expecting {@code null} has no exact value to
+     *                                    compare)
      */
     private record MatrixCase(
             String label,
@@ -118,6 +151,94 @@ class GeneratedArrayParamParityTest {
         }
     }
 
+    @Path("/matrix-path/{v}")
+    @PermitAll
+    static class StringArrayPathReflective {
+        @GET
+        public String handle(@PathParam("v") String[] v) {
+            return "";
+        }
+    }
+
+    /** FQN of the source-text {@code @PathParam String[]} fixture shared by the matrix and test 5. */
+    private static final String PATH_ARRAY_GENERATED_FQN = "dev.vertique.test.matrix.StringArrayPathGenerated";
+
+    /**
+     * Builds the APT source text for the {@code @PathParam String[]} declaration — the shape whose
+     * generated {@code componentType()} diverged from the reflective path (F1). Shared by the matrix
+     * row and by {@link #pathArrayParam_startupConverterProbe_rejectsOnBothPaths()} so both prove
+     * their halves of the same declaration.
+     *
+     * @return the source fixture for {@link #PATH_ARRAY_GENERATED_FQN}
+     */
+    private static JavaFileObject pathArrayGeneratedSource() {
+        return SourceFiles.inline(PATH_ARRAY_GENERATED_FQN, """
+                package dev.vertique.test.matrix;
+
+                import jakarta.ws.rs.GET;
+                import jakarta.ws.rs.Path;
+                import jakarta.ws.rs.PathParam;
+
+                @Path("/matrix-path/{v}")
+                public class StringArrayPathGenerated {
+                    public StringArrayPathGenerated() {}
+
+                    @GET
+                    public String handle(@PathParam("v") String[] v) { return ""; }
+                }
+                """);
+    }
+
+    @Path("/matrix-header-source")
+    @PermitAll
+    static class StringArrayHeaderSourceReflective {
+        @GET
+        public String handle(@HeaderParam("v") String[] v) {
+            return "";
+        }
+    }
+
+    @Path("/matrix-cookie-source")
+    @PermitAll
+    static class StringArrayCookieSourceReflective {
+        @GET
+        public String handle(@CookieParam("v") String[] v) {
+            return "";
+        }
+    }
+
+    @Path("/matrix-form-source")
+    @PermitAll
+    static class StringArrayFormSourceReflective {
+        @POST
+        public String handle(@FormParam("v") String[] v) {
+            return "";
+        }
+    }
+
+    @Path("/matrix-nested-array")
+    @PermitAll
+    static class NestedStringArrayReflective {
+        @GET
+        public String handle(@QueryParam("v") String[][] v) {
+            return "";
+        }
+    }
+
+    @Path("/matrix-bounded-typevar")
+    @PermitAll
+    static class BoundedTypeVariableArrayReflective {
+        enum Grade {
+            PASS,
+            FAIL
+        }
+
+        @GET
+        public <T extends Grade> String handle(@QueryParam("v") T[] v) {
+            return "";
+        }
+    }
+
     @Path("/matrix-integer")
     @PermitAll
     static class IntegerArrayReflective {
@@ -132,6 +253,33 @@ class GeneratedArrayParamParityTest {
     static class LongArrayReflective {
         @GET
         public String handle(@QueryParam("v") Long[] v) {
+            return "";
+        }
+    }
+
+    @Path("/matrix-short-query")
+    @PermitAll
+    static class ShortArrayReflective {
+        @GET
+        public String handle(@QueryParam("v") Short[] v) {
+            return "";
+        }
+    }
+
+    @Path("/matrix-double-query")
+    @PermitAll
+    static class DoubleArrayReflective {
+        @GET
+        public String handle(@QueryParam("v") Double[] v) {
+            return "";
+        }
+    }
+
+    @Path("/matrix-float-query")
+    @PermitAll
+    static class FloatArrayReflective {
+        @GET
+        public String handle(@QueryParam("v") Float[] v) {
             return "";
         }
     }
@@ -210,11 +358,25 @@ class GeneratedArrayParamParityTest {
     }
 
     /**
-     * Builds the ten matrix rows: {@code String[]}, {@code Integer[]}, {@code Long[]},
-     * {@code Boolean[]}, {@code Character[]}, an {@code enum[]} (all {@code @QueryParam}, expected
-     * QUERY + non-null componentType — RED today), and {@code int[]}/{@code char[]}/{@code byte[]}/
-     * {@code short[]} (all unannotated bodies, expected BODY + null componentType on both paths
-     * already — the carve-out that must keep agreeing, decision 8).
+     * Builds the matrix rows across all three dimensions described in the class javadoc:
+     *
+     * <ul>
+     *   <li><b>sources</b> — an array-typed {@code @PathParam} (expected PATH + <em>null</em>
+     *       componentType: a path parameter is single-valued on both paths),
+     *       {@code @QueryParam}/{@code @HeaderParam}/{@code @CookieParam}/{@code @FormParam}
+     *       (expected non-null componentType);</li>
+     *   <li><b>element types</b> — {@code String[]}, {@code Integer[]}, {@code Long[]},
+     *       {@code Short[]}, {@code Double[]}, {@code Float[]}, {@code Boolean[]},
+     *       {@code Character[]}, an {@code enum[]}, and {@code T[]} for
+     *       {@code <T extends Grade>} (a bounded type variable, which both paths see through
+     *       erasure as the enum array — the reflective side because
+     *       {@code Parameter.getType()} is already erased, the generated side because
+     *       {@code isScalarArrayComponent}/{@code TypeMirrorFqn.erasedFqn} erase the mirror);</li>
+     *   <li><b>non-multi-value shapes</b> — {@code int[]}/{@code char[]}/{@code byte[]}/
+     *       {@code short[]} unannotated bodies (expected BODY + null componentType, decision 8's
+     *       carve-out) and a {@code @QueryParam String[][]} (QUERY + null componentType: the element
+     *       type is itself an array, not a scalar component).</li>
+     * </ul>
      *
      * @return the matrix rows as JUnit 5 {@link Arguments}, named by their label
      */
@@ -240,6 +402,80 @@ class GeneratedArrayParamParityTest {
                                 """),
                         "dev.vertique.test.matrix.StringArrayGenerated",
                         ResourceMethodMeta.ParamSource.QUERY,
+                        String.class,
+                        String.class),
+                new MatrixCase(
+                        "String[] (@PathParam)",
+                        new StringArrayPathReflective(),
+                        pathArrayGeneratedSource(),
+                        PATH_ARRAY_GENERATED_FQN,
+                        ResourceMethodMeta.ParamSource.PATH,
+                        null,
+                        null),
+                new MatrixCase(
+                        "String[] (@HeaderParam)",
+                        new StringArrayHeaderSourceReflective(),
+                        SourceFiles.inline("dev.vertique.test.matrix.StringArrayHeaderSourceGenerated", """
+                                package dev.vertique.test.matrix;
+
+                                import jakarta.ws.rs.GET;
+                                import jakarta.ws.rs.HeaderParam;
+                                import jakarta.ws.rs.Path;
+
+                                @Path("/matrix-header-source")
+                                public class StringArrayHeaderSourceGenerated {
+                                    public StringArrayHeaderSourceGenerated() {}
+
+                                    @GET
+                                    public String handle(@HeaderParam("v") String[] v) { return ""; }
+                                }
+                                """),
+                        "dev.vertique.test.matrix.StringArrayHeaderSourceGenerated",
+                        ResourceMethodMeta.ParamSource.HEADER,
+                        String.class,
+                        String.class),
+                new MatrixCase(
+                        "String[] (@CookieParam)",
+                        new StringArrayCookieSourceReflective(),
+                        SourceFiles.inline("dev.vertique.test.matrix.StringArrayCookieSourceGenerated", """
+                                package dev.vertique.test.matrix;
+
+                                import jakarta.ws.rs.CookieParam;
+                                import jakarta.ws.rs.GET;
+                                import jakarta.ws.rs.Path;
+
+                                @Path("/matrix-cookie-source")
+                                public class StringArrayCookieSourceGenerated {
+                                    public StringArrayCookieSourceGenerated() {}
+
+                                    @GET
+                                    public String handle(@CookieParam("v") String[] v) { return ""; }
+                                }
+                                """),
+                        "dev.vertique.test.matrix.StringArrayCookieSourceGenerated",
+                        ResourceMethodMeta.ParamSource.COOKIE,
+                        String.class,
+                        String.class),
+                new MatrixCase(
+                        "String[] (@FormParam)",
+                        new StringArrayFormSourceReflective(),
+                        SourceFiles.inline("dev.vertique.test.matrix.StringArrayFormSourceGenerated", """
+                                package dev.vertique.test.matrix;
+
+                                import jakarta.ws.rs.FormParam;
+                                import jakarta.ws.rs.POST;
+                                import jakarta.ws.rs.Path;
+
+                                @Path("/matrix-form-source")
+                                public class StringArrayFormSourceGenerated {
+                                    public StringArrayFormSourceGenerated() {}
+
+                                    @POST
+                                    public String handle(@FormParam("v") String[] v) { return ""; }
+                                }
+                                """),
+                        "dev.vertique.test.matrix.StringArrayFormSourceGenerated",
+                        ResourceMethodMeta.ParamSource.FORM,
                         String.class,
                         String.class),
                 new MatrixCase(
@@ -286,6 +522,72 @@ class GeneratedArrayParamParityTest {
                         ResourceMethodMeta.ParamSource.QUERY,
                         Long.class,
                         Long.class),
+                new MatrixCase(
+                        "Short[]",
+                        new ShortArrayReflective(),
+                        SourceFiles.inline("dev.vertique.test.matrix.ShortArrayGenerated", """
+                                package dev.vertique.test.matrix;
+
+                                import jakarta.ws.rs.GET;
+                                import jakarta.ws.rs.Path;
+                                import jakarta.ws.rs.QueryParam;
+
+                                @Path("/matrix-short-query")
+                                public class ShortArrayGenerated {
+                                    public ShortArrayGenerated() {}
+
+                                    @GET
+                                    public String handle(@QueryParam("v") Short[] v) { return ""; }
+                                }
+                                """),
+                        "dev.vertique.test.matrix.ShortArrayGenerated",
+                        ResourceMethodMeta.ParamSource.QUERY,
+                        Short.class,
+                        Short.class),
+                new MatrixCase(
+                        "Double[]",
+                        new DoubleArrayReflective(),
+                        SourceFiles.inline("dev.vertique.test.matrix.DoubleArrayGenerated", """
+                                package dev.vertique.test.matrix;
+
+                                import jakarta.ws.rs.GET;
+                                import jakarta.ws.rs.Path;
+                                import jakarta.ws.rs.QueryParam;
+
+                                @Path("/matrix-double-query")
+                                public class DoubleArrayGenerated {
+                                    public DoubleArrayGenerated() {}
+
+                                    @GET
+                                    public String handle(@QueryParam("v") Double[] v) { return ""; }
+                                }
+                                """),
+                        "dev.vertique.test.matrix.DoubleArrayGenerated",
+                        ResourceMethodMeta.ParamSource.QUERY,
+                        Double.class,
+                        Double.class),
+                new MatrixCase(
+                        "Float[]",
+                        new FloatArrayReflective(),
+                        SourceFiles.inline("dev.vertique.test.matrix.FloatArrayGenerated", """
+                                package dev.vertique.test.matrix;
+
+                                import jakarta.ws.rs.GET;
+                                import jakarta.ws.rs.Path;
+                                import jakarta.ws.rs.QueryParam;
+
+                                @Path("/matrix-float-query")
+                                public class FloatArrayGenerated {
+                                    public FloatArrayGenerated() {}
+
+                                    @GET
+                                    public String handle(@QueryParam("v") Float[] v) { return ""; }
+                                }
+                                """),
+                        "dev.vertique.test.matrix.FloatArrayGenerated",
+                        ResourceMethodMeta.ParamSource.QUERY,
+                        Float.class,
+                        Float.class),
                 new MatrixCase(
                         "Boolean[]",
                         new BooleanArrayReflective(),
@@ -353,6 +655,52 @@ class GeneratedArrayParamParityTest {
                         "dev.vertique.test.matrix.EnumArrayGenerated",
                         ResourceMethodMeta.ParamSource.QUERY,
                         EnumArrayReflective.Color.class,
+                        null),
+                new MatrixCase(
+                        "T[] (bounded type variable, T extends enum)",
+                        new BoundedTypeVariableArrayReflective(),
+                        SourceFiles.inline("dev.vertique.test.matrix.BoundedTypeVariableArrayGenerated", """
+                                package dev.vertique.test.matrix;
+
+                                import jakarta.ws.rs.GET;
+                                import jakarta.ws.rs.Path;
+                                import jakarta.ws.rs.QueryParam;
+
+                                @Path("/matrix-bounded-typevar")
+                                public class BoundedTypeVariableArrayGenerated {
+                                    public BoundedTypeVariableArrayGenerated() {}
+
+                                    public enum Grade { PASS, FAIL }
+
+                                    @GET
+                                    public <T extends Grade> String handle(@QueryParam("v") T[] v) { return ""; }
+                                }
+                                """),
+                        "dev.vertique.test.matrix.BoundedTypeVariableArrayGenerated",
+                        ResourceMethodMeta.ParamSource.QUERY,
+                        BoundedTypeVariableArrayReflective.Grade.class,
+                        null),
+                new MatrixCase(
+                        "String[][] (nested array)",
+                        new NestedStringArrayReflective(),
+                        SourceFiles.inline("dev.vertique.test.matrix.NestedStringArrayGenerated", """
+                                package dev.vertique.test.matrix;
+
+                                import jakarta.ws.rs.GET;
+                                import jakarta.ws.rs.Path;
+                                import jakarta.ws.rs.QueryParam;
+
+                                @Path("/matrix-nested-array")
+                                public class NestedStringArrayGenerated {
+                                    public NestedStringArrayGenerated() {}
+
+                                    @GET
+                                    public String handle(@QueryParam("v") String[][] v) { return ""; }
+                                }
+                                """),
+                        "dev.vertique.test.matrix.NestedStringArrayGenerated",
+                        ResourceMethodMeta.ParamSource.QUERY,
+                        null,
                         null),
                 new MatrixCase(
                         "int[] (unannotated body)",
@@ -479,11 +827,12 @@ class GeneratedArrayParamParityTest {
                 result, matrixCase.generatedResourceFqn(), matrixCase.generatedResourceFqn() + "_JaxRsDescriptor");
         ResourceMethodMeta.ParamMeta generated = generatedMetas.get(0).params().get(0);
 
-        // Parity — the assertion under test. RED today for the boxed/String/enum shapes:
-        // EffectiveJaxRsContractResolver.resolveComponentType returns null for every ArrayType, so
-        // generated.componentType() is null where reflective.componentType() is not. The
-        // int[]/char[]/byte[]/short[] rows must already agree (both null, both BODY) — that
-        // agreement is the carve-out (decision 8) and must NOT regress.
+        // Parity — the assertion under test. The bindable-source rows prove
+        // EffectiveJaxRsContractResolver.resolveComponentType resolves the element type exactly
+        // where ResourceScanner does; the PATH row proves it does NOT resolve one where the
+        // reflective scanner deliberately hard-codes null (a path param is single-valued). The
+        // int[]/char[]/byte[]/short[] body rows and the String[][] row must agree on null — those
+        // are the non-multi-value carve-outs (decision 8) and must NOT regress.
         assertEquals(reflective.source(), generated.source(), label + ": parity breach on param source");
         assertEquals(
                 reflective.componentType() != null,
@@ -905,5 +1254,101 @@ class GeneratedArrayParamParityTest {
                 String.valueOf(expectedBytes.length),
                 invoked,
                 "resource method must receive the exact byte[] (observed via its returned length)");
+    }
+
+    // --- Test 5: startup converter-probe agreement for an array-typed @PathParam (F1) ---
+
+    /**
+     * Proves the two paths agree on <em>rejection</em>, not merely on metadata: an array-typed
+     * {@code @PathParam} is unbindable, and the startup converter probe must refuse it whichever path
+     * produced the {@link ResourceMethodMeta.ParamMeta}.
+     *
+     * <p>This is the second half of the F1 defect. With a generated
+     * {@code componentType() == String}, {@code JaxRsRouteRegistrar}'s probe substitutes the
+     * <em>element</em> type (see
+     * {@code ConversionContexts.forDescriptorConvertibleType}: a non-null {@code componentType}
+     * becomes the probe's {@code rawType}), finds the built-in {@code String} converter, and mounts
+     * the route — after which {@code DefaultBoundRequest.bindPath} always wraps a single scalar, no
+     * {@code JsonArray} is ever produced, extraction misses the collection branch, and the request
+     * fails per-request instead. The reflective twin resolves no {@code componentType} for PATH, so
+     * its probe targets {@code String[]}, finds nothing, and rejects the route at startup with
+     * {@code UNRESOLVABLE_PARAM_CONVERTER}. A loud startup failure had become an opaque per-request
+     * failure on one path only.
+     *
+     * <p><strong>Feasibility note (reported, not silently narrowed):</strong> the assertion is made
+     * against the probe <em>rule</em> rather than by calling
+     * {@code JaxRsRouteRegistrar.registerAll(...)}. The registrar's probe loop reads
+     * {@code ResourceMethodMetaToDescriptorAdapter.adapt(meta).parameters()}, and both that adapter
+     * and the loop are package-private in {@code vertique-rest-jaxrs}; {@code registerAll} itself
+     * takes ~20 collaborators (security handlers, decoders/encoders, validation strategy,
+     * {@code ParamConversionResolver}, …) that exist nowhere in this module's test scope. What is
+     * reachable through public API is the exact type triple the probe builds —
+     * {@link ConversionContexts#forComponent} for a collection-valued parameter (identical in shape
+     * to {@code forDescriptorConvertibleType}'s collection branch) and
+     * {@link ConversionContexts#forParamMeta} otherwise — plus
+     * {@link ParamConversionResolver#canResolve}, which is the predicate the registrar negates to
+     * raise the violation. A {@code registerAll}-level assertion carrying the real
+     * {@code UNRESOLVABLE_PARAM_CONVERTER} violation type belongs in {@code vertique-rest-jaxrs}
+     * ({@code RouteStartupValidationTest}, which already builds routers through
+     * {@code TestFactories}) for the reflective side, and in
+     * {@code vertique-codegen-integration-tests} for the generated side — that module already runs
+     * real Maven builds against generated output, whereas {@code vertique-rest-jaxrs} cannot depend
+     * on the processor in this module.
+     *
+     * @throws Exception if compilation or any reflection step fails
+     */
+    @Test
+    @DisplayName("@PathParam String[] — the startup converter probe rejects it on BOTH paths (F1)")
+    void pathArrayParam_startupConverterProbe_rejectsOnBothPaths() throws Exception {
+        ResourceMethodMeta.ParamMeta reflective = new JaxRsRouteRegistrar()
+                .scanResource(new StringArrayPathReflective())
+                .get(0)
+                .params()
+                .get(0);
+
+        var result = ProcessorTestHarness.run(new JaxRsPipelineProcessor(), pathArrayGeneratedSource());
+        result.assertSuccess();
+        ResourceMethodMeta.ParamMeta generated = callDescribe(
+                        result, PATH_ARRAY_GENERATED_FQN, PATH_ARRAY_GENERATED_FQN + "_JaxRsDescriptor")
+                .get(0)
+                .params()
+                .get(0);
+
+        // Oracle: the reflective path has always rejected this resource at startup.
+        assertFalse(
+                startupConverterProbeResolves(reflective),
+                "reflective (oracle): no converter can satisfy an array-typed @PathParam, so the probe must fail");
+
+        // The assertion under test: the generated path must reach the SAME verdict. Before the F1 fix
+        // the generated componentType() was String, so the probe resolved the built-in String
+        // converter and the route mounted — diverging from its reflective twin.
+        assertFalse(
+                startupConverterProbeResolves(generated),
+                "generated: the startup probe must reject an array-typed @PathParam exactly like the reflective"
+                        + " path, not pass by substituting the element type");
+    }
+
+    /**
+     * Applies {@code JaxRsRouteRegistrar}'s startup converter-probe rule to a single
+     * {@link ResourceMethodMeta.ParamMeta} and reports whether the full conversion chain can satisfy
+     * it. Mirrors the registrar rather than calling it (see
+     * {@link #pathArrayParam_startupConverterProbe_rejectsOnBothPaths()} for why): a non-null
+     * {@code componentType()} makes the probe target the <em>element</em> type, otherwise it targets
+     * the declared type.
+     *
+     * <p>The resolver is the built-ins-only chain — no application {@code ParamConverterBinding}s and
+     * no JAX-RS {@code ParamConverterProvider}s — matching a default deployment, which is the
+     * configuration in which the F1 divergence was observed.
+     *
+     * @param meta the parameter metadata produced by either dispatch path
+     * @return {@code true} when a converter is resolvable (the registrar would mount the route),
+     *         {@code false} when it is not (the registrar would raise
+     *         {@code UNRESOLVABLE_PARAM_CONVERTER})
+     */
+    private static boolean startupConverterProbeResolves(ResourceMethodMeta.ParamMeta meta) {
+        ConversionContext probeContext = meta.componentType() != null
+                ? ConversionContexts.forComponent(meta, meta.componentType())
+                : ConversionContexts.forParamMeta(meta);
+        return ParamConversionResolver.builtins().canResolve(probeContext);
     }
 }
