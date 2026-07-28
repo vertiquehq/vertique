@@ -51,7 +51,6 @@ import java.util.Set;
 import java.util.SortedSet;
 import java.util.TreeSet;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
 
 /**
@@ -430,7 +429,8 @@ final class ParameterExtractor {
      * the parameter source. Without this a {@code @QueryParam List<String>} would bypass the
      * canonicalization/sanitization chain that the equivalent {@code @QueryParam String} traverses.
      *
-     * <p>Materialization (declared-type selection and the read-only guarantee) is delegated to
+     * <p>Element conversion and policy processing are delegated to {@link #convertElements};
+     * materialization (declared-type selection and the read-only guarantee) to
      * {@link #materializeCollection}.
      *
      * @param jsonArray the bound multi-value array (elements are raw request strings)
@@ -443,27 +443,51 @@ final class ParameterExtractor {
             io.vertx.core.json.JsonArray jsonArray,
             ResourceMethodMeta.ParamMeta paramMeta,
             EffectiveInputPolicies policies) {
-        Class<?> componentType = paramMeta.componentType();
-        var elementContext = componentContext(paramMeta, componentType);
+        return materializeCollection(
+                convertElements(jsonArray.getList(), paramMeta, policies), paramMeta.type(), paramMeta.componentType());
+    }
+
+    /**
+     * Converts every raw request value of a collection-valued parameter to its declared component
+     * type and runs each converted {@link String} element through the input-policy chain.
+     *
+     * <p>Shared by every multi-value source: the QUERY/HEADER/COOKIE path reaches it through
+     * {@link #coerceCollection} (whose values arrive as a bound {@code JsonArray}) and the FORM path
+     * through {@link #extractFormParam} (whose values arrive as
+     * {@code formAttributes().getAll(name)}). One implementation keeps the two sources from diverging
+     * in either conversion or policy semantics.
+     *
+     * <p>Conversion is <em>fail-closed</em> per element: a malformed element propagates the
+     * resolver's {@link dev.vertique.rest.core.convert.ParamConversionException} (mapped to 400)
+     * rather than silently retaining the raw string. Policy processing uses the same guard the scalar
+     * path uses ({@code objectProcessor != null && !policies.hasNoRouteChains()}) and the
+     * {@link InputLocation} derived from the parameter source.
+     *
+     * @param rawValues the raw request values, in whatever order the transport reported them (F8 —
+     *                  ordering is not a framework guarantee); {@code null} entries are preserved
+     * @param paramMeta the collection parameter metadata (its {@code componentType()} is non-{@code null})
+     * @param policies  the effective input policies applied to each {@link String} element
+     * @return the converted, policy-processed elements, in the order given
+     */
+    private List<Object> convertElements(
+            List<?> rawValues, ResourceMethodMeta.ParamMeta paramMeta, EffectiveInputPolicies policies) {
+        ConversionContext elementContext = componentContext(paramMeta, paramMeta.componentType());
         // Hoisted out of the loop: both operands are per-route constants.
         boolean processElements = objectProcessor != null && !policies.hasNoRouteChains();
         InputLocation location = processElements ? toInputLocation(paramMeta.source()) : null;
-        List<Object> coerced = new ArrayList<>(jsonArray.size());
-        for (int i = 0; i < jsonArray.size(); i++) {
-            Object raw = jsonArray.getValue(i);
+        List<Object> coerced = new ArrayList<>(rawValues.size());
+        for (Object raw : rawValues) {
             if (raw == null) {
                 coerced.add(null);
                 continue;
             }
-            // Fail-closed per element: a malformed element propagates ParamConversionException (400)
-            // rather than retaining the raw string, matching the declared-type contract of the collection.
             Object element = paramConversionResolver.fromString(raw.toString(), elementContext);
             if (processElements && element instanceof String s) {
                 element = objectProcessor.processStructuredBody(s, String.class, policies, location);
             }
             coerced.add(element);
         }
-        return materializeCollection(coerced, paramMeta.type(), componentType);
+        return coerced;
     }
 
     /**
@@ -824,8 +848,20 @@ final class ParameterExtractor {
      * Extracts a form parameter from the routing context using a precomputed
      * {@link EffectiveInputPolicies} argument, bypassing per-call annotation re-resolution.
      *
-     * <p>Dispatches by target type: {@link FileUpload}, {@link EntityPart}, {@link List},
-     * or text form field (String/primitives).
+     * <p>Dispatches by target type, in this order:
+     * <ol>
+     *   <li>a scalar native multipart target — {@link FileUpload} or {@link EntityPart};</li>
+     *   <li>a native multipart <em>collection</em> target — {@code List<FileUpload>} or
+     *       {@code List<EntityPart>}. These guards are keyed on the native component type
+     *       <em>together with</em> {@code type() == List.class}: {@link List} is the only collection
+     *       shape with a native materialization (ADR-0190 decision 6), and any other collection shape
+     *       carrying a native component type is rejected at startup by {@link RouteValidator} rather
+     *       than silently falling through to string conversion here;</li>
+     *   <li>a text collection target — any {@code componentType() != null} shape
+     *       ({@code List}/{@code Set}/{@code SortedSet}/{@code NavigableSet}/{@code Collection}/
+     *       {@code T[]}), bound from <em>all</em> submitted values for the field;</li>
+     *   <li>a scalar text form field (String / primitives / any convertible type).</li>
+     * </ol>
      *
      * <p>This overload is used by {@link GeneratedJaxRsSupport} so that generated execution
      * plans can pass policies computed at codegen time.
@@ -856,29 +892,44 @@ final class ParameterExtractor {
             }
             return null;
         }
-        if (pm.type() == List.class) {
-            if (pm.componentType() == FileUpload.class) {
-                return ctx.fileUploads().stream()
-                        .filter(fu -> fu.name().equals(pm.name()))
-                        .collect(Collectors.toList());
-            }
-            if (pm.componentType() == EntityPart.class) {
-                List<EntityPart> parts = new ArrayList<>();
-                // File uploads first
-                ctx.fileUploads().stream()
-                        .filter(fu -> fu.name().equals(pm.name()))
-                        .map(fu -> new VertxFileUploadEntityPart(ctx.vertx(), fu))
-                        .forEach(parts::add);
-                // Then text form fields with the same name
-                for (Map.Entry<String, String> entry : ctx.request().formAttributes()) {
-                    if (entry.getKey().equals(pm.name())) {
-                        parts.add(new FormFieldEntityPart(entry.getKey(), entry.getValue()));
-                    }
-                }
-                return parts;
-            }
+        // Native multipart collections: List-only by contract, and read-only like every other
+        // injected collection (ADR-0190 decision 3).
+        if (pm.componentType() == FileUpload.class && pm.type() == List.class) {
+            // Stream.toList() is already unmodifiable.
+            return ctx.fileUploads().stream()
+                    .filter(fu -> fu.name().equals(pm.name()))
+                    .toList();
         }
-        // Text form field
+        if (pm.componentType() == EntityPart.class && pm.type() == List.class) {
+            List<EntityPart> parts = new ArrayList<>();
+            // File uploads first
+            ctx.fileUploads().stream()
+                    .filter(fu -> fu.name().equals(pm.name()))
+                    .map(fu -> new VertxFileUploadEntityPart(ctx.vertx(), fu))
+                    .forEach(parts::add);
+            // Then text form fields with the same name
+            for (Map.Entry<String, String> entry : ctx.request().formAttributes()) {
+                if (entry.getKey().equals(pm.name())) {
+                    parts.add(new FormFieldEntityPart(entry.getKey(), entry.getValue()));
+                }
+            }
+            return Collections.unmodifiableList(parts);
+        }
+        // Text collection form field: bind ALL submitted values for the name, so a repeated
+        // x-www-form-urlencoded/multipart field materialises the declared collection shape exactly as
+        // the equivalent @QueryParam would (ADR-0190 decision 2).
+        if (pm.componentType() != null) {
+            // getAll() returns an EMPTY list — never null — for an absent field, so emptiness MUST be
+            // tested before materializing: otherwise the absence contract (empty collection, or a
+            // single-entry collection for a @DefaultValue) would collapse into an empty collection and
+            // silently swallow the default.
+            List<String> values = ctx.request().formAttributes().getAll(pm.name());
+            if (values.isEmpty()) {
+                return absentCollectionValue(pm);
+            }
+            return materializeCollection(convertElements(values, pm, policies), pm.type(), pm.componentType());
+        }
+        // Scalar text form field
         String formValue = ctx.request().getFormAttribute(pm.name());
         if (formValue == null) {
             if (pm.defaultValue() != null) {
@@ -901,8 +952,12 @@ final class ParameterExtractor {
      * <p>Promoted to package-private so that {@link GeneratedJaxRsSupport} can expose it to
      * generated execution plans without duplicating the logic.
      *
+     * <p>The returned list is <em>read-only</em>: an aggregate {@code List<EntityPart>} is a
+     * {@code @FormParam} collection injection target like any other, so it carries the same
+     * read-only guarantee (ADR-0190 decision 3).
+     *
      * @param ctx the current routing context
-     * @return list of all entity parts
+     * @return an unmodifiable list of all entity parts
      */
     List<EntityPart> extractAllEntityParts(RoutingContext ctx) {
         List<EntityPart> parts = new ArrayList<>();
@@ -917,7 +972,7 @@ final class ParameterExtractor {
                 parts.add(new FormFieldEntityPart(entry.getKey(), entry.getValue()));
             }
         }
-        return parts;
+        return Collections.unmodifiableList(parts);
     }
 
     // --- Bean param extraction ---

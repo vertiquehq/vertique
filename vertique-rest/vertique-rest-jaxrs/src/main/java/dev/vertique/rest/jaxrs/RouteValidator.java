@@ -25,8 +25,9 @@ import java.util.Optional;
 /**
  * Validates route registration constraints at startup.
  *
- * <p>Checks include: body parameter count, form/body conflicts, duplicate operationIds,
- * unmatched operationIds, and security annotations present without an auth module installed.
+ * <p>Checks include: body parameter count, form/body conflicts, unsupported native multipart
+ * collection shapes, duplicate operationIds, unmatched operationIds, and security annotations
+ * present without an auth module installed.
  * All methods are static; this class is not intended to be instantiated.
  */
 class RouteValidator {
@@ -69,7 +70,88 @@ class RouteValidator {
         }
         addContextParamViolations(meta, violations);
         addFilePartViolations(meta, violations);
+        addMultipartCollectionShapeViolations(meta, violations);
         return violations;
+    }
+
+    /**
+     * Rejects a {@code @FormParam} whose element type is a native multipart target
+     * ({@link FileUpload} / {@link EntityPart}) but whose declared type is a collection shape other
+     * than {@link List} — {@code Set}, {@code SortedSet}, {@code NavigableSet}, {@code Collection}.
+     * {@code ParameterExtractor.extractFormParam} materializes only a scalar target and
+     * {@code List<T>} natively (ADR-0190 decision 6); any other shape would fall through to string
+     * conversion and fail per-request, so startup fails fast instead.
+     *
+     * <p>Running from {@link #validateMethodParams} places this check <em>before</em> the
+     * {@code UNRESOLVABLE_PARAM_CONVERTER} probe in {@code JaxRsRouteRegistrar} (which skips the rest
+     * of the operation as soon as method-param validation reports anything), so the offending
+     * parameter is reported once, with the shape-specific diagnostic rather than a misleading
+     * "no ParamConverter for FileUpload" one.
+     *
+     * <p>Only FORM-sourced parameters are inspected. The {@code FILE_UPLOADS}/{@code ENTITY_PARTS}
+     * aggregates are always declared {@code List<T>} by the scanner, and a non-FORM parameter
+     * carrying a native element type (e.g. {@code @QueryParam List<FileUpload>}) is not a multipart
+     * declaration at all — it is correctly reported as an unresolvable converter.
+     *
+     * @param meta       the resource method metadata to inspect
+     * @param violations mutable list to which any unsupported-shape violations are appended
+     */
+    private static void addMultipartCollectionShapeViolations(
+            ResourceMethodMeta meta, List<RouteRegistrationViolation> violations) {
+        for (ResourceMethodMeta.ParamMeta pm : meta.params()) {
+            if (pm.source() != ResourceMethodMeta.ParamSource.FORM || pm.componentType() == null) {
+                continue;
+            }
+            if (!isNativeMultipartCollection(pm) || isNativelyMaterializedFormCollection(pm)) {
+                continue;
+            }
+            violations.add(new RouteRegistrationViolation(
+                    meta.operationId(),
+                    RouteRegistrationViolation.ViolationType.UNSUPPORTED_MULTIPART_COLLECTION_SHAPE,
+                    String.format(
+                            "@FormParam '%s' of %s.%s() declares %s<%s>; only a scalar %s and "
+                                    + "List<%s> are materialized natively — declare it as List<%s>.",
+                            pm.name(),
+                            meta.method().getDeclaringClass().getSimpleName(),
+                            meta.method().getName(),
+                            pm.type().getSimpleName(),
+                            pm.componentType().getSimpleName(),
+                            pm.componentType().getSimpleName(),
+                            pm.componentType().getSimpleName(),
+                            pm.componentType().getSimpleName())));
+        }
+    }
+
+    /**
+     * Returns whether a collection-shaped parameter's element type is a native multipart target.
+     * Reuses {@link #isEntityPartTarget} for the {@link EntityPart} half so the two checks share one
+     * notion of "native {@code EntityPart} target".
+     *
+     * @param pm the parameter metadata; its {@code componentType()} is non-{@code null}
+     * @return {@code true} when the element type is {@link FileUpload} or {@link EntityPart}
+     */
+    private static boolean isNativeMultipartCollection(ResourceMethodMeta.ParamMeta pm) {
+        return pm.componentType() == FileUpload.class || isEntityPartTarget(pm);
+    }
+
+    /**
+     * Returns whether a FORM parameter carrying a native multipart element type is one of the shapes
+     * {@code ParameterExtractor.extractFormParam} materializes natively.
+     *
+     * <p>For {@link FileUpload} targets this delegates to {@link #isSupportedFileUploadTarget} — the
+     * same predicate {@code @FilePart} validation uses — so the supported-shape policy lives in one
+     * place. {@link EntityPart} has no {@code @FilePart}-facing counterpart ({@code @FilePart} is
+     * invalid on an {@code EntityPart} parameter), so the identical {@code List}-only rule is applied
+     * directly.
+     *
+     * @param pm the FORM parameter metadata; its {@code componentType()} is a native multipart type
+     * @return {@code true} when the declared shape has a native materialization
+     */
+    private static boolean isNativelyMaterializedFormCollection(ResourceMethodMeta.ParamMeta pm) {
+        if (pm.componentType() == FileUpload.class) {
+            return isSupportedFileUploadTarget(pm);
+        }
+        return pm.type() == List.class;
     }
 
     /**

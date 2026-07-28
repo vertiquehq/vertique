@@ -97,6 +97,30 @@ public record RouteRegistrationViolation(String operationId, ViolationType type,
          * {@code ParamConverterProvider} can satisfy. Such a parameter could only ever fail (opaquely)
          * at request time, so startup fails fast (PRD-REST-018).
          */
-        UNRESOLVABLE_PARAM_CONVERTER
+        UNRESOLVABLE_PARAM_CONVERTER,
+
+        /**
+         * A {@code @FormParam} whose element type is a native multipart target
+         * ({@code FileUpload}/{@code EntityPart}) is declared in a collection shape other than
+         * {@code List}. Only a scalar target and {@code List<T>} are materialized natively;
+         * {@code Set}, {@code SortedSet}, {@code NavigableSet}, and {@code Collection} have no
+         * native materialization and would otherwise fall through to string conversion and fail
+         * per-request.
+         *
+         * <p>Array shapes of a native target (e.g. {@code FileUpload[]}) are <em>not</em> reported
+         * here, because {@code ResourceScanner.resolveComponentType} only resolves an element type
+         * for arrays whose component passes its scalar-element policy — which excludes
+         * {@code FileUpload}/{@code EntityPart}. Such a parameter therefore carries no component
+         * type, is invisible to this check, and fails startup as
+         * {@link #UNRESOLVABLE_PARAM_CONVERTER} instead. Both outcomes fail fast; only the
+         * violation type differs.
+         *
+         * <p>Scoped to {@code FORM}. A native element type on another source (e.g.
+         * {@code @QueryParam List<FileUpload>}) keeps the more accurate
+         * {@link #UNRESOLVABLE_PARAM_CONVERTER} diagnostic rather than being mislabelled a
+         * multipart-shape problem. Bean-param fields never reach this check either, since they
+         * carry no component type at all.
+         */
+        UNSUPPORTED_MULTIPART_COLLECTION_SHAPE
     }
 }

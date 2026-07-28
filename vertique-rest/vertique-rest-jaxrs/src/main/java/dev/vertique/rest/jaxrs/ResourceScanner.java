@@ -443,12 +443,11 @@ class ResourceScanner {
                 params.add(new ResourceMethodMeta.ParamMeta(
                         fp.value(),
                         ResourceMethodMeta.ParamSource.FORM,
-                        // A multi-value @FormParam is normalized to List: the form extraction path
-                        // (ParameterExtractor.extractFormParam) has no JsonArray/coerceCollection
-                        // materialization for Set/array form fields, so a Set<X>/X[] @FormParam stays
-                        // List-only here (deliberately divergent from QUERY/HEADER/COOKIE).
-                        componentType != null ? List.class : param.getType(),
+                        param.getType(),
                         componentType,
+                        // genericType stays null for FORM: ResourceMethodMeta.ParamMeta documents it as
+                        // the full generic type for BODY parameters only (ADR-0190), and the FORM
+                        // collection path needs only type() + componentType() to materialize.
                         null,
                         resolveDefaultValue(mergedParamAnnotations),
                         mergedParamAnnotations));
