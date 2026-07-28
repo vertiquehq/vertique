@@ -230,5 +230,5 @@ implementation should follow the same discipline.
 
 ## Continue reading
 
-- Previous: [Workflows](workflows.md)
+- Previous: [Transactional inbox/outbox messaging](inbox-outbox.md)
 - Next: [Testing](testing.md)

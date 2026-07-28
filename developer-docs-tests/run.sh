@@ -5,7 +5,7 @@
 # Durable regression suite for developer-docs/verify.sh (the DOCS-001 D2
 # fixture-suite contract amendment).
 #
-# developer-docs/ is the frozen, fifteen-file corpus; this suite lives at the
+# developer-docs/ is the frozen, sixteen-file corpus; this suite lives at the
 # sibling path developer-docs-tests/ so verify.sh's own inventory contract
 # needs no exemption for it.
 #

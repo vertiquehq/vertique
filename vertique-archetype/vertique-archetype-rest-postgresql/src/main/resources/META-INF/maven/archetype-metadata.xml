@@ -20,6 +20,15 @@ SPDX-License-Identifier: EUPL-1.2
                 <include>README.md</include>
             </includes>
         </fileSet>
+        <!-- AGENTS.md is unfiltered: Velocity treats "##" as its comment token, so a filtered
+             fileset silently strips level-two and deeper markdown headings from a rendered file (as it already
+             does to README.md above). AGENTS.md carries no ${...} substitution, so filtering buys
+             it nothing and only risks the same heading loss. -->
+        <fileSet filtered="false" encoding="UTF-8">
+            <includes>
+                <include>AGENTS.md</include>
+            </includes>
+        </fileSet>
         <!-- packaged="true" renders this fileset below Maven Archetype's standard
              ${packageInPathFormat} destination. -->
         <fileSet filtered="true" packaged="true" encoding="UTF-8">

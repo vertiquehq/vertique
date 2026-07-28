@@ -15,6 +15,10 @@ By the end of this page you will have extended the generated REST application fr
 request body, and you will understand how that method is registered, validated, serialized, and how
 its failures become HTTP responses.
 
+This page uses a bounded subset of JAX-RS 4.0 annotations; see
+[JAX-RS compatibility](rest-jaxrs-compatibility.md) for exactly what is supported, where Vertique
+diverges, and what is not supported.
+
 ## Add a resource
 
 `HelloResource`, generated into `rest-app/src/main/java/com/example/restapp/resource/HelloResource.java`
@@ -154,7 +158,9 @@ annotations on your resource methods and request bodies — including `@NotBlank
 `vertx-json-schema` on every request. This does not consult `openapi.json` at all; the two are
 independent, and OpenAPI-contract validation against the generated document is available as a
 separate opt-in strategy (see [`vertique-rest-openapi-validation`](../../vertique-rest/vertique-rest-openapi-validation/src/main/resources/META-INF/vertique/module.md)
-below) selected with `jaxrs.validationStrategy = "openapi-contract"` in configuration.
+below) selected with `jaxrs.validationStrategy = "openapi-contract"` in configuration. Neither
+strategy validates a resource method's response against the OpenAPI contract — both gate the
+request only.
 
 Posting a blank `name` to `/hello/greetings` is rejected before `createGreeting` ever runs — see
 [Map failures to HTTP responses](#map-failures-to-http-responses) for the exact response body.
@@ -231,4 +237,4 @@ covered in the [`vertique-rest-jaxrs` module reference](../../vertique-rest/vert
 ## Continue reading
 
 - Previous: [Configuration](configuration.md)
-- Next: [Services](services.md)
+- Next: [JAX-RS compatibility](rest-jaxrs-compatibility.md)

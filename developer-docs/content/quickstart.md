@@ -10,9 +10,21 @@ SPDX-License-Identifier: EUPL-1.2
 
 # Quickstart
 
-By the end of this page you will have generated a Vertique REST application from the REST
-archetype, run its integration test suite, started it locally, and received a JSON response from
-its generated `/hello` endpoint.
+Quickstart is the fastest way to run a Vertique application: by the end of this page you will have
+generated a REST application from the archetype, run its integration test suite, started it
+locally, and received a JSON response from its generated `/hello` endpoint.
+
+## Choose your path
+
+This page covers the REST archetype. Two sibling archetypes generate a different starting
+application from the same build; pick the row that matches what you are building before you
+continue:
+
+| Start | When to choose it |
+|---|---|
+| REST (this page) | An HTTP API, with no persistence and no event-bus services |
+| [Headless services](services.md#generate-the-application) | Typed event-bus services only, with no REST edge in production |
+| [REST + PostgreSQL](persistence.md#generate-the-application) | An HTTP API backed by a real, Flyway-migrated PostgreSQL database |
 
 ## Prerequisites
 

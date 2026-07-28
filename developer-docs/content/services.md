@@ -110,8 +110,9 @@ address segment.
 
 You never write a `@Provides @IntoSet` binding for `GreetingServiceImpl` by hand. At compile time,
 `vertique-codegen-services`'s annotation processor emits one `{Contract}_ContractContributor` per
-service contract and a `GeneratedServicesModule` that contributes it into the framework's contract
-registry:
+service contract — carrying that contract's dispatch metadata (its address, resolved method, and
+resilience policy) — and a `GeneratedServicesModule` that contributes the contributor into the
+framework's contract registry:
 
 ```java
 @Module
@@ -278,5 +279,5 @@ JAX-RS resource — see [REST APIs](rest-apis.md) for adding that resource.
 
 ## Continue reading
 
-- Previous: [REST APIs](rest-apis.md)
+- Previous: [JAX-RS compatibility](rest-jaxrs-compatibility.md)
 - Next: [Persistence](persistence.md)

@@ -135,9 +135,12 @@ readonly -a PAGE_ORDER=(
   application-model.md
   configuration.md
   rest-apis.md
+  rest-jaxrs-compatibility.md
   services.md
   persistence.md
   workflows.md
+  jobs.md
+  inbox-outbox.md
   security.md
   testing.md
   deployment.md

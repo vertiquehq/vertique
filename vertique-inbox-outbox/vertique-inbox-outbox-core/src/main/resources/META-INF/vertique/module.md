@@ -263,7 +263,7 @@ Publish-side access to the application/transport headers for an outbound message
 
 ```json
 {
-  "transactionalMessaging": {
+  "inboxOutbox": {
     "relay": {
       "strategy": "LISTEN_NOTIFY",
       "pollingIntervalMs": 1000,
@@ -272,12 +272,13 @@ Publish-side access to the application/transport headers for an outbound message
       "maxAttempts": 20,
       "backoffBaseDelayMs": 1000,
       "backoffMaxDelayMs": 300000,
-      "publishedRetentionDays": 7,
-      "deadLetterRetentionDays": 30
+      "instances": 1
     },
-    "inbox": {
-      "retentionDays": 30,
-      "defaultMessageIdHeader": "x-message-id"
+    "cleanup": {
+      "publishedRetentionDays": 7,
+      "deadLetterRetentionDays": 30,
+      "inboxRetentionDays": 30,
+      "cleanupBatchSize": 1000
     }
   },
   "cron": {
@@ -289,9 +290,9 @@ Publish-side access to the application/transport headers for an outbound message
 }
 ```
 
-Cleanup cadence is now owned by the framework's cron infrastructure. The legacy `inbox.cleanupIntervalHours` field was removed; configs that still set it are accepted and the value ignored. Tune via `cron.jobs.<id>.cron`.
+Cleanup cadence is owned by the framework's cron infrastructure, not by the cleanup config block itself. The legacy `cleanupIntervalHours` field was removed from the cleanup config; configs that still set it are accepted (and the value ignored) via `@JsonIgnoreProperties`. Tune cadence via `cron.jobs.<id>.cron` — e.g. `cron.jobs.outbox-cleanup.cron` (default above) and `cron.jobs.outbox-stale-lease-recovery.cron`.
 
-Config classes: `TransactionalMessagingConfig` (root), `RelayConfig` (`relay` block), `InboxConfig` (`inbox` block).
+Config classes: `OutboxRelayConfig` (`inboxOutbox.relay`), `InboxOutboxCleanupConfig` (`inboxOutbox.cleanup`).
 
 ---
 
