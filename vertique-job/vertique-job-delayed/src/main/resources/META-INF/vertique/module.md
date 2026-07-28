@@ -10,7 +10,7 @@ SPDX-License-Identifier: EUPL-1.2
 > **Artifact:** `vertique-job-delayed`
 > **Depends on:** job-core, job-postgresql, services, deploy
 
-Persistent delayed job queue with configurable retry and dead-letter behavior. Application code enqueues `DelayedJob` descriptors via `DelayedJobService`; the `DelayedJobPoller` verticle polls the database on a timer, claims executions with `FOR UPDATE SKIP LOCKED`, and dispatches each via fire-and-report over the event bus. Handler methods are annotated with `@DelayedJobHandlerMethod` and discovered at startup by scanning service implementations. Future-scheduled jobs use `ENQUEUED` state with a future `scheduled_at` value — no separate SCHEDULED state or transition timer is needed because the claim query filters by `scheduled_at <= NOW()`.
+Persistent delayed job queue with configurable retry and dead-letter behavior. Application code enqueues `DelayedJob` descriptors via `DelayedJobService`; the `DelayedJobPoller` verticle polls the database on a timer, claims executions with `FOR UPDATE SKIP LOCKED`, and dispatches each via fire-and-report over the event bus (the reply-address delivery mode documented in `vertique-services`'s module reference). Handler methods are annotated with `@DelayedJobHandlerMethod` and discovered at startup by scanning service implementations. Future-scheduled jobs use `ENQUEUED` state with a future `scheduled_at` value — no separate SCHEDULED state or transition timer is needed because the claim query filters by `scheduled_at <= NOW()`.
 
 Multiple named queues are supported, each with independent concurrency, backoff configuration, and poller instance count.
 
