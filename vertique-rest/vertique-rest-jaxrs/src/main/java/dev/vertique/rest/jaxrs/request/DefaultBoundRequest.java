@@ -39,7 +39,9 @@ import java.util.concurrent.ConcurrentHashMap;
  * <ul>
  *   <li><b>Multiplicity is type-driven</b> by the matching {@link ParamDescriptor}: a parameter
  *       whose declared type is a collection ({@code componentType != null}) binds <em>all</em>
- *       values as a {@link JsonArray}; a scalar parameter binds only the <em>first</em> value.
+ *       values as a {@link JsonArray}; a scalar parameter binds only the <em>first</em> value. The rule
+ *       applies uniformly to query parameters, headers, and cookies; because a cookie is single-valued,
+ *       a collection-declared {@code @CookieParam} binds a single-entry {@link JsonArray}.
  *   <li><b>Declared scalar parameters are coerced</b> to their declared type via the
  *       {@link ParamConversionResolver} before being wrapped, because {@link RequestValue} does not
  *       parse strings.
@@ -175,8 +177,26 @@ public final class DefaultBoundRequest implements BoundRequest {
     }
 
     /**
-     * Binds request cookies, keyed case-insensitively by cookie name. Cookies are single-valued per
-     * name; a declared scalar descriptor coerces the value to its type.
+     * Binds request cookies, keyed case-insensitively by cookie name, applying the same type-driven
+     * multiplicity rule as query parameters and headers via {@link #wrapValues}.
+     *
+     * <p>A cookie is <em>single-valued</em> per name, so its value is presented to
+     * {@link #wrapValues} as a one-element list:
+     *
+     * <ul>
+     *   <li>a <b>collection-declared</b> {@code @CookieParam} ({@code componentType != null}) binds as a
+     *       single-entry {@link JsonArray}, exactly as QUERY and HEADER already do, so the downstream
+     *       collection state machine materializes a single-entry collection instead of receiving a bare
+     *       {@link String} it has no converter for (which failed the request);
+     *   <li>a <b>scalar</b> descriptor takes {@link #wrapValues}' first-value fallback to
+     *       {@link #wrapScalar}, so scalar cookie binding is unchanged.
+     * </ul>
+     *
+     * <p>A {@code null} cookie value is bound as {@code RequestValue.of(null)} directly rather than
+     * routed through {@link #wrapValues}, which keeps the previous {@link #wrapScalar} outcome for the
+     * scalar shape byte-for-byte and lets a collection-declared parameter apply its absence contract
+     * (empty collection, or the single-entry {@code @DefaultValue}) instead of binding a single-entry
+     * array holding {@code null}.
      *
      * @param cookieSet the request cookies
      * @param params    the operation's declared parameters
@@ -190,7 +210,9 @@ public final class DefaultBoundRequest implements BoundRequest {
             for (Cookie cookie : cookieSet) {
                 ParamDescriptor descriptor = findDescriptor(params, cookie.getName(), ParamLocation.COOKIE);
                 String key = cookie.getName().toLowerCase(Locale.ROOT);
-                result.put(key, wrapScalar(cookie.getValue(), descriptor, resolver));
+                String value = cookie.getValue();
+                result.put(
+                        key, value == null ? RequestValue.of(null) : wrapValues(List.of(value), descriptor, resolver));
             }
         }
         return Map.copyOf(result);

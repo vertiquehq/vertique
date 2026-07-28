@@ -14,6 +14,8 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 import dev.vertique.core.sanitization.Canonicalizer;
 import dev.vertique.core.sanitization.InputLocation;
@@ -25,8 +27,12 @@ import dev.vertique.rest.core.request.InputObjectProcessor;
 import dev.vertique.rest.core.request.RequestValue;
 import dev.vertique.rest.core.security.SecurityPolicy;
 import dev.vertique.rest.jaxrs.request.BoundRequest;
+import dev.vertique.rest.jaxrs.request.DefaultBoundRequest;
+import io.vertx.core.MultiMap;
+import io.vertx.core.http.Cookie;
 import io.vertx.core.http.HttpServerRequest;
 import io.vertx.core.json.JsonArray;
+import io.vertx.ext.web.RoutingContext;
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Method;
 import java.lang.reflect.Type;
@@ -41,6 +47,7 @@ import java.util.Set;
 import java.util.SortedSet;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -56,6 +63,11 @@ import org.junit.jupiter.params.provider.MethodSource;
  * multi-value collections at this layer: {@code QUERY}, {@code HEADER}, and {@code COOKIE}
  * ({@code FORM} collection binding is covered separately in {@code FormParamCollectionBindTest},
  * slice S5; {@code PATH} is never multi-valued).
+ *
+ * <p>The stub fixtures pin the <em>state machine</em>; the {@link RealBinderSeam} nested group pins
+ * that the production {@link dev.vertique.rest.jaxrs.request.DefaultBoundRequest} actually feeds it the
+ * shape it expects, for each of those three sources. Both halves are load-bearing: a stub can hand the
+ * extractor a shape the binder never produces.
  *
  * <p>What these tests exist to prevent regressing — the behavior before ADR-0191 (plan §2 F7,
  * F12). Each bullet describes the OLD defect, not current behavior:
@@ -112,6 +124,16 @@ class CollectionParamStateMachineTest {
         @SuppressWarnings("unused")
         public String scalarAndList(String name, List<String> tags) {
             return name + tags;
+        }
+
+        @SuppressWarnings("unused")
+        public String scalar(String name) {
+            return name;
+        }
+
+        @SuppressWarnings("unused")
+        public String scalarInt(Integer id) {
+            return String.valueOf(id);
         }
     }
 
@@ -307,6 +329,26 @@ class CollectionParamStateMachineTest {
         assertTrue(list.isEmpty(), "the collection must be empty when no values were submitted");
     }
 
+    @ParameterizedTest(name = "declaredType={1}")
+    @MethodSource("readOnlyShapes")
+    @DisplayName("Absence with no @DefaultValue yields an empty collection for every supported interface")
+    void absentCollection_withoutDefault_isEmptyForEveryShape(String methodName, Class<?> declaredType)
+            throws Exception {
+        Method method = CollectionResource.class.getMethod(methodName, declaredType);
+        ResourceMethodMeta.ParamMeta param = paramMeta("tags", QUERY, declaredType, String.class, null);
+        ResourceMethodMeta meta = metaFor(method, List.of(param));
+        ParameterExtractor extractor = extractorFor(meta);
+
+        Object[] args = extractor.extractArguments(null, boundRequest(QUERY, Map.of()));
+
+        Collection<?> collection = assertInstanceOf(
+                Collection.class,
+                args[0],
+                declaredType.getSimpleName() + " must yield an empty collection on absence, never null");
+        assertTrue(declaredType.isInstance(collection), "must materialize as exactly " + declaredType.getSimpleName());
+        assertTrue(collection.isEmpty(), "the collection must be empty when no values were submitted");
+    }
+
     // --- 2. Absence, with default ---
 
     @ParameterizedTest(name = "source={0}")
@@ -325,6 +367,51 @@ class CollectionParamStateMachineTest {
         List<?> list = assertInstanceOf(List.class, args[0]);
         assertEquals(1, list.size(), "@DefaultValue on a collection must yield exactly one entry");
         assertEquals("x", list.get(0));
+    }
+
+    @ParameterizedTest(name = "declaredType={1}")
+    @MethodSource("readOnlyShapes")
+    @DisplayName("The single-entry @DefaultValue collection is read-only, like a bound one")
+    @SuppressWarnings("unchecked")
+    void absentCollection_withDefault_isReadOnly(String methodName, Class<?> declaredType) throws Exception {
+        Method method = CollectionResource.class.getMethod(methodName, declaredType);
+        ResourceMethodMeta.ParamMeta param = paramMeta("tags", QUERY, declaredType, String.class, "x");
+        ResourceMethodMeta meta = metaFor(method, List.of(param));
+        ParameterExtractor extractor = extractorFor(meta);
+
+        Object[] args = extractor.extractArguments(null, boundRequest(QUERY, Map.of()));
+
+        Collection<Object> collection = (Collection<Object>) assertInstanceOf(Collection.class, args[0]);
+        assertEquals(1, collection.size());
+        assertThrows(
+                UnsupportedOperationException.class,
+                () -> collection.add("z"),
+                "the @DefaultValue path must materialize read-only, exactly as the bound-values path does");
+    }
+
+    @Test
+    @DisplayName("A collection @DefaultValue is NOT policy-processed (mirrors the scalar rule)")
+    void collectionDefaultValue_isNotPolicyProcessed() throws Exception {
+        Method method = CollectionResource.class.getMethod("scalarAndList", String.class, List.class);
+        ResourceMethodMeta.ParamMeta scalarParam = paramMeta("name", QUERY, String.class, null, null);
+        ResourceMethodMeta.ParamMeta listParam = paramMeta("tags", QUERY, List.class, String.class, "x");
+        ResourceMethodMeta meta =
+                metaFor(method, List.of(scalarParam, listParam), List.of(MarkerCanonicalizer.class), List.of());
+        ParameterExtractor extractor = extractorFor(meta, new UppercasingProcessor());
+
+        // "name" is PRESENT, so its value proves the processor is actually wired for this route; "tags"
+        // is ABSENT, so its single entry comes from @DefaultValue("x") and must bypass the chain.
+        BoundRequest req = boundRequest(QUERY, Map.of("name", RequestValue.of("hi")));
+
+        Object[] args = extractor.extractArguments(null, req);
+
+        assertEquals("HI", args[0], "the processor must be active on this route (otherwise the test proves nothing)");
+        List<?> list = assertInstanceOf(List.class, args[1]);
+        assertEquals(
+                List.of("x"),
+                list,
+                "a @DefaultValue must not traverse the input-policy chain — it is framework-supplied, not "
+                        + "client-supplied, mirroring the scalar @DefaultValue rule (§4 decision 5)");
     }
 
     // --- 3. Presence ignores default (regression guard) ---
@@ -501,5 +588,210 @@ class CollectionParamStateMachineTest {
                 List.of("A", "B"),
                 list,
                 "collection elements must traverse the input-policy chain identically to scalars (today: they don't)");
+    }
+
+    // --- 10. Real-binder seam ---
+
+    /**
+     * Drives the same state machine through the <em>real</em> {@link DefaultBoundRequest} instead of the
+     * hand-written {@link BoundRequest} stub above.
+     *
+     * <p>Why this group exists: the outer class's {@code boundRequest(source, values)} fixture puts a
+     * {@link JsonArray} straight into the map for whichever source is under test. For {@code COOKIE}
+     * that is a shape the production binder never produced — {@code DefaultBoundRequest.bindCookies}
+     * called {@code wrapScalar} unconditionally, so a present collection-declared {@code @CookieParam}
+     * bound as a bare {@link String}, never reached {@code coerceCollection}, and asked the resolver for
+     * a converter targeting the <em>collection</em> type (there is none, so it threw
+     * {@code ParamConverterNotFoundException} &rarr; HTTP 500). The stub therefore proved the
+     * {@code COOKIE} presence row for the wrong reason.
+     *
+     * <p>These tests build the {@link ResourceMethodMeta} with the outer class's fixtures, project it
+     * through the production {@link ResourceMethodMetaToDescriptorAdapter} (exactly as
+     * {@code ResourceMethodInvoker} does), bind a mocked Vert.x request with the real
+     * {@link DefaultBoundRequest}, and then run {@link ParameterExtractor} over it — so the binder's
+     * bound shape and the state machine's expected shape are pinned together, end to end.
+     */
+    @Nested
+    @DisplayName("The real DefaultBoundRequest feeds the state machine the shape it expects")
+    class RealBinderSeam {
+
+        /**
+         * Builds a mocked {@link RoutingContext} exposing the given query/header/cookie transport
+         * values and no body; any argument may be {@code null} for "nothing submitted".
+         *
+         * @param query   the raw query multi-map, or {@code null}
+         * @param headers the raw header multi-map, or {@code null}
+         * @param cookies the raw request cookies, or {@code null}
+         * @return the mocked routing context
+         */
+        private RoutingContext mockContext(MultiMap query, MultiMap headers, Set<Cookie> cookies) {
+            RoutingContext ctx = mock(RoutingContext.class);
+            HttpServerRequest request = mock(HttpServerRequest.class);
+            when(ctx.request()).thenReturn(request);
+            when(ctx.pathParams()).thenReturn(Map.of());
+            when(ctx.queryParams()).thenReturn(query != null ? query : MultiMap.caseInsensitiveMultiMap());
+            when(request.headers()).thenReturn(headers != null ? headers : MultiMap.caseInsensitiveMultiMap());
+            when(request.cookies()).thenReturn(cookies != null ? cookies : Set.of());
+            when(ctx.body()).thenReturn(null);
+            return ctx;
+        }
+
+        /**
+         * Binds a real {@link DefaultBoundRequest} for {@code meta} over the given transport values,
+         * projecting {@code meta} through the production descriptor adapter first.
+         *
+         * @param meta    the resource-method metadata whose declared params drive binding
+         * @param query   the raw query multi-map, or {@code null}
+         * @param headers the raw header multi-map, or {@code null}
+         * @param cookies the raw request cookies, or {@code null}
+         * @return the real bound request
+         */
+        private BoundRequest realBoundRequest(
+                ResourceMethodMeta meta, MultiMap query, MultiMap headers, Set<Cookie> cookies) {
+            return new DefaultBoundRequest(
+                    mockContext(query, headers, cookies), ResourceMethodMetaToDescriptorAdapter.adapt(meta));
+        }
+
+        /**
+         * Builds a mocked request {@link Cookie} with the given name and value.
+         *
+         * @param name  the cookie name
+         * @param value the cookie value
+         * @return the mocked cookie
+         */
+        private Cookie cookie(String name, String value) {
+            Cookie cookie = mock(Cookie.class);
+            when(cookie.getName()).thenReturn(name);
+            when(cookie.getValue()).thenReturn(value);
+            return cookie;
+        }
+
+        private MultiMap multiMap(String name, String... values) {
+            MultiMap map = MultiMap.caseInsensitiveMultiMap();
+            for (String value : values) {
+                map.add(name, value);
+            }
+            return map;
+        }
+
+        @Test
+        @DisplayName("QUERY: repeated values bound by the real binder reach coerceCollection")
+        void realBinder_presentQueryCollection_materializes() throws Exception {
+            Method method = CollectionResource.class.getMethod("list", List.class);
+            ResourceMethodMeta meta =
+                    metaFor(method, List.of(paramMeta("tags", QUERY, List.class, String.class, null)));
+
+            BoundRequest req = realBoundRequest(meta, multiMap("tags", "a", "b"), null, null);
+            Object[] args = extractorFor(meta).extractArguments(null, req);
+
+            List<?> list = assertInstanceOf(List.class, args[0]);
+            assertEquals(2, list.size(), "both repeated query values must be bound");
+            assertTrue(list.containsAll(List.of("a", "b")));
+        }
+
+        @Test
+        @DisplayName("HEADER: repeated values bound by the real binder reach coerceCollection")
+        void realBinder_presentHeaderCollection_materializes() throws Exception {
+            Method method = CollectionResource.class.getMethod("list", List.class);
+            ResourceMethodMeta meta =
+                    metaFor(method, List.of(paramMeta("tags", HEADER, List.class, String.class, null)));
+
+            BoundRequest req = realBoundRequest(meta, null, multiMap("tags", "a", "b"), null);
+            Object[] args = extractorFor(meta).extractArguments(null, req);
+
+            List<?> list = assertInstanceOf(List.class, args[0]);
+            assertEquals(2, list.size(), "both repeated header values must be bound");
+            assertTrue(list.containsAll(List.of("a", "b")));
+        }
+
+        @Test
+        @DisplayName("COOKIE: a present List<String> cookie yields a single-entry collection, not a 500")
+        void realBinder_presentCookieList_materializesSingleEntry() throws Exception {
+            Method method = CollectionResource.class.getMethod("list", List.class);
+            ResourceMethodMeta meta =
+                    metaFor(method, List.of(paramMeta("tags", COOKIE, List.class, String.class, null)));
+
+            BoundRequest req = realBoundRequest(meta, null, null, Set.of(cookie("tags", "a")));
+            Object[] args = extractorFor(meta).extractArguments(null, req);
+
+            List<?> list = assertInstanceOf(
+                    List.class,
+                    args[0],
+                    "bindCookies must bind a collection-declared cookie as a JsonArray so it reaches "
+                            + "coerceCollection; wrapScalar leaves a bare String that 500s");
+            assertEquals(List.of("a"), list, "a cookie is single-valued, so the collection has exactly one entry");
+        }
+
+        @Test
+        @DisplayName("COOKIE: a present Set<String> cookie yields a single-entry set, not a 500")
+        void realBinder_presentCookieSet_materializesSingleEntry() throws Exception {
+            Method method = CollectionResource.class.getMethod("set", Set.class);
+            ResourceMethodMeta meta =
+                    metaFor(method, List.of(paramMeta("tags", COOKIE, Set.class, String.class, null)));
+
+            BoundRequest req = realBoundRequest(meta, null, null, Set.of(cookie("tags", "a")));
+            Object[] args = extractorFor(meta).extractArguments(null, req);
+
+            Set<?> set = assertInstanceOf(Set.class, args[0]);
+            assertEquals(Set.of("a"), set);
+        }
+
+        @Test
+        @DisplayName("COOKIE: a present String[] cookie yields a single-element array, not a 500")
+        void realBinder_presentCookieArray_materializesSingleElement() throws Exception {
+            Method method = CollectionResource.class.getMethod("array", String[].class);
+            ResourceMethodMeta meta =
+                    metaFor(method, List.of(paramMeta("tags", COOKIE, String[].class, String.class, null)));
+
+            BoundRequest req = realBoundRequest(meta, null, null, Set.of(cookie("tags", "a")));
+            Object[] args = extractorFor(meta).extractArguments(null, req);
+
+            String[] array = assertInstanceOf(String[].class, args[0]);
+            assertEquals(1, array.length);
+            assertEquals("a", array[0]);
+        }
+
+        @Test
+        @DisplayName("COOKIE: an absent List<String> cookie still yields an empty collection")
+        void realBinder_absentCookieCollection_yieldsEmptyCollection() throws Exception {
+            Method method = CollectionResource.class.getMethod("list", List.class);
+            ResourceMethodMeta meta =
+                    metaFor(method, List.of(paramMeta("tags", COOKIE, List.class, String.class, null)));
+
+            BoundRequest req = realBoundRequest(meta, null, null, Set.of());
+            Object[] args = extractorFor(meta).extractArguments(null, req);
+
+            List<?> list = assertInstanceOf(List.class, args[0], "absence must not regress to null");
+            assertTrue(list.isEmpty());
+        }
+
+        @Test
+        @DisplayName("COOKIE: a scalar String cookie still binds its raw value (non-regression)")
+        void realBinder_scalarCookie_bindsRawValue() throws Exception {
+            Method method = CollectionResource.class.getMethod("scalar", String.class);
+            ResourceMethodMeta meta = metaFor(method, List.of(paramMeta("session", COOKIE, String.class, null, null)));
+
+            BoundRequest req = realBoundRequest(meta, null, null, Set.of(cookie("session", "abc")));
+            Object[] args = extractorFor(meta).extractArguments(null, req);
+
+            assertEquals("abc", args[0], "scalar cookie binding must stay identical");
+        }
+
+        @Test
+        @DisplayName("COOKIE: a scalar Integer cookie still coerces to its declared type (non-regression)")
+        void realBinder_scalarCookie_stillCoercesToDeclaredType() throws Exception {
+            Method method = CollectionResource.class.getMethod("scalarInt", Integer.class);
+            ResourceMethodMeta meta = metaFor(method, List.of(paramMeta("id", COOKIE, Integer.class, null, null)));
+
+            BoundRequest req = realBoundRequest(meta, null, null, Set.of(cookie("id", "42")));
+
+            assertEquals(
+                    42,
+                    req.cookies().get("id").getInteger(),
+                    "the descriptor-scoped scalar coercion must survive the wrapValues first-value fallback");
+
+            Object[] args = extractorFor(meta).extractArguments(null, req);
+            assertEquals(42, args[0]);
+        }
     }
 }
