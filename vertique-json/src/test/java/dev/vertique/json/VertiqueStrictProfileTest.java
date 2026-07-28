@@ -304,6 +304,11 @@ class VertiqueStrictProfileTest {
         assertTrue(prefix.contains("100"), "message prefix must name the 100-character bound: " + prefix);
         assertTrue(prefix.contains("precision=200"), "message prefix must name the offending precision: " + prefix);
         assertFalse(prefix.contains(digits), "message prefix must never echo the offending key's digits: " + prefix);
+        // Length-bound the prefix too: assertFalse(prefix.contains(digits)) alone only rules out the
+        // COMPLETE 200-digit key appearing verbatim — a truncated echo of the key's digits would still
+        // pass that check. A short, bounded prefix length rules out ANY partial echo regardless of
+        // which digit substring might otherwise slip through.
+        assertTrue(prefix.length() < 150, "message prefix must stay short and value-free, was: " + prefix);
     }
 
     @Test

@@ -38,15 +38,16 @@ import java.util.Iterator;
 public class SseModelConverter implements ModelConverter {
 
     /**
-     * Resolves the schema for the given type. If the type is a {@link ReadStream}, this
-     * converter returns a string schema (representing an SSE text stream). Otherwise,
-     * the call is delegated to the next converter in the chain.
+     * Resolves the schema for the given type. If the type is a {@link ReadStream} of
+     * {@code SseEvent}, this converter returns a string schema (representing an SSE text
+     * stream). Otherwise — including a {@code ReadStream} of any other element type — the
+     * call is delegated to the next converter in the chain.
      *
      * @param type the annotated type being resolved
      * @param context the current model converter context
      * @param chain the remaining converters in the resolution chain
-     * @return a {@link StringSchema} for {@code ReadStream} types, or the result of the
-     *     next converter in {@code chain}, or {@code null} if the chain is exhausted
+     * @return a {@link StringSchema} for {@code ReadStream<SseEvent>} types, or the result of
+     *     the next converter in {@code chain}, or {@code null} if the chain is exhausted
      */
     @Override
     public Schema<?> resolve(AnnotatedType type, ModelConverterContext context, Iterator<ModelConverter> chain) {
