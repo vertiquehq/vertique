@@ -190,6 +190,24 @@ new_case_corpus add-extra-file-with-space
 run_case "add-extra-file-with-space" fail "$corpus_root" \
   "is not part of the frozen corpus inventory (inventory contract)"
 
+# The symlink target deliberately lives outside corpus_root (inside it would
+# itself violate the frozen inventory contract as an extra file) but inside
+# case_dir - i.e. one directory above corpus_root, so the symlink's own path
+# stays inside the corpus. The target's content carries a TODO token to
+# prove the inventory rejection is what stops the symlink from being read at
+# all: were it instead silently treated as an ordinary corpus file (the
+# bypass this case guards against), the forbidden-token scan would also
+# report a violation from this same path - and it must not, since the
+# symlink is rejected outright before any content scan ever reaches it.
+new_case_corpus add-extra-file-as-symlink
+printf '%s\n' \
+  '# Outside-corpus symlink target' \
+  'TODO: this token must never surface as a forbidden-token violation once symlinks are rejected outright by the inventory check.' \
+  >"$case_dir/outside-corpus-target.md"
+ln -s "$case_dir/outside-corpus-target.md" "$corpus_root/content/extra-symlink.md"
+run_case "add-extra-file-as-symlink" fail "$corpus_root" \
+  "symlinks are not part of the frozen corpus inventory (inventory contract)"
+
 # --- Mutation cases: navigation (b) ---
 
 new_case_corpus duplicate-navigation-entry
@@ -251,6 +269,30 @@ append_lines "$corpus_root/content/quickstart.md" \
   '[broken-ref]: ./this-target-does-not-exist.md'
 run_case "add-broken-reference-style-definition" fail "$corpus_root" \
   "broken relative link target './this-target-does-not-exist.md' (link contract)"
+
+# The committed suite otherwise only proves the CommonMark angle-bracket
+# destination form for an *inline* `](<target with spaces.md>)` link (see
+# the static-angle-bracket-link-with-spaces fixture below); these two cases
+# prove the identical destination form on a *reference-style*
+# `[label]: <target with spaces>` definition, both when it resolves and when
+# it doesn't. The target lives outside corpus_root for the same reason as
+# that inline fixture: inside corpus_root it would itself violate the frozen
+# inventory contract.
+new_case_corpus add-reference-style-definition-with-spaces-pass
+printf '%s\n' \
+  '# Reference-style target with spaces' \
+  '' \
+  'Sibling fixture file referenced through a reference-style link definition whose angle-bracket destination contains an embedded space.' \
+  >"$case_dir/repo/reference style target.md"
+append_lines "$corpus_root/content/quickstart.md" \
+  '[reference-style-target-with-spaces]: <../../reference style target.md>'
+run_case "add-reference-style-definition-with-spaces-pass" pass "$corpus_root"
+
+new_case_corpus add-reference-style-definition-with-spaces-fail
+append_lines "$corpus_root/content/quickstart.md" \
+  '[missing-reference-style-target-with-spaces]: <../../this target does not exist.md>'
+run_case "add-reference-style-definition-with-spaces-fail" fail "$corpus_root" \
+  "broken relative link target '../../this target does not exist.md' (link contract)"
 
 # --- Mutation cases: forbidden tokens (e) ---
 

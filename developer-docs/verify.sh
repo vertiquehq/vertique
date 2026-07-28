@@ -103,8 +103,18 @@
 #
 # Uses only Bash and standard Unix tools (find, grep, sed, awk). No network
 # access is performed or required.
+#
+# Validator integrity: every check below that scans corpus content through
+# an external find/grep/sed/awk producer captures that producer's own exit
+# status and treats anything other than 0 (matched/enumerated) or 1 (grep's
+# own "found nothing" convention) as a scanner failure in its own right,
+# reported via check_scan_status rather than silently yielding an empty
+# result set and a false PASS. `pipefail` is enabled below so a two-stage
+# "extractor | grep" scan's captured status reflects the pipeline as a
+# whole, not only grep's last-stage status.
 
 set -u
+set -o pipefail
 
 readonly -a PAGE_ORDER=(
   index.md
@@ -126,9 +136,21 @@ FAILURES=0
 # --- Reporting ---
 
 # Records one violation with a path-specific diagnostic and keeps going.
+# $1 routinely embeds raw corpus content (a frontmatter line, a link target,
+# a matched token) verbatim, so control characters - an ANSI escape
+# sequence, a stray NUL - are stripped before the message ever reaches a CI
+# log, rather than trusting corpus content not to spoof or corrupt terminal
+# output. Tab, LF, and CR are preserved (none of this script's diagnostics
+# embed them, since every extraction is already single-line-bounded, but
+# leaving them out of the deleted range keeps this a pure control-character
+# strip rather than a whitespace-mangling one). The violation is still
+# counted before sanitizing, so a sanitizer hiccup can never itself cause a
+# violation to go unreported.
 fail() {
   FAILURES=$((FAILURES + 1))
-  echo "FAIL: $1" >&2
+  local msg
+  msg="$(printf '%s' "$1" | tr -d '\000-\010\013\014\016-\037')"
+  echo "FAIL: $msg" >&2
 }
 
 # --- Corpus root resolution ---
@@ -156,6 +178,59 @@ resolve_corpus_root() {
   fi
 }
 
+# --- Scanner integrity ---
+
+# Confirms a scan's exit status - already captured by the caller into $2 -
+# is one of the two "clean" outcomes for a find/grep/sed/awk producer
+# feeding this script's checks: 0 (something matched or was enumerated) or
+# 1 (a grep-driven scan's own "nothing matched" convention - a legitimate
+# empty result, not a tool failure). Any other status means the producing
+# tool itself failed - a bad flag, an unreadable path, an interpreter error
+# - which must never be allowed to fail open into an empty result set and a
+# silent PASS; that is reported here as its own violation instead. The
+# diagnostic keeps the fixed substring "internal scanner error (validator
+# integrity)" contiguous (the per-call $3 description is appended after it,
+# not spliced into the middle) so it stays a single stable, greppable marker
+# regardless of which scan tripped it. $1 is the file or corpus root the
+# scan covered, folded into the violation's path prefix. Returns success
+# when the caller should go on to consume the scan's captured output, and
+# failure when the caller must skip it - the violation has already been
+# recorded.
+check_scan_status() {
+  local subject="$1" status="$2" desc="$3"
+  if [[ "$status" -gt 1 ]]; then
+    fail "$subject: internal scanner error (validator integrity) while scanning for $desc"
+    return 1
+  fi
+  return 0
+}
+
+# Enumerates every corpus Markdown file, NUL-delimited, for one of the four
+# content-scan checks below (fence grammar, links, forbidden tokens,
+# renderer metadata). `-type f` excludes symlinks - already rejected
+# outright by check_inventory below - so a symlinked extra corpus entry is
+# never followed and read as if it were a real corpus file. Captures the
+# match list into the global array MD_FILES and validates find's own exit
+# status via check_scan_status: a failure enumerating files must not fail
+# open into a silent "found nothing, so nothing to check" PASS. $1 is a
+# short description of the calling check, folded into the violation message
+# on failure. MD_FILES is left empty on failure, so a caller that loops over
+# it unconditionally naturally performs zero further scanning.
+find_corpus_markdown_files() {
+  local desc="$1"
+  local tmp status
+  tmp="$(mktemp "${TMPDIR:-/tmp}/vertique-verify-find.XXXXXX")"
+  find "$CORPUS_ROOT" -name '*.md' -type f -print0 >"$tmp"
+  status=$?
+  MD_FILES=()
+  if check_scan_status "$CORPUS_ROOT" "$status" "$desc"; then
+    while IFS= read -r -d '' f; do
+      MD_FILES+=("$f")
+    done <"$tmp"
+  fi
+  rm -f "$tmp"
+}
+
 # --- (a) Inventory ---
 
 # Reports whether needle exactly equals one element of the remaining
@@ -173,7 +248,13 @@ array_contains_exact() {
 }
 
 # Confirms the corpus contains exactly the frozen fifteen-file inventory:
-# missing files and unexpected extra files are both violations.
+# missing files and unexpected extra files are both violations. Also
+# confirms the corpus contains no symlinks at all: a symlinked corpus entry
+# would otherwise pass this same-name inventory check trivially while its
+# target - possibly outside the corpus, or even outside the repository - is
+# what the content scans below actually read (see the `-type f` on their
+# `find` calls), an inventory bypass a real file never has (inventory
+# contract).
 check_inventory() {
   local -a expected=(README.md navigation.yml verify.sh)
   local page
@@ -184,7 +265,17 @@ check_inventory() {
   # Built with line-safe / NUL-safe read loops rather than unquoted `$(...)`
   # array assignment, so a corpus file whose name contains a space stays one
   # array element instead of being word-split into two (inventory contract).
-  local -a expected_sorted=() actual=()
+  #
+  # Neither `find` below is wrapped with check_scan_status, unlike the scan
+  # drivers hardened elsewhere in this script: both enumerate the same
+  # CORPUS_ROOT, so a `find` failure broken enough to affect one (e.g. an
+  # unreadable directory) affects the other identically. A failed `actual`
+  # enumeration already fails closed on its own - it comes back empty, so
+  # every expected file is reported missing below - and that same guaranteed
+  # non-zero FAILURES count is what makes a simultaneous, silent `symlinks`
+  # enumeration failure harmless too: the overall run cannot come back PASS
+  # regardless of whether the symlink check itself finds anything.
+  local -a expected_sorted=() actual=() symlinks=()
   local f
   while IFS= read -r f; do
     expected_sorted+=("$f")
@@ -193,6 +284,10 @@ check_inventory() {
   while IFS= read -r -d '' f; do
     actual+=("${f#./}")
   done < <(cd "$CORPUS_ROOT" && find . -type f -print0 | sort -z)
+
+  while IFS= read -r -d '' f; do
+    symlinks+=("${f#./}")
+  done < <(cd "$CORPUS_ROOT" && find . -type l -print0 | sort -z)
 
   for f in "${expected_sorted[@]}"; do
     if ! array_contains_exact "$f" "${actual[@]}"; then
@@ -204,6 +299,17 @@ check_inventory() {
       fail "$CORPUS_ROOT/$f: file is not part of the frozen corpus inventory (inventory contract)"
     fi
   done
+  # Guarded on a non-empty check first: under bash 3.2's `set -u`,
+  # `"${symlinks[@]}"` on a genuinely empty (but declared) array is treated
+  # as an unbound-variable reference rather than an empty expansion, and a
+  # clean corpus - the overwhelmingly common case - legitimately has zero
+  # symlinks (see the same guard on `find_corpus_markdown_files`'s callers
+  # below, needed for the identical reason).
+  if [[ "${#symlinks[@]}" -gt 0 ]]; then
+    for f in "${symlinks[@]}"; do
+      fail "$CORPUS_ROOT/$f: symlinks are not part of the frozen corpus inventory (inventory contract)"
+    done
+  fi
 }
 
 # --- (b) Navigation ---
@@ -366,11 +472,18 @@ frontmatter_value_is_empty_or_null() {
   [[ "$lowered" == "null" ]]
 }
 
-# Parses and validates the frontmatter block of a single content page.
+# Parses and validates the frontmatter block of a single content page. Each
+# of the three sed/awk extractions below (opening delimiter, closing
+# delimiter, body lines) is captured into a variable first and its exit
+# status checked via check_scan_status, rather than trusted implicitly - the
+# same validator-integrity treatment applied to the other scan drivers in
+# this script.
 check_frontmatter_of_file() {
   local f="$1"
-  local first_line close_line
+  local first_line close_line status
   first_line=$(sed -n '1p' "$f")
+  status=$?
+  check_scan_status "$f" "$status" "the frontmatter opening delimiter" || return
   first_line="${first_line%$'\r'}"
   if [[ "$first_line" != "---" ]]; then
     fail "$f: must open with a YAML frontmatter block delimited by '---' (frontmatter contract)"
@@ -378,6 +491,8 @@ check_frontmatter_of_file() {
   fi
 
   close_line=$(awk '{ sub(/\r$/, "") } NR>1 && $0=="---"{print NR; exit}' "$f")
+  status=$?
+  check_scan_status "$f" "$status" "the frontmatter closing delimiter" || return
   if [[ -z "$close_line" ]]; then
     fail "$f: frontmatter block is not closed with a second '---' line (frontmatter contract)"
     return
@@ -386,42 +501,48 @@ check_frontmatter_of_file() {
   local -a keys=()
   local title_count=0 desc_count=0
   local title_empty=false desc_empty=false
-  local line key value
+  local line key value body
 
-  while IFS= read -r line; do
-    line="${line%$'\r'}"
-    [[ -z "${line//[[:space:]]/}" ]] && continue
-    if [[ "$line" =~ ^([A-Za-z0-9_-]+):[[:space:]]*(.*)$ ]]; then
-      key="${BASH_REMATCH[1]}"
-      value="${BASH_REMATCH[2]}"
-      keys+=("$key")
+  body=$(sed -n "2,$((close_line - 1))p" "$f")
+  status=$?
+  check_scan_status "$f" "$status" "the frontmatter body" || return
 
-      # Count the key regardless of scalar validity, so an invalid value
-      # reports exactly one violation (its own) rather than also tripping
-      # the "found 0" key-count check below.
-      case "$key" in
-      title) title_count=$((title_count + 1)) ;;
-      description) desc_count=$((desc_count + 1)) ;;
-      esac
+  if [[ -n "$body" ]]; then
+    while IFS= read -r line; do
+      line="${line%$'\r'}"
+      [[ -z "${line//[[:space:]]/}" ]] && continue
+      if [[ "$line" =~ ^([A-Za-z0-9_-]+):[[:space:]]*(.*)$ ]]; then
+        key="${BASH_REMATCH[1]}"
+        value="${BASH_REMATCH[2]}"
+        keys+=("$key")
 
-      validate_frontmatter_scalar "$value"
-      if ! $FRONTMATTER_SCALAR_OK; then
-        fail "$f: $FRONTMATTER_SCALAR_DIAG: '$line'"
-        continue
+        # Count the key regardless of scalar validity, so an invalid value
+        # reports exactly one violation (its own) rather than also tripping
+        # the "found 0" key-count check below.
+        case "$key" in
+        title) title_count=$((title_count + 1)) ;;
+        description) desc_count=$((desc_count + 1)) ;;
+        esac
+
+        validate_frontmatter_scalar "$value"
+        if ! $FRONTMATTER_SCALAR_OK; then
+          fail "$f: $FRONTMATTER_SCALAR_DIAG: '$line'"
+          continue
+        fi
+
+        case "$key" in
+        title)
+          frontmatter_value_is_empty_or_null "$FRONTMATTER_SCALAR_VALUE" && title_empty=true
+          ;;
+        description)
+          frontmatter_value_is_empty_or_null "$FRONTMATTER_SCALAR_VALUE" && desc_empty=true
+          ;;
+        esac
+      else
+        fail "$f: unparseable frontmatter line (frontmatter contract): '$line'"
       fi
-
-      case "$key" in
-      title)
-        frontmatter_value_is_empty_or_null "$FRONTMATTER_SCALAR_VALUE" && title_empty=true
-        ;;
-      description)
-        frontmatter_value_is_empty_or_null "$FRONTMATTER_SCALAR_VALUE" && desc_empty=true
-        ;;
-      esac
-    else
-      fail "$f: unparseable frontmatter line (frontmatter contract): '$line'"
-    fi
-  done < <(sed -n "2,$((close_line - 1))p" "$f")
+    done <<<"$body"
+  fi
 
   local -a other_keys=()
   for key in "${keys[@]}"; do
@@ -551,22 +672,37 @@ fence_state_machine() {
 # restricted fence grammar (see fence_state_machine above).
 check_fence_grammar() {
   local f
-  while IFS= read -r -d '' f; do
-    check_fence_grammar_of_file "$f"
-  done < <(find "$CORPUS_ROOT" -name '*.md' -print0)
+  find_corpus_markdown_files "corpus Markdown files (fence grammar)"
+  # Guarded on a non-empty check: under bash 3.2's `set -u`, expanding
+  # "${MD_FILES[@]}" when the array is genuinely empty (e.g. after a `find`
+  # failure already reported by find_corpus_markdown_files above) is an
+  # unbound-variable error, not a zero-iteration loop.
+  if [[ "${#MD_FILES[@]}" -gt 0 ]]; then
+    for f in "${MD_FILES[@]}"; do
+      check_fence_grammar_of_file "$f"
+    done
+  fi
 }
 
 # Scans a single file for fence-grammar violations, via the shared state
-# machine, and reports each one.
+# machine, and reports each one. The state machine's own awk invocation is
+# captured and status-checked via check_scan_status before its output is
+# trusted, rather than consumed straight off a process substitution whose
+# exit status would otherwise go unexamined.
 check_fence_grammar_of_file() {
   local f="$1"
-  local hit line_no msg
+  local hit line_no msg output status
+
+  output="$(fence_state_machine "$f" grammar)"
+  status=$?
+  check_scan_status "$f" "$status" "fence grammar" || return
+  [[ -z "$output" ]] && return
 
   while IFS= read -r hit; do
     line_no="${hit%%$'\t'*}"
     msg="${hit#*$'\t'}"
     fail "$f:$line_no: $msg"
-  done < <(fence_state_machine "$f" grammar)
+  done <<<"$output"
 }
 
 # --- Fence handling ---
@@ -588,9 +724,14 @@ strip_all_fences() {
 # files resolves to an existing path from the linking file's own directory.
 check_links() {
   local f
-  while IFS= read -r -d '' f; do
-    check_links_of_file "$f"
-  done < <(find "$CORPUS_ROOT" -name '*.md' -print0)
+  find_corpus_markdown_files "corpus Markdown files (links)"
+  # See the identical guard in check_fence_grammar above for why this is
+  # needed (bash 3.2's `set -u` + an empty array expansion).
+  if [[ "${#MD_FILES[@]}" -gt 0 ]]; then
+    for f in "${MD_FILES[@]}"; do
+      check_links_of_file "$f"
+    done
+  fi
 }
 
 # Validates a single relative link target, resolving it from dir and
@@ -624,37 +765,59 @@ check_link_target() {
 # silently passed through unresolved). A bare (non-angle-bracket) inline
 # destination containing a literal '(' is rejected as a corpus-grammar
 # violation rather than silently truncated at the first ')' — such a target
-# must use the angle-bracket destination form instead.
+# must use the angle-bracket destination form instead. Each of the three
+# `strip_all_fences | grep` extractor scans below is captured into a
+# variable and its own exit status checked via check_scan_status (the
+# `pipefail` enabled at the top of this script means the captured status
+# reflects the two-stage pipeline as a whole) before its output is trusted.
 check_links_of_file() {
   local f="$1"
-  local dir raw target line hit
+  local dir raw target line hit output status
   dir=$(dirname "$f")
 
-  while IFS= read -r raw; do
-    target="${raw#](}"
-    if [[ "$target" == '<'*'>' ]]; then
-      target="${target#<}"
-      target="${target%>}"
-    elif [[ "$target" == *'('* ]]; then
-      fail "$f: bare link destination contains '(' ('$target'); use the angle-bracket destination form '(<target>)' instead (corpus grammar)"
-      continue
+  output="$(strip_all_fences "$f" | grep -oE '\]\(<[^>]*>|\]\([^)[:space:]]+')"
+  status=$?
+  if check_scan_status "$f" "$status" "inline link destinations"; then
+    if [[ -n "$output" ]]; then
+      while IFS= read -r raw; do
+        target="${raw#](}"
+        if [[ "$target" == '<'*'>' ]]; then
+          target="${target#<}"
+          target="${target%>}"
+        elif [[ "$target" == *'('* ]]; then
+          fail "$f: bare link destination contains '(' ('$target'); use the angle-bracket destination form '(<target>)' instead (corpus grammar)"
+          continue
+        fi
+        check_link_target "$f" "$dir" "$target"
+      done <<<"$output"
     fi
-    check_link_target "$f" "$dir" "$target"
-  done < <(strip_all_fences "$f" | grep -oE '\]\(<[^>]*>|\]\([^)[:space:]]+')
+  fi
 
-  while IFS= read -r hit; do
-    fail "$f:${hit%%:*}: reference-style link definitions must start at column zero, not be indented (corpus grammar)"
-  done < <(strip_all_fences "$f" | grep -noE '^[[:space:]]+\[[^]]+\]:|^([[:space:]]*(>[[:space:]]*|[-*+][[:space:]]+|[0-9]+[.)][[:space:]]+))+\[[^]]+\]:')
-
-  while IFS= read -r line; do
-    [[ "$line" =~ ^\[[^]]+\]:[[:space:]]*(.+)$ ]] || continue
-    target="${BASH_REMATCH[1]}"
-    if [[ "$target" == '<'*'>' ]]; then
-      target="${target#<}"
-      target="${target%>}"
+  output="$(strip_all_fences "$f" | grep -noE '^[[:space:]]+\[[^]]+\]:|^([[:space:]]*(>[[:space:]]*|[-*+][[:space:]]+|[0-9]+[.)][[:space:]]+))+\[[^]]+\]:')"
+  status=$?
+  if check_scan_status "$f" "$status" "indented reference-style link definitions"; then
+    if [[ -n "$output" ]]; then
+      while IFS= read -r hit; do
+        fail "$f:${hit%%:*}: reference-style link definitions must start at column zero, not be indented (corpus grammar)"
+      done <<<"$output"
     fi
-    check_link_target "$f" "$dir" "$target"
-  done < <(strip_all_fences "$f" | grep -oE '^\[[^]]+\]:[[:space:]]*<[^>]*>|^\[[^]]+\]:[[:space:]]*[^[:space:]]+')
+  fi
+
+  output="$(strip_all_fences "$f" | grep -oE '^\[[^]]+\]:[[:space:]]*<[^>]*>|^\[[^]]+\]:[[:space:]]*[^[:space:]]+')"
+  status=$?
+  if check_scan_status "$f" "$status" "reference-style link definitions"; then
+    if [[ -n "$output" ]]; then
+      while IFS= read -r line; do
+        [[ "$line" =~ ^\[[^]]+\]:[[:space:]]*(.+)$ ]] || continue
+        target="${BASH_REMATCH[1]}"
+        if [[ "$target" == '<'*'>' ]]; then
+          target="${target#<}"
+          target="${target%>}"
+        fi
+        check_link_target "$f" "$dir" "$target"
+      done <<<"$output"
+    fi
+  fi
 }
 
 # --- (e) Forbidden tokens ---
@@ -664,9 +827,14 @@ check_links_of_file() {
 # fence appears in corpus Markdown files.
 check_forbidden_tokens() {
   local f
-  while IFS= read -r -d '' f; do
-    check_forbidden_tokens_of_file "$f"
-  done < <(find "$CORPUS_ROOT" -name '*.md' -print0)
+  find_corpus_markdown_files "corpus Markdown files (forbidden tokens)"
+  # See the identical guard in check_fence_grammar above for why this is
+  # needed (bash 3.2's `set -u` + an empty array expansion).
+  if [[ "${#MD_FILES[@]}" -gt 0 ]]; then
+    for f in "${MD_FILES[@]}"; do
+      check_forbidden_tokens_of_file "$f"
+    done
+  fi
 }
 
 # Strips the content of ```xml fenced code blocks (and every fence's marker
@@ -678,28 +846,42 @@ strip_xml_fences() {
   fence_state_machine "$1" strip_xml
 }
 
-# Scans a single file for forbidden tokens and reports each match.
+# Scans a single file for forbidden tokens and reports each match. Each
+# extractor scan is captured into a variable and its own exit status checked
+# via check_scan_status before its output is trusted.
 check_forbidden_tokens_of_file() {
   local f="$1"
-  local hit line_no token
+  local hit line_no token output status
 
   # TODO/TBD (singular or plural) and latest are forbidden everywhere,
   # including inside xml fences, case-insensitively (e.g. Latest, TODOs).
-  while IFS= read -r hit; do
-    line_no="${hit%%:*}"
-    token="${hit#*:}"
-    fail "$f:$line_no: forbidden token '$token' (placeholder contract)"
-  done < <(grep -inoE '\b(TODO|TBD)S?\b|\blatest\b' "$f")
+  output="$(grep -inoE '\b(TODO|TBD)S?\b|\blatest\b' "$f")"
+  status=$?
+  if check_scan_status "$f" "$status" "forbidden tokens"; then
+    if [[ -n "$output" ]]; then
+      while IFS= read -r hit; do
+        line_no="${hit%%:*}"
+        token="${hit#*:}"
+        fail "$f:$line_no: forbidden token '$token' (placeholder contract)"
+      done <<<"$output"
+    fi
+  fi
 
   # Angle-bracket pseudo-value placeholders are forbidden outside xml fences:
   # lowercase-hyphenated (<placeholder-name>), ALL-CAPS (<VERSION>), and
   # lowercase-start camelCase (<vertiqueVersion>). Chosen so none match a Java
   # generic such as <String>, <T>, or <Response<String>>.
-  while IFS= read -r hit; do
-    line_no="${hit%%:*}"
-    token="${hit#*:}"
-    fail "$f:$line_no: forbidden angle-bracket placeholder '$token' outside an xml fence (placeholder contract)"
-  done < <(strip_xml_fences "$f" | grep -noE '<[a-z][a-z0-9-]*>|<[A-Z][A-Z0-9_]{2,}>|<[a-z][a-z0-9]*[A-Z][A-Za-z0-9]*>')
+  output="$(strip_xml_fences "$f" | grep -noE '<[a-z][a-z0-9-]*>|<[A-Z][A-Z0-9_]{2,}>|<[a-z][a-z0-9]*[A-Z][A-Za-z0-9]*>')"
+  status=$?
+  if check_scan_status "$f" "$status" "angle-bracket placeholders"; then
+    if [[ -n "$output" ]]; then
+      while IFS= read -r hit; do
+        line_no="${hit%%:*}"
+        token="${hit#*:}"
+        fail "$f:$line_no: forbidden angle-bracket placeholder '$token' outside an xml fence (placeholder contract)"
+      done <<<"$output"
+    fi
+  fi
 }
 
 # --- (f) Renderer/site metadata ---
@@ -708,9 +890,14 @@ check_forbidden_tokens_of_file() {
 # tag appears in any corpus Markdown file.
 check_renderer_metadata() {
   local f
-  while IFS= read -r -d '' f; do
-    check_renderer_metadata_of_file "$f"
-  done < <(find "$CORPUS_ROOT" -name '*.md' -print0)
+  find_corpus_markdown_files "corpus Markdown files (renderer metadata)"
+  # See the identical guard in check_fence_grammar above for why this is
+  # needed (bash 3.2's `set -u` + an empty array expansion).
+  if [[ "${#MD_FILES[@]}" -gt 0 ]]; then
+    for f in "${MD_FILES[@]}"; do
+      check_renderer_metadata_of_file "$f"
+    done
+  fi
 }
 
 # Scans a single file for renderer-specific syntax and reports each match.
@@ -718,25 +905,45 @@ check_renderer_metadata() {
 # against a fence-stripped view of the file: a legitimate ```java fence
 # containing `import dev.vertique...;` or a `Optional<Response<String>>`
 # generic must never trip these two rules. The ':::' directive has no
-# legitimate code-fence use, so it is still scanned everywhere.
+# legitimate code-fence use, so it is still scanned everywhere. Each
+# extractor scan is captured into a variable and its own exit status checked
+# via check_scan_status before its output is trusted.
 check_renderer_metadata_of_file() {
   local f="$1"
-  local hit line_no
+  local hit line_no output status
 
-  while IFS= read -r hit; do
-    line_no="${hit%%:*}"
-    fail "$f:$line_no: renderer import syntax is forbidden in corpus Markdown (renderer-neutrality contract)"
-  done < <(strip_all_fences "$f" | grep -noE '^[[:space:]]*import[[:space:]]')
+  output="$(strip_all_fences "$f" | grep -noE '^[[:space:]]*import[[:space:]]')"
+  status=$?
+  if check_scan_status "$f" "$status" "renderer import syntax"; then
+    if [[ -n "$output" ]]; then
+      while IFS= read -r hit; do
+        line_no="${hit%%:*}"
+        fail "$f:$line_no: renderer import syntax is forbidden in corpus Markdown (renderer-neutrality contract)"
+      done <<<"$output"
+    fi
+  fi
 
-  while IFS= read -r hit; do
-    line_no="${hit%%:*}"
-    fail "$f:$line_no: ':::' directive syntax is forbidden in corpus Markdown (renderer-neutrality contract)"
-  done < <(grep -noF ':::' "$f")
+  output="$(grep -noF ':::' "$f")"
+  status=$?
+  if check_scan_status "$f" "$status" "':::' directive syntax"; then
+    if [[ -n "$output" ]]; then
+      while IFS= read -r hit; do
+        line_no="${hit%%:*}"
+        fail "$f:$line_no: ':::' directive syntax is forbidden in corpus Markdown (renderer-neutrality contract)"
+      done <<<"$output"
+    fi
+  fi
 
-  while IFS= read -r hit; do
-    line_no="${hit%%:*}"
-    fail "$f:$line_no: JSX component tag syntax is forbidden in corpus Markdown (renderer-neutrality contract)"
-  done < <(strip_all_fences "$f" | grep -noE '<[A-Z][A-Za-z0-9]*[[:space:]/>]')
+  output="$(strip_all_fences "$f" | grep -noE '<[A-Z][A-Za-z0-9]*[[:space:]/>]')"
+  status=$?
+  if check_scan_status "$f" "$status" "JSX component tag syntax"; then
+    if [[ -n "$output" ]]; then
+      while IFS= read -r hit; do
+        line_no="${hit%%:*}"
+        fail "$f:$line_no: JSX component tag syntax is forbidden in corpus Markdown (renderer-neutrality contract)"
+      done <<<"$output"
+    fi
+  fi
 }
 
 # --- Main ---
