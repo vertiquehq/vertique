@@ -15,6 +15,14 @@ package dev.vertique.rest.core.sse;
  * {@link Class} whose {@link Class#getName()} matches that literal, exercising the converter's
  * positive match path without adding a module dependency. Declared {@code public} so the test in
  * package {@code dev.vertique.openapi} can reference it.
+ *
+ * <p><strong>Rename-guard hazard.</strong> This stub is declared at the exact FQN the converter
+ * string-matches, so it stays green even if the real class in {@code rest-core} is renamed or moved —
+ * the coupling is guarded instead by {@code SseEventTest.shouldKeepFullyQualifiedNameStableForOpenApiStringMatch()}
+ * in {@code vertique-rest-core}'s test sources, which pins {@code SseEvent.class.getName()} to this
+ * same literal. This class is test-scope only; if {@code rest-core} is ever added to this module's
+ * test classpath, {@code target/test-classes} precedes jars on the classpath and this stub would
+ * shadow the real class.
  */
 public class SseEvent {
 

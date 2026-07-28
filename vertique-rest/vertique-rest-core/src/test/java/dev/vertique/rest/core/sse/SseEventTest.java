@@ -158,4 +158,26 @@ class SseEventTest {
             assertNotEquals(null, event);
         }
     }
+
+    // --- Fully-qualified name guard (json-004 round-4 review) ---
+
+    @Nested
+    @DisplayName("Fully-qualified class name")
+    class FullyQualifiedName {
+
+        /**
+         * {@code dev.vertique.openapi.SseModelConverter} (in the build-time-only {@code
+         * rest-openapi-plugin} module, which deliberately does not depend on {@code rest-core}) matches
+         * an SSE stream's type argument by comparing its {@link Class#getName()} against the string
+         * literal {@code "dev.vertique.rest.core.sse.SseEvent"}, not by type identity, specifically to
+         * avoid a compile-time dependency on this module. Renaming or moving this class silently breaks
+         * OpenAPI schema generation for SSE endpoints unless that literal is updated in lockstep — this
+         * test pins the FQN so a rename fails loudly here instead of silently in the sibling module.
+         */
+        @Test
+        @DisplayName("Should keep the FQN that dev.vertique.openapi.SseModelConverter string-matches")
+        void shouldKeepFullyQualifiedNameStableForOpenApiStringMatch() {
+            assertEquals("dev.vertique.rest.core.sse.SseEvent", SseEvent.class.getName());
+        }
+    }
 }
