@@ -18,12 +18,15 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { loadPolicy, deriveInventory, verifyInventory } from '../verify-publication.mjs';
+import { loadPolicy, deriveInventory, verifyInventory, readPom } from '../verify-publication.mjs';
+
+/** The development line both independently invokable public parents must declare (FR-REL-001). */
+const DEVELOPMENT_VERSION = '0.1.0-SNAPSHOT';
 
 const TEST_DIR = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(TEST_DIR, '..', '..');
@@ -200,6 +203,56 @@ describe('PublicPublicationInventoryTest', () => {
       assert.match(unknown.errors.join('\n'), /unclassified|vertique-brand-new-thing/i);
     } finally {
       for (const r of roots) rmSync(r, { recursive: true, force: true });
+    }
+  });
+});
+
+/** Reads the literal `<revision>` property declared in a POM's own `<properties>`. */
+function declaredRevision(pomRelPath) {
+  const xml = readFileSync(path.join(REPO_ROOT, pomRelPath), 'utf8');
+  const match = /<revision>([^<]+)<\/revision>/.exec(xml);
+  assert.ok(match, `${pomRelPath} declares no <revision> property`);
+  return match[1].trim();
+}
+
+describe('PublicVersionContractTest', () => {
+  it('rootAndStandaloneApplicationParentDefaultToZeroOneSnapshot', () => {
+    // Both public parents are independently invokable, so each carries its own
+    // <revision>. main must identify the actual next intended release
+    // (FR-REL-001), not the 0.0.0-SNAPSHOT cutover placeholder.
+    assert.equal(declaredRevision('pom.xml'), DEVELOPMENT_VERSION);
+    assert.equal(declaredRevision('vertique-app-parent/pom.xml'), DEVELOPMENT_VERSION);
+
+    // Both parents are themselves publishable, so the version they declare is
+    // the version consumers resolve.
+    const policy = loadPolicy(POLICY_PATH);
+    const published = deriveInventory(REPO_ROOT, policy).published.map((u) => u.artifactId);
+    assert.ok(published.includes('vertique-parent'));
+    assert.ok(published.includes('vertique-app-parent'));
+  });
+
+  it('declaresReleaseShapedPayloadPolicyForEveryPublishedPackaging', () => {
+    // FR-REL-034: every published packaging must have a declared payload set,
+    // so staging can never silently omit sources or Javadocs for a GAV.
+    const policy = loadPolicy(POLICY_PATH);
+    const inventory = deriveInventory(REPO_ROOT, policy);
+    const packagings = new Set(inventory.published.map((u) => u.packaging));
+
+    for (const packaging of packagings) {
+      const payloads = policy.payloadPolicy[packaging];
+      assert.ok(payloads, `payloadPolicy declares no payload set for packaging "${packaging}"`);
+      assert.ok(payloads.includes('pom'), `${packaging} must publish a flattened POM`);
+      if (packaging !== 'pom') {
+        for (const required of ['jar', 'sources', 'javadoc']) {
+          assert.ok(payloads.includes(required), `${packaging} must publish a ${required} payload`);
+        }
+      }
+    }
+
+    // Every published unit carries its resolved payload set, so the staging
+    // step never has to re-derive it.
+    for (const unit of inventory.published) {
+      assert.ok(Array.isArray(unit.payloads), `${unit.artifactId} has no resolved payload set`);
     }
   });
 });
