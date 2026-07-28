@@ -66,15 +66,22 @@ function pom(dir, { artifactId, packaging = 'jar', modules = [], managed = [] })
  * parent + app-parent + bom (3 managed GAVs) + 3 archetypes + 1 example.
  * Returns its root directory; callers mutate it to simulate drift.
  */
+const DEFAULT_MANAGED = ['vertique-core', 'vertique-rest-core', 'vertique-json'];
+const DEFAULT_ARCHETYPES = [
+  'vertique-archetype-rest',
+  'vertique-archetype-services',
+  'vertique-archetype-rest-postgresql',
+];
+
 function fixtureReactor(overrides = {}) {
   const root = mkdtempSync(path.join(tmpdir(), 'vertique-pub-'));
-  const managed = overrides.managed ?? ['vertique-core', 'vertique-rest-core', 'vertique-json'];
-  const archetypes = overrides.archetypes ?? [
-    'vertique-archetype-rest',
-    'vertique-archetype-services',
-    'vertique-archetype-rest-postgresql',
-  ];
+  const managed = overrides.managed ?? DEFAULT_MANAGED;
+  const archetypes = overrides.archetypes ?? DEFAULT_ARCHETYPES;
   const extraJars = overrides.extraJars ?? [];
+  // BOM entries for modules that already exist elsewhere in the reactor, so a
+  // case can add an existing module to the BOM without also creating a
+  // second module of the same artifactId at the reactor root.
+  const bomOnly = overrides.bomOnly ?? [];
 
   pom(root, {
     artifactId: 'vertique-parent',
@@ -89,7 +96,11 @@ function fixtureReactor(overrides = {}) {
     ],
   });
   pom(path.join(root, 'vertique-app-parent'), { artifactId: 'vertique-app-parent', packaging: 'pom' });
-  pom(path.join(root, 'vertique-bom'), { artifactId: 'vertique-bom', packaging: 'pom', managed });
+  pom(path.join(root, 'vertique-bom'), {
+    artifactId: 'vertique-bom',
+    packaging: 'pom',
+    managed: [...managed, ...bomOnly],
+  });
   pom(path.join(root, 'vertique-archetype'), {
     artifactId: 'vertique-archetype',
     packaging: 'pom',
@@ -109,9 +120,19 @@ function fixtureReactor(overrides = {}) {
   return root;
 }
 
-/** Policy matching {@link fixtureReactor}'s expected count (3 managed + 3 fixed + 3 archetypes). */
+/**
+ * Policy pinned to {@link fixtureReactor}'s BASELINE inventory: 3 fixed +
+ * 3 BOM-managed + 3 archetypes. Drift cases mutate the reactor and verify
+ * against this unchanged policy, which is exactly the real failure mode —
+ * someone changing the reactor without deliberately updating the policy.
+ */
 function fixturePolicy() {
-  return { ...loadPolicy(POLICY_PATH), expectedPublishableGavCount: 9 };
+  const ids = ['vertique-parent', 'vertique-app-parent', 'vertique-bom', ...DEFAULT_MANAGED, ...DEFAULT_ARCHETYPES];
+  return {
+    ...loadPolicy(POLICY_PATH),
+    expectedPublishableGavCount: ids.length,
+    expectedPublishableGavs: ids.map((a) => `dev.vertique:${a}`).sort(),
+  };
 }
 
 describe('PublicPublicationInventoryTest', () => {
@@ -121,16 +142,27 @@ describe('PublicPublicationInventoryTest', () => {
 
     // Every reactor module is classified exactly once, with no overlap and no gap.
     const publishedIds = inventory.published.map((u) => u.artifactId);
-    const skippedIds = inventory.skipped.map((u) => u.artifactId);
+
+    // Partition on relPath — the only stable per-module identity — and assert
+    // the counts sum. Comparing a Set of artifactIds against modules.length
+    // would only fail when two modules share an artifactId, which is not the
+    // property this test is named for.
+    const publishedPaths = inventory.published.map((u) => u.relPath);
+    const skippedPaths = inventory.skipped.map((u) => u.relPath);
     assert.equal(
-      new Set([...publishedIds, ...skippedIds]).size,
+      inventory.published.length + inventory.skipped.length,
       inventory.modules.length,
-      'published ∪ skipped must cover every reactor module exactly once'
+      'published + skipped must sum to the reactor module count'
     );
     assert.deepEqual(
-      publishedIds.filter((id) => skippedIds.includes(id)),
+      publishedPaths.filter((p) => skippedPaths.includes(p)),
       [],
       'no module may be both published and skipped'
+    );
+    assert.equal(
+      new Set([...publishedPaths, ...skippedPaths]).size,
+      inventory.modules.length,
+      'every reactor module must be classified exactly once'
     );
 
     // No module may fall through to the catch-all: an unrecognised module is drift.
@@ -146,10 +178,14 @@ describe('PublicPublicationInventoryTest', () => {
     for (const fixed of ['vertique-parent', 'vertique-app-parent', 'vertique-bom']) {
       assert.ok(publishedIds.includes(fixed), `${fixed} must be published`);
     }
-    assert.equal(
-      inventory.published.filter((u) => u.packaging === 'maven-archetype').length,
-      3,
-      'exactly the three public archetypes are published'
+    // Assert archetype IDENTITY, not merely a count of three — renaming an
+    // archetype must fail, and a count assertion would not notice.
+    assert.deepEqual(
+      inventory.published
+        .filter((u) => u.packaging === 'maven-archetype')
+        .map((u) => u.artifactId)
+        .sort(),
+      ['vertique-archetype-rest', 'vertique-archetype-rest-postgresql', 'vertique-archetype-services']
     );
 
     // Examples and integration-test modules are never publishable.
@@ -201,9 +237,125 @@ describe('PublicPublicationInventoryTest', () => {
       const unknown = verifyInventory(unknownModule, fixturePolicy());
       assert.equal(unknown.ok, false, 'an unclassifiable reactor module must fail verification');
       assert.match(unknown.errors.join('\n'), /unclassified|vertique-brand-new-thing/i);
+
+      // COUNT-NEUTRAL swap: dropping one BOM GAV while adding another leaves
+      // the total at 9, so a cardinality check alone cannot see it. FR-REL-032
+      // requires BOM drift to fail regardless of count.
+      const swapped = fixtureReactor({
+        managed: ['vertique-core', 'vertique-rest-core', 'vertique-totally-new'],
+      });
+      roots.push(swapped);
+      const swap = verifyInventory(swapped, fixturePolicy());
+      assert.equal(swap.ok, false, 'a count-neutral BOM swap must fail verification');
+      assert.match(swap.errors.join('\n'), /vertique-totally-new/i, 'the unexpected GAV must be named');
+      assert.match(swap.errors.join('\n'), /vertique-json/i, 'the missing GAV must be named');
+
+      // A renamed archetype is also count-neutral.
+      const renamedArchetype = fixtureReactor({
+        archetypes: ['vertique-archetype-rest', 'vertique-archetype-services', 'vertique-archetype-renamed'],
+      });
+      roots.push(renamedArchetype);
+      assert.equal(
+        verifyInventory(renamedArchetype, fixturePolicy()).ok,
+        false,
+        'a renamed archetype must fail verification'
+      );
+
+      // A BOM-listed EXAMPLE must never become publishable: deny rules are
+      // authoritative and evaluated before the publish rules, so a BOM listing
+      // is not sufficient to publish something FR-REL-030 does not enumerate.
+      const bomListedExample = fixtureReactor({ bomOnly: ['vertique-example-hello'] });
+      roots.push(bomListedExample);
+      const exampleInv = deriveInventory(bomListedExample, fixturePolicy());
+      assert.ok(
+        !exampleInv.published.some((u) => u.artifactId === 'vertique-example-hello'),
+        'a BOM-listed example must not be classified as publishable'
+      );
+      assert.equal(
+        exampleInv.skipped.find((u) => u.artifactId === 'vertique-example-hello')?.reason,
+        'example',
+        'a BOM-listed example must still be skipped as an example'
+      );
     } finally {
       for (const r of roots) rmSync(r, { recursive: true, force: true });
     }
+  });
+});
+
+describe('PomReaderTest', () => {
+  /** Writes `xml` to a scratch pom and returns the parsed result. */
+  function parse(xml) {
+    const dir = mkdtempSync(path.join(tmpdir(), 'vertique-pom-'));
+    try {
+      writeFileSync(path.join(dir, 'pom.xml'), xml);
+      return readPom(path.join(dir, 'pom.xml'));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  it('readsTheModuleOwnCoordinatesNotItsParents', () => {
+    // The reason this is a parser and not a regex: <parent> carries its own
+    // <artifactId>, and a first-match scan would read the parent's.
+    const pom = parse(`<project xmlns="http://maven.apache.org/POM/4.0.0">
+        <parent><groupId>dev.vertique</groupId><artifactId>vertique-parent</artifactId><version>1</version></parent>
+        <artifactId>vertique-core</artifactId>
+        <packaging>jar</packaging>
+      </project>`);
+    assert.equal(pom.artifactId, 'vertique-core');
+    assert.equal(pom.packaging, 'jar');
+    // groupId falls back to the parent's when the module declares none.
+    assert.equal(pom.groupId, 'dev.vertique');
+  });
+
+  it('ignoresCommentedOutAndCdataContent', () => {
+    const pom = parse(`<project xmlns="http://maven.apache.org/POM/4.0.0">
+        <artifactId>vertique-thing</artifactId>
+        <packaging>pom</packaging>
+        <description><![CDATA[ranges where a < b, and </description><artifactId>forged</artifactId>]]></description>
+        <modules><module>real</module><!--<module>commented</module>--></modules>
+      </project>`);
+    // CDATA is discarded rather than re-injected: unwrapping it would let its
+    // contents be scanned as markup, dropping <packaging> and the <modules>
+    // subtree — modules that vanish are never classified at all.
+    assert.equal(pom.artifactId, 'vertique-thing');
+    assert.equal(pom.packaging, 'pom');
+    assert.deepEqual(pom.modules, ['real']);
+  });
+
+  it('readsOnlyProjectLevelManagedDependencies', () => {
+    // A plugin's own <dependencies> are not dependency management.
+    const pom = parse(`<project xmlns="http://maven.apache.org/POM/4.0.0">
+        <artifactId>vertique-bom</artifactId><packaging>pom</packaging>
+        <dependencyManagement><dependencies>
+          <dependency><groupId>dev.vertique</groupId><artifactId>vertique-core</artifactId></dependency>
+        </dependencies></dependencyManagement>
+        <build><plugins><plugin><artifactId>some-plugin</artifactId><dependencies>
+          <dependency><groupId>dev.vertique</groupId><artifactId>not-managed</artifactId></dependency>
+        </dependencies></plugin></plugins></build>
+      </project>`);
+    assert.deepEqual(pom.managed.map((d) => d.artifactId), ['vertique-core']);
+  });
+
+  it('refusesProfileScopedModulesAndDependencyManagement', () => {
+    // Profile-conditional declarations cannot be resolved build-independently.
+    // Refusing beats silently returning a smaller reactor, because hidden
+    // modules never reach the unclassified fail-closed check at all.
+    assert.throws(
+      () =>
+        parse(`<project xmlns="http://maven.apache.org/POM/4.0.0">
+          <artifactId>vertique-parent</artifactId><packaging>pom</packaging>
+          <profiles><profile><id>extra</id><modules><module>hidden</module></modules></profile></profiles>
+        </project>`),
+      /<profile> declares <modules>/
+    );
+  });
+
+  it('treatsAnEmptyPackagingElementAsTheMavenDefault', () => {
+    const pom = parse(`<project xmlns="http://maven.apache.org/POM/4.0.0">
+        <groupId>dev.vertique</groupId><artifactId>vertique-core</artifactId><packaging></packaging>
+      </project>`);
+    assert.equal(pom.packaging, 'jar');
   });
 });
 
