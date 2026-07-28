@@ -256,3 +256,92 @@ describe('PublicVersionContractTest', () => {
     }
   });
 });
+
+/**
+ * Splits a workflow's `run:` step bodies out of the raw YAML.
+ *
+ * The workflow contract is asserted textually rather than through a YAML
+ * object model: the properties that matter here (which permissions are
+ * granted anywhere in the file, whether any secret is referenced, whether a
+ * step embeds logic instead of calling an entry point) are all properties of
+ * the literal document a reviewer reads, and a parser would let a
+ * semantically-equivalent-but-unreviewable form slip through.
+ */
+function runStepBodies(yaml) {
+  const bodies = [];
+  const lines = yaml.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const m = /^(\s*)-?\s*run:\s*(\|[-+]?|>[-+]?)?\s*(.*)$/.exec(lines[i]);
+    if (!m) continue;
+    const [, indent, block, inline] = m;
+    if (!block) {
+      bodies.push(inline.trim());
+      continue;
+    }
+    const body = [];
+    for (let j = i + 1; j < lines.length; j++) {
+      if (lines[j].trim() === '') { body.push(''); continue; }
+      const lead = lines[j].match(/^\s*/)[0].length;
+      if (lead <= indent.length) break;
+      body.push(lines[j].trim());
+    }
+    bodies.push(body.join('\n').trim());
+  }
+  return bodies;
+}
+
+describe('PublicCiContractTest', () => {
+  const CI_PATH = path.join(REPO_ROOT, '.github', 'workflows', 'ci.yml');
+  const ci = () => readFileSync(CI_PATH, 'utf8');
+
+  it('pullRequestBuildHasReadOnlyPermissionsAndNoSecrets', () => {
+    const yaml = ci();
+
+    // Required CI must hold no package, release, tag, or repository-content
+    // write credential (FR-REL-014, NFR-REL-001).
+    const granted = [...yaml.matchAll(/^\s*(contents|packages|pull-requests|id-token|actions|checks|deployments|issues|statuses|security-events|attestations|pages):\s*(\S+)\s*$/gm)];
+    assert.ok(granted.length > 0, 'ci.yml declares no explicit permissions block');
+    for (const [, scope, level] of granted) {
+      assert.equal(level, 'read', `permission ${scope} must be read, got "${level}"`);
+    }
+    assert.match(yaml, /^permissions:\s*$/m, 'ci.yml must declare a top-level permissions block');
+
+    // No secret may be referenced at all: nothing in required CI needs one.
+    const secretRefs = [...yaml.matchAll(/\$\{\{\s*secrets\.([A-Za-z0-9_]+)/g)].map((m) => m[1]);
+    assert.deepEqual(secretRefs, [], `required CI must reference no secrets, found ${secretRefs}`);
+
+    // It must run on both PR and main push, and must actually verify.
+    assert.match(yaml, /pull_request:/, 'ci.yml must run on pull_request');
+    assert.match(yaml, /push:/, 'ci.yml must run on push');
+    const bodies = runStepBodies(yaml).join('\n');
+    assert.match(bodies, /mvnw[^\n]*\bverify\b/, 'ci.yml must run a clean Maven verification');
+    assert.match(bodies, /spotless:check/, 'ci.yml must run the formatting check');
+    assert.match(
+      bodies,
+      /verify-publication\.mjs|publication-contract\.test\.mjs/,
+      'ci.yml must run the release-contract tests'
+    );
+  });
+
+  it('delegatesSubstantiveLogicToRepositoryOwnedScripts', () => {
+    // NFR-REL-006: workflow YAML binds events and permissions; substantive
+    // logic lives in versioned, locally runnable repository-owned entry points.
+    const bodies = runStepBodies(ci());
+    assert.ok(bodies.length > 0, 'ci.yml declares no run steps');
+
+    const ENTRY_POINT = /^(\.\/mvnw|bash\s+\S+\.sh|node\s+(--test\s+)?\S+\.mjs|npm\s+\S+)\b/;
+    for (const body of bodies) {
+      const commands = body.split('\n').map((l) => l.trim()).filter(Boolean);
+      for (const command of commands) {
+        assert.match(
+          command,
+          ENTRY_POINT,
+          `ci.yml step embeds logic instead of calling a repository-owned entry point: "${command}"`
+        );
+      }
+      // Shell control flow in a workflow step is logic that cannot be run or
+      // tested locally, which is exactly what NFR-REL-006 forbids.
+      assert.doesNotMatch(body, /\b(if|for|while|case)\b\s|&&|\|\||;\s*\w/, `ci.yml step contains inline control flow:\n${body}`);
+    }
+  });
+});
