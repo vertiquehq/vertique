@@ -203,7 +203,7 @@ public final class ExecutionPlanEmitter {
 
         // --- private static helpers emitted into generated class ---
         List<MethodSpec> helpers = new ArrayList<>();
-        helpers.add(buildLoadClassHelper());
+        helpers.add(buildLoadClassHelper(planClass));
 
         // --- assemble class ---
         TypeSpec.Builder classBuilder = TypeSpec.classBuilder(planSimpleName)
@@ -545,16 +545,23 @@ public final class ExecutionPlanEmitter {
      * Returns the source-form type name (qualified name with type arguments, not binary) for
      * embedding in a TypeReference literal.
      *
+     * <p>Non-declared types (notably array type arguments such as the {@code Outer.Inner[]} in
+     * {@code List<Outer.Inner[]>}) go through
+     * {@link TypeMirrorFqn#erasedSourceFqn(TypeMirror, dev.vertique.codegen.CodegenContext)}, not
+     * {@link TypeMirrorFqn#erasedFqn(TypeMirror, dev.vertique.codegen.CodegenContext)}: this string
+     * is interpolated into the generated source, where a binary {@code Outer$Inner} base name would
+     * not compile.
+     *
      * @param type the type mirror to render
      * @return the source-form type name string
      */
     private String sourceTypeName(TypeMirror type) {
         if (!(type instanceof DeclaredType dt)) {
-            return erasedFqn(type);
+            return erasedSourceFqn(type);
         }
         var element = ctx.types().asElement(ctx.types().erasure(type));
         String rawName =
-                element instanceof TypeElement te ? te.getQualifiedName().toString() : erasedFqn(type);
+                element instanceof TypeElement te ? te.getQualifiedName().toString() : erasedSourceFqn(type);
         var args = dt.getTypeArguments();
         if (args.isEmpty()) {
             return rawName;
@@ -852,20 +859,35 @@ public final class ExecutionPlanEmitter {
      * plan class. Used by static {@code P{n}} field initializers to resolve {@code Class<?>}
      * instances from FQN strings at class-load time.
      *
+     * <p>The thread context class loader is tried first, then — additively — the generated plan
+     * class's own loader, mirroring the belt-and-braces pair the descriptor emitter already uses
+     * ({@code resource.getClass().getClassLoader()} with a context-loader fallback). The plan class
+     * is compiled into the same artifact as the resource it dispatches, so its own loader always
+     * sees every parameter type in that resource's signatures — including a type nested inside the
+     * resource itself — whereas the context loader is whatever the deploying thread happens to
+     * carry. The fallback is purely additive: every FQN that resolved through the context loader
+     * before still resolves to the same class.
+     *
+     * @param planClass the generated plan class's own name, used to reach its class loader
      * @return the method spec
      */
-    private static MethodSpec buildLoadClassHelper() {
+    private static MethodSpec buildLoadClassHelper(ClassName planClass) {
         ParameterizedTypeName classOfQ = ParameterizedTypeName.get(
                 ClassName.get(Class.class), com.palantir.javapoet.WildcardTypeName.subtypeOf(Object.class));
         return MethodSpec.methodBuilder("loadClass")
                 .addModifiers(Modifier.PRIVATE, Modifier.STATIC)
                 .returns(classOfQ)
                 .addParameter(String.class, "fqn")
+                .addStatement("$T tccl_ = $T.currentThread().getContextClassLoader()", ClassLoader.class, Thread.class)
+                .beginControlFlow("if (tccl_ != null)")
                 .beginControlFlow("try")
-                .addStatement(
-                        "return $T.forName(fqn, false, $T.currentThread().getContextClassLoader())",
-                        Class.class,
-                        Thread.class)
+                .addStatement("return $T.forName(fqn, false, tccl_)", Class.class)
+                .nextControlFlow("catch ($T ignored)", ClassNotFoundException.class)
+                .addCode("// Fall through to this plan class's own loader.\n")
+                .endControlFlow()
+                .endControlFlow()
+                .beginControlFlow("try")
+                .addStatement("return $T.forName(fqn, false, $T.class.getClassLoader())", Class.class, planClass)
                 .nextControlFlow("catch ($T e)", ClassNotFoundException.class)
                 .addStatement("throw new $T(e)", IllegalStateException.class)
                 .endControlFlow()
@@ -948,11 +970,20 @@ public final class ExecutionPlanEmitter {
     }
 
     /**
-     * Returns the erased binary FQN of {@code type}. Delegates to {@link TypeMirrorFqn}
-     * so the three CG-010 emitters share one source of truth on nested-type form.
+     * Returns the erased binary FQN of {@code type} — for strings the generated code resolves at
+     * runtime. Delegates to {@link TypeMirrorFqn} so the three CG-010 emitters share one source of
+     * truth on nested-type and array form.
      */
     private String erasedFqn(TypeMirror type) {
         return TypeMirrorFqn.erasedFqn(type, ctx);
+    }
+
+    /**
+     * Returns the erased source-form FQN of {@code type} — for strings interpolated into the
+     * generated source rather than resolved at runtime. Delegates to {@link TypeMirrorFqn}.
+     */
+    private String erasedSourceFqn(TypeMirror type) {
+        return TypeMirrorFqn.erasedSourceFqn(type, ctx);
     }
 
     /**

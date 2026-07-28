@@ -57,6 +57,23 @@ public final class EffectiveJaxRsContractResolver {
     private static final String SKIP_CANON_FQN = "dev.vertique.core.sanitization.SkipCanonicalization";
     private static final String SKIP_SANIT_FQN = "dev.vertique.core.sanitization.SkipSanitization";
 
+    // --- Multi-value shape policy ---
+
+    /**
+     * The non-{@code enum} element types accepted as a scalar array component — the compile-time
+     * mirror of the boxed/{@code String} set in {@code ResourceScanner.isScalarArrayComponent}.
+     */
+    private static final Set<String> SCALAR_ARRAY_COMPONENT_FQNS = Set.of(
+            "java.lang.String",
+            "java.lang.Integer",
+            "java.lang.Long",
+            "java.lang.Short",
+            "java.lang.Byte",
+            "java.lang.Double",
+            "java.lang.Float",
+            "java.lang.Boolean",
+            "java.lang.Character");
+
     private final CodegenContext ctx;
 
     /**
@@ -923,24 +940,43 @@ public final class EffectiveJaxRsContractResolver {
     }
 
     /**
-     * Extracts the component type from a parameterized multi-value collection mirror —
-     * {@code List<T>}, {@code Set<T>}, {@code SortedSet<T>}, {@code NavigableSet<T>}, or
-     * {@code Collection<T>} — or returns {@code null} for any other type. Mirrors the supported
-     * <em>collection</em> shapes of {@code ResourceScanner.resolveComponentType} so the generated
-     * dispatch path binds and validates all values for these shapes, at parity with the reflective
-     * path.
+     * Extracts the element type of a multi-value parameter shape, or returns {@code null} when the
+     * parameter is not multi-valued. Two shapes are recognized, mirroring the reflective
+     * {@code ResourceScanner.resolveComponentType} so the generated dispatch path binds and
+     * validates <em>all</em> submitted values exactly where the reflective path does:
      *
-     * <p>Array shapes ({@code T[]}) are intentionally <em>not</em> recognized here: the generated
-     * descriptor emits a parameter type's FQN in source-array form (e.g. {@code "java.lang.Integer[]"}),
-     * which {@code Class.forName} cannot resolve, so emitting a non-null {@code componentType} for an
-     * array param would turn a silent first-value bind into a runtime {@code ClassNotFoundException}.
-     * Arrays therefore keep their existing (scalar-classified) generated handling; the reflective path
-     * handles {@code T[]} fully via {@code ResourceScanner.resolveComponentType}.
+     * <ul>
+     *   <li>a parameterized collection — {@code List<T>}, {@code Set<T>}, {@code SortedSet<T>},
+     *       {@code NavigableSet<T>}, or {@code Collection<T>} (see
+     *       {@link #isSupportedCollectionFqn(String)}) — yields {@code T};
+     *   <li>an array {@code T[]} whose element type is a scalar array component (see
+     *       {@link #isScalarArrayComponent(TypeMirror)}) — yields {@code T}.
+     * </ul>
+     *
+     * <p>Array element types <em>are</em> recognized: the descriptor emits the array parameter's own
+     * FQN as a <em>binary</em> base name plus source-form {@code []} pairs (see
+     * {@code TypeMirrorFqn.erasedFqn}), and {@code ArrayFqns} — reached through
+     * {@code GeneratedJaxRsDescriptorSupport.resolveClass} — resolves that form via
+     * {@link java.lang.reflect.Array#newInstance(Class, int...)}, so a non-null
+     * {@code componentType} on an array parameter no longer risks an unresolvable type name. (The
+     * emitted {@code componentType} FQN itself is a plain element type such as
+     * {@code java.lang.String}, which {@code Class.forName} has always resolved.)
+     *
+     * <p>Primitive-array element types are <em>excluded</em> so {@code byte[]} / {@code char[]} and
+     * every other primitive array keep their BODY classification as binary/buffer body shapes rather
+     * than being routed through the multi-value collection path.
      *
      * @param type the parameter type mirror
-     * @return the component type for a recognized parameterized collection shape, or {@code null}
+     * @return the element type for a recognized multi-value shape, or {@code null} otherwise
      */
     private TypeMirror resolveComponentType(TypeMirror type) {
+        // Array shape: T[] — restricted to scalar element types, so byte[]/char[] and other
+        // primitive arrays stay BODY (decision 8; mirrors ResourceScanner.isScalarArrayComponent).
+        if (type instanceof javax.lang.model.type.ArrayType arrayType) {
+            TypeMirror component = arrayType.getComponentType();
+            return isScalarArrayComponent(component) ? component : null;
+        }
+
         if (!(type instanceof javax.lang.model.type.DeclaredType declared)) {
             return null;
         }
@@ -954,6 +990,39 @@ public final class EffectiveJaxRsContractResolver {
             }
         }
         return null;
+    }
+
+    /**
+     * Returns {@code true} if {@code componentType} is a sensible element type for a multi-value
+     * scalar array parameter: {@code java.lang.String}, a boxed numeric ({@code Integer},
+     * {@code Long}, {@code Short}, {@code Byte}, {@code Double}, {@code Float}), {@code Boolean},
+     * {@code Character}, or an {@code enum}. Primitive element types return {@code false} so
+     * {@code byte[]} / {@code char[]} (and every other primitive array) are not treated as
+     * multi-value collections.
+     *
+     * <p>This is the compile-time half of a policy the framework implements twice: the reflective
+     * counterpart is {@code ResourceScanner.isScalarArrayComponent(Class)} in
+     * {@code vertique-rest-jaxrs}. The two cannot share one method — this side sees
+     * {@link TypeMirror}/{@link javax.lang.model.type.TypeKind}, the reflective side sees
+     * {@link Class} — so the shapes they accept are held equal by the parity test
+     * {@code GeneratedArrayParamParityTest} (plan decision 8). Any edit here must be mirrored there.
+     *
+     * @param componentType the array element type mirror
+     * @return {@code true} when the element type is a sensible scalar array component
+     */
+    private boolean isScalarArrayComponent(TypeMirror componentType) {
+        if (componentType.getKind().isPrimitive()) {
+            return false;
+        }
+        TypeMirror erased = ctx.types().erasure(componentType);
+        if (!(ctx.types().asElement(erased) instanceof TypeElement te)) {
+            // Nested arrays (String[][]), type variables, wildcards — not scalar elements.
+            return false;
+        }
+        if (te.getKind() == ElementKind.ENUM) {
+            return true;
+        }
+        return SCALAR_ARRAY_COMPONENT_FQNS.contains(te.getQualifiedName().toString());
     }
 
     /**

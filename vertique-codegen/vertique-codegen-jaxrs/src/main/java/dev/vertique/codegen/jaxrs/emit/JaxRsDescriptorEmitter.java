@@ -702,18 +702,25 @@ public final class JaxRsDescriptorEmitter {
     /**
      * Returns the source-form type name for use in a TypeReference generic argument. For a
      * parameterized type like {@code List<Foo>}, returns {@code "java.util.List<com.example.Foo>"}.
-     * For a raw type, returns the erased FQN.
+     * For a raw type, returns the erased source-form FQN.
+     *
+     * <p>Non-declared types (notably array type arguments such as the {@code Outer.Inner[]} in
+     * {@code List<Outer.Inner[]>}) go through
+     * {@link TypeMirrorFqn#erasedSourceFqn(TypeMirror, dev.vertique.codegen.CodegenContext)}, not
+     * {@link TypeMirrorFqn#erasedFqn(TypeMirror, dev.vertique.codegen.CodegenContext)}: this string
+     * is interpolated into the generated source, where a binary {@code Outer$Inner} base name would
+     * not compile.
      *
      * @param type the type mirror to render
      * @return the source-form type name string
      */
     private String sourceTypeName(TypeMirror type) {
         if (!(type instanceof javax.lang.model.type.DeclaredType dt)) {
-            return erasedFqn(type);
+            return erasedSourceFqn(type);
         }
         var element = ctx.types().asElement(ctx.types().erasure(type));
         String rawName =
-                element instanceof TypeElement te ? te.getQualifiedName().toString() : erasedFqn(type);
+                element instanceof TypeElement te ? te.getQualifiedName().toString() : erasedSourceFqn(type);
         var args = dt.getTypeArguments();
         if (args.isEmpty()) {
             return rawName;
@@ -971,11 +978,20 @@ public final class JaxRsDescriptorEmitter {
     // --- Private: type / path helpers ---
 
     /**
-     * Returns the erased binary FQN of {@code type}. Delegates to {@link TypeMirrorFqn}
-     * so the three CG-010 emitters share one source of truth on nested-type form.
+     * Returns the erased binary FQN of {@code type} — for strings the generated code resolves at
+     * runtime. Delegates to {@link TypeMirrorFqn} so the three CG-010 emitters share one source of
+     * truth on nested-type and array form.
      */
     private String erasedFqn(TypeMirror type) {
         return TypeMirrorFqn.erasedFqn(type, ctx);
+    }
+
+    /**
+     * Returns the erased source-form FQN of {@code type} — for strings interpolated into the
+     * generated source rather than resolved at runtime. Delegates to {@link TypeMirrorFqn}.
+     */
+    private String erasedSourceFqn(TypeMirror type) {
+        return TypeMirrorFqn.erasedSourceFqn(type, ctx);
     }
 
     /**

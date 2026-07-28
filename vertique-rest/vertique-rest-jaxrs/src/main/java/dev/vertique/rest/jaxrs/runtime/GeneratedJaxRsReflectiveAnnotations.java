@@ -88,20 +88,19 @@ public final class GeneratedJaxRsReflectiveAnnotations {
     }
 
     /**
-     * Loads a class by FQN, resolving Java primitive names to their {@code Class} constants (a
-     * primitive parameter type's erased FQN is e.g. {@code "int"}, which {@code Class.forName} cannot
-     * load) and array-typed FQNs to the corresponding array {@code Class}.
+     * Loads a class by FQN, delegating to {@link ArrayFqns#resolve(String, ClassLoader, boolean)} with
+     * {@code initialize=false}.
      *
-     * <p>Array parameter types arrive in Java <em>source</em> form — the format
-     * {@code TypeMirrorFqn.erasedFqn} emits, e.g. {@code "java.lang.String[]"}, {@code "int[]"}, or
-     * {@code "java.lang.String[][]"} — not the JVM binary form ({@code "[Ljava.lang.String;"}) that
-     * {@code Class.forName} would need. Rather than string-mangle to the binary form, each trailing
-     * {@code []} pair is stripped to count dimensions, the base component type is resolved (primitive
-     * or reference), and {@link java.lang.reflect.Array#newInstance(Class, int...)} produces the array
-     * {@code Class} uniformly for primitive arrays, object arrays, and multi-dimensional arrays. This
-     * matters because a resource method with any array-typed parameter (even a sibling of the
-     * fallback parameter) is looked up by its full parameter-type list, so an array FQN that failed to
-     * load would break the fallback for every parameter of the method.
+     * <p>Primitive names ({@code "int"}) and array types in Java <em>source</em> form
+     * ({@code "java.lang.String[]"}, {@code "int[]"}, {@code "java.lang.String[][]"}) are both
+     * handled there. Array handling matters here because a resource method with any array-typed
+     * parameter (even a sibling of the fallback parameter) is looked up by its full parameter-type
+     * list, so an array FQN that failed to load would break the fallback for every parameter of the
+     * method.
+     *
+     * <p>Class initialization is deliberately <em>disabled</em>: this fallback merely names parameter
+     * types in order to look up a {@link Method}, so it must not trigger a user type's static
+     * initializer as a side effect of annotation resolution.
      *
      * @param fqn the fully-qualified (or primitive, or array) type name in source form
      * @param cl  the classloader to use for reference types
@@ -109,44 +108,6 @@ public final class GeneratedJaxRsReflectiveAnnotations {
      * @throws ClassNotFoundException if a reference (component) type cannot be found
      */
     private static Class<?> loadClass(String fqn, ClassLoader cl) throws ClassNotFoundException {
-        // Strip trailing "[]" pairs to count array dimensions, leaving the base component type.
-        int dimensions = 0;
-        String baseFqn = fqn;
-        while (baseFqn.endsWith("[]")) {
-            dimensions++;
-            baseFqn = baseFqn.substring(0, baseFqn.length() - 2);
-        }
-        Class<?> baseClass = loadBaseClass(baseFqn, cl);
-        if (dimensions == 0) {
-            return baseClass;
-        }
-        // Array.newInstance handles primitive, object, and multi-dimensional arrays uniformly and
-        // returns the array Class via getClass() — no JVM binary-name string-mangling required.
-        return java.lang.reflect.Array.newInstance(baseClass, new int[dimensions])
-                .getClass();
-    }
-
-    /**
-     * Resolves a non-array base type FQN to its {@link Class}, mapping Java primitive names to their
-     * {@code Class} constants and delegating reference types to {@code Class.forName}.
-     *
-     * @param fqn the non-array fully-qualified (or primitive) type name
-     * @param cl  the classloader to use for reference types
-     * @return the resolved base {@link Class}
-     * @throws ClassNotFoundException if a reference type cannot be found
-     */
-    private static Class<?> loadBaseClass(String fqn, ClassLoader cl) throws ClassNotFoundException {
-        return switch (fqn) {
-            case "boolean" -> boolean.class;
-            case "byte" -> byte.class;
-            case "char" -> char.class;
-            case "short" -> short.class;
-            case "int" -> int.class;
-            case "long" -> long.class;
-            case "float" -> float.class;
-            case "double" -> double.class;
-            case "void" -> void.class;
-            default -> Class.forName(fqn, false, cl);
-        };
+        return ArrayFqns.resolve(fqn, cl, false);
     }
 }
