@@ -279,5 +279,5 @@ JAX-RS resource — see [REST APIs](rest-apis.md) for adding that resource.
 
 ## Continue reading
 
-- Previous: [REST APIs](rest-apis.md)
+- Previous: [JAX-RS compatibility](rest-jaxrs-compatibility.md)
 - Next: [Persistence](persistence.md)

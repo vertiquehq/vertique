@@ -33,9 +33,12 @@ developer-docs/content/quickstart.md
 developer-docs/content/application-model.md
 developer-docs/content/configuration.md
 developer-docs/content/rest-apis.md
+developer-docs/content/rest-jaxrs-compatibility.md
 developer-docs/content/services.md
 developer-docs/content/persistence.md
 developer-docs/content/workflows.md
+developer-docs/content/jobs.md
+developer-docs/content/inbox-outbox.md
 developer-docs/content/security.md
 developer-docs/content/testing.md
 developer-docs/content/deployment.md
