@@ -20,6 +20,7 @@ import io.vertx.core.Future;
 import io.vertx.core.MultiMap;
 import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
+import io.vertx.core.http.HttpHeaders;
 import io.vertx.core.http.HttpMethod;
 import io.vertx.core.http.HttpServerResponse;
 import io.vertx.core.json.EncodeException;
@@ -756,6 +757,62 @@ class ResponsePipelineTest {
             } finally {
                 vertx.close().toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS);
             }
+        }
+
+        @Test
+        @DisplayName("A truncated fixed-length response is reset, never ended into a framing violation")
+        void underLengthFixedResponseResetInsteadOfEnded() {
+            // given a committed, non-chunked response that declared more bytes than it has written
+            Promise<Void> wire = pendingWireCompletion();
+            when(httpResponse.headWritten()).thenReturn(true);
+            when(httpResponse.isChunked()).thenReturn(false);
+            when(httpResponse.bytesWritten()).thenReturn(10L);
+            responseHeaders.set(HttpHeaders.CONTENT_LENGTH, "100");
+
+            pipeline.sendResponse(ctx, Response.ok("body").build());
+
+            // when the wire write fails after the handoff
+            wire.fail(new RuntimeException("stream aborted mid-body"));
+
+            // then the stream is reset — ending would frame 10 bytes as a complete 100-byte body
+            verify(httpResponse).reset();
+            verify(httpResponse, never()).end();
+        }
+
+        @Test
+        @DisplayName("A truncated chunked response is still ended cleanly and never reset")
+        void chunkedTruncatedResponseStillEndedCleanly() {
+            // given a committed chunked response — its terminal zero-length chunk frames the
+            // truncation honestly, so no reset is warranted
+            Promise<Void> wire = pendingWireCompletion();
+            when(httpResponse.headWritten()).thenReturn(true);
+            when(httpResponse.isChunked()).thenReturn(true);
+
+            pipeline.sendResponse(ctx, Response.ok("body").build());
+
+            // when the wire write fails after the handoff
+            wire.fail(new RuntimeException("stream aborted mid-body"));
+
+            // then the response is ended, not reset
+            verify(httpResponse).end();
+            verify(httpResponse, never()).reset();
+        }
+
+        @Test
+        @DisplayName("A terminal end() whose future fails resets the response as a backstop")
+        void endFailureBackstopResets() {
+            // given a response whose guarded terminal end() cannot complete (the connection is gone)
+            Promise<Void> wire = pendingWireCompletion();
+            when(httpResponse.end()).thenReturn(Future.failedFuture(new RuntimeException("connection gone")));
+
+            pipeline.sendResponse(ctx, Response.ok("body").build());
+
+            // when the wire write fails after the handoff
+            wire.fail(new RuntimeException("stream aborted mid-body"));
+
+            // then the response that could not be ended is not left open
+            verify(httpResponse).end();
+            verify(httpResponse).reset();
         }
 
         @Test
