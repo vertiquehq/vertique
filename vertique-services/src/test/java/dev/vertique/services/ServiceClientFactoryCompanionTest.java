@@ -7,16 +7,10 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
 
 import dev.vertique.config.parser.DefaultConfigMapper;
 import dev.vertique.config.parser.DefaultConfigParser;
 import dev.vertique.core.config.ConfigParser;
-import dev.vertique.core.eventbus.EventBusClient;
-import dev.vertique.core.eventbus.EventBusExceptionMapper;
-import dev.vertique.services.config.ServicesConfig;
 import dev.vertique.services.dispatch.ServiceMethodMeta.ParamSource;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
@@ -24,8 +18,6 @@ import io.vertx.core.json.JsonObject;
 import io.vertx.junit5.VertxExtension;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
-import java.util.List;
-import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.DisplayName;
@@ -97,35 +89,6 @@ class ServiceClientFactoryCompanionTest {
         return new DefaultConfigParser(DefaultConfigMapper.lenient());
     }
 
-    /**
-     * Registers a single hand-built entry into a fresh registry via the
-     * {@link ServiceContractContributor} SPI, so the registry's operation map is exactly what the
-     * caller supplied (no {@code @ServiceContract} implementation scanning involved).
-     *
-     * @param entry the pre-built contract entry to register
-     * @return a registry containing only {@code entry}
-     */
-    private static ServiceContractRegistry registryOf(ServiceContractRegistry.ContractEntry<?> entry) {
-        ServiceContractContributor contributor = config -> List.of(entry);
-        return ServiceContractRegistry.build(Set.of(), Set.of(contributor), new JsonObject(), configParser());
-    }
-
-    /**
-     * Builds a {@link ServiceRequestSender} backed by a real {@link EventBusClient} and a
-     * permissive mocked {@link ServiceSupervisor}. None of the tests below actually dispatch a
-     * message — the sender is only needed to construct a {@link ServiceClientFactory}.
-     *
-     * @param vertx the Vert.x instance
-     * @return a sender usable to construct a {@link ServiceClientFactory}
-     */
-    private static ServiceRequestSender sender(Vertx vertx) {
-        EventBusExceptionMapper exceptionMapper = new EventBusExceptionMapper();
-        EventBusClient eventBusClient = new EventBusClient(vertx, exceptionMapper);
-        ServiceSupervisor supervisor = mock(ServiceSupervisor.class);
-        when(supervisor.isAvailable(any())).thenReturn(true);
-        return new ServiceRequestSender(eventBusClient, supervisor, new ServicesConfig(null, List.of()), Map.of());
-    }
-
     // --- Tests ---
 
     /**
@@ -155,8 +118,9 @@ class ServiceClientFactoryCompanionTest {
                 .param("x", ParamSource.PAYLOAD, String.class)
                 .done()
                 .build();
-        ServiceContractRegistry registry = registryOf(entry);
-        ServiceClientFactory factory = new ServiceClientFactory(sender(vertx), registry);
+        ServiceContractRegistry registry = ServiceClientFactoryTest.registryOf(entry);
+        ServiceClientFactory factory =
+                new ServiceClientFactory(ServiceClientFactoryTest.availableSender(vertx), registry);
 
         SelectableContract client = factory.create(SelectableContract.class);
 
@@ -182,7 +146,8 @@ class ServiceClientFactoryCompanionTest {
     void shouldFallBackToDynamicProxyWhenCompanionAbsent(Vertx vertx) {
         ServiceContractRegistry registry =
                 ServiceContractRegistry.build(Set.of(new NoCompanionContractImpl()), new JsonObject(), configParser());
-        ServiceClientFactory factory = new ServiceClientFactory(sender(vertx), registry);
+        ServiceClientFactory factory =
+                new ServiceClientFactory(ServiceClientFactoryTest.availableSender(vertx), registry);
 
         NoCompanionContract client = factory.create(NoCompanionContract.class);
 
@@ -220,8 +185,9 @@ class ServiceClientFactoryCompanionTest {
                 .param("x", ParamSource.PAYLOAD, String.class)
                 .done()
                 .build();
-        ServiceContractRegistry registry = registryOf(entry);
-        ServiceClientFactory factory = new ServiceClientFactory(sender(vertx), registry);
+        ServiceContractRegistry registry = ServiceClientFactoryTest.registryOf(entry);
+        ServiceClientFactory factory =
+                new ServiceClientFactory(ServiceClientFactoryTest.availableSender(vertx), registry);
 
         IllegalStateException ex =
                 assertThrows(IllegalStateException.class, () -> factory.create(BrokenContract.class));
@@ -271,8 +237,9 @@ class ServiceClientFactoryCompanionTest {
                 .param("x", ParamSource.PAYLOAD, String.class)
                 .done()
                 .build();
-        ServiceContractRegistry registry = registryOf(entry);
-        ServiceClientFactory factory = new ServiceClientFactory(sender(vertx), registry);
+        ServiceContractRegistry registry = ServiceClientFactoryTest.registryOf(entry);
+        ServiceClientFactory factory =
+                new ServiceClientFactory(ServiceClientFactoryTest.availableSender(vertx), registry);
 
         IllegalStateException ex = assertThrows(IllegalStateException.class, () -> factory.create(DriftContract.class));
         assertTrue(
@@ -315,8 +282,9 @@ class ServiceClientFactoryCompanionTest {
                 .param("x", ParamSource.PAYLOAD, String.class)
                 .done()
                 .build();
-        ServiceContractRegistry registry = registryOf(entry);
-        ServiceClientFactory factory = new ServiceClientFactory(sender(vertx), registry);
+        ServiceContractRegistry registry = ServiceClientFactoryTest.registryOf(entry);
+        ServiceClientFactory factory =
+                new ServiceClientFactory(ServiceClientFactoryTest.availableSender(vertx), registry);
 
         IllegalStateException ex =
                 assertThrows(IllegalStateException.class, () -> factory.create(SelectableContract.class));

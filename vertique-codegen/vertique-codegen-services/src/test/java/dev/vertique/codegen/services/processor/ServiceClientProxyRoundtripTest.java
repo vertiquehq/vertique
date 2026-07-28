@@ -624,9 +624,12 @@ class ServiceClientProxyRoundtripTest {
      * package-private construction {@link dev.vertique.services.ServiceClientFactory} uses in its
      * own test-only constructor.
      *
+     * <p>Package-private so {@code ServiceClientProxyParityTest} can reuse it rather than
+     * duplicating an identical helper.
+     *
      * @return a fresh envelope builder with no registered encoders/decoders
      */
-    private static DispatchEnvelopeBuilder newEnvelopeBuilder() {
+    static DispatchEnvelopeBuilder newEnvelopeBuilder() {
         return new DispatchEnvelopeBuilder(new ServiceDispatchContextCapturer(
                 new ServiceDispatchContextRegistry(Set.of(), Set.of()), new DefaultContextHolder()));
     }
@@ -682,10 +685,13 @@ class ServiceClientProxyRoundtripTest {
      * Builds a minimal dummy {@link SecurityContext} carrying only a user id, mirroring the
      * precedent helper in {@code ServiceClientFactoryTest}.
      *
+     * <p>Package-private so {@code ServiceClientProxyParityTest} can reuse it rather than
+     * duplicating an identical helper.
+     *
      * @param userId the actor user id to embed
      * @return a dummy security context
      */
-    private static SecurityContext testSecurityContext(String userId) {
+    static SecurityContext testSecurityContext(String userId) {
         SecurityIdentity identity =
                 SecurityIdentity.user(new PrincipalRef(PrincipalType.USER, userId, java.util.Map.of()));
         AuthenticationState auth = new AuthenticationState(

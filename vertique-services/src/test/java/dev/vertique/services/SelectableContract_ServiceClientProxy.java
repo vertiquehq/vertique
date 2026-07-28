@@ -21,6 +21,9 @@ import java.util.Map;
  * dispatch delegated to {@link ServiceRequestSender}. Used by
  * {@link ServiceClientFactoryCompanionTest} to prove companion selection before the real
  * emitter/seam exist.
+ *
+ * <p>{@code ServiceClientProxyParityTest} (codegen-services) independently proves that the real
+ * emitter's generated companion output behaves identically to this hand-written stand-in.
  */
 public final class SelectableContract_ServiceClientProxy implements SelectableContract {
 

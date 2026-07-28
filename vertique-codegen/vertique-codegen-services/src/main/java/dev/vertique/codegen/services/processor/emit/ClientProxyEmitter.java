@@ -188,8 +188,14 @@ public final class ClientProxyEmitter {
         }
 
         classBuilder.addMethod(buildToString(contractType));
-        classBuilder.addMethod(buildPayloadIndexHelper());
-        classBuilder.addMethod(buildSecurityContextIndexHelper());
+        classBuilder.addMethod(
+                buildIndexHelper(PAYLOAD_INDEX_HELPER, CodeBlock.of("_param_.source() == $T.PAYLOAD", PARAM_SOURCE)));
+        classBuilder.addMethod(buildIndexHelper(
+                SC_INDEX_HELPER,
+                CodeBlock.of(
+                        "_param_.source() == $T.DISPATCH_CONTEXT && $T.class.getName().equals(_param_.lookupKey())",
+                        PARAM_SOURCE,
+                        SECURITY_CONTEXT)));
 
         JavaFile javaFile =
                 JavaFile.builder(contractPackage, classBuilder.build()).build();
@@ -373,45 +379,27 @@ public final class ClientProxyEmitter {
     // --- Runtime metadata helpers (emitted into the proxy) ---
 
     /**
-     * Builds the private static helper returning the index of the first {@code PAYLOAD} parameter in
-     * the runtime metadata, or {@code -1} when the operation takes no payload.
+     * Builds a private static index-helper method: scans {@code _meta_.params()} for the first
+     * parameter matching {@code condition}, returning its index, or {@code -1} when none match.
      *
+     * <p>Shared by the payload-index and {@code SecurityContext}-index helpers ({@code
+     * PAYLOAD_INDEX_HELPER} / {@code SC_INDEX_HELPER}), which differ only in the match condition
+     * evaluated against the loop-local {@code _param_}.
+     *
+     * @param methodName the generated method's name
+     * @param condition  the boolean condition tested against the loop-local {@code _param_} (bound
+     *                   to {@code _params_.get(_i_)}); must not be {@code null}
      * @return the method spec
      */
-    private static MethodSpec buildPayloadIndexHelper() {
-        return MethodSpec.methodBuilder(PAYLOAD_INDEX_HELPER)
-                .addModifiers(Modifier.PRIVATE, Modifier.STATIC)
-                .returns(TypeName.INT)
-                .addParameter(SERVICE_METHOD_META, "_meta_")
-                .addStatement("$T<$T> _params_ = _meta_.params()", LIST, PARAM_META)
-                .beginControlFlow("for (int _i_ = 0; _i_ < _params_.size(); _i_++)")
-                .beginControlFlow("if (_params_.get(_i_).source() == $T.PAYLOAD)", PARAM_SOURCE)
-                .addStatement("return _i_")
-                .endControlFlow()
-                .endControlFlow()
-                .addStatement("return -1")
-                .build();
-    }
-
-    /**
-     * Builds the private static helper returning the index of the first dispatch-context parameter
-     * keyed by {@code SecurityContext.class.getName()} in the runtime metadata, or {@code -1} when
-     * the operation declares none.
-     *
-     * @return the method spec
-     */
-    private static MethodSpec buildSecurityContextIndexHelper() {
-        return MethodSpec.methodBuilder(SC_INDEX_HELPER)
+    private static MethodSpec buildIndexHelper(String methodName, CodeBlock condition) {
+        return MethodSpec.methodBuilder(methodName)
                 .addModifiers(Modifier.PRIVATE, Modifier.STATIC)
                 .returns(TypeName.INT)
                 .addParameter(SERVICE_METHOD_META, "_meta_")
                 .addStatement("$T<$T> _params_ = _meta_.params()", LIST, PARAM_META)
                 .beginControlFlow("for (int _i_ = 0; _i_ < _params_.size(); _i_++)")
                 .addStatement("$T _param_ = _params_.get(_i_)", PARAM_META)
-                .beginControlFlow(
-                        "if (_param_.source() == $T.DISPATCH_CONTEXT && $T.class.getName().equals(_param_.lookupKey()))",
-                        PARAM_SOURCE,
-                        SECURITY_CONTEXT)
+                .beginControlFlow("if ($L)", condition)
                 .addStatement("return _i_")
                 .endControlFlow()
                 .endControlFlow()

@@ -22,23 +22,12 @@ import dev.vertique.codegen.test.fixtures.SourceFiles;
 import dev.vertique.config.parser.DefaultConfigMapper;
 import dev.vertique.config.parser.DefaultConfigParser;
 import dev.vertique.context.ContextValues;
-import dev.vertique.context.DefaultContextHolder;
-import dev.vertique.context.DispatchEnvelopeBuilder;
-import dev.vertique.context.ServiceDispatchContextCapturer;
-import dev.vertique.context.ServiceDispatchContextRegistry;
 import dev.vertique.core.config.ConfigParser;
 import dev.vertique.core.context.ContextHolder;
 import dev.vertique.core.eventbus.DispatchEnvelope;
 import dev.vertique.core.eventbus.Result;
 import dev.vertique.core.util.GeneratedNames;
-import dev.vertique.security.AuthenticationState;
-import dev.vertique.security.DefaultAuthMethod;
-import dev.vertique.security.PrincipalRef;
-import dev.vertique.security.PrincipalType;
 import dev.vertique.security.SecurityContext;
-import dev.vertique.security.SecurityIdentity;
-import dev.vertique.security.authz.AuthorizationClaims;
-import dev.vertique.security.origin.RequestOrigin;
 import dev.vertique.services.ResolvedServiceTarget;
 import dev.vertique.services.ServiceClientFactory;
 import dev.vertique.services.ServiceContractContributor;
@@ -240,37 +229,24 @@ class ServiceClientProxyParityTest {
     @Test
     @DisplayName("Scenario 1 — payload extraction: create() selects the companion (RED); both paths dispatch alike")
     void scenario1PayloadExtraction() throws Exception {
-        Class<?> contractA = WITH_COMPANION.loadGeneratedClass(PARITY_GREETER_FQN);
-        ContractEntry<?> entryA = parityGreeterEntry(contractA);
-        ServiceRequestSender senderA = mock(ServiceRequestSender.class);
-        when(senderA.send(any(), any())).thenReturn(Future.succeededFuture(Result.success("echo:x")));
-        Object proxyA = factoryFor(entryA, senderA).create(contractA);
+        DualPathCapture captures = greeterDualPathCapture("echo:x", "x");
 
         // RED ANCHOR (CG-015 §6 S3): create() must select the generated companion instance — not a
         // JDK dynamic proxy — whenever one is present on the classpath. Fails today because the
         // factory has no companion-selection seam yet and always returns a dynamic proxy.
         assertEquals(
-                GeneratedNames.companionFqn(contractA, "_ServiceClientProxy"),
-                proxyA.getClass().getName(),
+                GeneratedNames.companionFqn(captures.contractA(), "_ServiceClientProxy"),
+                captures.proxyA().getClass().getName(),
                 "create() must return the generated companion instance when one is present on the classpath");
         assertFalse(
-                Proxy.isProxyClass(proxyA.getClass()),
+                Proxy.isProxyClass(captures.proxyA().getClass()),
                 "create() must NOT fall back to a JDK dynamic proxy when a generated companion is present");
-
-        Method greetMethodA = contractA.getMethod("greet", String.class);
-        DispatchCapture capturedA = invokeRequestResponse(proxyA, greetMethodA, new Object[] {"x"}, senderA);
-
-        Class<?> contractB = NO_COMPANION.loadGeneratedClass(PARITY_GREETER_FQN);
-        ContractEntry<?> entryB = parityGreeterEntry(contractB);
-        ServiceRequestSender senderB = mock(ServiceRequestSender.class);
-        when(senderB.send(any(), any())).thenReturn(Future.succeededFuture(Result.success("echo:x")));
-        Object proxyB = factoryFor(entryB, senderB).create(contractB);
         assertTrue(
-                Proxy.isProxyClass(proxyB.getClass()),
+                Proxy.isProxyClass(captures.proxyB().getClass()),
                 "sanity: the no-companion fixture must fall back to the JDK dynamic proxy");
 
-        Method greetMethodB = contractB.getMethod("greet", String.class);
-        DispatchCapture capturedB = invokeRequestResponse(proxyB, greetMethodB, new Object[] {"x"}, senderB);
+        DispatchCapture capturedA = captures.capturedA();
+        DispatchCapture capturedB = captures.capturedB();
 
         assertEquals(capturedA.address(), capturedB.address(), "both paths must dispatch to the same resolved address");
         assertEquals("x", capturedA.payload(), "path (a) must extract the caller's payload argument");
@@ -287,7 +263,7 @@ class ServiceClientProxyParityTest {
     @Test
     @DisplayName("Scenario 2 — explicit SecurityContext with no ambient SC: override present on both paths")
     void scenario2ExplicitSecurityContextNoAmbient() throws Exception {
-        SecurityContext explicitSc = testSecurityContext("explicit-user");
+        SecurityContext explicitSc = ServiceClientProxyRoundtripTest.testSecurityContext("explicit-user");
 
         Class<?> contractA = WITH_COMPANION.loadGeneratedClass(PARITY_SC_GREETER_FQN);
         ContractEntry<?> entryA = parityScGreeterEntry(contractA);
@@ -344,8 +320,8 @@ class ServiceClientProxyParityTest {
         Object proxyB = factoryFor(entryB, senderB).create(contractB);
         Method greetScMethodB = contractB.getMethod("greetSc", SecurityContext.class, String.class);
 
-        SecurityContext ambientSc = testSecurityContext("ambient-user");
-        SecurityContext explicitSc = testSecurityContext("explicit-user");
+        SecurityContext ambientSc = ServiceClientProxyRoundtripTest.testSecurityContext("ambient-user");
+        SecurityContext explicitSc = ServiceClientProxyRoundtripTest.testSecurityContext("explicit-user");
 
         ContextInternal dup = ((ContextInternal) vertx.getOrCreateContext()).duplicate();
         dup.runOnContext(v -> {
@@ -380,21 +356,9 @@ class ServiceClientProxyParityTest {
     @Test
     @DisplayName("Scenario 4 — null payload: envelope payload is null on both paths and dispatch does not throw")
     void scenario4NullPayload() throws Exception {
-        Class<?> contractA = WITH_COMPANION.loadGeneratedClass(PARITY_GREETER_FQN);
-        ContractEntry<?> entryA = parityGreeterEntry(contractA);
-        ServiceRequestSender senderA = mock(ServiceRequestSender.class);
-        when(senderA.send(any(), any())).thenReturn(Future.succeededFuture(Result.success("ok")));
-        Object proxyA = factoryFor(entryA, senderA).create(contractA);
-        Method greetMethodA = contractA.getMethod("greet", String.class);
-        DispatchCapture capturedA = invokeRequestResponse(proxyA, greetMethodA, new Object[] {null}, senderA);
-
-        Class<?> contractB = NO_COMPANION.loadGeneratedClass(PARITY_GREETER_FQN);
-        ContractEntry<?> entryB = parityGreeterEntry(contractB);
-        ServiceRequestSender senderB = mock(ServiceRequestSender.class);
-        when(senderB.send(any(), any())).thenReturn(Future.succeededFuture(Result.success("ok")));
-        Object proxyB = factoryFor(entryB, senderB).create(contractB);
-        Method greetMethodB = contractB.getMethod("greet", String.class);
-        DispatchCapture capturedB = invokeRequestResponse(proxyB, greetMethodB, new Object[] {null}, senderB);
+        DualPathCapture captures = greeterDualPathCapture("ok", null);
+        DispatchCapture capturedA = captures.capturedA();
+        DispatchCapture capturedB = captures.capturedB();
 
         assertNull(capturedA.payload(), "path (a) envelope payload must be null when the caller passes null");
         assertNull(capturedB.payload(), "path (b) envelope payload must be null when the caller passes null");
@@ -437,21 +401,9 @@ class ServiceClientProxyParityTest {
     @Test
     @DisplayName("Scenario 6 — request-response Result unwrap: both paths unwrap the same stubbed success value")
     void scenario6ResultUnwrap() throws Exception {
-        Class<?> contractA = WITH_COMPANION.loadGeneratedClass(PARITY_GREETER_FQN);
-        ContractEntry<?> entryA = parityGreeterEntry(contractA);
-        ServiceRequestSender senderA = mock(ServiceRequestSender.class);
-        when(senderA.send(any(), any())).thenReturn(Future.succeededFuture(Result.success("hello, x")));
-        Object proxyA = factoryFor(entryA, senderA).create(contractA);
-        Method greetMethodA = contractA.getMethod("greet", String.class);
-        DispatchCapture capturedA = invokeRequestResponse(proxyA, greetMethodA, new Object[] {"x"}, senderA);
-
-        Class<?> contractB = NO_COMPANION.loadGeneratedClass(PARITY_GREETER_FQN);
-        ContractEntry<?> entryB = parityGreeterEntry(contractB);
-        ServiceRequestSender senderB = mock(ServiceRequestSender.class);
-        when(senderB.send(any(), any())).thenReturn(Future.succeededFuture(Result.success("hello, x")));
-        Object proxyB = factoryFor(entryB, senderB).create(contractB);
-        Method greetMethodB = contractB.getMethod("greet", String.class);
-        DispatchCapture capturedB = invokeRequestResponse(proxyB, greetMethodB, new Object[] {"x"}, senderB);
+        DualPathCapture captures = greeterDualPathCapture("hello, x", "x");
+        DispatchCapture capturedA = captures.capturedA();
+        DispatchCapture capturedB = captures.capturedB();
 
         assertEquals("hello, x", capturedA.resultValue(), "path (a) must unwrap the stubbed Result value");
         assertEquals("hello, x", capturedB.resultValue(), "path (b) must unwrap the stubbed Result value");
@@ -608,18 +560,8 @@ class ServiceClientProxyParityTest {
      * @return the constructed factory
      */
     private static ServiceClientFactory factoryFor(ContractEntry<?> entry, ServiceRequestSender sender) {
-        return new ServiceClientFactory(sender, registryOf(entry), envelopeBuilder());
-    }
-
-    /**
-     * Builds a {@link DispatchEnvelopeBuilder} backed by empty SPI registries — no encoders run, so
-     * the built envelope's dispatch context is exactly the caller-supplied overrides.
-     *
-     * @return a fresh envelope builder with no registered encoders/decoders
-     */
-    private static DispatchEnvelopeBuilder envelopeBuilder() {
-        return new DispatchEnvelopeBuilder(new ServiceDispatchContextCapturer(
-                new ServiceDispatchContextRegistry(Set.of(), Set.of()), new DefaultContextHolder()));
+        return new ServiceClientFactory(
+                sender, registryOf(entry), ServiceClientProxyRoundtripTest.newEnvelopeBuilder());
     }
 
     // --- Dispatch capture helper ---
@@ -672,44 +614,54 @@ class ServiceClientProxyParityTest {
                 targetCaptor.getValue().address(), envelopeCaptor.getValue().payload(), scOverride, future.result());
     }
 
-    // --- SecurityContext test fixture ---
+    // --- Dual-path capture helper for scenarios 1, 4, 6 ---
 
     /**
-     * Builds a minimal dummy {@link SecurityContext} carrying only a user id, mirroring the
-     * precedent helper in {@code ServiceClientProxyRoundtripTest} / {@code ServiceClientFactoryTest}.
+     * Both paths' constructed proxy instances and captured dispatch outcomes from
+     * {@link #greeterDualPathCapture(String, Object)}.
      *
-     * @param userId the actor user id to embed
-     * @return a dummy security context
+     * @param contractA the {@link #PARITY_GREETER} interface as loaded from the companion-bearing
+     *                  compilation ({@link #WITH_COMPANION})
+     * @param proxyA    path (a)'s constructed proxy instance (companion or dynamic proxy)
+     * @param capturedA path (a)'s captured dispatch outcome
+     * @param proxyB    path (b)'s constructed proxy instance (always a dynamic proxy)
+     * @param capturedB path (b)'s captured dispatch outcome
      */
-    private static SecurityContext testSecurityContext(String userId) {
-        SecurityIdentity identity =
-                SecurityIdentity.user(new PrincipalRef(PrincipalType.USER, userId, java.util.Map.of()));
-        AuthenticationState auth = new AuthenticationState(
-                DefaultAuthMethod.none(),
-                java.util.List.of(),
-                java.util.Optional.empty(),
-                java.util.Optional.empty(),
-                java.util.Map.of());
-        return new SecurityContext() {
-            @Override
-            public SecurityIdentity identity() {
-                return identity;
-            }
+    private record DualPathCapture(
+            Class<?> contractA, Object proxyA, DispatchCapture capturedA, Object proxyB, DispatchCapture capturedB) {}
 
-            @Override
-            public AuthenticationState authentication() {
-                return auth;
-            }
+    /**
+     * Builds both dispatch paths (companion and dynamic-proxy) for the {@link #PARITY_GREETER}
+     * fixture, invokes {@code greet} on each with the given stub value and invocation argument, and
+     * captures both outcomes.
+     *
+     * <p>Shared by scenarios 1, 4, and 6, which repeat this exact build-invoke-capture shape and vary
+     * only the stubbed success value and the invocation argument. Per-scenario assertions — including
+     * scenario 1's RED-ANCHOR class-identity checks — stay in the scenario methods; this helper only
+     * builds, invokes, and captures.
+     *
+     * @param stubValue     the value the mock sender's stubbed {@link Result#success} completes with
+     * @param invocationArg the single argument passed to {@code greet} (may be {@code null})
+     * @return both paths' constructed proxy instances and captured dispatch outcomes
+     * @throws Exception if either path's proxy cannot be built or invoked
+     */
+    private static DualPathCapture greeterDualPathCapture(String stubValue, Object invocationArg) throws Exception {
+        Class<?> contractA = WITH_COMPANION.loadGeneratedClass(PARITY_GREETER_FQN);
+        ContractEntry<?> entryA = parityGreeterEntry(contractA);
+        ServiceRequestSender senderA = mock(ServiceRequestSender.class);
+        when(senderA.send(any(), any())).thenReturn(Future.succeededFuture(Result.success(stubValue)));
+        Object proxyA = factoryFor(entryA, senderA).create(contractA);
+        Method greetMethodA = contractA.getMethod("greet", String.class);
+        DispatchCapture capturedA = invokeRequestResponse(proxyA, greetMethodA, new Object[] {invocationArg}, senderA);
 
-            @Override
-            public AuthorizationClaims authorization() {
-                return AuthorizationClaims.empty();
-            }
+        Class<?> contractB = NO_COMPANION.loadGeneratedClass(PARITY_GREETER_FQN);
+        ContractEntry<?> entryB = parityGreeterEntry(contractB);
+        ServiceRequestSender senderB = mock(ServiceRequestSender.class);
+        when(senderB.send(any(), any())).thenReturn(Future.succeededFuture(Result.success(stubValue)));
+        Object proxyB = factoryFor(entryB, senderB).create(contractB);
+        Method greetMethodB = contractB.getMethod("greet", String.class);
+        DispatchCapture capturedB = invokeRequestResponse(proxyB, greetMethodB, new Object[] {invocationArg}, senderB);
 
-            @Override
-            public java.util.Optional<RequestOrigin> origin() {
-                return java.util.Optional.empty();
-            }
-        };
+        return new DualPathCapture(contractA, proxyA, capturedA, proxyB, capturedB);
     }
 }

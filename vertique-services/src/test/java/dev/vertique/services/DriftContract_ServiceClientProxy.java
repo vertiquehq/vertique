@@ -18,6 +18,10 @@ import io.vertx.core.Future;
  * {@link IllegalStateException} shape the real emitter bakes into every generated constructor —
  * the {@code create()}-time factory check must unwrap this exception directly rather than
  * wrapping it in the generic "present but could not be instantiated" message.
+ *
+ * <p>{@code ServiceClientProxyParityTest} (codegen-services) independently proves that the real
+ * emitter's generated companion output behaves identically to what this hand-written stand-in
+ * mimics.
  */
 public final class DriftContract_ServiceClientProxy implements DriftContract {
 

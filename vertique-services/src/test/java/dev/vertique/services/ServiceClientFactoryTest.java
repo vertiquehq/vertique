@@ -146,6 +146,41 @@ class ServiceClientFactoryTest {
         return new DefaultConfigParser(DefaultConfigMapper.lenient());
     }
 
+    /**
+     * Registers a single hand-built entry into a fresh registry via the
+     * {@link ServiceContractContributor} SPI, so the registry's operation map is exactly what the
+     * caller supplied (no {@code @ServiceContract} implementation scanning involved).
+     *
+     * <p>Package-private so {@code ServiceClientFactoryCompanionTest} can reuse it rather than
+     * duplicating an identical helper.
+     *
+     * @param entry the pre-built contract entry to register
+     * @return a registry containing only {@code entry}
+     */
+    static ServiceContractRegistry registryOf(ServiceContractRegistry.ContractEntry<?> entry) {
+        ServiceContractContributor contributor = config -> List.of(entry);
+        return ServiceContractRegistry.build(Set.of(), Set.of(contributor), new JsonObject(), configParser());
+    }
+
+    /**
+     * Builds a {@link ServiceRequestSender} backed by a real {@link EventBusClient} and a permissive
+     * mocked {@link ServiceSupervisor} that reports every address as available.
+     *
+     * <p>Package-private so {@code ServiceClientFactoryCompanionTest} can reuse it rather than
+     * duplicating an identical helper.
+     *
+     * @param vertx the Vert.x instance
+     * @return a sender usable to construct a {@link ServiceClientFactory}
+     */
+    static ServiceRequestSender availableSender(Vertx vertx) {
+        EventBusExceptionMapper exceptionMapper = new EventBusExceptionMapper();
+        EventBusClient eventBusClient = new EventBusClient(vertx, exceptionMapper);
+        ServiceSupervisor availableSupervisor = mock(ServiceSupervisor.class);
+        when(availableSupervisor.isAvailable(any())).thenReturn(true);
+        return new ServiceRequestSender(
+                eventBusClient, availableSupervisor, new ServicesConfig(null, List.of()), Map.of());
+    }
+
     private static ServiceContractRegistry registry;
     private static ServiceSupervisor supervisor;
     private static ServiceRequestSender sender;
@@ -763,35 +798,6 @@ class ServiceClientFactoryTest {
         }
 
         /**
-         * Registers a single hand-built entry into a fresh registry via the
-         * {@link ServiceContractContributor} SPI, so the registry's operation map is exactly what
-         * the caller supplied (no {@code @ServiceContract} implementation scanning involved).
-         *
-         * @param entry the pre-built contract entry to register
-         * @return a registry containing only {@code entry}
-         */
-        private ServiceContractRegistry registryOf(ServiceContractRegistry.ContractEntry<?> entry) {
-            ServiceContractContributor contributor = config -> List.of(entry);
-            return ServiceContractRegistry.build(Set.of(), Set.of(contributor), new JsonObject(), configParser());
-        }
-
-        /**
-         * Builds a {@link ServiceRequestSender} backed by a real {@link EventBusClient} and a
-         * permissive mocked {@link ServiceSupervisor}.
-         *
-         * @param vertx the Vert.x instance
-         * @return a sender usable to construct a {@link ServiceClientFactory}
-         */
-        private ServiceRequestSender localSender(Vertx vertx) {
-            EventBusExceptionMapper exceptionMapper = new EventBusExceptionMapper();
-            EventBusClient eventBusClient = new EventBusClient(vertx, exceptionMapper);
-            ServiceSupervisor availableSupervisor = mock(ServiceSupervisor.class);
-            when(availableSupervisor.isAvailable(any())).thenReturn(true);
-            return new ServiceRequestSender(
-                    eventBusClient, availableSupervisor, new ServicesConfig(null, List.of()), Map.of());
-        }
-
-        /**
          * §4.2 step 2: an entry that omits one of the contract's client-dispatchable operations
          * must fail {@code create()} fast with an {@link IllegalStateException} whose message
          * begins with the §4.2-pinned literal {@link ServiceClientFactory#CONTRACT_MISMATCH_PREFIX}
@@ -822,7 +828,7 @@ class ServiceClientFactoryTest {
                     .done()
                     .build();
             ServiceContractRegistry localRegistry = registryOf(entry);
-            ServiceClientFactory factory = new ServiceClientFactory(localSender(vertx), localRegistry);
+            ServiceClientFactory factory = new ServiceClientFactory(availableSender(vertx), localRegistry);
 
             IllegalStateException ex =
                     assertThrows(IllegalStateException.class, () -> factory.create(PartialContract.class));
@@ -889,7 +895,7 @@ class ServiceClientFactoryTest {
                     .done()
                     .build();
             ServiceContractRegistry localRegistry = registryOf(entry);
-            ServiceRequestSender localSender = localSender(vertx);
+            ServiceRequestSender localSender = availableSender(vertx);
 
             DeliveryOptions replyOptions = new DeliveryOptions().setCodecName("dispatch.result");
             for (ServiceMethodMeta meta : entry.operations().values()) {

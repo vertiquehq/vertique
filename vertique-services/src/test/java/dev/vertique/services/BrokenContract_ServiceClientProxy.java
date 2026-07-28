@@ -14,6 +14,10 @@ import io.vertx.core.Future;
  * but the constructor body unconditionally throws an unrelated {@link RuntimeException} — the
  * present-but-broken case that must fail {@code create()} loudly (§4.2 {@code brokenCompanion},
  * wide-fallback branch) rather than silently degrading to the JDK dynamic proxy.
+ *
+ * <p>{@code ServiceClientProxyParityTest} (codegen-services) independently proves that the real
+ * emitter's generated companion output behaves identically to what this hand-written stand-in
+ * mimics.
  */
 public final class BrokenContract_ServiceClientProxy implements BrokenContract {
 

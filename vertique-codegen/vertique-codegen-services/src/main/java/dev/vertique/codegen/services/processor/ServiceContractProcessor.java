@@ -27,11 +27,13 @@ import dev.vertique.codegen.services.processor.validate.ReturnTypeValidator;
 import dev.vertique.codegen.validate.InjectConstructorValidator;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.stream.Collectors;
 import javax.annotation.processing.AbstractProcessor;
 import javax.annotation.processing.ProcessingEnvironment;
 import javax.annotation.processing.RoundEnvironment;
@@ -254,7 +256,20 @@ public final class ServiceContractProcessor extends AbstractProcessor {
             moduleEmitter.emit();
         }
 
-        emitClientProxies(roundEnv);
+        // Contracts whose impl-loop processing failed (extraction, per-model validators, group
+        // validators, or DOUBLE_PATTERN rejection) already have their diagnostics reported above;
+        // the impl-rooted candidate FQNs that never made it into an emittable group are exactly
+        // those contracts.
+        Set<String> candidateContractFqns = candidates.stream()
+                .map(c -> c.contractType().getQualifiedName().toString())
+                .collect(Collectors.toSet());
+        Set<String> emittedContractFqns = emittableGroups.stream()
+                .map(group -> group.get(0).contractType().getQualifiedName().toString())
+                .collect(Collectors.toSet());
+        Set<String> failedContractFqns = new HashSet<>(candidateContractFqns);
+        failedContractFqns.removeAll(emittedContractFqns);
+
+        emitClientProxies(roundEnv, failedContractFqns);
 
         emitted = true;
         return false;
@@ -274,9 +289,15 @@ public final class ServiceContractProcessor extends AbstractProcessor {
      * <p>Only the five contract-shape validators gate emission — the impl-coupled ones
      * ({@code Handler*}, {@code @Inject} constructor, group-level) have no meaning without an impl.
      *
-     * @param roundEnv the current round environment; must not be {@code null}
+     * <p>Contracts whose impl-loop processing failed in this round are skipped here (see
+     * {@code failedContractFqns}) so their contract-shape errors are not reported twice.
+     *
+     * @param roundEnv           the current round environment; must not be {@code null}
+     * @param failedContractFqns FQNs of contracts whose impl-loop processing failed in this round
+     *                           (an {@link ImplCandidate} existed but its model never reached an
+     *                           emittable group); must not be {@code null}
      */
-    private void emitClientProxies(RoundEnvironment roundEnv) {
+    private void emitClientProxies(RoundEnvironment roundEnv, Set<String> failedContractFqns) {
         TypeElement serviceContractAnnotation = ctx.elements().getTypeElement(ServiceAnnotations.SERVICE_CONTRACT);
         if (serviceContractAnnotation == null) {
             // @ServiceContract is not on the processor classpath — nothing can be annotated with it.
@@ -286,6 +307,9 @@ public final class ServiceContractProcessor extends AbstractProcessor {
         List<TypeElement> contracts = roundEnv.getElementsAnnotatedWith(serviceContractAnnotation).stream()
                 .filter(e -> e.getKind() == ElementKind.INTERFACE)
                 .map(TypeElement.class::cast)
+                // Diagnostics already reported by the impl loop; the compilation is failing anyway,
+                // so no proxy is needed.
+                .filter(t -> !failedContractFqns.contains(t.getQualifiedName().toString()))
                 .sorted(Comparator.comparing(t -> t.getQualifiedName().toString()))
                 .toList();
 
