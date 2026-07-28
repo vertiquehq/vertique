@@ -626,3 +626,60 @@ substitute RATIFIED by the user (2026-07-27).**
   Potential adjacent production defect in the same subsystem — handed to the
   convergence-phase review/triage for fix-now-vs-defer adjudication, not silently
   absorbed or dropped.
+- 2026-07-28 (Blocker-2 fix — build regression, examples/vertique-example-parent):
+  `examples/vertique-example-parent/pom.xml` is `packaging=pom`, and
+  flatten-maven-plugin does not replace the install POM for pom-packaging modules
+  unless explicitly told to. The module was installing its *raw* POM, so the
+  installed POM's `<parent><version>${revision}</version>` was unresolvable from a
+  repository — breaking downstream resolution of every `vertique-example-*`
+  artifact (surfaced by the enterprise audit integration-tests module). Fix: add to
+  `examples/vertique-example-parent/pom.xml`'s `<build><plugins>`:
+  ```xml
+  <plugin>
+      <groupId>org.codehaus.mojo</groupId>
+      <artifactId>flatten-maven-plugin</artifactId>
+      <configuration>
+          <updatePomFile>true</updatePomFile>
+      </configuration>
+  </plugin>
+  ```
+  (inherits the root `pom.xml` `pluginManagement` version, `resolveCiFriendliesOnly`
+  flattenMode, and execution bindings — only `updatePomFile` is overridden locally.)
+
+  Proof commands (isolated repository, `~/.m2` untouched), run from the worktree with
+  `REPO=/private/tmp/claude-501/-Users-mikakoivisto-Development-VertiqueHQ-vertique-dev/9e8f1bcb-b96e-41fb-943d-e27b2735b03b/scratchpad/flatten-proof-repo`:
+
+  1. Negative control (fix stashed): `./mvnw -ntp -pl examples/vertique-example-parent -am install -DskipTests -Dmaven.repo.local="$REPO"` — build succeeded, but the
+     installed POM at
+     `$REPO/dev/vertique/vertique-example-parent/0.0.0-SNAPSHOT/vertique-example-parent-0.0.0-SNAPSHOT.pom`
+     carried `<parent><version>${revision}</version>` verbatim, confirming the
+     regression reproduces in an isolated repo.
+  2. Fix restored, same command re-run against the same `$REPO` — installed POM's
+     `<parent>` block now reads `<version>0.0.0-SNAPSHOT</version>`.
+  3. External fixture (outside the worktree, at
+     `/private/tmp/claude-501/.../scratchpad/flatten-fixture/pom.xml`, an empty
+     jar module with `<parent>dev.vertique:vertique-example-parent:0.0.0-SNAPSHOT</parent>`
+     and an explicit empty `<relativePath/>` to force repository-only resolution):
+     `./mvnw -ntp -f "$FIXTURE" help:effective-pom -Dmaven.repo.local="$REPO"` — `BUILD
+     SUCCESS`; the effective POM shows the fully resolved parent chain
+     (`vertique-example-parent` → `vertique-parent`, BOM import, full
+     dependencyManagement) with no unresolved `${revision}` anywhere except the
+     source `<revision>0.0.0-SNAPSHOT</revision>` property definition itself. (A
+     benign `[WARNING] Failed to build parent project for
+     dev.vertique:vertique-example-parent:pom:0.0.0-SNAPSHOT` is emitted first —
+     that is Maven's reactor-membership probe failing before it falls back to
+     repository resolution, not a resolution failure; the effective POM that
+     follows proves the fallback succeeded.)
+  4. `./mvnw -ntp spotless:apply -pl examples/vertique-example-parent` — `BUILD
+     SUCCESS`, no formatting changes produced.
+
+  **User ruling on Blocker-1 (enterprise pin, unrelated build regression surfaced by
+  the same audit):** the committed enterprise `pom.xml` pin stays unchanged for S5.
+  The enterprise verification gate instead re-runs in an isolated temporary checkout
+  with an explicit, uncommitted two-line compatibility repin — `pom.xml` L10 and L36,
+  `0.0.0-repository001.3e841ecb40a9-SNAPSHOT` → `0.0.0-SNAPSHOT` — plus
+  `-Drevision=0.0.0-SNAPSHOT` and an isolated `-Dmaven.repo.local`; the result is
+  reported as "passed with compatibility override," not as a clean gate pass. The
+  permanent, resolvable pin is assigned to the active 0.1.0 / managed-checkout work
+  and must update the enterprise pin and its checkout verifier atomically in that
+  follow-up, not here.
