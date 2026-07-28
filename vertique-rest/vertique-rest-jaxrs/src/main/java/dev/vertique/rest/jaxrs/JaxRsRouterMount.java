@@ -57,8 +57,12 @@ import lombok.extern.slf4j.Slf4j;
  * <p>Instances are created exclusively via the inner {@link Factory} class, which holds all
  * shared framework services. Per-mount configuration ({@code mountPath}, {@code openapiPath},
  * {@code resources}, and {@code priority}) is supplied at creation time. The {@code openapiPath} is
- * retained only as documentation metadata ({@link #meta()}); no OpenAPI contract is loaded at runtime
- * (PRD-REST-017 FR-001 — {@code openapi.json} is docs-only, and binding is decoupled from validation).
+ * retained only as documentation metadata ({@link #meta()}); routing is always built from JAX-RS
+ * metadata, never from the spec, and the default {@code web-validation} strategy loads no spec at
+ * runtime either (PRD-REST-017 FR-001 — {@code openapi.json} is docs-only on that path, and binding is
+ * decoupled from validation). The opt-in {@code openapi-contract} strategy ({@code
+ * vertique-rest-openapi-validation}) does load {@code openapi.json} at runtime and validates requests
+ * against it.
  *
  * <p>The {@link #createRouter(Vertx)} method encapsulates the full JAX-RS router construction pipeline:
  * selecting the request-validation strategy by id, running router lifecycle hooks, collecting security

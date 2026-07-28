@@ -20,7 +20,7 @@ JAX-RS routing runtime on top of Vert.x. Maps annotated resource classes to plai
 
 `rest-jaxrs` is the execution engine of the HTTP stack:
 
-1. At build time, `swagger-maven-plugin-jakarta` scans JAX-RS annotations and generates `openapi.json` (documentation only)
+1. At build time, `swagger-maven-plugin-jakarta` scans JAX-RS annotations and generates `openapi.json` — documentation-only on the default `web-validation` path; the opt-in `openapi-contract` strategy (`vertique-rest-openapi-validation`) loads this file at runtime and validates requests against it
 2. At runtime, `JaxRsRouterMount` creates a plain Vert.x `Router`, configures security scheme handlers, and runs the JAX-RS route registration pipeline
 3. `JaxRsRouteRegistrar` maps each resource method to a `ResourceMethodInvoker` keyed by operationId; request validation uses annotation-synthesized schemas (not the generated spec)
 4. `ResourceMethodInvoker` handles each request: extracts parameters, invokes the method, serializes the response, and drives the error pipeline on failure
