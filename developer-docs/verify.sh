@@ -5,7 +5,7 @@
 # Validates the developer-docs corpus contract defined by DOCS-001:
 #
 #   (a) inventory   - exactly README.md, navigation.yml, verify.sh, and the
-#                      thirteen content/*.md pages, no more, no fewer.
+#                      twelve content/*.md pages, no more, no fewer.
 #   (b) navigation  - navigation.yml lists every page filename exactly once,
 #                      in the frozen order, under a sole `pages:` key.
 #   (c) frontmatter - every content/*.md page opens with YAML frontmatter
@@ -132,7 +132,6 @@ set -o pipefail
 readonly -a PAGE_ORDER=(
   index.md
   quickstart.md
-  concepts.md
   application-model.md
   configuration.md
   rest-apis.md
@@ -292,7 +291,7 @@ array_contains_exact() {
   return 1
 }
 
-# Confirms the corpus contains exactly the frozen sixteen-file inventory:
+# Confirms the corpus contains exactly the frozen fifteen-file inventory:
 # missing files and unexpected extra files are both violations. Also
 # confirms the corpus contains no symlinks at all: a symlinked corpus entry
 # would otherwise pass this same-name inventory check trivially while its

@@ -30,7 +30,6 @@ developer-docs/navigation.yml
 developer-docs/verify.sh
 developer-docs/content/index.md
 developer-docs/content/quickstart.md
-developer-docs/content/concepts.md
 developer-docs/content/application-model.md
 developer-docs/content/configuration.md
 developer-docs/content/rest-apis.md

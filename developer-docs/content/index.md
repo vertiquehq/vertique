@@ -10,20 +10,21 @@ SPDX-License-Identifier: EUPL-1.2
 
 # Vertique developer documentation
 
-Vertique is an opinionated, agent-native, Vert.x-native Java 21 framework for teams building
-microservices that must coordinate durable work without giving up an explicit, non-blocking
-architecture. It combines compile-time application assembly and diagnostics with typed event-bus
-services and a PostgreSQL-backed durability stack for workflows, jobs, and transactional
-inbox/outbox messaging. REST, security, configuration, and observability compose around that
-foundation.
+Vertique is a Vert.x-native Java 21 framework for teams building services that must coordinate
+durable work without giving up an explicit, non-blocking architecture. It combines compile-time
+application assembly and diagnostics with typed event-bus services and a PostgreSQL-backed
+durability stack for workflows, jobs, and transactional inbox/outbox messaging. REST, security,
+configuration, and observability compose around that foundation.
 
 Vertique is designed so humans and coding agents work from the same versioned contracts, generated
 application model, compile-time guardrails, and executable verification paths. The companion
 [vertique-skills](https://github.com/vertiquehq/vertique-skills) repository packages that design
 for agent harnesses — Claude Code, Codex CLI, GitHub Copilot, and Cursor — answering module
 questions from the canonical reference inside the exact artifact versions your application
-resolves, alongside starter and archetype selection guidance. The framework grows
-out of years of building bank-grade microservices, carried forward into this same explicit,
+resolves, alongside starter and archetype selection guidance. That contract is provenance, not a
+claim that an agent is always right — generated wiring, typed configuration, compiler failures,
+and executable tests remain the authority. The framework grows
+out of years of building production microservices, carried forward into this same explicit,
 non-blocking design.
 
 ## Why Vertique
@@ -65,8 +66,7 @@ Vertique applications are not built by hand-assembling individual framework modu
 time — at least not for the application's foundation. The supported path for the lifecycle, REST,
 services, and PostgreSQL-persistence foundation is:
 
-1. **Generate an application from an archetype.** REST, headless services, and REST with PostgreSQL
-   are peer entry points. Each archetype produces a working, tested
+1. **Generate an application from an archetype.** Each archetype produces a working, tested
    application skeleton: a `pom.xml` parented on the application parent, a Dagger application
    component and module, an example resource or service, a JSON configuration file, and an
    integration test.
@@ -85,8 +85,6 @@ without a starter.
 
 - [Quickstart](quickstart.md) — generate a REST application, run its tests, start it, and call
   its hello endpoint.
-- [Core concepts](concepts.md) — the vocabulary behind applications, services, lifecycle,
-  generated wiring, durable work, and version-matched agent knowledge.
 - [Application model](application-model.md) — how the launcher, your application's Dagger
   component/module, generated modules, and starters fit together.
 - [Configuration](configuration.md) — JSON configuration sources, typed configuration, and
