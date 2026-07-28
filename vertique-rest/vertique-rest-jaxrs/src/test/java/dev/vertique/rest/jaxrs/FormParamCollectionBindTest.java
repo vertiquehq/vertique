@@ -48,33 +48,33 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Red tests for multi-value {@code @FormParam} collection binding, frozen in
+ * Tests for multi-value {@code @FormParam} collection binding, frozen in
  * {@code docs/plans/feat-param-shape-parity.md} §4 decisions 2–6 (slice S5). Mirrors
  * {@link SetAndArrayQueryParamBindTest}'s and {@link CollectionParamStateMachineTest}'s style: most
- * tests build a {@link ResourceMethodMeta.ParamMeta} directly (bypassing today's
- * {@code ResourceScanner} FORM normalization) so they exercise {@link ParameterExtractor}'s FORM
- * extraction against the <em>declared</em> collection type the green step will actually produce.
+ * tests build a {@link ResourceMethodMeta.ParamMeta} directly so they exercise
+ * {@link ParameterExtractor}'s FORM extraction against the <em>declared</em> collection type.
  *
- * <p>Today's known-broken behavior (plan §2 F5, F6, F7, F13):
+ * <p>What these tests exist to prevent regressing — the behavior before ADR-0191 (plan §2 F5, F6,
+ * F7, F13). Each bullet describes the OLD defect, not current behavior:
  * <ul>
- *   <li>{@code ResourceScanner.java:440-454} rewrites every collection-shaped {@code @FormParam}'s
- *       declared type to {@code List.class}, so a declared {@code Set<String>} carries
+ *   <li>{@code ResourceScanner.java:440-454} rewrote every collection-shaped {@code @FormParam}'s
+ *       declared type to {@code List.class}, so a declared {@code Set<String>} carried
  *       {@code ParamMeta.type() == List.class}.</li>
- *   <li>{@code ParameterExtractor.extractFormParam} has native branches only for
+ *   <li>{@code ParameterExtractor.extractFormParam} had native branches only for
  *       {@code FileUpload}/{@code EntityPart}/{@code List<FileUpload>}/{@code List<EntityPart>};
- *       every other FORM collection falls to a single-value {@code getFormAttribute(name)} +
- *       {@code coerceString}, which asks for a converter targeting the collection type — there is
- *       none, so it throws {@code ParamConverterNotFoundException} (mapped to HTTP 500).</li>
- *   <li>{@code @DefaultValue} on an absent FORM collection hits the same 500, for the same reason.</li>
- *   <li>FORM collection elements never traverse the input-policy chain (the FORM scalar branch
- *       already does, at {@code ParameterExtractor.java:789-791}).</li>
+ *       every other FORM collection fell to a single-value {@code getFormAttribute(name)} +
+ *       {@code coerceString}, which asked for a converter targeting the collection type — there is
+ *       none, so it threw {@code ParamConverterNotFoundException} (mapped to HTTP 500).</li>
+ *   <li>{@code @DefaultValue} on an absent FORM collection hit the same 500, for the same reason.</li>
+ *   <li>FORM collection elements never traversed the input-policy chain (the FORM scalar branch
+ *       already did, at {@code ParameterExtractor.java:789-791}).</li>
  *   <li>The two native FORM list branches ({@code Collectors.toList()},
- *       {@code new ArrayList<>()}) and {@code extractAllEntityParts}'s aggregate are mutable; only
- *       the {@code FILE_UPLOADS} aggregate ({@code List.copyOf}) is already read-only.</li>
- *   <li>A non-{@code List} native multipart shape (e.g. {@code Set<FileUpload>}) is not rejected at
- *       startup: {@code RouteValidator.isSupportedFileUploadTarget} only runs when {@code @FilePart}
- *       is declared, and today's {@code List.class} normalization masks the real declared shape
- *       from every other check, so it silently slides through registration.</li>
+ *       {@code new ArrayList<>()}) and {@code extractAllEntityParts}'s aggregate were mutable; only
+ *       the {@code FILE_UPLOADS} aggregate ({@code List.copyOf}) was already read-only.</li>
+ *   <li>A non-{@code List} native multipart shape (e.g. {@code Set<FileUpload>}) was not rejected
+ *       at startup: {@code RouteValidator.isSupportedFileUploadTarget} only ran when {@code @FilePart}
+ *       was declared, and the {@code List.class} normalization masked the real declared shape
+ *       from every other check, so it slid through registration silently.</li>
  * </ul>
  */
 class FormParamCollectionBindTest {
@@ -140,13 +140,31 @@ class FormParamCollectionBindTest {
         }
     }
 
-    /** Resource declaring a non-{@code List} native multipart collection shape. */
+    /** Resource declaring a non-{@code List} native multipart collection shape of {@code FileUpload}. */
     @Path("/native-multipart-set")
     static class NativeMultipartSetResource {
 
         @POST
         @Operation(operationId = "nativeMultipartSet")
         public String post(@FormParam("uploads") Set<FileUpload> uploads) {
+            return "unused";
+        }
+    }
+
+    /**
+     * Resource declaring a non-{@code List} native multipart collection shape of {@code EntityPart}.
+     *
+     * <p>The {@code EntityPart} twin of {@link NativeMultipartSetResource}. Without it,
+     * {@code RouteValidator.isNativelyMaterializedFormCollection}'s {@code EntityPart} arm is only
+     * ever evaluated to {@code true} (by {@code RouteStartupValidationTest}'s
+     * {@code List<EntityPart>} fixture), leaving the arm that actually raises the violation unproven.
+     */
+    @Path("/native-multipart-entity-part-set")
+    static class NativeMultipartEntityPartSetResource {
+
+        @POST
+        @Operation(operationId = "nativeMultipartEntityPartSet")
+        public String post(@FormParam("parts") Set<EntityPart> parts) {
             return "unused";
         }
     }
@@ -565,7 +583,7 @@ class FormParamCollectionBindTest {
         Method fileUploadListMethod = FormResource.class.getMethod("fileUploadList", List.class);
         Method entityPartListMethod = FormResource.class.getMethod("entityPartList", List.class);
 
-        // FORM List<FileUpload> — mutable today (Collectors.toList())
+        // FORM List<FileUpload> — was mutable (Collectors.toList()) before the read-only contract
         ResourceMethodMeta.ParamMeta fileUploadListParam = formParam("uploads", List.class, FileUpload.class);
         ResourceMethodMeta fileUploadListMeta = metaFor(fileUploadListMethod, List.of(fileUploadListParam));
         RoutingContext fileUploadListCtx = formRoutingContext(Map.of(), List.of(fileUpload("uploads")));
@@ -577,7 +595,7 @@ class FormParamCollectionBindTest {
                 () -> fileUploadList.add(fileUpload("extra")),
                 "a FORM List<FileUpload> must be materialized read-only");
 
-        // FORM List<EntityPart> — mutable today (new ArrayList<>())
+        // FORM List<EntityPart> — was mutable (new ArrayList<>()) before the read-only contract
         ResourceMethodMeta.ParamMeta entityPartListParam = formParam("parts", List.class, EntityPart.class);
         ResourceMethodMeta entityPartListMeta = metaFor(entityPartListMethod, List.of(entityPartListParam));
         RoutingContext entityPartListCtx = formRoutingContext(Map.of("parts", List.of("v1")), List.of());
@@ -589,7 +607,7 @@ class FormParamCollectionBindTest {
                 () -> entityPartList.add(new FormFieldEntityPart("x", "y")),
                 "a FORM List<EntityPart> must be materialized read-only");
 
-        // ENTITY_PARTS aggregate — mutable today (extractAllEntityParts' new ArrayList<>())
+        // ENTITY_PARTS aggregate — was mutable (extractAllEntityParts' new ArrayList<>())
         ResourceMethodMeta.ParamMeta entityPartsAggregateParam =
                 aggregateParam(ResourceMethodMeta.ParamSource.ENTITY_PARTS, EntityPart.class);
         ResourceMethodMeta entityPartsAggregateMeta = metaFor(entityPartListMethod, List.of(entityPartsAggregateParam));
@@ -621,24 +639,45 @@ class FormParamCollectionBindTest {
     @Test
     @DisplayName("@FormParam Set<FileUpload> is rejected at startup as an unsupported native multipart shape")
     void nativeMultipartNonListShape_rejectedAtStartup() {
+        assertNonListNativeMultipartShapeRejected(
+                new NativeMultipartSetResource(),
+                "a Set<FileUpload> @FormParam has no native materialization and must be rejected at startup");
+    }
+
+    @Test
+    @DisplayName("@FormParam Set<EntityPart> is rejected at startup as an unsupported native multipart shape")
+    void nativeMultipartNonListEntityPartShape_rejectedAtStartup() {
+        assertNonListNativeMultipartShapeRejected(
+                new NativeMultipartEntityPartSetResource(),
+                "a Set<EntityPart> @FormParam has no native materialization and must be rejected at startup");
+    }
+
+    /**
+     * Asserts that registering {@code resource} fails startup naming
+     * {@code UNSUPPORTED_MULTIPART_COLLECTION_SHAPE}.
+     *
+     * <p>Shared by both native element types on purpose: the rule is "native target, {@code List}
+     * only", and {@code RouteValidator} reaches that conclusion through two separate expressions —
+     * {@code isSupportedFileUploadTarget} for {@code FileUpload} and a direct
+     * {@code type() == List.class} test for {@code EntityPart}. Exercising only one of them would
+     * leave the other free to drift.
+     *
+     * <p>The assertion matches the violation type by NAME rather than by referencing the enum
+     * constant, because this test was authored before the constant existed. It is left as a string
+     * deliberately: the message text is what an application developer actually sees at startup, so
+     * pinning it also pins the diagnostic.
+     */
+    private static void assertNonListNativeMultipartShapeRejected(Object resource, String because) {
         Vertx vertx = Vertx.vertx();
         try {
             JaxRsRouteRegistrar registrar = new JaxRsRouteRegistrar();
             Router router = Router.router(vertx);
 
-            // Today ResourceScanner normalizes every FORM collection's declared type to List.class
-            // (F5), so this Set<FileUpload> param reaches extractFormParam's List<FileUpload> branch
-            // and slides through both scanning and startup validation unnoticed — RED: no exception is
-            // thrown today. The green fix (§4 decision 6) rejects any non-List native multipart
-            // collection shape at startup with the new UNSUPPORTED_MULTIPART_COLLECTION_SHAPE
-            // violation type. That enum constant does not exist yet, so this assertion checks the
-            // future violation NAME as a string literal (never referencing the enum constant) to stay
-            // compilable before the green step lands.
             RouteRegistrationException ex = assertThrows(
                     RouteRegistrationException.class,
                     () -> RegistrarTestSupport.registerAll(
                             registrar,
-                            Set.of(new NativeMultipartSetResource()),
+                            Set.of(resource),
                             router,
                             List.of(),
                             List.of(),
@@ -651,7 +690,7 @@ class FormParamCollectionBindTest {
                             null,
                             null,
                             false),
-                    "a Set<FileUpload> @FormParam has no native materialization and must be rejected at startup");
+                    because);
 
             assertTrue(
                     ex.getMessage().contains("UNSUPPORTED_MULTIPART_COLLECTION_SHAPE"),

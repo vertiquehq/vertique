@@ -47,7 +47,7 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
 /**
- * Red tests for the collection parameter state machine frozen in
+ * Tests for the collection parameter state machine frozen in
  * {@code docs/plans/feat-param-shape-parity.md} §4 decisions 2–5 (slice S4).
  *
  * <p>Drives the reflective {@link ParameterExtractor} directly with hand-built
@@ -57,19 +57,20 @@ import org.junit.jupiter.params.provider.MethodSource;
  * ({@code FORM} collection binding is covered separately in {@code FormParamCollectionBindTest},
  * slice S5; {@code PATH} is never multi-valued).
  *
- * <p>Today's known-broken behavior (plan §2 F7, F12):
+ * <p>What these tests exist to prevent regressing — the behavior before ADR-0191 (plan §2 F7,
+ * F12). Each bullet describes the OLD defect, not current behavior:
  * <ul>
- *   <li>{@code extractScalarValue} routes an absent collection's {@code @DefaultValue} through
- *       {@code coerceString}, whose conversion context uses the <em>collection</em> type
- *       ({@code List.class}, etc.) as the target — no such converter is registered, so this
- *       throws {@code ParamConverterNotFoundException} (mapped to HTTP 500).</li>
- *   <li>An absent collection with no {@code @DefaultValue} returns {@code null} instead of the
+ *   <li>{@code extractScalarValue} routed an absent collection's {@code @DefaultValue} through
+ *       {@code coerceString}, whose conversion context used the <em>collection</em> type
+ *       ({@code List.class}, etc.) as the target — no such converter is registered, so it
+ *       threw {@code ParamConverterNotFoundException} (mapped to HTTP 500).</li>
+ *   <li>An absent collection with no {@code @DefaultValue} returned {@code null} instead of the
  *       Jakarta REST 4.0-mandated empty collection; an absent array correctly stays {@code null}
  *       (arrays are not one of the three named collection interfaces).</li>
- *   <li>{@code coerceCollection} returns mutable {@code ArrayList}/{@code LinkedHashSet}/
+ *   <li>{@code coerceCollection} returned mutable {@code ArrayList}/{@code LinkedHashSet}/
  *       {@code TreeSet} instead of read-only wrappers.</li>
- *   <li>{@code coerceCollection} returns before the scalar path's {@code objectProcessor} block,
- *       so collection elements never traverse the input-policy chain that scalars already do.</li>
+ *   <li>{@code coerceCollection} returned before the scalar path's {@code objectProcessor} block,
+ *       so collection elements never traversed the input-policy chain that scalars already did.</li>
  * </ul>
  */
 class CollectionParamStateMachineTest {

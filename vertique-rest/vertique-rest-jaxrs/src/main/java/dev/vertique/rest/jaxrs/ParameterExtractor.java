@@ -400,7 +400,7 @@ final class ParameterExtractor {
         // the declared component type and materialise the collection. Without this the raw JsonArray
         // would reach the resource method and fail the invocation.
         if (paramMeta.componentType() != null && rv.get() instanceof io.vertx.core.json.JsonArray jsonArray) {
-            return coerceCollection(jsonArray, paramMeta, policies);
+            return coerceCollection(jsonArray.getList(), paramMeta, policies);
         }
 
         Object value = coerce(rv, paramMeta);
@@ -414,8 +414,8 @@ final class ParameterExtractor {
     }
 
     /**
-     * Coerces a bound multi-value {@link io.vertx.core.json.JsonArray} of raw strings into the declared
-     * collection type for a {@code List<T>}/{@code Set<T>}/{@code SortedSet<T>}/{@code NavigableSet<T>}/
+     * Coerces a multi-value parameter's raw request values into the declared collection type for a
+     * {@code List<T>}/{@code Set<T>}/{@code SortedSet<T>}/{@code NavigableSet<T>}/
      * {@code Collection<T>}/{@code T[]} parameter, coercing each element to the parameter's component
      * type via the {@link ParamConversionResolver}. Element conversion is <em>fail-closed</em>: a
      * malformed element propagates the resolver's
@@ -433,29 +433,28 @@ final class ParameterExtractor {
      * materialization (declared-type selection and the read-only guarantee) to
      * {@link #materializeCollection}.
      *
-     * @param jsonArray the bound multi-value array (elements are raw request strings)
+     * @param rawValues the parameter's raw request values, in the order the transport reported them:
+     *                  the bound {@code JsonArray}'s elements for QUERY/HEADER/COOKIE, or
+     *                  {@code formAttributes().getAll(name)} for FORM
      * @param paramMeta the parameter metadata supplying the collection type and component type
      * @param policies  the effective input policies applied to each {@link String} element
      * @return the materialised read-only {@link List}/{@link Set}/{@link SortedSet}/
      *     {@link NavigableSet}, or the materialised array, of coerced elements
      */
     private Object coerceCollection(
-            io.vertx.core.json.JsonArray jsonArray,
-            ResourceMethodMeta.ParamMeta paramMeta,
-            EffectiveInputPolicies policies) {
+            List<?> rawValues, ResourceMethodMeta.ParamMeta paramMeta, EffectiveInputPolicies policies) {
         return materializeCollection(
-                convertElements(jsonArray.getList(), paramMeta, policies), paramMeta.type(), paramMeta.componentType());
+                convertElements(rawValues, paramMeta, policies), paramMeta.type(), paramMeta.componentType());
     }
 
     /**
      * Converts every raw request value of a collection-valued parameter to its declared component
      * type and runs each converted {@link String} element through the input-policy chain.
      *
-     * <p>Shared by every multi-value source: the QUERY/HEADER/COOKIE path reaches it through
-     * {@link #coerceCollection} (whose values arrive as a bound {@code JsonArray}) and the FORM path
-     * through {@link #extractFormParam} (whose values arrive as
-     * {@code formAttributes().getAll(name)}). One implementation keeps the two sources from diverging
-     * in either conversion or policy semantics.
+     * <p>Shared by every multi-value source: both the QUERY/HEADER/COOKIE path (whose values arrive as
+     * a bound {@code JsonArray}) and the FORM path (whose values arrive as
+     * {@code formAttributes().getAll(name)}) reach it through {@link #coerceCollection}. One
+     * implementation keeps the sources from diverging in either conversion or policy semantics.
      *
      * <p>Conversion is <em>fail-closed</em> per element: a malformed element propagates the
      * resolver's {@link dev.vertique.rest.core.convert.ParamConversionException} (mapped to 400)
@@ -927,7 +926,7 @@ final class ParameterExtractor {
             if (values.isEmpty()) {
                 return absentCollectionValue(pm);
             }
-            return materializeCollection(convertElements(values, pm, policies), pm.type(), pm.componentType());
+            return coerceCollection(values, pm, policies);
         }
         // Scalar text form field
         String formValue = ctx.request().getFormAttribute(pm.name());
