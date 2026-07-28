@@ -34,7 +34,7 @@ and the generated project's `vertiqueVersion` property, matching [Quickstart](qu
 convention.
 
 ```bash
-VERTIQUE_VERSION=0.0.0-SNAPSHOT
+VERTIQUE_VERSION=0.1.0-SNAPSHOT
 
 mvn -B -ntp archetype:generate \
   -DarchetypeGroupId=dev.vertique \

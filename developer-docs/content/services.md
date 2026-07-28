@@ -25,7 +25,7 @@ inside it. `VERTIQUE_VERSION` is declared once and reused for both the archetype
 generated project's `vertiqueVersion` property, matching [Quickstart](quickstart.md)'s convention.
 
 ```bash
-VERTIQUE_VERSION=0.0.0-SNAPSHOT
+VERTIQUE_VERSION=0.1.0-SNAPSHOT
 
 mvn -B -ntp archetype:generate \
   -DarchetypeGroupId=dev.vertique \
