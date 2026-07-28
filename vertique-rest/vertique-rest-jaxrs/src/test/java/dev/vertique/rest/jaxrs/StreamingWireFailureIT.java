@@ -407,10 +407,12 @@ public class StreamingWireFailureIT {
      * body cannot be framed honestly by {@code end()}), which is not the behavior under test here —
      * these tests pin the clean-end path for a chunked stream.
      *
-     * <p>Stands in for {@link ReadStreamBodyEncoder}'s current default — a plain {@link ReadStream}
-     * entity yields a {@code StreamingBody} with neither {@code Content-Length} nor chunked encoding
-     * set, so production resources currently need an equivalent interceptor themselves; known gap
-     * tracked for triage (see the plan's Amendments log / follow-up issue).
+     * <p>This is a test-explicitness device, not a production requirement. A plain
+     * {@link ReadStream} entity yields a {@code StreamingBody} with neither {@code Content-Length}
+     * nor {@code Transfer-Encoding} set by {@link ReadStreamBodyEncoder}, and Vert.x then applies
+     * chunked transfer encoding itself on the first write (HTTP/1.1) — so a production streaming
+     * resource is correctly framed without any interceptor. Setting it here makes the framing these
+     * tests depend on explicit rather than implicit.
      */
     private static final class ChunkedResponseInterceptor implements RequestInterceptor {
 

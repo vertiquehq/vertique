@@ -539,8 +539,14 @@ there), filed pre-merge after the user sees the summary; one per item with its
 re-entry trigger:
 
 - "rest-jaxrs: honest termination for failed streaming responses (reset vs end)" —
-  incl. pre-first-byte 500; client-visible wire change.
-- "rest-core: capture buffered end(buf) late write failures in completion events" —
+  incl. pre-first-byte 500; client-visible wire change. **Partially delivered on this
+  branch** (an under-length fixed-length response is now reset instead of ended — see
+  the F1-m2 as-built amendment); the remainder is the pre-first-byte 500 and the
+  **HTTP/1.0 caveat**: an HTTP/1.0 streamed response is close-delimited rather than
+  chunked, so a truncation is indistinguishable from a clean end at the protocol level
+  (pre-existing Vert.x behavior — record it in the future issue body).
+- "rest-core: capture **late `end()`** write failures (buffered `end(buf)`,
+  null-entity `end()`, streaming final `end()`) in completion events" —
   trigger: operational need + §8 falsifier.
 - "rest-core: afterResponseSettled interceptor hook" — trigger: 2+ consumers.
 - "rest-jaxrs: HTTP/2 RST_STREAM variant of StreamingWireFailureIT" — trigger: h2
@@ -683,3 +689,39 @@ substitute RATIFIED by the user (2026-07-27).**
   permanent, resolvable pin is assigned to the active 0.1.0 / managed-checkout work
   and must update the enterprise pin and its checkout verifier atomically in that
   follow-up, not here.
+- 2026-07-28 (review round 1, F7 — **Amendment 3 REFUTED**): the 2026-07-28 "S4
+  discovery" amendment above — claiming a plain `ReadStream` entity through
+  `ReadStreamBodyEncoder` produces neither `Content-Length` nor chunked transfer
+  encoding — is **wrong and is withdrawn**. Verified against Vert.x 5.1.2
+  `Http1ServerResponse.write` bytecode: when neither `Transfer-Encoding` nor
+  `Content-Length` is set, the first write applies chunked transfer encoding
+  automatically (HTTP/1.1). Production `ReadStream` resources are therefore correctly
+  framed with no interceptor, and there is no adjacent production defect and no
+  follow-up issue to file. `StreamingWireFailureIT`'s `ChunkedResponseInterceptor` is
+  retained only to make the test's framing explicit, and its javadoc now says so.
+  Verified-fact correction; no contract change, no sign-off required.
+- 2026-07-28 (review round 1, F3 — §10 D2 scope widened): the deferred item "capture
+  buffered `end(buf)` late write failures" is widened to "capture **late `end()`**
+  write failures (buffered `end(buf)`, null-entity `end()`, streaming final `end()`)".
+  The exactly-once completion event misses the whole late-`end()` class, not just the
+  buffered branch — Vert.x runs the response end handlers inline before `end()`
+  returns, so any failure settling only at that point can land after emission. The
+  carve-out is now documented on `RestRequestCompletedEvent`, in rest-core's
+  `KEY_WIRE_FAILURE` and event sections, in rest-jaxrs's fallback-500 paragraph, and
+  on micrometer-rest's `error.type` coverage note. Scope-of-deferral correction; no
+  contract change, no sign-off required.
+- 2026-07-28 (security review, F1-m2 as-built): the declared-length wire-failure path
+  now **resets** the response instead of relying on a guarded `end()`. The mechanism
+  named in the security report was wrong — it assumed `end()` raises
+  `IllegalStateException` when the declared `Content-Length` is unsatisfied. Bytecode
+  verification of Vert.x 5.1.2 `Http1ServerResponse.end()` shows **no length check at
+  all**: the under-length end succeeds, fires the end handlers, and leaves a
+  framing-violating body (declared N, delivered M<N) on a live keep-alive connection —
+  a response-desync vector. The shipped remedy is `HttpServerResponse.reset()`
+  (stream-scoped: RST_STREAM on h2, connection close on h1) when the truncated body can
+  no longer satisfy the declared length, with `reset()` also as the backstop when the
+  guarded `end()` throws or fails its future; chunked responses keep the clean `end()`.
+  §8's "Declared Content-Length premature-end: guarded + tested (unverified in 5.1.2 —
+  guard, don't assume)" watch-item is resolved as-built, and the surviving synchronous
+  `IllegalStateException` causes are an already-written race and a foreign-thread
+  write. Verified-fact correction; no contract change, no sign-off required.
