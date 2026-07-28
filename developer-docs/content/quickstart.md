@@ -10,9 +10,12 @@ SPDX-License-Identifier: EUPL-1.2
 
 # Quickstart
 
-By the end of this page you will have generated a Vertique REST application from the REST
-archetype, run its integration test suite, started it locally, and received a JSON response from
-its generated `/hello` endpoint.
+This REST path is the fastest visible way to see Vertique running. By the end of the page you will
+have generated an application, run its integration test suite, started it locally, and received a
+JSON response from its `/hello` endpoint.
+
+REST is not the only application shape. Use the [Services](services.md) journey for a headless
+event-bus application or [Persistence](persistence.md) for the PostgreSQL-backed REST archetype.
 
 ## Prerequisites
 
@@ -133,4 +136,4 @@ Return to the terminal running `mvn -ntp exec:java` and press `Ctrl+C`.
 ## Continue reading
 
 - Previous: [Documentation overview](index.md)
-- Next: [Application model](application-model.md)
+- Next: [Core concepts](concepts.md)

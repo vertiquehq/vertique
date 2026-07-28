@@ -4,6 +4,7 @@
 pages:
   - index.md
   - quickstart.md
+  - concepts.md
   - application-model.md
   - configuration.md
   - rest-apis.md

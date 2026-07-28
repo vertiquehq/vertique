@@ -10,30 +10,35 @@ SPDX-License-Identifier: EUPL-1.2
 
 # Vertique developer documentation
 
-Vertique is an opinionated Java 21 framework for building Vert.x applications. It lets you write
-REST APIs using JAX-RS annotations on Vert.x, generates an OpenAPI specification from those
-annotations at build time, validates incoming requests by default against JSON Schema synthesized
-from the same annotations (OpenAPI-contract request validation against the generated spec is
-available as a separate opt-in module), and assembles your application with compile-time Dagger 2
-dependency injection instead of a runtime container.
+Vertique is an opinionated, agent-native Java 21 framework for building Vert.x microservices. It
+combines a disciplined application model — compile-time Dagger assembly, generated wiring, phased
+lifecycle, and typed configuration — with composable HTTP, event-bus service, persistence, durable
+work, security, messaging, management, and observability capabilities.
+
+The framework is shaped by years of experience building bank-grade microservices. That history is
+expressed as concrete behavior: invalid wiring and restrictive security declarations fail early,
+durable work has explicit transaction and idempotency boundaries, and every consumable artifact
+carries version-matched reference documentation that both developers and coding agents can inspect.
 
 ## Why Vertique
 
-- **JAX-RS annotations on Vert.x** — define resources with `@Path`, `@GET`, `@POST`, and the rest
-  of the familiar JAX-RS annotation set; Vertique generates the Vert.x routing for you.
-- **Build-time OpenAPI generation, annotation-driven request validation by default** — the OpenAPI
-  specification is generated from your annotated resources at build time. Incoming requests are
-  validated by default against JSON Schema synthesized from those same annotations (see the
-  [`vertique-rest-validation` module reference](../../vertique-rest/vertique-rest-validation/src/main/resources/META-INF/vertique/module.md)),
-  with contract validation against the generated spec available as an opt-in
-  [`vertique-rest-openapi-validation` module](../../vertique-rest/vertique-rest-openapi-validation/src/main/resources/META-INF/vertique/module.md).
-  Neither server-side validation strategy validates responses against the OpenAPI contract.
-- **Compile-time dependency injection** — application wiring is assembled by Dagger 2 at compile
-  time, so there is no runtime classpath scanning or reflection-based container to configure.
-- **Composable capability** — REST, services, and PostgreSQL persistence compose through starters;
-  security mechanisms, the durable-work families (jobs, workflows, inbox/outbox), and observability
-  (metrics, tracing) compose through direct capability modules named in your own component instead,
-  since none of them publishes a starter of its own.
+- **Explicit application model** — Dagger assembles one application-owned component at compile
+  time; generated modules make discovered resources and services visible, while lifecycle phases
+  make startup and shutdown ordering explicit.
+- **Agent-native, version-matched knowledge** — each consumable JAR carries its own `module.md`.
+  The companion [Vertique skills](https://github.com/vertiquehq/vertique-skills) resolve the
+  versions in an application's Maven model and read those exact artifact references instead of
+  guessing from a different release.
+- **Composable microservice capabilities** — REST, services, and PostgreSQL persistence compose
+  through starters; security mechanisms, the durable-work families (jobs, workflows, inbox/outbox),
+  and observability (metrics, tracing) compose through direct capability modules named in your own
+  component instead, since none of them publishes a starter of its own.
+- **Fail early at boundaries** — typed configuration validates at startup, generated wiring turns
+  structural mistakes into compiler errors, and restrictive authorization declarations without an
+  enforcement mechanism fail closed.
+- **JAX-RS and OpenAPI at the HTTP edge** — familiar annotations produce Vert.x routing and a
+  build-time OpenAPI specification. Request validation is annotation-driven by default, with
+  generated-spec contract validation as a separate opt-in module.
 
 ## Prerequisites
 
@@ -49,7 +54,8 @@ Vertique applications are not built by hand-assembling individual framework modu
 time — at least not for the application's foundation. The supported path for the lifecycle, REST,
 services, and PostgreSQL-persistence foundation is:
 
-1. **Generate an application from an archetype.** Each archetype produces a working, tested
+1. **Generate an application from an archetype.** REST, headless services, and REST with PostgreSQL
+   are peer entry points. Each archetype produces a working, tested
    application skeleton: a `pom.xml` parented on the application parent, a Dagger application
    component and module, an example resource or service, a JSON configuration file, and an
    integration test.
@@ -68,6 +74,8 @@ without a starter.
 
 - [Quickstart](quickstart.md) — generate a REST application, run its tests, start it, and call
   its hello endpoint.
+- [Core concepts](concepts.md) — the vocabulary behind applications, services, lifecycle,
+  generated wiring, durable work, and version-matched agent knowledge.
 - [Application model](application-model.md) — how the launcher, your application's Dagger
   component/module, generated modules, and starters fit together.
 - [Configuration](configuration.md) — JSON configuration sources, typed configuration, and
