@@ -203,7 +203,7 @@ public final class ExecutionPlanEmitter {
 
         // --- private static helpers emitted into generated class ---
         List<MethodSpec> helpers = new ArrayList<>();
-        helpers.add(buildLoadClassHelper());
+        helpers.add(buildLoadClassHelper(planClass));
 
         // --- assemble class ---
         TypeSpec.Builder classBuilder = TypeSpec.classBuilder(planSimpleName)
@@ -859,20 +859,35 @@ public final class ExecutionPlanEmitter {
      * plan class. Used by static {@code P{n}} field initializers to resolve {@code Class<?>}
      * instances from FQN strings at class-load time.
      *
+     * <p>The thread context class loader is tried first, then — additively — the generated plan
+     * class's own loader, mirroring the belt-and-braces pair the descriptor emitter already uses
+     * ({@code resource.getClass().getClassLoader()} with a context-loader fallback). The plan class
+     * is compiled into the same artifact as the resource it dispatches, so its own loader always
+     * sees every parameter type in that resource's signatures — including a type nested inside the
+     * resource itself — whereas the context loader is whatever the deploying thread happens to
+     * carry. The fallback is purely additive: every FQN that resolved through the context loader
+     * before still resolves to the same class.
+     *
+     * @param planClass the generated plan class's own name, used to reach its class loader
      * @return the method spec
      */
-    private static MethodSpec buildLoadClassHelper() {
+    private static MethodSpec buildLoadClassHelper(ClassName planClass) {
         ParameterizedTypeName classOfQ = ParameterizedTypeName.get(
                 ClassName.get(Class.class), com.palantir.javapoet.WildcardTypeName.subtypeOf(Object.class));
         return MethodSpec.methodBuilder("loadClass")
                 .addModifiers(Modifier.PRIVATE, Modifier.STATIC)
                 .returns(classOfQ)
                 .addParameter(String.class, "fqn")
+                .addStatement("$T tccl_ = $T.currentThread().getContextClassLoader()", ClassLoader.class, Thread.class)
+                .beginControlFlow("if (tccl_ != null)")
                 .beginControlFlow("try")
-                .addStatement(
-                        "return $T.forName(fqn, false, $T.currentThread().getContextClassLoader())",
-                        Class.class,
-                        Thread.class)
+                .addStatement("return $T.forName(fqn, false, tccl_)", Class.class)
+                .nextControlFlow("catch ($T ignored)", ClassNotFoundException.class)
+                .addCode("// Fall through to this plan class's own loader.\n")
+                .endControlFlow()
+                .endControlFlow()
+                .beginControlFlow("try")
+                .addStatement("return $T.forName(fqn, false, $T.class.getClassLoader())", Class.class, planClass)
                 .nextControlFlow("catch ($T e)", ClassNotFoundException.class)
                 .addStatement("throw new $T(e)", IllegalStateException.class)
                 .endControlFlow()
