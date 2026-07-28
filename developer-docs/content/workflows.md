@@ -27,7 +27,7 @@ following the wiring each family's own module reference documents — there is n
 |---|---|---|
 | Durable workflows | Coordinating several steps over time, potentially across systems, as one resumable, versioned instance | The work has more than one step, must survive a restart, and may wait on a signal, a timer, or a human decision |
 | Scheduled and deferred jobs | Running one unit of background work on a schedule or after a delay, with retry and dead-letter handling | The work is a single handler invocation — recurring maintenance on a cron, or work deferred to a future time — not a multi-step instance |
-| Inbox/outbox messaging | Recording an inbound or outbound message atomically with a business transaction — the recording itself is exactly once — while the relay then delivers a recorded outbound entry to its destination with at-least-once delivery | A business write must deduplicate an inbound message, or record an outbound side effect (a service call, a delayed job, a Kafka publish) that commits atomically with the write and is relayed to its destination afterward — the destination side should be idempotent, since inbox dedup, not outbox delivery, is where the framework guarantees exactly-once effect |
+| Inbox/outbox messaging | Recording an inbound or outbound message atomically with a business transaction — the insert commits atomically with that transaction, but is not itself deduplicated, so a business retry in a new transaction records again — while the relay then delivers a recorded outbound entry to its destination with at-least-once delivery | A business write must deduplicate an inbound message, or record an outbound side effect (a service call, a delayed job, a Kafka publish) that commits atomically with the write and is relayed to its destination afterward — the destination side should be idempotent, since inbox dedup, not outbox delivery, is where the framework guarantees exactly-once effect |
 
 These three compose rather than compete: a durable workflow step commonly dispatches its service
 call or publishes its external event through inbox/outbox, and a workflow's durable timers are
@@ -148,15 +148,19 @@ every module it needs in its own component, exactly as it does for a single fami
   `vertique-inbox-outbox-postgresql` each depend directly on `vertique-db-postgresql` — the same
   PostgreSQL access layer the `vertique-starter-postgresql` aggregate composes for a REST or
   services application, covered in [Persistence](persistence.md) — rather than on that starter
-  aggregate. Migration wiring differs per adapter, though: only `vertique-workflow-postgresql`
-  depends on `vertique-db-flyway` at compile scope, so naming it is enough to run its own
-  migrations alongside the application's. `vertique-job-postgresql` and
-  `vertique-inbox-outbox-postgresql` declare `vertique-db-flyway` at test scope only, so an
-  application composing either one's persistence must also add `DbFlywayModule` to its own Dagger
-  component itself — the same `DbFlywayModule` the PostgreSQL starter composes for a REST or
-  services application — see each module's own reference for the exact wiring. An application that
-  already uses the PostgreSQL starter for its own repositories composes a durable-work family's
-  PostgreSQL adapter alongside it, not instead of it.
+  aggregate. All three require the application to install both `DbPostgresqlModule` and
+  `DbFlywayModule` in its own Dagger component — the same two modules the PostgreSQL starter
+  composes for a REST or services application — because none of the three adapter modules wires
+  Flyway migration for the application; `vertique-workflow-postgresql`'s own module reference is
+  explicit that applications must also include `DbPostgresqlModule` and `DbFlywayModule` for the
+  connection pool its repositories and transaction runner depend on. Maven dependency scope
+  differs per adapter, but that difference governs classpath availability, not Dagger wiring: only
+  `vertique-workflow-postgresql` depends on `vertique-db-flyway` at compile scope, while
+  `vertique-job-postgresql` and `vertique-inbox-outbox-postgresql` declare it at test scope only —
+  either way, `DbFlywayModule` still has to be installed by the application itself; see each
+  module's own reference for the exact wiring. An application that already uses the PostgreSQL
+  starter for its own repositories composes a durable-work family's PostgreSQL adapter alongside
+  it, not instead of it.
 
 ## Learn more
 

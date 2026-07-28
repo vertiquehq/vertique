@@ -46,7 +46,8 @@ dependency injection instead of a runtime container.
 ## The supported path
 
 Vertique applications are not built by hand-assembling individual framework modules one at a
-time. The supported path is:
+time — at least not for the application's foundation. The supported path for the lifecycle, REST,
+services, and PostgreSQL-persistence foundation is:
 
 1. **Generate an application from an archetype.** Each archetype produces a working, tested
    application skeleton: a `pom.xml` parented on the application parent, a Dagger application
@@ -56,6 +57,12 @@ time. The supported path is:
    Dagger aggregate that composes a fixed set of framework capabilities behind one class name.
    Your application names the starter it needs instead of assembling that capability's module
    list by hand.
+
+Capability with no starter — security mechanisms, the durable-work families (jobs, workflows,
+inbox/outbox), and observability — is composed the other way: as direct framework modules named in
+your own component. See [Application model](application-model.md) for how starters and direct
+modules fit together, and [Workflows](workflows.md) for a worked example of composing capability
+without a starter.
 
 ## Next steps
 

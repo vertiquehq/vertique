@@ -9,7 +9,7 @@
 # sibling path developer-docs-tests/ so verify.sh's own inventory contract
 # needs no exemption for it.
 #
-# Two kinds of case, both invoking the repository's real verify.sh against a
+# Three kinds of case, all invoking the repository's real verify.sh against a
 # disposable corpus copy (verify.sh [corpus-root]):
 #
 #   (a) mutation cases - each case copies developer-docs/ into a fresh
@@ -24,16 +24,52 @@
 #       marker inside a fence), a small standalone page is committed under
 #       fixtures/static/ and swapped into a fresh developer-docs/ copy in
 #       place of content/quickstart.md before verify.sh runs.
+#   (c) scanner-failure sabotage - see "--- Sabotage cases: validator
+#       integrity (round 8) ---" below. One case makes a corpus page
+#       unreadable via `chmod 000` and asserts verify.sh reports an
+#       internal-scanner-error violation rather than a silent PASS (skipped,
+#       with a note, when the suite runs as root, since root ignores file
+#       permissions). This single sabotage is the regression proof for BOTH
+#       round-8 validator-integrity findings at once, and there is a
+#       deliberate decision behind that:
+#         - scanner-specific status acceptance - the file is unreadable, not
+#           merely empty, so every producer that touches it (sed, awk, grep)
+#           exits with a genuine non-zero status, proving strict-mode
+#           producers (sed/awk, and the fence-stripping awk stage) and the
+#           grep stage alike are never silently treated as "found nothing"
+#           (on macOS/BSD grep, an unreadable file already exits 2, itself
+#           over grep mode's own max accepted status of 1).
+#         - no `pipefail` masking of a producer failure behind a quiet grep
+#           consumer - a bare `producer | grep` pipeline's own captured
+#           status would be indistinguishable, in exactly this scenario
+#           (producer status 2, grep status 1), from a clean "nothing
+#           matched" grep run (pipefail reports only the rightmost status).
+#           verify.sh's fence-stripped scans instead capture the producer's
+#           output first (see stripped_grep_scan in verify.sh) and check its
+#           status independently before grep ever runs, so this sabotage
+#           exercises exactly the code path the old masking bug lived in. A
+#           distinct "producer fails, grep quietly finds nothing" case
+#           cannot be constructed independently of this one without editing
+#           verify.sh itself: post-fix, grep is never invoked once the
+#           producer stage has already failed, so no corpus mutation can
+#           reach a quiet grep consumer past a failed producer - the
+#           vulnerable bare pipeline the old bug lived in no longer exists
+#           in verify.sh to exploit. This note records that decision instead
+#           of adding a second, redundant case.
 #
 # Every case asserts both the exit-code direction (pass/fail) and, for a
 # fail case, that the diagnostic contains the expected invariant substring -
 # a case that fails for the wrong reason is reported as a suite failure, not
-# treated as a pass.
+# treated as a pass. A case may also assert the negative: that the combined
+# output does NOT contain a given substring, via run_case's optional fifth
+# argument - used to prove a rejection stops before a downstream content
+# scan ever runs (see the symlink-rejection case below).
 #
-# Uses only Bash and standard Unix tools (awk, sed, grep, cp, mktemp). No
-# network access is performed or required. Bash 3.2 compatible (no mapfile,
-# no associative arrays, no GNU-only flags) - see developer-docs/verify.sh for
-# the same portability discipline this suite follows.
+# Uses only Bash and standard Unix tools (awk, sed, grep, cp, mktemp,
+# chmod, id). No network access is performed or required. Bash 3.2
+# compatible (no mapfile, no associative arrays, no GNU-only flags) - see
+# developer-docs/verify.sh for the same portability discipline this suite
+# follows.
 #
 # Usage: run.sh
 #   Always validates this repository's own developer-docs/ corpus, copied
@@ -73,14 +109,20 @@ print_indented_output() {
 # Runs verify.sh against $3 and asserts the outcome named case $1 produces:
 # $2 is the expected outcome (pass|fail); $4, required for a fail case, is a
 # literal substring the combined stdout+stderr output must contain - the
-# diagnostic naming the specific invariant this case proves. A case that
-# exits in the wrong direction, or exits fail for a diagnostic other than the
-# expected one, is reported as an unexpected outcome rather than a pass.
+# diagnostic naming the specific invariant this case proves. $5, optional,
+# is a literal substring the combined output must NOT contain - used to
+# prove a rejection stops before a downstream content scan ever runs (e.g.
+# a symlink rejected by the inventory check must never also produce a
+# forbidden-token violation sourced from the symlink's own target content).
+# A case that exits in the wrong direction, exits fail for a diagnostic
+# other than the expected one, or contains the forbidden substring, is
+# reported as an unexpected outcome rather than a pass.
 run_case() {
   local case_name="$1"
   local expected_outcome="$2"
   local target_root="$3"
   local expected_diagnostic="${4:-}"
+  local forbidden_diagnostic="${5:-}"
   local output
   local status=0
   local observed_outcome
@@ -105,6 +147,14 @@ run_case() {
     unexpected_outcomes=$((unexpected_outcomes + 1))
     printf 'FAIL  %-62s verifier %sed but never reported: %s\n' \
       "$case_name" "$observed_outcome" "$expected_diagnostic"
+    print_indented_output "$output"
+    return 0
+  fi
+
+  if [[ -n "$forbidden_diagnostic" && "$output" == *"$forbidden_diagnostic"* ]]; then
+    unexpected_outcomes=$((unexpected_outcomes + 1))
+    printf 'FAIL  %-62s verifier %sed but also reported (should not have): %s\n' \
+      "$case_name" "$observed_outcome" "$forbidden_diagnostic"
     print_indented_output "$output"
     return 0
   fi
@@ -198,7 +248,10 @@ run_case "add-extra-file-with-space" fail "$corpus_root" \
 # all: were it instead silently treated as an ordinary corpus file (the
 # bypass this case guards against), the forbidden-token scan would also
 # report a violation from this same path - and it must not, since the
-# symlink is rejected outright before any content scan ever reaches it.
+# symlink is rejected outright before any content scan ever reaches it. The
+# fifth run_case argument makes that "must not" an actual assertion rather
+# than only a comment: the combined output must contain zero forbidden-token
+# diagnostics naming the TODO token the target carries.
 new_case_corpus add-extra-file-as-symlink
 printf '%s\n' \
   '# Outside-corpus symlink target' \
@@ -206,7 +259,8 @@ printf '%s\n' \
   >"$case_dir/outside-corpus-target.md"
 ln -s "$case_dir/outside-corpus-target.md" "$corpus_root/content/extra-symlink.md"
 run_case "add-extra-file-as-symlink" fail "$corpus_root" \
-  "symlinks are not part of the frozen corpus inventory (inventory contract)"
+  "symlinks are not part of the frozen corpus inventory (inventory contract)" \
+  "forbidden token 'TODO'"
 
 # --- Mutation cases: navigation (b) ---
 
@@ -437,6 +491,23 @@ printf '%s\n' \
   'Sibling fixture file referenced through an angle-bracket link destination containing an embedded space.' \
   >"$case_dir/repo/reference guide.md"
 run_case "static-angle-bracket-link-with-spaces-resolves-pass" pass "$corpus_root"
+
+# --- Sabotage cases: validator integrity (round 8) ---
+# See the "(c) scanner-failure sabotage" entry in this file's header comment
+# for what this single case proves (both round-8 findings at once) and why a
+# distinct pipeline-masking case is not independently constructible post-fix
+# without editing verify.sh itself.
+
+new_case_corpus scanner-failure-fails-closed
+if [[ "$(id -u)" == "0" ]]; then
+  printf 'skip  %-62s (running as root - chmod 000 does not block root reads)\n' \
+    "scanner-failure-fails-closed"
+else
+  chmod 000 "$corpus_root/content/quickstart.md"
+  run_case "scanner-failure-fails-closed" fail "$corpus_root" \
+    "internal scanner error (validator integrity)"
+  chmod 644 "$corpus_root/content/quickstart.md"
+fi
 
 # --- Summary ---
 

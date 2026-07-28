@@ -106,12 +106,25 @@
 #
 # Validator integrity: every check below that scans corpus content through
 # an external find/grep/sed/awk producer captures that producer's own exit
-# status and treats anything other than 0 (matched/enumerated) or 1 (grep's
-# own "found nothing" convention) as a scanner failure in its own right,
-# reported via check_scan_status rather than silently yielding an empty
-# result set and a false PASS. `pipefail` is enabled below so a two-stage
-# "extractor | grep" scan's captured status reflects the pipeline as a
-# whole, not only grep's last-stage status.
+# status and validates it via check_scan_status, which never fails open
+# into an empty result set and a false PASS. Status 1 as a legitimate
+# "found nothing" result is accepted ONLY for a grep consumer
+# (check_scan_status's "grep" mode) - find/sed/awk have no such convention
+# of their own (find enumerates and exits 0 even when nothing matched;
+# sed/awk exit 0 whether or not a pattern matched or a line was printed),
+# so check_scan_status's "strict" mode accepts status 0 only for those
+# producers; any other status is a scanner failure in its own right. A
+# two-stage "producer | grep" scan is never validated as a single pipeline
+# status, even with `pipefail` enabled below: pipefail surfaces only the
+# rightmost non-zero exit code, which can mask a producer failure behind a
+# grep exit of 0 or 1 (e.g. producer=2, grep=1 -> pipeline status 1,
+# indistinguishable from a clean "nothing matched" grep run). Every such
+# scan instead runs through stripped_grep_scan, which captures the
+# producer's own output first and checks its status in "strict" mode
+# before ever handing that output to grep, whose own status is then
+# checked independently in "grep" mode. `pipefail` stays enabled as a
+# general-purpose default for any future pipeline this script adds, not
+# because either scan stage above still depends on it.
 
 set -u
 set -o pipefail
@@ -136,20 +149,27 @@ FAILURES=0
 # --- Reporting ---
 
 # Records one violation with a path-specific diagnostic and keeps going.
-# $1 routinely embeds raw corpus content (a frontmatter line, a link target,
-# a matched token) verbatim, so control characters - an ANSI escape
+# $1 routinely embeds raw corpus content (a frontmatter line, a link
+# target, a matched token, or - via a NUL-delimited find(1) enumeration - a
+# corpus path segment) verbatim, so control characters - an ANSI escape
 # sequence, a stray NUL - are stripped before the message ever reaches a CI
 # log, rather than trusting corpus content not to spoof or corrupt terminal
-# output. Tab, LF, and CR are preserved (none of this script's diagnostics
-# embed them, since every extraction is already single-line-bounded, but
-# leaving them out of the deleted range keeps this a pure control-character
-# strip rather than a whitespace-mangling one). The violation is still
-# counted before sanitizing, so a sanitizer hiccup can never itself cause a
-# violation to go unreported.
+# output. A path is not guaranteed single-line the way an extracted content
+# line is: NUL is the only byte find(1) -print0 refuses to put in a
+# filename, so a legally NUL-delimited enumeration result may still carry a
+# literal LF or CR. Left untouched - preserved, as an earlier revision of
+# this function did on the theory that no diagnostic embeds them - that
+# lets a maliciously or accidentally named corpus file inject fabricated
+# "FAIL: ..." lines into the CI log (log-injection contract). CR and LF are
+# therefore folded to a single space each, a visible, single-line-safe
+# substitute, rather than preserved or silently deleted; tab is still
+# preserved, since unlike CR/LF it never introduces a new output line. The
+# violation is still counted before sanitizing, so a sanitizer hiccup can
+# never itself cause a violation to go unreported.
 fail() {
   FAILURES=$((FAILURES + 1))
   local msg
-  msg="$(printf '%s' "$1" | tr -d '\000-\010\013\014\016-\037')"
+  msg="$(printf '%s' "$1" | tr '\r\n' '  ' | tr -d '\000-\010\013\014\016-\037')"
   echo "FAIL: $msg" >&2
 }
 
@@ -181,24 +201,42 @@ resolve_corpus_root() {
 # --- Scanner integrity ---
 
 # Confirms a scan's exit status - already captured by the caller into $2 -
-# is one of the two "clean" outcomes for a find/grep/sed/awk producer
-# feeding this script's checks: 0 (something matched or was enumerated) or
-# 1 (a grep-driven scan's own "nothing matched" convention - a legitimate
-# empty result, not a tool failure). Any other status means the producing
-# tool itself failed - a bad flag, an unreadable path, an interpreter error
-# - which must never be allowed to fail open into an empty result set and a
-# silent PASS; that is reported here as its own violation instead. The
-# diagnostic keeps the fixed substring "internal scanner error (validator
-# integrity)" contiguous (the per-call $3 description is appended after it,
-# not spliced into the middle) so it stays a single stable, greppable marker
-# regardless of which scan tripped it. $1 is the file or corpus root the
-# scan covered, folded into the violation's path prefix. Returns success
-# when the caller should go on to consume the scan's captured output, and
-# failure when the caller must skip it - the violation has already been
-# recorded.
+# is a "clean" outcome for the KIND of producer that generated it, per the
+# scanner-specific mode named by $4 (round-8 review finding: status
+# acceptance must be scanner-specific, not a single blanket rule):
+#   grep   - 0 (something matched) or 1 (grep's own "nothing matched"
+#            convention - a legitimate empty result, not a tool failure).
+#   strict - 0 only. find, sed, and awk have no "nothing matched"
+#            convention of their own: find enumerates (an empty match set
+#            is still exit 0), and sed/awk exit 0 whether or not a pattern
+#            matched or a line was printed. Any non-zero status from one of
+#            these producers - unlike grep's status 1 - is the producing
+#            tool itself failing (a bad flag, an unreadable path, an
+#            interpreter error), never a legitimate empty result. Accepting
+#            status 1 from a strict producer would fail open into an empty
+#            result set and a silent PASS exactly when the producer itself
+#            is broken.
+# An unrecognized $4 is itself treated as a scanner-integrity failure
+# rather than silently accepted as a passthrough. The diagnostic keeps the
+# fixed substring "internal scanner error (validator integrity)" contiguous
+# (the per-call $3 description is appended after it, not spliced into the
+# middle) so it stays a single stable, greppable marker regardless of which
+# scan tripped it. $1 is the file or corpus root the scan covered, folded
+# into the violation's path prefix. Returns success when the caller should
+# go on to consume the scan's captured output, and failure when the caller
+# must skip it - the violation has already been recorded.
 check_scan_status() {
-  local subject="$1" status="$2" desc="$3"
-  if [[ "$status" -gt 1 ]]; then
+  local subject="$1" status="$2" desc="$3" mode="$4"
+  local max_ok_status
+  case "$mode" in
+  grep) max_ok_status=1 ;;
+  strict) max_ok_status=0 ;;
+  *)
+    fail "$subject: internal scanner error (validator integrity) while scanning for $desc: unrecognized check_scan_status mode '$mode'"
+    return 1
+    ;;
+  esac
+  if [[ "$status" -gt "$max_ok_status" ]]; then
     fail "$subject: internal scanner error (validator integrity) while scanning for $desc"
     return 1
   fi
@@ -211,11 +249,14 @@ check_scan_status() {
 # outright by check_inventory below - so a symlinked extra corpus entry is
 # never followed and read as if it were a real corpus file. Captures the
 # match list into the global array MD_FILES and validates find's own exit
-# status via check_scan_status: a failure enumerating files must not fail
-# open into a silent "found nothing, so nothing to check" PASS. $1 is a
-# short description of the calling check, folded into the violation message
-# on failure. MD_FILES is left empty on failure, so a caller that loops over
-# it unconditionally naturally performs zero further scanning.
+# status via check_scan_status in "strict" mode - find has no grep-style
+# "nothing matched" convention of its own (an empty match set is still exit
+# 0), so any non-zero status here is find itself failing, not a legitimate
+# empty corpus; that failure must not fail open into a silent "found
+# nothing, so nothing to check" PASS. $1 is a short description of the
+# calling check, folded into the violation message on failure. MD_FILES is
+# left empty on failure, so a caller that loops over it unconditionally
+# naturally performs zero further scanning.
 find_corpus_markdown_files() {
   local desc="$1"
   local tmp status
@@ -223,7 +264,7 @@ find_corpus_markdown_files() {
   find "$CORPUS_ROOT" -name '*.md' -type f -print0 >"$tmp"
   status=$?
   MD_FILES=()
-  if check_scan_status "$CORPUS_ROOT" "$status" "$desc"; then
+  if check_scan_status "$CORPUS_ROOT" "$status" "$desc" strict; then
     while IFS= read -r -d '' f; do
       MD_FILES+=("$f")
     done <"$tmp"
@@ -475,15 +516,18 @@ frontmatter_value_is_empty_or_null() {
 # Parses and validates the frontmatter block of a single content page. Each
 # of the three sed/awk extractions below (opening delimiter, closing
 # delimiter, body lines) is captured into a variable first and its exit
-# status checked via check_scan_status, rather than trusted implicitly - the
-# same validator-integrity treatment applied to the other scan drivers in
-# this script.
+# status checked via check_scan_status in "strict" mode, rather than
+# trusted implicitly - sed and awk have no grep-style "nothing matched"
+# convention of their own (both exit 0 whether or not a line matched or was
+# printed), so any non-zero status from one of them is the tool itself
+# failing, never a legitimate empty result; the same validator-integrity
+# treatment applied to the other scan drivers in this script.
 check_frontmatter_of_file() {
   local f="$1"
   local first_line close_line status
   first_line=$(sed -n '1p' "$f")
   status=$?
-  check_scan_status "$f" "$status" "the frontmatter opening delimiter" || return
+  check_scan_status "$f" "$status" "the frontmatter opening delimiter" strict || return
   first_line="${first_line%$'\r'}"
   if [[ "$first_line" != "---" ]]; then
     fail "$f: must open with a YAML frontmatter block delimited by '---' (frontmatter contract)"
@@ -492,7 +536,7 @@ check_frontmatter_of_file() {
 
   close_line=$(awk '{ sub(/\r$/, "") } NR>1 && $0=="---"{print NR; exit}' "$f")
   status=$?
-  check_scan_status "$f" "$status" "the frontmatter closing delimiter" || return
+  check_scan_status "$f" "$status" "the frontmatter closing delimiter" strict || return
   if [[ -z "$close_line" ]]; then
     fail "$f: frontmatter block is not closed with a second '---' line (frontmatter contract)"
     return
@@ -505,7 +549,7 @@ check_frontmatter_of_file() {
 
   body=$(sed -n "2,$((close_line - 1))p" "$f")
   status=$?
-  check_scan_status "$f" "$status" "the frontmatter body" || return
+  check_scan_status "$f" "$status" "the frontmatter body" strict || return
 
   if [[ -n "$body" ]]; then
     while IFS= read -r line; do
@@ -686,16 +730,19 @@ check_fence_grammar() {
 
 # Scans a single file for fence-grammar violations, via the shared state
 # machine, and reports each one. The state machine's own awk invocation is
-# captured and status-checked via check_scan_status before its output is
-# trusted, rather than consumed straight off a process substitution whose
-# exit status would otherwise go unexamined.
+# captured and status-checked via check_scan_status in "strict" mode before
+# its output is trusted (awk has no grep-style "nothing matched"
+# convention - it exits 0 whether or not a violation was printed - so any
+# non-zero status is awk itself failing, not a clean file), rather than
+# consumed straight off a process substitution whose exit status would
+# otherwise go unexamined.
 check_fence_grammar_of_file() {
   local f="$1"
   local hit line_no msg output status
 
   output="$(fence_state_machine "$f" grammar)"
   status=$?
-  check_scan_status "$f" "$status" "fence grammar" || return
+  check_scan_status "$f" "$status" "fence grammar" strict || return
   [[ -z "$output" ]] && return
 
   while IFS= read -r hit; do
@@ -716,6 +763,67 @@ check_fence_grammar_of_file() {
 # check_fence_grammar accepts as a real fence.
 strip_all_fences() {
   fence_state_machine "$1" strip_all
+}
+
+# --- Producer+grep two-stage scan helper (validator integrity) ---
+
+# Runs a fence-stripped view of file $1 through a grep filter, checking each
+# stage's own exit status independently rather than as a single "producer |
+# grep" pipeline status - the round-8 review finding this helper fixes: even
+# with `pipefail` enabled, a pipeline's captured status reflects only the
+# rightmost non-zero exit code, so a broken producer (status 2) feeding a
+# grep that finds nothing (status 1) yields a pipeline status of 1 -
+# indistinguishable from a clean "nothing matched" grep run, and the
+# producer's own failure silently slips past a grep-mode check_scan_status
+# call. This helper instead captures the producer's output into a temp file
+# first, validates ITS status in check_scan_status's "strict" mode (fences
+# are stripped by fence_state_machine, an awk producer with no grep-style
+# "nothing matched" convention of its own), and only then greps that temp
+# file, validating grep's own status independently in "grep" mode.
+#
+# $2 selects the fence-stripped view: "all" for strip_all_fences (blanks
+# every fence's content), "xml" for strip_xml_fences (blanks only ```xml```
+# fence content). $3 is the stripping-stage description folded into a
+# scanner-failure diagnostic; $4 is the grep-stage description. Every
+# remaining argument ($5+) is passed verbatim to grep as its flags and
+# pattern.
+#
+# Reports the outcome via two globals (bash 3.2 has no local nameref):
+#   STRIPPED_GREP_OK     - true when both stages cleared check_scan_status
+#                           (an empty grep result is still OK; only a
+#                           scanner failure at either stage is not - that
+#                           failure has already been recorded via fail())
+#   STRIPPED_GREP_OUTPUT - grep's own captured output when OK; empty
+#                           otherwise, so a caller that reads it
+#                           unconditionally on a failed scan just sees no
+#                           matches rather than stale content from a
+#                           previous call
+stripped_grep_scan() {
+  local f="$1" strip_kind="$2" strip_desc="$3" grep_desc="$4"
+  shift 4
+  local tmp status
+  tmp="$(mktemp "${TMPDIR:-/tmp}/vertique-verify-stripped.XXXXXX")"
+
+  if [[ "$strip_kind" == "xml" ]]; then
+    strip_xml_fences "$f" >"$tmp"
+  else
+    strip_all_fences "$f" >"$tmp"
+  fi
+  status=$?
+
+  STRIPPED_GREP_OK=false
+  STRIPPED_GREP_OUTPUT=""
+  if check_scan_status "$f" "$status" "$strip_desc" strict; then
+    STRIPPED_GREP_OUTPUT="$(grep "$@" "$tmp")"
+    status=$?
+    if check_scan_status "$f" "$status" "$grep_desc" grep; then
+      STRIPPED_GREP_OK=true
+    else
+      STRIPPED_GREP_OUTPUT=""
+    fi
+  fi
+
+  rm -f "$tmp"
 }
 
 # --- (d) Links ---
@@ -766,18 +874,21 @@ check_link_target() {
 # destination containing a literal '(' is rejected as a corpus-grammar
 # violation rather than silently truncated at the first ')' — such a target
 # must use the angle-bracket destination form instead. Each of the three
-# `strip_all_fences | grep` extractor scans below is captured into a
-# variable and its own exit status checked via check_scan_status (the
-# `pipefail` enabled at the top of this script means the captured status
-# reflects the two-stage pipeline as a whole) before its output is trusted.
+# fence-stripped-then-grepped extractor scans below runs through
+# stripped_grep_scan, which checks the stripping stage (an awk producer) and
+# the grep stage independently in check_scan_status's "strict" and "grep"
+# modes respectively, rather than trusting a single "producer | grep"
+# pipeline status that `pipefail` alone cannot make scanner-specific (see
+# stripped_grep_scan's own comment for why).
 check_links_of_file() {
   local f="$1"
-  local dir raw target line hit output status
+  local dir raw target line hit output
   dir=$(dirname "$f")
 
-  output="$(strip_all_fences "$f" | grep -oE '\]\(<[^>]*>|\]\([^)[:space:]]+')"
-  status=$?
-  if check_scan_status "$f" "$status" "inline link destinations"; then
+  stripped_grep_scan "$f" all "fence-stripped view (inline link destinations)" \
+    "inline link destinations" -oE '\]\(<[^>]*>|\]\([^)[:space:]]+'
+  if $STRIPPED_GREP_OK; then
+    output="$STRIPPED_GREP_OUTPUT"
     if [[ -n "$output" ]]; then
       while IFS= read -r raw; do
         target="${raw#](}"
@@ -793,9 +904,11 @@ check_links_of_file() {
     fi
   fi
 
-  output="$(strip_all_fences "$f" | grep -noE '^[[:space:]]+\[[^]]+\]:|^([[:space:]]*(>[[:space:]]*|[-*+][[:space:]]+|[0-9]+[.)][[:space:]]+))+\[[^]]+\]:')"
-  status=$?
-  if check_scan_status "$f" "$status" "indented reference-style link definitions"; then
+  stripped_grep_scan "$f" all "fence-stripped view (indented reference-style link definitions)" \
+    "indented reference-style link definitions" \
+    -noE '^[[:space:]]+\[[^]]+\]:|^([[:space:]]*(>[[:space:]]*|[-*+][[:space:]]+|[0-9]+[.)][[:space:]]+))+\[[^]]+\]:'
+  if $STRIPPED_GREP_OK; then
+    output="$STRIPPED_GREP_OUTPUT"
     if [[ -n "$output" ]]; then
       while IFS= read -r hit; do
         fail "$f:${hit%%:*}: reference-style link definitions must start at column zero, not be indented (corpus grammar)"
@@ -803,9 +916,11 @@ check_links_of_file() {
     fi
   fi
 
-  output="$(strip_all_fences "$f" | grep -oE '^\[[^]]+\]:[[:space:]]*<[^>]*>|^\[[^]]+\]:[[:space:]]*[^[:space:]]+')"
-  status=$?
-  if check_scan_status "$f" "$status" "reference-style link definitions"; then
+  stripped_grep_scan "$f" all "fence-stripped view (reference-style link definitions)" \
+    "reference-style link definitions" \
+    -oE '^\[[^]]+\]:[[:space:]]*<[^>]*>|^\[[^]]+\]:[[:space:]]*[^[:space:]]+'
+  if $STRIPPED_GREP_OK; then
+    output="$STRIPPED_GREP_OUTPUT"
     if [[ -n "$output" ]]; then
       while IFS= read -r line; do
         [[ "$line" =~ ^\[[^]]+\]:[[:space:]]*(.+)$ ]] || continue
@@ -846,9 +961,12 @@ strip_xml_fences() {
   fence_state_machine "$1" strip_xml
 }
 
-# Scans a single file for forbidden tokens and reports each match. Each
-# extractor scan is captured into a variable and its own exit status checked
-# via check_scan_status before its output is trusted.
+# Scans a single file for forbidden tokens and reports each match. The
+# first scan is a plain grep over the whole file (no producer stage), so
+# its own exit status is checked via check_scan_status in "grep" mode
+# directly. The second scan runs a fence-stripped view through grep, via
+# stripped_grep_scan, which checks the stripping stage and the grep stage
+# independently in "strict" and "grep" mode respectively.
 check_forbidden_tokens_of_file() {
   local f="$1"
   local hit line_no token output status
@@ -857,7 +975,7 @@ check_forbidden_tokens_of_file() {
   # including inside xml fences, case-insensitively (e.g. Latest, TODOs).
   output="$(grep -inoE '\b(TODO|TBD)S?\b|\blatest\b' "$f")"
   status=$?
-  if check_scan_status "$f" "$status" "forbidden tokens"; then
+  if check_scan_status "$f" "$status" "forbidden tokens" grep; then
     if [[ -n "$output" ]]; then
       while IFS= read -r hit; do
         line_no="${hit%%:*}"
@@ -871,9 +989,11 @@ check_forbidden_tokens_of_file() {
   # lowercase-hyphenated (<placeholder-name>), ALL-CAPS (<VERSION>), and
   # lowercase-start camelCase (<vertiqueVersion>). Chosen so none match a Java
   # generic such as <String>, <T>, or <Response<String>>.
-  output="$(strip_xml_fences "$f" | grep -noE '<[a-z][a-z0-9-]*>|<[A-Z][A-Z0-9_]{2,}>|<[a-z][a-z0-9]*[A-Z][A-Za-z0-9]*>')"
-  status=$?
-  if check_scan_status "$f" "$status" "angle-bracket placeholders"; then
+  stripped_grep_scan "$f" xml "fence-stripped view (angle-bracket placeholders)" \
+    "angle-bracket placeholders" \
+    -noE '<[a-z][a-z0-9-]*>|<[A-Z][A-Z0-9_]{2,}>|<[a-z][a-z0-9]*[A-Z][A-Za-z0-9]*>'
+  if $STRIPPED_GREP_OK; then
+    output="$STRIPPED_GREP_OUTPUT"
     if [[ -n "$output" ]]; then
       while IFS= read -r hit; do
         line_no="${hit%%:*}"
@@ -902,19 +1022,22 @@ check_renderer_metadata() {
 
 # Scans a single file for renderer-specific syntax and reports each match.
 # The import-line and JSX-tag scans are prose-only rules, so they run
-# against a fence-stripped view of the file: a legitimate ```java fence
-# containing `import dev.vertique...;` or a `Optional<Response<String>>`
-# generic must never trip these two rules. The ':::' directive has no
-# legitimate code-fence use, so it is still scanned everywhere. Each
-# extractor scan is captured into a variable and its own exit status checked
-# via check_scan_status before its output is trusted.
+# against a fence-stripped view of the file, via stripped_grep_scan (which
+# checks the stripping stage and the grep stage independently in "strict"
+# and "grep" mode respectively): a legitimate ```java fence containing
+# `import dev.vertique...;` or a `Optional<Response<String>>` generic must
+# never trip these two rules. The ':::' directive has no legitimate
+# code-fence use, so it is still scanned everywhere via a plain grep (no
+# producer stage), whose own exit status is checked via check_scan_status
+# in "grep" mode directly.
 check_renderer_metadata_of_file() {
   local f="$1"
   local hit line_no output status
 
-  output="$(strip_all_fences "$f" | grep -noE '^[[:space:]]*import[[:space:]]')"
-  status=$?
-  if check_scan_status "$f" "$status" "renderer import syntax"; then
+  stripped_grep_scan "$f" all "fence-stripped view (renderer import syntax)" \
+    "renderer import syntax" -noE '^[[:space:]]*import[[:space:]]'
+  if $STRIPPED_GREP_OK; then
+    output="$STRIPPED_GREP_OUTPUT"
     if [[ -n "$output" ]]; then
       while IFS= read -r hit; do
         line_no="${hit%%:*}"
@@ -925,7 +1048,7 @@ check_renderer_metadata_of_file() {
 
   output="$(grep -noF ':::' "$f")"
   status=$?
-  if check_scan_status "$f" "$status" "':::' directive syntax"; then
+  if check_scan_status "$f" "$status" "':::' directive syntax" grep; then
     if [[ -n "$output" ]]; then
       while IFS= read -r hit; do
         line_no="${hit%%:*}"
@@ -934,9 +1057,10 @@ check_renderer_metadata_of_file() {
     fi
   fi
 
-  output="$(strip_all_fences "$f" | grep -noE '<[A-Z][A-Za-z0-9]*[[:space:]/>]')"
-  status=$?
-  if check_scan_status "$f" "$status" "JSX component tag syntax"; then
+  stripped_grep_scan "$f" all "fence-stripped view (JSX component tag syntax)" \
+    "JSX component tag syntax" -noE '<[A-Z][A-Za-z0-9]*[[:space:]/>]'
+  if $STRIPPED_GREP_OK; then
+    output="$STRIPPED_GREP_OUTPUT"
     if [[ -n "$output" ]]; then
       while IFS= read -r hit; do
         line_no="${hit%%:*}"

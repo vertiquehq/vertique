@@ -128,12 +128,16 @@ accepted with the `jwt` section of your application config:
 ```
 
 Every field is optional and defaults when omitted — `clockSkewSeconds` defaults to `30` even when
-the whole `validation` object is left out — but omitting `issuer` or `audience` means the resulting
-`JWTAuth` accepts tokens from any issuer or audience: `JwtAuthFactory` logs a startup warning for
-each one left unset, and a production configuration should set both to prevent token substitution
-attacks. See the module reference's configuration table for every key, and its "Extension Points"
-section for overriding the whole `JwtAuthConfig` from a `@Provides` binding instead of the config
-file.
+the whole `validation` object is left out. Omitting `issuer` or `audience` removes that check
+entirely: `JwtBearerSecuritySchemeHandler` enforces the configured `iss`/`aud` claims after
+authentication, independently of how the `JWTAuth` was built, so leaving either key unset lets a
+token from any issuer or audience through. `JwtAuthFactory` logs its own startup warning for an
+unset issuer or audience only when its `JwtValidationConfig`-aware overload builds the `JWTAuth`
+directly — the no-config `fromJwks`/`fromJwksAsync`/`fromJwksRefreshing` overloads recommended above
+emit no such warning. A production configuration should still set both `issuer` and `audience` to
+prevent token substitution attacks. See the module reference's configuration table for every key,
+and its "Extension Points" section for overriding the whole `JwtAuthConfig` from a `@Provides`
+binding instead of the config file.
 
 ## Enforce authorization on a resource method
 
