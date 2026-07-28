@@ -20,9 +20,11 @@ import io.vertx.core.Future;
 import io.vertx.core.MultiMap;
 import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
+import io.vertx.core.http.HttpConnection;
 import io.vertx.core.http.HttpHeaders;
 import io.vertx.core.http.HttpMethod;
 import io.vertx.core.http.HttpServerResponse;
+import io.vertx.core.http.HttpVersion;
 import io.vertx.core.json.EncodeException;
 import io.vertx.ext.web.RoutingContext;
 import jakarta.ws.rs.core.EntityTag;
@@ -91,6 +93,7 @@ class ResponsePipelineTest {
         // Wire terminations return futures the pipeline observes; individual tests override these.
         when(httpResponse.end()).thenReturn(Future.succeededFuture());
         when(httpResponse.end(anyString())).thenReturn(Future.succeededFuture());
+        when(httpResponse.reset()).thenReturn(Future.succeededFuture());
 
         responseHeaders = MultiMap.caseInsensitiveMultiMap();
         when(httpResponse.headers()).thenReturn(responseHeaders);
@@ -777,6 +780,138 @@ class ResponsePipelineTest {
             // then the stream is reset — ending would frame 10 bytes as a complete 100-byte body
             verify(httpResponse).reset();
             verify(httpResponse, never()).end();
+        }
+
+        @Test
+        @DisplayName("A fixed-length response that fails before its head is written is reset, not ended")
+        void preHeadFixedLengthFailureResets() {
+            // given an uncommitted, non-chunked response that declared 100 bytes and wrote none:
+            // Vert.x preserves the explicit Content-Length, so a clean end() would ship a zero-byte
+            // response advertised as a complete 100-byte body
+            Promise<Void> wire = pendingWireCompletion();
+            when(httpResponse.headWritten()).thenReturn(false);
+            when(httpResponse.isChunked()).thenReturn(false);
+            when(httpResponse.bytesWritten()).thenReturn(0L);
+            responseHeaders.set(HttpHeaders.CONTENT_LENGTH, "100");
+
+            pipeline.sendResponse(ctx, Response.ok("body").build());
+
+            // when the wire write fails before the head reached the client
+            wire.fail(new RuntimeException("connection died before the head flushed"));
+
+            // then the stream is reset — an uncommitted head does not make the framing honest
+            verify(httpResponse).reset();
+            verify(httpResponse, never()).end();
+        }
+
+        @Test
+        @DisplayName("A fixed-length response that over-wrote its declared length is reset")
+        void overLengthFixedResponseResets() {
+            // given a committed, non-chunked response that wrote more bytes than it declared —
+            // surplus bytes desync a keep-alive connection exactly as a short body does
+            Promise<Void> wire = pendingWireCompletion();
+            when(httpResponse.headWritten()).thenReturn(true);
+            when(httpResponse.isChunked()).thenReturn(false);
+            when(httpResponse.bytesWritten()).thenReturn(20L);
+            responseHeaders.set(HttpHeaders.CONTENT_LENGTH, "10");
+
+            pipeline.sendResponse(ctx, Response.ok("body").build());
+
+            // when the wire write fails after the handoff
+            wire.fail(new RuntimeException("stream aborted mid-body"));
+
+            // then the stream is reset — 20 bytes cannot be framed as the declared 10
+            verify(httpResponse).reset();
+            verify(httpResponse, never()).end();
+        }
+
+        @Test
+        @DisplayName("An unparseable declared Content-Length fails closed and resets the stream")
+        void malformedDeclaredLengthFailsClosed() {
+            // given a declared length the guard cannot reason about at all
+            Promise<Void> wire = pendingWireCompletion();
+            when(httpResponse.headWritten()).thenReturn(true);
+            when(httpResponse.isChunked()).thenReturn(false);
+            when(httpResponse.bytesWritten()).thenReturn(10L);
+            responseHeaders.set(HttpHeaders.CONTENT_LENGTH, "banana");
+
+            pipeline.sendResponse(ctx, Response.ok("body").build());
+
+            // when the wire write fails after the handoff
+            wire.fail(new RuntimeException("stream aborted mid-body"));
+
+            // then the unverifiable framing is treated as unsatisfiable, not waved through
+            verify(httpResponse).reset();
+            verify(httpResponse, never()).end();
+        }
+
+        @Test
+        @DisplayName("A fixed-length response whose bytes exactly match the declared length is ended cleanly")
+        void exactLengthCompletedResponseEndsCleanly() {
+            // given a committed, non-chunked response whose written bytes satisfy the declared
+            // length exactly — the boundary the reset guard must not cross
+            Promise<Void> wire = pendingWireCompletion();
+            when(httpResponse.headWritten()).thenReturn(true);
+            when(httpResponse.isChunked()).thenReturn(false);
+            when(httpResponse.bytesWritten()).thenReturn(10L);
+            responseHeaders.set(HttpHeaders.CONTENT_LENGTH, "10");
+
+            pipeline.sendResponse(ctx, Response.ok("body").build());
+
+            // when the wire write fails after the handoff
+            wire.fail(new RuntimeException("failure reported after the last byte was written"));
+
+            // then the honestly-framed response is ended, never reset
+            verify(httpResponse).end();
+            verify(httpResponse, never()).reset();
+        }
+
+        @Test
+        @DisplayName("A reset that fails falls back to closing the HTTP/1 connection")
+        void resetFailureFallsBackToConnectionCloseOnHttp1() {
+            // given a truncated fixed-length HTTP/1.1 response whose reset cannot be delivered
+            Promise<Void> wire = pendingWireCompletion();
+            when(httpResponse.headWritten()).thenReturn(true);
+            when(httpResponse.isChunked()).thenReturn(false);
+            when(httpResponse.bytesWritten()).thenReturn(10L);
+            responseHeaders.set(HttpHeaders.CONTENT_LENGTH, "100");
+            when(httpResponse.reset()).thenReturn(Future.failedFuture(new RuntimeException("reset not delivered")));
+            HttpConnection connection = mock(HttpConnection.class);
+            when(ctx.request().version()).thenReturn(HttpVersion.HTTP_1_1);
+            when(ctx.request().connection()).thenReturn(connection);
+
+            pipeline.sendResponse(ctx, Response.ok("body").build());
+
+            // when the wire write fails after the handoff
+            wire.fail(new RuntimeException("stream aborted mid-body"));
+
+            // then the connection carrying the un-framable response is closed as the last resort
+            verify(httpResponse).reset();
+            verify(connection).close();
+        }
+
+        @Test
+        @DisplayName("A reset that fails on HTTP/2 never closes the connection carrying sibling streams")
+        void resetFailureOnHttp2LeavesConnectionOpen() {
+            // given the same failed reset on an HTTP/2 stream
+            Promise<Void> wire = pendingWireCompletion();
+            when(httpResponse.headWritten()).thenReturn(true);
+            when(httpResponse.isChunked()).thenReturn(false);
+            when(httpResponse.bytesWritten()).thenReturn(10L);
+            responseHeaders.set(HttpHeaders.CONTENT_LENGTH, "100");
+            when(httpResponse.reset()).thenReturn(Future.failedFuture(new RuntimeException("reset not delivered")));
+            HttpConnection connection = mock(HttpConnection.class);
+            when(ctx.request().version()).thenReturn(HttpVersion.HTTP_2);
+            when(ctx.request().connection()).thenReturn(connection);
+
+            pipeline.sendResponse(ctx, Response.ok("body").build());
+
+            // when the wire write fails after the handoff
+            wire.fail(new RuntimeException("stream aborted mid-body"));
+
+            // then the multiplexed connection is left alone — closing it would kill sibling streams
+            verify(httpResponse).reset();
+            verify(connection, never()).close();
         }
 
         @Test

@@ -19,6 +19,7 @@ import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.core.http.HttpHeaders;
 import io.vertx.core.http.HttpServerResponse;
+import io.vertx.core.http.HttpVersion;
 import io.vertx.ext.web.RoutingContext;
 import jakarta.ws.rs.core.Response;
 import java.util.List;
@@ -412,15 +413,16 @@ class ResponsePipeline {
      * whether the caller wants to end it), so this is the only place the truncated response is
      * closed.
      *
-     * <p><strong>A truncated fixed-length response is reset, not ended.</strong> Vert.x performs no
-     * {@code Content-Length}-satisfaction check in {@code end()}: ending a committed, non-chunked
-     * response that declared {@code Content-Length: N} after only {@code M < N} body bytes were
-     * written <em>succeeds</em>, fires the end handlers, and leaves the keep-alive connection open
-     * carrying a body that violates its own framing. A peer or intermediary then reads the next
-     * response's head as this body's remainder — a response-desync vector. When the truncated body
-     * can no longer satisfy the declared length, {@link HttpServerResponse#reset()} is therefore
-     * used instead: it is stream-scoped (RST_STREAM on HTTP/2, connection close on HTTP/1.1), so
-     * the client observes an incomplete transfer rather than a well-framed lie.
+     * <p><strong>A fixed-length response that cannot satisfy its declared length is reset, not
+     * ended.</strong> Vert.x performs no {@code Content-Length}-satisfaction check in {@code end()}:
+     * ending a non-chunked response that declared {@code Content-Length: N} after only {@code M != N}
+     * body bytes were written <em>succeeds</em>, fires the end handlers, and leaves the keep-alive
+     * connection open carrying a body that violates its own framing. A peer or intermediary then
+     * reads the next response's head as this body's remainder — a response-desync vector. When the
+     * written bytes can no longer match the declared length,
+     * {@link HttpServerResponse#reset()} is therefore used instead: it is stream-scoped (RST_STREAM
+     * on HTTP/2, connection close on HTTP/1.1), so the client observes an incomplete transfer rather
+     * than a well-framed lie. See {@link #declaredLengthUnsatisfiable} for the exact predicate.
      *
      * <p>A chunked response is left on the ordinary {@code end()} path: its terminal zero-length
      * chunk frames the truncation honestly, and the client sees a complete-but-short body.
@@ -429,7 +431,8 @@ class ResponsePipeline {
      * synchronously — an already-written race, or a write initiated from a foreign thread — and
      * ending a connection that is already gone fails the returned future. Neither may escape into
      * the completion future's failure handler, and both fall back to {@link #resetQuietly}: a
-     * response that could not be ended must not be left open.
+     * response that could not be ended is reset, and — on HTTP/1, where a failed reset leaves the
+     * connection usable — closed as the last resort.
      *
      * @param ctx the current routing context
      */
@@ -438,37 +441,53 @@ class ResponsePipeline {
         if (httpResponse.ended()) {
             return;
         }
-        if (isUnderDeclaredLength(httpResponse)) {
-            log.debug("Truncated fixed-length response cannot be framed honestly — resetting the stream");
-            resetQuietly(httpResponse);
+        if (declaredLengthUnsatisfiable(httpResponse)) {
+            log.debug("Fixed-length response cannot be framed honestly — resetting the stream");
+            resetQuietly(ctx);
             return;
         }
         try {
             httpResponse.end().onFailure(endFailure -> {
                 log.debug("Terminal cleanup end() failed after a wire failure", endFailure);
-                resetQuietly(httpResponse);
+                resetQuietly(ctx);
             });
         } catch (RuntimeException endFailure) {
             log.debug("Terminal cleanup end() could not be initiated after a wire failure", endFailure);
-            resetQuietly(httpResponse);
+            resetQuietly(ctx);
         }
     }
 
     /**
-     * Returns whether the response has already committed a fixed {@code Content-Length} that the
-     * bytes written so far can no longer satisfy — the state in which {@code end()} would put a
-     * framing-violating body on a still-usable connection.
+     * Returns whether the response declared a fixed {@code Content-Length} that the bytes written so
+     * far do not match — the state in which {@code end()} would put a framing-violating body on a
+     * still-usable connection.
      *
-     * <p>Only a committed ({@link HttpServerResponse#headWritten()}), non-chunked response with a
-     * declared, parseable {@code Content-Length} greater than
-     * {@link HttpServerResponse#bytesWritten()} qualifies. A malformed declared length is not
-     * something this guard can reason about, so the ordinary guarded {@code end()} runs instead.
+     * <p>Any non-chunked response carrying a declared {@code Content-Length} qualifies when
+     * {@code declaredLength != }{@link HttpServerResponse#bytesWritten()}:
+     * <ul>
+     *   <li><em>Under-length</em> — the client is told to expect bytes that never arrive, and the
+     *       next response's head is read as this body's remainder.</li>
+     *   <li><em>Over-length</em> — the surplus bytes desync the connection the same way.</li>
+     *   <li><em>Head not yet written</em> — an uncommitted response is no safer: Vert.x preserves the
+     *       explicit {@code Content-Length} header, so a clean {@code end()} would ship a zero-byte
+     *       body advertised as a complete {@code N}-byte one.</li>
+     *   <li><em>Malformed declared length</em> — a length this guard cannot parse is one it cannot
+     *       verify, so it <strong>fails closed</strong> and resets rather than waving the response
+     *       through.</li>
+     * </ul>
+     *
+     * <p><strong>Accounting limit.</strong> {@code bytesWritten()} counts bytes this server
+     * <em>initiated</em> writes for and is not rolled back when a write fails in flight. Equality
+     * therefore proves the framing consistency of the initiated writes only — it is not evidence
+     * that the peer received them. That is the correct trade-off here: this guard exists to stop the
+     * server from framing a lie, and a delivery failure the server cannot observe is the transport's
+     * to surface.
      *
      * @param httpResponse the response being terminated after a wire failure
      * @return {@code true} when the response can no longer be framed honestly by {@code end()}
      */
-    private static boolean isUnderDeclaredLength(HttpServerResponse httpResponse) {
-        if (!httpResponse.headWritten() || httpResponse.isChunked()) {
+    private static boolean declaredLengthUnsatisfiable(HttpServerResponse httpResponse) {
+        if (httpResponse.isChunked()) {
             return false;
         }
         String declaredLength = httpResponse.headers().get(HttpHeaders.CONTENT_LENGTH);
@@ -476,25 +495,66 @@ class ResponsePipeline {
             return false;
         }
         try {
-            return Long.parseLong(declaredLength.trim()) > httpResponse.bytesWritten();
+            return Long.parseLong(declaredLength.trim()) != httpResponse.bytesWritten();
         } catch (NumberFormatException malformed) {
-            return false;
+            // Fail closed: an unverifiable declared length is treated as unsatisfiable.
+            return true;
         }
     }
 
     /**
-     * Resets the response stream, swallowing any failure. Used both for a truncated fixed-length
-     * response and as the backstop for an {@code end()} that could not be initiated or completed.
-     * A reset on an already-dead connection is itself allowed to fail — there is nothing further to
-     * do at that point, and the failure must not escape into the completion future's handler.
+     * Resets the response stream, keeping any failure quiet. Used both for a response whose declared
+     * length can no longer be satisfied and as the backstop for an {@code end()} that could not be
+     * initiated or completed.
      *
-     * @param httpResponse the response to reset
+     * <p>A reset can itself fail or throw, so the returned future is observed. When it does fail and
+     * the response is still not ended, the fallback depends on the protocol:
+     * <ul>
+     *   <li><strong>HTTP/1.x</strong> — the connection is closed
+     *       ({@link io.vertx.core.http.HttpConnection#close()}). It is the transport for this one
+     *       response, and leaving it open is exactly the desync this path exists to prevent.</li>
+     *   <li><strong>HTTP/2</strong> — nothing further is done. The connection multiplexes sibling
+     *       streams that have nothing to do with this response, and a stream reset that could not be
+     *       delivered means the connection is already gone.</li>
+     * </ul>
+     *
+     * <p>Every failure here stays at DEBUG — this is terminal cleanup for an already-failed
+     * response, and no failure may escape into the completion future's handler.
+     *
+     * @param ctx the current routing context, whose response is reset
      */
-    private static void resetQuietly(HttpServerResponse httpResponse) {
+    private static void resetQuietly(RoutingContext ctx) {
         try {
-            httpResponse.reset();
+            ctx.response().reset().onFailure(resetFailure -> {
+                log.debug("Terminal cleanup reset() failed after a wire failure", resetFailure);
+                closeConnectionAfterFailedReset(ctx);
+            });
         } catch (RuntimeException resetFailure) {
-            log.debug("Terminal cleanup reset() failed after a wire failure", resetFailure);
+            log.debug("Terminal cleanup reset() could not be initiated after a wire failure", resetFailure);
+            closeConnectionAfterFailedReset(ctx);
+        }
+    }
+
+    /**
+     * Closes the underlying connection as the last resort after {@link #resetQuietly} failed, so an
+     * HTTP/1 response that could neither be framed nor reset does not leave a poisoned keep-alive
+     * connection behind.
+     *
+     * <p>Does nothing when the response ended after all, or when the request is HTTP/2 — closing a
+     * multiplexed connection would tear down unrelated sibling streams. The close is fire-and-forget:
+     * there is no further remedy if it fails, and no failure may escape.
+     *
+     * @param ctx the current routing context
+     */
+    private static void closeConnectionAfterFailedReset(RoutingContext ctx) {
+        try {
+            if (ctx.response().ended() || ctx.request().version() == HttpVersion.HTTP_2) {
+                return;
+            }
+            log.debug("Reset failed on an HTTP/1 response — closing the connection as the last resort");
+            ctx.request().connection().close();
+        } catch (RuntimeException closeFailure) {
+            log.debug("Last-resort connection close failed after a failed reset", closeFailure);
         }
     }
 
