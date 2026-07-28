@@ -1,0 +1,31 @@
+{
+  "$comment": "RELEASE-001 public publication policy. Publication eligibility is DERIVED from these rules, never selected ad hoc and never inferred from reactor membership (ADR-0007). Changing the reactor, the BOM, or the archetype set without updating expectedPublishableGavCount fails release/tests/publication-contract.test.mjs by design.",
+  "schemaVersion": 1,
+  "product": "public",
+  "groupIdPrefix": "dev.vertique",
+  "publish": {
+    "fixed": ["vertique-parent", "vertique-app-parent", "vertique-bom"],
+    "bomManaged": {
+      "pomPath": "vertique-bom/pom.xml",
+      "groupIdPrefix": "dev.vertique"
+    },
+    "archetypes": {
+      "aggregatorPath": "vertique-archetype",
+      "packaging": "maven-archetype"
+    }
+  },
+  "skip": [
+    { "reason": "example", "pathPrefix": "examples" },
+    { "reason": "integration-tests", "artifactIdSuffix": "-integration-tests" },
+    { "reason": "aggregator", "packaging": "pom" }
+  ],
+  "expectedPublishableGavCount": 93,
+  "payloadPolicy": {
+    "$comment": "FR-REL-034. Enforced by the S2/S4 file-repository integration tests, not by inventory derivation.",
+    "pom": ["pom"],
+    "jar": ["pom", "jar", "sources", "javadoc"],
+    "maven-plugin": ["pom", "jar", "sources", "javadoc"],
+    "maven-archetype": ["pom", "jar", "sources", "javadoc"],
+    "emptyJavadocExceptions": []
+  }
+}
