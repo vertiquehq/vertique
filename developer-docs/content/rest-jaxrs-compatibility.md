@@ -30,12 +30,12 @@ exactly.
 | [Resources and methods](#resources-and-methods) | Supported, with one gap | HTTP-verb annotations, `@Produces`/`@Consumes`, and regex-constrained `@Path` templates all work; sub-resource locators do not exist. |
 | [Parameters](#parameters) | Supported, with one gap | Every standard parameter-binding annotation except `@MatrixParam` works on a resource method, and a real `ParamConverterProvider` is consulted for scalar conversion. |
 | [Bodies and entities](#bodies-and-entities) | Diverges | Body reading and writing run through a framework decoder/encoder SPI, not `MessageBodyReader`/`MessageBodyWriter`; multipart `EntityPart` is supported within that model. |
-| [Responses](#responses) | Supported, with two gaps | `Response` and `@Produces` negotiation work as specified; `StreamingOutput` and response-body contract validation do not exist. |
+| [Responses](#responses) | Supported, with gaps | `Response` and `@Produces` negotiation work as specified, though the builder's variant methods throw; `StreamingOutput` is not recognized; there is no response-body contract validation. |
 | [Providers and filters](#providers-and-filters) | Diverges | `ContainerRequestFilter`, `ContainerResponseFilter`, `ReaderInterceptor`, `WriterInterceptor`, `@Provider`, and `@NameBinding` are all replaced by framework interceptor and codec extension points wired through Dagger. |
 | [Exception handling](#exception-handling) | Supported | `ExceptionMapper` and `WebApplicationException` behave as specified, backed by a hierarchy-aware registry. |
 | [Context injection](#context-injection) | Supported, with a reserved list | `@Context` resolves the Vert.x routing context, the JAX-RS `SecurityContext`, and framework context types; seven standard JAX-RS context types are rejected at startup. |
 | [Validation](#validation) | Diverges by default | The default request-validation path enforces Bean Validation annotations as a synthesized JSON Schema, not as Jakarta Validation; a genuine Bean Validation runtime is available as a separate opt-in. |
-| [Async model](#async-model) | Diverges | A resource method returns a `Future`; `@Suspended` and `AsyncResponse` do not exist. |
+| [Async model](#async-model) | Diverges | A resource method returns a `Future`; `@Suspended` and `AsyncResponse` are never recognized. |
 | [Client API](#client-api) | Not supported | `jakarta.ws.rs.client` is not implemented; a separate declarative REST client module is the framework's alternative for calling other HTTP services. |
 
 ## Resources and methods
@@ -47,7 +47,9 @@ evaluation, matching HTTP semantics. `@Produces` and `@Consumes` are read at bot
 level (method overrides class) and are enforced: an incoming request whose Content-Type does not
 satisfy the operation's `@Consumes` is rejected with 415 before validation or the resource method
 ever runs, and `@Produces` drives Accept-header content negotiation on the way out (see
-[Responses](#responses) below).
+[Responses](#responses) below). One divergence in how the annotation is read: each array element
+must hold exactly one media type — a comma-separated list inside a single string is not split, and
+is treated as one invalid media type. Declare multiple media types as separate array elements.
 
 A plain `@Path` template such as `/items/{id}` is translated into a Vert.x route with a named path
 parameter. A regex-constrained template such as `/items/{id:[0-9]+}` is supported too: the whole
@@ -118,7 +120,9 @@ produces data, and a dedicated mechanism is available for Server-Sent Events.
 either directly or wrapped in a `Future`. Because the runtime is not built on Jersey or RESTEasy,
 `vertique-rest-jaxrs` ships its own minimal `RuntimeDelegate` — just enough for the standard
 `Response` builder, `UriBuilder`, and `Link` to work standalone; anything a full JAX-RS container
-would additionally provide is out of scope.
+would additionally provide is out of scope. One bound inside the builder itself: the
+`variants(...)` methods throw `UnsupportedOperationException`, so variant-based negotiation cannot
+be expressed through the builder.
 
 `@Produces` content negotiation works against the request's Accept header: candidate media types
 come from the operation's `@Produces` list, or a JSON default when none is declared, matched by
@@ -177,7 +181,7 @@ might supply: the Vert.x routing context, the JAX-RS `SecurityContext` (the exac
 not a custom subtype), and any of the framework's own context-value types — its own security
 context, correlation data, localization, and similar request-scoped application values. All of them
 resolve through the same ordered resolver chain, and an application can contribute its own resolver
-for a custom type.
+for a custom context-value type.
 
 Seven standard JAX-RS context types are explicitly not supported: `UriInfo`, `HttpHeaders`,
 `Request`, `Configuration`, `Application`, `Providers`, and `ResourceContext`. These are recognized
@@ -220,9 +224,11 @@ non-trivial resource method that does I/O returns a `Future` of its result, reso
 before the response is serialized; a `Future` that completes with no value sends 204 with no body,
 matching a `void` method. That is the only asynchronous model available. The standard JAX-RS
 asynchronous pattern — a `@Suspended` `AsyncResponse` parameter that the method resumes later from
-another thread — does not exist: there is no such annotation, no such type, and no code path that
-looks for either. On a Vert.x-native runtime, a `Future`-returning method already expresses the
-same intent without a second, parallel mechanism.
+another thread — is not implemented: both the annotation and the type ship with the Jakarta WS-RS
+API dependency, so the declaration compiles, but no code path recognizes either, and the parameter
+falls through the same unannotated-parameter body binding described under
+[Parameters](#parameters). On a Vert.x-native runtime, a `Future`-returning method already
+expresses the same intent without a second, parallel mechanism.
 
 ## Client API
 
