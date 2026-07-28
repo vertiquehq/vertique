@@ -116,13 +116,19 @@ merges, then enterprise.
 - Event enrichment: `wireFailureCode` (nullable, low-cardinality). Inputs: marker
   (streaming failures) and failed end-handler `AsyncResult` (client aborts; §6
   predicate). Precedence: marker wins; first failure wins; cleanup failures never
-  overwrite. Buffered `end(buf)` late failures documented as not covered (§8
-  falsifier).
+  overwrite. **Late-`end()` failures documented as not covered** — buffered
+  `end(buf)`, null-entity `end()`, and a stream's final `end()` alike: Vert.x runs
+  the response end handlers inline before `end()` returns, so a failure settling only
+  at that point can land after emission (§8 falsifier).
 - **D1 RESOLVED: Option A** (user ruling 2026-07-27), unconditional:
   `error.type` = `failureCode`, else `wireFailureCode`, else `none`.
-- **Audit outcome (frozen, enterprise, projector-local):**
-  `e.wireFailureCode() != null` → `new AuditOutcome(Status.FAILURE,
-  String.valueOf(e.statusCode()), e.wireFailureCode())`, else existing path.
+- **Audit outcome (frozen, enterprise, projector-local; SUCCESS-confined per the
+  2026-07-28 user-ratified amendment):** `e.wireFailureCode() != null` **and** the base
+  outcome's status is `SUCCESS` → `new AuditOutcome(Status.FAILURE,
+  String.valueOf(e.statusCode()), e.wireFailureCode())`; a `DENIED`/`FAILURE` base
+  outcome is passed through **unchanged** (status, statusCode, reasonCode), so a
+  client-triggerable wire failure cannot demote a denial. For non-SUCCESS outcomes the
+  wire signal lives in the completion event and metrics only.
 - No new interceptor hook (trigger: 2+ consumers). `KEY_WIRE_FAILURE` stays a public
   emitter key (`KEY_OPERATION_ID` precedent).
 
@@ -445,12 +451,15 @@ public record RestRequestCompletedEvent(
   `cause.getClass().getName().equals("io.vertx.core.impl.NoStackTraceThrowable")`
   **and** `"Connection closed".equals(cause.getMessage())` (Vert.x 5.1.2 close path —
   version-coupled; documented at the normalization site). `StreamResetException` keeps
-  its class simple name. Covers streaming failures + client aborts; buffered
-  `end(buf)` late failures documented as not covered.
+  its class simple name. Covers streaming failures + client aborts; **late-`end()`
+  failures documented as not covered** (buffered `end(buf)`, null-entity `end()`,
+  streaming final `end()`).
 - `RequestInterceptor.afterResponse`: wire-handoff semantics; timing unchanged.
 - Metrics (D1=A): `error.type` = `failureCode`, else `wireFailureCode`, else `none`.
-- Audit (enterprise, projector-local): `wireFailureCode != null` →
-  `new AuditOutcome(Status.FAILURE, String.valueOf(statusCode), wireFailureCode)`.
+- Audit (enterprise, projector-local), **confined to SUCCESS base outcomes**:
+  `wireFailureCode != null && base.status() == SUCCESS` →
+  `new AuditOutcome(Status.FAILURE, String.valueOf(statusCode), wireFailureCode)`;
+  `DENIED`/`FAILURE` base outcomes pass through unchanged.
 - Pipeline WARN on wire failure: method, path, status, cause **class simple name**
   only; full throwable at DEBUG.
 
@@ -490,11 +499,16 @@ public record RestRequestCompletedEvent(
 
 - Immediate synchronous pipe failure: pinned S1+S2.
 - Arbitrary-thread completion: pipeline redispatch; pinned by the worker-thread test.
-- Buffered late failures not captured — documented; falsifier: a test showing the
-  routing-context end `AsyncResult` failing at emission for a failed `end(buf)`
-  reopens buffered coverage.
-- Declared Content-Length premature-end: guarded + tested (unverified in 5.1.2 —
-  guard, don't assume).
+- Late-`end()` failures not captured — the whole class (buffered `end(buf)`,
+  null-entity `end()`, streaming final `end()`), documented; falsifier: a test showing
+  the routing-context end `AsyncResult` failing at emission for any failed late
+  `end()` reopens that coverage.
+- Declared Content-Length premature-end: **resolved as-built and bytecode-verified**
+  in Vert.x 5.1.2 — `Http1ServerResponse.end()` performs no length check at all, so
+  the pipeline **resets** (never ends) any non-chunked response whose declared
+  `Content-Length` does not equal `bytesWritten()`, failing closed on an unparseable
+  length; a failed reset falls back to closing the connection on HTTP/1 and to nothing
+  further on HTTP/2. Guarded + tested.
 - HEAD-after-transform entity reintroduction: cheap characterization assertion or doc
   note in S2.
 - Characterization tests: stubbing + wording only; a semantic re-pin falsifies the
@@ -739,3 +753,15 @@ substitute RATIFIED by the user (2026-07-27).**
   Maven processes racing one worktree target/ — evidence discarded, chain re-run
   serialized on the final commits. Builds within one worktree are serialized from here
   on.
+- 2026-07-28 (review round 2, normative sync): the plan's normative sections still
+  carried text this ledger had already superseded, so they were edited in place to the
+  operative contract: §3 and §6 now state the **generalized late-`end()` carve-out**
+  (buffered `end(buf)`, null-entity `end()`, streaming final `end()`) instead of the
+  buffered-only exclusion; §3 and §6 now state the **SUCCESS-confined** enterprise audit
+  override instead of the unconditional one; §8's declared-`Content-Length` watch-item is
+  restated as bytecode-verified and resolved as-built (non-chunked
+  `declaredLength != bytesWritten()` → reset, fail-closed on an unparseable length, with
+  an HTTP/1 connection-close backstop when the reset itself fails). §2's `end(buf)`
+  bytecode finding is left as written — it is an accurate fact about that method; the
+  wider class it implies is now stated in §3/§6/§8. Verified-fact and
+  scope-of-deferral alignment only; no contract change, no sign-off required.
