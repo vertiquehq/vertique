@@ -648,7 +648,13 @@ Per slice: `./mvnw -ntp -pl <module> -am verify` on the touched module, delegate
 
 Mechanical completeness checks:
 - `grep -n 'List.class' …/ResourceScanner.java` — no FORM normalization remains.
-- `grep -n 'erased.toString()' …/emit/TypeMirrorFqn.java` — gone if S2 ran.
+- `grep -n 'instanceof ArrayType' vertique-codegen/vertique-codegen-jaxrs/src/main/java/dev/vertique/codegen/jaxrs/emit/TypeMirrorFqn.java`
+  — present if S2 ran. (Amendment 4: the original check asserted `erased.toString()` was
+  *gone*, which is wrong — the primitive/`void`/other-non-declared fallback legitimately
+  keeps it; only the array path stopped reaching it.)
+- `grep -n 'erasedSourceFqn' vertique-codegen/vertique-codegen-jaxrs/src/main/java/dev/vertique/codegen/jaxrs/emit/*.java`
+  — both emitters' `sourceTypeName` fallbacks use the source-form renderer, not the binary
+  one, so generated `TypeReference` literals stay compilable (Amendment 3).
 - `grep -rn 'binds only the first value' .` — the stale doc claim (F10) is gone.
 - `grep -rn 'Class.forName' …/rest/jaxrs/runtime/` — every call site is array-aware or
   provably non-array.
@@ -694,4 +700,40 @@ Each item routes to a GitHub issue in `vertiquehq/vertique-dev` (no backing PRD)
 
 ## Amendments
 
-*(none yet — entries added per `planning.md` § Mid-flight amendments)*
+All five below are as-built notes and corrections of verified facts, so none re-freezes a
+contract or changes scope — no sign-off required (`planning.md` § Mid-flight amendments).
+The Contract Appendix (§4) is untouched.
+
+1. **2026-07-28 — S1 test sequencing (as-built).** The plan listed
+   `arrayFqns_referenceBase_initializationSemanticsPreserved` / `ArrayFqnsTest` among S1's
+   *red* tests, but that test targets `ArrayFqns`, which does not exist before the green
+   step — including it in the red commit would have broken compilation, violating the
+   buildable-slice rule. The behavioral red proof is the four `JaxRsDescriptorArrayParamTest`
+   cases (commit `63c4972`, all four confirmed red with the predicted
+   `IllegalStateException`/`ClassNotFoundException`); `ArrayFqnsTest` landed with the green
+   commit (`35f1367`). No coverage lost.
+
+2. **2026-07-28 — F4 resolved: real, S2 ran (verified fact).** After S1, three of four
+   descriptor tests passed and `nestedTypeArrayParam_describe_resolves` still failed with
+   `ClassNotFoundException: dev.vertique.test.Outer.Inner`. S2 was therefore required and
+   executed (`a9a8168`) — it was **not** skipped, so S2's conditional-skip branch never
+   applied.
+
+3. **2026-07-28 — S2 manifest expanded (correction of a verified fact).** Making
+   `TypeMirrorFqn.erasedFqn` emit binary base names for arrays would have broken a second,
+   unrelated consumer: both emitters' `sourceTypeName` fall back to `erasedFqn` for
+   non-declared mirrors, and that string is interpolated into generated Java *source* as a
+   Jackson `TypeReference` literal, where `$` is a compile error (a `List<Outer.Inner[]>`
+   body param would have emitted uncompilable code). `erasedSourceFqn` was added for those
+   positions, preserving the previous rendering exactly. **Added to §8 Modified:**
+   `vertique-codegen/vertique-codegen-jaxrs/src/main/java/dev/vertique/codegen/jaxrs/emit/JaxRsDescriptorEmitter.java`
+   and `.../emit/ExecutionPlanEmitter.java`. Both are internal to `vertique-codegen-jaxrs`,
+   already a documented module in §8, so no module-doc decision changes.
+
+4. **2026-07-28 — §10 mechanical check corrected (correction of a verified fact).** The
+   `erased.toString()`-is-gone check was wrong; see the replacement checks in §10.
+
+5. **2026-07-28 — build note (as-built).** Omitting `-am` in this worktree resolves a stale
+   `vertique-rest-jaxrs` SNAPSHOT from the shared `~/.m2` and produces spurious failures —
+   the cross-worktree contamination §9 warns about. Every Maven invocation in this branch
+   uses `-am`.
