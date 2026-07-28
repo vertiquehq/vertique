@@ -191,9 +191,13 @@ The mapper is built once at profile construction and returned as-is; the shared 
   as a value — **not** `BigDecimal.toString()` — so a small-scale key (e.g. `0.0000001`) is written
   as `"0.0000001"`, not `"1E-7"`; without this, the profile could not read back its own output, since
   `"1E-7"` fails the read-side grammar. On read, a JSON object key cannot smuggle an exponent-notation
-  literal (e.g. `"1e-2000000000"`) past the value-side bound. A rejected key — on either side —
-  surfaces as a `JsonMappingException` naming only the bound and the rejected key's length, never the
-  key text itself.
+  literal (e.g. `"1e-2000000000"`) past the value-side bound. A rejected key surfaces as a
+  `JsonMappingException`. On the **read** side (key deserializer), the message states only the bound
+  and the rejected key's length, never the key text itself. On the **write** side (key serializer),
+  this code's own message is equally value-free — it states only the bound and the offending
+  scale/precision, plus the exact length once the value has been materialized — but Jackson's own
+  reference-chain wrapping appends the key's `toString()` form regardless; see the next bullet for the
+  exact mechanism and why it is safe.
 - Every rejection message **this profile's own code produces** — value or key, read or write — states
   only the bound and the offending length/scale/precision; it never echoes the submitted text. The one
   boundary outside this profile's control is Jackson's own `SerializationFeature.WRAP_EXCEPTIONS`
