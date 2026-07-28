@@ -725,3 +725,17 @@ substitute RATIFIED by the user (2026-07-27).**
   guard, don't assume)" watch-item is resolved as-built, and the surviving synchronous
   `IllegalStateException` causes are an already-written race and a foreign-thread
   write. Verified-fact correction; no contract change, no sign-off required.
+- 2026-07-28 (review round 1, USER-RATIFIED): §6 audit mapping amended — the enterprise
+  wire-failure override is confined to base outcomes with Status.SUCCESS (F2 Option A).
+  DENIED/FAILURE base outcomes are fully unchanged (status, statusCode, reasonCode); the
+  wire signal for non-SUCCESS outcomes lives in the completion event and metrics only.
+  Rationale: a client-triggerable wire failure (abort-after-request) must not demote
+  DENIED — denial monitoring keyed on outcome.status stays trustworthy. ADR 0189
+  amended in the meta repo (18c1fb7); enterprise commits d86b339/735c7fb implement and
+  pin the confined mapping. Contract re-frozen with user sign-off per the amendment
+  protocol.
+- 2026-07-28 (process): the first invalidation-chain run produced a phantom
+  "compatibility break" (installed rest-core jar missing wireFailureCode) caused by two
+  Maven processes racing one worktree target/ — evidence discarded, chain re-run
+  serialized on the final commits. Builds within one worktree are serialized from here
+  on.
