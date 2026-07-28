@@ -792,18 +792,16 @@ class ServiceClientFactoryTest {
         }
 
         /**
-         * §4.2 step 2 (S2 red): an entry that omits one of the contract's client-dispatchable
-         * operations must fail {@code create()} fast with an {@link IllegalStateException} whose
-         * message begins with the §4.2-pinned literal {@code "Service client contract mismatch: "}
+         * §4.2 step 2: an entry that omits one of the contract's client-dispatchable operations
+         * must fail {@code create()} fast with an {@link IllegalStateException} whose message
+         * begins with the §4.2-pinned literal {@link ServiceClientFactory#CONTRACT_MISMATCH_PREFIX}
          * and names both the contract FQCN and the missing operation id ({@code opB}).
          *
-         * <p>THIS TEST IS RED as of S2: {@code create()} does not yet run the completeness check —
-         * it happily returns a dynamic proxy over the incomplete entry; the "no operation found"
-         * failure only surfaces per-invocation (as a {@code Future.failedFuture}, never a thrown
-         * exception) when {@code opB} is actually called. The prefix literal asserted here is the
-         * §4.2-pinned mismatch-message protocol; the S2 green phase additionally introduces a
-         * package-private factory constant equal to this literal plus a direct constant-equality
-         * assertion — not added here, since the constant does not exist yet.
+         * <p>{@code create()} now runs {@code requireCompleteContract()} immediately after
+         * {@code registry.resolve(contract)} and before proxy construction, superseding the prior
+         * per-invocation {@code Future.failedFuture} behavior — the missing operation is caught at
+         * {@code create()} time rather than only surfacing when {@code opB} is actually called. The
+         * prefix constant equality is pinned separately by {@code prefixConstantMatchesPinnedLiteral}.
          *
          * @param vertx the Vert.x instance
          * @throws NoSuchMethodException never — {@code opA} is a real declared method
@@ -912,6 +910,18 @@ class ServiceClientFactoryTest {
 
             assertTrue(ctx.awaitCompletion(5, TimeUnit.SECONDS));
             if (ctx.failed()) throw ctx.causeOfFailure();
+        }
+
+        /**
+         * §4.2 protocol pin: {@link ServiceClientFactory#CONTRACT_MISMATCH_PREFIX} must equal the
+         * exact literal frozen by the plan. The emitter-side twin assertion lives in
+         * {@code ServiceClientProxyEmissionTest} (codegen-services) — drift in either
+         * implementation breaks a test.
+         */
+        @Test
+        @DisplayName("Prefix constant must match the §4.2-pinned literal")
+        void prefixConstantMatchesPinnedLiteral() {
+            assertEquals("Service client contract mismatch: ", ServiceClientFactory.CONTRACT_MISMATCH_PREFIX);
         }
     }
 

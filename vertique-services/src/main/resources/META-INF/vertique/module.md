@@ -497,6 +497,10 @@ public Future<Response> getUser(String userId) {
 }
 ```
 
+**Create-time contract completeness:** before building the proxy, `create(Class<T>)` resolves the contract in the registry — an unregistered contract throws `IllegalArgumentException` (unchanged, always checked first) — then validates that every non-static, non-`Object`-declared public method of the contract interface has a corresponding registered operation. Each method's operation id is resolved via `OperationIdResolver.resolveOperationName(method)` (the `@ServiceOperation` value, or the method name when the annotation is absent) and looked up in the resolved entry's operations map. A registry superset — extra registered operations with no corresponding interface method — is allowed. A missing operation fails `create()` immediately with `IllegalStateException` whose message begins with the exact literal `"Service client contract mismatch: "`, followed by the contract's fully-qualified name, the missing operation id, and the method name.
+
+**Common mistake:** a hand-built `ServiceContractContributor` entry that omits an operation the contract interface declares now fails at `create()` time rather than only surfacing on the first invocation of that method.
+
 **One-way operations:** For methods annotated with `@OneWay`, the proxy calls `ServiceRequestSender.sendOneWay()` and returns `Future.succeededFuture()` immediately after the supervisor check passes.
 
 **Event bus send timeout:** Delegated to `ServiceRequestSender.computeSendTimeout()`. Resolution precedence (highest wins):

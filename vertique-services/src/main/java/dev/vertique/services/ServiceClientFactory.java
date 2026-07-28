@@ -17,6 +17,7 @@ import dev.vertique.services.dispatch.ServiceMethodMeta.ParamMeta;
 import dev.vertique.services.dispatch.ServiceMethodMeta.ParamSource;
 import io.vertx.core.Future;
 import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
 import java.lang.reflect.Proxy;
 import java.util.HashMap;
 import java.util.List;
@@ -47,10 +48,26 @@ import lombok.extern.slf4j.Slf4j;
  * security context and other dispatch-context values via the
  * {@link dev.vertique.core.context.ContextHolder}.
  *
+ * <p><b>{@code create()}-time completeness guarantee (CG-015 §4.2):</b> before constructing a
+ * proxy, every non-static, non-{@code Object}-declared method of the contract interface must have
+ * a corresponding registered operation in the resolved {@link ServiceContractRegistry.ContractEntry}
+ * — a registry superset (extra operations with no interface method) is allowed, but a missing
+ * operation fails {@code create()} fast with {@link IllegalStateException} rather than only
+ * surfacing per-invocation when the missing operation is actually called.
+ *
  * <p>Instances are created by {@link DispatchModule} via a {@code @Provides} method.
  */
 @Slf4j
 public class ServiceClientFactory {
+
+    /**
+     * The §4.2 pinned protocol prefix for contract↔registry mismatch messages.
+     *
+     * <p>Deliberately duplicated in the codegen emitter ({@code ClientProxyEmitter}, in
+     * {@code vertique-codegen-services}) and sync-tested in both modules — do not change one
+     * without the other.
+     */
+    static final String CONTRACT_MISMATCH_PREFIX = "Service client contract mismatch: ";
 
     private final ServiceRequestSender sender;
     private final ServiceContractRegistry registry;
@@ -99,10 +116,15 @@ public class ServiceClientFactory {
      * @param contract the contract interface class
      * @return a proxy instance that dispatches calls over the event bus
      * @throws IllegalArgumentException if the contract is not registered in the registry
+     * @throws IllegalStateException    if any non-static, non-{@code Object}-declared contract
+     *                                   method has no corresponding operation registered in the
+     *                                   resolved {@link ServiceContractRegistry.ContractEntry}
+     *                                   (CG-015 §4.2 completeness check)
      */
     @SuppressWarnings("unchecked")
     public <T> T create(Class<T> contract) {
         ServiceContractRegistry.ContractEntry<T> entry = registry.resolve(contract);
+        requireCompleteContract(contract, entry);
 
         // Pre-compute resolved targets per operation to avoid per-invocation allocation
         Map<String, ResolvedServiceTarget> operationTargets = new HashMap<>();
@@ -122,6 +144,8 @@ public class ServiceClientFactory {
                     String operationName = OperationIdResolver.resolveOperationName(method);
                     ServiceMethodMeta meta = entry.operations().get(operationName);
                     if (meta == null) {
+                        // Unreachable via create(): requireCompleteContract() above already fails
+                        // create() fast for any missing operation. Kept as an invariant guard.
                         return Future.failedFuture(new IllegalStateException("No operation found for method "
                                 + method.getName() + " on " + contract.getSimpleName()));
                     }
@@ -171,6 +195,33 @@ public class ServiceClientFactory {
     }
 
     // --- Helpers ---
+
+    /**
+     * Fails fast when the contract interface declares a client-dispatchable method with no
+     * corresponding operation in the resolved registry entry (CG-015 §4.2 step 2).
+     *
+     * <p>Enumerates {@code contract.getMethods()} minus {@code Object}-declared methods minus
+     * static methods (statics are never client-dispatchable via a JDK dynamic proxy, and the
+     * registry may register them as phantom operations). A registry superset — extra operations
+     * with no corresponding interface method — is allowed.
+     *
+     * @param contract the contract interface class
+     * @param entry    the resolved registry entry for {@code contract}
+     * @throws IllegalStateException if any qualifying method's resolved operation name is absent
+     *                                from {@code entry.operations()}
+     */
+    private static void requireCompleteContract(Class<?> contract, ServiceContractRegistry.ContractEntry<?> entry) {
+        for (Method m : contract.getMethods()) {
+            if (m.getDeclaringClass() == Object.class || Modifier.isStatic(m.getModifiers())) {
+                continue;
+            }
+            String op = OperationIdResolver.resolveOperationName(m);
+            if (!entry.operations().containsKey(op)) {
+                throw new IllegalStateException(CONTRACT_MISMATCH_PREFIX + contract.getName()
+                        + " has no registered operation '" + op + "' for method " + m.getName());
+            }
+        }
+    }
 
     /**
      * Handles {@link Object} methods (equals, hashCode, toString) on the proxy.
