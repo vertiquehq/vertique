@@ -32,7 +32,7 @@ Event bus-based service dispatch with contract-first interfaces and declarative 
 4. At startup, `ServiceRegistrar` scans implementations, validates the contract, and builds `ServiceMethodMeta`
 5. `ServiceContractRegistry.build()` assembles the registry (including a stable-target-id index); `ServiceDeploymentManager.deployAll()` deploys one `ServiceVerticle` per contract
 6. Each `ServiceVerticle` registers an event bus consumer per operation, wrapping invocations with a `DispatchPipeline` built from policy annotations
-7. Callers obtain a typed proxy from `ServiceClientFactory.create(Contract.class)` and invoke methods as plain Java calls — the proxy serializes the payload into a `DispatchEnvelope<?>` and sends it over the event bus
+7. Callers obtain a typed client from `ServiceClientFactory.create(Contract.class)` and invoke methods as plain Java calls — `create()` selects a generated `{Contract}_ServiceClientProxy` companion when one is on the classpath, otherwise builds a JDK dynamic proxy; either way, the client serializes the payload into a `DispatchEnvelope<?>` and sends it over the event bus
 
 ---
 
@@ -424,7 +424,7 @@ interface AppComponent {
 | `ServiceSupervisor` | `@Singleton` | Restart tracking and availability checks |
 | `ServiceDeploymentManager` | `@Singleton` | Deploys all service verticles |
 | `ServiceRequestSender` | `@Singleton` | Transport layer: supervisor check, timeout, error enrichment |
-| `ServiceClientFactory` | `@Singleton` | Creates typed event bus proxy clients; delegates transport to `ServiceRequestSender` |
+| `ServiceClientFactory` | `@Singleton` | Creates typed service clients, preferring a generated companion proxy over a JDK dynamic proxy; delegates transport to `ServiceRequestSender` |
 
 ### `ServiceInterceptor`
 
@@ -479,7 +479,7 @@ Built once per operation by `PolicyChainBuilder` at verticle start. Returns `nul
 
 ### `ServiceClientFactory`
 
-Creates JDK dynamic proxy clients for service contract interfaces. The proxy handles `DispatchEnvelope`/`Result` encoding and delegates all transport to `ServiceRequestSender`; policy enforcement happens server-side.
+Creates typed clients for service contract interfaces. `create(Class<T>)` selects a generated `{Contract}_ServiceClientProxy` companion when one is present on the contract's classloader (emitted by `vertique-codegen-services`), falling back to a JDK dynamic proxy otherwise. Both paths handle `DispatchEnvelope`/`Result` encoding identically and delegate all transport to `ServiceRequestSender`; policy enforcement happens server-side.
 
 ```java
 // In a Dagger module:
@@ -498,6 +498,8 @@ public Future<Response> getUser(String userId) {
 ```
 
 **Create-time contract completeness:** before building the proxy, `create(Class<T>)` resolves the contract in the registry — an unregistered contract throws `IllegalArgumentException` (unchanged, always checked first) — then validates that every non-static, non-`Object`-declared public method of the contract interface has a corresponding registered operation. Each method's operation id is resolved via `OperationIdResolver.resolveOperationName(method)` (the `@ServiceOperation` value, or the method name when the annotation is absent) and looked up in the resolved entry's operations map. A registry superset — extra registered operations with no corresponding interface method — is allowed. A missing operation fails `create()` immediately with `IllegalStateException` whose message begins with the exact literal `"Service client contract mismatch: "`, followed by the contract's fully-qualified name, the missing operation id, and the method name.
+
+**Companion selection:** after the completeness check passes, `create()` looks up the generated `{Contract}_ServiceClientProxy` companion via `GeneratedNames.companionFqn` (contract's origin package; nested types flatten `Outer$Inner` → `Outer_Inner`). An absent companion is the expected fallback and yields the JDK dynamic proxy described below. A *present but broken* companion — a bad constructor, a failing static initializer, or a linkage error — fails loudly instead of silently falling back: the constructor's own contract-mismatch `IllegalStateException` (message prefixed with the exact literal `"Service client contract mismatch: "`) is unwrapped and rethrown unchanged, so a baked-vs-runtime drift reports identically on both paths; any other failure is wrapped as `"Generated service client proxy {fqn} is present but could not be instantiated"`.
 
 **Common mistake:** a hand-built `ServiceContractContributor` entry that omits an operation the contract interface declares now fails at `create()` time rather than only surfacing on the first invocation of that method.
 
@@ -1173,6 +1175,7 @@ All fields are optional — when absent the annotation value, computed resilienc
 - ADR-0108: Unified Failure Mapping on a Context-Aware `FailureMapper` — collapses four layer-specific mapper wrappers onto one concrete `core.failure.FailureMapper`; `ServiceExceptionMapper` now extends it; `map(...)` renamed to `translate(...)`.
 - ADR-0113: Federated Action and Policy Authorship for Framework Authorization — establishes `@RequiresAction` as the mechanism for declaring service operation action gates, with federated authorship in each service module.
 - ADR-0114: Enforcement-Layer Emission Ownership for Authorization Decisions — establishes that each enforcement layer (including `ServiceAuthorizationInterceptor`) emits `AuthorizationDecisionEvent` directly via `SecurityEventEmitter`, not through a shared intermediary.
+- ADR-0190: Service Client Companion Selection and Create-Time Fail-Fast — establishes the generated-companion-first, dynamic-proxy-fallback selection in `ServiceClientFactory.create()` and the narrow contract-mismatch unwrap for a present-but-broken companion.
 
 ---
 
