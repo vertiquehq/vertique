@@ -83,6 +83,33 @@ failure.
 means only that the message was submitted to the event bus. It does not prove that a consumer
 received or processed it, and server failures cannot reach the caller.
 
+### Reply-address delivery
+
+`DispatchEnvelope` may additionally carry an optional reply address alongside the payload and
+dispatch metadata. When one is present, the operation's outcome — success, or the final failure
+after any `ServiceInterceptor` recovery — is published to that address instead of being sent back
+on the originating event-bus message. This is a third delivery mode ("fire-and-report"), distinct
+from both request/reply and `@OneWay`.
+
+The reply address is a property of how an operation is dispatched, not of the operation's own
+annotations: when present, it is honored regardless of whether the target method is `@OneWay`.
+
+The jobs infrastructure (cron and delayed-job scheduling) is the framework dispatcher that uses it.
+Each dispatch sets a reply address before sending, then listens for the outcome independently of
+the original send — letting a scheduler hand an operation off without holding a live request/reply
+future open across the operation's entire execution. The outcome — or a separate execution-timeout
+timer, if none ever arrives — drives that scheduler's own completion handling: delayed-job retries
+with backoff up to its configured attempt limit before dead-lettering; cron records a terminal
+outcome per fire with no automatic retry, since its own recurrence produces the next execution.
+
+`ServiceClientFactory`'s typed client never populates a reply address, for either delivery mode it
+uses:
+
+| Client delivery mode | Reply address | Outcome delivery |
+|---|---|---|
+| `@OneWay` | never set | Fire-and-forget; the returned future completes once the message is submitted. No outcome — success or failure — ever reaches the caller. |
+| Request/reply (default) | never set | Carried back on the originating request via the event bus's own reply mechanism; the returned future completes with the service result or a transported failure. |
+
 ### Execution and lifecycle
 
 Each registered service contract is deployed as an isolated Vert.x verticle. Operations run on the
