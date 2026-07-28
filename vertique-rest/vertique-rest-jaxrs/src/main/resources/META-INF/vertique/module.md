@@ -148,6 +148,7 @@ Scans JAX-RS annotated classes and registers handlers on the plain Vert.x `Route
      - `MULTIPLE_BODY_PARAMS`: more than one unannotated body parameter
      - `FORM_AND_BODY_CONFLICT`: `@FormParam`/file upload params mixed with a body param
      - `INVALID_FILE_PART_DECLARATION`: `@FilePart` is placed on an unsupported type, has invalid `allowedTypes`/`maxSizeBytes`, or overlaps another constrained file declaration
+     - `UNSUPPORTED_MULTIPART_COLLECTION_SHAPE`: a `@FormParam` collection parameter's element type is a native multipart target (`FileUpload` or `EntityPart`) but the declared collection shape is not `List` — native multipart binding materializes only a scalar target or `List<T>` (ADR-0191); `Set<T>`, `SortedSet<T>`, `NavigableSet<T>`, `Collection<T>`, and array shapes of `FileUpload`/`EntityPart` fail startup instead of silently falling through to string conversion and failing per-request
      - `DUPLICATE_OPERATION_ID`: two methods share the same operationId
      - `SECURITY_ANNOTATIONS_WITHOUT_AUTH_MODULE`: restrictive annotations present but `AuthModule` absent
      - `CONTEXT_PARAM_CONFLICT`: a `@Context`-annotated parameter also carries a JAX-RS value-binding annotation (`@PathParam`, `@QueryParam`, `@HeaderParam`, `@CookieParam`, `@FormParam`, or `@BeanParam`) — the two are mutually exclusive
@@ -194,6 +195,7 @@ Vert.x `Handler<RoutingContext>` that bridges a routing context to a JAX-RS reso
    - `@FormParam("name") EntityPart` → named file upload wrapped as `VertxFileUploadEntityPart`, or text field as `FormFieldEntityPart`
    - `@FormParam("name") List<FileUpload>` → all file uploads with matching name
    - `@FormParam("name") List<EntityPart>` → all file uploads with matching name, each wrapped as `VertxFileUploadEntityPart`
+   - `@FormParam("name") List<T>` / `Set<T>` / `SortedSet<T>` / `NavigableSet<T>` / `Collection<T>` / `T[]` (of a convertible, non-native element type) → all submitted values for that name, each coerced to the component type (see [Collection Parameter Binding](#collection-parameter-binding) below)
    - `@FormParam("name") String` (or primitive) → text form attribute, coerced to target type
    - Unannotated `List<FileUpload>` → all file uploads from the request
    - Unannotated `List<EntityPart>` → all parts: file uploads as `VertxFileUploadEntityPart`, text fields as `FormFieldEntityPart`
@@ -228,10 +230,24 @@ static RequestBodyDecoder csvDecoder() {
 
 - `String` and `JsonObject` keep identity fast-paths inside `ParameterExtractor.coerce()`.
 - Every other declared type — built-in scalars (`int`/`long`/`float`/`double`/`boolean` and their boxed forms), `UUID`, `java.time` types, `BigDecimal`, enums, and any app-registered `ParamConverterBinding` or JAX-RS `ParamConverterProvider` — is converted via `paramConversionResolver.fromString(value, conversionContext)`.
-- A collection-valued parameter (`List<T>`/`Set<T>`/`T[]`) coerces each element individually against the declared component type; a malformed element fails closed with a `ParamConversionException` rather than silently retaining the raw string for the whole collection.
+- A collection-valued parameter — `List<T>`, `Set<T>`, `SortedSet<T>`, `NavigableSet<T>`, `Collection<T>`, or `T[]` — on `@QueryParam`, `@HeaderParam`, `@CookieParam`, or `@FormParam` coerces each submitted value individually against the declared component type (ADR-0191); a malformed element fails closed with a `ParamConversionException` rather than silently retaining the raw string for the whole collection. See [Collection Parameter Binding](#collection-parameter-binding) below for the full absence/default/read-only contract.
 - A value that fails conversion raises `ParamConversionException` (400); a declared type with no resolvable converter at all raises `ParamConverterNotFoundException` (500) — though `JaxRsRouteRegistrar`'s startup validation (`UNRESOLVABLE_PARAM_CONVERTER`) is intended to catch the latter before any request is served.
 - `ConversionContext` instances are cached per `ResourceMethodMeta.ParamMeta` for the lifetime of the route's `ParameterExtractor`, so the conversion-context allocation happens at most once per parameter, not per request.
 - A JAX-RS `ParamConverterProvider` that inspects *parameter annotations* to decide conversion works identically on runtime-scanned routes and on codegen-generated routes: both `ExecutionPlanEmitter` and `JaxRsDescriptorEmitter` materialize each parameter's runtime-retained annotations into compile-time literals (see `dev.vertique:vertique-codegen-jaxrs` and ADR-0146), so `ConversionContexts.forParamMeta(...).annotationsLazy()` supplies the provider with the real annotation regardless of which path produced the route.
+
+### Collection Parameter Binding
+
+A collection-valued `@QueryParam`, `@HeaderParam`, `@CookieParam`, or `@FormParam` — declared as `List<T>`, `Set<T>`, `SortedSet<T>`, `NavigableSet<T>`, `Collection<T>`, or `T[]` — follows one binding contract on both the reflective and codegen dispatch paths (ADR-0191). `@PathParam` does not support collection shapes; a path segment is always single-valued.
+
+- **Absent, no `@DefaultValue`** — an *empty* collection for the five collection interfaces (`List`, `Set`, `SortedSet`, `NavigableSet`, `Collection`); `null` for `T[]`. An array is not one of the three collection interfaces the Jakarta REST `@DefaultValue` contract names, so it falls under that contract's "`null` for other object types" rule rather than the collection rule.
+- **Absent, `@DefaultValue` present** — a *single-entry* collection holding the converted default value; for `T[]` a single-element array (the Jakarta REST contract is silent on array defaults, so the single-element array is a Vertique extension by analogy with the single-entry collection rule).
+- **Present** — every submitted value is converted individually against the declared component type via the `ParamConversionResolver` chain; a malformed element fails closed with a `ParamConversionException` (400) rather than silently retaining the raw string for the whole collection. `@DefaultValue` is ignored once at least one value is present.
+- **Read-only** — an injected collection is unmodifiable (`Collections.unmodifiableList`/`unmodifiableSet`/`unmodifiableSortedSet`/`unmodifiableNavigableSet`); mutation throws `UnsupportedOperationException`. This includes the native `@FormParam List<FileUpload>` and `List<EntityPart>` targets and the unannotated `List<FileUpload>`/`List<EntityPart>` aggregates — they are collection injection targets like any other. Arrays remain mutable: no read-only array wrapper exists, and none is invented.
+- **Input policies** — each converted element that is still a `String` traverses the same canonicalization/sanitization chain a scalar parameter of the same source would traverse (when `SanitizationModule`/`InputObjectProcessor` is active). Default values are not processed, mirroring the scalar rule.
+- **Ordering** — element order is whatever the underlying transport (Vert.x) reported for repeated values; neither Vert.x nor Jakarta REST documents an ordering guarantee, and the framework makes none.
+- **`@FormParam` additionally** applies `@DefaultValue` when the request body is absent or of an unsupported media type, on top of the absence rule above.
+
+Native multipart targets (`FileUpload`, `EntityPart`) are `List`-restricted: only a scalar target or `List<T>` is materialized natively. Declaring `Set<FileUpload>`, `SortedSet<EntityPart>`, or any other non-`List` collection shape of a native target fails route registration with `UNSUPPORTED_MULTIPART_COLLECTION_SHAPE` (see [Startup validation](#jaxrsrouteregistrar)) rather than falling through to string conversion and failing per-request.
 
 ### ResourceMethodMeta and ParamMeta
 
@@ -641,7 +657,7 @@ The following table lists all supported parameter forms, in the order `JaxRsRout
 | 4 | `@QueryParam("name")` | Query string | `String`, `int`, `long`, `float`, `double`, `boolean`, `JsonObject` | `@DefaultValue` supported |
 | 4 | `@HeaderParam("name")` | HTTP header | `String` | `@DefaultValue` supported |
 | 4 | `@CookieParam("name")` | Cookie | `String` | `@DefaultValue` supported |
-| 5 | `@FormParam("name")` | Multipart/form field | `FileUpload`, `EntityPart`, `List<FileUpload>`, `List<EntityPart>`, `String`, primitives | `@DefaultValue` supported for text fields |
+| 5 | `@FormParam("name")` | Multipart/form field | `FileUpload`, `EntityPart`, `List<FileUpload>`, `List<EntityPart>`, `String`, primitives, `List<T>`/`Set<T>`/`SortedSet<T>`/`NavigableSet<T>`/`Collection<T>`/`T[]` of a convertible text element type | `@DefaultValue` supported for text fields and text collections; see [Collection Parameter Binding](#collection-parameter-binding) |
 | 6 | (unannotated, type `List<FileUpload>`) | All uploaded files | `List<FileUpload>` | Auto-detected by type |
 | 6 | (unannotated, type `List<EntityPart>`) | All multipart parts | `List<EntityPart>` | Auto-detected by type |
 | 7 | (unannotated, any other type) | Request body | POJO, `JsonObject`, `String`, `Buffer` | JSON/text/binary via `RequestBodyDecoder` SPI |

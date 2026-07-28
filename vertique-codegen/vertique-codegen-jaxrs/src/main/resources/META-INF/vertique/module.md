@@ -71,6 +71,8 @@ Conflict policy:
 
 Produces `EffectiveResourceContract` (one per class), which contains `EffectiveMethodContract` (one per resource method), which contains `EffectiveParamContract` (one per parameter) and `EffectiveSecurityContract`.
 
+`resolveComponentType` classifies a `T[]` array-typed query or header parameter as a multi-value parameter, at parity with the reflective runtime's `ResourceScanner.resolveComponentType` — a codegen'd resource binds all repeated values for `String[]`, `Integer[]`, boxed-wrapper array, and enum array element types identically to the reflective path. Primitive scalar-array element types (`byte[]`, `char[]`, `int[]`, etc.) are deliberately excluded from this policy and remain BODY parameters on both paths. The processor implements the scalar-array-component policy over `TypeMirror`; the runtime implements the same policy over `Class<?>`; the two are held equal by a parity test rather than by sharing one method. See ADR-0191 for the full collection parameter binding model, including the array FQN wire format below.
+
 ### Validators
 
 | Class | Role |
@@ -158,6 +160,8 @@ The runtime SPI lives in `dev.vertique.rest.jaxrs.runtime`. These types are part
 | `BeanParamFieldMeta` | Immutable record describing a single bean-param field: name, source, type, `@DefaultValue` |
 | `ResourceExecutionPlan` | SPI interface implemented by each `{Resource}_{method}_{idx}_ExecutionPlan`; two methods: `extractArguments(RoutingContext, BoundRequest, GeneratedJaxRsSupport)` and `invoke(Object resource, Object[] args)` |
 | `GeneratedJaxRsSupport` | Per-request helper bag for generated execution plans: `extractScalarParam`, `extractFormParam`, `deserializeBody`, `extractBeanParam`, `resolveContext(Class<?>, RoutingContext, String, String)`, etc.; backed by `ParameterExtractorBackedSupport`. The `bridgeJaxRsSecurityContext` and `currentFrameworkSecurityContext` methods from prior generated code are removed — context resolution now goes through `resolveContext` and the `RestContextResolver` chain. |
+
+Array-typed parameter FQNs are emitted onto the descriptor wire format as a **binary** base name plus source-form `[]` suffixes — for example `com.example.Outer$Inner[]` — because `Class.forName` cannot load the Java source array form (`com.example.Outer.Inner[]`) that a plain `toString()` of the type would produce. `GeneratedJaxRsDescriptorSupport.resolveClass` counts and strips the trailing `[]` pairs, resolves the base type via `Class.forName`, and reconstructs the array `Class` via `java.lang.reflect.Array.newInstance`. A separate source-form FQN rendering is used wherever the emitted string is interpolated into generated Java *source* rather than into a runtime class lookup — for example a Jackson `TypeReference` literal for a body parameter — since a binary name containing `$` is not valid Java source and would fail to compile. See ADR-0191 for the rationale behind this wire format and its resolution rule.
 
 `ResourceMethodMeta.ParamMeta` composes `dev.vertique.core.codegen.ParameterMetadata` (name, raw type, generic type, `annotationsLazy()`) rather than holding an eager live `Annotation[]`. Both codegen construction paths follow a **parity-first, reflection-free-as-best-effort** policy (see ADR-0146): every parameter annotation whose member shape can be rendered at compile time is literal-backed; a parameter carrying an annotation that cannot be is not left with a gap — it gets a lazy per-parameter reflective fallback instead, so runtime behavior is always identical to the reflective-scan path regardless of what a given annotation's members look like.
 
@@ -284,7 +288,6 @@ Test-only dependencies: `vertique-codegen-test`.
 
 ## Known Gaps
 
-- **`T[]` repeated query/header params are not supported by generated dispatch (V1 limitation).** The codegen path does not recognize array shapes (`String[]`, `Integer[]`, etc.) as multi-value parameters: `EffectiveJaxRsContractResolver.resolveComponentType` intentionally excludes `T[]` because the emitted FQN form (`"java.lang.Integer[]"`) cannot be resolved via `Class.forName` at runtime. As a result, generated dispatch treats an array-typed query or header param as a scalar and binds only the first value. The reflective path (`ResourceScanner.resolveComponentType`) handles `T[]` fully and is unaffected. **Use `List<T>`, `Set<T>`, `SortedSet<T>`, or `NavigableSet<T>` for repeated params** — both paths support these collection shapes. `T[]` multi-value params are tracked for a future codegen release.
 - Descriptor-registry hierarchy walk for proxy/subclass resource patterns — the current registry uses `resource.getClass()` exactly and does not walk superclasses to find a companion for a subclass or proxy.
 
 ---
