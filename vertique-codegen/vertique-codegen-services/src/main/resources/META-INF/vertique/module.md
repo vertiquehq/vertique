@@ -63,6 +63,12 @@ For each concrete (non-abstract, non-interface) `TypeElement` in the round:
 4. Neither → skipped silently.
 5. Annotated `@NoAutoWire` → skipped silently (preserves manual binding for types that opt out of codegen).
 
+### Client Contract Discovery
+
+`ServiceContractProcessor` runs a second, independent scan in the same round to emit client proxies: an **annotation-rooted scan** via `roundEnv.getElementsAnnotatedWith(ServiceContract.class)`, filtered to `INTERFACE` elements and sorted by fully-qualified name for deterministic output.
+
+This scan is **independent of implementation presence** — every source-root `@ServiceContract` interface is a candidate, whether or not a concrete implementation is compiled in the same unit. A contract with a compiled impl gets both a `{Contract}_ContractContributor` (from the impl-rooted scan above) and a `{Contract}_ServiceClientProxy`; a contract with no impl in this compilation unit still gets the client proxy.
+
 ---
 
 ## Package Layout
@@ -70,9 +76,11 @@ For each concrete (non-abstract, non-interface) `TypeElement` in the round:
 | Package | Contents |
 |---------|----------|
 | `dev.vertique.codegen.services.processor` | `ServiceContractProcessor`, `ServiceAnnotations` |
-| `dev.vertique.codegen.services.processor.scan` | `ImplCandidateScanner`, `ImplCandidate`, `ContractGroup`, `ContractModel`, `OperationModel`, `ParamModel`, `DirectImplExtractor`, `HandlerImplExtractor`, `AptOperationIdResolver`, `AptParamClassifier`, `Conditions` |
+| `dev.vertique.codegen.services.processor.scan` | `ImplCandidateScanner`, `ImplCandidate`, `ContractModel`, `ClientContractModel`, `OperationModel`, `ParamModel`, `DirectImplExtractor`, `HandlerImplExtractor`, `ClientContractExtractor`, `AptOperationIdResolver`, `AptParamClassifier` |
 | `dev.vertique.codegen.services.processor.validate` | `ReturnTypeValidator`, `PayloadParamValidator`, `ContractOverloadValidator`, `HandlerOverloadValidator`, `OperationValueValidator`, `OperationCollisionValidator`, `HandlerContractValidator`, `HandlerMatchValidator`, `MultipleUnconditionalImplValidator`, `ConditionalRequiredOnNonDefaultValidator` |
-| `dev.vertique.codegen.services.processor.emit` | `ContributorEmitter`, `ContributorModuleEmitter` |
+| `dev.vertique.codegen.services.processor.emit` | `ContributorEmitter`, `ContributorModuleEmitter`, `ClientProxyEmitter` |
+
+The shared `@ConditionalOnProperty`-reading helper (`readConditions`, `emitConditionArrayInit`, `hasConditions`) is **not** in this module — it lives in `dev.vertique.codegen.Conditions`, part of `vertique-codegen-core`, and is consumed by both `ContributorEmitter` here and `GeneratedJaxRsResourcesModuleEmitter` in the jaxrs codegen module (see [Conditions](#conditions) under Key Classes).
 
 ---
 
@@ -90,7 +98,7 @@ For each concrete (non-abstract, non-interface) `TypeElement` in the round:
 })
 ```
 
-`init()` constructs a `CodegenContext`, one instance of each scanner, all validators, and both emitters. `process()` runs `ImplCandidateScanner` on `round.getRootElements()`, validates each candidate, extracts `ContractModel`, and passes to `ContributorEmitter` / `ContributorModuleEmitter`. Returns `false` so Dagger, Lombok, and other processors see unmodified elements.
+`init()` constructs a `CodegenContext`, one instance of each scanner/extractor (including `ClientContractExtractor`), all validators, and all three emitters. `process()` runs `ImplCandidateScanner` on `round.getRootElements()`, validates each impl candidate, extracts a `ContractModel`, groups valid models by contract, and passes each group to `ContributorEmitter` / `ContributorModuleEmitter`. It then runs the independent contract-only scan described under [Client Contract Discovery](#client-contract-discovery) and passes each valid `ClientContractModel` to `ClientProxyEmitter`. Returns `false` so Dagger, Lombok, and other processors see unmodified elements.
 
 ### `ImplCandidateScanner`
 
@@ -99,15 +107,15 @@ Walks `roundEnv.getRootElements()`. For each `TypeElement` that is concrete (not
 - `@NoAutoWire` check → skip silently (but emit a compile-time WARNING if the type also carries `@ConditionalOnProperty` — the conditional has no effect on opted-out types).
 - Supertype walk via `ctx.typeResolver().allSupertypes(...)` → determine DIRECT / HANDLER / DOUBLE / NONE.
 
-Produces `List<ImplCandidate>` records carrying `TypeElement impl`, `TypeElement contract`, and `ImplKind kind (DIRECT | HANDLER)`. Candidates are grouped into `ContractGroup` records (one per contract) before validation.
+Produces a `List<ImplCandidate>`. Grouping by contract (one entry per contract FQN, insertion-ordered) happens later in `ServiceContractProcessor.process()` after per-impl validation, not in the scanner itself.
 
 Classification rejects the double-pattern: if a type implements `ServiceHandler<C>` *and* also directly implements a `@ServiceContract` interface, it is rejected with ERROR before any further processing.
 
 ### `ImplCandidate`
 
-Package-private record: `TypeElement impl`, `TypeElement contract`, `ImplKind kind`.
+Public record: `ImplKind kind`, `TypeElement implType`, `TypeElement contractType`.
 
-`ImplKind` enum: `DIRECT`, `HANDLER`.
+`ImplKind` enum: `DIRECT`, `HANDLER`, `DOUBLE_PATTERN` (the impl satisfies both patterns at once; always rejected by validation, never reaches extraction).
 
 ### `DirectImplExtractor`
 
@@ -125,15 +133,30 @@ Builds a `ContractModel` for HANDLER impls. Resolves `C` from `ServiceHandler<C>
 2. Classifies contract params (PAYLOAD-only path, DISPATCH_CONTEXT params are not on the contract) and handler params (can add injectable params such as `SecurityContext`).
 3. Produces separate `contractMethod` and `handlerMethod` in the `OperationModel`.
 
+### `ClientContractExtractor`
+
+Extracts a `ClientContractModel` from a `@ServiceContract` interface alone — contract-only extraction, no implementation required. Runs the same pipeline `DirectImplExtractor` uses (`AptOperationIdResolver` → `MethodExtraction.unwrapReturnType` → `AptParamClassifier`), but drives it from the contract interface itself, using the resolved-type overloads (below) so every candidate method's signature is viewed via `Types.asMemberOf(DeclaredType, Element)` against the contract type. A concrete contract inheriting from a generic super-interface (`Child extends Parent<String>`) therefore yields substituted signatures and *is* generatable.
+
+Two rules distinguish it from the impl-rooted extractors:
+
+- **Static interface methods are excluded.** `MethodExtraction.publicNonObjectMethods` keeps `static` interface methods, but a client proxy overrides instance methods only, so `ClientContractExtractor` filters them out before extraction.
+- **Generic contracts/methods are skipped, not rejected.** When a type variable survives substitution — the contract declares its own type parameters, or one of its methods is itself generic — extraction emits an informational `NOTE` (never a compiler error) and returns `Optional.empty()`. That contract simply gets no static client proxy; callers still resolve it through the reflective client proxy at runtime.
+
+The contract method is used as both `contractMethod` and `handlerMethod` on the produced `OperationModel`s — the same direct-impl aliasing convention `DirectImplExtractor` uses; `ClientProxyEmitter` reads only the contract side. Parameter classification goes through `AptParamClassifier.classifyClientParams`, which — unlike `classifyContractParams` — does **not** enforce the "at most one payload parameter" rule at extraction time, because the client proxy reads the payload position from the runtime `ServiceMethodMeta` at construction, never from the extracted parameter list. `PayloadParamValidator` still runs afterward against the extracted `ClientContractModel` operations and rejects emission for a multi-payload contract, same as it does on the impl path.
+
 ### `ContractModel`
 
 Record: `TypeElement contract`, `TypeElement impl`, `ImplKind kind`, `String contractType`, `String contractName`, `List<OperationModel> operations`.
 
 `contractType` is the `TypeElement` of the contract interface; `contractName` is the string value of `@ServiceContract#value()`. The namespace string is extracted from `@ServiceContract#namespace()`.
 
+### `ClientContractModel`
+
+Record: `TypeElement contractType`, `List<OperationModel> operations`. The contract-only counterpart of `ContractModel` for client-proxy emission — it carries no implementation type, because `ClientProxyEmitter` runs regardless of whether an implementation is compiled alongside the contract in the current unit. A separate record (rather than allowing a `null` `implType` on `ContractModel`) keeps `ContractModel`'s "never null" invariant intact. Produced by `ClientContractExtractor`.
+
 ### `OperationModel`
 
-Record: `ExecutableElement contractMethod`, `ExecutableElement handlerMethod`, `String operationName`, `String stableOperationId` (nullable when `@ServiceOperation` is absent), `TypeMirror returnType`, `TypeMirror payloadType` (nullable), `List<ParamModel> contractParams`, `List<ParamModel> handlerParams`, `boolean oneWay`.
+Record: `ExecutableElement contractMethod`, `ExecutableElement handlerMethod`, `String operationName`, `String stableOperationId` (nullable when `@ServiceOperation` is absent), `TypeMirror returnType`, `TypeMirror payloadType` (nullable), `List<ParamModel> params`, `List<ParamModel> handlerParams`, `boolean oneWay`. Also produced directly by `ClientContractExtractor` for contract-only operations, using the same `contractMethod == handlerMethod` / `params == handlerParams` aliasing `DirectImplExtractor` uses.
 
 ### `AptOperationIdResolver`
 
@@ -145,25 +168,31 @@ APT-side replica of the runtime `ParameterClassifier`. Classifies `VariableEleme
 
 - `DispatchEnvelope<?>` → ERROR (transport wrapper not allowed on contracts).
 - `SecurityContext` subtype or type annotated `@DispatchContextValue` → `DISPATCH_CONTEXT`.
-- Anything else → `PAYLOAD` (at most one per method, enforced by `PayloadParamValidator`).
+- Anything else → `PAYLOAD` (at most one per method, enforced by `PayloadParamValidator`, which gates both the impl path and client-proxy emission).
+
+`classifyContractParams` has a resolved-type overload — `classifyContractParams(ExecutableElement, ExecutableType, boolean[])` — that reads parameter *types* from the `ExecutableType` produced by `Types.asMemberOf(...)` while still reading names and annotations from the `ExecutableElement`; this substitutes type variables inherited from a generic super-interface. `classifyClientParams(ExecutableElement, ExecutableType, boolean[])` is the client-emission variant of the resolved-type overload: it reuses the same substitution but does **not** enforce the single-payload rule, since a generated client proxy has no stake in a server-side registration constraint. `MethodExtraction.unwrapReturnType` has the identical two-overload shape (element-declared vs. resolved) for the same reason.
 
 ### Validators
 
 Each validator is stateless and receives a `CodegenContext`. Validators emit `ERROR`-level diagnostics via `ctx.diagnostics()` except where noted.
 
+Five **contract-shape validators** — `ReturnTypeValidator`, `PayloadParamValidator`, `ContractOverloadValidator`, `OperationValueValidator`, `OperationCollisionValidator` — take explicit `(TypeElement contractType, List<OperationModel> operations)` inputs (`ContractOverloadValidator` takes just `TypeElement`, since it rescans the contract's members directly rather than an extracted operation list). This explicit-input shape is what lets `ServiceContractProcessor` reuse them against a `ClientContractModel`'s contract type and operations with no `ContractModel`/impl in scope at all. All five gate **both** the impl path and client-proxy emission (`emitClientProxies`) — see the table's last column. `PayloadParamValidator`'s "at most one payload parameter" rule is a server-side registration constraint that `ClientContractExtractor`'s own parameter classification does not enforce (`classifyClientParams` allows multiple payload-shaped parameters, since the client proxy reads the payload position from runtime `ServiceMethodMeta`, not from the extracted list) — but the validator itself still runs against the extracted `ClientContractModel` operations and rejects a multi-payload contract before a proxy is emitted for it.
+
+The remaining validators stay `ContractModel`-typed because their rules are inherently impl-coupled and have no meaning for a contract with no implementation in scope.
+
 **Per-impl validators (run against each `ImplCandidate`):**
 
-| Validator | Runtime mirror | Rule |
-|---|---|---|
-| `ReturnTypeValidator` | `ReturnTypeResolver` | Contract method must return parameterized `Future<T>`; `Future` without type argument is rejected |
-| `PayloadParamValidator` | `ParameterClassifier.java:90-132` | At most one PAYLOAD parameter per contract method; `DispatchEnvelope<?>` parameters rejected outright |
-| `ContractOverloadValidator` | `MethodValidator.java:27-41` | No method-name overloads on the contract interface |
-| `HandlerOverloadValidator` | `MethodValidator.java:80,106,191` | No method-name overloads on the handler class — full-stop reject, no best-overload heuristic |
-| `OperationValueValidator` | `OperationIdResolver.java:62` | `@ServiceOperation` value must not be blank |
-| `OperationCollisionValidator` | `ServiceRegistrar` | No duplicate resolved operation names within a contract (e.g., two methods producing the same operation id) |
-| `InjectConstructorValidator` | (stricter than CG-002) | Exactly one `@Inject` constructor: 0 → ERROR (unlike CG-002's silent skip); >1 → ERROR |
-| `HandlerContractValidator` | `ContractDiscovery.java:35-76` | `ServiceHandler<C>`: C must be a `@ServiceContract` interface; double-pattern rejected; handler must not implement additional `@ServiceContract` interfaces |
-| `HandlerMatchValidator` | `MethodValidator.java:54-160` | Each contract method must have exactly one matching handler method (same name; payload params identical in order and type; extra params must be `SecurityContext` or `@DispatchContextValue`-annotated; same `Future<T>` return type) |
+| Validator | Runtime mirror | Rule | Gates client-proxy emission |
+|---|---|---|---|
+| `ReturnTypeValidator` | `ReturnTypeResolver` | Contract method must return parameterized `Future<T>`; `Future` without type argument is rejected | Yes |
+| `PayloadParamValidator` | `ParameterClassifier.java:90-132` | At most one PAYLOAD parameter per contract method; `DispatchEnvelope<?>` parameters rejected outright | Yes |
+| `ContractOverloadValidator` | `MethodValidator.java:27-41` | No method-name overloads on the contract interface | Yes |
+| `HandlerOverloadValidator` | `MethodValidator.java:80,106,191` | No method-name overloads on the handler class — full-stop reject, no best-overload heuristic | No — impl-coupled |
+| `OperationValueValidator` | `OperationIdResolver.java:62` | `@ServiceOperation` value must not be blank | Yes |
+| `OperationCollisionValidator` | `ServiceRegistrar` | No duplicate resolved operation names within a contract (e.g., two methods producing the same operation id) | Yes |
+| `InjectConstructorValidator` | (stricter than CG-002) | Exactly one `@Inject` constructor: 0 → ERROR (unlike CG-002's silent skip); >1 → ERROR | No — impl-coupled |
+| `HandlerContractValidator` | `ContractDiscovery.java:35-76` | `ServiceHandler<C>`: C must be a `@ServiceContract` interface; double-pattern rejected; handler must not implement additional `@ServiceContract` interfaces | No — impl-coupled |
+| `HandlerMatchValidator` | `MethodValidator.java:54-160` | Each contract method must have exactly one matching handler method (same name; payload params identical in order and type; extra params must be `SecurityContext` or `@DispatchContextValue`-annotated; same `Future<T>` return type) | No — impl-coupled |
 
 **Per-contract-group validators (run after grouping, CG-011):**
 
@@ -176,7 +205,7 @@ Each validator is stateless and receives a `CodegenContext`. Validators emit `ER
 
 ### `Conditions`
 
-Shared APT helper (in `scan` package) for reading `@ConditionalOnProperty` mirrors from a `TypeElement` and emitting `PropertyCondition[]` array initializers. Used by both `ContributorEmitter` (services) and `GeneratedJaxRsResourcesModuleEmitter` (jaxrs) so both codegen modules emit consistent `PropertyCondition` construction.
+Shared APT helper for reading `@ConditionalOnProperty` mirrors from a `TypeElement` and emitting `PropertyCondition[]` array initializers. Lives in `dev.vertique.codegen.Conditions`, part of `vertique-codegen-core` — **not** in this module's `scan` package — so it can be used by both `ContributorEmitter` here and `GeneratedJaxRsResourcesModuleEmitter` in the jaxrs codegen module, giving both codegen modules consistent `PropertyCondition` construction.
 
 Key methods:
 
@@ -206,6 +235,24 @@ For all contracts, the generated code always passes contract-derived `.resilienc
 Generates one `GeneratedServicesModule` per compilation unit using `DaggerModuleWriter`. The module is abstract, annotated `@Generated`, and contains one `@Provides @IntoSet static ServiceContractContributor` method per contributor emitted in the round.
 
 Output package is resolved via `PackageResolver` (LCP of all contributor types, or `-Avertique.codegen.package` override).
+
+### `ClientProxyEmitter`
+
+Generates one `{Contract}_ServiceClientProxy` per validated `ClientContractModel`, in the contract's own package, with the flattened name produced by `Identifiers.generatedClassName(contractType, "_ServiceClientProxy")` (a nested contract `Outer.Inner` yields `Outer_Inner_ServiceClientProxy`). The generated class:
+
+- is `public final`, annotated `@Generated("...ServiceContractProcessor")`, and implements the contract interface directly — dispatch involves no reflection, neither at construction nor per call;
+- has a public constructor `(ServiceRequestSender, DispatchEnvelopeBuilder, ContractEntry<?>)`;
+- resolves every operation's `ServiceMethodMeta` from the injected entry by operation id **at construction time**, and derives the payload-parameter index, the `SecurityContext`-parameter index, and the `oneWay` flag from that runtime metadata — never from the source signature (see Invariants & Gotchas below);
+- dispatches each override with `sendOneWay(...)` when the operation's runtime `oneWay` flag is set, otherwise `send(...).compose(Futures::toFuture)`;
+- applies FR-CTX-063 ambient-first `SecurityContext` gating: an explicit `SecurityContext` argument is added as a dispatch override only when `ContextValues.current(SecurityContext.class)` is empty, so an already-ambient context always wins;
+- overrides `toString()` to return `"ServiceProxy[SimpleName]"`, matching the JDK dynamic proxy's rendering; `equals`/`hashCode` are deliberately left un-overridden, matching the dynamic proxy's identity semantics.
+
+Selecting between the static proxy and the JDK dynamic proxy is `ServiceClientFactory`'s concern: it resolves the generated companion via `GeneratedCompanions`, whose lookup FQN is `GeneratedNames.companionFqn(contract, "_ServiceClientProxy")` — the naming contract this emitter's `SUFFIX` constant is pinned against.
+
+#### Invariants & Gotchas
+
+- **Metadata ownership.** Only the method universe (one override per `OperationModel`) and the operation-id string constants are baked at annotation-processing time. `oneWay`, the payload-parameter index, and the `SecurityContext`-parameter index are all derived from the runtime `ServiceMethodMeta` at construction — baking them from the source signature would silently diverge from a registry built by a different mechanism.
+- **Fail-fast on contract mismatch.** The constructor looks up every baked operation id against `entry.operations()` and throws `IllegalStateException` on the first miss. The message always starts with the literal `Service client contract mismatch: ` so a caller can recognize and unwrap a companion fail-fast.
 
 ### `ServiceAnnotations`
 
@@ -372,6 +419,67 @@ public abstract class GeneratedServicesModule {
 }
 ```
 
+### Service client proxy
+
+For `com.example.DemoContract` (a source-root `@ServiceContract` interface) declaring `Future<String> greet(SecurityContext sc, String name)`:
+
+```java
+@Generated("dev.vertique.codegen.services.processor.ServiceContractProcessor")
+public final class DemoContract_ServiceClientProxy implements DemoContract {
+
+    private final ServiceRequestSender _sender_;
+    private final DispatchEnvelopeBuilder _envelopeBuilder_;
+    private final ResolvedServiceTarget greetTarget;
+    private final int greetPayloadIndex;
+    private final int greetSecurityContextIndex;
+    private final boolean greetOneWay;
+
+    public DemoContract_ServiceClientProxy(ServiceRequestSender _sender_,
+            DispatchEnvelopeBuilder _envelopeBuilder_, ServiceContractRegistry.ContractEntry<?> _entry_) {
+        this._sender_ = _sender_;
+        this._envelopeBuilder_ = _envelopeBuilder_;
+        ServiceMethodMeta _greetMeta_ = _entry_.operations().get("greet");
+        if (_greetMeta_ == null) {
+            throw new IllegalStateException("Service client contract mismatch: com.example.DemoContract"
+                + " has no registered operation 'greet' for method greet");
+        }
+        this.greetTarget = ResolvedServiceTarget.of(DemoContract.class, _greetMeta_);
+        this.greetPayloadIndex = _payloadIndex_(_greetMeta_);
+        this.greetSecurityContextIndex = _securityContextIndex_(_greetMeta_);
+        this.greetOneWay = _greetMeta_.oneWay();
+    }
+
+    @Override
+    @SuppressWarnings("unchecked")
+    public Future<String> greet(SecurityContext sc, String name) {
+        Object[] _args_ = new Object[] {sc, name};
+        Object _payload_ = this.greetPayloadIndex >= 0 && this.greetPayloadIndex < _args_.length
+            ? _args_[this.greetPayloadIndex] : null;
+        Map<String, Object> _overrides_ = Map.of();
+        if (this.greetSecurityContextIndex >= 0 && this.greetSecurityContextIndex < _args_.length
+                && _args_[this.greetSecurityContextIndex] != null
+                && ContextValues.current(SecurityContext.class).isEmpty()) {
+            _overrides_ = Map.of(SecurityContext.class.getName(), _args_[this.greetSecurityContextIndex]);
+        }
+        DispatchEnvelope<?> _envelope_ =
+            this._envelopeBuilder_.build(_payload_, _overrides_, DispatchBoundary.SERVICE_DISPATCH);
+        Future<?> _dispatch_ = this.greetOneWay
+            ? this._sender_.sendOneWay(this.greetTarget, _envelope_)
+            : this._sender_.send(this.greetTarget, _envelope_).compose(Futures::toFuture);
+        return (Future<String>) _dispatch_;
+    }
+
+    @Override
+    public String toString() {
+        return "ServiceProxy[DemoContract]";
+    }
+
+    // _payloadIndex_(ServiceMethodMeta) / _securityContextIndex_(ServiceMethodMeta) helpers omitted
+}
+```
+
+The constructor is the one place the generated proxy can throw before any dispatch happens: every baked operation id (`"greet"` here) is looked up in `_entry_.operations()`, and a missing entry throws `IllegalStateException` whose message always starts with the literal `Service client contract mismatch: `. Every other per-operation field — `greetPayloadIndex`, `greetSecurityContextIndex`, `greetOneWay` — is derived from the resolved `ServiceMethodMeta`, not from the source method signature, so the proxy always tracks whatever registered the contract, even if that registration used a different mechanism than this emitter.
+
 ---
 
 ## `OperationBuilder` Extensions in `vertique-services`
@@ -427,6 +535,14 @@ CG-011 supports multi-impl-per-contract within the same compilation unit (the pr
 
 To annotate an impl class `@NoAutoWire`, the impl module must add `vertique-codegen-core` as a `provided` (or `compileOnly`) dependency. This is the same requirement as for CG-002.
 
+### Generic contracts skip client-proxy emission
+
+A `@ServiceContract` interface that declares its own type parameters, or whose method remains generic after resolving against the contract, produces no `{Contract}_ServiceClientProxy`. `ClientContractExtractor` detects the unresolved type variable and emits an informational `NOTE` rather than a compiler error — the compilation still succeeds. Callers of such a contract fall back to the reflective client proxy at runtime instead of the generated static one.
+
+### Client-proxy emission is also one-shot per round
+
+Client-proxy emission shares the same `emitted` guard as contributor emission: `ServiceContractProcessor.process()` runs both scans and emits both `{Contract}_ContractContributor` and `{Contract}_ServiceClientProxy` classes in the first non-`processingOver` round it sees, then sets `emitted = true`. A `@ServiceContract` interface that only becomes visible in a later round (for example, generated by another processor after this one has already run) does not get a client proxy in that compilation.
+
 ---
 
 ## Examples
@@ -458,24 +574,6 @@ None at processor time. The processor emits a Dagger `@Module` (`GeneratedServic
 | `com.palantir.javapoet:javapoet` | compile | Source generation (via `DaggerModuleWriter`); not on runtime classpath |
 
 Test-only dependencies: `vertique-codegen-test`, `vertique-services`, `vertique-core`.
-
----
-
-## Version History
-
-| Date | Change |
-|------|--------|
-| 2026-05-01 | Structural roundtrip upgraded to runtime registry equivalence: `ProcessorTestHarness.Result` converted from `record` to `final class` with memoised `generatedClassLoader()` / `loadGeneratedClass(String)` API; `ServiceContractProcessorRoundtripTest` now compiles fixture against real framework classpath, loads generated contributor + impl via harness classloader, instantiates them, and asserts `ContractEntry`-level equivalence against the legacy `ServiceRegistrar` path (address, stableTargetId, type, name, operation, payloadType, returnType, params, resilienceAnnotations, annotation types); structural source-text assertions retained only for emitter-shape contracts |
-| 2026-05-01 | Codex review fixes: `ContributorEmitter` now emits `private static final` field declarations matching benchmark fixture shape; `HandlerOverloadValidator` filters to public methods only (private helpers with the same name no longer trigger rejection); `HandlerMatchValidator` emits targeted diagnostic naming the offending parameter and suggesting `@DispatchContextValue` or `SecurityContext`; `AptParamClassifier` error-sink changed from `List<Boolean>` to `boolean[]`; `BillingShippingIT` ordering annotations removed; benchmark re-run: 73.2% startup-time reduction at 20 services (7.160 µs codegen vs 26.747 µs legacy) |
-| 2026-05-05 | CG-011: switched from per-impl contributor to contract-group contributor. One `{Contract}_ContractContributor` is emitted per contract, injecting `Provider<Impl>` for each candidate. New per-impl `PropertyCondition[]` constants (or shared `EMPTY_CONDITIONS`) drive `PropertyCondition.matchesAll(config, ...)` selection at startup. Added two new per-group validators: `MultipleUnconditionalImplValidator` (≤1 unconditional per group) and `ConditionalRequiredOnNonDefaultValidator` (non-defaults must carry `@ConditionalOnProperty` when a default exists). `ImplCandidateScanner` emits a compile-time WARNING when an impl carries both `@NoAutoWire` and `@ConditionalOnProperty`. `Conditions` shared APT helper added to `scan` package. Multi-impl limitation removed from the codegen path — manual binding remains the fallback only for cross-module collision and `@NoAutoWire` cases. |
-| 2026-04-30 | Initial implementation: single generated service-registration path; `GeneratedServicesModule` (renamed from `GeneratedServiceContractContributorsModule`); `ServiceContractProcessor` with impl-rooted scan; direct-impl + handler-pattern code generation; 9 validators; `ContributorEmitter` + `ContributorModuleEmitter`; manual `@Services Set<Object>` remains as supported fallback for multi-impl-per-contract and `@NoAutoWire` cases; `ServiceContractEntries.OperationBuilder` extended with `.handlerMethod`, `.handlerParam`, `.methodAnnotations`, `.classAnnotations`; new helper `Constructors.findInjectConstructors` in `vertique-codegen-core`; 74.5% startup-time reduction at 20 services (JMH baseline) |
-
----
-
-## Planned Additions
-
-- **`@IntoMap` lookup variant** — if the `Set<ServiceContractContributor>` scan at `ServiceContractRegistry.build()` becomes a bottleneck, an `@IntoMap`-keyed contribution could produce O(1) contract lookup. Current `@IntoSet` is already fast at typical scales (measured at 7.1 µs for 20 services).
-- **Cross-module collision detection** — CG-011 compile-time validation applies only to candidates visible in the current compilation unit. Cross-module collisions (same contract, different impls in separate Maven modules) remain a runtime concern. A potential future extension could use a generated index file (similar to `META-INF/services`) to detect cross-module conflicts at link time.
 
 ---
 

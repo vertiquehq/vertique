@@ -56,8 +56,10 @@ class ServiceContractProcessorDirectImplSmokeTest {
 
     private static final String CONTRACT_ENTRY_SOURCE = """
             package dev.vertique.services;
+            import dev.vertique.services.dispatch.ServiceMethodMeta;
+            import java.util.Map;
             public class ServiceContractRegistry {
-                public record ContractEntry<T>(Class<T> contract) {}
+                public record ContractEntry<T>(Class<T> contract, Map<String, ServiceMethodMeta> operations) {}
             }
             """;
 
@@ -96,8 +98,12 @@ class ServiceContractProcessorDirectImplSmokeTest {
 
     private static final String PARAM_SOURCE_ENUM_SOURCE = """
             package dev.vertique.services.dispatch;
+            import java.util.List;
             public class ServiceMethodMeta {
                 public enum ParamSource { PAYLOAD, DISPATCH_CONTEXT }
+                public record ParamMeta(String name, ParamSource source, Class<?> type, String lookupKey) {}
+                public List<ParamMeta> params() { return List.of(); }
+                public boolean oneWay() { return false; }
             }
             """;
 
@@ -122,10 +128,12 @@ class ServiceContractProcessorDirectImplSmokeTest {
 
     private static final String FUTURE_SOURCE = """
             package io.vertx.core;
+            import java.util.function.Function;
             public interface Future<T> {
                 static <T> Future<T> succeededFuture(T value) { return null; }
                 static <T> Future<T> succeededFuture() { return null; }
                 static <T> Future<T> failedFuture(Throwable t) { return null; }
+                <U> Future<U> compose(Function<? super T, Future<U>> mapper);
             }
             """;
 

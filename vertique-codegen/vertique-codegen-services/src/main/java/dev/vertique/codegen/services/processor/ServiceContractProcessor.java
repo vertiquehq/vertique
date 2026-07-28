@@ -4,8 +4,11 @@
 package dev.vertique.codegen.services.processor;
 
 import dev.vertique.codegen.CodegenContext;
+import dev.vertique.codegen.services.processor.emit.ClientProxyEmitter;
 import dev.vertique.codegen.services.processor.emit.ContributorEmitter;
 import dev.vertique.codegen.services.processor.emit.ContributorModuleEmitter;
+import dev.vertique.codegen.services.processor.scan.ClientContractExtractor;
+import dev.vertique.codegen.services.processor.scan.ClientContractModel;
 import dev.vertique.codegen.services.processor.scan.ContractModel;
 import dev.vertique.codegen.services.processor.scan.DirectImplExtractor;
 import dev.vertique.codegen.services.processor.scan.HandlerImplExtractor;
@@ -23,9 +26,11 @@ import dev.vertique.codegen.services.processor.validate.PayloadParamValidator;
 import dev.vertique.codegen.services.processor.validate.ReturnTypeValidator;
 import dev.vertique.codegen.validate.InjectConstructorValidator;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import javax.annotation.processing.AbstractProcessor;
 import javax.annotation.processing.ProcessingEnvironment;
@@ -34,6 +39,7 @@ import javax.annotation.processing.SupportedAnnotationTypes;
 import javax.annotation.processing.SupportedOptions;
 import javax.annotation.processing.SupportedSourceVersion;
 import javax.lang.model.SourceVersion;
+import javax.lang.model.element.ElementKind;
 import javax.lang.model.element.TypeElement;
 
 /**
@@ -85,6 +91,7 @@ public final class ServiceContractProcessor extends AbstractProcessor {
     private ImplCandidateScanner scanner;
     private DirectImplExtractor directExtractor;
     private HandlerImplExtractor handlerExtractor;
+    private ClientContractExtractor clientContractExtractor;
 
     // --- Per-model validators ---
     private ReturnTypeValidator returnTypeValidator;
@@ -104,6 +111,7 @@ public final class ServiceContractProcessor extends AbstractProcessor {
     // --- Emitters ---
     private ContributorEmitter contributorEmitter;
     private ContributorModuleEmitter moduleEmitter;
+    private ClientProxyEmitter clientProxyEmitter;
 
     // --- State ---
     private boolean emitted;
@@ -129,6 +137,7 @@ public final class ServiceContractProcessor extends AbstractProcessor {
         scanner = new ImplCandidateScanner(ctx);
         directExtractor = new DirectImplExtractor(ctx);
         handlerExtractor = new HandlerImplExtractor(ctx);
+        clientContractExtractor = new ClientContractExtractor(ctx);
 
         returnTypeValidator = new ReturnTypeValidator(ctx);
         payloadParamValidator = new PayloadParamValidator(ctx);
@@ -145,6 +154,7 @@ public final class ServiceContractProcessor extends AbstractProcessor {
 
         contributorEmitter = new ContributorEmitter(ctx);
         moduleEmitter = new ContributorModuleEmitter(ctx);
+        clientProxyEmitter = new ClientProxyEmitter(ctx);
 
         emitted = false;
     }
@@ -198,13 +208,15 @@ public final class ServiceContractProcessor extends AbstractProcessor {
             }
 
             // Use & (not &&) so every validator runs and contributes its diagnostics in one compile.
+            // The five contract-shape validators take explicit inputs so the contract-only client
+            // path can reuse them without a ContractModel (which always carries an impl type).
             boolean valid = handlerContractValidator.validate(model)
-                    & contractOverloadValidator.validate(model)
+                    & contractOverloadValidator.validate(model.contractType())
                     & handlerOverloadValidator.validate(model)
-                    & returnTypeValidator.validate(model)
-                    & payloadParamValidator.validate(model)
-                    & operationValueValidator.validate(model)
-                    & operationCollisionValidator.validate(model)
+                    & returnTypeValidator.validate(model.contractType(), model.operations())
+                    & payloadParamValidator.validate(model.contractType(), model.operations())
+                    & operationValueValidator.validate(model.contractType(), model.operations())
+                    & operationCollisionValidator.validate(model.contractType(), model.operations())
                     & injectConstructorValidator.validate(model.implType())
                     & handlerMatchValidator.validate(model);
 
@@ -242,7 +254,59 @@ public final class ServiceContractProcessor extends AbstractProcessor {
             moduleEmitter.emit();
         }
 
+        emitClientProxies(roundEnv);
+
         emitted = true;
         return false;
+    }
+
+    // --- Contract-only client proxy emission (CG-015 Track D) ---
+
+    /**
+     * Emits one {@code {Contract}_ServiceClientProxy} per {@code @ServiceContract} interface in this
+     * round.
+     *
+     * <p>Discovery is annotation-rooted rather than impl-rooted: a client proxy is emitted for every
+     * source contract interface, whether or not an implementation is compiled alongside it, so a
+     * contract that <em>does</em> have an impl produces both a contributor and a client proxy.
+     * Contracts are processed in fully-qualified-name order so the generated output is deterministic.
+     *
+     * <p>Only the five contract-shape validators gate emission — the impl-coupled ones
+     * ({@code Handler*}, {@code @Inject} constructor, group-level) have no meaning without an impl.
+     *
+     * @param roundEnv the current round environment; must not be {@code null}
+     */
+    private void emitClientProxies(RoundEnvironment roundEnv) {
+        TypeElement serviceContractAnnotation = ctx.elements().getTypeElement(ServiceAnnotations.SERVICE_CONTRACT);
+        if (serviceContractAnnotation == null) {
+            // @ServiceContract is not on the processor classpath — nothing can be annotated with it.
+            return;
+        }
+
+        List<TypeElement> contracts = roundEnv.getElementsAnnotatedWith(serviceContractAnnotation).stream()
+                .filter(e -> e.getKind() == ElementKind.INTERFACE)
+                .map(TypeElement.class::cast)
+                .sorted(Comparator.comparing(t -> t.getQualifiedName().toString()))
+                .toList();
+
+        for (TypeElement contractType : contracts) {
+            Optional<ClientContractModel> extracted = clientContractExtractor.extract(contractType);
+            if (extracted.isEmpty()) {
+                // Non-generatable (NOTE emitted) or invalid (errors emitted) — nothing to emit.
+                continue;
+            }
+            ClientContractModel model = extracted.get();
+
+            // Use & (not &&) so every validator runs and contributes its diagnostics in one compile.
+            boolean valid = contractOverloadValidator.validate(model.contractType())
+                    & returnTypeValidator.validate(model.contractType(), model.operations())
+                    & payloadParamValidator.validate(model.contractType(), model.operations())
+                    & operationValueValidator.validate(model.contractType(), model.operations())
+                    & operationCollisionValidator.validate(model.contractType(), model.operations());
+
+            if (valid) {
+                clientProxyEmitter.emit(model);
+            }
+        }
     }
 }

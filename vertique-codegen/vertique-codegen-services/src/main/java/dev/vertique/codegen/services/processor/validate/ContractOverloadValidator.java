@@ -4,7 +4,6 @@
 package dev.vertique.codegen.services.processor.validate;
 
 import dev.vertique.codegen.CodegenContext;
-import dev.vertique.codegen.services.processor.scan.ContractModel;
 import java.util.HashMap;
 import java.util.Map;
 import javax.lang.model.element.ExecutableElement;
@@ -38,11 +37,13 @@ public final class ContractOverloadValidator {
     /**
      * Validates that no two methods on the contract interface share the same name.
      *
-     * @param model the contract model to validate; must not be {@code null}
+     * <p>Rescans the contract's members directly, so it needs no extracted operation list.
+     *
+     * @param contractType the {@code @ServiceContract} interface to validate; must not be
+     *                     {@code null}
      * @return {@code true} if no overloads found; {@code false} if any error was emitted
      */
-    public boolean validate(ContractModel model) {
-        TypeElement contractType = model.contractType();
+    public boolean validate(TypeElement contractType) {
         boolean valid = true;
 
         Map<String, Integer> counts = new HashMap<>();

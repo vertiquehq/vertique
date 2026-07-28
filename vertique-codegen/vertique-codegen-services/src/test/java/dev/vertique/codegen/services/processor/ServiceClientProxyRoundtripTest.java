@@ -189,9 +189,14 @@ class ServiceClientProxyRoundtripTest {
             }
             """);
 
-    /** Two plain String params, used to prove runtime PAYLOAD-index selection (D1). */
+    /**
+     * Security context first, payload second — a legal contract shape whose source classification
+     * (index 0 {@code DISPATCH_CONTEXT}, index 1 {@code PAYLOAD}) is the mirror image of the runtime
+     * metadata the D1 index-contradiction test hand-builds for it.
+     */
     private static final JavaFileObject TWO_PARAM_GREETER = SourceFiles.inline("com.example.TwoParamGreeter", """
             package com.example;
+            import dev.vertique.security.SecurityContext;
             import dev.vertique.services.ServiceContract;
             import dev.vertique.services.ServiceOperation;
             import io.vertx.core.Future;
@@ -199,7 +204,7 @@ class ServiceClientProxyRoundtripTest {
             @ServiceContract("two-param-greeter")
             public interface TwoParamGreeter {
                 @ServiceOperation("op")
-                Future<String> op(String first, String second);
+                Future<String> op(SecurityContext sc, String name);
             }
             """);
 
@@ -473,26 +478,35 @@ class ServiceClientProxyRoundtripTest {
         verify(sender, never()).send(any(), any());
     }
 
+    /**
+     * The entry built here <strong>deliberately contradicts</strong> the fixture's source
+     * declaration — the runtime metadata marks the {@code SecurityContext} parameter (source index 0)
+     * as the {@code PAYLOAD} and the {@code String} parameter (source index 1) as the
+     * {@code SecurityContext}-keyed dispatch-context param, i.e. the exact mirror of what the source
+     * signature says — so an emitter that baked parameter roles at annotation-processing time would
+     * dispatch the {@code String} and fail this test; do not "correct" the entry to match the source.
+     *
+     * @throws Exception if the generated proxy cannot be loaded, constructed, or invoked
+     */
     @Test
     @DisplayName("runtime PAYLOAD param index wins over the source declaration order (D1 falsifiability)")
     void runtimeParamIndexContradictionWins() throws Exception {
         Class<?> twoParamGreeterClass = RESULT.loadGeneratedClass("com.example.TwoParamGreeter");
         Class<?> proxyClass = RESULT.loadGeneratedClass("com.example.TwoParamGreeter_ServiceClientProxy");
 
-        Method opMethod = twoParamGreeterClass.getMethod("op", String.class, String.class);
-        // Source declares "first" at index 0 and "second" at index 1. The entry deliberately
-        // contradicts that: index 0 is marked DISPATCH_CONTEXT (ignored client-side, non-SC
-        // lookup key) and index 1 is marked PAYLOAD — the opposite of the source's declared order.
+        Method opMethod = twoParamGreeterClass.getMethod("op", SecurityContext.class, String.class);
+        // Source classification is: index 0 = DISPATCH_CONTEXT (SecurityContext), index 1 = PAYLOAD.
+        // The entry deliberately contradicts that, swapping the two roles.
         ContractEntry<?> entry = ServiceContractEntries.deployable()
                 .contract(twoParamGreeterClass)
                 .serviceInstance(new Object())
                 .name("two-param-greeter")
                 .operation("op")
                 .method(opMethod)
-                .payloadType(String.class)
+                .payloadType(SecurityContext.class)
                 .returnType(String.class)
-                .param("first", ParamSource.DISPATCH_CONTEXT, String.class)
-                .param("second", ParamSource.PAYLOAD, String.class)
+                .param("sc", ParamSource.PAYLOAD, SecurityContext.class)
+                .param("name", ParamSource.DISPATCH_CONTEXT, SecurityContext.class)
                 .done()
                 .build();
 
@@ -500,16 +514,18 @@ class ServiceClientProxyRoundtripTest {
         when(sender.send(any(), any())).thenReturn(Future.succeededFuture(Result.success("ok")));
 
         Object proxy = newProxy(proxyClass, sender, newEnvelopeBuilder(), entry);
-        Method opProxyMethod = proxyClass.getMethod("op", String.class, String.class);
+        Method opProxyMethod = proxyClass.getMethod("op", SecurityContext.class, String.class);
 
-        opProxyMethod.invoke(proxy, "firstArg", "secondArg");
+        SecurityContext scArg = testSecurityContext("payload-by-runtime-index");
+        opProxyMethod.invoke(proxy, scArg, "secondArg");
 
         ArgumentCaptor<DispatchEnvelope<?>> envelopeCaptor = forClass(DispatchEnvelope.class);
         verify(sender).send(any(), envelopeCaptor.capture());
-        assertEquals(
-                "secondArg",
+        assertSame(
+                scArg,
                 envelopeCaptor.getValue().payload(),
-                "payload must be extracted from the runtime meta's PAYLOAD index (1), not the source's first param");
+                "payload must be extracted from the runtime meta's PAYLOAD index (0) — the source's"
+                        + " SecurityContext param — not from the source's declared payload param");
     }
 
     @Test
