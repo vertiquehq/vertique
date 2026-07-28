@@ -5,9 +5,11 @@ SPDX-License-Identifier: EUPL-1.2
 
 # Vertique
 
-Vertique is an opinionated Java 21 framework for building Vert.x applications with
-compile-time dependency injection, JAX-RS routing, OpenAPI validation, configuration,
-security, services, jobs, workflows, Kafka, persistence, and observability.
+Vertique is a Vert.x-native Java 21 framework for teams building services that must coordinate
+durable work without giving up an explicit, non-blocking architecture. It combines compile-time
+application assembly and diagnostics with typed event-bus services and a PostgreSQL-backed
+durability stack for workflows, jobs, and transactional inbox/outbox messaging. REST, security,
+configuration, observability, and Kafka integration compose around that foundation.
 
 ## Build
 
