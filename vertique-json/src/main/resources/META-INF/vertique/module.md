@@ -227,10 +227,30 @@ precision matters; untyped relay is explicitly a lossy-but-shape-stable path.
 **Validation-strategy interaction.** The default `web-validation` strategy synthesizes request
 schemas from the Java types at runtime and is profile-agnostic, so it types a `BigDecimal` property
 as a JSON **number** and rejects the strict string form with a 400 before this profile's
-deserializer ever runs. A REST endpoint that accepts `vertique-strict` decimal strings in a
-**request body** therefore needs the `openapi-contract` strategy
-(`vertique-rest-openapi-validation`) paired with `BigDecimalModelConverter` in the spec build, or no
-body validation at all. Response-side strict serialization is unaffected by the choice of strategy.
+deserializer ever runs. Response-side strict serialization is unaffected by the choice of strategy;
+so is any `BigDecimal` bound as a query, path, header, or cookie **parameter** — the parameter path
+types `BigDecimal` as a string already. The constraint applies only to **request bodies**.
+
+Three ways to accept `vertique-strict` decimal strings in a request body, in ascending order of
+blast radius:
+
+1. **Per property — `@Schema(implementation = String.class)`** on the `BigDecimal` field. The
+   runtime synthesizer honors this override, so the property is typed as a string and the profile's
+   deserializer parses it. Narrowest option; the cost is that the annotation misstates the Java
+   type, and it does not carry the decimal grammar (`pattern`/`maxLength`) — the profile's
+   deserializer remains the enforcing side. Note `@Schema(type = "string")` does **not** work here:
+   the runtime synthesizer reads `implementation`, not `type`. (The build-time spec generator used
+   for `openapi.json` is a different generator with different annotation support — see
+   `vertique-rest-openapi-plugin`.)
+2. **Per application — the `openapi-contract` strategy** (`vertique-rest-openapi-validation`)
+   paired with `BigDecimalModelConverter` in the spec build. Validates against the generated spec,
+   which does carry the grammar and length bound. This is what `examples/vertique-example-hello`
+   demonstrates.
+3. **Opt out** of body validation entirely.
+
+The underlying gap is that the runtime schema synthesizer takes no input from the active JSON
+profile at all — `BigDecimal` is simply its most visible consequence. Making profile-declared wire
+shapes an input to schema synthesis is a separate initiative; see the `rest-020` PRD.
 
 ### Keyed-Collection Support (`dev.vertique.json.keyed`)
 
