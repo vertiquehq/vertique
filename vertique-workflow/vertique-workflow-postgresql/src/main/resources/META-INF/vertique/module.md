@@ -72,7 +72,7 @@ The module owns workflow persistence tables, including:
 | `workflow_branch_tokens` | Active branch execution state; includes `metadata JSONB` for durable context |
 | `workflow_join_states` | Fan-in state for fork/join workflows |
 
-The migration files live with the module under the workflow PostgreSQL resources. Since this module was pre-release when branch-token and `metadata` columns were added, the `workflow_branch_tokens` table definition and the `metadata` columns on both `workflow_timers` and `workflow_branch_tokens` were folded into `V1__create_workflow_tables.sql` rather than added as a subsequent migration. `V2__add_branch_and_join_support.sql` no longer exists — it was folded into V1 before any external release. After first public release, schema changes should be additive Flyway migrations.
+The migration files live with the module under `db/migration/workflow`. The whole schema is defined in a single migration, `V1__create_workflow_tables.sql` — including the `workflow_branch_tokens` table and the `metadata` columns on both `workflow_timers` and `workflow_branch_tokens`. Schema changes from here are additive Flyway migrations.
 
 ---
 
