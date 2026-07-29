@@ -37,22 +37,25 @@ duplicated contexts via `CorrelationContextValueAdapter`, which is discovered th
 
 ## Key Classes
 
-| Class | Role |
-|-------|------|
-| `MutableCorrelationContext` (package-private) | Live impl of the public `CorrelationContext` interface. Vert.x duplicated-context confined — plain fields + `ArrayList`/`HashMap`; no synchronisation. `snapshot()` takes defensive `List.copyOf`/`Map.copyOf` so the resulting snapshot is safe to cross threads. Static `fromSnapshot(snapshot)` reconstructs a fresh independent instance; reused by both the factory and the value adapter. |
-| `CorrelationContextFactory` (`@Singleton`) | Creates initial `CorrelationContext` instances. Three entry points: `create(requestId, correlationId)` for REST ingress, `seed(boundary)` for first-ingress on non-REST surfaces (mints both ids via the generator, tags `source="seeded:<boundary>"`), `fromSnapshot(snapshot)` for the receive side of a dispatch boundary. Injects `Optional<CorrelationIdGenerator>` so app-supplied overrides win over the framework default. |
-| `CorrelationContextMutator` (`@Singleton`) | Framework-only write surface for enriching the already-bound context. **Mirroring setters** (`setCausationId`, `setTrace`) update the live state AND the matching `CorrelationMdcKeys` MDC entry inline. **Non-mirroring setters** (`setSession`, `addProtocolCorrelation`, `putAttribute`) write the live state only — session and protocol refs are not in the V1 safe-by-default mirror set (FR-COR-163/165). Every setter fails fast with `IllegalStateException` when no `CorrelationContext` is bound on the current context. |
-| `Uuid4CorrelationIdGenerator` | Default `CorrelationIdGenerator` SPI implementation. Stateless singleton (`INSTANCE`) producing RFC 4122 UUID v4 strings. Used by `CorrelationContextFactory` when no app override is supplied. |
-| `CorrelationMdcKeys` | Public string constants for the framework-mirrored MDC keys (`requestId`, `correlationId`, `causationId`, `traceId`, `spanId`) plus the `MIRRORED` set. Lives here (not in `vertique-core`) because MDC is a logging concept that should not leak into the API module. |
-| `CorrelationContextValueAdapter` | `ContextValueAdapter<CorrelationContext>` implementation registered via `META-INF/services/dev.vertique.core.context.ContextValueAdapter`. `type()` returns the public interface (matching the holder bind key); `snapshot`/`restoreFromSnapshot` delegate to `MutableCorrelationContext.fromSnapshot`; `duplicate` rebuilds independently so mutations on a Vert.x context duplicate do not bleed into the source. Pure no-arg constructor — no Dagger dependencies (substrate bootstraps adapters before Dagger exists). |
-| `CorrelationContextModule` | Dagger module. Declares `@BindsOptionalOf CorrelationIdGenerator` and `@BindsOptionalOf TraceReferenceResolver`, contributes service-dispatch encoder/decoder (via `ServiceDispatchCodecs.snapshotEncoder/Decoder`), the bespoke durable encoder/decoder, and the `CorrelationContextSeeder` `InboundContextInitializer`. Pulled into the REST graph by `RestCoreModule` and into every service-dispatch graph by `DispatchModule`. |
-| `TraceReferenceResolver` | SPI interface. See Extension Points below. |
+### `CorrelationMdcKeys`
+
+Public string constants for the framework's mirrored MDC keys: `REQUEST_ID` (`requestId`),
+`CORRELATION_ID` (`correlationId`), `CAUSATION_ID` (`causationId`), `TRACE_ID` (`traceId`),
+`SPAN_ID` (`spanId`), plus a `MIRRORED` set containing all five. Reference these constants (or the
+literal key strings) when configuring a logging pattern — e.g. Logback `%X{correlationId}` — so log
+lines carry the active correlation identifiers.
+
+Mirroring is selective: `requestId`/`correlationId` are set once at REST ingress; `causationId` and
+`trace` (`traceId`/`spanId`) are additionally written into MDC whenever the corresponding
+`CorrelationContextMutator` setter runs during enrichment. Session refs, protocol-correlation refs,
+and arbitrary attributes are never mirrored into MDC — they live only in the `CorrelationContext`
+read via the substrate.
 
 ## Extension Points
 
 | Extension | Where to plug in |
 |-----------|------------------|
-| Custom id generator (ULID / NanoID / etc.) | `@Provides @Singleton CorrelationIdGenerator` in the app's `AppModule`. Wins over the framework default via the `@BindsOptionalOf` indirection. |
+| Custom id generator (ULID / NanoID / etc.) | `@Provides @Singleton CorrelationIdGenerator` in the app's `AppModule`. Wins over the framework default (`Uuid4CorrelationIdGenerator`, RFC 4122 UUID v4 strings) via the `@BindsOptionalOf` indirection. |
 | Distributed-trace identity at REST ingress | `@Provides @Singleton TraceReferenceResolver` in the OpenTelemetry integration module. At most one implementation may be on the graph — see below. |
 | Custom correlation MDC mirror keys | Not configurable in V1. Future opt-in `CorrelationMdcConfig` (deferred) will broaden the mirror set without breaking V1 semantics. |
 | Application-supplied snapshot/restore behavior | Not exposed in V1 — the adapter is wired and bound to `CorrelationContext.class`. Apps that need to customise persistence shape contribute their own `DurableContextMetadataEncoder` / `Decoder` against the substrate's multibind. |
@@ -81,7 +84,7 @@ and the trace-enrichment step is skipped entirely — no behavior change for app
 not wire a tracer.
 
 **Singleton by design:** at most one implementation may be on the graph. Tracing is
-OpenTelemetry-only in this framework (see ADR-0098); contributing multiple resolvers would create
+OpenTelemetry-only in this framework; contributing multiple resolvers would create
 an ambiguous binding that Dagger rejects at compile time. Note that
 `vertique-opentelemetry-core`'s `OpenTelemetryModule` **already contributes**
 `OpenTelemetryTraceReferenceResolver` — an application that installs it must **not** also bind its
@@ -124,7 +127,7 @@ TraceReferenceResolver otelTraceReferenceResolver(OpenTelemetry otel) {
 
 Consumed by:
 
-- **`vertique-rest-core`** — `CorrelationIngressMiddleware` and the protocol-correlation SPIs.
+- **`vertique-rest-core`** — `CorrelationIngressMiddleware` and the protocol-correlation SPIs; `RestCoreModule` includes `CorrelationContextModule`, so correlation is active by default for REST.
 - `vertique-services` — transitively via `DispatchModule`, which now includes `CorrelationContextModule`. This means every dispatch-using graph (Kafka consumers, scheduled jobs, workflow workers, outbox relays) gets correlation by default without any per-app wiring.
 - `vertique-kafka`, `vertique-inbox-outbox-*`, `vertique-job-*`, `vertique-workflow-*` — consume the runtime indirectly through `DispatchModule` and the substrate's `InboundExecutionContextScope`, which invokes the registered `CorrelationContextSeeder` on durable boundaries that arrive without an encoded context (FR-COR-125).
 
@@ -146,7 +149,3 @@ For cross-boundary propagation the runtime ships:
 - A `CorrelationContextSeeder` `InboundContextInitializer` that mints a fresh context on every
   inbound boundary (REST, service dispatch, Kafka, outbox relay, delayed-job poll, workflow
   branch / timer recovery) that arrives without one.
-
-## Related ADRs
-
-- ADR-0098: Micrometer Facade and Pluggable Registry Backends — establishes that tracing is OpenTelemetry-only in this framework (non-pluggable); directly governs why `TraceReferenceResolver` is a singular optional binding rather than a multibinding.

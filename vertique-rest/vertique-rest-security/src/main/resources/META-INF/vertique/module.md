@@ -7,458 +7,457 @@ SPDX-License-Identifier: EUPL-1.2
 
 > **Status:** Implemented
 > **Package:** `dev.vertique.rest.security`
-> **Artifact:** `rest-security`
-> **Depends on:** rest-core, core
+> **Artifact:** `vertique-rest-security`
+> **Depends on:** rest-core, security-core, security-runtime, context, logging
 
-Authentication, identity resolution, and authorization for the REST framework. Bridges inbound
-Vert.x authentication to the typed `SecurityContext` model, resolves `SecurityIdentity` from
-accumulated `AuthenticationEvidence`, enforces authorization via `AuthorizationDecisionPoint`, and
-emits security lifecycle events through `SecurityEventObserver`.
+`vertique-rest-security` is the authentication, identity-resolution, and authorization layer for
+Vertique's HTTP transport. It turns whatever an authentication handler proved about a request into
+the framework's typed `dev.vertique.security.SecurityContext`, enforces the operation's declared
+security policy before the resource method runs, and emits a canonical security event for every
+credential acceptance, credential rejection, and authorization decision.
 
----
-
-## Overview
-
-`rest-security` provides:
-
-- **`OriginCaptureMiddleware`** — ROOT-scoped pre-auth middleware that captures `RequestOrigin` from
-  the inbound request
-- **`IdentityResolutionMiddleware`** — per-route handler that runs the `SecurityIdentityResolver`
-  chain, builds the `SecurityContext`, enriches MDC, and emits `CredentialAcceptedEvent`
-- **`AuthorizationContributor`** — adds authorization handlers for `@RolesAllowed`/`@Authorized`
-  operations via `SecurityPolicyEnforcer` and `AuthorizationDecisionPoint`
-- **`CredentialRejectionReporter`** SPI — called by auth handlers on failure to emit
-  `CredentialRejectedEvent`
-- **`SecurityClaimMapper`** SPI — maps raw JWT/provider claims to typed `AuthorizationClaims`
-- **`SecurityEventEmitter`** (from `vertique-security-runtime`, `dev.vertique.security.runtime.events`) — failure-isolated fan-out to `Set<SecurityEventObserver>`; the multibinding and singleton are owned by `SecurityEventsModule` and injected here
-- **`DefaultChannelIdentityManager`** — in-memory `ChannelIdentityManager` for long-lived channels
-- **`JaxRsSecurityContext`** — bridges framework `SecurityContext` to
-  `jakarta.ws.rs.core.SecurityContext`
-- **`DefaultSecurityPolicyValidator`** — startup annotation/OpenAPI consistency checker
-- **`ActionGateAuthenticationContributor`** — installs an auth handler on action-only routes (`SecurityPolicy.None` + `@RequiresAction`) so the gate sees a real identity rather than anonymous
-- **`AuthModule`** and **`SecurityModule`** — Dagger modules wiring all of the above
+It does **not** verify credentials itself. Credential verification is contributed by an
+authentication module — `dev.vertique:vertique-rest-auth-jwt` for bearer tokens, or an application's
+own `SecuritySchemeHandler` / `RouteAuthHandler`. This module consumes the evidence those handlers
+produce. It also does not manage users, sessions, or login flows.
 
 ---
 
-## Request Pipeline
+## When To Use It
 
-The framework registers handlers for each JAX-RS operation in this order:
+Install `vertique-rest-security` whenever an HTTP operation carries `@RolesAllowed`, `@DenyAll`,
+`@PermitAll`, `@Authorized`, `@RequiresAction`, or a Swagger `@SecurityRequirement`. Without it the
+route registrar has no `AuthEnforcementCapability` binding and rejects those annotations at startup,
+so a secured API cannot start unauthenticated by accident.
 
-```
-ROOT-scoped middleware (run at Router level for every request):
-  1. RequestContextLifecycle    (order = Integer.MIN_VALUE — scope owner)
-  2. CorrelationIngressMiddleware (order = ORDER + 10 from lifecycle)
-  3. OriginCaptureMiddleware    (order = CorrelationIngressMiddleware.ORDER + 10 — captures RequestOrigin)
-  4. RestRequestCompletionEmitter (order = RequestContextLifecycle.ORDER + 5, owned by rest-core; emits RestRequestCompletedEvent on response end)
-  ... other ROOT middlewares ...
+Pair it with:
 
-  → Auth handler(s) (e.g., JWTAuthHandler via SecuritySchemeHandler.configure(SecuritySchemeRegistry);
-    ChainAuthHandler.any() for OR-scheme operations; sets ctx.user(), appends AuthenticationEvidence,
-    calls CredentialRejectionReporter on failure)
-
-Per-route handler chain:
-  5. IdentityResolutionMiddleware  (priority 80 — resolves SecurityIdentity, binds SecurityContext,
-                                    emits CredentialAcceptedEvent)
-  6. AuthorizationHandler          (priority 100 — enforces @RolesAllowed/@Authorized + scope requirements
-                                    folded from securityRequirementSets(), emits AuthorizationDecisionEvent)
-  7. OperationIdCaptureContributor  (priority 350, owned by rest-core — stores operationId + route template for RestRequestCompletionEmitter)
-  8. ResourceMethodInvoker         (always last — JAX-RS method invocation)
-```
-
-`IdentityResolutionMiddleware` is NOT a `Middleware` — it is added per-route via
-`IdentityResolutionContributor` so it runs after the auth handler (which sets `ctx.user()` and
-appends evidence) and before the authorization handler (which reads claims from the bound
-`SecurityContext`).
+| Artifact | Why |
+|---|---|
+| `dev.vertique:vertique-rest-auth-jwt` | Ready-made bearer-token `SecuritySchemeHandler` and `RouteAuthHandler` |
+| `dev.vertique:vertique-security-core` | The typed `SecurityContext` model, `AuthorizationClaims`, `@RequiresAction`, `AuthorizationPolicy` |
+| `dev.vertique:vertique-security-runtime` | `SecurityEventEmitter` and the `SecurityEventObserver` multibinding |
+| `dev.vertique:vertique-security-authz` | The action `Authorizer` engine that `@RequiresAction` requires |
 
 ---
 
-## Security Model
+## Core Concepts
 
-### OR-of-AND-with-scopes
+### What runs, in what order
 
-Operation security follows the OpenAPI semantics: the `securityRequirementSets()` list is an **OR** (any one set satisfying all its schemes authenticates the request); within a `SecurityRequirementSet` every listed `SecurityRequirement` must hold (**AND**); within a scheme every listed scope must hold (**AND**). An empty list means public (no authentication required).
+Every request passes three separately-owned stages. Only the last two belong to this module.
+
+1. **Authentication** — an `AuthenticationHandler` installed from the operation's security scheme
+   sets `ctx.user()` and appends `AuthenticationEvidence`. On failure it calls
+   `CredentialRejectionReporter.report(...)` and then `ctx.fail(...)`, which short-circuits
+   everything below.
+2. **Identity resolution** (priority 80) — runs the `SecurityIdentityResolver` chain, assembles the
+   `SecurityContext`, binds it for the rest of the request, and emits `CredentialAcceptedEvent`.
+3. **Authorization** (priority 100) — evaluates the effective `SecurityPolicy` and any
+   `@RequiresAction` gate, and emits exactly one `AuthorizationDecisionEvent`.
+
+The framework occupies these `OperationHandlerContributor` priorities. Choose a priority for your
+own contributor relative to them:
+
+| Priority | Contributor | Artifact |
+|---|---|---|
+| 40 | `ActionGateAuthenticationContributor` | `vertique-rest-security` |
+| 50 | JWT claims validator | `vertique-rest-auth-jwt` |
+| 80 | `IdentityResolutionContributor` | `vertique-rest-security` |
+| 100 | `AuthorizationContributor` | `vertique-rest-security` |
+| 350 | operation-id capture | `vertique-rest-core` |
+
+`OriginCaptureMiddleware` is the module's one ROOT-scoped `Middleware`. It runs before any
+authentication handler and stashes the resolved `RequestOrigin` so identity resolution and every
+emitted event carry the caller's address even when authentication fails.
+
+### The resolved `SecurityContext`
+
+`dev.vertique.security.SecurityContext` has four pillars, assembled at identity resolution:
+
+| Pillar | Source |
+|---|---|
+| `identity()` | the first `SecurityIdentityResolver` returning a non-empty result; `SecurityIdentity.anonymous()` when the chain is exhausted |
+| `authentication()` | the accumulated `AuthenticationEvidence` list; `primaryMethod()` is the first entry's method, or `DefaultAuthMethod.none()` when there is no evidence |
+| `authorization()` | `SecurityClaimMapper` applied to `ctx.user().principal()`; `AuthorizationClaims.empty()` when no Vert.x `User` is present |
+| `origin()` | the `RequestOrigin` captured pre-authentication |
+
+Inject it into any resource method (see [JAX-RS integration](#jax-rs-integration)), or read it
+anywhere in the request through `SecurityRuntime.current()`. The binding unwinds with the request
+lifecycle. The same context is captured onto outbound `vertique-services` dispatches automatically,
+so a downstream service handler observes the caller's identity without threading it through the
+contract.
+
+### Authorization model: OR of AND, with scopes
+
+An operation's security requirements follow OpenAPI semantics through
+`RestOperationDescriptor.securityRequirementSets()`:
+
+- the list of `SecurityRequirementSet` is an **OR** — satisfying any one set authenticates the
+  request;
+- every `SecurityRequirement` inside a set must hold — an **AND**;
+- every scope listed on a scheme must hold — an **AND**;
+- an empty list means the operation is public.
 
 ```java
-// rest-core, dev.vertique.rest.core.routing
+// dev.vertique.rest.core.routing — from vertique-rest-core
 public record SecurityRequirement(String schemeName, List<String> scopes) {}
 
 public record SecurityRequirementSet(List<SecurityRequirement> schemes) {
-    /** True when this set contains exactly one scheme (the only case V1 implements). */
-    public boolean isSingleScheme() { return schemes.size() == 1; }
-    /** True when at least one scheme in this set carries required scopes. */
-    public boolean hasScopes() { return schemes.stream().anyMatch(r -> !r.scopes().isEmpty()); }
+    public boolean isSingleScheme();  // exactly one scheme in this set
+    public boolean hasScopes();       // at least one scheme carries required scopes
 }
 ```
 
-`RestOperationDescriptor.securityRequirementSets()` replaces the former `securityRequirements()`. The `SecuritySchemeAnnotationScanner` produces sets directly: a standalone `@SecurityRequirement(name)` → a single-scheme set; `@SecurityRequirement(combine={…})` → a multi-scheme AND-set; repeated / `@SecurityRequirements` / `@Operation(security=…)` → multiple sets (OR).
+Sets are produced from annotations: a standalone `@SecurityRequirement(name)` becomes a
+single-scheme set; `@SecurityRequirement(combine = {…})` becomes a multi-scheme AND-set; repeated
+`@SecurityRequirement`, `@SecurityRequirements`, or `@Operation(security = …)` become multiple sets
+(the OR alternatives).
 
-### Fail-closed matrix (V1)
+### Fail-closed startup matrix
 
-The framework fails startup with `RestConfigurationException` on any configuration it cannot enforce safely. Supported configurations are: public (empty set list); single-scheme scopeless; multiple single-scheme scopeless OR alternatives. Everything else is rejected at startup — not silently degraded.
+Any security shape the framework cannot enforce exactly as declared fails startup with
+`RestConfigurationException`. Nothing is silently downgraded or ignored.
 
-| Configuration | Outcome |
+| Declared shape | Outcome |
 |---|---|
-| Empty `securityRequirementSets()` | Public — no auth handler |
-| Single-scheme set, no scopes | Auth handler installed; no scope check |
-| Single-scheme set, with scopes | Auth handler + scope enforcement (see below) |
-| Multiple single-scheme scopeless OR sets | `ChainAuthHandler.any()` — any one scheme sufficient |
-| Multi-scheme AND-set (`combine()`) | `RestConfigurationException` at startup — deferred |
-| Any OR alternative with scopes (multi-set with scopes) | `RestConfigurationException` at startup — deferred |
-| Duplicate `schemeName()` across handlers | `RestConfigurationException` at startup |
-| Both `@Authorized(scopes)` and `@SecurityRequirement` scopes on same operation | `RestConfigurationException` at startup — ambiguous |
+| Empty `securityRequirementSets()` | Public — no authentication handler installed |
+| One single-scheme set, no scopes | Authentication handler installed; no scope check |
+| One single-scheme set, with scopes | Authentication handler plus scope enforcement (folded, below) |
+| Several single-scheme scopeless sets | `ChainAuthHandler.any()` — any one scheme is sufficient |
+| Any multi-scheme AND-set (`combine()`) | `RestConfigurationException` at startup |
+| Several sets where any set carries scopes | `RestConfigurationException` at startup |
+| Scopes declared via both `@Authorized(scopes)` and `@SecurityRequirement` | `RestConfigurationException` at startup — ambiguous |
+| Two `SecuritySchemeHandler`s with the same `schemeName()` | `RestConfigurationException` at startup |
 
-### Scope enforcement unified with `@Authorized`
+The gate is `EffectiveSecurityPolicy.enforceSupportedShape` in `vertique-rest-core`. Reading an
+operation's effective policy runs it, so the check is always on — it does not depend on this
+module's `SecurityPolicyValidator` being wired.
 
-For the one scoped case V1 supports (single-scheme set with scopes), `EffectiveSecurityPolicy.fold` merges the set's scopes into the operation's `SecurityPolicy.Constrained(existingRoles, scopes, requireAllScopes=true)` at the route-registration site. Enforcement then flows through the existing `VertxProviderDecisionPoint` → `SecurityPolicyEnforcer` → `ctx.fail(403)` path — one mechanism, one 403, no parallel scope check. `@Authorized(scopes)` and `@SecurityRequirement` scopes are mutually exclusive per operation (both-scopes fails closed, see above). Roles from `@RolesAllowed` / `@Authorized(roles)` are preserved alongside the folded scopes.
+### Scope enforcement is unified with `@Authorized`
+
+For the one scoped shape the framework enforces — a single single-scheme set with scopes —
+`EffectiveSecurityPolicy.fold` merges the scheme's scopes into the operation's policy at route
+registration:
+
+| Base policy | Effective policy after fold |
+|---|---|
+| `None` or `AuthenticatedOnly` | `Constrained([], scopes, requireAllScopes = true)` |
+| `Constrained(roles, [], …)` | `Constrained(roles, scopes, requireAllScopes = true)` |
+| `PermitAll` or `DenyAll` | unchanged |
+
+Roles from `@RolesAllowed` / `@Authorized(roles)` survive the fold. Enforcement then flows through
+the same `AuthorizationDecisionPoint` → `SecurityPolicyEnforcer` → 403 path as `@Authorized(scopes)`
+— one mechanism, one status, one event. `fold` never replaces or loosens scopes a base policy
+already declares.
+
+### Security events
+
+Every decision this module makes produces exactly one canonical event, fanned out to every
+`SecurityEventObserver` through the `SecurityEventEmitter` from
+`dev.vertique:vertique-security-runtime`. Observer failure is isolated and never changes the
+security outcome.
+
+| Event | Emitted by | When |
+|---|---|---|
+| `CredentialRejectedEvent` | the failing authentication handler, via `CredentialRejectionReporter` | credential verification failed |
+| `CredentialAcceptedEvent` | identity resolution | evidence is non-empty **and** a `CorrelationContext` is bound |
+| `AuthorizationDecisionEvent` | `SecurityPolicyEnforcer` | once per authorization attempt, permit or deny |
+| `ChannelOpenedEvent`, `ChannelIdentityRefreshedEvent`, `ChannelClosedEvent` | `ChannelIdentityManager` | long-lived channel lifecycle |
+
+An `AuthorizationDecisionPoint` is a **pure evaluator**: it returns a decision and must not emit. The
+enforcement layer owns emission, so a decision point that also emits produces duplicate events.
+
+---
+
+## Getting Started
+
+```java
+@Singleton
+@Component(modules = {VertxModule.class, RestModule.class,
+                      AuthModule.class, SecurityModule.class,
+                      AppModule.class, ResourceModule.class})
+interface AppComponent {
+    HttpVerticle httpVerticle();
+}
+```
+
+`SecurityModule` supplies the `SecurityRuntime` binding and is required for any security feature.
+`AuthModule` adds identity resolution, authorization, the startup validator, and the default
+claim mapper, rejection reporter, and channel identity manager.
 
 ---
 
 ## Key Classes
 
-### SecurityIdentity and SecurityContext
+### `RestAuthenticationEvidence`
 
-The typed security model is defined in `dev.vertique.security`. See `dev.vertique:vertique-security-core` for the
-full reference. At the REST layer, `IdentityResolutionMiddleware` builds an
-`AuthenticatedSecurityContext` from:
-- `SecurityIdentity` — resolved by the `SecurityIdentityResolver` chain
-- `AuthenticationState` — built from accumulated `AuthenticationEvidence`
-- `AuthorizationClaims` — built by `SecurityClaimMapper` from `ctx.user().principal()`
-- `Optional<RequestOrigin>` — captured pre-auth by `OriginCaptureMiddleware`
-
-### OriginCaptureMiddleware
-
-ROOT-scoped `Middleware` (order = `CorrelationIngressMiddleware.ORDER + 10`) that captures
-`RequestOrigin` before any authentication handler runs. Stashes the captured origin on the routing
-context under `RequestOrigin.class.getName()`. Downstream `IdentityResolutionMiddleware` reads it
-and incorporates it into the resolved `SecurityContext`.
-
-`RequestOriginCapturer` applies the `RequestOriginConfig` trusted-proxy policy:
-- XFF is always parsed for observability (AC-RO-3)
-- `clientIp` uses the forwarded address only when the direct peer is in `trustedProxyCidrs`
-- Forwarded scheme and host are trusted only when configured and the direct peer is trusted
-
-### IdentityResolutionMiddleware
-
-Per-route handler (priority 80, added by `IdentityResolutionContributor`) that:
-
-1. Reads accumulated `AuthenticationEvidence` from `RestAuthenticationEvidence.get(ctx)`
-2. Builds a `SecurityIdentityResolutionContext` (evidence + origin + correlation + empty transport
-   attributes)
-3. Runs the priority-ordered `SecurityIdentityResolver` chain — first non-empty result wins;
-   exhausted chain falls back to `SecurityIdentity.anonymous()`
-4. Builds `AuthorizationClaims` from `ctx.user().principal()` via `SecurityClaimMapper`
-5. Constructs `AuthenticatedSecurityContext` and binds it via `SecurityRuntime.bindCurrent()`,
-   registering the returned scope for LIFO cleanup with `RequestContextLifecycle`
-6. When the injected `Optional<IdentitySnapshotCapture>` is present, captures an identity snapshot
-   for durable carriage via `capture.captureFrom(securityContext)`, registering the returned bind
-   scope for LIFO cleanup with the same `RequestContextLifecycle`
-7. Enriches MDC (`userId`, `clientId`, `authMethod`) — absent components are never emitted as
-   empty strings
-8. Emits `CredentialAcceptedEvent` when evidence is non-empty (authenticated requests only)
-
-#### Invariants & Gotchas
-
-- Duplicate `(priority, id)` resolver pairs fail loudly at startup (`IllegalStateException`) —
-  NFR-ID-003. This fires at Dagger construction time, not at first request.
-- The `Optional<IdentitySnapshotCapture>` ingress capture hook is **inert unless identity-snapshot
-  durable carriage is installed**: `SecurityModule` declares it `@BindsOptionalOf`, so the optional
-  is empty (and the REST hot path pays nothing) until an application includes
-  `IdentitySnapshotReconstructionModule` / `IdentitySnapshotCarriageModule` and configures
-  `identity.snapshot.hmacKeys`. When present, `captureFrom(...)` gates the `identity.snapshot.captureEnabled`
-  kill-switch itself. The convenience constructor that omits the capture argument (used by
-  `WebSocketMount` and tests) passes `Optional.empty()`, so WebSocket/SSE ingress captures no
-  snapshot (deferred — ADR-0164).
-- `CredentialAcceptedEvent` is NOT emitted for anonymous requests (empty evidence). Anonymous
-  requests produce a bound `SecurityContext` with `SecurityIdentity.anonymous()` but emit no event.
-- `CredentialRejectedEvent` is emitted by the failing auth handler before `ctx.fail()` is called,
-  NOT by this middleware. Once `ctx.fail()` is called, `IdentityResolutionMiddleware` is
-  short-circuited.
-
-### RestAuthenticationEvidence
-
-Static utility class for auth handlers to append `AuthenticationEvidence` to a routing context.
+Static bridge an authentication handler uses to record what it proved. Evidence accumulates as a
+list on the routing context, so layered authentication (mTLS plus JWT) contributes several entries.
 
 ```java
-// In a Vert.x auth handler or SecuritySchemeHandler:
 RestAuthenticationEvidence.append(ctx, new AuthenticationEvidence(
-    method,
-    Optional.of("credential-id-or-jti"),
-    Instant.now(),                          // verifiedAt
-    Optional.of(exp),                       // notAfter
-    new JwksVerificationSource("https://idp.example.com/.well-known/jwks.json"),
-    Map.of()
-));
+        DefaultAuthMethod.jwt(),
+        Optional.of(jti),        // credentialId — stable and non-sensitive
+        Instant.now(),           // verifiedAt
+        Optional.of(expiresAt),  // notAfter
+        new JwksVerificationSource(
+                Optional.of("https://idp.example.com/"),
+                Optional.of("https://idp.example.com/.well-known/jwks.json"),
+                Optional.of(kid),
+                Optional.of("RS256")),
+        Map.of()));              // safeAttributes
 ```
 
-Evidence is stored as a list on `ctx.data()` under a well-known key. Multiple evidence entries are
-supported for layered authentication (e.g., mTLS plus JWT).
+`RestAuthenticationEvidence.get(ctx)` returns the accumulated list; identity resolution reads it.
+The first entry's method becomes `authentication().primaryMethod()`, so append the strongest or
+primary method first.
 
-### CredentialRejectionReporter
+### `CredentialRejectionReporter`
 
-SPI that auth handlers call when credential verification fails. The default implementation
-(`DefaultCredentialRejectionReporter`) assembles a `CredentialRejectedEvent` from the provided
-parameters plus the pre-auth-bound `RequestOrigin` and ambient `CorrelationContext`, and emits it
-immediately via the `SecurityEventsModule`-provided `SecurityEventEmitter` (`dev.vertique.security.runtime.events`).
+SPI an authentication handler calls when verification fails, before `ctx.fail(...)`.
 
 ```java
-// In a custom SecuritySchemeHandler on failure:
+void report(RoutingContext ctx,
+            AuthMethod attemptedMethod,
+            Optional<String> credentialId,
+            Optional<VerificationSource> verificationSource,
+            String reasonCode,
+            Map<String, Object> safeAttributes);
+```
+
+```java
 rejectionReporter.report(
-    ctx,
-    DefaultAuthMethod.jwt(),
-    Optional.of(jti),                     // stable, non-sensitive credential id
-    Optional.of(new JwksVerificationSource(issuer)),
-    "TOKEN_EXPIRED",                       // stable reason code
-    Map.of("header_alg", headerAlg)       // safe, redacted context only
-);
+        ctx,
+        DefaultAuthMethod.jwt(),
+        Optional.of(jti),
+        Optional.of(new JwksVerificationSource(
+                Optional.of(issuer), Optional.of(jwksUri), Optional.empty(), Optional.empty())),
+        "TOKEN_EXPIRED",
+        Map.of("header_alg", headerAlg));
 ctx.fail(401);
 ```
 
-`safeAttributes` MUST NOT contain raw token material, raw API keys, raw passwords, or raw request
-bodies.
+`safeAttributes` **must not** contain raw token material, raw API keys, raw passwords, raw HMAC
+signatures, or raw request bodies. It throws `IllegalStateException` when no `CorrelationContext` is
+bound; in normal request flow the correlation ingress middleware binds one before any authentication
+handler runs.
 
-### SecurityClaimMapper
+### `SecurityClaimMapper`
 
-Functional SPI for mapping raw JWT/provider claims to typed `AuthorizationClaims`. The default
-implementation (`DefaultSecurityClaimMapper`) handles the most common JWT claim conventions:
+Functional SPI mapping raw provider claims to typed `AuthorizationClaims`:
 
-| Claim | Produced authority kind |
-|-------|------------------------|
+```java
+AuthorizationClaims map(Map<String, Object> claims);
+```
+
+The default implementation reads three conventions. Each claim may be a JSON array of strings or a
+single space-delimited string; non-string elements and blank values are skipped, and a missing claim
+contributes nothing.
+
+| Claim | Authority kind |
+|---|---|
 | `roles` | `AuthorityKind.ROLE` |
-| `scope` / `scp` | `AuthorityKind.SCOPE` |
+| `scope` and `scp` (merged) | `AuthorityKind.SCOPE` |
 | `permissions` | `AuthorityKind.PERMISSION` |
 
-Both JSON-array (`["a", "b"]`) and space-delimited string (`"a b"`) formats are supported for all
-claims.
-
-Override by providing a custom binding in the application's Dagger module:
+Override it for a provider with a different shape:
 
 ```java
 @Provides
-SecurityClaimMapper myClaimMapper() {
+SecurityClaimMapper keycloakClaimMapper() {
     return claims -> {
-        // Example: Keycloak nested realm_access.roles
-        List<String> roles = extractNestedRoles(claims, "realm_access", "roles");
-        return AuthorizationClaims.of(AuthorityKind.ROLE, roles);
+        // Keycloak nests roles under realm_access.roles.
+        Set<AuthorityClaim> authorities = extractNestedRoles(claims, "realm_access", "roles").stream()
+                .map(role -> new AuthorityClaim(AuthorityKind.ROLE, role, "", "", "", Map.of()))
+                .collect(Collectors.toSet());
+        return new AuthorizationClaims(authorities, Map.of());
     };
 }
 ```
 
-### AuthorizationDecisionPoint
+`AuthorityClaim` is `(kind, value, issuer, audience, source, attributes)`; the built-in mapper
+leaves `issuer`, `audience`, and `source` empty. Query the result with
+`claims.valuesOf(AuthorityKind.ROLE)`.
 
-Async REST-layer SPI for authorization evaluation. Implementations receive a fully populated
-`AuthorizationRequest` and return `Future<AuthorizationDecision>`. Per ADR-0114, implementations
-must **not** emit `AuthorizationDecisionEvent` — the enforcement layer (`SecurityPolicyEnforcer`)
-owns emission and emits exactly one event per attempt.
+### `AuthorizationDecisionPoint`
 
-`SecurityPolicyEnforcer` selects the active decision point at construction time in priority order:
-1. App-provided `AuthorizationDecisionPoint` override (`@BindsOptionalOf`)
-2. App-provided sync `AuthorizationPolicy`, wrapped by `SyncPolicyDecisionPoint`
-3. Default `VertxProviderDecisionPoint` (evaluates from `AuthorizationClaims`)
+Async authorization SPI. Implementations receive a fully-populated `AuthorizationRequest` and return
+`Future<AuthorizationDecision>`.
 
 ```java
-// Async decision point for remote PDP:
-// import dev.vertique.security.runtime.events.SecurityEventEmitter; — lives in vertique-security-runtime
+@FunctionalInterface
+public interface AuthorizationDecisionPoint {
+    Future<AuthorizationDecision> decide(AuthorizationRequest request);
+}
+```
 
+```java
 @Provides
-AuthorizationDecisionPoint remoteDecisionPoint(MyPdpClient client, SecurityEventEmitter emitter) {
-    // NOTE: per ADR-0114 the enforcement layer (SecurityPolicyEnforcer) owns emission.
-    // A custom AuthorizationDecisionPoint should return the decision without emitting;
-    // SecurityPolicyEnforcer will emit exactly one AuthorizationDecisionEvent.
-    return request -> client.evaluate(request.identity(), request.action(), request.resource())
+AuthorizationDecisionPoint remoteDecisionPoint(MyPdpClient client) {
+    // Return the decision only — SecurityPolicyEnforcer emits the one event.
+    return request -> client
+            .evaluate(request.securityContext(), request.action(), request.resource())
             .map(allowed -> allowed
                     ? AuthorizationDecision.permit("REMOTE_PDP_ALLOWED")
                     : AuthorizationDecision.deny("REMOTE_PDP_DENIED"));
 }
 ```
 
-> **Migration note:** Applications using Vert.x `AuthorizationProvider` bindings must migrate
-> authorization data to the `SecurityClaimMapper` → `AuthorizationClaims` path. Vert.x
-> `AuthorizationProvider` chains are NOT consulted by the new `AuthorizationDecisionPoint`. A
-> future adapter resolver is tracked in GitHub issue #73. See
-> ADR-0064 for the rationale.
+Vert.x `AuthorizationProvider` bindings are accepted by the multibinding but are **not** consulted:
+authorization is evaluated from the resolved `AuthorizationClaims`. Move authorization data onto the
+`SecurityClaimMapper` → `AuthorizationClaims` path.
 
-### SecurityEventEmitter
+### `SecurityPolicyEnforcer`
 
-`SecurityEventEmitter` is defined and lives in `vertique-security-runtime` (`dev.vertique.security.runtime.events`).
-`AuthModule` includes `SecurityEventsModule`, which declares the `Set<SecurityEventObserver>` multibinding
-and makes the singleton emitter available for injection throughout the security stack.
-
-### ActionGateAuthenticationContributor
-
-`OperationHandlerContributor` (priority 40) that installs the selected `RouteAuthHandler` on a
-JAX-RS route whose resolved policy is `SecurityPolicy.None` but which carries a `@RequiresAction`
-gate. Without this contributor, an action-only route receives no OpenAPI security handler, so
-`IdentityResolutionMiddleware` resolves an anonymous identity and the action gate silently evaluates
-the wrong caller.
-
-The handler is installed **only** when `SecurityPolicy.None` + `@RequiresAction` are both present.
-Routes with `AuthenticatedOnly` or `Constrained` policies already get an auth handler from the
-OpenAPI security scheme; installing a second one would double-authenticate. `PermitAll`/`DenyAll`
-cannot combine with `@RequiresAction` (rejected at startup).
-
-Priority 40 places it before:
-- the JWT claims validator (priority 50, `rest-auth-jwt`)
-- `IdentityResolutionContributor` (priority 80)
-- `AuthorizationContributor` (priority 100)
-
-#### Invariants & Gotchas
-
-- Exactly one `RouteAuthHandler` must be registered. If none is registered, or more than one is
-  registered (JAX-RS has no per-route scheme selector to disambiguate), startup fails with
-  `IllegalStateException` — fail-closed by design.
-
-### DefaultChannelIdentityManager
-
-`@Singleton` `ChannelIdentityManager` implementation backed by a `ConcurrentHashMap`. Maintains
-the registry of `(channelId → SecurityContext + ChannelBinding + optional expiry timer)`. For each
-channel whose `AuthenticationState.earliestNotAfter()` is non-empty, schedules a raw Vert.x timer
-that calls `closeChannel(channelId, "IDENTITY_EXPIRED")` on expiry.
-
-**Channel lifecycle sequence:**
-
-```
-WebSocket open:
-  WebSocketChannelAdapter.onOpen()
-    → ChannelIdentityManager.register(channelId, ctx, binding)
-    → emits ChannelOpenedEvent
-    → schedules expiry timer if notAfter is present
-
-Identity refresh (e.g., token rotation):
-  ChannelIdentityManager.refreshIdentity(channelId, newCtx)
-    → binding.rebind(newCtx)   // on channel's event loop
-    → emits ChannelIdentityRefreshedEvent
-    → reschedules expiry timer
-
-Connection close (peer or server-initiated):
-  WebSocket @OnClose runs (SecurityContext still bound)
-  WebSocketChannelAdapter.onClose()
-    → ChannelIdentityManager.deregister(channelId, fallbackReasonCode)
-    → cancels expiry timer
-    → emits ChannelClosedEvent
-    → binding.releaseResources()   // scope released last
-```
-
-### JaxRsSecurityContext
-
-Bridges framework `SecurityContext` to `jakarta.ws.rs.core.SecurityContext`:
-
-```java
-public class JaxRsSecurityContext implements jakarta.ws.rs.core.SecurityContext {
-    public JaxRsSecurityContext(SecurityContext frameworkContext, boolean secure) { ... }
-}
-```
-
-| JAX-RS Method | Framework Implementation |
-|---|---|
-| `getUserPrincipal()` | `identity().actor()` as `Principal` |
-| `isUserInRole(role)` | `authorization().valuesOf(ROLE).contains(role)` |
-| `isSecure()` | Based on HTTPS request |
-| `getAuthenticationScheme()` | JWT→`"BEARER"`, BASIC→`"BASIC_AUTH"`, API_KEY→`"API_KEY"`, MTLS→`"CLIENT_CERT"`, CUSTOM/UNKNOWN→`"CUSTOM"` |
-
-### SecurityPolicyEnforcer
-
-Creates `Handler<RoutingContext>` instances that enforce `SecurityPolicy` authorization rules. Used by
-`AuthorizationContributor` to decouple policy resolution from handler construction, enabling reuse
-across JAX-RS and non-JAX-RS routes.
-
-**Key methods:**
+Builds the `Handler<RoutingContext>` that enforces a `SecurityPolicy`, optionally AND-composed with
+a `@RequiresAction` gate. `AuthorizationContributor` uses it for JAX-RS routes; reuse it directly
+when registering non-JAX-RS routes (for example a WebSocket upgrade) that need the same enforcement.
 
 | Method | Purpose |
 |---|---|
-| `createHandler(SecurityPolicy)` | Role/scope enforcement only; equivalent to calling the two-argument form with `Optional.empty()` |
-| `createHandler(SecurityPolicy, Optional<ActionRef>)` | AND-composes the role/scope gate with the `@RequiresAction` action gate into one handler that emits **exactly one** `AuthorizationDecisionEvent` per attempt (ADR-0113 / ADR-0114) |
-| `createHandler(SecurityPolicy.Constrained, String)` | Constrained-policy handler with a context label for error messages |
+| `createHandler(SecurityPolicy)` | Role/scope enforcement only |
+| `createHandler(SecurityPolicy, Optional<ActionRef>)` | AND-composes the role/scope gate with the action gate into one handler emitting one event |
+| `createHandler(SecurityPolicy.Constrained, String)` | Constrained enforcement with a context label used in error messages |
 
-Returns `null` for `SecurityPolicy.None` and `SecurityPolicy.PermitAll` (with no action); those
-variants install no authorization handler.
+It returns `null` — install no handler — for `None` and `PermitAll` with no action. With an action
+present, even an action-only `None` route gets a handler.
 
-**Emission ownership (ADR-0114).** The enforcer — not the decision point — owns every
-`AuthorizationDecisionEvent`. This includes fail-closed short-circuits that historically emitted
-nothing: `DenyAll` (reason `DENY_ALL`); missing/anonymous `SecurityContext` on `AuthenticatedOnly` or
-`Constrained` routes (reason `AUTHENTICATION_REQUIRED`); decision-point failure (reason
-`INTERNAL_AUTHZ_ERROR`). `SecurityPolicyEnforcer` injects `Authorizer` optionally via
-`@BindsOptionalOf`; the action gate is composed only when a `@RequiresAction` is present, which
-requires the authorization engine to be installed (startup validation fails otherwise).
+The decision point is selected once, at construction, in this order:
 
-**Decision point chain (priority order at construction time):**
-1. App-provided `AuthorizationDecisionPoint` override (`@BindsOptionalOf`)
-2. App-provided `AuthorizationPolicy` (sync, core SPI), wrapped as `SyncPolicyDecisionPoint`
-3. Default `VertxProviderDecisionPoint` (evaluates role/scope/permission requirements from `AuthorizationClaims`)
+1. an application-provided `AuthorizationDecisionPoint`;
+2. an application-provided sync `AuthorizationPolicy`, wrapped as `SyncPolicyDecisionPoint`;
+3. the built-in decision point, which evaluates roles, scopes, and permissions from
+   `AuthorizationClaims`.
 
-#### Invariants & Gotchas
+### `JaxRsSecurityContext`
 
-- `SecurityPolicy.Constrained` with both empty roles and empty scopes throws `IllegalStateException`
-  at handler-creation time (not at first request).
-- The correlation context is captured **synchronously at handler entry** before any async hop so that
-  a remote-PDP decision completing off the request context still carries the inbound correlation in
-  the emitted event.
+Bridges the framework context to `jakarta.ws.rs.core.SecurityContext` so standard JAX-RS code works
+unchanged.
 
-### RequestOriginConfig
+| JAX-RS method | Behavior |
+|---|---|
+| `getUserPrincipal()` | the actor id as a `Principal`; **`null`** when the actor is anonymous or no framework context is bound |
+| `isUserInRole(role)` | matches a `ROLE` authority claim by value; **always `false`** for an anonymous actor, regardless of claims |
+| `isSecure()` | `origin().scheme()` equals `"https"`; falls back to the raw request's TLS state when no origin was captured |
+| `getAuthenticationScheme()` | see the mapping below |
 
-Trusted-proxy configuration. Defaults to no trusted proxy (empty CIDR set). Override in the
-application's Dagger module for production deployments:
+`getAuthenticationScheme()` maps `authentication().primaryMethod().normalizedKind()`:
 
-```java
-@Provides @Singleton
-RequestOriginConfig originConfig() {
-    return new RequestOriginConfig(
-        Set.of("10.0.0.0/8", "172.16.0.0/12"),
-        16,      // forwardedForCap
-        true,    // trustForwardedScheme
-        true     // trustForwardedHost
-    );
-}
-```
+| Kind | Returned string |
+|---|---|
+| `JWT` | `"BEARER"` |
+| `BASIC` | `"BASIC"` (`SecurityContext.BASIC_AUTH`) |
+| `API_KEY` | `"API_KEY"` |
+| `MTLS` | `"CLIENT_CERT"` (`SecurityContext.CLIENT_CERT_AUTH`) |
+| `HMAC` | `"HMAC"` |
+| `CUSTOM`, `UNKNOWN` | the auth method's `id()`, upper-cased |
+| `NONE` | `null` |
 
-### DefaultSecurityPolicyValidator
+`getAuthenticationScheme()` also returns `null` when no framework context is bound.
 
-`SecurityPolicyValidator` implementation that validates annotation/security-model consistency at startup.
-Checks violations per operation, each resulting in `RestConfigurationException`:
+### `ChannelIdentityManager`
 
-1. `ANNOTATION_WITHOUT_OPENAPI_SECURITY` — method has `@RolesAllowed`/`@Authorized`/`@DenyAll`
-   but the operation's `securityRequirementSets()` is empty (no security requirement)
-2. `OPENAPI_SECURITY_WITHOUT_HANDLER` — operation has a security requirement but no
-   matching `SecuritySchemeHandler` was registered for one of the required scheme names
-3. `CONFLICTING_SEMANTICS` — method has `@PermitAll` but the operation has a security requirement
-4. Multi-scheme AND-set (a `SecurityRequirementSet` with more than one `SecurityRequirement`) — not yet implemented; fails closed with a message naming the operation and the workaround
-5. Scoped OR alternatives — any OR alternative (`SecurityRequirementSet`) that has scopes when there are multiple sets — fails closed (scope enforcement across OR branches needs matched-scheme tracking, deferred to a future release)
-6. Both-scopes overlap — an operation declaring required scopes via both `@Authorized(scopes)` and a `@SecurityRequirement` scope — ambiguous; fails closed
-7. Duplicate `schemeName()` — two `SecuritySchemeHandler`s registered with the same name (detected by `SecuritySchemeHandlerCollector`); fails closed
+Registry of identities bound to long-lived channels (WebSocket, SSE), keyed by channel id. The
+default implementation is in-memory and, for every channel whose
+`AuthenticationState.earliestNotAfter()` is present, schedules a timer that closes the channel with
+reason code `IDENTITY_EXPIRED` at that instant.
 
-Violations cause `RestConfigurationException` at startup. No warn-only mode. The validator receives a `RestOperationDescriptor` (not `OpenAPIRoute`/`OpenAPIContract`) so it operates without any dependency on `vertx-openapi`.
+| Method | Effect |
+|---|---|
+| `register(channelId, ctx, binding)` | records the identity, emits `ChannelOpenedEvent`, arms the expiry timer |
+| `refreshIdentity(channelId, newCtx)` | rebinds on the channel's event loop, emits `ChannelIdentityRefreshedEvent`, re-arms the timer |
+| `closeChannel(channelId, reasonCode)` | server-initiated close with an explicit reason |
+| `deregister(channelId, fallbackReasonCode)` | peer-initiated close: cancels the timer, emits `ChannelClosedEvent`, releases the binding **last** |
+| `current(channelId)` | the currently bound context, if any |
+
+The binding is released after the close event, so an `@OnClose` callback still observes the bound
+`SecurityContext`.
 
 ---
 
 ## Extension Points
 
-### SecurityIdentityResolver (multibinding)
+### `SecurityIdentityResolver` (multibinding)
 
-Contribute custom identity resolvers to the chain. `SecurityIdentityResolver extends OrderedExtension`; resolvers are sorted by `OrderedExtension.comparator()` (phase → priority → orderKey), where `orderKey()` delegates to `id()`. Lower `priority()` runs first; `id()` is the stable tie-break for equal priorities. Two resolvers with the same `(priority, id)` fail at startup.
+Contribute an identity resolver. `SecurityIdentityResolver extends OrderedExtension`, so the chain
+is sorted by phase, then ascending `priority()`, then `orderKey()` — which delegates to `id()`. The
+first resolver returning a non-empty `Optional` wins; an exhausted chain yields
+`SecurityIdentity.anonymous()`. The framework default runs at priority 100, so an application
+resolver should use a priority below 100 to run first.
 
 ```java
 @Provides @IntoSet
 static SecurityIdentityResolver tenantResolver(TenantDirectory directory) {
     return new SecurityIdentityResolver() {
         @Override
-        public int priority() { return 50; }  // run before framework default (100)
+        public int priority() {
+            return 50;
+        }
 
         @Override
         public Future<Optional<SecurityIdentity>> resolve(SecurityIdentityResolutionContext ctx) {
-            // Check evidence for a tenant-specific API key claim
             return ctx.evidence().stream()
                     .filter(e -> e.method().normalizedKind() == AuthMethodKind.API_KEY)
                     .findFirst()
-                    .map(e -> directory.lookup(e.credentialId().orElse(""))
-                            .map(Optional::of))
+                    .map(e -> directory.lookup(e.credentialId().orElse("")).map(Optional::of))
                     .orElse(Future.succeededFuture(Optional.empty()));
         }
     };
 }
 ```
 
-### SecurityEventObserver (multibinding)
+### `SecuritySchemeHandler` (multibinding)
 
-Observe security lifecycle events without coupling to REST internals:
+Contribute the authentication handler for a named OpenAPI security scheme.
+
+```java
+@Provides @IntoSet
+SecuritySchemeHandler jwtScheme(JWTAuth jwtAuth) {
+    return new SecuritySchemeHandler() {
+        @Override
+        public String schemeName() {
+            return "bearerAuth";
+        }
+
+        @Override
+        public void configure(SecuritySchemeRegistry registry) {
+            registry.authenticationHandler(JWTAuthHandler.create(jwtAuth));
+        }
+    };
+}
+```
+
+The registry takes an `AuthenticationHandler`, not a bare `Handler<RoutingContext>`, so several
+single-scheme scopeless alternatives can be composed into a Vert.x `ChainAuthHandler.any()`. Two
+handlers reporting the same `schemeName()` fail startup.
+
+### `RouteAuthHandler` (multibinding)
+
+Route-level authentication for transports with no OpenAPI security scheme — WebSocket endpoints and
+action-only `@RequiresAction` routes.
+
+```java
+@Provides @IntoSet
+RouteAuthHandler bearerRouteAuth(JWTAuth jwtAuth) {
+    return new RouteAuthHandler() {
+        @Override
+        public String schemeName() {
+            return "bearerAuth";
+        }
+
+        @Override
+        public Handler<RoutingContext> createHandler() {
+            return JWTAuthHandler.create(jwtAuth);
+        }
+    };
+}
+```
+
+### `SecurityEventObserver` (multibinding)
+
+Observe security lifecycle events without coupling to REST internals. Declared by
+`SecurityEventsModule` in `dev.vertique:vertique-security-runtime`, which `AuthModule` includes.
 
 ```java
 @Provides @IntoSet
@@ -477,153 +476,50 @@ static SecurityEventObserver siemForwarder(SiemClient siem) {
 }
 ```
 
-### SecurityClaimMapper (optional binding)
+### `AuthorizationPolicy` (optional binding)
 
-Override claim-to-authorization mapping (see above).
-
-### AuthorizationPolicy (optional core SPI)
-
-Sync authorization for applications that can evaluate from claims without I/O:
+Synchronous authorization for applications that can decide from claims without I/O. Declared in
+`dev.vertique:vertique-security-core`; `AuthorizationDecision decide(AuthorizationRequest request)`
+takes the request alone — identity and claims are reached through
+`request.securityContext()`.
 
 ```java
 @Provides
 AuthorizationPolicy myPolicy() {
-    return (identity, claims, request) -> {
-        if (claims.valuesOf(AuthorityKind.ROLE).contains("admin")) {
-            return AuthorizationDecision.permit("ADMIN_ROLE");
-        }
-        return AuthorizationDecision.deny("INSUFFICIENT_ROLE");
-    };
+    return request -> request.securityContext()
+                    .authorization()
+                    .valuesOf(AuthorityKind.ROLE)
+                    .contains("admin")
+            ? AuthorizationDecision.permit("ADMIN_ROLE")
+            : AuthorizationDecision.deny("INSUFFICIENT_ROLE");
 }
 ```
 
-### AuthorizationDecisionPoint (optional async override)
+### Replaceable bindings
 
-See example under [AuthorizationDecisionPoint](#authorizationdecisionpoint) above.
-
-### CredentialRejectionReporter (replaceable binding)
-
-Override rejection reporting (e.g., to add custom structured logging):
-
-```java
-// import dev.vertique.security.runtime.events.SecurityEventEmitter; — lives in vertique-security-runtime
-
-@Provides
-CredentialRejectionReporter myReporter(SecurityEventEmitter emitter) {
-    return (ctx, method, credentialId, source, reasonCode, attrs) -> {
-        myLogger.warn("auth.failed method={} reason={}", method.id(), reasonCode);
-        // delegate to default emitter pattern
-        ...
-    };
-}
-```
-
-### ChannelIdentityManager (replaceable binding)
-
-Override channel identity management (e.g., for distributed channel tracking):
-
-```java
-@Binds @Singleton
-abstract ChannelIdentityManager channelIdentityManager(RedisChannelIdentityManager impl);
-```
-
-### SecuritySchemeHandler (multibinding)
-
-Contribute authentication handlers for named security schemes via the transport-neutral `SecuritySchemeRegistry`:
-
-```java
-@Provides @IntoSet
-SecuritySchemeHandler jwtScheme(JWTAuth jwtAuth, CredentialRejectionReporter reporter) {
-    return new SecuritySchemeHandler() {
-        public String schemeName() { return "bearerAuth"; }
-        public void configure(SecuritySchemeRegistry registry) {
-            registry.authenticationHandler(JWTAuthHandler.create(jwtAuth));
-        }
-    };
-}
-```
-
-The `SecuritySchemeRegistry` accepts an `AuthenticationHandler` (not a bare `Handler<RoutingContext>`) so the framework can compose multiple single-scheme scopeless OR alternatives into a Vert.x `ChainAuthHandler.any()`. The OR-of-AND-with-scopes security model governs which configurations are supported at startup (see `## Security Model` above).
+| Binding | Default | Override with |
+|---|---|---|
+| `SecurityClaimMapper` | three-convention JWT mapper | `@Provides SecurityClaimMapper` |
+| `AuthorizationDecisionPoint` | claims-based evaluation | `@Provides AuthorizationDecisionPoint` |
+| `CredentialRejectionReporter` | assembles and emits `CredentialRejectedEvent` | `@Provides CredentialRejectionReporter` |
+| `ChannelIdentityManager` | in-memory registry with expiry timers | `@Binds ChannelIdentityManager` |
+| `RequestOriginConfig` | trust no proxy | `@Provides @Singleton RequestOriginConfig` |
 
 ---
 
-## Dagger Modules
-
-### AuthModule
-
-```java
-@Module(includes = SecurityEventsModule.class)  // owns Set<SecurityEventObserver> multibinding
-public abstract class AuthModule {
-    @Multibinds abstract Set<AuthorizationProvider> authorizationProviders();
-    @Multibinds abstract Set<RouteAuthHandler> routeAuthHandlers();
-    @Multibinds abstract Set<SecurityIdentityResolver> securityIdentityResolvers();
-    // Set<SecurityEventObserver> declared in SecurityEventsModule (vertique-security-runtime)
-
-    @BindsOptionalOf abstract SecurityClaimMapper optionalSecurityClaimMapper();
-    @BindsOptionalOf abstract AuthorizationPolicy optionalAuthorizationPolicy();
-    @BindsOptionalOf abstract AuthorizationDecisionPoint optionalAuthorizationDecisionPoint();
-    @BindsOptionalOf abstract Authorizer optionalAuthorizer();
-
-    // Default resolver + contributors (AuthorizationContributor, IdentityResolutionContributor,
-    // ActionGateAuthenticationContributor) + validator + dispatch encoders + OriginCaptureMiddleware
-    // + CredentialRejectionReporter + ChannelIdentityManager bindings all provided statically
-}
-```
-
-| Binding | Purpose |
-|---|---|
-| `Set<SecurityIdentityResolver>` | Identity resolver chain (default: `DefaultSecurityIdentityResolver` at priority 100) |
-| `Set<SecurityEventObserver>` | Declared by `SecurityEventsModule` (vertique-security-runtime); empty by default. `rest-security` contributes observers via `@IntoSet`. |
-| `Set<AuthorizationProvider>` | Vert.x authorization sources (empty by default; not used for authorization decisions — retained for compatibility) |
-| `Set<RouteAuthHandler>` | Route-level auth handlers for non-OpenAPI transports |
-| `Optional<SecurityClaimMapper>` | Custom claim-to-claims mapping |
-| `Optional<AuthorizationPolicy>` | Sync authorization policy |
-| `Optional<AuthorizationDecisionPoint>` | Async authorization decision point override |
-| `Optional<Authorizer>` | Core action authorizer; present when the authorization engine (`SecurityAuthzModule`) is installed; absent otherwise |
-| `Set<OperationHandlerContributor>` | Registers `AuthorizationContributor` (priority 100), `IdentityResolutionContributor` (priority 80), and `ActionGateAuthenticationContributor` (priority 40) |
-| `SecurityPolicyValidator` | Startup annotation/OpenAPI consistency validation |
-| `ChannelIdentityManager` | Bound to `DefaultChannelIdentityManager` |
-| `CredentialRejectionReporter` | Bound to `DefaultCredentialRejectionReporter` |
-| `Set<Middleware>` | Registers `OriginCaptureMiddleware` (ROOT) |
-| `AuthEnforcementCapability` (via `@BindsOptionalOf`) | Typed marker (`dev.vertique.rest.core.security`) signalling the auth enforcement runtime is installed; supplied only by `AuthModule` as `AuthEnforcementCapability.INSTANCE`. The route registrar reads the `Optional` to validate that restrictive security annotations have runtime support. |
-
-### SecurityModule
-
-| Binding | Purpose |
-|---|---|
-| `SecurityRuntime` | Bound to `HolderBackedSecurityRuntime` (reads/writes via `ContextValues`) |
-| `JaxRsSecurityContextFactory` | Factory for `JaxRsSecurityContext` bridge |
-| `@BindsOptionalOf IdentitySnapshotCapture` | Declares the optional ingress capture seam `IdentityResolutionMiddleware` injects; empty unless identity-snapshot durable carriage is installed (ADR-0164) |
-
-Including `SecurityModule` in the app's `@Component` is required for security features.
-
----
-
-## Application Setup
-
-```java
-@Singleton
-@Component(modules = {VertxModule.class, RestModule.class, AuthModule.class,
-                      SecurityModule.class,
-                      AppModule.class, ResourceModule.class})
-interface AppComponent {
-    HttpVerticle httpVerticle();
-}
-```
-
-**Example secured resource:**
+## JAX-RS Integration
 
 ```java
 @Path("/orders")
 public class OrderResource {
 
-    @GET @Path("/{id}")
+    @GET
+    @Path("/{id}")
     @RolesAllowed("user")
     public Future<Order> getOrder(
-            @PathParam("id") String id,
-            dev.vertique.security.SecurityContext sc) {
-        // sc.identity().actor().id() — authenticated user id
-        // sc.authorization().valuesOf(AuthorityKind.SCOPE) — scopes
+            @PathParam("id") String id, dev.vertique.security.SecurityContext sc) {
+        // sc.identity().actor().id()                      — authenticated user id
+        // sc.authorization().valuesOf(AuthorityKind.SCOPE) — granted scopes
         return orderService.findById(id);
     }
 
@@ -633,54 +529,131 @@ public class OrderResource {
 }
 ```
 
-**Injecting SecurityContext in lifecycle callbacks:**
+Either context type may be injected as a resource-method parameter:
 
 ```java
-// Rich framework context
 public Future<Response> handle(dev.vertique.security.SecurityContext sc) { ... }
-
-// Standard JAX-RS context
 public Future<Response> handle(jakarta.ws.rs.core.SecurityContext sc) { ... }
 ```
 
-**Authorization annotation semantics:**
+### Annotation semantics
 
 | Annotation | Effect |
 |---|---|
-| `@DenyAll` | Returns 403 always (highest priority) |
-| `@PermitAll` | No authorization handler |
-| `@RolesAllowed("a", "b")` | OR: any listed role is sufficient |
-| `@Authorized(scopes = "write")` | Single scope required |
-| `@Authorized(scopes = {"a", "b"}, matchAll = true)` | AND: all scopes required |
-| `@Authorized(scopes = {"a", "b"}, matchAll = false)` | OR: any scope sufficient |
-| `@RolesAllowed` + `@Authorized` | AND: must pass both role AND scope checks |
+| `@DenyAll` | Always 403; wins over every other annotation |
+| `@PermitAll` | No authorization handler installed |
+| `@RolesAllowed("a", "b")` | OR — any one listed role is sufficient |
+| `@Authorized(scopes = "write")` | The listed scope is required |
+| `@Authorized(scopes = {"a", "b"})` | AND — **all** listed scopes required (`matchAll` defaults to `true`) |
+| `@Authorized(scopes = {"a", "b"}, matchAll = false)` | OR — any one listed scope is sufficient |
+| `@Authorized(scopes = {})` | Authentication only — any authenticated caller |
+| `@RolesAllowed` with `@Authorized` | AND — the role check and the scope check must both pass |
+| `@RequiresAction("…")` | AND — the action gate must pass in addition to the role/scope gate |
+
+`@Authorized` on a class applies to every method; a method-level `@Authorized` overrides it.
+
+---
+
+## Configuration
+
+`RequestOriginConfig` is a Dagger binding, not a config-file section. The default trusts no proxy,
+so `clientIp` always equals `remoteIp` and forwarded scheme and host headers are ignored.
+
+```java
+@Provides @Singleton
+RequestOriginConfig originConfig() {
+    return new RequestOriginConfig(
+            Set.of("10.0.0.0/8", "172.16.0.0/12"),  // trustedProxyCidrs
+            16,                                      // forwardedForCap
+            true,                                    // trustForwardedScheme
+            true);                                   // trustForwardedHost
+}
+```
+
+| Component | Default | Meaning |
+|---|---|---|
+| `trustedProxyCidrs` | empty | CIDR ranges whose members may set forwarded headers; empty trusts nothing |
+| `forwardedForCap` | `16` | Maximum `X-Forwarded-For` entries; a longer chain is dropped entirely and flagged rejected. Must be `>= 0`; `0` disables the chain |
+| `trustForwardedScheme` | `false` | Honour `X-Forwarded-Proto` — only when the direct peer is trusted |
+| `trustForwardedHost` | `false` | Honour `X-Forwarded-Host` — only when the direct peer is trusted |
+
+Resolution rules:
+
+- `X-Forwarded-For` is always parsed and exposed for observability, trusted peer or not.
+- `clientIp` uses the forwarded chain **only** when the direct peer matches a trusted CIDR;
+  otherwise it is the direct peer address.
+- Forwarded scheme and host are honoured only when both the corresponding flag is set and the direct
+  peer is trusted.
+
+A non-empty `trustedProxyCidrs` is what makes forwarded headers trustworthy. Setting
+`trustForwardedScheme` or `trustForwardedHost` without it changes nothing.
+
+---
+
+## Failures, Constraints, and Common Mistakes
+
+### Startup failures
+
+| Failure | Cause |
+|---|---|
+| `RestConfigurationException` | Any shape in the [fail-closed matrix](#fail-closed-startup-matrix): a multi-scheme AND-set, scopes on an OR alternative, scopes from both `@Authorized` and `@SecurityRequirement`, or duplicate `schemeName()` |
+| `RestConfigurationException` | `@RolesAllowed` / `@Authorized` / `@DenyAll` on an operation with no declared security requirement — the handler would never run |
+| `RestConfigurationException` | A declared security requirement with no matching `SecuritySchemeHandler` registered |
+| `RestConfigurationException` | `@PermitAll` on an operation that also declares a security requirement — conflicting intent |
+| `IllegalStateException` | Two `SecurityIdentityResolver`s share the same `(priority, id)` pair. Raised while the Dagger graph is constructed, not on first request |
+| `IllegalStateException` | An action-only `@RequiresAction` route with no `RouteAuthHandler` registered, or with more than one — JAX-RS has no per-route scheme selector, so the framework fails rather than guess |
+| `IllegalStateException` | A `SecurityPolicy.Constrained` with both empty roles and empty scopes. Raised at handler creation, not on first request |
+
+There is no warn-only mode. Every validation failure stops startup.
+
+### Request-time outcomes
+
+| Status | Reason code | Situation |
+|---|---|---|
+| 401 | — | Credential verification failed; the authentication handler reported and failed the request |
+| 401 | `AUTHENTICATION_REQUIRED` | No `SecurityContext` bound, or an anonymous actor on an `AuthenticatedOnly` or `Constrained` route |
+| 403 | `DENY_ALL` | `@DenyAll` |
+| 403 | the decision's own code | The decision point denied |
+| 403 | `INTERNAL_AUTHZ_ERROR` | The decision point or `Authorizer` threw, returned a `null` future, or resolved to a `null` decision — fail-closed |
+| — | `PERMITTED` | Both gates passed |
+
+A failed (rather than denied) decision future propagates its cause through the error pipeline after
+the deny event is emitted. Every one of these paths emits exactly one `AuthorizationDecisionEvent`.
+
+With a `@RequiresAction` gate, the role/scope gate is evaluated first and the action gate only if it
+permits. The single emitted decision carries the **first failing predicate** as its top-level reason
+code, plus `rolesSatisfied`, `actionSatisfied`, and `actionEvaluated` in `safeAttributes`.
+
+### Common mistakes
+
+- **Emitting from a custom `AuthorizationDecisionPoint`.** The enforcement layer already emits one
+  event per attempt; a decision point that emits produces duplicates. Return the decision only.
+- **Expecting `CredentialAcceptedEvent` for anonymous traffic.** It is emitted only when evidence is
+  non-empty. An anonymous request still gets a bound `SecurityContext`, just no event. The event is
+  also skipped, with a warning, when no `CorrelationContext` is bound.
+- **Expecting identity resolution to report rejections.** `CredentialRejectedEvent` comes from the
+  failing authentication handler before `ctx.fail(...)`; identity resolution never runs on that path.
+- **Relying on Vert.x `AuthorizationProvider` bindings.** They are accepted but never consulted.
+- **Trusting forwarded headers without `trustedProxyCidrs`.** `trustForwardedScheme` and
+  `trustForwardedHost` do nothing while the trusted-proxy set is empty.
+- **Reading roles straight off `AuthorizationClaims` for a JAX-RS check.** `isUserInRole` deliberately
+  returns `false` for an anonymous actor even if claims are present; hand-rolled checks lose that
+  guard.
+- **Including `AuthModule` without `SecurityModule`.** `SecurityModule` owns the `SecurityRuntime`
+  binding that every enforcement path reads.
 
 ---
 
 ## Dependencies
 
-- `dev.vertique:rest-core`
-- `dev.vertique:core`
-- `io.vertx:vertx-core`
-- `io.vertx:vertx-web`
-- `io.vertx:vertx-auth-common`
-- `com.google.dagger:dagger`
-- `jakarta.ws.rs:jakarta.ws.rs-api`
-- `org.slf4j:slf4j-api`
-- `org.projectlombok:lombok` (provided scope)
-
----
-
-## Related ADRs
-
-- ADR-0062: Canonical Security Facts and Observer Boundary — establishes that security modules
-  produce canonical facts/events for independent observers; observer failure must not affect the
-  security result.
-- ADR-0063: Stateless External-IdP Authentication and Evidence Model — establishes that Vertique verifies inbound credentials and records evidence but does not own user management, login flows, or session establishment.
-- ADR-0064: Typed Security Identity Model — establishes the four-pillar `SecurityContext`, `SecurityIdentity`/`AuthenticationState`/`AuthorizationClaims`/`RequestOrigin` structure, the `SecurityEventObserver` SPI, the SYSTEM identity boundary rule, the authorization source-of-truth decision (`AuthorizationClaims` over Vert.x `AuthorizationProvider`), trusted-proxy model, channel lifecycle close ordering, and resolver determinism.
-- ADR-0084: Framework Extension-Ordering Contract — establishes `OrderedExtension` and `ExtensionPhase` as the canonical ordering contract for framework extensions.
-- ADR-0085: OrderedExtension Rolled Out Across Sorted Behavioral SPIs — `SecurityIdentityResolver` now follows the framework OrderedExtension ordering contract; `orderKey()` delegates to `id()` so the documented `(priority, id)` tie-break is preserved.
-- ADR-0113: Federated Action and Policy Authorship for Framework Authorization — establishes federated authorship of actions and policies; governs the AND-composition of the role/scope gate with the action gate in `SecurityPolicyEnforcer.createHandler(SecurityPolicy, Optional<ActionRef>)`.
-- ADR-0114: Enforcement-Layer Emission Ownership for Authorization Decisions — the enforcement layer (`SecurityPolicyEnforcer`) — not the decision point — owns emission of exactly one `AuthorizationDecisionEvent` per authorization attempt; supersedes the former "MUST emit" contract on `AuthorizationDecisionPoint`.
-- ADR-0124: Security Model as OR-of-AND-with-Scopes, Fail-Closed on the Unsupported Subset — establishes `SecurityRequirementSet` / `securityRequirementSets()` as the final SPI shape, the fail-closed matrix for unsupported configurations, and scope enforcement unified with the `@Authorized` path via `EffectiveSecurityPolicy.fold`.
-- ADR-0164: Identity-Snapshot Capture Site — SecurityContext Assembly (Ingress), Opt-In — governs the opt-in `Optional<IdentitySnapshotCapture>` capture hook `IdentityResolutionMiddleware` invokes at REST ingress and the `@BindsOptionalOf` declaration in `SecurityModule`.
+| Artifact | Why |
+|---|---|
+| `dev.vertique:vertique-rest-core` | `Middleware`, `OperationHandlerContributor`, `SecurityPolicy`, `EffectiveSecurityPolicy`, `SecuritySchemeHandler`, `RouteAuthHandler`, `SecurityRuntime`, `RequestContextLifecycle` |
+| `dev.vertique:vertique-security-core` | The typed identity model, `AuthorizationClaims`, `AuthorizationPolicy`, `Authorizer`, `ChannelIdentityManager`, `SecurityIdentityResolver` |
+| `dev.vertique:vertique-security-runtime` | `SecurityEventEmitter`, `SecurityEventsModule`, `IdentitySnapshotCapture` |
+| `dev.vertique:vertique-context` | `ContextHolder` scopes and the service-dispatch context encoder/decoder seam |
+| `dev.vertique:vertique-logging` | MDC key binding for `userId`, `clientId`, and `authMethod` |
+| `io.vertx:vertx-auth-common` | `AuthenticationHandler`, `User`, `AuthorizationProvider` |
+| `jakarta.ws.rs:jakarta.ws.rs-api` | The `jakarta.ws.rs.core.SecurityContext` bridge and the Jakarta security annotations |
+| `com.google.dagger:dagger` | Module wiring and multibindings |
+| `org.projectlombok:lombok` | Compile-time only |

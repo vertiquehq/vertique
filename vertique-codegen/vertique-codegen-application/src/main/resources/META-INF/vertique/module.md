@@ -255,12 +255,3 @@ does not clean up previously generated files.
   annotation processing). Not on the application runtime classpath.
 
 The module has no dependency on `vertique-launcher`, `vertique-core`, or any runtime module.
-
----
-
-## Related ADRs
-
-- ADR-0132: `@VertiqueApp` Annotation Processor — Generated Factory and SPI Registration — records the decision to use an annotation-on-the-`@Component` approach, the by-name Dagger builder reference (no reflection), and the rejection of the runtime-reflection alternative.
-- ADR-0131: Standalone Entry via `verticleSupplier()` and ServiceLoader Factory Discovery — establishes the `VertiqueComponentFactory` SPI and the exactly-one `ServiceLoader` rule this processor targets.
-- ADR-0126: `VertiqueRuntime` as the Container-Neutral Graph-Input Seam — defines `VertiqueRuntime` and `VertiqueComponentFactory<C>`, the seam types the generated factory implements.
-- ADR-0024: Annotation Processing Infrastructure — establishes the `vertique-codegen` family structure and design conventions this module follows.

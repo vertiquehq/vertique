@@ -84,9 +84,13 @@ public final class OrderFulfillmentDefinition
 }
 ```
 
+### Parallel Branches
+
+`WorkflowBuilder.fork(stepId)` declares a fan-out into named branches, each with its own start step; `join(stepId)` declares the matching join step with a completion policy (`allRequired`, `firstSuccess`, or `firstFailure`) that reduces branch results back into workflow state. Each running branch executes against its own `BranchToken`; the fork's fan-in progress is tracked in a `JoinState`.
+
 ### Workflow Plan
 
-Registration turns a definition into an immutable `WorkflowPlan`. A plan contains serializable step metadata, callback ids, type names, and a content-derived plan hash. Executable Java callbacks stay in the callback registry and are referenced by id.
+Registration turns a definition into an immutable `WorkflowPlan`. A plan contains serializable step metadata, callback ids, type names, and a content-derived plan hash. Executable Java callbacks stay in the callback registry and are referenced by id. The engine executes only `WorkflowPlan` objects — the Java DSL above and document-based authoring (see `dev.vertique:vertique-workflow-definition`) are alternative ways to produce one.
 
 The engine records the definition id, definition version, and plan hash when an instance starts. Resumes use that pinned version rather than silently switching to the latest registered definition.
 
@@ -119,13 +123,15 @@ Future<Void> migrate(WorkflowInstanceId id, long targetVersion);
 
 The Postgres implementation opens its own transaction for each call. Code that already owns a transaction should use `TransactionalWorkflowOperations<TX>`.
 
-Starts require an idempotency key. `StartCommand.requestedDefinitionVersion` may pin a new instance to a specific registered version; when omitted, the current version is used.
+Instance state is modeled as a single current snapshot plus an append-only history: `query` returns the latest snapshot, and each transition that produced it is recorded as a separate history entry.
+
+Starts require an idempotency key. `StartCommand.requestedDefinitionVersion` may pin a new instance to a specific registered version; when omitted, the current version is used. Idempotency and dedup keys are scoped to what they protect — a start key is scoped to the definition id and a signal dedup key is scoped to the workflow instance; see `dev.vertique:vertique-workflow-postgresql` for the complete key-scope table across all operations.
 
 ### Durable Context on the Instance
 
 `WorkflowInstance` carries an 18th component, `@Nullable DurableMetadata metadata` — the durable
 context (correlation, tenant, and other registered namespaces) captured once at start time, using
-the ADR-0065 `{"context": …}` carrier shape. It is `null` when no ambient durable context was
+the framework's standard `{"context": …}` carrier shape. It is `null` when no ambient durable context was
 present at start (empty capture) or for instances started before this field existed.
 
 The field is immutable for the instance's lifetime: no `withMetadata(...)` updater exists, and
@@ -226,6 +232,8 @@ wf.task("editorial-review")
       .toStep("publish")
   .build();
 ```
+
+Decisions carry typed payloads; `void.class`, as used for `approve` above, declares a decision with no payload.
 
 When version stability is required, task completion compares the version the reviewer saw with the version snapshotted when the task was created. The engine does not read live domain content; applications remain responsible for authorization and for loading current object state.
 
@@ -333,6 +341,26 @@ WorkflowActorMapper customActorMapper() {
 
 ---
 
+## Exceptions
+
+`workflow-core` defines the semantic exception hierarchy applications catch when workflow operations fail. Each root maps to the matching core framework exception root and its default HTTP status:
+
+| Exception | Core root | HTTP |
+|---|---|---|
+| `WorkflowException` | `BusinessRuleException` | 400 |
+| `WorkflowConflictException` | `ConflictException` | 409 |
+| `WorkflowNotFoundException` | `NotFoundException` | 404 |
+| `WorkflowConfigurationException` | `ConfigurationException` | — |
+| `WorkflowTechnicalException` | `TechnicalException` | 500 |
+| `WorkflowUnavailableException` | `UnavailableException` | 503 |
+| `WorkflowPersistenceException` | extends `WorkflowTechnicalException` (carries a `retryable` flag) | 500 |
+
+`WorkflowException` is the business-rule root only, not the superclass of every workflow failure — missing resources, state conflicts, configuration problems, unavailable capabilities, and technical failures use their own roots above instead.
+
+`vertique-workflow-engine` translates DB-origin failures into this hierarchy at the persistence boundary; see `dev.vertique:vertique-workflow-engine` for the translation table.
+
+---
+
 ## Invariants & Gotchas
 
 Behaviors that are load-bearing for correct use and not obvious from method signatures alone:
@@ -353,29 +381,3 @@ Behaviors that are load-bearing for correct use and not obvious from method sign
 
 - **core** - common Vertique exception and module conventions.
 - **db-core** - `PageCursor` and `PagedResult` used by task and workflow query APIs.
-
----
-
-## Related ADRs
-
-- ADR-0027: One runtime, multiple authoring models — the engine executes `WorkflowPlan` only; Java DSL and document loaders are alternative ways to produce that plan.
-- ADR-0028: Public API layering — `WorkflowOperations` is SQL-free; transactional callers use `TransactionalWorkflowOperations<TX>`.
-- ADR-0029: No live dispatch in transitions — the engine never calls downstream services inside a workflow transaction.
-- ADR-0030: Snapshot + history persistence — instance row holds the current snapshot; history entries record what happened.
-- ADR-0031: Side-effect recording via outbox — recorders persist intents through the transactional outbox.
-- ADR-0033: Definition versioning and plan hash — instances pin `definitionVersion` + `planHash` at start; resumes use the pinned plan.
-- ADR-0034: Dedup key scoping — scope rules for idempotency / dedup keys across start, signal, dispatch, and task surfaces.
-- ADR-0037: Timer store SPI — generic timer-storage seam.
-- ADR-0042: Tasks SPI shape — `TaskStore<TX>` and `TransactionalTaskCallbacks<TX>` boundary.
-- ADR-0043: Decision payload typing — typed task decisions and `void.class` no-payload semantics.
-- ADR-0044: Task completion idempotency — canonical fingerprint envelope for completion / reassignment.
-- ADR-0047: workflow-core depends on db-core — limited compile dep for `PageCursor` / `PagedResult` only.
-- ADR-0048: Actor as audit identity — required `WorkflowActor` on task mutation commands.
-- ADR-0064: Typed Security Identity Model — establishes `SecurityIdentity` as the typed identity model consumed by `WorkflowActorMapper` to derive `WorkflowActor`.
-- ADR-0051: Optional intent kinds — opt-in no-op behavior for declared optional kinds.
-- ADR-0055: Version-aware approvals — stability snapshot + completion-time mismatch failure.
-- ADR-0056: Subject resolver precedence — caller wins over definition-level resolver.
-- ADR-0058: Parallel branch tokens — branch token + join state model behind fork/join DSL.
-- ADR-0110: Layered workflow exception mapping — introduces `WorkflowPersistenceException` and the stage-2 mapper that translates DB-origin failures into workflow semantic exceptions; callers see core-rooted workflow types (e.g. optimistic conflict → `WorkflowConflictException` → 409; infrastructure failure → `WorkflowPersistenceException` → `WorkflowTechnicalException` → 500) rather than raw `DataAccessException` subtypes; non-DB throwables pass through unchanged.
-- ADR-0112: Framework exception hierarchy and REST mapping — reparents workflow exceptions onto the core semantic roots (`WorkflowConflictException` → 409, `WorkflowNotFoundException` → 404, `WorkflowConfigurationException`, `WorkflowTechnicalException` → 500, `WorkflowUnavailableException` → 503) and narrows `WorkflowException` to the business-rule root (→ 400).
-- ADR-0147: Instance-Level Durable Context with Base-Wins/Instance-Fill Binding — extends ADR-0065 with `WorkflowInstance.metadata`, the base-wins/instance-fill compose, and the explicit signal-context carrier; governs the `metadata` field and the `signal` 8-arg overload documented above.

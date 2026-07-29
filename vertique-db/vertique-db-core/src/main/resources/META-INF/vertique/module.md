@@ -6,179 +6,100 @@ SPDX-License-Identifier: EUPL-1.2
 # DB Core Module
 
 > **Status:** Implemented
-> **Package:** `dev.vertique.db`
-> **Artifact:** `db-core`
+> **Package:** `dev.vertique.db` (+ `.exception`, `.query`)
+> **Artifact:** `vertique-db-core`
 > **Depends on:** core
 
-Database-agnostic abstraction layer for Vert.x SQL client access. Provides a typed exception hierarchy, a hierarchy-aware failure mapper, connection pool configuration, the repository base class pattern, and migration contract — without binding to any specific database vendor.
+`vertique-db-core` is the vendor-neutral data-access surface for Vertique. It supplies the
+repository base types, the fluent query and pagination builders, the typed `DataAccessException`
+hierarchy with its hierarchy-aware translator, transaction and savepoint semantics, connection-pool
+configuration, and the migration contract — all against `io.vertx:vertx-sql-client` interfaces with
+no driver dependency.
 
-### Package Layout
+It is not a runnable data layer on its own. A vendor artifact such as
+`dev.vertique:vertique-db-postgresql` supplies the driver, the `Pool`, the dialect-specific query
+builders, and the SQL-state translations; `dev.vertique:vertique-db-flyway` supplies a
+`MigrationRunner`. Application repositories extend the vendor's repository base class, not the one
+here.
 
-| Package | Contents |
-|---------|----------|
-| `dev.vertique.db` | `DbModule`, `DbPoolConfig`, `MigrationRunner`, `MigrationResult`, `PoolConnectHandler` |
-| `dev.vertique.db.exception` | `DataAccessException`, `TransientDataAccessException`, `ConnectionException`, `QueryTimeoutException`, `DeadlockException`, `DataIntegrityViolationException`, `UniqueConstraintViolationException`, `ForeignKeyViolationException`, `ConcurrencyFailureException`, `OptimisticLockingFailureException`, `PessimisticLockingFailureException`, `InvalidDataAccessUsageException`, `DbExceptionMapper`, `DbValidationException` |
-| `dev.vertique.db.query` | `Query`, `PagedQuery`, `PageCursor`, `PagedResult`, `SortDirection`, `OffsetPagedQuery`, `OffsetPagedResult`, `QueryClause`, `SqlIdentifier`, `OrderKey`, `OrderDirection`, `NullHandling`, `RowMapper`, `Rows`, `AbstractSqlRepository`, `SqlRepository`, `PageSizeConstraintViolationException` |
+---
+
+## When To Use It
+
+Install `DbModule` alongside a vendor module whenever the application talks to a SQL database
+through the Vert.x SQL client.
+
+| Pairing | Supplies |
+|---|---|
+| `dev.vertique:vertique-db-postgresql` | The PostgreSQL driver, `Pool`, `PgSqlRepository`, `PgDbExceptionMapper`, `PgLockMode` |
+| `dev.vertique:vertique-db-flyway` | A Flyway-backed `MigrationRunner` |
+
+Depend on this artifact alone — without a vendor module — when a module needs only the DB-agnostic
+types: the exception hierarchy, `PageCursor`/`PagedResult`, `OrderKey`, or the `MigrationRunner`
+interface. It pulls in no driver and opens no connections.
+
+---
+
+## Core Concepts
+
+**Repositories are the unit of composition.** `SqlRepository` exposes the pool, the exception
+mapper, three query-builder factories, and the transaction entry point. An application repository
+extends the vendor's `AbstractSqlRepository` subclass, injects a `Pool` and a vendor
+`DbExceptionMapper`, and exposes domain methods returning `Future<T>`.
+
+**Every builder terminal translates its own failures.** The query, pagination, transaction, and
+`withConnection` paths all route driver exceptions through the repository's `DbExceptionMapper`
+before failing the future. Application code sees typed `DataAccessException` subtypes — or whatever
+a custom translator returns — never a raw `PgException`.
+
+**Two pagination models, deliberately not interchangeable.** Keyset (`PagedQuery`) seeks by sort-key
+comparison and is O(1) at any depth, but only supports next/previous navigation. Offset
+(`OffsetPagedQuery`) supports random page access and reports a total count, at the cost of a
+`COUNT(*)` and degrading performance at deep offsets. Both refuse to accept `ORDER BY`, `LIMIT`, or
+`OFFSET` in the base SQL — the builder appends them.
+
+**Cursor tokens are opaque, not secret.** A `PageCursor` token is Base64URL-encoded JSON carrying
+the boundary row's keyset values, page size, and direction. It is neither signed nor encrypted, so
+anything you sort by is readable by the client. Do not put confidential values in an order key.
+(`dev.vertique:vertique-rest-core` offers an HMAC-signed `CursorCodec` for its own REST-level cursor
+types when tamper-evidence is required.)
+
+**Identifiers are validated, values are bound.** Parameters always travel as `Tuple` placeholders.
+Column names — the one place a string reaches SQL — go through `SqlIdentifier` at construction time
+and are quoted again by vendor builders during composition.
 
 ---
 
 ## Key Classes
 
-### `DataAccessException`
-
-Base exception for all database failures. All framework database exceptions extend this class, enabling uniform catch-all handling at the service or resource layer.
-
-Context fields are populated by vendor-specific translators when available; they are `null` by default.
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `sqlState()` | `String` | SQL state code (e.g., `"23505"`), or `null` |
-| `constraintName()` | `String` | Constraint name (e.g., `"uk_users_email"`), or `null` |
-| `tableName()` | `String` | Table name, or `null` |
-
-### Exception Hierarchy
-
-`DataAccessException` extends `TechnicalException` (from `core.exception`), placing database failures in the unified framework exception hierarchy.
-
-```
-TechnicalException (core.exception)
-└── DataAccessException (db.exception, RuntimeException)
-    ├── TransientDataAccessException          — retry-safe failures
-    │   ├── ConnectionException               — pool exhaustion, network errors (SQL state class 08)
-    │   ├── QueryTimeoutException             — query exceeded time limit
-    │   └── DeadlockException                 — deadlock detected (SQL state 40P01)
-    ├── DataIntegrityViolationException       — constraint violations; wrap into `ConflictException` at the API boundary to produce HTTP 409
-    │   ├── UniqueConstraintViolationException — unique/PK violation (SQL state 23505)
-    │   └── ForeignKeyViolationException       — FK violation (SQL state 23503)
-    ├── ConcurrencyFailureException           — concurrent modification failures
-    │   ├── OptimisticLockingFailureException  — optimistic lock conflict (SQL state 40001)
-    │   └── PessimisticLockingFailureException — pessimistic lock failure
-    └── InvalidDataAccessUsageException       — programming errors (bad SQL, bad permissions)
-```
-
-`DbValidationException` extends `ValidationException` (from `core.exception`) for validation failures in the DB layer:
-
-```
-ValidationException (core.exception)
-└── DbValidationException (db.exception)
-    └── PageSizeConstraintViolationException (db.query) — page size exceeds max allowed
-```
-
-`PageSizeConstraintViolationException` is thrown by `PagedQuery` when cursor-provided page sizes exceed `maxPageSize` via strict validation mode.
-
-`TransientDataAccessException` subclasses represent conditions that may succeed on retry:
-
-```java
-// In a resilience policy:
-@Retry(retryOn = {TransientDataAccessException.class})
-Future<Item> findById(UUID id);
-```
-
-### `DbExceptionMapper`
-
-Hierarchy-aware translator that maps raw exceptions to typed `DataAccessException` subclasses. Extends `core.failure.FailureMapper`, inheriting the superclass-walk, lookup cache, and two `on(...)` overloads. Its constructor pre-registers a `DataAccessException` pass-through (existing `DataAccessException`s are returned unchanged). Its `fallback` override wraps any unmapped throwable in a generic `DataAccessException`.
-
-Translators registered via `on(...)` may return **any `Throwable`** — including application business exceptions — because `translate(...)` returns `Throwable`, not `DataAccessException`. Unmapped throwables are still wrapped in `DataAccessException` by `fallback`.
-
-```java
-var mapper = new DbExceptionMapper();
-// Return a typed DataAccessException subclass
-mapper.on(DatabaseException.class, (e, ctx) -> new DataAccessException(ctx, e));
-// Return an application business exception — allowed because translate() returns Throwable
-mapper.on(EmailAlreadyUsedException.class, (e, ctx) -> new EmailAlreadyInUseException(e.getEmail()));
-
-// Translate (DataAccessException pass-through and Throwable catch-all come from the base):
-Throwable translated = mapper.translate(rawException, "Failed to save user");
-Throwable translated = mapper.translate(rawException); // context defaults to getMessage()
-```
-
-Self-contained — no dependency on the REST pipeline or services layer. Vendor modules extend this class with pre-configured translations (e.g., `PgDbExceptionMapper`).
-
-#### Invariants & Gotchas
-
-- The `DataAccessException` pass-through is registered in the base constructor. Subclasses must not re-register it.
-- The catch-all wrapping of unrecognised throwables in `DataAccessException` is the `fallback` override, not a registered translator — it cannot be selectively removed.
-- Because `translate(...)` returns `Throwable`, callers in repositories must handle both `DataAccessException` and plain application exceptions from the result. The `recover()` pipeline pattern works regardless of which type is returned.
-
-### `DbPoolConfig`
-
-Lombok `@Builder` configuration value object. Deserialized from the `"db"` section of the application config. Covers all Vert.x 5 `PoolOptions` and common `SqlConnectOptions` fields.
-
-```json
-{
-  "db": {
-    "host": "localhost",
-    "port": 5432,
-    "database": "mydb",
-    "user": "app",
-    "password": "secret",
-    "maxPoolSize": 10
-  }
-}
-```
-
-| Field | Default | Description |
-|-------|---------|-------------|
-| `host` | — | Database host |
-| `port` | — | Database port (vendor default applied by vendor module) |
-| `database` | — | Database name |
-| `user` | — | Database user |
-| `password` | — | Database password |
-| `maxPoolSize` | `5` | Maximum connections in pool |
-| `maxWaitQueueSize` | `-1` | Max requests waiting for a connection; `-1` = unbounded |
-| `eventLoopSize` | `0` | Event loop threads used by pool; `0` = Vert.x default |
-| `connectionTimeoutMs` | `30000` | Max wait for connection from pool (ms) |
-| `idleTimeoutMs` | `0` | Max idle time before eviction (ms); `0` = disabled |
-| `maxLifetimeMs` | `0` | Max connection lifetime (ms); `0` = no limit |
-| `poolCleanerPeriodMs` | `1000` | Pool cleaner run interval (ms) |
-| `cachePreparedStatements` | `false` | Cache prepared statements per connection |
-| `preparedStatementCacheMaxSize` | `256` | Max prepared statement cache size |
-| `reconnectAttempts` | `0` | Reconnect attempts on failure; `0` = no reconnect |
-| `reconnectIntervalMs` | `1000` | Delay between reconnect attempts (ms) |
-| `properties` | `{}` | Vendor-specific connection properties |
-
-### `PoolConnectHandler`
-
-Handler interface (extends `Handler<SqlConnection>`) for initializing newly established database connections. Called once per new physical connection before pool admission. The implementation **must** call `conn.close()` when initialization completes — this is the Vert.x pool admission signal.
-
-```java
-@Provides
-static PoolConnectHandler timezoneHandler() {
-    return conn -> conn.query("SET TIME ZONE 'UTC'").execute()
-            .onComplete(ar -> conn.close());
-}
-```
-
 ### `SqlRepository`
 
-Base interface for database repositories. Exposes factory methods for fluent query builders, `pool()`, `exceptionMapper()`, `transaction()`, and `withConnection()`.
+The repository contract.
 
 ```java
 public interface SqlRepository {
+
     Pool pool();
     DbExceptionMapper exceptionMapper();
 
-    // Fluent query builder factory methods
     <T> Query.Builder<T, ?> query();
     default <T> Query.Builder<T, ?> query(String sql);
+
     <T> PagedQuery.Builder<T, ?> pagedQuery();
     default <T> PagedQuery.Builder<T, ?> pagedQuery(String sql);
+
     <T> OffsetPagedQuery.Builder<T, ?> offsetPagedQuery();
     default <T> OffsetPagedQuery.Builder<T, ?> offsetPagedQuery(String sql);
 
-    // Fluent transaction builder
     TransactionBuilder transaction();
 
-    // Executes fn on a pooled connection without a transaction
     <T> Future<T> withConnection(Function<SqlClient, Future<T>> fn);
 }
 ```
 
-`withConnection` translates exceptions via the failure mapper automatically. `transaction()` returns a `TransactionBuilder` — call `.execute(conn -> ...)` to run work inside an ACID transaction with automatic rollback on failure.
-
-### `AbstractSqlRepository`
-
-Base implementation of `SqlRepository`. Accepts a `Pool` and `DbExceptionMapper` at construction. Vendor subclasses (e.g., `PgSqlRepository`) implement `query()` and `pagedQuery()` returning dialect-specific builders. Extend the vendor subclass for application repositories:
+`AbstractSqlRepository` implements everything except the three builder factories, which a vendor
+subclass supplies so the builders emit the right placeholder and row-comparison syntax. Extend the
+vendor subclass:
 
 ```java
 @Singleton
@@ -189,328 +110,325 @@ public class ItemRepository extends PgSqlRepository {
         super(pool, exceptionMapper);
     }
 
-    public Future<Item> findById(UUID id) {
+    public Future<Optional<Item>> findById(UUID id) {
         return this.<Item>query("SELECT id, name, description FROM items WHERE id = $1")
                 .params(Tuple.of(id))
                 .mapping(Item::fromRow)
-                .one()
-                .map(opt -> opt.orElse(null));
+                .one();
     }
 }
 ```
 
 ### `Query<T>`
 
-Fluent query builder and executor for non-paginated database operations. Obtained via `SqlRepository.query(String)`. Builder methods set configuration; terminal methods build and execute in one step.
+Fluent builder and executor for non-paginated statements. Configuration methods return the builder;
+terminal methods build and execute in one step.
 
-**Builder methods:**
+| Builder method | Effect |
+|---|---|
+| `.sql(String)` | The statement |
+| `.on(SqlClient)` | Run on a specific connection instead of the pool — required inside a transaction |
+| `.params(Tuple)` | Prepared-statement parameters |
+| `.mapping(RowMapper<T>)` | Row mapper; required by `one`, `list`, `returning`, `returningOptional`, `stream` |
+| `.queryClause(QueryClause)` | Append a vendor clause after the SQL |
+| `.batch(List<Tuple>)` | Batch parameters for `execute()` |
 
-| Method | Description |
-|--------|-------------|
-| `.sql(String)` | Set the SQL statement |
-| `.on(SqlClient)` | Override pool with a specific connection (for transactions) |
-| `.params(Tuple)` | Set prepared statement parameters |
-| `.mapping(RowMapper<T>)` | Set row mapper (required for `one()`, `list()`, `returning()`) |
-| `.queryClause(QueryClause)` | Append vendor clause (e.g., `PgLockMode.FOR_UPDATE`) |
-| `.batch(List<Tuple>)` | Set batch parameters for `execute()` |
+| Terminal method | Returns | Notes |
+|---|---|---|
+| `.one()` | `Future<Optional<T>>` | **At most one row.** Zero rows is empty; two or more fail with `IncorrectResultSizeDataAccessException` |
+| `.list()` | `Future<List<T>>` | All rows; empty list when none match |
+| `.execute()` | `Future<Integer>` | Affected rows; for a batch, the total across all entries |
+| `.returning()` | `Future<T>` | **Exactly one row.** Zero fails with `DataAccessException`, two or more with `IncorrectResultSizeDataAccessException` |
+| `.returningOptional()` | `Future<Optional<T>>` | **At most one row.** Zero rows is a valid outcome; two or more fail with `IncorrectResultSizeDataAccessException` |
+| `.count()` | `Future<Long>` | Single-column result; `0L` when no rows; a multi-column row fails with `InvalidDataAccessUsageException` |
+| `.rows()` | `Future<RowSet<Row>>` | Unmapped escape hatch, still exception-translated |
+| `.stream(int fetchSize)` | `Future<ReadStream<T>>` | Server-side cursor; requires a `SqlConnection` |
 
-**Terminal methods:**
-
-| Method | Return type | Description |
-|--------|-------------|-------------|
-| `.one()` | `Future<Optional<T>>` | First row or empty; requires mapper |
-| `.list()` | `Future<List<T>>` | All rows; requires mapper |
-| `.execute()` | `Future<Integer>` | Affected row count (mutation or batch) |
-| `.returning()` | `Future<T>` | First RETURNING row; fails if 0 rows |
-| `.returningOptional()` | `Future<Optional<T>>` | First RETURNING row or empty |
-| `.count()` | `Future<Long>` | Count from `SELECT COUNT(*)` query |
-| `.rows()` | `Future<RowSet<Row>>` | Raw `RowSet` escape hatch |
+`.one()`, `.list()`, `.returning()`, `.returningOptional()`, and `.stream(...)` throw
+`IllegalStateException` **synchronously** when no `.mapping(...)` was configured — that is a wiring
+error, not a runtime failure, so it does not travel as a failed future.
 
 ```java
-// Query a single row
-Future<Optional<Item>> item = this.<Item>query("SELECT id, name FROM items WHERE id = $1")
-    .params(Tuple.of(itemId))
-    .mapping(Item::fromRow)
-    .one();
-
-// Query a list
-Future<List<Item>> items = this.<Item>query("SELECT id, name FROM items WHERE status = $1")
-    .params(Tuple.of("active"))
-    .mapping(Item::fromRow)
-    .list();
-
-// Mutation — affected row count
-Future<Integer> deleted = this.<Void>query("DELETE FROM items WHERE status = $1")
-    .params(Tuple.of("expired"))
-    .execute();
-
-// Mutation with RETURNING — fails if 0 rows
-Future<Item> created = this.<Item>query("INSERT INTO items (id, name) VALUES ($1, $2) RETURNING *")
-    .params(Tuple.of(id, name))
-    .mapping(Item::fromRow)
-    .returning();
-
-// Mutation with RETURNING — optional (e.g., ON CONFLICT DO NOTHING)
-Future<Optional<Item>> updated = this.<Item>query("UPDATE items SET name = $2 WHERE id = $1 RETURNING *")
-    .params(Tuple.of(id, name))
-    .mapping(Item::fromRow)
-    .returningOptional();
-
-// COUNT query
-Future<Long> count = this.<Void>query("SELECT COUNT(*) FROM items WHERE status = $1")
-    .params(Tuple.of("active"))
-    .count();
-
-// Inside a transaction with a lock clause
-transaction().execute(conn ->
-    this.<Item>query("SELECT id, name FROM items WHERE id = $1")
-        .on(conn)
-        .params(Tuple.of(id))
+// Mutation with RETURNING — exactly one row expected
+this.<Item>query("INSERT INTO items (id, name) VALUES ($1, $2) RETURNING *")
+        .params(Tuple.of(id, name))
         .mapping(Item::fromRow)
-        .queryClause(PgLockMode.FOR_UPDATE)
-        .one()
-);
+        .returning();
+
+// INSERT ... ON CONFLICT DO NOTHING — zero rows is fine
+this.<Item>query("INSERT INTO items (id, name) VALUES ($1, $2) ON CONFLICT DO NOTHING RETURNING *")
+        .params(Tuple.of(id, name))
+        .mapping(Item::fromRow)
+        .returningOptional();
 
 // Batch insert
 var tuples = items.stream().map(i -> Tuple.of(i.id(), i.name())).toList();
-Future<Integer> inserted = this.<Void>query("INSERT INTO items (id, name) VALUES ($1, $2)")
-    .batch(tuples)
-    .execute();
+this.<Void>query("INSERT INTO items (id, name) VALUES ($1, $2)")
+        .batch(tuples)
+        .execute();
+
+// Locked read inside a transaction
+transaction().execute(conn ->
+        this.<Item>query("SELECT id, name FROM items WHERE id = $1")
+                .on(conn)
+                .params(Tuple.of(id))
+                .mapping(Item::fromRow)
+                .queryClause(PgLockMode.FOR_UPDATE)
+                .one());
+```
+
+`.batch(...)` and `.queryClause(...)` are mutually exclusive — combining them fails with
+`InvalidDataAccessUsageException`.
+
+**Streaming.** `.stream(fetchSize)` builds a Vert.x row stream over a prepared statement and needs a
+real connection, so `.on(conn)` inside `transaction().execute(...)` or `withConnection(...)` is
+mandatory; a pool client fails with `InvalidDataAccessUsageException`. The statement is closed when
+the stream ends or errors, so set both a `handler` and an `endHandler` (or call `close()`).
+
+```java
+repository.transaction().execute(conn ->
+        repository.<Item>query("SELECT id, name FROM items")
+                .on(conn)
+                .mapping(Item::fromRow)
+                .stream(100)
+                .compose(stream -> {
+                    Promise<Void> done = Promise.promise();
+                    stream.handler(this::process)
+                          .endHandler(done::complete)
+                          .exceptionHandler(done::fail);
+                    return done.future();
+                }));
 ```
 
 ### `PagedQuery<T>`
 
-Fluent builder and executor for keyset-paginated database queries. Obtained via `SqlRepository.pagedQuery(String)`. Uses the fetch-N+1 pattern to detect whether more pages exist without a separate COUNT query. The base SQL must not contain `ORDER BY`, `LIMIT`, or `OFFSET` — the framework appends these automatically.
+Keyset pagination using fetch-N+1: the builder requests `pageSize + 1` rows to decide whether a next
+page exists, without a `COUNT(*)`.
 
-**Builder methods:**
+| Builder method | Effect |
+|---|---|
+| `.sql(String)` | Base SQL — no `ORDER BY`, `LIMIT`, or `OFFSET` |
+| `.on(SqlClient)` | Run on a specific connection |
+| `.params(Tuple)` | Base WHERE parameters; keyset parameters are appended automatically |
+| `.mapping(RowMapper<T>)` | Required |
+| `.orderBy(String...)` | Columns in sort priority order — all `ASC`, nulls `DISALLOW` |
+| `.orderBy(OrderDirection, String...)` | Uniform direction, nulls `DISALLOW` |
+| `.orderBy(OrderDirection, NullHandling, String...)` | Uniform direction and null policy |
+| `.orderBy(OrderKey, OrderKey...)` | Per-column direction and null policy |
+| `.uniqueKey(String...)` | Declares which order columns form a unique key |
+| `.pageSize(int)` | Default page size when the cursor carries none (default `20`) |
+| `.queryClause(QueryClause)` | Vendor clause appended after `LIMIT` |
 
-| Method | Description |
-|--------|-------------|
-| `.sql(String)` | Set the base SQL (no ORDER BY/LIMIT/OFFSET) |
-| `.on(SqlClient)` | Override pool with a specific connection |
-| `.params(Tuple)` | Base WHERE clause parameters; keyset params appended automatically |
-| `.mapping(RowMapper<T>)` | Set row mapper (required) |
-| `.keysetColumns(String...)` | Keyset column names in sort order (at least one required) |
-| `.pageSize(int)` | Default page size (default: 20) |
-| `.maxPageSize(int)` | Maximum allowed page size; cursor values are clamped (default: 100) |
-| `.direction(SortDirection)` | Default sort direction (default: `ASC`) |
-| `.queryClause(QueryClause)` | Append vendor clause after LIMIT (e.g., `PgLockMode.FOR_UPDATE`) |
-
-**Terminal methods:**
-
-| Method | Return type | Description |
-|--------|-------------|-------------|
-| `.page()` | `Future<PagedResult<T>>` | First page with default page size |
-| `.page(PageCursor)` | `Future<PagedResult<T>>` | Page at the given cursor position |
+| Terminal method | Returns |
+|---|---|
+| `.page()` | `Future<PagedResult<T>>` — first page at the default size |
+| `.page(PageCursor)` | `Future<PagedResult<T>>` — the page the cursor addresses |
 
 ```java
-// First page (20 items, ascending by name then id)
 Future<PagedResult<Item>> first = this.<Item>pagedQuery(
-        "SELECT id, name, description FROM items WHERE status = $1")
-    .params(Tuple.of("active"))
-    .mapping(Item::fromRow)
-    .keysetColumns("name", "id")
-    .pageSize(20)
-    .page();
+                "SELECT id, name, created_at FROM items WHERE status = $1")
+        .params(Tuple.of("active"))
+        .mapping(Item::fromRow)
+        .orderBy("created_at", "id")
+        .uniqueKey("id")
+        .pageSize(20)
+        .page();
 
-// Subsequent page using cursor token from previous result
-PageCursor cursor = PageCursor.fromToken(result.nextCursorToken());
-Future<PagedResult<Item>> next = this.<Item>pagedQuery(
-        "SELECT id, name, description FROM items WHERE status = $1")
-    .params(Tuple.of("active"))
-    .mapping(Item::fromRow)
-    .keysetColumns("name", "id")
-    .page(cursor);
+PageCursor next = PageCursor.fromToken(first.result().nextCursorToken());
+Future<PagedResult<Item>> second = this.<Item>pagedQuery(
+                "SELECT id, name, created_at FROM items WHERE status = $1")
+        .params(Tuple.of("active"))
+        .mapping(Item::fromRow)
+        .orderBy("created_at", "id")
+        .uniqueKey("id")
+        .page(next);
 ```
 
-**Keyset columns:** For non-unique sort columns (e.g., `created_at`), add a unique tiebreaker (e.g., `id`) as the last column. The framework generates row-value comparison syntax: `(created_at, id) > ($2, $3)`.
+**At least one order key is required** — building without `orderBy(...)` throws
+`IllegalArgumentException`. The framework emits row-value comparison syntax such as
+`(created_at, id) > ($2, $3)`, so every order column must appear in the `SELECT` list and be
+readable by name from the returned `Row`.
 
-**Backward pagination:** `PagedResult.previousCursorToken()` produces a backward cursor. When executed, the sort direction is reversed, results are fetched, then reversed in memory to maintain original display order.
+**Declare a unique tiebreaker.** When the leading order column is not unique, append a unique column
+(typically `id`) and name it with `.uniqueKey(...)`. Without `.uniqueKey(...)` the query logs a
+one-time WARN that pagination may skip or duplicate rows. A `uniqueKey` column that is not among the
+`orderBy` columns fails construction with `IllegalArgumentException`.
 
-**Cardinality validation:** At runtime, the cursor's keyset values count is validated against `keysetColumns.length`. A mismatch fails the future with `IllegalArgumentException`.
+**Backward navigation** uses `PagedResult.previousCursorToken()`: each order key's direction is
+reversed for the fetch and the results are reversed back in memory, so display order is preserved.
 
-**`maxPageSize`:** Cursor-provided page sizes exceeding `maxPageSize` are silently clamped to prevent resource exhaustion. Default is `PagedQuery.DEFAULT_MAX_PAGE_SIZE` (100).
+**Null keyset values** are rejected unless the corresponding `OrderKey` allows them. A cursor
+carrying a null for a `DISALLOW` column fails the future with `IllegalArgumentException`; a *result
+row* with a null in such a column fails with `IllegalStateException`. Use `.nullsFirst()` or
+`.nullsLast()` on the `OrderKey` when nulls are expected.
+
+**Cardinality** is checked at execution: a cursor whose keyset value count differs from the order-key
+count fails the future with `IllegalArgumentException`.
 
 ### `PageCursor`
 
-Stateless cursor encoding keyset column values, page size, and navigation direction as an opaque Base64URL token. Sort direction is owned by the `PagedQuery`, not the cursor.
+Stateless, opaque cursor encoding keyset values, page size, and direction. Sort direction itself is
+owned by the `PagedQuery`, not by the cursor.
 
-**Factory methods:**
+| Method | Purpose |
+|---|---|
+| `PageCursor.first(int pageSize)` | First-page cursor; `pageSize` must be positive |
+| `PageCursor.of(List<Object>, int, boolean)` | Explicit construction |
+| `PageCursor.of(List<Object>, int, boolean, CursorCodecs)` | …with an explicit codec set |
+| `PageCursor.fromToken(String)` | Decode a token |
+| `PageCursor.fromToken(String, CursorCodecs)` | …with an explicit codec set |
+| `toToken()` / `toToken(CursorCodecs)` | Encode to a Base64URL token |
+| `isFirstPage()`, `keysetValues()`, `pageSize()`, `backward()` | Accessors |
+| `withPageSize(int)` | Copy with a different page size |
+| `withPageSize(int, int min, int max)` | …validating the range first |
+| `validatePageSize(int min, int max)` | Range check only |
 
-| Method | Description |
-|--------|-------------|
-| `PageCursor.first(int pageSize)` | First-page cursor (no keyset values) |
-| `PageCursor.of(List, int, boolean)` | Explicit construction (used internally by `PagedQuery`) |
-| `PageCursor.fromToken(String)` | Decode from a Base64URL token string |
+`withPageSize(int, int, int)` and `validatePageSize(int, int)` throw
+`PageSizeConstraintViolationException` when the requested size falls outside `[min, max]`. That
+exception extends `DbValidationException` → `ValidationException`, so an unclamped client page size
+surfaces as HTTP 400 rather than a 500. Nothing clamps silently — call one of these explicitly at
+the API boundary if you accept a client-supplied page size.
 
-**Instance methods:**
+`fromToken` throws `IllegalArgumentException` for a null, empty, malformed, or unknown-prefix token.
 
-| Method | Return type | Description |
-|--------|-------------|-------------|
-| `toToken()` | `String` | Encode to opaque Base64URL token |
-| `isFirstPage()` | `boolean` | True when no keyset values (first page) |
-| `keysetValues()` | `List<Object>` | Boundary row keyset values (empty for first page) |
-| `pageSize()` | `int` | Requested page size |
-| `backward()` | `boolean` | True for previous-page navigation |
+**Keyset value types** are preserved across encode/decode by a type prefix:
 
-**Supported keyset value types:** `UUID`, `Instant`, `OffsetDateTime`, `LocalDateTime`, `String`, `Integer`, `Long`, `Double`, `Boolean`. Types are preserved across encode/decode via type prefixes (e.g., `uuid:`, `instant:`).
+| Type | Prefix | Type | Prefix |
+|---|---|---|---|
+| `null` | `null:` | `String` | `str:` |
+| `java.util.UUID` | `uuid:` | `Integer` | `int:` |
+| `java.time.Instant` | `instant:` | `Long` | `long:` |
+| `java.time.OffsetDateTime` | `odt:` | `Short` | `short:` |
+| `java.time.LocalDateTime` | `ldt:` | `Double` | `double:` |
+| `java.time.LocalDate` | `date:` | `Float` | `float:` |
+| `java.math.BigDecimal` | `bigdec:` | `Boolean` | `bool:` |
+
+Anything else needs a `CursorValueCodec` — see [Extension Points](#extension-points).
 
 ### `PagedResult<T>`
 
-Result of a keyset-paginated query. Returned by `PagedQuery.Builder.page()`.
-
 ```java
-// Check navigation and fetch next page
-if (result.hasMore()) {
-    PageCursor next = PageCursor.fromToken(result.nextCursorToken());
-    PagedResult<Item> nextPage = repository.findItems(next).await();
-}
-
-if (result.hasPrevious()) {
-    PageCursor prev = PageCursor.fromToken(result.previousCursorToken());
-    PagedResult<Item> prevPage = repository.findItems(prev).await();
-}
+public record PagedResult<T>(List<T> items, String nextCursorToken, String previousCursorToken)
 ```
 
-| Component | Type | Description |
-|-----------|------|-------------|
-| `items()` | `List<T>` | Items on the current page (never null, may be empty) |
-| `nextCursorToken()` | `String` | Opaque forward cursor token, or `null` if last page |
-| `previousCursorToken()` | `String` | Opaque backward cursor token, or `null` if first page |
-| `hasMore()` | `boolean` | True when `nextCursorToken` is non-null |
-| `hasPrevious()` | `boolean` | True when `previousCursorToken` is non-null |
-| `size()` | `int` | Number of items on this page |
+| Member | Type | Meaning |
+|---|---|---|
+| `items()` | `List<T>` | Current page; never null, may be empty |
+| `nextCursorToken()` | `String` | Forward token, or `null` on the last page |
+| `previousCursorToken()` | `String` | Backward token, or `null` on the first page |
+| `hasMore()` | `boolean` | `nextCursorToken != null` |
+| `hasPrevious()` | `boolean` | `previousCursorToken != null` |
+| `size()` | `int` | Item count on this page |
+| `PagedResult.empty()` | static | Empty page with both tokens `null` |
 
-`PagedResult` is annotated with `@JsonInclude(NON_NULL)` — null cursor tokens are omitted from JSON responses.
+Annotated `@JsonInclude(NON_NULL)`, so null tokens are omitted from JSON.
 
 ### `OffsetPagedQuery<T>`
 
-Fluent builder and executor for offset-based (`LIMIT`/`OFFSET`) paginated queries. Unlike `PagedQuery` (keyset), offset pagination allows random-access by page number but degrades at deep offsets. Obtained via `SqlRepository.offsetPagedQuery(String)`.
+Offset pagination. Runs the `COUNT(*)` and the data query in parallel via `Future.all(...)` and
+returns both the page and the total.
 
-Runs a `COUNT(*)` query and the data query in parallel via `Future.all()`, returning an `OffsetPagedResult` with both the items and the total count. The base SQL must not contain `ORDER BY`, `LIMIT`, or `OFFSET` — the framework appends these automatically.
-
-**Builder methods:**
-
-| Method | Description |
-|--------|-------------|
-| `.sql(String)` | Set the base SQL (no ORDER BY/LIMIT/OFFSET) |
-| `.on(SqlClient)` | Override pool with a specific connection |
-| `.params(Tuple)` | Base WHERE clause parameters |
-| `.mapping(RowMapper<T>)` | Set row mapper (required) |
-| `.orderBy(String...)` | Column names, all ASC |
-| `.orderBy(OrderDirection, String...)` | Column names with uniform direction |
-| `.orderBy(OrderKey, OrderKey...)` | Per-column direction and null handling |
-| `.pageSize(int)` | Default page size used by `page(int)` (default: 20) |
-| `.queryClause(QueryClause)` | Append vendor clause after OFFSET |
-
-**Terminal methods:**
-
-| Method | Return type | Description |
-|--------|-------------|-------------|
-| `.page(int)` | `Future<OffsetPagedResult<T>>` | Page at index using configured default page size |
-| `.page(int, int)` | `Future<OffsetPagedResult<T>>` | Page at index with explicit page size |
+Builder methods match `PagedQuery` except that there is no `uniqueKey(...)` and `queryClause` is
+appended after `OFFSET`. Terminals are `.page(int page)` (default page size) and
+`.page(int page, int pageSize)`. A negative page or a page size below 1 fails the future with
+`IllegalArgumentException`.
 
 ```java
-// First page (page 0), default page size
 offsetPagedQuery("SELECT id, name, created_at FROM items WHERE status = $1")
-    .params(Tuple.of("active"))
-    .mapping(Item::fromRow)
-    .orderBy("created_at", "id")
-    .pageSize(20)
-    .page(0);
+        .params(Tuple.of("active"))
+        .mapping(Item::fromRow)
+        .orderBy("created_at", "id")
+        .pageSize(20)
+        .page(0);
 
-// Specific page and size
 offsetPagedQuery("SELECT id, name FROM items")
-    .mapping(Item::fromRow)
-    .orderBy(OrderKey.desc("created_at"), OrderKey.asc("id"))
-    .page(2, 15);
-
-// Converting to REST OffsetPage
-return repository.findAll(page, pageSize)
-    .map(r -> OffsetPage.of(r.items(), r.totalItems(), r.page(), r.pageSize()));
+        .mapping(Item::fromRow)
+        .orderBy(OrderKey.desc("created_at"), OrderKey.asc("id"))
+        .page(2, 15);
 ```
-
-**Ordering:** `orderBy(String...)` defaults to ASC with no null handling (`DISALLOW`). Use `OrderKey.asc("col").nullsLast()` for null-safe sorting.
 
 ### `OffsetPagedResult<T>`
 
-Record returned by `OffsetPagedQuery`. Contains the page items, total item count, and page metadata.
-
 ```java
-record OffsetPagedResult<T>(List<T> items, long totalItems, int page, int pageSize)
+public record OffsetPagedResult<T>(List<T> items, long totalItems, int page, int pageSize)
 ```
 
-| Component | Type | Description |
-|-----------|------|-------------|
-| `items()` | `List<T>` | Items on this page (defensive copy, never null) |
-| `totalItems()` | `long` | Total matching rows across all pages |
-| `page()` | `int` | Zero-based page number |
-| `pageSize()` | `int` | Max items per page |
-| `totalPages()` | `int` | Derived: `ceil(totalItems / pageSize)`; 0 when totalItems is 0 |
-| `first()` | `boolean` | True when `page == 0` |
-| `last()` | `boolean` | True when `page >= totalPages - 1` |
-| `size()` | `int` | Number of items on this page |
-| `isEmpty()` | `boolean` | True when `items` is empty |
-| `empty(int, int)` | `OffsetPagedResult<T>` | Static factory — empty result (0 items, totalItems 0) |
+| Member | Type | Meaning |
+|---|---|---|
+| `items()` | `List<T>` | Defensive copy; never null |
+| `totalItems()` | `long` | Total matching rows |
+| `page()` / `pageSize()` | `int` | Zero-based page number and page size |
+| `totalPages()` | `int` | `ceil(totalItems / pageSize)`; 0 when empty, clamped to `Integer.MAX_VALUE` |
+| `first()` / `last()` | `boolean` | `page == 0` / `page >= totalPages - 1` |
+| `size()` / `isEmpty()` | `int` / `boolean` | Item count on this page |
+| `OffsetPagedResult.empty(int page, int pageSize)` | static | Empty page |
 
-`OffsetPagedResult` is annotated with `@JsonInclude(NON_NULL)`.
+The compact constructor rejects a negative `totalItems` or `page` and a `pageSize` below 1 with
+`IllegalArgumentException`. Annotated `@JsonInclude(NON_NULL)`.
 
-**Navigation example:**
+### Ordering types
 
-```java
-OffsetPagedResult<Item> result = repository.findItems(0, 20).await();
+`OrderKey` is `(String column, OrderDirection direction, NullHandling nullHandling)`. Construct with
+`OrderKey.asc(col)`, `OrderKey.desc(col)`, or `OrderKey.of(col, direction)`, then refine with
+`.nullsFirst()`, `.nullsLast()`, or `.disallowNulls()`. `reverse()` flips the direction. The column
+name is validated through `SqlIdentifier` in the compact constructor.
 
-if (!result.last()) {
-    OffsetPagedResult<Item> nextPage = repository.findItems(result.page() + 1, 20).await();
-}
-```
+| `OrderDirection` | SQL | Keyset operator |
+|---|---|---|
+| `ASC` | `ORDER BY col ASC` | `>` |
+| `DESC` | `ORDER BY col DESC` | `<` |
 
-### `SortDirection`
+| `NullHandling` | Meaning |
+|---|---|
+| `DISALLOW` | Nulls are a programming error in this column — the default |
+| `NULLS_FIRST` | Nulls sort first |
+| `NULLS_LAST` | Nulls sort last |
 
-Enum controlling SQL `ORDER BY` direction and keyset comparison operator for `PagedQuery`.
+### Transactions
 
-| Value | SQL | Keyset operator |
-|-------|-----|-----------------|
-| `ASC` | `ORDER BY col ASC` | `>` (rows after cursor) |
-| `DESC` | `ORDER BY col DESC` | `<` (rows before cursor) |
-
-`SortDirection.reverse()` returns the opposite direction (used internally for backward pagination).
-
-### `SqlIdentifier`
-
-Utility for validating and quoting SQL identifiers to prevent SQL injection via identifier interpolation. Supports simple and dot-qualified identifiers (`table.column`, `schema.table.column`).
+`transaction()` returns a single-use `TransactionBuilder`. It auto-commits on success, auto-rolls
+back on failure, and translates the failure through the repository's exception mapper.
 
 ```java
-// validate() — fail-fast at entry points (constructors, builder methods)
-// Accepts letters, digits, underscores; first char must be letter or underscore.
-// Dot-separated segments supported (max 3). Returns the identifier unchanged for fluent chaining.
-String col = SqlIdentifier.validate("created_at");      // ok
-String col = SqlIdentifier.validate("id; DROP TABLE--"); // throws InvalidDataAccessUsageException
+// Database-default isolation, read-write
+repository.transaction().execute(conn -> doWork(conn));
 
-// quote() — defense-in-depth at SQL composition sites
-// Applies standard SQL double-quote escaping; doubles any embedded " characters.
-String q = SqlIdentifier.quote("name");       // → "name"
-String q = SqlIdentifier.quote("t.name");     // → "t"."name"
-String q = SqlIdentifier.quote("a\"b");       // → "a""b"
+// Serializable
+repository.transaction().serializable().execute(conn -> doWork(conn));
+
+// Read-only, repeatable read
+repository.transaction().repeatableRead().readOnly().execute(conn -> readWork(conn));
+
+// Named for diagnostics — the name becomes the exception-translation context
+repository.transaction().execute("items archiveBefore", conn -> archive(conn, cutoff));
 ```
 
-`OrderKey` validates column names via `SqlIdentifier.validate()` at construction time. `PagedQuery` and `OffsetPagedQuery` both delegate column name validation to `SqlIdentifier.validateColumnNames()`. `PgPagedQuery` and `PgOffsetPagedQuery` quote all column names via `SqlIdentifier.quote()` during SQL composition.
+| Method | Effect |
+|---|---|
+| `.isolationLevel(IsolationLevel)` | `READ_COMMITTED`, `REPEATABLE_READ`, or `SERIALIZABLE` |
+| `.serializable()` / `.repeatableRead()` | Shorthands |
+| `.readOnly()` | Issues `SET TRANSACTION READ ONLY` |
+| `.execute(fn)` | Runs with the context `"Transaction failed"` |
+| `.execute(operationName, fn)` | Runs with `operationName` as the translation context |
 
-### `QueryClause`
+Every statement inside the lambda must be bound to the transactional connection with `.on(conn)`;
+a builder left on the pool silently runs outside the transaction.
 
-Interface for vendor-specific SQL clauses appended after the base SQL (or after `LIMIT` in paginated queries). Implementations are typically enums in vendor modules (e.g., `PgLockMode`).
-
-**Security contract:** `QueryClause.sql()` must return a compile-time constant or developer-controlled string. Never pass user-controlled input as a `QueryClause` — the SQL string is interpolated directly with no further escaping.
+`Savepoint.execute(conn, name, fn)` gives partial rollback inside an open transaction: on success the
+savepoint is released, on failure it is rolled back to and the original error propagates, and the
+surrounding transaction stays open either way. The name must be a valid SQL identifier.
 
 ```java
-public interface QueryClause {
-    String sql(); // e.g., "FOR UPDATE SKIP LOCKED"
-}
+repository.transaction().serializable().execute(conn ->
+        doPartOne(conn)
+                .compose(v -> Savepoint.execute(conn, "sp1", c -> doRiskyWork(c)))
+                .recover(err -> doFallback(conn)));
 ```
 
-### `RowMapper<T>`
+`withConnection(fn)` runs on a pooled connection with **no** transaction, translating failures the
+same way. Use it for read paths and for `stream(...)`.
 
-Functional interface for mapping a database row to a domain object.
+### `RowMapper<T>` and `Rows`
 
 ```java
 @FunctionalInterface
@@ -519,47 +437,79 @@ public interface RowMapper<T> {
 }
 ```
 
-### `Rows`
+`Rows` holds null-safe column extractors; each returns `null` or `Optional.empty()` for SQL NULL.
 
-Null-safe row extraction helpers for common data types. All methods return `null` or `Optional.empty()` when the column value is SQL NULL.
+| Method | Returns |
+|---|---|
+| `enumValue(row, column, enumType)` | `E` |
+| `optionalEnum(row, column, enumType)` | `Optional<E>` |
+| `uuidOrNull(row, column)` | `UUID` |
+| `optionalUuid(row, column)` | `Optional<UUID>` |
+| `offsetDateTimeOrNull(row, column)` | `OffsetDateTime` |
+| `instantOrNull(row, column)` | `Instant` |
+| `localDateOrNull(row, column)` | `LocalDate` |
+| `integerOrNull(row, column)` | `Integer` |
+| `longOrNull(row, column)` | `Long` |
+| `booleanOrNull(row, column)` | `Boolean` |
+| `jsonObjectOrNull(row, column)` | `JsonObject` |
+| `optionalJson(row, column)` | `Optional<JsonObject>` |
+| `jsonOrNull(row, column, type)` | `T` — `JsonObject` mapped to `type` |
 
-| Method | Return type | Description |
-|--------|-------------|-------------|
-| `enumValue(row, column, enumType)` | `E` | Enum from string column |
-| `optionalEnum(row, column, enumType)` | `Optional<E>` | Optional enum |
-| `uuidOrNull(row, column)` | `UUID` | UUID or null |
-| `optionalUuid(row, column)` | `Optional<UUID>` | Optional UUID |
-| `offsetDateTimeOrNull(row, column)` | `OffsetDateTime` | OffsetDateTime or null |
-| `instantOrNull(row, column)` | `Instant` | Instant (via OffsetDateTime) or null |
-| `localDateOrNull(row, column)` | `LocalDate` | LocalDate or null |
-| `integerOrNull(row, column)` | `Integer` | Integer or null |
-| `longOrNull(row, column)` | `Long` | Long or null |
-| `booleanOrNull(row, column)` | `Boolean` | Boolean or null |
-| `jsonObjectOrNull(row, column)` | `JsonObject` | JsonObject or null |
-| `optionalJson(row, column)` | `Optional<JsonObject>` | Optional JsonObject |
-| `jsonOrNull(row, column, type)` | `T` | JsonObject mapped to type, or null |
+### `SqlIdentifier`
 
-### `MigrationRunner`
+The only sanctioned way to put a caller-supplied name into SQL.
 
-Interface for running database schema migrations. Implementations may use Flyway, Liquibase, or custom migration logic. Typically invoked during application startup before deploying verticles.
+```java
+// validate() — fail fast at entry points. Letters, digits, underscores; first character a letter
+// or underscore; up to three dot-separated segments. Returns the input for fluent chaining.
+SqlIdentifier.validate("created_at");        // ok
+SqlIdentifier.validate("id; DROP TABLE--");  // throws InvalidDataAccessUsageException
+
+// quote() — defence in depth at composition sites; doubles embedded quotes.
+SqlIdentifier.quote("name");    // "name"
+SqlIdentifier.quote("t.name");  // "t"."name"
+SqlIdentifier.quote("a\"b");    // "a""b"
+
+// validateColumnNames() — bulk check used by both pagination builders.
+SqlIdentifier.validateColumnNames("created_at", "id");
+```
+
+`OrderKey` validates at construction; `PagedQuery` and `OffsetPagedQuery` validate their `orderBy`
+columns; vendor builders quote every column during composition.
+
+### `DbPoolConfig`
+
+The typed `db` config section — see [Configuration](#configuration) for every key.
+`DbPoolConfig.validate()` returns a list of warning strings for likely misconfigurations — an unset
+host, a non-positive `maxPoolSize`, a trust store configured while `sslMode` is `DISABLE`. It never
+throws and nothing calls it automatically; invoke it yourself and log the result if you want that
+diagnostic at startup.
+
+### Migration contract
 
 ```java
 public interface MigrationRunner {
     Future<MigrationResult> migrate(Vertx vertx);
 }
+
+public record MigrationResult(int migrationsApplied, String targetVersion) {}
 ```
 
-### `MigrationResult`
+`targetVersion` is `null` when nothing was applied. Implementations wrap vendor failures in
+`MigrationException` (extends `dev.vertique.core.exception.VertiqueException`), which may carry a
+partial `MigrationResult` via `partialResult()` when the engine reported progress before failing.
 
-Record holding the outcome of a migration run.
+Run migrations before deploying verticles:
 
 ```java
-public record MigrationResult(int migrationsApplied, String targetVersion) {}
+migrationRunner.migrate(vertx)
+        .compose(result -> vertx.deployVerticle(httpVerticle));
 ```
 
 ### `DbModule`
 
-Dagger `@Module` that reads the `"db"` config section and provides `DbPoolConfig @Singleton`. Include alongside a vendor module.
+Provides `DbPoolConfig` as a `@Singleton`, parsed from the `db` config section. Include it alongside
+a vendor module.
 
 ```java
 @Singleton
@@ -581,38 +531,173 @@ interface AppComponent {
 
 ---
 
-## Extension Points
+## Exceptions
 
-### Custom Exception Translation via `ContextAwareFailureTranslator`
+### Hierarchy
 
-Register custom translators on a `DbExceptionMapper` instance using `on()`. Translators are `ContextAwareFailureTranslator` lambdas `(exception, context) -> Throwable` — the `context` string names the failed operation. Translators may return a typed `DataAccessException` subclass **or** an application business exception.
+`DataAccessException` extends `dev.vertique.core.exception.TechnicalException`, so an untranslated
+database failure reaching the REST layer renders as HTTP 500.
+
+```
+TechnicalException (core.exception)
+└── DataAccessException
+    ├── TransientDataAccessException            — may succeed on retry
+    │   ├── ConnectionException                 — pool exhaustion, network, SQL state class 08
+    │   ├── QueryTimeoutException               — statement exceeded its time limit
+    │   └── DeadlockException                   — deadlock detected
+    ├── DataIntegrityViolationException         — constraint violation
+    │   ├── UniqueConstraintViolationException  — unique / primary key
+    │   └── ForeignKeyViolationException        — foreign key
+    ├── ConcurrencyFailureException
+    │   ├── OptimisticLockingFailureException   — serialization failure
+    │   └── PessimisticLockingFailureException  — lock not available
+    └── InvalidDataAccessUsageException         — programming errors: bad SQL, bad permissions
+        └── IncorrectResultSizeDataAccessException — expectedSize() / actualSize()
+```
+
+```
+ValidationException (core.exception)
+└── DbValidationException
+    └── PageSizeConstraintViolationException    — requestedPageSize(), minPageSize(), maxPageSize()
+```
+
+Every `DataAccessException` carries three nullable context fields populated by vendor translators:
+
+| Accessor | Example |
+|---|---|
+| `sqlState()` | `"23505"` |
+| `constraintName()` | `"uk_users_email"` |
+| `tableName()` | `"users"` |
+
+**Translate at the API boundary.** This module deliberately installs no bridge into the REST or
+services pipelines: a `DataIntegrityViolationException` that escapes a repository becomes a 500.
+Catch it where the operation has business meaning and rethrow a core semantic type — usually
+`ConflictException` for a unique violation, which the REST pipeline renders as 409.
+
+`TransientDataAccessException` is the retry-safe root:
+
+```java
+@Retry(retryOn = {TransientDataAccessException.class})
+Future<Item> findById(UUID id);
+```
+
+### `DbExceptionMapper`
+
+The hierarchy-aware translator every repository holds. It extends
+`dev.vertique.core.failure.FailureMapper`, inheriting the superclass walk, the lookup cache, and both
+`on(...)` overloads with covariant return types for chaining.
 
 ```java
 var mapper = new DbExceptionMapper();
-// Return a typed DataAccessException subclass
-mapper.on(MyVendorException.class, (e, ctx) ->
-    new UniqueConstraintViolationException(ctx, e, e.getSqlState(), e.getConstraint(), null));
-// Return a business exception (the mapper's translate() returns Throwable)
-mapper.on(MyEmailConflictException.class, (e, ctx) ->
-    new EmailAlreadyInUseException(e.getEmail()));
+
+// A typed DataAccessException subtype
+mapper.on(DatabaseException.class, (e, ctx) -> new DataAccessException(ctx, e));
+
+// Or an application business exception — translate() returns Throwable, not DataAccessException
+mapper.on(EmailAlreadyUsedException.class, (e, ctx) -> new EmailAlreadyInUseException(e.getEmail()));
+
+Throwable translated = mapper.translate(rawException, "Failed to save user");
+Throwable fallbackContext = mapper.translate(rawException); // context defaults to getMessage()
 ```
 
-Vendor modules subclass `DbExceptionMapper` with pre-configured translations. Applications can extend vendor mappers:
+Two behaviours come from the base class and are inherited by every vendor mapper:
+
+- The **constructor registers a `DataAccessException` pass-through**, so an already-typed exception
+  travels unchanged through any number of translation layers.
+- The **`fallback` override wraps every unmapped throwable in `DataAccessException`**. This is an
+  override, not a registered translator, so it cannot be selectively removed.
+
+`dev.vertique:vertique-db-postgresql` extends this class as `PgDbExceptionMapper`, adding SQL-state
+translations on top; it does not re-register the pass-through and does not override `fallback`. A
+subclass of your own must not either — re-registering the pass-through would shadow the base entry,
+and overriding `fallback` would change the catch-all contract for every repository using the mapper.
+
+Because `translate(...)` returns `Throwable`, a caller cannot assume a `DataAccessException` came
+back. The `recover(...)` pattern in repositories works regardless of which type a translator
+produced.
+
+---
+
+## Configuration
+
+`DbModule` parses the `db` section into `DbPoolConfig`.
+
+```json
+{
+  "db": {
+    "host": "localhost",
+    "port": 5432,
+    "database": "mydb",
+    "user": "app",
+    "password": "secret",
+    "maxPoolSize": 10,
+    "sslMode": "VERIFY_FULL",
+    "trustStorePath": "/etc/certs/db-ca.pem"
+  }
+}
+```
+
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `host` | string | — | Database host |
+| `port` | int | — | Database port; the vendor module applies its own default |
+| `database` | string | — | Database name |
+| `user` | string | — | Database user |
+| `password` | string | — | Database password |
+| `maxPoolSize` | int | `5` | Maximum pooled connections |
+| `maxWaitQueueSize` | int | `-1` | Requests allowed to wait for a connection; `-1` is unbounded |
+| `eventLoopSize` | int | `0` | Event-loop threads for the pool; `0` uses the Vert.x default |
+| `connectionTimeoutMs` | int | `30000` | Maximum wait for a pooled connection |
+| `idleTimeoutMs` | int | `0` | Idle time before eviction; `0` disables |
+| `maxLifetimeMs` | int | `0` | Maximum connection lifetime; `0` is unlimited |
+| `poolCleanerPeriodMs` | int | `1000` | Pool cleaner interval |
+| `cachePreparedStatements` | boolean | `false` | Cache prepared statements per connection |
+| `preparedStatementCacheMaxSize` | int | `256` | Prepared-statement cache size per connection |
+| `reconnectAttempts` | int | `0` | Reconnect attempts; `0` disables |
+| `reconnectIntervalMs` | long | `1000` | Delay between reconnect attempts |
+| `properties` | map | `{}` | Vendor-specific connection properties |
+| `sslMode` | string | `"DISABLE"` | Vendor SSL mode; PostgreSQL accepts `DISABLE`, `ALLOW`, `PREFER`, `REQUIRE`, `VERIFY_CA`, `VERIFY_FULL` |
+| `trustAll` | boolean | `false` | Skip certificate verification — development only |
+| `trustStorePath` | string | — | Trust store file (PEM, JKS, PKCS12); type inferred from the extension |
+| `trustStorePassword` | string | — | Required for JKS and PKCS12, ignored for PEM |
+| `trustStoreType` | string | — | Explicit `PEM`, `JKS`, or `PKCS12` |
+| `keyPath` | string | — | Client private key (PEM) for mutual TLS |
+| `certPath` | string | — | Client certificate (PEM) for mutual TLS |
+
+Unknown keys are ignored. `keyPath` and `certPath` are a pair — mutual TLS needs both.
+
+---
+
+## Extension Points
+
+### Custom exception translation
+
+Register translators on a `DbExceptionMapper` with `on(...)`. A translator is a
+`dev.vertique.core.failure.ContextAwareFailureTranslator` — `(exception, context) -> Throwable` —
+where `context` names the failing operation. It may return a typed `DataAccessException` subtype or
+an application exception.
 
 ```java
 public class MyPgExceptionMapper extends PgDbExceptionMapper {
+
     public MyPgExceptionMapper() {
         super();
-        on(MyAppException.class, (e, ctx) -> new InvalidDataAccessUsageException(ctx, e));
+        on(MyVendorException.class, (e, ctx) ->
+                new UniqueConstraintViolationException(ctx, e, e.getSqlState(), e.getConstraint(), null));
+        on(MyEmailConflictException.class, (e, ctx) ->
+                new EmailAlreadyInUseException(e.getEmail()));
     }
 }
 ```
 
-The `DataAccessException` pass-through and `Throwable` catch-all are provided by `DbExceptionMapper` — do not re-register them in subclasses.
+Do not re-register the `DataAccessException` pass-through and do not override `fallback` — both come
+from `DbExceptionMapper`.
 
-### `PoolConnectHandler` — Connection Initialization
+### `PoolConnectHandler`
 
-Provide a `PoolConnectHandler` via `@Provides` to run initialization logic on each new connection. The handler **must** call `conn.close()` when done — this is the pool admission signal.
+`PoolConnectHandler extends Handler<SqlConnection>` runs once per newly established physical
+connection, before the connection is admitted to the pool. **The handler must call `conn.close()`
+when it finishes** — that call is the admission signal, and omitting it stalls pool growth.
 
 ```java
 @Provides
@@ -623,9 +708,9 @@ static PoolConnectHandler connectHandler() {
 }
 ```
 
-### `MigrationRunner` — Custom Migration Backend
+### `MigrationRunner`
 
-Implement `MigrationRunner` for custom migration logic. The default implementation is `FlywayMigrationRunner` (from `db-flyway`). Override the binding if you prefer a different backend:
+Implement it to replace the Flyway default:
 
 ```java
 @Provides @Singleton
@@ -634,35 +719,84 @@ static MigrationRunner migrationRunner(LiquibaseMigrationRunner runner) {
 }
 ```
 
+### `CursorValueCodec`
+
+Teach `PageCursor` a keyset type outside the built-in table.
+
+```java
+public interface CursorValueCodec<T> {
+    String typePrefix();
+    Class<T> type();
+    String serialize(T value);
+    T deserialize(String raw);
+
+    static <T> CursorValueCodec<T> of(
+            String prefix, Class<T> type, Function<T, String> serializer, Function<String, T> deserializer) { ... }
+}
+```
+
+```java
+// Global — affects every cursor built from the default codec set.
+PageCursor.registerCodec(CursorValueCodec.of(
+        "tenant", TenantId.class, TenantId::toString, TenantId::parse));
+
+// Or scoped, without touching global state.
+CursorCodecs codecs = CursorCodecs.defaults()
+        .with(CursorValueCodec.of("tenant", TenantId.class, TenantId::toString, TenantId::parse));
+PageCursor cursor = PageCursor.fromToken(token, codecs);
+```
+
+`registerCodec` is synchronized and additive; registering a prefix or type that is already known
+throws `IllegalArgumentException`. `CursorCodecs.with(...)` returns a new instance and leaves the
+receiver untouched, so prefer it when a codec should not become process-global.
+
+### `QueryClause`
+
+```java
+public interface QueryClause {
+    String sql(); // e.g. "FOR UPDATE SKIP LOCKED"
+}
+```
+
+Implement it — typically as an enum, like the vendor's `PgLockMode` — to append a trailing SQL
+fragment to a query. **`sql()` is interpolated verbatim with no escaping**, so it must return a
+compile-time constant or a developer-controlled string, never anything derived from user input.
+
 ---
 
-## Version History
+## Failures, Constraints, and Common Mistakes
 
-| Date | Change |
-|------|--------|
-| 2026-03 | Initial implementation — typed exception hierarchy (`DataAccessException` tree), `DbExceptionMapper`, `DbPoolConfig`, `MigrationRunner` contract, `AbstractSqlRepository`, `PoolConnectHandler` |
-| 2026-03 | Added fluent `Query` and `PagedQuery` APIs with keyset pagination, `PageCursor` opaque token encoding, `PagedResult`, `SortDirection`, `Rows` helpers |
-| 2026-03 | Fixed five pagination bugs in `PagedQuery`/`OrderKey`/backward cursor handling |
-| 2026-04-02 | SQL injection hardening: `SqlIdentifier` utility (`validate()` + `quote()`); `OrderKey` and `PagedQuery` validate column names at construction; `PgPagedQuery` quotes all column identifiers in SQL composition; `QueryClause` security contract documented |
-| 2026-04-03 | Added offset-based pagination: `OffsetPagedQuery` (abstract builder/executor, parallel COUNT+data via `Future.all()`), `OffsetPagedResult` (record with `totalPages()`, `first()`, `last()`, `empty()` factory); `SqlRepository.offsetPagedQuery()` factory methods; `SqlIdentifier.validateColumnNames()` shared validation |
-| 2026-04-10 | `DbFailureMapper` renamed to `DbExceptionMapper`; `SqlRepository.failureMapper()` renamed to `exceptionMapper()`; `AbstractSqlRepository` constructor updated accordingly |
-| 2026-06-15 | Unified exception mapping on `core.failure.FailureMapper`; `DbExceptionTranslator` removed (use `ContextAwareFailureTranslator` from `core.failure`); `DbExceptionMapper` now extends `FailureMapper` directly; `DbExceptionMapper.translate(...)` returns `Throwable` instead of `DataAccessException`, allowing translators to return application business exceptions (see ADR-0108) |
+| Symptom | Cause |
+|---|---|
+| `IllegalArgumentException: At least one order key is required` | `PagedQuery` built without `orderBy(...)` |
+| `IllegalArgumentException: uniqueKey column '…' does not appear in the orderBy columns` | `.uniqueKey(...)` names a column not in `orderBy` |
+| WARN "no declared unique tiebreaker column" | `PagedQuery` executed without `.uniqueKey(...)`; pagination may skip or duplicate rows |
+| `IllegalArgumentException: Cursor keyset values count (…) does not match order keys count (…)` | Cursor reused against a query whose `orderBy` changed |
+| `IllegalStateException: Null value in column '…' … null handling is DISALLOW` | A result row has a null order-key value; use `.nullsFirst()` / `.nullsLast()` |
+| `IllegalArgumentException: Invalid cursor token` | Malformed, truncated, or foreign token from the client |
+| `IllegalArgumentException: Unsupported keyset value type prefix: …` | Cursor produced with a codec set the decoder does not have |
+| `PageSizeConstraintViolationException` (→ HTTP 400) | Client page size outside `[min, max]` at a `validatePageSize` / `withPageSize` call |
+| `InvalidDataAccessUsageException: stream() requires a SqlConnection` | `.stream(...)` on a pool client instead of `.on(conn)` |
+| `InvalidDataAccessUsageException: queryClause cannot be combined with batch execution` | `.batch(...)` and `.queryClause(...)` on the same query |
+| `InvalidDataAccessUsageException: count() expects a single-column result` | `.count()` on a multi-column `SELECT` |
+| `IncorrectResultSizeDataAccessException` from `.one()` / `.returning()` / `.returningOptional()` | The statement matched more than one row; use `.list()` or narrow the `WHERE` |
+| `IllegalStateException: A mapper must be configured via .mapping() …` | A row-mapping terminal called without `.mapping(...)` |
+| Statement runs outside its transaction | A builder inside `transaction().execute(...)` missing `.on(conn)` |
+| Pool never grows past the first connection | A `PoolConnectHandler` that does not call `conn.close()` |
+| Unique-violation surfaces as HTTP 500 | No boundary translation; catch `UniqueConstraintViolationException` and rethrow `ConflictException` |
+| Syntax error after `ORDER BY` | Base SQL for a paginated query already contained `ORDER BY`, `LIMIT`, or `OFFSET` |
 
 ---
 
 ## Dependencies
 
-- `dev.vertique:core` — `VertxConfig`, `FailureMapper`, `ContextAwareFailureTranslator`
-- `io.vertx:vertx-core` — Vert.x instance, `Future`
-- `io.vertx:vertx-sql-client` — `Pool`, `SqlConnection`, `Row`
-- `com.google.dagger:dagger`
-- `jakarta.inject:jakarta.inject-api`
-- `com.fasterxml.jackson.core:jackson-databind` — `DbPoolConfig` deserialization
-- `org.slf4j:slf4j-api`
-- `org.projectlombok:lombok` (provided)
-
----
-
-## Related ADRs
-
-- ADR-0108: Unify exception mapping on a context-aware FailureMapper — establishes `FailureMapper` as the shared concrete registry; `DbExceptionMapper` now extends it; `DbExceptionTranslator` removed in favour of `ContextAwareFailureTranslator`; `translate(...)` return type widened to `Throwable` to allow business-exception returns.
+| Dependency | Why |
+|---|---|
+| `dev.vertique:vertique-core` | `@VertxConfig`, `ConfigParser`, `FailureMapper`, `ContextAwareFailureTranslator`, the core exception roots |
+| `io.vertx:vertx-core` | `Vertx`, `Future`, `ReadStream` |
+| `io.vertx:vertx-sql-client` | `Pool`, `SqlClient`, `SqlConnection`, `Row`, `RowSet`, `Tuple` |
+| `com.google.dagger:dagger` | `DbModule` |
+| `jakarta.inject:jakarta.inject-api` | `@Singleton` |
+| `com.fasterxml.jackson.core:jackson-databind` | `DbPoolConfig` deserialization |
+| `org.slf4j:slf4j-api` | Pagination diagnostics |
+| `org.projectlombok:lombok` | Compile-time only |

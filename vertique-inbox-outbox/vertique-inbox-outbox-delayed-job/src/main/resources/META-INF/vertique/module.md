@@ -14,14 +14,6 @@ Delayed job adapter for Transactional Messaging. Provides two components: `Trans
 
 ---
 
-## Package Layout
-
-| Package | Contents |
-|---------|----------|
-| `dev.vertique.inboxoutbox.delayedjob` | `TransactionalDelayedJobPublisher`, `DelayedJobOutboxDestinationHandler`, `TransactionalMessagingDelayedJobModule` |
-
----
-
 ## Key Classes
 
 ### `TransactionalDelayedJobPublisher`
@@ -128,9 +120,3 @@ The adapter stores snapshot data in `OutboxEntry.headers` under well-known keys:
 | `dj-priority` | Effective priority at write time |
 | `dj-max-attempts` | Effective `maxAttempts` at write time |
 | `dj-run-at` | ISO-8601 scheduled time, if `scheduledAt` was provided |
-
----
-
-## Related ADRs
-
-- ADR-0082: Adapter-Owned Claim Eligibility — establishes that each `OutboxDestinationHandler` declares its own `ClaimScope` instead of contributing capability sets via qualified multibindings.

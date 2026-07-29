@@ -81,9 +81,9 @@ has two consequences:
 **Security.** `WorkflowSignalEndpoint.post` is an internal-relay-only endpoint. The `metadata`
 carrier is bound as the *authoritative* durable-context base for the signal's drive — it is never
 populated from untrusted or end-user input, only from the relay that produced it via
-`DurableMetadata.toCarrier()`. Authenticating the provenance of a caller-supplied carrier (deriving
-a production tenant namespace from the authenticated `SecurityContext` rather than trusting it
-verbatim off the carrier) is tracked as a follow-up in ADR-0147.
+`DurableMetadata.toCarrier()`. The carrier's provenance is not independently authenticated against
+the caller's identity — a future revision may derive the tenant namespace from the authenticated
+`SecurityContext` instead of trusting it verbatim off the carrier.
 
 ---
 
@@ -142,13 +142,3 @@ Applications normally provide service contracts and destination handlers; this m
 - **services** - service contract contribution and target resolution.
 - **inbox-outbox-core** - outbox and inbox APIs.
 - **vertx-sql-client** - `SqlClient` appears in public integration signatures.
-
----
-
-## Related ADRs
-
-- ADR-0029: No live dispatch in transitions — service calls are deferred through the outbox; the engine never makes live downstream calls.
-- ADR-0031: Side-effect recording via outbox — service dispatch is the canonical outbox-backed side effect.
-- ADR-0032: Transactional signal seam — the workflow signal contract participates in the caller's transaction.
-- ADR-0048: Actor as audit identity — service-initiated signals carry a `Service` actor.
-- ADR-0147: Instance-Level Durable Context with Base-Wins/Instance-Fill Binding — governs the explicit signal-context carrier on `WorkflowSignalRequest`, its decode boundary, and the authenticated-provenance follow-up for the carrier's trust model.

@@ -14,14 +14,6 @@ PostgreSQL persistence and relay engine for Transactional Messaging. Provides `D
 
 ---
 
-## Package Layout
-
-| Package | Contents |
-|---------|----------|
-| `dev.vertique.inboxoutbox.postgresql` | `DefaultInboxService`, `DefaultOutboxService`, `PgInboxOutboxRepository`, `OutboxRelay`, `OutboxRelayConfig`, `OutboxRecordMapper`, `TransactionalMessagingPostgresqlModule` |
-
----
-
 ## Key Classes
 
 ### `PgInboxOutboxRepository`
@@ -135,7 +127,7 @@ The exception message names only the destination TYPE and reason category — ne
 
 **Stale lease recovery:** A background cron job calls `reclaimStale(leaseTimeout)` to return rows stuck in `PROCESSING` beyond `leaseTimeoutMs`. Multiple relay nodes may share the same database safely.
 
-**Per-publish metadata model (ADR 0065):**
+**Per-publish metadata model:**
 - Application `headers` are stored and relayed as-is — application/transport headers only; no framework keys are merged in.
 - Durable propagation context bound at publish is captured into `metadata.context` and, at the Kafka boundary, projected to reserved `vertique-<namespace>` headers (e.g. `vertique-correlation`).
 - Relay control (message id, `eventType`, `aggregateType`, `aggregateId`) is exposed at relay time via `metadata.delivery.outbox` (projected from the row columns) — it is **not** merged into `headers` and is internal to the relay. `aggregateId` is still used as the Kafka message key.
@@ -227,7 +219,7 @@ Index: `idx_inbox_processed_at` (for cleanup queries).
 | `OutboxRelayConfig` | Singleton | Relay configuration deserialized from `inboxOutbox.relay` |
 | `InboxOutboxCleanupConfig` | Singleton | Cleanup configuration deserialized from `inboxOutbox.cleanup` |
 | `Set<VerticleDeployment>` | `@ElementsIntoSet` | `OutboxRelay` verticle; SERVICES phase, priority 100 |
-| `@Services Set<Object>` | `@IntoSet` | `OutboxMaintenanceServiceImpl` — provides cron-job entry points for stale-lease recovery and table cleanup |
+| `@Services Set<Object>` | `@IntoSet` | `OutboxMaintenanceServiceImpl` — provides cluster-singleton `@CronJob` entry points for stale-lease recovery and table cleanup |
 
 `RelayCapabilities` are derived at startup by `OutboxRelay.deriveCapabilities(handlerMap)` from the registered `Set<OutboxDestinationHandler>`. No `@ServiceTargetIds`- or `@DelayedJobTargetIds`-qualified `Set<String>` bindings are provided by this module — each adapter handler owns its own claim scope.
 
@@ -280,13 +272,3 @@ public interface AppComponent { ... }
 The previous `cleanupIntervalHours` field on `InboxOutboxCleanupConfig` is removed; the configuration object still accepts it for upgrade compatibility (`@JsonIgnoreProperties(ignoreUnknown = true)`) but the value is ignored. Maintenance cadence is now controlled by `cron.jobs.outbox-cleanup.cron` (default `0 0 */6 * * *` — every 6h on wall-clock boundaries) and `cron.jobs.outbox-stale-lease-recovery.cron` (default `*/30 * * * * *` — every 30s). The cron periods match the prior `setPeriodic` defaults, but first-fire timing is wall-clock-aligned rather than uptime-relative.
 
 `InboxOutboxPostgresqlComposeValidator` requires `CronJobRegistrar`, `CronScheduler`, and `CronPersistenceMarker`. The marker is bound exclusively by `CronPersistenceModule`, so installing `TransactionalMessagingPostgresqlModule` without it — including the case where the in-memory `CronModule` is installed instead — fails at Dagger codegen.
-
----
-
-## Related ADRs
-
-- ADR-0065: Structured Durable Context Metadata — establishes the `metadata.context` / `metadata.delivery` envelope split; governs how relay-control values (`messageId`, `eventType`, `aggregateType`, `aggregateId`) are exposed via `OutboxRelayControl` rather than merged into `headers`.
-- ADR-0060: Cluster-Singleton Maintenance via Cron — mandates that stale-lease recovery and row cleanup run as cluster-singleton `@CronJob` operations rather than per-node `setPeriodic` timers.
-- ADR-0081: DestinationType Is an Open Value Type, Not a Closed Enum — `DestinationType` is a validated string value type; new destination adapters register by returning `DestinationType.of("their-id")` with no edit to the framework class. The read path uses `DestinationType.of(...)` (lenient) so unrecognised but well-formed ids are preserved rather than rejected.
-- ADR-0082: Adapter-Owned Relay Claim Eligibility via Per-Handler ClaimScope — each `OutboxDestinationHandler` declares its own `ClaimScope`; the relay derives `RelayCapabilities` from the handler set and builds the SQL destination-eligibility disjunction dynamically, eliminating hardcoded type lists from the claim query.
-- ADR-0112: Framework Exception Hierarchy and REST Mapping — establishes `InboxOutboxConfigurationException` (→ core `ConfigurationException`) and `InboxOutboxTechnicalException` (→ core `TechnicalException`) as the semantic roots; mandates `InboxOutboxExceptionMapper` as the API-boundary wrapper of `DataAccessException`; `ClaimScopeException` extends `InboxOutboxConfigurationException` per this hierarchy.

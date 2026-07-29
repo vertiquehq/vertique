@@ -16,73 +16,42 @@ Discovery is anchored on `@Path`-annotated resource methods in the current compi
 
 ---
 
-## Package Layout
+## Key Classes
 
-| Package | Contents |
-|---------|----------|
-| `dev.vertique.codegen.sanitization.processor` | `SanitizationProcessor` |
-| `dev.vertique.codegen.sanitization.processor.scan` | `RestBodyDiscovery`, `DtoScanner`, `AnnotationCollector`, `DtoModel`, `FieldModel` |
-| `dev.vertique.codegen.sanitization.processor.emit` | `InputProcessorEmitter` |
+### Generated `{DTO}_InputProcessor`
+
+For each participating DTO type, the processor emits a `{DTO}_InputProcessor` class in the DTO's own package:
+
+- `public final`, implements `GeneratedInputProcessor<T>`, with a public no-arg constructor for `Class.forName`-based instantiation by `GeneratedInputProcessorDispatcher`.
+- `static final` chain constants — `List<Class<? extends Canonicalizer>>`, `List<Class<? extends Sanitizer>>`, and `boolean` skip flags — for the type-level chain and for each field, resolved once at class-load time.
+- `process(...)` dispatches on a `switch` over JSON field names:
+  - String fields call `GeneratedSupport.applyString(...)`.
+  - String collection fields call `GeneratedSupport.applyStringCollection(...)`.
+  - Nested DTO fields call `rootCtx.descend(...)` then `dispatcher.dispatchNested(...)`.
+  - Nested DTO collection fields call `rootCtx.descend(...)` then `GeneratedSupport.dispatchObjectCollection(...)`.
+  - External-jar nested types call `dispatcher.dispatchNested(...)` directly — no local chain, the reflective continuation handles them.
+  - Unknown keys flow through `GeneratedSupport.applyDefault(...)` with an empty field-level chain, so inherited route/object-level chains still apply.
+
+See "Runtime SPI Types" below for the interfaces and helpers this generated class calls into.
 
 ---
 
-## Key Classes
+## Field Classification & DTO Participation
 
-### `SanitizationProcessor`
+For a `@BODY` resource-method parameter typed `Collection<E>` or `E[]`, the element type `E` — not the collection/array type itself — is the discovery root for generation.
 
-`AbstractProcessor` registered via `META-INF/services/javax.annotation.processing.Processor`.
+**Which nested DTOs get a generated processor.** A nested DTO type is included in the generated set only if its subtree carries at least one of `@Canonicalize`, `@Sanitize`, `@SkipCanonicalization`, or `@SkipSanitization` — directly on the type, on a field/component, or via a meta-annotation. A discovery-root DTO is always included regardless of local annotations, so route- and parameter-level policies still flow through the generated path. Field classification walks the superclass chain (stopping at `Object`) to collect inherited fields, mirroring `FR-CG008-005`, so they participate alongside a DTO's own fields.
 
-```
-@SupportedAnnotationTypes("jakarta.ws.rs.Path")
-@SupportedSourceVersion(SourceVersion.RELEASE_21)
-```
+**External-jar and array-field limits.** A field or record component whose declared type is not in the current compilation unit (an external-jar type) is not scanned for nested annotations; the generated processor calls `dispatcher.dispatchNested(...)` for that field instead, routing it to the reflective continuation (see "Codegen↔Reflection Handoff" below). An array field at the nested level (e.g. `NestedDto[]`) is never emitted — only `Collection<E>` field types are supported for nested objects, matching the reflective baseline.
 
-Lifecycle:
+**Context parameters are never request bodies.** A resource method parameter annotated `@Context`, or one whose declared type is assignable to `dev.vertique.core.context.ContextValue`, is excluded from discovery — these are auto-classified as `CONTEXT` by the runtime regardless of whether `@Context` is present, and are never treated as request-body roots.
 
-1. `init(env)` — instantiates `CodegenContext`, `RestBodyDiscovery`, `DtoScanner`, `AnnotationCollector`, `InputProcessorEmitter`.
-2. `process(annotations, round)`:
-   - `RestBodyDiscovery` collects direct body-parameter types from `@Path`-annotated resource methods in the current compilation unit; scalar roots are filtered out.
-   - `DtoScanner` expands those roots into the transitive closure of participating DTO types.
-   - `AnnotationCollector` resolves per-type and per-field annotation metadata for the emitted set.
-   - `InputProcessorEmitter` writes one `{DTO}_InputProcessor` source file per type in the emitted set.
-3. Returns `false` so Dagger, Lombok, and other processors see the same elements unmodified.
-
-### `RestBodyDiscovery`
-
-Server-side body classifier that mirrors `ResourceScanner.resolveParams`. Visits every `ExecutableElement` on `@Path`-annotated types in the round's root elements. For each method parameter:
-
-- Skips if the enclosing type is not itself annotated `@Path` (no-`@Path` enclosing class → resource skipped).
-- **Excludes context parameters**: any parameter annotated `@Context` is not a request body and is skipped. Any parameter whose declared type is assignable to `dev.vertique.core.context.ContextValue` is likewise excluded — these are auto-classified as `CONTEXT` by the runtime regardless of whether `@Context` is present, and are never request bodies.
-- Classifies the remaining parameters as `@BODY` using the same rules as `ResourceScanner` (no `@PathParam`/`@QueryParam`/`@HeaderParam`/`@CookieParam`/`@FormParam`/`@BeanParam`/`@Context`, and type is not a `ContextValue` subtype).
-- When the parameter type is `Collection<E>` or `E[]`, records the **element type** `E` as the discovery root; otherwise records the raw parameter type.
-
-Scalar element types are filtered out before returning: `String`, `CharSequence`, primitive wrappers, `Number`, `BigDecimal`, `BigInteger`, `Character`, all `java.time.*` types, `UUID`, and `Enum` subtypes.
-
-### `DtoScanner`
-
-Takes the set of discovery roots from `RestBodyDiscovery` and computes the transitive closure of DTO types to emit.
-
-**Participation rule for transitive types:** a nested DTO type participates (and is included in the emitted set) only if its subtree carries at least one of `@Canonicalize`, `@Sanitize`, `@SkipCanonicalization`, or `@SkipSanitization` — directly on the type, on a field/component, or via a meta-annotation. Discovery roots are emitted unconditionally regardless of local annotations so that route- and parameter-level policies still flow through the generated path.
-
-Field/component types that are not in the current compilation unit (external-jar types) are tracked as `externalNestedTypes`. The emitter emits a `dispatcher.dispatchNested(...)` call for these fields so the runtime routes them to the reflective continuation, preserving `InputTraversalContext` across the codegen↔reflection boundary.
-
-Array fields at the nested level (e.g., `NestedDto[]` as a field) are not emitted — the reflective baseline handles only `Collection<E>` field types for nested objects, and the generated path mirrors that constraint.
-
-### `AnnotationCollector`
-
-APT mirror of `InputPolicyMetadataResolver`. Collects per-type and per-field annotation data from `TypeElement` and `VariableElement`/`RecordComponentElement` mirrors:
-
-- Walks the superclass chain (stopping at `Object`) to collect inherited fields (mirroring `FR-CG008-005`).
-- Resolves `@Canonicalize`, `@Sanitize`, `@SkipCanonicalization`, `@SkipSanitization` via direct and meta-annotation inspection using `CodegenContext.annotationMirrors()`.
-- Detects conflicting annotations on the same element (e.g., `@Canonicalize` and `@SkipCanonicalization` on the same field) and emits an `ERROR` diagnostic at compile time.
-- Produces `DtoModel` / `FieldModel` carriers consumed by the emitter.
-
-**`Optional<T>` is transparent for classification.** The intermediate wire value of an `Optional<T>` field is the unwrapped `T`, so the collector strips `java.util.Optional` layers before deciding the `FieldKind`:
+**`Optional<T>` is transparent for classification.** The intermediate wire value of an `Optional<T>` field is the unwrapped `T`, so field classification strips `java.util.Optional` layers before deciding the field kind:
 
 | Declared field type | Classified as |
 |---------------------|---------------|
 | `Optional<String>` | `STRING` |
-| `Optional<NestedDto>` | `NESTED_DTO` (nested type `NestedDto` — so `DtoScanner` also reaches it) |
+| `Optional<NestedDto>` | `NESTED_DTO` (nested type `NestedDto` — so its own chains are generated too) |
 | `Collection<Optional<String>>` | `COLLECTION_OF_STRINGS` |
 | `Optional<Optional<T>>` | classified as `T` (unwrapping recurses) |
 | raw `Optional`, `Optional<?>` | `OTHER` (or omitted when unannotated) |
@@ -90,8 +59,8 @@ APT mirror of `InputPolicyMetadataResolver`. Collects per-type and per-field ann
 
 **Bounded type arguments are normalized to their upper bound.** Wildcard and type-variable type
 arguments carry no runtime identity of their own: javac erases them to their bound and Jackson
-binds the wire value against that bound. The collector therefore resolves the bound before
-classifying, so the generated path materializes the same type the runtime does:
+binds the wire value against that bound, so field classification resolves the bound before deciding
+the field kind:
 
 | Declared field type | Classified as |
 |---------------------|---------------|
@@ -103,38 +72,7 @@ classifying, so the generated path materializes the same type the runtime does:
 | `Collection<?>` / `Collection<? super NestedDto>` | `OTHER` — the element normalizes to `java.lang.Object`, a scalar leaf |
 | `Optional<T>` where `T extends A & B` | classified against `A` — javac erases an intersection bound to its leftmost member, and that is the type in the erased field signature Jackson binds against |
 
-Without this normalization `Optional` would classify as a nested DTO and emit `dispatcher.dispatchNested(v, Optional.class, …)`; no `Optional_InputProcessor` exists, so the field's chain would be silently dropped and nested DTO metadata would be resolved from `Optional` rather than the wrapped type. Likewise, without bound normalization a bounded nested DTO would fall to the `OTHER` tail and never be discovered by `DtoScanner`, so its own chains would never be emitted while the runtime still materialized it. This keeps the generated path aligned with the reflective `InputPolicyMetadataResolver`, which applies the same `Optional`-stripping and bound-resolution rules.
-
-### `InputProcessorEmitter`
-
-JavaPoet-based emitter. For each `DtoModel` in the emitted set, generates `{DTO}_InputProcessor` in the DTO type's package:
-
-- Implements `GeneratedInputProcessor<T>`.
-- Static `final` per-field chain constants (`List<Class<? extends Canonicalizer>>`, `List<Class<? extends Sanitizer>>`, `boolean` skip flags) resolved once at class-load time.
-- Static `final` per-type (object-level) chain constants covering type-level annotations.
-- `process(...)` body: checks `intermediate instanceof Map<?,?>`; seeds `InputTraversalContext` from `parent` or `InputTraversalContext.fromRoute(policies)`; iterates the map with a `switch(k)` over known field names.
-  - String fields: calls `GeneratedSupport.applyString(...)` (imported via `import static`).
-  - String collection fields: calls `GeneratedSupport.applyStringCollection(...)`.
-  - Nested DTO fields: calls `rootCtx.descend(...)` then `dispatcher.dispatchNested(...)`.
-  - Nested DTO collection fields: calls `rootCtx.descend(...)` then `GeneratedSupport.dispatchObjectCollection(...)`.
-  - External-jar nested types: calls `dispatcher.dispatchNested(...)` directly (no `descend` with known chains — the reflective continuation handles them).
-  - Unknown keys flow through `GeneratedSupport.applyDefault(...)` with an empty field-level chain, so inherited route/object-level chains still apply.
-
-### `DtoModel` / `FieldModel`
-
-Immutable carriers populated by `DtoScanner` and `AnnotationCollector`, consumed by `InputProcessorEmitter`.
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `DtoModel.typeElement` | `TypeElement` | APT type mirror |
-| `DtoModel.fields` | `List<FieldModel>` | Ordered field list (superclass fields first) |
-| `DtoModel.objectLevelChains` | resolved chain lists | Type-level `@Canonicalize`/`@Sanitize` + skip flags |
-| `FieldModel.name` | `String` | Java field / record component name |
-| `FieldModel.kind` | `FieldKind` | `STRING`, `COLLECTION_OF_STRINGS`, `NESTED_DTO`, `COLLECTION_OF_DTO`, `OTHER` |
-| `FieldModel.canonChain` | `List<TypeMirror>` | Per-field canonicalizer classes |
-| `FieldModel.sanitChain` | `List<TypeMirror>` | Per-field sanitizer classes |
-| `FieldModel.skipCanon` | `boolean` | `@SkipCanonicalization` present on field |
-| `FieldModel.skipSanit` | `boolean` | `@SkipSanitization` present on field |
+Without this normalization `Optional` would classify as a nested DTO and emit `dispatcher.dispatchNested(v, Optional.class, …)`; no `Optional_InputProcessor` exists, so the field's chain would be silently dropped and nested DTO metadata would be resolved from `Optional` rather than the wrapped type. Likewise, without bound normalization a bounded nested DTO would fall to the `OTHER` tail and never receive its own generated processor while the runtime still materialized it. This keeps the generated path aligned with the reflective `InputPolicyMetadataResolver`, which applies the same `Optional`-stripping and bound-resolution rules.
 
 ---
 
@@ -179,7 +117,7 @@ Built once by `DefaultInputObjectProcessor` from the existing `Function<Class, C
 
 ### `InputTraversalContext`
 
-Public final class (not a record). Replaces the private `TraversalContext` record that was previously internal to `DefaultInputObjectProcessor`. Two `descend(...)` overloads preserve the metadata-shape for the reflective walker and provide a primitive-shape for generated callers (avoiding `InputPolicyMetadata` allocation on the hot path).
+Public final class (not a record) that carries traversal state across generated and reflective dispatch. Two `descend(...)` overloads preserve the metadata-shape for the reflective walker and provide a primitive-shape for generated callers (avoiding `InputPolicyMetadata` allocation on the hot path).
 
 ```java
 public final class InputTraversalContext {
@@ -251,7 +189,7 @@ Public class with public static helpers imported via `import static` in generate
 
 ## Scalar-Root Filter
 
-The following types are excluded from the discovery root set and are never passed to `DtoScanner`:
+The following types are excluded from the discovery root set and never receive a generated processor:
 
 - `String`, `CharSequence`
 - `boolean`, `byte`, `short`, `int`, `long`, `float`, `double`, `char` (and their boxed wrappers)
@@ -278,7 +216,7 @@ This means adding `vertique-codegen-sanitization` to a project is always additiv
 
 ## Conflict Diagnostics
 
-`AnnotationCollector` emits `ERROR` when mutually exclusive annotations appear on the same element:
+The processor emits `ERROR` when mutually exclusive annotations appear on the same element:
 
 | Conflict | Diagnostic |
 |----------|------------|
@@ -316,22 +254,6 @@ Test-only dependencies: `vertique-codegen-test`, `vertique-rest-core` (for `Gene
 
 ---
 
-## Version History
+## Known Gaps
 
-| Date | Change |
-|------|--------|
-| 2026-05-01 | Initial implementation (CG-008): `SanitizationProcessor` with `RestBodyDiscovery`, `DtoScanner`, `AnnotationCollector`, `InputProcessorEmitter`; runtime SPI types (`GeneratedInputProcessor`, `GeneratedInputProcessorDispatcher`, `ChainResolver`, `InputTraversalContext`, `GeneratedSupport`) added to `vertique-rest-core`; `DefaultInputObjectProcessor` self-bootstraps dispatcher and consults generated processors before reflective traversal; bidirectional codegen↔reflection handoff via `ReflectiveContinuation` |
-
----
-
-## Planned Additions
-
-- **Pre-composed per-field chain constants** — NFR-CG008-001 (≥3× latency reduction vs reflection) is not yet met; current benchmarks show ~5% improvement. Reaching the target requires the emitter to compose the canonicalizer+sanitizer function chain into a single constant at class-load time rather than passing raw `List<Class<...>>` to `GeneratedSupport.applyString(...)` on every call. Tracked as a follow-up.
-- **`Elements.getOrigin` edge-case verification** — APT's `Elements.getOrigin(Element)` returns `CLASS_FILE` for types loaded from external jars. `DtoScanner` currently relies on `typeElement.getKind()` to detect struct types but has not been exercised against all CU-classification edge cases in mixed-source/jar compilation units. Verification against these cases is deferred.
-- **`LinkedHashMap` allocation skip** — DTOs with no emittable fields (all fields are passthrough or the DTO has no fields) still allocate a `LinkedHashMap` output. The emitter could detect this at generation time and emit a passthrough `return intermediate` instead.
-
----
-
-## Related ADRs
-
-- ADR-0069: REST Context Resolver Chain and Single Context Source — establishes that `@Context` parameters and `ContextValue`-typed parameters are classified as `CONTEXT` at the runtime layer; `RestBodyDiscovery` mirrors this classification to ensure context parameters are never treated as request-body roots.
+- **Latency-reduction target not yet met.** NFR-CG008-001 targets a ≥3× latency reduction versus the reflective path; current benchmarks show roughly a 5% improvement. The per-field and per-type chain constants are resolved once at class-load time (see "Generated `{DTO}_InputProcessor`" above), but they are not yet composed into a single chain function — `GeneratedSupport.applyString(...)` still receives the raw `List<Class<...>>` on every call.

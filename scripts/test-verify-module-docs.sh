@@ -83,10 +83,36 @@ fixture_add_index_row() {
     fixture_index_rows+=("$1|$2")
 }
 
+# Emits a template-compliant canonical document for artifactId $1: the heading
+# and the blockquote status header docs/module-doc-template.md mandates.
+emit_compliant_document() {
+    printf '# %s\n\n' "$1"
+    printf '%s\n\n' '> **Status:** Stable'
+    printf '%s\n' 'One-paragraph overview of what the module does.'
+}
+
+# Writes the canonical document $1 for artifactId $2 as a template-compliant
+# baseline followed by the offending content read from standard input. Every
+# content-rule fixture therefore differs from a clean document by exactly the one
+# rule it is meant to trip, so a case cannot pass for an incidental reason.
+write_document_with_violation() {
+    local document="$1"
+    local artifact_id="$2"
+
+    mkdir -p "$(dirname "$document")"
+    {
+        emit_compliant_document "$artifact_id"
+        printf '\n'
+        cat
+    } > "$document"
+}
+
 # Writes a module's canonical document.
 # $1 = module path relative to the fixture root
 # $2 = artifactId (document heading)
-# $3 = document mode (present|empty|whitespace|missing)
+# $3 = document mode: present|empty|whitespace|missing, or one of the
+#      content-rule violations adr-hyphen|adr-space|related-adrs-heading|
+#      version-history|planned-additions|missing-status|unresolved-repo-path
 fixture_write_document() {
     local module_path="$1"
     local artifact_id="$2"
@@ -96,10 +122,7 @@ fixture_write_document() {
     case "$document_mode" in
         present)
             mkdir -p "$(dirname "$document")"
-            {
-                printf '# %s\n\n' "$artifact_id"
-                printf '%s\n' 'Status: Stable'
-            } > "$document"
+            emit_compliant_document "$artifact_id" > "$document"
             ;;
         empty)
             mkdir -p "$(dirname "$document")"
@@ -110,6 +133,49 @@ fixture_write_document() {
             printf '   \n\n\t\n' > "$document"
             ;;
         missing) ;;
+        adr-hyphen)
+            write_document_with_violation "$document" "$artifact_id" <<'DOC'
+Dispatch ordering follows ADR-0192.
+DOC
+            ;;
+        adr-space)
+            write_document_with_violation "$document" "$artifact_id" <<'DOC'
+Dispatch ordering follows ADR 0192.
+DOC
+            ;;
+        related-adrs-heading)
+            write_document_with_violation "$document" "$artifact_id" <<'DOC'
+## Related ADRs
+
+- Packaged documentation excludes private decision references.
+DOC
+            ;;
+        version-history)
+            write_document_with_violation "$document" "$artifact_id" <<'DOC'
+## Version History
+
+- Dispatch ordering became deterministic in the previous cycle.
+DOC
+            ;;
+        planned-additions)
+            write_document_with_violation "$document" "$artifact_id" <<'DOC'
+## Planned Additions
+
+- A batching dispatcher is under consideration.
+DOC
+            ;;
+        missing-status)
+            mkdir -p "$(dirname "$document")"
+            {
+                printf '# %s\n\n' "$artifact_id"
+                printf '%s\n' 'One-paragraph overview of what the module does.'
+            } > "$document"
+            ;;
+        unresolved-repo-path)
+            write_document_with_violation "$document" "$artifact_id" <<'DOC'
+Packaging rules are described in `docs/nope.md`.
+DOC
+            ;;
         *)
             echo "Unknown document mode: $document_mode" >&2
             exit 1
@@ -397,6 +463,81 @@ fixture_add_aligned_artifact vertique-delta vertique-delta jar whitespace
 fixture_finish
 run_case "whitespace-canonical-doc" fail "$fixture_root" \
     "vertique-delta has an empty canonical module document"
+
+# A packaged document must not cite a private decision record: the artifact ships
+# to application developers, and the decision log is not part of that contract.
+# The hyphenated citation is the form the decision records themselves use.
+fixture_reset adr-reference-hyphenated
+fixture_add_baseline_artifacts
+fixture_add_aligned_artifact vertique-delta vertique-delta jar adr-hyphen
+fixture_finish
+run_case "adr-reference-hyphenated" fail "$fixture_root" \
+    "vertique-delta cites a private decision record in its canonical module document: Dispatch ordering follows ADR-0192."
+
+# The same citation written with a space and no hyphen really occurs in prose, so
+# matching only the hyphenated form would leave the rule trivially evadable.
+fixture_reset adr-reference-spaced
+fixture_add_baseline_artifacts
+fixture_add_aligned_artifact vertique-delta vertique-delta jar adr-space
+fixture_finish
+run_case "adr-reference-spaced" fail "$fixture_root" \
+    "vertique-delta cites a private decision record in its canonical module document: Dispatch ordering follows ADR 0192."
+
+# A "## Related ADRs" section carries private decision material even when it
+# quotes no record number, so the heading itself must be rejected.
+fixture_reset related-adrs-section
+fixture_add_baseline_artifacts
+fixture_add_aligned_artifact vertique-delta vertique-delta jar related-adrs-heading
+fixture_finish
+run_case "related-adrs-section" fail "$fixture_root" \
+    "vertique-delta has a forbidden section in its canonical module document: ## Related ADRs"
+
+# Module documents are evergreen reference: change history lives in git.
+fixture_reset version-history-section
+fixture_add_baseline_artifacts
+fixture_add_aligned_artifact vertique-delta vertique-delta jar version-history
+fixture_finish
+run_case "version-history-section" fail "$fixture_root" \
+    "vertique-delta has a forbidden section in its canonical module document: ## Version History"
+
+# Roadmap material is unshipped behavior and belongs in the private governance
+# repository, not in an artifact an application already depends on.
+fixture_reset planned-additions-section
+fixture_add_baseline_artifacts
+fixture_add_aligned_artifact vertique-delta vertique-delta jar planned-additions
+fixture_finish
+run_case "planned-additions-section" fail "$fixture_root" \
+    "vertique-delta has a forbidden section in its canonical module document: ## Planned Additions"
+
+# The template mandates the blockquote status header, which is how a reader learns
+# whether the module's surface is safe to depend on.
+fixture_reset missing-status-header
+fixture_add_baseline_artifacts
+fixture_add_aligned_artifact vertique-delta vertique-delta jar missing-status
+fixture_finish
+run_case "missing-status-header" fail "$fixture_root" \
+    'vertique-delta has no "> **Status:**" blockquote'
+
+# A backticked repository-relative path that resolves to nothing is a link the
+# reader cannot follow. The real-repository case below proves the same rule
+# accepts the repository paths the shipped documents genuinely reference.
+fixture_reset unresolved-repository-path
+fixture_add_baseline_artifacts
+fixture_add_aligned_artifact vertique-delta vertique-delta jar unresolved-repo-path
+fixture_finish
+run_case "unresolved-repository-path" fail "$fixture_root" \
+    "vertique-delta references a repository path that does not exist in its canonical module document: docs/nope.md"
+
+# Maintainer documentation moved to a private governance repository, so
+# DEVELOPMENT.md is not a document whose content is checked but a file that must
+# not exist here at all. The rule is repository-wide rather than per-artifact: a
+# stray copy under a module that has no index row would otherwise go unseen.
+fixture_reset maintainer-document-present
+fixture_add_baseline_artifacts
+printf '# vertique-alpha internals\n' > "$fixture_root/vertique-alpha/DEVELOPMENT.md"
+fixture_finish
+run_case "maintainer-document-present" fail "$fixture_root" \
+    "vertique-alpha/DEVELOPMENT.md must not exist"
 
 # A packaging=pom aggregator must never enter the BOM/index set.
 fixture_reset aggregator-row

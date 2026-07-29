@@ -10,7 +10,7 @@ SPDX-License-Identifier: EUPL-1.2
 > **Artifact:** `logging`
 > **Depends on:** vertique-context, vertique-core
 
-Owns MDC (Mapped Diagnostic Context) for the framework: the per-request `MDCContext` storage, the `MDCContexts` public facade, the `MDCContextValueAdapter` ServiceLoader entry required by the substrate for deep-copy semantics, and the `LoggingContextModule` that registers MDC propagation through the service-dispatch encoder/decoder pipeline. Also provides two logback appenders that bridge Vert.x's context-local storage and logback's thread-local MDC model. For audit logging functionality, see the `docs/audit.md` module.
+Owns MDC (Mapped Diagnostic Context) for the framework: the per-request `MDCContext` storage, the `MDCContexts` public facade, the `MDCContextValueAdapter` ServiceLoader entry required by the substrate for deep-copy semantics, and the `LoggingContextModule` that registers MDC propagation through the service-dispatch encoder/decoder pipeline. Also provides two logback appenders that bridge Vert.x's context-local storage and logback's thread-local MDC model. Audit logging is a separate concern, provided by the Vertique audit modules rather than this one.
 
 ---
 

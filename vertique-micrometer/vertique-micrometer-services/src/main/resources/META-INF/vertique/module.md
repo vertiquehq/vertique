@@ -123,6 +123,10 @@ invocation.
 | `oneway` | `true` or `false` | `true` for fire-and-forget (`@OneWay`) dispatches |
 | `error.type` | Simple class name of the terminal failure cause, e.g. `IllegalArgumentException` | `none` when the outcome is `SUCCESS` |
 
+All tags above are part of `vertique-micrometer-core`'s frozen cardinality-guarded tag-key set —
+each key is capped at `metrics.cardinality.maxTagValuesPerKey` distinct values (default `200`)
+across the composite. See `vertique-micrometer-core`'s module reference for the guard mechanism.
+
 Outcome convention: a dispatch that failed but was recovered by the service pipeline appears as
 `outcome=SUCCESS` because `onTerminalComplete` receives the post-recovery result. Only dispatches
 whose terminal result is still a failure produce `outcome=ERROR`.
@@ -138,10 +142,3 @@ whose terminal result is still a failure produce `outcome=ERROR`.
 - `dev.vertique:vertique-core` — `Result` (from `core.eventbus`).
 - `com.google.dagger:dagger`, `jakarta.inject:jakarta.inject-api`
 - `org.slf4j:slf4j-api`, `org.projectlombok:lombok` (provided)
-
----
-
-## Related ADRs
-
-- ADR-0098: Micrometer Facade and Pluggable Registry Backends — establishes the `@BindsOptionalOf` adapter dependency rule (D-J) that allows this module to compile without `vertique-micrometer-core`, and the publish-on-success bootstrap contract that guarantees the injected registry is always non-null.
-- ADR-0099: Metric Naming, Tag, and Cardinality Policy — establishes the `vertique.*` naming scheme, the `UNKNOWN`/`none` sentinel convention, the `GUARDED_TAG_KEYS` frozen list that covers `target`, `outcome`, `oneway`, and `error.type`, and the per-event registry lookup policy (no adapter cache).

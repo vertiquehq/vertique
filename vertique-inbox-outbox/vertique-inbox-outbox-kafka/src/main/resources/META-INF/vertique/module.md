@@ -14,14 +14,6 @@ Kafka adapter for Transactional Messaging. Provides `KafkaOutboxDestinationHandl
 
 ---
 
-## Package Layout
-
-| Package | Contents |
-|---------|----------|
-| `dev.vertique.inboxoutbox.kafka` | `KafkaOutboxDestinationHandler`, `TransactionalMessagingKafkaModule` |
-
----
-
 ## Key Classes
 
 ### `KafkaOutboxDestinationHandler`
@@ -36,7 +28,7 @@ At relay time:
 3. Builds a Kafka record:
    - **Key:** `aggregateId` when present; `null` otherwise.
    - **Value:** `OutboxEnvelope.record().payload()` serialized to JSON.
-   - **Headers:** application headers from `OutboxEntry.headers` (application-only) plus the durable propagation context projected to reserved `vertique-<namespace>` headers (e.g. `vertique-correlation`, `vertique-localization`) via `DurableMetadataHeaderCodec`. Relay control (message id, `eventType`, aggregate ids) is **not** emitted as headers — it is carried internally in `OutboxMetadata.delivery.outbox` (see ADR 0065).
+   - **Headers:** application headers from `OutboxEntry.headers` (application-only) plus the durable propagation context projected to reserved `vertique-<namespace>` headers (e.g. `vertique-correlation`, `vertique-localization`) via `DurableMetadataHeaderCodec`. Relay control (message id, `eventType`, aggregate ids) is **not** emitted as headers — it is carried internally in `OutboxMetadata.delivery.outbox`.
 4. Sends the record. Awaits producer acknowledgment.
 5. On success: returns `OutboxPublishResult.success()`.
 6. On transport/timeout/broker failure: returns `OutboxPublishResult.retryable(error, errorType)`.
@@ -49,8 +41,8 @@ At relay time:
 | `vertique-<namespace>` | One reserved header per bound durable-context namespace (e.g. `vertique-correlation`, `vertique-localization`), value = the namespace body as JSON, projected by `DurableMetadataHeaderCodec` |
 
 Relay/delivery control (`x-message-id`, `eventType`, `aggregateType`, `aggregateId`) is no longer
-emitted as Kafka headers — it lives in `OutboxMetadata.delivery.outbox` and is internal to the relay
-(ADR 0065). `aggregateId` is still used as the Kafka **message key**. An application header that uses
+emitted as Kafka headers — it lives in `OutboxMetadata.delivery.outbox` and is internal to the relay.
+`aggregateId` is still used as the Kafka **message key**. An application header that uses
 the reserved `vertique-` prefix is rejected: the entry is dead-lettered (`OutboxPublishResult.permanent`),
 since the stored row cannot change.
 
@@ -117,10 +109,3 @@ The dependency required is `vertique-kafka-core` (provides `KafkaModule` and `Ka
 ## Configuration
 
 No Kafka-specific configuration in this module. Kafka producer settings (bootstrap servers, serializers, acks, etc.) are configured in the `kafka` module: connection scalars at the `kafka` root (e.g. `kafka.bootstrap.servers`), global properties under `kafka.properties`, and the global producer bag under `kafka.producer.properties`. Per-named-producer overrides live under `kafka.producers.{name}.*`. See `dev.vertique:vertique-kafka-core` for the full configuration reference.
-
----
-
-## Related ADRs
-
-- ADR-0082: Adapter-Owned Claim Eligibility — establishes that each `OutboxDestinationHandler` declares its own `ClaimScope` instead of contributing capability sets via qualified multibindings.
-- ADR-0094: Kafka Boundary Capture Hooks — load-bearing decisions for `KafkaOutboxCaptureHook`, `KafkaSendOrigin.OUTBOX`, and the relationship between the outbox-level hook and the producer-level `KafkaProducerCaptureHook`.

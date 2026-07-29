@@ -7,34 +7,63 @@ SPDX-License-Identifier: EUPL-1.2
 
 > **Status:** Implemented
 > **Package:** `dev.vertique.management`
-> **Artifact:** `management`
-> **Depends on:** core, vertx-web
+> **Artifact:** `vertique-management`
+> **Depends on:** `dev.vertique:vertique-core`, `io.vertx:vertx-web`
 
-Provides a dedicated management HTTP server on a separate port (default 9090) for Kubernetes-style health probe endpoints. The management server runs independently of the main `HttpVerticle`, allowing different network policies (e.g., cluster-internal only) for liveness and readiness probes.
+Runs a dedicated management HTTP server on its own port (default 9090) that serves Kubernetes-style liveness and readiness probes and hosts operational endpoints contributed by other modules. The management server is separate from the application's `HttpVerticle`, so probes and metrics can be placed behind different network policy (cluster-internal only, for example) from the application's traffic.
 
-Health check SPI types live in the `core` module (`dev.vertique.core.health`) so that other modules (`db-postgresql`, `services`) can contribute checks without depending on `management`. This follows the same pattern as `JsonModule`.
+The health-check SPI itself lives in `dev.vertique.core.health`, not in this package. That placement lets any module contribute a check without taking a dependency on `dev.vertique:vertique-management`.
 
 ---
 
-## Key Classes
+## When To Use It
 
-### ManagementVerticle
+Install this module when the application must expose health probes or an operational endpoint such as a Prometheus scrape route. Applications built on `dev.vertique:vertique-starter-rest` or `dev.vertique:vertique-starter-services` already have `ManagementModule` in the component graph; everything else adds it explicitly.
 
-Vert.x `AbstractVerticle` that creates a lightweight HTTP server with two routes:
+The starters compose the bindings but do **not** deploy the verticle — the application owns its deployment entry. Register `ManagementVerticle` in the `INFRA` lifecycle phase so probes answer before the `EDGE`-phase HTTP server starts accepting traffic:
 
-| Endpoint | Check set | UP response | DOWN response |
-|----------|-----------|-------------|---------------|
-| `GET /health/live` | `@Liveness Set<HealthCheck>` | 200 | 503 |
-| `GET /health/ready` | `@Readiness Set<HealthCheck>` | 200 | 503 |
+```java
+@Module
+public class AppModule {
 
-**Aggregation rules:**
-- All checks run concurrently via `Future.all()`
-- Overall status is UP only when ALL individual checks are UP
-- Empty check set → UP (nothing to fail)
-- Each check has a configurable timeout (default 5 seconds, set via `healthCheckTimeoutSeconds`); timeout counts as DOWN
-- Exceptions thrown synchronously inside `check()` are caught and reported as DOWN
+    @Provides
+    @IntoSet
+    static VerticleDeployment managementVerticle(Provider<ManagementVerticle> provider) {
+        return VerticleDeployment.of("management", provider::get, LifecyclePhase.INFRA);
+    }
 
-**Response format:**
+    @Provides
+    @IntoSet
+    static VerticleDeployment httpVerticle(Provider<HttpVerticle> provider) {
+        return VerticleDeployment.of("http", provider::get, LifecyclePhase.EDGE);
+    }
+}
+```
+
+`VerticleDeployment` and the deployment manager that consumes the set come from `dev.vertique:vertique-deploy`; `LifecyclePhase` comes from `dev.vertique:vertique-core`.
+
+---
+
+## Core Concepts
+
+### Two probe endpoints, two check sets
+
+| Endpoint | Check set | Status 200 | Status 503 |
+|----------|-----------|------------|------------|
+| `GET /health/live` | `@Liveness Set<HealthCheck>` | all checks UP | any check DOWN |
+| `GET /health/ready` | `@Readiness Set<HealthCheck>` | all checks UP | any check DOWN |
+
+Classify a check by the qualifier you contribute it under. `@Liveness` answers "is this process still functioning" and must not touch external dependencies — a liveness failure normally causes a restart. `@Readiness` answers "can this process serve traffic right now" and is where database pools, downstream services, and event-bus consumers belong.
+
+### Aggregation rules
+
+- Every check in the set runs concurrently; the endpoint waits for all of them.
+- The overall status is UP only when every individual check is UP.
+- An empty check set is UP with an empty `checks` array.
+- Each check is bounded by a per-check timeout (`healthCheckTimeoutSeconds`, default 5); a timed-out check counts as DOWN.
+- A check that returns a failed future, or that throws synchronously from `check()`, is reported as DOWN carrying the throwable's message.
+
+### Response format
 
 ```json
 {
@@ -46,110 +75,93 @@ Vert.x `AbstractVerticle` that creates a lightweight HTTP server with two routes
 }
 ```
 
-The `data` field is omitted from individual check objects when the result has no diagnostic data.
-
-**When `management.enabled` is `false`**, the verticle starts successfully without binding a port.
-
-**Deployment order:** `ManagementVerticle` should be deployed before `HttpVerticle` so that Kubernetes liveness probes are available before the application begins serving traffic.
-
-```java
-// In a startup verticle or lifecycle step (config() is pre-resolved):
-AppComponent app = DaggerAppComponent.builder()
-    .vertxModule(new VertxModule(vertx, config()))
-    .build();
-// Deploy management first, then HTTP (or use VerticleDeploymentManager for phase ordering)
-app.verticleDeploymentManager()
-    .deployAll()
-    .onSuccess(v -> startPromise.complete())
-    .onFailure(startPromise::fail);
-```
-
-**Dagger wiring:**
-
-```java
-@Singleton
-@Component(modules = {
-    VertxModule.class,
-    ManagementModule.class,   // provides config bindings, includes HealthCheckModule
-    RestModule.class,
-    AppModule.class,
-    ResourceModule.class
-})
-interface AppComponent {
-    ManagementVerticle managementVerticle();
-    HttpVerticle httpVerticle();
-}
-```
-
-### ManagementModule
-
-Abstract Dagger `@Module` that binds `ManagementConfig` from configuration, includes
-`HealthCheckModule` for the `@Liveness` / `@Readiness` multibinding sets, and **declares the
-`Set<ManagementEndpointContributor>` multibinding** so endpoint contributors (e.g. the Prometheus
-scrape endpoint) can mount routes on the management router. It is `abstract` because it hosts a
-`@Multibinds` declaration.
-
-```java
-@Module(includes = HealthCheckModule.class)
-public abstract class ManagementModule {
-
-    @Multibinds
-    abstract Set<ManagementEndpointContributor> managementEndpointContributors();
-
-    @Provides @Singleton
-    static ManagementConfig managementConfig(@VertxConfig JsonObject config, ConfigParser parser) {
-        return parser.parse(
-            JsonConfigPaths.navigateObject(config, "management"), ManagementConfig.class);
-    }
-}
-```
-
-Consumers inject `ManagementConfig` directly and read `config.port()` / `config.enabled()` — there
-are no separate `@Named("management.port")` or `@Named("management.enabled")` bindings.
-
-**Bindings provided:**
-
-| Type | Qualifier | Description |
-|------|-----------|-------------|
-| `ManagementConfig` | — | Full management configuration; consumers call `config.port()` and `config.enabled()` |
-
-### ManagementConfig
-
-Jackson-deserialized configuration value object with builder defaults. Deserialized from the `management` section by `ManagementModule`.
+`data` is omitted from an individual check object when that result carries no diagnostic data. The response content type is `application/json`.
 
 ---
 
-## Health Check SPI (core module)
+## Key Classes
 
-The health check SPI lives in `dev.vertique.core.health` so contributing modules do not need to depend on `management`.
+### ManagementVerticle
+
+The Vert.x verticle that owns the management server. It is `@Inject`-constructible, so applications obtain it from Dagger and hand it to their deployment entry rather than constructing it directly.
+
+When `management.enabled` is `false` the verticle starts successfully, binds no port, and invokes no endpoint contributors — which is the usual configuration for unit tests and for environments where probes are handled outside the process.
+
+After a successful bind, the resolved port is published into the Vert.x shared local map `vertique` under the key `management.port`. Configure `port: 0` and read that entry to discover the ephemeral port in tests:
+
+```java
+int boundPort = (int) vertx.sharedData().getLocalMap("vertique").get("management.port");
+```
+
+### ManagementConfig
+
+Typed configuration object deserialized from the `management` configuration section. Inject it wherever the port or enablement flag is needed and read `config.port()`, `config.enabled()`, and `config.healthCheckTimeoutSeconds()`. There are no separate scalar bindings for these values.
+
+### ManagementModule
+
+The Dagger module to install. It provides `ManagementConfig`, includes `HealthCheckModule` from `dev.vertique:vertique-core` so the `@Liveness` / `@Readiness` sets resolve, and declares the `Set<ManagementEndpointContributor>` multibinding so the injection point is satisfiable with no contributors registered.
+
+| Type | Qualifier | Notes |
+|------|-----------|-------|
+| `ManagementConfig` | — | Parsed from the `management` section; defaults applied for absent fields |
+
+---
+
+## Health Check SPI
+
+These types live in `dev.vertique.core.health` and are re-exported through this module's dependency on `dev.vertique:vertique-core`.
 
 ### HealthCheck
-
-SPI interface for health indicators. Implementations report the health of a component and are discovered via Dagger multibinding.
 
 ```java
 public interface HealthCheck {
     /** Human-readable name; must be unique within its qualifier set. */
     String name();
 
-    /** Performs the check; returns a completed Future with HealthCheckResult. */
+    /** Performs the check. */
     Future<HealthCheckResult> check();
 }
 ```
 
-Implementations should return a completed future with an appropriate `HealthCheckResult` rather than a failed future. If `check()` throws or returns a failed future, `ManagementVerticle` reports it as DOWN with the error message.
+Return a *completed* future carrying an UP or DOWN `HealthCheckResult` rather than a failed future. A failed future is still reported as DOWN, but the message it carries is the raw throwable message.
+
+```java
+@Singleton
+public class CacheHealthCheck implements HealthCheck {
+
+    private final Cache cache;
+
+    @Inject
+    public CacheHealthCheck(Cache cache) {
+        this.cache = cache;
+    }
+
+    @Override
+    public String name() {
+        return "cache";
+    }
+
+    @Override
+    public Future<HealthCheckResult> check() {
+        try {
+            return Future.succeededFuture(
+                    cache.ping() ? HealthCheckResult.up() : HealthCheckResult.down("ping failed"));
+        } catch (Exception e) {
+            return Future.succeededFuture(HealthCheckResult.down(String.valueOf(e.getMessage())));
+        }
+    }
+}
+```
 
 ### HealthCheckResult
 
-Immutable record carrying the check's status and optional diagnostic data.
-
 ```java
-public record HealthCheckResult(HealthStatus status, Map<String, Object> data) { ... }
+public record HealthCheckResult(HealthStatus status, Map<String, Object> data) { }
 ```
 
-**Factory methods:**
+The canonical constructor normalizes a `null` data map to empty and takes an unmodifiable defensive copy, so the returned map is never `null` and never mutable.
 
-| Method | Status | Data |
+| Factory | Status | Data |
 |--------|--------|------|
 | `HealthCheckResult.up()` | UP | empty |
 | `HealthCheckResult.up(Map<String,Object>)` | UP | provided map |
@@ -157,45 +169,22 @@ public record HealthCheckResult(HealthStatus status, Map<String, Object> data) {
 | `HealthCheckResult.down(String error)` | DOWN | `{"error": "<error>"}` |
 | `HealthCheckResult.down(Map<String,Object>)` | DOWN | provided map |
 
-### HealthStatus
-
-```java
-public enum HealthStatus { UP, DOWN }
-```
+`HealthStatus` is a two-constant enum, `UP` and `DOWN`.
 
 ### @Liveness / @Readiness
 
-Dagger qualifier annotations that classify a `HealthCheck` into the liveness or readiness probe set.
-
-```java
-@Qualifier @Documented @Retention(RUNTIME)
-@Target({METHOD, PARAMETER, FIELD})
-public @interface Liveness {}
-
-@Qualifier @Documented @Retention(RUNTIME)
-@Target({METHOD, PARAMETER, FIELD})
-public @interface Readiness {}
-```
-
-**Guidelines for check classification:**
-- `@Liveness` — lightweight "is the process alive" checks; must not check external dependencies
-- `@Readiness` — dependency checks (database pool, downstream services, event bus consumers)
+Dagger qualifier annotations (`@Qualifier`, runtime-retained, valid on methods, parameters, and fields) that place a contributed `HealthCheck` into the liveness or the readiness set.
 
 ### HealthCheckModule
 
-Abstract Dagger `@Module` (in `core`) declaring the `@Multibinds` empty sets. Must be included in any component or module that contributes or consumes health checks. `ManagementModule` includes it automatically; `DbPostgresqlModule` and `DispatchModule` also include it.
+The abstract Dagger module in `dev.vertique.core.health` that declares both `@Multibinds` sets. Any module that contributes or consumes health checks must include it — directly or transitively. `ManagementModule` includes it, as do the Dagger modules of `dev.vertique:vertique-db-postgresql` and `dev.vertique:vertique-services`.
 
-```java
-@Module
-public abstract class HealthCheckModule {
+### Invariants & Gotchas
 
-    @Multibinds @Liveness
-    abstract Set<HealthCheck> livenessChecks();
-
-    @Multibinds @Readiness
-    abstract Set<HealthCheck> readinessChecks();
-}
-```
+- **`HealthCheckResult.down(String)` rejects a `null` message.** The single-argument overload builds `Map.of("error", error)`, and `Map.of` throws `NullPointerException` on a `null` value. A throwable's message is frequently `null`, so wrap it (`String.valueOf(e.getMessage())`) instead of passing it straight through.
+- **`name()` must be unique within its qualifier set.** Names are the JSON keys in the probe response; duplicates produce two entries that operators cannot tell apart. The framework does not reject a collision.
+- **A check's work counts against the probe's latency.** All checks in a set run concurrently, but the endpoint responds only after the slowest one settles or times out, so `healthCheckTimeoutSeconds` is effectively the probe's worst-case latency.
+- **Never block the event loop inside `check()`.** Offload blocking work with `vertx.executeBlocking` and return the resulting future.
 
 ---
 
@@ -203,10 +192,7 @@ public abstract class HealthCheckModule {
 
 ### ManagementEndpointContributor
 
-SPI for modules that need to mount additional routes on the management HTTP server. Implementations
-are gathered via Dagger multibinding and invoked once per server start, in
-`OrderedExtension.comparator()` order (ascending phase, then ascending priority, then ascending
-`orderKey()`).
+SPI for modules that mount additional routes on the management server. Implementations are collected via Dagger multibinding and invoked once per management server start, in `OrderedExtension.comparator()` order — ascending phase, then ascending `priority()`, then ascending `orderKey()`.
 
 ```java
 public interface ManagementEndpointContributor extends OrderedExtension {
@@ -215,32 +201,17 @@ public interface ManagementEndpointContributor extends OrderedExtension {
 }
 ```
 
-**Invariants & Gotchas**
-
-- `contribute()` is called on the management verticle's event loop — the method must not block.
-  Route *handlers* added to the router may offload blocking work via `executeBlocking`.
-- Health routes (`/health/*`) are mounted **before** contributors are invoked. Because Vert.x
-  first-registration-wins semantics apply, re-registering a health path has no effect.
-- If `contribute()` throws, management server startup fails immediately: the start-promise is
-  failed, no HTTP port is bound, and no further contributors are invoked.
-- Contributors are **not** invoked when `management.enabled=false`.
-- When two contributors register handlers on the same path, the contributor with the lower
-  comparator order (mounted first) wins.
-- Lambda or method-reference registrations have a JVM-generated `orderKey` that is not stable
-  across compilations. When relative order matters between two lambda contributors, assign them
-  distinct `priority()` values or register them as named classes.
-
-**Registering a contributor:**
+Register a lambda when order does not matter:
 
 ```java
-@Provides @IntoSet
+@Provides
+@IntoSet
 static ManagementEndpointContributor metricsEndpoint(PrometheusHandler handler) {
     return router -> router.get("/metrics").handler(handler);
 }
 ```
 
-To control invocation order relative to other contributors, implement the interface as a named
-class and override `phase()` and/or `priority()`:
+Implement the interface as a named class when it does, overriding `phase()` and/or `priority()`, and bind it with `@Binds @IntoSet`:
 
 ```java
 @Singleton
@@ -265,117 +236,61 @@ public class MetricsEndpointContributor implements ManagementEndpointContributor
 }
 ```
 
-`ManagementModule` declares the empty `@Multibinds` default set so the injection point is always
-satisfiable even when no contributors are registered.
+#### Invariants & Gotchas
 
----
+- `contribute()` runs on the management verticle's event loop during start — it must not block. Route *handlers* it registers may offload blocking work with `executeBlocking`.
+- The `/health/live` and `/health/ready` routes are mounted **before** any contributor runs. Vert.x matches the first registered route, so re-registering a health path has no effect.
+- Between two contributors that register the same path, the one sorted first wins for the same reason.
+- A `RuntimeException` thrown from `contribute()` fails the management server start promise immediately: no port is bound and no further contributor runs.
+- Contributors are not invoked at all when `management.enabled=false`.
+- A lambda or method-reference contributor gets a JVM-generated default `orderKey()` that is not stable across compilations. When relative order between two lambda contributors matters, give them distinct `priority()` values or register them as named classes.
 
 ### `@Liveness Set<HealthCheck>` and `@Readiness Set<HealthCheck>`
 
-Contribute health checks via Dagger multibinding in any `@Module`:
+Contribute a check from any Dagger module that includes `HealthCheckModule`:
 
 ```java
-// Liveness: custom process check
-@Provides @IntoSet @Liveness
+// Liveness: lightweight in-process check
+@Provides
+@IntoSet
+@Liveness
 static HealthCheck processCheck(ProcessHealthCheck check) {
     return check;
 }
 
 // Readiness: external dependency check
-@Provides @IntoSet @Readiness
+@Provides
+@IntoSet
+@Readiness
 static HealthCheck cacheCheck(CacheHealthCheck check) {
     return check;
 }
 ```
 
-A contributing module must include `HealthCheckModule` (or any module that transitively includes it) in its `@Module(includes = ...)` declaration.
+---
 
-**Writing a custom HealthCheck:**
+## Built-In Readiness Checks
 
-```java
-public class CacheHealthCheck implements HealthCheck {
+Two framework modules contribute a readiness check automatically when installed. Neither requires application wiring.
 
-    private final Cache cache;
+| Name | Contributed by | Reports DOWN when |
+|------|----------------|-------------------|
+| `database` | `dev.vertique:vertique-db-postgresql` | `SELECT 1` against the connection pool fails |
+| `services` | `dev.vertique:vertique-services` | any supervised event-bus service is unavailable |
 
-    @Inject
-    public CacheHealthCheck(Cache cache) {
-        this.cache = cache;
-    }
-
-    @Override
-    public String name() {
-        return "cache";
-    }
-
-    @Override
-    public Future<HealthCheckResult> check() {
-        try {
-            boolean connected = cache.ping();
-            return Future.succeededFuture(
-                connected ? HealthCheckResult.up() : HealthCheckResult.down("ping failed")
-            );
-        } catch (Exception e) {
-            return Future.succeededFuture(HealthCheckResult.down(e.getMessage()));
-        }
-    }
-}
-```
+The `services` check carries a per-service `data` map (`{"user-service": "UP"}`) on both UP and DOWN results whenever at least one service is supervised; with no supervised services it reports UP with no data.
 
 ---
 
-## Built-In Health Checks
+## Configuration
 
-### DatabaseHealthCheck (`db-postgresql`)
-
-Executes `SELECT 1` against the PostgreSQL connection pool. Contributed automatically as `@Readiness` by `DbPostgresqlModule`.
-
-```java
-// Automatically contributed by DbPostgresqlModule:
-@Provides @IntoSet @Readiness
-static HealthCheck databaseHealthCheck(DatabaseHealthCheck check) {
-    return check;
-}
-```
-
-| Property | Value |
-|----------|-------|
-| Name | `"database"` |
-| Qualifier | `@Readiness` |
-| Module | `DbPostgresqlModule` |
-| Query | `SELECT 1` |
-
-### ServiceSupervisorHealthCheck (`services`)
-
-Aggregates the supervision state of all event bus services managed by `ServiceSupervisor`. Reports DOWN if any supervised service is unavailable (restart budget exhausted). Reports UP when all services are available or when no services are supervised. Contributed automatically as `@Readiness` by `DispatchModule`.
-
-```java
-// Automatically contributed by DispatchModule:
-@Provides @IntoSet @Readiness
-static HealthCheck servicesHealthCheck(ServiceSupervisorHealthCheck check) {
-    return check;
-}
-```
-
-| Property | Value |
-|----------|-------|
-| Name | `"services"` |
-| Qualifier | `@Readiness` |
-| Module | `DispatchModule` |
-| Data | Per-service status map when DOWN (e.g., `{"user-service": "DOWN"}`) |
-
----
-
-## Configuration Reference
-
-Configuration is deserialized from the `management` section of the application config via `ManagementConfig`:
+Deserialized from the `management` section into `ManagementConfig`. Every field is optional.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `port` | `int` | `9090` | Management HTTP server port |
-| `enabled` | `boolean` | `true` | Set to `false` to skip port binding (e.g., in tests) |
-| `healthCheckTimeoutSeconds` | `long` | `5` | Per-check timeout in seconds for health probes |
-
-Example in `config/application.json`:
+| `port` | `int` | `9090` | Management HTTP server port; `0` binds an ephemeral port |
+| `enabled` | `boolean` | `true` | `false` skips port binding and contributor invocation |
+| `healthCheckTimeoutSeconds` | `long` | `5` | Per-check timeout for both probe endpoints; must be positive |
 
 ```json
 {
@@ -387,23 +302,19 @@ Example in `config/application.json`:
 }
 ```
 
-**Properties file:** With hierarchical expansion, `management.port=9090` in a `.properties` file is automatically expanded to nested JSON, which `ManagementConfig` handles correctly.
+`healthCheckTimeoutSeconds` is validated when the verticle starts, not when configuration is parsed: a zero or negative value fails the management verticle's deployment with `IllegalArgumentException` rather than at config-load time. Unknown properties in the `management` section are ignored.
+
+With hierarchical property expansion, `management.port=9090` in a `.properties` source expands to the same nested object.
 
 ---
 
 ## Dependencies
 
-- `dev.vertique:core` — `HealthCheck`, `HealthCheckResult`, `HealthStatus`, `@Liveness`, `@Readiness`, `HealthCheckModule`, `OrderedExtension`, `@VertxConfig`
-- `io.vertx:vertx-web` — `Router`, `RoutingContext`
-- `com.google.dagger:dagger`
-- `jakarta.inject:jakarta.inject-api`
-- `org.slf4j:slf4j-api`
-- `org.projectlombok:lombok` (provided scope)
-
----
-
-## Related ADRs
-
-- ADR-0084: Framework Extension-Ordering Contract (Phase Dominates Priority) — establishes the `OrderedExtension` three-tier ordering model (phase → priority → orderKey) used by contributor sorting.
-- ADR-0085: OrderedExtension Rolled Out Across Sorted Behavioral SPIs — records the decision to apply `OrderedExtension` uniformly across all sorted SPIs, including this one.
-- ADR-0100: Management Endpoint Contribution SPI — records why a multibound `ManagementEndpointContributor` SPI was chosen over per-module standalone servers or mounting operational endpoints on the application router.
+| Dependency | Why |
+|------------|-----|
+| `dev.vertique:vertique-core` | `HealthCheck`, `HealthCheckResult`, `HealthStatus`, `@Liveness`, `@Readiness`, `HealthCheckModule`, `OrderedExtension`, `ConfigParser`, `@VertxConfig` |
+| `io.vertx:vertx-web` | `Router` and `RoutingContext` for the management server |
+| `com.google.dagger:dagger` | `ManagementModule` bindings and multibinding declarations |
+| `jakarta.inject:jakarta.inject-api` | `@Inject`, `@Singleton` |
+| `org.slf4j:slf4j-api` | Startup and failure logging |
+| `org.projectlombok:lombok` | Compile-scoped; `ManagementConfig` builder and logging field |

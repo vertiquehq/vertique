@@ -8,113 +8,87 @@ SPDX-License-Identifier: EUPL-1.2
 > **Status:** Alpha
 > **Package:** `dev.vertique.opentelemetry`
 > **Artifact:** `vertique-opentelemetry-core`
-> **Depends on:** core, correlation, bootstrap
+> **Depends on:** core, correlation, bootstrap, security-core
 
 Provides opt-in distributed tracing for Vertique applications using the OpenTelemetry SDK. The
 module bootstraps an `OpenTelemetrySdk` before `Vertx` is created (or reuses an existing global
-installed by a javaagent), wires the Vert.x tracing subsystem, bridges trace ids into the
-framework's `CorrelationContext` for trace–log correlation, emits security lifecycle events as span
-events, and exposes the `Tracer` and `TraceReferenceResolver` through Dagger bindings.
+installed by a javaagent), wires the Vert.x tracing subsystem, bridges trace ids into the framework's
+`CorrelationContext` for trace–log correlation, emits security lifecycle events as span events, and
+exposes `OpenTelemetry`, `Tracer`, and `TraceReferenceResolver` through Dagger bindings.
 
-The module does not own metrics collection (meters belong to `vertique-micrometer-core`) and does
-not own log-output bridging (that is `vertique-logging`'s responsibility). It owns the OTel SDK
-lifecycle, the Vert.x tracer installation, and the correlation seam.
-
-This module has **no dependency on any Prometheus or metrics-backend library**. OTel-backed
-Prometheus exemplars are provided by the separate `vertique-opentelemetry-prometheus` bridge module
-(see `dev.vertique:vertique-opentelemetry-prometheus`).
+The module does not own metrics collection (meters belong to `dev.vertique:vertique-micrometer-core`)
+and does not own log-output bridging (that is `dev.vertique:vertique-logging`'s responsibility). It
+owns the OTel SDK lifecycle, the Vert.x tracer installation, and the correlation seam. It has **no
+dependency on any Prometheus or metrics-backend library**.
 
 ---
 
 ## When To Use It
 
-Add `vertique-opentelemetry-core` to any application that should emit distributed traces. Install
-`OpenTelemetryModule` in the Dagger `@Component`. The Vert.x tracer and correlation bridge
-activate automatically when both `OpenTelemetryBootstrapContributor` (discovered via ServiceLoader)
-and `OpenTelemetryModule` are present.
+Add `vertique-opentelemetry-core` to any application that should emit distributed traces, and install
+`OpenTelemetryModule` in the Dagger `@Component`. The Vert.x tracer and the correlation bridge
+activate automatically when both `OpenTelemetryBootstrapContributor` (discovered via `ServiceLoader`
+from this artifact) and `OpenTelemetryModule` are present.
 
-Pair with `vertique-micrometer-registry-prometheus` and `vertique-opentelemetry-prometheus`, and set
-`metrics.prometheus.exemplars.enabled=true`, when trace-id exemplars on Prometheus metrics are
-desired (opt-in; exposes trace/span ids on the management port's scrape endpoint).
+Do not add this module if the application has no need for distributed tracing. With
+`tracing.enabled=false` the module is inert: a no-op `VertxTracerFactory.NOOP` is installed and Dagger
+receives `OpenTelemetry.noop()`.
 
-Do not add this module if the application has no need for distributed tracing — when
-`tracing.enabled=false` the module is completely inert (a no-op `VertxTracerFactory.NOOP` is
-installed and Dagger receives `OpenTelemetry.noop()`).
+Optional siblings, each independently installable:
+
+| Artifact | Adds |
+|---|---|
+| `dev.vertique:vertique-opentelemetry-rest` | Route and `operationId` attributes on the Vert.x-created HTTP server span |
+| `dev.vertique:vertique-opentelemetry-services` | Service-dispatch attributes on the event-bus CONSUMER span |
+| `dev.vertique:vertique-opentelemetry-prometheus` | OTel trace ids as exemplars on Prometheus samples. Pair with `dev.vertique:vertique-micrometer-registry-prometheus` and set `metrics.prometheus.exemplars.enabled=true` — this exposes trace and span ids on the management port's scrape endpoint. |
 
 ---
 
 ## Core Concepts
 
-**Bootstrap before Vert.x.** The OTel SDK must be available before the `Vertx` instance is
-created so the Vert.x tracing subsystem can be wired in. `OpenTelemetryBootstrapContributor` is a
-`VertxBuilderContributor` discovered via ServiceLoader; it runs in phase `SYSTEM_FIRST` at priority
-`110` (after the Micrometer metrics contributor at priority `100`).
+**Bootstrap before Vert.x.** The OTel SDK must exist before the `Vertx` instance is created so the
+Vert.x tracing subsystem can be wired in. `OpenTelemetryBootstrapContributor` is a
+`VertxBuilderContributor` discovered via `ServiceLoader`; it runs in phase `SYSTEM_FIRST` at priority
+`110`, after the Micrometer metrics contributor at priority `100`. An application contributor that
+must observe the tracer wiring should order itself after that.
 
-**Reuse-or-provision.** On the enabled path the contributor checks `GlobalOpenTelemetry.isSet()`.
-If an existing global is present (e.g. from a javaagent), it is reused and `tracing.otel.*`
-configuration is silently ignored. If no global exists the contributor provisions one via
-`AutoConfiguredOpenTelemetrySdk` and owns its shutdown. The framework never closes a reused global.
+**Reuse-or-provision.** On the enabled path the contributor checks `GlobalOpenTelemetry.isSet()`. When
+an existing global is present — typically installed by a javaagent — it is reused as-is and the whole
+`tracing.otel.*` configuration subtree is **silently ignored**; configure the agent through its own
+mechanism instead. When no global exists, the contributor provisions one via
+`AutoConfiguredOpenTelemetrySdk` and owns its shutdown. **The framework never closes a global it did
+not create.**
 
-**No framework holder.** `GlobalOpenTelemetry` is the canonical OTel instance. No
-`OpenTelemetryHolder` exists. The bootstrap contributor registers the SDK as the global via
-`setResultAsGlobal()` on the autoconfigure build, and Dagger binds `GlobalOpenTelemetry.getOrNoop()`
-at component construction time (which is after the contributor ran, so the global is set).
+**`GlobalOpenTelemetry` is the canonical instance.** There is no framework-owned holder type. The
+contributor registers the SDK as the global on a successful build, and Dagger binds
+`GlobalOpenTelemetry.getOrNoop()` at component-construction time — which is after the contributor
+ran, so the global is set.
 
-**Trace–log correlation.** The correlation bridge connects the OTel active span to the framework's
-`CorrelationContext`. `OpenTelemetryTraceReferenceResolver` reads `Span.current()` and returns a
-`TraceReference` for any valid span context; `CorrelationIngressMiddleware` calls
-`CorrelationContextMutator.setTrace(...)` to mirror `traceId` and `spanId` into MDC. Ids are
-mirrored regardless of sampling — see [SP-10 caveat](#tracelog-correlation) below.
+**Span context propagation is Vert.x-owned.** Installing the tracer makes `vertx-opentelemetry`
+instrument HTTP client/server exchanges and event-bus request/reply, so an HTTP SERVER span, an
+event-bus CONSUMER span, and their children share a trace with the caller's span as parent. This
+module contributes no span *names* of its own — span naming and kind are decided by
+`vertx-opentelemetry` and the OTel semantic conventions it applies. What this module adds to spans is
+listed under **Emitted Telemetry**.
 
-**Security span events.** `SecuritySpanEventObserver` contributes into the `SecurityEventsModule`
-`Set<SecurityEventObserver>` multibinding (`vertique-security-runtime`) via `OpenTelemetryModule`. When both modules are installed in the same Dagger
-component, security lifecycle events (credential acceptance/rejection, authorization decisions,
-channel lifecycle) are recorded as span events on the current active span.
+**Trace–log correlation.** `OpenTelemetryTraceReferenceResolver` reads `Span.current()` and returns a
+`TraceReference` for any valid span context; the REST ingress middleware calls
+`CorrelationContextMutator.setTrace(...)`, which mirrors `traceId` and `spanId` into the live
+`CorrelationContext` and its MDC for the duration of the request. Ids are mirrored **regardless of
+sampling** — see **Failures, Constraints, and Common Mistakes**.
+
+**Security span events.** When `OpenTelemetryModule` and the security runtime's `SecurityEventsModule`
+are installed in the same Dagger component, security lifecycle events are recorded as span *events* on
+the current active span — never as new child spans, which keeps the operation cheap and leaves the
+trace tree unchanged.
 
 ---
 
 ## Key Classes
 
-### OpenTelemetryBootstrapContributor
-
-`VertxBuilderContributor` discovered via ServiceLoader. Phase `SYSTEM_FIRST`, priority `110`.
-
-**Disabled path** (`tracing.enabled=false`): installs `VertxTracerFactory.NOOP` via
-`builder.withTracer(...)` to explicitly defeat the Vert.x OTel integration's ServiceLoader
-auto-discovery. No SDK is built and no global is registered.
-
-**Enabled path — reuse existing global**: when `GlobalOpenTelemetry.isSet()` is `true`, the
-contributor calls `GlobalOpenTelemetry.get()` and wires that instance into the Vert.x tracer. The
-`tracing.otel.*` configuration subtree is silently ignored. The contributor does not close the
-reused global on shutdown.
-
-**Enabled path — provision new SDK**: when `GlobalOpenTelemetry.isSet()` is `false`:
-
-1. Calls `AutoConfiguredOpenTelemetrySdk.builder()` with `OtelConfigProperties.properties(config)`
-   as the lowest-precedence property supplier, `disableShutdownHook()`, and `setResultAsGlobal()`.
-2. Sets `OpenTelemetryOptions` on `ctx.vertxOptions()` and wires
-   `new OpenTelemetryTracingFactory(sdk)` into the builder.
-3. Stores the `OpenTelemetrySdk` in `ownedSdk` for shutdown.
-
-`onShutdown()` calls `ownedSdk.close()` (blocking up to 10 s, idempotent) if `ownedSdk` is
-non-null. A reused global is never closed.
-
-Any exception from `AutoConfiguredOpenTelemetrySdk` is wrapped in `TracingBootstrapException` with
-no cause attached (secret safety — see below).
-
-#### Invariants and Gotchas
-
-- The contributor runs before the Dagger component is constructed. The global is set by the time
-  `OpenTelemetryModule` provides `GlobalOpenTelemetry.getOrNoop()`.
-- `onShutdown()` is called only for contributors whose `contribute()` returned successfully. On the
-  provision path, `ownedSdk` is set only after `build()` succeeds; a failed build never sets the
-  global (autoconfigure's contract) and `ownedSdk` remains null, so `onShutdown()` is a safe no-op.
-- On the reuse path, `tracing.otel.*` config is inert. Operators configuring a javaagent-managed
-  SDK must use the agent's own mechanism.
-
 ### OpenTelemetryModule
 
-Dagger `@Module`. Install in the application `@Component`:
+The Dagger `@Module` to install:
 
 ```java
 @Singleton
@@ -132,195 +106,153 @@ interface AppComponent {
 
 Bindings provided:
 
-| Type | Qualifier | Source |
-|------|-----------|--------|
-| `TracingConfig` | — | Deserialized from `tracing` config section via `JsonConfigPaths.navigateObject` |
-| `OpenTelemetry` | — | `OpenTelemetry.noop()` when disabled; `GlobalOpenTelemetry.getOrNoop()` when enabled |
+| Type | Qualifier | Value |
+|---|---|---|
+| `TracingConfig` | — | The `tracing` config section, parsed through the injected `ConfigParser` |
+| `OpenTelemetry` | — | `OpenTelemetry.noop()` when `tracing.enabled=false`; otherwise `GlobalOpenTelemetry.getOrNoop()` |
 | `Tracer` | — | `openTelemetry.getTracer("dev.vertique")` |
-| `TraceReferenceResolver` | — | `OpenTelemetryTraceReferenceResolver` (satisfies `@BindsOptionalOf` in `CorrelationContextModule`) |
-| `SecurityEventObserver` | `@IntoSet` | `SecuritySpanEventObserver` (contributed to `SecurityEventsModule` multibinding in `vertique-security-runtime`) |
+| `TraceReferenceResolver` | — | The built-in OTel resolver; satisfies the `@BindsOptionalOf` declaration in `CorrelationContextModule` |
+| `SecurityEventObserver` | `@IntoSet` | The built-in span-event observer, contributed to the `Set<SecurityEventObserver>` multibinding declared by `SecurityEventsModule` in `dev.vertique:vertique-security-runtime` |
 
-The `TraceReferenceResolver` binding satisfies the `@BindsOptionalOf` declaration in
-`CorrelationContextModule`. When `OpenTelemetryModule` is absent from the graph, the optional is
-empty and trace ids do not flow into `CorrelationContext`.
+When `OpenTelemetryModule` is absent from the graph, the `TraceReferenceResolver` optional is empty
+and trace ids do not flow into `CorrelationContext`.
 
-### OpenTelemetryTraceReferenceResolver
+### OpenTelemetryBootstrapContributor
 
-Package-private `@Singleton` implementation of `TraceReferenceResolver` (SPI in
-`vertique-correlation`). Called by `CorrelationIngressMiddleware` on the Vert.x event loop during
-request ingress.
-
-`currentTrace()` reads `Span.current()`, extracts its `SpanContext`, and returns a
-`TraceReference(traceId, spanId, "opentelemetry")` when `SpanContext.isValid()` is `true`.
-Sampling is not checked — see [correlation bridge behavior](#tracelog-correlation) below.
-Any exception from the OTel API is caught, logged at WARN, and `Optional.empty()` is returned so
-the ingress middleware degrades silently.
-
-### OtelConfigProperties
-
-Package-private static utility. Builds the `otel.*` property map supplied to
-`AutoConfiguredOpenTelemetrySdkBuilder.addPropertiesSupplier()` as the lowest-precedence layer;
-environment variables and system properties always override it.
-
-**Property construction order:**
-
-1. Seeds `otel.metrics.exporter=none` and `otel.logs.exporter=none` — metrics are
-   Micrometer-owned; logs are not managed by this module.
-2. Seeds `otel.service.name` from the first non-blank of: `metrics.tags.service` from root config,
-   or the literal `"unknown-service"`. The `OTEL_SERVICE_NAME` environment variable overrides this
-   via autoconfigure's own precedence.
-3. Flattens the `tracing.otel` subtree recursively: nested `JsonObject` values are joined with
-   `.`; leaf values are stringified; all keys are prefixed with `otel.`. Flattened entries
-   overwrite seeds on collision, so explicit config beats seeded defaults.
-
-#### Invariants and Gotchas
-
-- This utility is only consulted on the provision path. On the reuse path the entire `tracing.otel`
-  subtree is ignored.
+Public `VertxBuilderContributor`, registered by this artifact in
+`META-INF/services/dev.vertique.bootstrap.VertxBuilderContributor`. Applications do not construct or
+register it; the entry that matters to an application is its ordering — `SYSTEM_FIRST` / priority
+`110` — and its shutdown ownership: `onShutdown()` closes the SDK **only** if this contributor built
+it. `OpenTelemetrySdk.close()` blocks for up to 10 s and is idempotent.
 
 ### TracingConfig
 
-Jackson-deserialized config VO (`@Builder @Jacksonized`). Deserialized from the `tracing` section:
-
-```json
-{
-  "tracing": {
-    "enabled": true,
-    "security": { "spanEvents": true },
-    "otel": { ... }
-  }
-}
-```
-
-The `tracing.otel` subtree is read raw by `OtelConfigProperties` and is not modeled here. Unknown
-properties are silently ignored.
-
-Nested `SecurityConfig` controls `spanEvents` (default `true`).
-
-### SecuritySpanEventObserver
-
-Package-private `@Singleton` `SecurityEventObserver` contributed via `OpenTelemetryModule`.
-Records security lifecycle events as span events on the current active span (`Span.current()`),
-gated on `Span.isRecording()`. Events are added to the current span — never as new child spans —
-to keep the operation cheap and avoid polluting the trace tree.
-
-Gating is two-layered: the class-level `enabled` boolean (cached at construction from
-`config.enabled() && config.security().spanEvents()`) and per-method `try/catch` blocks. A
-`Future.succeededFuture()` is always returned so the security pipeline is never affected by a
-tracing failure.
-
-**Span events and attributes:**
-
-| Method | Span event name | Attributes |
-|--------|----------------|------------|
-| `onCredentialAccepted` | `vertique.security.credential.accepted` | `vertique.auth.method` = normalized kind (or `"unknown"`) |
-| `onCredentialRejected` | `vertique.security.credential.rejected` | `vertique.auth.method`, `vertique.auth.reason` (normalized) |
-| `onAuthorizationDecided` | `vertique.security.authz.decision` | `vertique.authz.decision` (`"permit"` or `"deny"`), `vertique.authz.reason` (normalized) |
-| `onChannelLifecycle` (opened) | `vertique.security.channel.opened` | — (no attributes; channel id excluded) |
-| `onChannelLifecycle` (refreshed) | `vertique.security.channel.refreshed` | — |
-| `onChannelLifecycle` (closed) | `vertique.security.channel.closed` | — |
-
-`vertique.auth.method` is always `AuthMethod.normalizedKind().name()` — never `AuthMethod.id()`,
-which is arbitrary custom input and would create unbounded cardinality.
-
-Reason codes are normalized by `normalizeReason(String)`: codes matching `^[A-Z0-9_]{1,64}$` are
-returned as-is; null, blank, or non-matching codes are replaced with `"OTHER"`.
-
-Channel identifiers are excluded from span attributes to limit cardinality and avoid leaking
-session-tracking data.
+The typed view of the `tracing` section (`@Builder @Jacksonized`, fluent accessors), injectable
+anywhere in the graph. It models `enabled` and the nested `security.spanEvents` flag only; the
+`tracing.otel` subtree is read raw and forwarded to autoconfigure, so it is deliberately not modeled
+here. Unknown properties are ignored, and an explicit JSON `null` for `security` is treated as absent
+so the nested defaults survive.
 
 ### TracingBootstrapException
 
-Unchecked exception thrown by `OpenTelemetryBootstrapContributor` when SDK provisioning fails.
-No cause constructor is provided. The message contains only the failing class's simple name.
-
-This is intentional for secret safety: SDK exceptions from `AutoConfiguredOpenTelemetrySdk` may
-embed configuration values (hostnames, credentials, endpoint URLs) in their message or cause chain.
-Severing the cause chain at this boundary prevents accidental credential logging — the launcher
-logs the full exception chain, so any cause attached here would be emitted.
+Extends `dev.vertique.core.exception.ConfigurationException`. Thrown by the bootstrap contributor when
+SDK provisioning fails, or when tracing is relaunched in a JVM whose owned global SDK was already
+closed. **It has no cause constructor by design**: third-party SDK exceptions can embed hostnames,
+credentials, and endpoint URLs in their message or cause chain, and the launcher logs the full chain.
+The message carries only the failing class's simple name or a structural description.
 
 ---
 
-## Bootstrap Flow
+## Emitted Telemetry
 
-```
-VertiqueApplication.launch()
-  └─ OpenTelemetryBootstrapContributor.contribute(builder, ctx)
-       │
-       ├─ tracing.enabled=false?
-       │    └─ builder.withTracer(VertxTracerFactory.NOOP)   // defeat ServiceLoader
-       │
-       ├─ GlobalOpenTelemetry.isSet()?
-       │    └─ openTelemetry = GlobalOpenTelemetry.get()     // reuse; tracing.otel.* inert
-       │
-       └─ else (provision)
-            ├─ AutoConfiguredOpenTelemetrySdk.builder()
-            │    .addPropertiesSupplier(() → OtelConfigProperties.properties(config))
-            │    .disableShutdownHook()
-            │    .setResultAsGlobal()
-            │    .build().getOpenTelemetrySdk()
-            ├─ ownedSdk = sdk                                // contributor owns shutdown
-            └─ openTelemetry = sdk
-       │
-       └─ (enabled paths)
-            ├─ ctx.vertxOptions().setTracingOptions(new OpenTelemetryOptions())
-            └─ builder.withTracer(new OpenTelemetryTracingFactory(openTelemetry))
+This module adds **span events** to the current recording span. It never creates spans of its own, and
+it never adds an attribute to a span it did not receive.
 
-Dagger component construction (after contributor)
-  └─ OpenTelemetryModule.openTelemetry(config)
-       ├─ enabled=false → OpenTelemetry.noop()
-       └─ enabled=true  → GlobalOpenTelemetry.getOrNoop()
+| Trigger | Span event name | Attributes |
+|---|---|---|
+| Credential accepted | `vertique.security.credential.accepted` | `vertique.auth.method` |
+| Credential rejected | `vertique.security.credential.rejected` | `vertique.auth.method`, `vertique.auth.reason` |
+| Authorization decided | `vertique.security.authz.decision` | `vertique.authz.decision`, `vertique.authz.reason` |
+| Channel opened | `vertique.security.channel.opened` | none |
+| Channel identity refreshed | `vertique.security.channel.refreshed` | none |
+| Channel closed | `vertique.security.channel.closed` | none |
 
-VertiqueApplication.stop()
-  └─ OpenTelemetryBootstrapContributor.onShutdown()
-       └─ if ownedSdk != null → ownedSdk.close()            // reused global: never closed
-```
+| Attribute key | Value contract |
+|---|---|
+| `vertique.auth.method` | `AuthMethod.normalizedKind().name()`, or `"unknown"` when the method or its kind is absent or blank. Never `AuthMethod.id()` — that is arbitrary caller input and would create unbounded cardinality. |
+| `vertique.auth.reason`, `vertique.authz.reason` | The reason code when it matches `[A-Z0-9_]{1,64}`; otherwise `"OTHER"`. Null and blank codes also become `"OTHER"`. |
+| `vertique.authz.decision` | `"permit"` or `"deny"`. |
+
+Channel identifiers are deliberately excluded from every attribute set, to limit cardinality and to
+avoid emitting session-tracking data into a trace backend.
+
+Emission is gated twice: on `tracing.enabled && tracing.security.spanEvents` (read once at
+construction) and on `Span.current().isRecording()`. Every observer method returns a succeeded
+`Future` and swallows any OTel API failure with a WARN, so a tracing fault can never affect the
+security pipeline.
 
 ---
 
-## Trace–Log Correlation
+## Extension Points
 
-`CorrelationIngressMiddleware` (in `vertique-rest-core`) consults the optional
-`TraceReferenceResolver` binding after `snapshotKeys(MIRRORED)`. When
-`OpenTelemetryTraceReferenceResolver.currentTrace()` returns a `TraceReference`, the middleware
-calls `CorrelationContextMutator.setTrace(...)`, which writes `traceId` and `spanId` into both the
-live `CorrelationContext` and MDC for the duration of the request.
+### TraceReferenceResolver
 
-**Validity-only condition (SP-10):** Ids are mirrored for any `SpanContext` where
-`SpanContext.isValid()` is `true`, regardless of whether the trace is sampled for export.
-Unsampled traces have structurally valid trace and span ids that can appear in log MDC. The ids
-may not resolve to a trace record in Jaeger/Zipkin/etc. when sampling dropped the trace; this is
-expected and documented behavior. Applications that need to suppress unsampled ids may provide an
-alternative `TraceReferenceResolver` binding.
+SPI declared in `dev.vertique:vertique-correlation` and resolved through
+`@BindsOptionalOf TraceReferenceResolver` in `CorrelationContextModule`:
 
-Note: `MDCContexts` in Vert.x is context-local storage (`ContextLocal`), not thread-local SLF4J
-MDC. Bridging context-local MDC to log-output MDC is `vertique-logging`'s responsibility; this
-module only ensures `traceId` and `spanId` are present in the correlation context.
+```java
+Optional<TraceReference> currentTrace();
+```
+
+`OpenTelemetryModule` provides the built-in OTel implementation **unconditionally**, and at most one
+implementation may be on the graph — adding a second provider alongside `OpenTelemetryModule` is a
+duplicate Dagger binding. To install a custom resolver (for example to suppress unsampled ids), **omit
+`OpenTelemetryModule`**, wire the SDK and the other OTel bindings yourself, and provide your own:
+
+```java
+package com.example.app;
+
+import dagger.Module;
+import dagger.Provides;
+import dev.vertique.core.correlation.TraceReference;
+import dev.vertique.correlation.TraceReferenceResolver;
+import io.opentelemetry.api.trace.Span;
+import io.opentelemetry.api.trace.SpanContext;
+import jakarta.inject.Singleton;
+import java.util.Optional;
+
+@Module
+public abstract class SampledOnlyTracingModule {
+
+    @Provides
+    @Singleton
+    static TraceReferenceResolver traceReferenceResolver() {
+        return () -> {
+            SpanContext sc = Span.current().getSpanContext();
+            if (!sc.isValid() || !sc.isSampled()) {
+                return Optional.empty();
+            }
+            return Optional.of(new TraceReference(sc.getTraceId(), sc.getSpanId(), "custom"));
+        };
+    }
+}
+```
+
+#### Invariants & Gotchas
+
+- The resolver is invoked on the Vert.x event loop during request ingress; it must be cheap and
+  non-blocking.
+- A resolver should never throw. The caller guards with `try`/`catch` (WARN, then continue), but a
+  throwing resolver still emits one WARN line per request.
+- `TraceReference` is `record TraceReference(String traceId, @Nullable String spanId, String source)`
+  and lives in `dev.vertique:vertique-core`; `traceId` and `source` must be non-null.
+- The `@BindsOptionalOf` model means the binding is *absent*, not null, when no module supplies it —
+  there is no NPE risk in the ingress path.
 
 ---
 
 ## Configuration
 
-All keys live under the `tracing` section. The `tracing.otel.*` subtree is flattened to `otel.*`
-and passed to autoconfigure at the lowest precedence — environment variables and system properties
-always win. The `tracing.otel.*` subtree is **inert on the reuse path** (when a global already
-exists at bootstrap time).
+All keys live under the `tracing` section. The `tracing.otel.*` subtree is flattened to `otel.*` and
+handed to autoconfigure as its **lowest**-precedence layer, so environment variables and system
+properties always win. The whole subtree is **inert on the reuse path**.
 
 | Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `tracing.enabled` | boolean | `true` | Master switch. `false` → contributor installs NOOP tracer; Dagger receives `OpenTelemetry.noop()`. |
-| `tracing.security.spanEvents` | boolean | `true` | Emit security lifecycle span events via `SecuritySpanEventObserver`. |
-| `tracing.otel.*` | object | — | Flattened to `otel.*` and supplied to autoconfigure at lowest precedence. See below. |
+|---|---|---|---|
+| `tracing.enabled` | boolean | `true` | Master switch. `false` installs the NOOP tracer and binds `OpenTelemetry.noop()`. |
+| `tracing.security.spanEvents` | boolean | `true` | Emit the security span events listed above. |
+| `tracing.otel.*` | object | — | Flattened to `otel.*` and supplied to `AutoConfiguredOpenTelemetrySdk`. |
 
-**Service name resolution.** `otel.service.name` is seeded in this order:
-1. `tracing.otel.service.name` (explicit, from the `tracing.otel` subtree via the flatten step)
-2. `metrics.tags.service` from root config
-3. `"unknown-service"`
+Two `otel.*` properties are seeded before the flatten step and can be overridden by it:
+`otel.metrics.exporter=none` (meters are Micrometer-owned) and `otel.logs.exporter=none`.
 
-The `OTEL_SERVICE_NAME` environment variable overrides all of these via autoconfigure's own
-precedence.
+**Service-name resolution**, first non-blank wins:
 
-**`tracing.otel.*` examples** (inert on the reuse path):
+1. `tracing.otel.service.name` — via the flatten step, which overwrites the seed.
+2. `metrics.tags.service` from the root config.
+3. The literal `"unknown-service"`.
+
+`OTEL_SERVICE_NAME` overrides all three through autoconfigure's own precedence.
 
 ```json
 {
@@ -334,93 +266,69 @@ precedence.
           "protocol": "http/protobuf"
         }
       },
-      "traces": {
-        "sampler": "parentbased_traceidratio",
-        "sampler": {
-          "arg": "0.1"
-        }
-      }
+      "traces.sampler": "parentbased_traceidratio",
+      "traces.sampler.arg": "0.1"
     }
   }
 }
 ```
 
-The `tracing.otel` subtree key `exporter.otlp.endpoint` becomes `otel.exporter.otlp.endpoint`
-after flattening. Environment variable `OTEL_EXPORTER_OTLP_ENDPOINT` always takes precedence.
+`exporter.otlp.endpoint` becomes `otel.exporter.otlp.endpoint`; `OTEL_EXPORTER_OTLP_ENDPOINT` still
+takes precedence over it.
 
 ---
 
-## Prometheus Exemplar Bridge
+## Failures, Constraints, and Common Mistakes
 
-OTel-backed Prometheus exemplars are provided by the separate `vertique-opentelemetry-prometheus`
-module, not by this module. Install `OpenTelemetryPrometheusExemplarModule` alongside this module
-and `vertique-micrometer-registry-prometheus`, and set `metrics.prometheus.exemplars.enabled=true`,
-to attach OTel trace ids to Prometheus histogram and summary samples.
-
-See `dev.vertique:vertique-opentelemetry-prometheus` for details and
-ADR-0102 for why the bridge lives in a
-separate module rather than here.
-
----
-
-## Extension Points
-
-### TraceReferenceResolver
-
-SPI in `vertique-correlation`. Resolved via `@BindsOptionalOf Optional<TraceReferenceResolver>` in
-`CorrelationContextModule`. Exactly one implementation may be on the Dagger graph.
-
-`OpenTelemetryModule` **unconditionally** provides the built-in OTel implementation. Because exactly
-one implementation may be on the graph, an application cannot add a second provider alongside
-`OpenTelemetryModule` — that is a duplicate Dagger binding. To use a custom resolver (e.g. suppress
-unsampled ids), **omit `OpenTelemetryModule`** and wire the SDK plus the other OTel bindings
-yourself, then provide your own:
-
-```java
-@Provides
-@Singleton
-static TraceReferenceResolver traceReferenceResolver() {
-    return () -> {
-        Span span = Span.current();
-        SpanContext sc = span.getSpanContext();
-        // Only mirror sampled traces
-        if (!sc.isValid() || !sc.isSampled()) {
-            return Optional.empty();
-        }
-        return Optional.of(new TraceReference(sc.getTraceId(), sc.getSpanId(), "custom"));
-    };
-}
-```
-
-#### Invariants and Gotchas
-
-- The resolver is invoked on the Vert.x event loop; it must be cheap and non-blocking.
-- The resolver should never throw. The caller guards with `try/catch` (WARN, continue), but a
-  throwing resolver still emits a WARN log entry per request.
-- Exactly one binding. The `@BindsOptionalOf` model means the binding is absent, not null, when
-  `OpenTelemetryModule` is not installed — no NPE risk.
+- **A config section that is present but not a JSON object aborts startup.** `tracing`,
+  `tracing.otel`, `metrics`, and `metrics.tags` are each traversed with a tolerant navigator that
+  throws `ConfigurationException` when the key is bound to a non-object. That exception passes through
+  the contributor untouched, so a config-shape error stays distinguishable from an SDK failure.
+- **SDK provisioning failure aborts startup with no cause chain.** The failure surfaces as
+  `TracingBootstrapException` naming only the underlying exception's simple class name. If a failing
+  exporter endpoint needs diagnosis, reproduce it outside the launcher — the message will not carry
+  the endpoint.
+- **A key cannot be both a leaf and a parent in the `tracing.otel` subtree.** The flattener descends
+  into nested objects and stringifies leaves, so `{"traces": {"sampler": "…"}}` and
+  `{"traces": {"sampler": {"arg": "…"}}}` cannot coexist — JSON forbids the duplicate key. Where OTel
+  defines both `otel.x.y` and `otel.x.y.z`, write **dotted leaf keys** as in the example above.
+- **Relaunching tracing in one JVM is unsupported.** Once this process has built and closed an owned
+  global SDK, a subsequent `contribute()` on the enabled path fails fast with
+  `TracingBootstrapException` rather than wiring a closed SDK. `GlobalOpenTelemetry` is a JVM-wide
+  singleton that cannot be safely re-registered. This affects embedded and multi-launch test hosts,
+  not ordinary applications.
+- **On the reuse path, `tracing.otel.*` silently does nothing.** The contributor logs one INFO line
+  when it reuses a global. If exporter settings appear to be ignored, check for a javaagent first.
+- **Unsampled trace ids still reach the logs.** Ids are mirrored for any structurally valid
+  `SpanContext`, sampled or not, so log entries remain correlatable with each other. Those ids may not
+  resolve to a record in Jaeger, Zipkin, or another backend when sampling dropped the trace; that is
+  expected. Suppressing them requires a custom `TraceReferenceResolver` (see Extension Points).
+- **Correlation ids reach log *output* only via the logging module.** The correlation MDC is Vert.x
+  context-local storage, not thread-local SLF4J MDC. This module guarantees `traceId` and `spanId` are
+  present in the correlation context; bridging that to log output is
+  `dev.vertique:vertique-logging`'s job.
+- **Two `TraceReferenceResolver` providers is a Dagger compile error**, not a runtime override. Omit
+  `OpenTelemetryModule` rather than trying to outrank its binding.
 
 ---
 
 ## Dependencies
 
-- `dev.vertique:vertique-core` — `ExtensionPhase`, `@VertxConfig`, `JsonConfigPaths`
-- `dev.vertique:vertique-correlation` — `TraceReferenceResolver`, `TraceReference`
-  (SPI; declared `@BindsOptionalOf` by `CorrelationContextModule`)
+- `dev.vertique:vertique-core` — `ExtensionPhase`, `@VertxConfig`, `ConfigParser`, `JsonConfigPaths`,
+  `ConfigurationException`, and the `TraceReference` value type
+- `dev.vertique:vertique-correlation` — the `TraceReferenceResolver` SPI and the
+  `@BindsOptionalOf` declaration in `CorrelationContextModule` that this module satisfies
 - `dev.vertique:vertique-bootstrap` — `VertxBuilderContributor`, `BootstrapContext`
+- `dev.vertique:vertique-security-core` — `SecurityEventObserver` and the security lifecycle event
+  types recorded as span events
 - `io.opentelemetry:opentelemetry-api` — `OpenTelemetry`, `Tracer`, `Span`, `SpanContext`,
-  `GlobalOpenTelemetry`
+  `Attributes`, `GlobalOpenTelemetry`
 - `io.opentelemetry:opentelemetry-sdk` — `OpenTelemetrySdk`
 - `io.opentelemetry:opentelemetry-sdk-extension-autoconfigure` — `AutoConfiguredOpenTelemetrySdk`
-- `io.vertx:vertx-opentelemetry` — `OpenTelemetryOptions`, `OpenTelemetryTracingFactory`,
-  `VertxContextStorageProvider` (auto-registers)
+- `io.opentelemetry:opentelemetry-exporter-otlp` — runtime scope; the default OTLP exporter
+  autoconfigure resolves
+- `io.vertx:vertx-opentelemetry` — `OpenTelemetryOptions`, `OpenTelemetryTracingFactory`, and the
+  auto-registered `VertxContextStorageProvider`
+- `io.vertx:vertx-core` — `VertxBuilder`, `VertxTracerFactory`, `JsonObject`, `Future`
 - `com.google.dagger:dagger`, `jakarta.inject:jakarta.inject-api`
 - `org.slf4j:slf4j-api`, `org.projectlombok:lombok` (provided)
-
----
-
-## Related ADRs
-
-- ADR-0098: Micrometer Facade and Pluggable Registry Backends — establishes the telemetry-module bootstrap pattern; the OTel contributor follows the same `VertxBuilderContributor` + secret-safe exception-wrapping model.
-- ADR-0101: Trace-Log Correlation via TraceReferenceResolver — establishes why `TraceReferenceResolver` is in `vertique-correlation`, why ids are mirrored for unsampled traces, and why there is no `OpenTelemetryHolder`.
-- ADR-0102: OpenTelemetry→Prometheus Exemplar Bridge as a Dedicated Module — records why the Prometheus exemplar `SpanContext` is not provided by this module, and establishes `vertique-opentelemetry-prometheus` as the correct host.

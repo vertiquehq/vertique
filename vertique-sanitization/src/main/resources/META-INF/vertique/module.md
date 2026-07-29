@@ -16,16 +16,6 @@ The module bridges the annotation model defined in `dev.vertique.core.sanitizati
 
 ---
 
-## Package Layout
-
-| Package | Contents |
-|---------|----------|
-| `dev.vertique.sanitization` | `SanitizationModule`, `ProcessorResolver` |
-| `dev.vertique.sanitization.canonicalize` | 8 built-in `Canonicalizer` implementations |
-| `dev.vertique.sanitization.sanitize` | 5 built-in `Sanitizer` implementations |
-
----
-
 ## Key Classes
 
 ### SanitizationModule
@@ -251,11 +241,3 @@ Custom processors are contributed via `@Provides @IntoSet` in application or lib
 - `jakarta.inject:jakarta.inject-api`
 - `com.googlecode.owasp-java-html-sanitizer:owasp-java-html-sanitizer` (OWASP Java HTML Sanitizer, used by HTML sanitizers)
 - `org.projectlombok:lombok` (provided scope)
-
----
-
-## Version History
-
-| Date | Change |
-|------|--------|
-| 2026-04-07 | Initial implementation — `SanitizationModule`, `ProcessorResolver` (two-tier resolution); 8 built-in canonicalizers (Trim, NFKC, NFC, NormalizeLineEndings, CollapseWhitespace, UpperCase, LowerCase, RemoveIdentifierSeparators); 5 built-in sanitizers (StripControlChars, StripAllHtml, BasicHtml, LinksHtml, RichTextHtml); `InputObjectProcessor` wired via `@BindsOptionalOf` from `RestModule` |

@@ -56,6 +56,10 @@ Locale locale = LocalizationContextHolder.locale(holder, config.defaultLocale())
 ZoneId  zone  = LocalizationContextHolder.zone(holder, ZoneId.of("UTC"));
 ```
 
+### Propagation to downstream service calls
+
+`LocalizationContext` is a `@DispatchContextValue`. `RestLocalizationModule` pulls in `LocalizationModule`, which registers a pass-through service-dispatch encoder/decoder pair and a durable-metadata encoder/decoder pair for `LocalizationContext` into the framework's context-propagation multibindings. Once `RequestLocaleInterceptor` binds a `LocalizationContext`, it therefore crosses in-process event-bus service calls and durable async boundaries automatically, with no extra application wiring required. This is separate from outbound REST-client propagation, which remains deferred — see the module overview above.
+
 ### Scope lifecycle
 
 The `ContextHolder.Scope` returned by the binding call is registered with `RequestContextLifecycle.fromRoutingContext(rc).onClose(scope)`. The scope is closed when the request context is torn down at request completion. If `onClose` registration itself throws, the interceptor closes the scope immediately to prevent a leak.
@@ -237,12 +241,3 @@ The `examples/vertique-example-localization` example shows this pattern end-to-e
 - `io.vertx:vertx-web` (RoutingContext)
 
 Maven Enforcer `bannedDependencies` excludes `vertique-rest-jaxrs` and `vertique-rest-client` from the compile classpath (FR-RLOC-004). The module is server-side only and carries no JAX-RS runtime or HTTP-client dependency.
-
----
-
-## Related ADRs
-
-- ADR-0067: REST locale resolution contract — establishes the ordered `LocaleSource` chain, built-in `AcceptLanguageLocaleSource` priority and deferral rules, pre-auth boundary, `ContextHolder` as sole source of truth, throttled WARN strategy, scope lifecycle, and the server-only module boundary.
-- ADR-0066: Localization context propagation — establishes `LocalizationContext` as a `@DispatchContextValue` and defines the identity service-dispatch codec and the `localization` durable namespace that `RestLocalizationModule` builds on.
-- ADR-0084: Framework Extension-Ordering Contract — establishes `OrderedExtension` and `ExtensionPhase` as the canonical ordering contract for framework extensions.
-- ADR-0085: OrderedExtension Rolled Out Across Sorted Behavioral SPIs — `LocaleSource` now follows the framework OrderedExtension ordering contract (phase → priority → orderKey); `AcceptLanguageLocaleSource` keeps its explicit priority of 1000 so application sources at default priority 0 precede it.
