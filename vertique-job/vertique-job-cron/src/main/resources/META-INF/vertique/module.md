@@ -29,10 +29,16 @@ Timer-based cron scheduler for recurring jobs. Parses 6-field cron expressions, 
 
 Method-level annotation that marks a service implementation method as a recurring cron job. Place on the implementation method, not the contract interface.
 
+The contract method must carry `@ServiceOperation`. Cron resolves a job to a **stable service target**, and only an annotated operation has one — registration fails at startup otherwise.
+
 ```java
-@EventBusService(type = "maintenance", value = "cleanup-service")
+@ServiceContract(namespace = "maintenance", value = "cleanup-service")
 public interface CleanupService {
+
+    @ServiceOperation("cleanup-expired")
     Future<Void> cleanupExpired();
+
+    @ServiceOperation("daily-report")
     Future<Void> generateDailyReport();
 }
 
@@ -128,8 +134,8 @@ Sealed interface representing where a cron job dispatches. Two variants:
 | `EventBusTarget` | `eventbus:{eventBusAddress}` | Dispatched directly to the supplied event bus address |
 
 ```java
-CronTargetReference target = CronTargetReference.parse("service:maintenance.cleanup.cleanupExpired");
-// → ServiceTarget("maintenance.cleanup.cleanupExpired")
+CronTargetReference target = CronTargetReference.parse("service:maintenance.cleanup-service.cleanup-expired");
+// → ServiceTarget("maintenance.cleanup-service.cleanup-expired")
 
 CronTargetReference direct = CronTargetReference.parse("eventbus:integrations/legacy/reconcile");
 // → EventBusTarget("integrations/legacy/reconcile")
@@ -268,7 +274,7 @@ Register jobs without an annotation by specifying a `target` field:
   "cron": {
     "jobs": {
       "weekly-report": {
-        "target": "service:reporting.reports.generateWeeklyReport",
+        "target": "service:reporting.reports.generate-weekly-report",
         "cron": "0 0 9 * * 1",
         "timezone": "Europe/Helsinki",
         "mode": "SINGLE_INSTANCE",
