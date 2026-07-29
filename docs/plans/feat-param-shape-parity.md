@@ -314,7 +314,8 @@ see Amendment 14:
  * mis-bound. Scoped to the locations {@code findDescriptor} serves; FORM is excluded because form
  * extraction reads {@code formAttributes()} directly. Name comparison mirrors the binder:
  * case-insensitive for header and cookie, case-sensitive for path and query. Two same-name
- * parameters with the same multiplicity are redundant but well-defined, and are not rejected.
+ * parameters with the same multiplicity are out of this check's scope — which is a scope statement,
+ * not a safety guarantee, since they still share one descriptor.
  */
 DUPLICATE_PARAM_NAME_MULTIPLICITY_CONFLICT
 ```
@@ -728,7 +729,7 @@ Each item routes to a GitHub issue in `vertiquehq/vertique-dev` (no backing PRD)
 | **Null converted `@DefaultValue` element** — `absentCollectionValue` wraps the converted default in `singletonList`; a converter returning `null` NPEs inside `new TreeSet<>(...)` | Design decision: the outcome is a 500 either way, and choosing the semantics for a null converted default (`[null]`, empty, or reject) is a policy §4 does not make. The same hazard exists for a converter returning null on a *present* value, so a real fix belongs in the materializer under a decided policy | Issue: "Decide the contract for a ParamConverter returning null for a collection element or @DefaultValue" |
 | **Scalar policy ordering across sources** — FORM scalars process the raw value pre-conversion; QUERY/HEADER/COOKIE scalars process post-conversion and only while still a `String`, so non-`String` scalar targets skip the chain there | Out of scope: unifying it changes shipped behavior for every non-`String` scalar param on those three sources, on both dispatch paths — well beyond param-shape parity. Round 1 fixed only the *collection* half, per source | Issue: "Decide whether input policies run before or after scalar conversion, uniformly across sources" |
 | **`@PathParam` collection shapes** | Out of scope: needs multi-value path extraction that `RoutingContext.pathParams()` (a `Map<String,String>`) does not expose. §4 decision 2 and Amendment 9 scope PATH out deliberately, and after F1 the limitation fails loudly on **both** paths rather than one | Issue: "Decide whether @PathParam collection shapes become supported (repeated path templates)" |
-| **No compile-time mirror for either shape rule** — neither `UNSUPPORTED_MULTIPART_COLLECTION_SHAPE` nor `NON_COMPARABLE_SORTED_SET_ELEMENT` has a processor-side diagnostic | Both are runtime `RouteValidator` checks; the codegen module has no mirror for either. Adding one is a separate slice covering both rules together, not half of one | Issue: "Mirror the FORM shape rules as compile-time diagnostics" |
+| **No compile-time mirror for either shape rule** — neither `UNSUPPORTED_MULTIPART_COLLECTION_SHAPE` nor `NON_COMPARABLE_SORTED_SET_ELEMENT` has a processor-side diagnostic | The surviving shape rules are runtime `RouteValidator` checks; the codegen module has no mirror for them. Adding one is a separate slice covering the rules together, not half of one | Issue: "Mirror the FORM shape rules as compile-time diagnostics" |
 | **Inner class of a parameterized owner** — `List<Outer<String>.Inner>` is a `ParameterizedType` reflectively (empty args, parameterized owner) so the reflective scanner resolves no element type, while the codegen mirror accepts it | Near-zero reachability: a non-static member class of a generic outer, used as a String-convertible collection element. Two-line fix plus matrix rows if it ever matters | Issue: "Mirror inner-classes-of-parameterized-owners in the codegen element-type gate" |
 | **RFC 6265 cookie names are case-sensitive** while the framework now matches them case-insensitively on both halves, so `@CookieParam("session")` is satisfiable by a wire cookie named `Session`, and two cookies differing only in case collapse (last wins) | Pre-existing in the map keying; the security fix only made the descriptor half agree with it, which is what was actually broken. Changing the semantic is a separate decision | Issue: "Decide whether cookie name matching should be case-sensitive per RFC 6265" |
 | **`raw.toString()` double-conversion** in the multiplicity fallback, lossy for a converter whose round-trip is not `toString`-symmetric | Its only legal trigger was the duplicate-name declaration now rejected at startup; the remaining triggers are a custom `BoundRequest`, a codegen divergence, or path collection support | Issue: "Avoid toString round-tripping in the collection multiplicity fallback" |
@@ -781,8 +782,9 @@ collection support.
 
 Method note worth keeping: the sorted-set reasoning defeated inspection twice — once in the
 round-2 fix and once in the test that ratified it. Round 3 settled it by *executing* a shape
-matrix against real `TreeSet` behavior, and that matrix is now in-tree asserting both the runtime
-truth and the validator verdict per row, so a stale row fails rather than misleading.
+matrix against real `TreeSet` behavior, and that matrix asserted both the runtime truth and
+the validator verdict per row. It was deleted with the guard in Amendment 14; the technique is the
+part worth keeping.
 
 ## Amendments
 
@@ -888,4 +890,3 @@ The Contract Appendix (§4) is untouched throughout.
    version was falsified by *execution*, never by inspection. When a check's correctness depends on
    Java erasure subtleties, build the executed shape matrix before the check — and be willing to
    conclude the check is not worth its cost.
-

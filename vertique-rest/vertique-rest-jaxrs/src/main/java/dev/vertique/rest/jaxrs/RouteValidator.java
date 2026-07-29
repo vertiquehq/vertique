@@ -156,7 +156,7 @@ class RouteValidator {
                                         + "incompatible multiplicities — one collection-shaped, one scalar. Binding "
                                         + "resolves a request name to a single declared parameter (first match wins), "
                                         + "so exactly one of the two would always be mis-bound: give them distinct "
-                                        + "names, or declare both with the same multiplicity.",
+                                        + "names.",
                                 first.source(),
                                 first.name(),
                                 describeShape(first),

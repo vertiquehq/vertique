@@ -145,15 +145,17 @@ public record RouteRegistrationViolation(String operationId, ViolationType type,
          * Neither outcome is what the declaration asks for, so the shape is rejected at registration
          * rather than mounted and mis-bound per request.
          *
-         * <p><b>What to do instead:</b> give the two parameters distinct names, or declare both with the
-         * same multiplicity — the collection-shaped declaration alone already receives every submitted
-         * value.
+         * <p><b>What to do instead:</b> give the two parameters distinct names. A collection-shaped
+         * declaration on its own already receives every submitted value, so the scalar one is rarely
+         * what was wanted.
          *
-         * <p><b>Two declarations of the same name with the same multiplicity are NOT reported.</b> Both
-         * then bind the identical value through the identical descriptor: redundant, but well-defined.
-         * That includes two different collection shapes of one name (e.g. {@code List<String>} plus
-         * {@code Set<String>}), since multiplicity — not the concrete collection type — is what the
-         * single descriptor decides.
+         * <p><b>Two declarations of the same name with the same multiplicity are NOT reported</b> — but
+         * that is a statement about this check's scope, <em>not</em> a safety guarantee. They still share
+         * one descriptor, and whatever that single descriptor decides is applied to both: two different
+         * declared types under one name (e.g. {@code Integer} plus {@code UUID}) mount and then fail in
+         * {@code Method.invoke} on every request carrying the name, and the same declared type with
+         * different conversion-affecting annotations silently applies the <em>first</em> declaration's
+         * semantics to both. Only the multiplicity conflict above is validated here.
          *
          * <p><b>Scoping.</b> Reported for the sources whose multiplicity {@code findDescriptor} decides:
          * {@code PATH}, {@code QUERY}, {@code HEADER}, and {@code COOKIE}. Names are compared exactly as
