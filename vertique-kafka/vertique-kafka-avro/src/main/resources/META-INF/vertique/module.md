@@ -68,8 +68,8 @@ public final class ApicurioAvroSerdeProvider implements KafkaSerdeProvider {
 
     public static final String FORMAT = "avro";
 
-    /** Constructed by AvroModule from the full application config. */
-    public ApicurioAvroSerdeProvider(JsonObject config) { ... }
+    /** Constructed by AvroModule from the typed Kafka config; reads its schemaRegistry block. */
+    public ApicurioAvroSerdeProvider(KafkaConfig kafkaConfig) { ... }
 
     @Override public String format() { return FORMAT; }
 
@@ -133,8 +133,8 @@ public abstract class AvroModule {
     @Provides
     @Singleton
     @IntoSet
-    static KafkaSerdeProvider avroSerdeProvider(@VertxConfig JsonObject config) {
-        return new ApicurioAvroSerdeProvider(config);
+    static KafkaSerdeProvider avroSerdeProvider(KafkaConfig kafkaConfig) {
+        return new ApicurioAvroSerdeProvider(kafkaConfig);
     }
 }
 ```
