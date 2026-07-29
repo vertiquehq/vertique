@@ -105,19 +105,17 @@ Applications usually install the provided module rather than implementing these 
 
 ---
 
-## Durable Context Propagation Seams
+## Durable Context Propagation
 
-This module implements the timer-side durable context propagation path. Timer metadata is captured once at timer-create and survives the full timer lifecycle including dead-letter and recovery.
+Durable context — correlation, caller identity, and any other registered durable namespace — is captured when a timer is created and restored when it fires, including after a crash, a dead-letter, or a recovery re-enqueue. Applications do not thread anything through the timer themselves.
 
-**Timer create (`WorkflowTimerSideEffectRecorder`):** Calls `DurableContextPropagator.mergeCaptured(DurableMetadata.empty(), "DELAYED_JOB")` — the caller-supplied context document is always empty by construction so no collision with framework-captured namespaces is possible. The resulting `DurableMetadata` document is dual-written inside the same transaction:
-- Into `workflow_timers.metadata` — recovery-state source of truth; survives delayed-job dead-letter or DELETE
-- Into `job_executions.metadata` — dispatch-time wire format picked up by `DelayedJobPoller`
+**Timer create.** The recorder captures the ambient durable context once and writes it to `workflow_timers.metadata` as the recovery-state copy, which survives dead-letter cleanup of the job row. The timer's delayed job is enqueued through the *ordinary* enqueue path, so the job row independently captures its own copy of the same ambient context.
 
-Both `DelayedJobOptions.premergedMetadata` and the `TimerStore.insertScheduled` call receive the same `DurableMetadata` document, so both rows carry identical metadata at creation.
+The two documents are written in one transaction but are **not** interchangeable: each is bound to the row that owns it. That is why neither is copied into the other — a document bound to the timer row cannot be replayed as the job row's context.
 
-**Timer fire:** Context is restored through the standard delayed-job dispatch pipeline. `DelayedJobPoller.dispatch` calls `decodeToDispatchContext(execution.metadata(), "DELAYED_JOB")` and places decoded values in the envelope's `callerOverrides`. `InboundDispatchScope.install` binds them on the handler's duplicated context. There is no `WorkflowTimerFireExecutor`-side binding.
+**Timer fire.** Context is restored by the standard delayed-job dispatch pipeline before the executor runs, so the resumed workflow observes the context that was ambient at timer create. This module adds no fire-time binding of its own.
 
-**Timer recovery (`WorkflowTimerRecoveryService`):** Copies `workflow_timers.metadata` into the replacement delayed-job via `DelayedJobOptions.premergedMetadata`. This routes through `DelayedJobService.enqueuePremerged`, persisting the `DurableMetadata` document as-is without re-capture. The recovery sweep uses `workflow_timers.metadata` as the source of truth because `job_executions` rows may be absent (dead-letter DELETE) or stale.
+**Timer recovery.** `workflow_timers.metadata` is the recovery source of truth, because the job row may be absent (dead-letter cleanup) or stale. Recovery restores the timer row's stored context for the duration of the reconcile and re-enqueues the replacement job through the *ordinary* enqueue path — under that restored context — so the replacement job captures its own copy bound to itself. The stored document is never handed to the replacement job verbatim.
 
 ---
 
@@ -135,7 +133,7 @@ Both `DelayedJobOptions.premergedMetadata` and the `TimerStore.insertScheduled` 
 - **Lock order.** Within the firing path and any extension code, `workflow_timers` is locked before `workflow_tasks` / `workflow_branch_tokens` / `workflow_instances`. Reversing this order produces a deadlock with the firing executor. All engine code paths (fire, signal, cancel) follow this invariant.
 - **Idempotent executor.** The executor treats an already-closed timer row (`FIRED` / `CANCELLED` / `FAILED`) as a no-op and returns without raising. Delayed-job retries are therefore safe.
 - **Cluster-singleton recovery.** The orphan-recovery cron job must run as a cluster singleton — install the persistent-cron module, not the in-memory variant. Running it on every node racing against itself can resurrect cancelled timers.
-- **Slot mismatch.** Firing executes against a captured `executionId` slot. If the slot does not match the current timer row, the fire is recorded as `timerFiringFailed` and the workflow remains in its prior wait state rather than transitioning on a stale schedule.
+- **Wait-slot mismatch.** A fire is gated on the wait slot of the waiting workflow instance — or, for a timer owned by a parallel branch, of the branch token. The slot is `wait_type` plus `wait_key` / `wait_aux_id`, and the firing timer's id must match it: `wait_type=TIMER` with `wait_key` = timer id (standalone), `wait_type=SIGNAL` with `wait_aux_id` = timer id (signal timeout), or `wait_type=TASK` with `wait_aux_id` = timer id (task due date). If the instance is no longer waiting, or the slot names a different timer or a different wait type, the engine reports the fire as a stale no-op: the timer row is marked `FAILED` with a `TIMER_INCONSISTENCY` reason, the delayed job completes successfully without retrying, and the workflow is left exactly as it was rather than transitioning on a stale schedule. A superseded timer therefore ends up as a `FAILED` timer row against an otherwise healthy workflow — read the reason before treating it as a fault. This is distinct from `timerFiringFailed`, which belongs to the recovery sweep for dead-lettered or inconsistent timer jobs.
 
 ---
 
