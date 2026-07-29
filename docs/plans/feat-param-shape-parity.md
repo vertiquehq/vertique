@@ -885,4 +885,3 @@ The Contract Appendix (§4) is untouched throughout.
 13. **2026-07-29 — `DUPLICATE_PARAM_NAME_MULTIPLICITY_CONFLICT` added (USER-APPROVED; consumer-visible).**
    Rejects at startup a declaration that has no correct binding. An application that mounts today
    stops booting; the repo was grepped and no in-tree declaration is newly rejected.
-

@@ -1085,23 +1085,36 @@ class CollectionParamStateMachineTest {
                             + "pass for the wrong reason");
         }
 
+        /**
+         * Proves the once-per-parameter guard is scoped to <b>one extractor</b>, i.e. to one route.
+         *
+         * <p>The single {@link ResourceMethodMeta.ParamMeta} instance is shared by both routes on purpose,
+         * and it is what gives the test teeth. {@code ParamMeta}'s equality bottoms out on the identity of
+         * its {@code ParameterMetadata} component, so two freshly built {@code ParamMeta}s are unequal and
+         * would land as two distinct keys even in a process-wide set — the assertion would then pass with a
+         * static latch in place, catching only a literal {@code boolean} field. Sharing the instance makes
+         * the two routes collide on one key, so a {@code static} set collapses the count to 1 and fails
+         * here, exactly as it would leak every route's metadata for the process lifetime.
+         *
+         * @throws Exception if the reflected fixture method cannot be resolved
+         */
         @Test
-        @DisplayName("Each affected route reports the disagreement for itself")
+        @DisplayName("Each affected route reports the disagreement for itself, even for one shared ParamMeta")
         void warnsPerRoute() throws Exception {
             Method method = CollectionResource.class.getMethod("list", List.class);
             BoundRequest req = boundRequest(QUERY, Map.of("tags", RequestValue.of("a")));
+            ResourceMethodMeta.ParamMeta sharedParam = paramMeta("tags", QUERY, List.class, String.class, null);
 
             for (int route = 0; route < 2; route++) {
-                ResourceMethodMeta meta =
-                        metaFor(method, List.of(paramMeta("tags", QUERY, List.class, String.class, null)));
-                extractorFor(meta).extractArguments(null, req);
+                extractorFor(metaFor(method, List.of(sharedParam))).extractArguments(null, req);
             }
 
             assertEquals(
                     2,
                     multiplicityWarnings().size(),
                     "the guard is scoped to one extractor (one route), so a second affected route must still be "
-                            + "diagnosed — a process-wide latch would hide it");
+                            + "diagnosed — with both routes keyed by the SAME ParamMeta instance, a process-wide "
+                            + "(static) set would report only the first and retain every route's metadata forever");
         }
     }
 }

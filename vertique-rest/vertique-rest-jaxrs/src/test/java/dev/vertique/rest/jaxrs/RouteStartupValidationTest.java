@@ -656,6 +656,201 @@ public class RouteStartupValidationTest {
     public static final class ConcreteRecursiveSelfComparable
             extends RecursiveSelfComparable<ConcreteRecursiveSelfComparable> {}
 
+    // --- Declaration-only element types: nothing below Comparable declares a concrete compareTo ---
+    //
+    // Every shape in this block is a Class<?>, so ResourceScanner.resolveComponentType accepts it as a
+    // component type — an interface or abstract element type is a reachable declaration, not a
+    // hypothetical one. None of them declares a concrete compareTo, so the ONLY non-bridge candidate
+    // Class.getMethods() exposes is the erased Comparable.compareTo(Object). A predicate that reads its
+    // cast target off that method alone therefore degenerates to "cast target == Object", i.e. accepts
+    // unconditionally. The declaration site is the only evidence available for these types.
+
+    /**
+     * An <em>interface</em> element type declaring {@code Comparable<String>} without declaring
+     * {@code compareTo} itself. Every implementor must implement {@code compareTo(String)}, so the
+     * synthesized {@code compareTo(Object)} bridge casts to {@link String} and a {@code TreeSet} of
+     * implementors throws — the guard must reject it.
+     */
+    public interface ForeignComparableInterface extends Comparable<String> {}
+
+    /** The concrete implementor whose bridge supplies {@link ForeignComparableInterface}'s ground truth. */
+    public static final class ForeignComparableInterfaceImpl implements ForeignComparableInterface {
+        @Override
+        public int compareTo(String other) {
+            return 0;
+        }
+    }
+
+    /**
+     * An <em>abstract class</em> element type declaring {@code Comparable<String>} and leaving
+     * {@code compareTo} abstract. Same hazard as {@link ForeignComparableInterface}: the concrete
+     * subclass's bridge casts to {@link String}.
+     */
+    public abstract static class ForeignComparableAbstract implements Comparable<String> {}
+
+    /** The concrete subclass whose bridge supplies {@link ForeignComparableAbstract}'s ground truth. */
+    public static final class ForeignComparableAbstractImpl extends ForeignComparableAbstract {
+        @Override
+        public int compareTo(String other) {
+            return 0;
+        }
+    }
+
+    /**
+     * An <em>abstract class</em> element type that reaches {@link Comparable} through the forwarding
+     * interface {@link ForwardingComparable} bound to {@link String}, and leaves {@code compareTo}
+     * abstract. Neither half of the resolution sees a concrete target on its own — the declaration site
+     * yields a type variable and no concrete {@code compareTo} exists below {@link Comparable} — so the
+     * only sound verdict is the fail-closed one: reject.
+     */
+    public abstract static class ForwardedComparableAbstract implements ForwardingComparable<String> {}
+
+    /** The concrete subclass whose bridge supplies {@link ForwardedComparableAbstract}'s ground truth. */
+    public static final class ForwardedComparableAbstractImpl extends ForwardedComparableAbstract {
+        @Override
+        public int compareTo(String other) {
+            return 0;
+        }
+    }
+
+    /**
+     * A <em>sealed interface</em> element type declaring {@code Comparable<Integer>}. Sealing restricts
+     * who may implement it; it does not change the bridge its permitted implementor emits, which casts
+     * to {@link Integer} — so the guard must reject it.
+     */
+    public sealed interface SealedForeignComparable extends Comparable<Integer> permits SealedForeignComparableImpl {}
+
+    /** The permitted implementor whose bridge supplies {@link SealedForeignComparable}'s ground truth. */
+    public static final class SealedForeignComparableImpl implements SealedForeignComparable {
+        @Override
+        public int compareTo(Integer other) {
+            return 0;
+        }
+    }
+
+    /**
+     * The <b>safe</b> declaration-only idiom: an interface comparable to <em>itself</em>. Implementors
+     * emit a bridge casting to this interface, which every implementor satisfies, so a {@code TreeSet}
+     * orders them and the guard must accept it. Rejecting every declaration-only type — the crude fix for
+     * the four hazards above — would break this common shape at startup.
+     */
+    public interface SelfComparableInterface extends Comparable<SelfComparableInterface> {}
+
+    /** The concrete implementor whose bridge supplies {@link SelfComparableInterface}'s ground truth. */
+    public static final class SelfComparableInterfaceImpl implements SelfComparableInterface {
+        @Override
+        public int compareTo(SelfComparableInterface other) {
+            return 0;
+        }
+    }
+
+    /**
+     * The <b>safe</b> abstract-class counterpart of {@link SelfComparableInterface}: {@code Comparable}
+     * is bound to the abstract type itself and {@code compareTo} is left abstract.
+     */
+    public abstract static class SelfComparableAbstract implements Comparable<SelfComparableAbstract> {}
+
+    /** The concrete subclass whose bridge supplies {@link SelfComparableAbstract}'s ground truth. */
+    public static final class SelfComparableAbstractImpl extends SelfComparableAbstract {
+        @Override
+        public int compareTo(SelfComparableAbstract other) {
+            return 0;
+        }
+    }
+
+    // --- Multiple non-bridge compareTo candidates: iteration order must not decide ---
+    //
+    // Class.getMethods() returns methods in an explicitly UNSPECIFIED order. When two non-bridge
+    // compareTo candidates are mutually unassignable, a "most specific wins" scan lets that order pick
+    // the cast target — so the same declaration can be accepted on one JVM run and rejected on another.
+    // Each shape below is declared twice, with the two overloads in opposite source order, so both
+    // permutations are exercised whichever way the JVM happens to enumerate them. Only the declaration
+    // site distinguishes the real Comparable implementation from the unrelated overload.
+
+    /**
+     * {@code Comparable<String>} plus an unrelated {@code compareTo} overload, the {@link Comparable}
+     * implementation declared first. The bridge delegates to {@code compareTo(String)} — the overload is
+     * invisible to {@code TreeSet} — so this shape must be rejected.
+     */
+    public static final class MultiOverloadForeignComparable implements Comparable<String> {
+        @Override
+        public int compareTo(String other) {
+            return 0;
+        }
+
+        /**
+         * An unrelated overload that no {@code TreeSet} ever calls.
+         *
+         * @param other the other instance
+         * @return always {@code 0}
+         */
+        public int compareTo(MultiOverloadForeignComparable other) {
+            return 0;
+        }
+    }
+
+    /** {@link MultiOverloadForeignComparable} with the two overloads in the reverse source order. */
+    public static final class ReversedMultiOverloadForeignComparable implements Comparable<String> {
+
+        /**
+         * An unrelated overload that no {@code TreeSet} ever calls.
+         *
+         * @param other the other instance
+         * @return always {@code 0}
+         */
+        public int compareTo(ReversedMultiOverloadForeignComparable other) {
+            return 0;
+        }
+
+        @Override
+        public int compareTo(String other) {
+            return 0;
+        }
+    }
+
+    /**
+     * {@code Comparable<Self>} plus an unrelated {@code compareTo(String)} overload, the {@link Comparable}
+     * implementation declared first. The bridge casts to this type, so a {@code TreeSet} orders it and the
+     * guard must accept it — the mirror image of {@link MultiOverloadForeignComparable}, proving the
+     * ambiguity is resolved by the declaration site rather than by rejecting whenever it is ambiguous.
+     */
+    public static final class MultiOverloadSelfComparable implements Comparable<MultiOverloadSelfComparable> {
+        @Override
+        public int compareTo(MultiOverloadSelfComparable other) {
+            return 0;
+        }
+
+        /**
+         * An unrelated overload that no {@code TreeSet} ever calls.
+         *
+         * @param other the string to compare against
+         * @return always {@code 0}
+         */
+        public int compareTo(String other) {
+            return 0;
+        }
+    }
+
+    /** {@link MultiOverloadSelfComparable} with the two overloads in the reverse source order. */
+    public static final class ReversedMultiOverloadSelfComparable
+            implements Comparable<ReversedMultiOverloadSelfComparable> {
+
+        /**
+         * An unrelated overload that no {@code TreeSet} ever calls.
+         *
+         * @param other the string to compare against
+         * @return always {@code 0}
+         */
+        public int compareTo(String other) {
+            return 0;
+        }
+
+        @Override
+        public int compareTo(ReversedMultiOverloadSelfComparable other) {
+            return 0;
+        }
+    }
+
     /**
      * Resolves a no-op converter for the sorted-shape element fixtures above (and only for the element
      * shape, {@code genericType == rawType}), so the only possible startup rejection for a parameter
@@ -1201,18 +1396,26 @@ public class RouteStartupValidationTest {
     }
 
     /**
-     * Resource declaring duplicated names whose multiplicities <em>agree</em>. Both declarations resolve
-     * to the same bound value, so the declaration is redundant but well-defined and must keep building.
+     * Resource declaring duplicated names whose multiplicities <em>agree</em> — the shape the
+     * multiplicity guard deliberately does not inspect.
+     *
+     * <p>The two scalar {@code id} declarations use <em>different</em> types ({@link Integer} and
+     * {@link UUID}) on purpose. Same-multiplicity duplicates still share one descriptor, and
+     * {@code DefaultBoundRequest.wrapScalar} coerces the raw value once with the <em>first</em> matching
+     * descriptor, so this declaration mounts and then fails in {@code Method.invoke} on every request
+     * carrying {@code id}. Declaring both as {@code String} would be the one configuration that cannot
+     * expose that — the mis-binding would be invisible, and the fixture would document a benign case
+     * instead of the real, still-unvalidated one.
      */
     @Path("/duplicate-matching-multiplicity")
     public static class DuplicateMatchingMultiplicityResource {
 
         /**
-         * Declares {@code id} twice as a scalar and {@code tags} twice as a collection (in two different
-         * collection shapes, which is still one multiplicity).
+         * Declares {@code id} twice as a scalar of two different types, and {@code tags} twice as a
+         * collection (in two different collection shapes, which is still one multiplicity).
          *
-         * @param first      the first scalar declaration of {@code id}
-         * @param second     the second scalar declaration of {@code id}
+         * @param first      the first scalar declaration of {@code id}, an {@link Integer}
+         * @param second     the second scalar declaration of the same name, a {@link UUID}
          * @param tagList    the {@code List} declaration of {@code tags}
          * @param tagSet     the {@code Set} declaration of {@code tags}
          * @return never reached in this test (only the router build is exercised)
@@ -1221,8 +1424,8 @@ public class RouteStartupValidationTest {
         @Produces(MediaType.TEXT_PLAIN)
         @Operation(operationId = "duplicateMatchingMultiplicity")
         public String get(
-                @QueryParam("id") String first,
-                @QueryParam("id") String second,
+                @QueryParam("id") Integer first,
+                @QueryParam("id") UUID second,
                 @QueryParam("tags") List<String> tagList,
                 @QueryParam("tags") Set<String> tagSet) {
             return "unreachable";
@@ -1344,17 +1547,33 @@ public class RouteStartupValidationTest {
         ctx.completeNow();
     }
 
+    /**
+     * Pins the multiplicity guard's <b>scope</b>, not the safety of what it lets through. The fixture is a
+     * genuinely mis-binding declaration — two scalar {@code @QueryParam("id")} parameters of different
+     * types — which mounts because same-multiplicity duplicates are not validated anywhere today. It fails
+     * at request time, in {@code Method.invoke}, since {@code wrapScalar} converts the value once using the
+     * first matching descriptor.
+     *
+     * <p>So this test documents current scope: widening the guard to reject it would break declarations
+     * that mount today and is a separate, consumer-visible decision. If that decision is ever taken, this
+     * test is the one that must change.
+     *
+     * @param vertx the injected Vert.x instance
+     * @param ctx   the test context
+     */
     @Test
-    @DisplayName("Duplicated names whose multiplicities agree are redundant but legal and pass validation")
-    void duplicateParamNamesWithMatchingMultiplicityPassValidation(Vertx vertx, VertxTestContext ctx) {
+    @DisplayName("Same-multiplicity duplicate names are out of the guard's scope and still mount (unsafe or not)")
+    void duplicateParamNamesWithMatchingMultiplicityAreNotValidatedHere(Vertx vertx, VertxTestContext ctx) {
         JaxRsRouterMount.Factory factory = TestFactories.builder().build();
         JaxRsRouterMount mount =
                 factory.create("/*", "openapi.json", Set.of(new DuplicateMatchingMultiplicityResource()));
 
         assertDoesNotThrow(
                 () -> mount.createRouter(vertx),
-                "both declarations bind the same value when the multiplicity agrees — redundant, but "
-                        + "well-defined, so the guard must not reject it");
+                "the guard reports multiplicity conflicts only; a same-multiplicity pair whose declared "
+                        + "types differ (Integer plus UUID here) is NOT validated — it mounts and then fails "
+                        + "in Method.invoke per request, which is current, documented scope rather than a "
+                        + "safety guarantee");
         ctx.completeNow();
     }
 
@@ -1390,9 +1609,17 @@ public class RouteStartupValidationTest {
     /**
      * One row of the sorted-element self-comparability shape matrix.
      *
+     * <p>For an interface or abstract {@code elementType} the {@code factory} supplies an instance of an
+     * implementing/extending <em>subclass</em>. That is the right instance, not a workaround for
+     * uninstantiability: the ground truth this matrix pins is <b>the cast the {@code compareTo(Object)}
+     * bridge performs</b>, and a bridge only ever exists in the concrete class that implements
+     * {@code compareTo}. Those subclass instances are also exactly what a request would carry, so the
+     * {@code TreeSet} probe measures the same failure a deployed route would hit.
+     *
      * @param label       a human-readable shape name, used as the test display name
      * @param elementType the declared element type of the {@code SortedSet} shape
-     * @param factory     supplies an instance of {@code elementType} for the ground-truth
+     * @param factory     supplies an instance of {@code elementType} — of an implementing subclass when
+     *                    {@code elementType} is an interface or abstract class — for the ground-truth
      *                    {@code TreeSet} insertion
      * @param mustAccept  whether route registration must accept a {@code SortedSet} over it
      */
@@ -1445,6 +1672,26 @@ public class RouteStartupValidationTest {
                         SuperclassForwardedComparable.class,
                         SuperclassForwardedComparable::new,
                         true),
+                new SortedElementShape(
+                        "declaration-only INTERFACE, Comparable<Self>",
+                        SelfComparableInterface.class,
+                        SelfComparableInterfaceImpl::new,
+                        true),
+                new SortedElementShape(
+                        "declaration-only ABSTRACT class, Comparable<Self>",
+                        SelfComparableAbstract.class,
+                        SelfComparableAbstractImpl::new,
+                        true),
+                new SortedElementShape(
+                        "Comparable<Self> plus an unrelated overload",
+                        MultiOverloadSelfComparable.class,
+                        MultiOverloadSelfComparable::new,
+                        true),
+                new SortedElementShape(
+                        "Comparable<Self> plus an unrelated overload, reverse source order",
+                        ReversedMultiOverloadSelfComparable.class,
+                        ReversedMultiOverloadSelfComparable::new,
+                        true),
                 // --- rejected: a real TreeSet throws ClassCastException ---
                 new SortedElementShape("not Comparable at all", MyType.class, () -> new MyType("x"), false),
                 new SortedElementShape("Comparable<Unrelated>", ForeignComparable.class, ForeignComparable::new, false),
@@ -1457,6 +1704,36 @@ public class RouteStartupValidationTest {
                         "BOUNDED generic superclass",
                         BoundedForwardedComparable.class,
                         BoundedForwardedComparable::new,
+                        false),
+                new SortedElementShape(
+                        "declaration-only INTERFACE, Comparable<Unrelated>",
+                        ForeignComparableInterface.class,
+                        ForeignComparableInterfaceImpl::new,
+                        false),
+                new SortedElementShape(
+                        "declaration-only ABSTRACT class, Comparable<Unrelated>",
+                        ForeignComparableAbstract.class,
+                        ForeignComparableAbstractImpl::new,
+                        false),
+                new SortedElementShape(
+                        "declaration-only ABSTRACT class, forwarded to an UNRELATED type",
+                        ForwardedComparableAbstract.class,
+                        ForwardedComparableAbstractImpl::new,
+                        false),
+                new SortedElementShape(
+                        "declaration-only SEALED interface, Comparable<Unrelated>",
+                        SealedForeignComparable.class,
+                        SealedForeignComparableImpl::new,
+                        false),
+                new SortedElementShape(
+                        "Comparable<Unrelated> plus an unrelated overload",
+                        MultiOverloadForeignComparable.class,
+                        MultiOverloadForeignComparable::new,
+                        false),
+                new SortedElementShape(
+                        "Comparable<Unrelated> plus an unrelated overload, reverse source order",
+                        ReversedMultiOverloadForeignComparable.class,
+                        ReversedMultiOverloadForeignComparable::new,
                         false));
     }
 

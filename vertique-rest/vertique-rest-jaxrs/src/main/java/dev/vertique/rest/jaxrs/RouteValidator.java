@@ -3,6 +3,7 @@
 
 package dev.vertique.rest.jaxrs;
 
+import dev.vertique.core.util.TypeResolver;
 import dev.vertique.rest.core.context.RestContextMessages;
 import dev.vertique.rest.core.context.RestContextTypes;
 import dev.vertique.rest.core.request.FilePart;
@@ -18,10 +19,14 @@ import jakarta.ws.rs.QueryParam;
 import jakarta.ws.rs.core.EntityPart;
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Method;
+import java.lang.reflect.ParameterizedType;
+import java.lang.reflect.Type;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.SortedSet;
 
 /**
@@ -90,10 +95,30 @@ class RouteValidator {
      * therefore fails fast, exactly as it does for the other unbindable shapes (see
      * {@link #addMultipartCollectionShapeViolations}, {@link #addSortedSetElementViolations}).
      *
-     * <p>Two declarations of one name with the <em>same</em> multiplicity are <b>not</b> reported: both
-     * bind the identical value through the identical descriptor — redundant, but well-defined. That
-     * includes two different collection shapes of one name ({@code List<String>} plus {@code Set<String>}),
-     * because multiplicity, not the concrete collection type, is what the single descriptor decides.
+     * <p><b>This guard is scoped to multiplicity conflicts and nothing else.</b> Two declarations of one
+     * name with the <em>same</em> multiplicity are outside its scope — they are not validated here, and
+     * that is <em>not</em> a claim that they bind correctly. They do share one descriptor, so the
+     * multiplicity of the bound value fits both; but the shared descriptor is the <em>first</em>
+     * declaration's ({@code DefaultBoundRequest.findDescriptor} is first-match), and
+     * {@code DefaultBoundRequest.wrapScalar} eagerly coerces the raw value with it while
+     * {@code ParameterExtractor.coerce} passes an already-converted value through unchanged. So a
+     * same-multiplicity pair still mis-binds whenever the two declarations differ in a way the single
+     * descriptor decides:
+     *
+     * <ul>
+     *   <li><b>different declared types</b> — {@code @QueryParam("id") Integer} plus
+     *       {@code @QueryParam("id") UUID} mounts, then fails in {@code Method.invoke} on every request
+     *       carrying {@code id}, because the value was converted once, to the first declared type;
+     *   <li><b>different conversion-affecting annotations</b> on the same declared type — silent, not a
+     *       failure: {@code ConversionContexts.forDescriptor} builds the context from the first
+     *       declaration's annotations, so the second parameter receives a value converted under the
+     *       first's semantics.
+     * </ul>
+     *
+     * <p>Two different collection shapes of one name ({@code List<String>} plus {@code Set<String>}) are
+     * likewise unreported — multiplicity, not the concrete collection type, is what the single descriptor
+     * decides. Widening the guard to same-multiplicity mis-binding would reject declarations that mount
+     * today, so it is a separate, consumer-visible decision rather than an omission of this one.
      *
      * <p><b>Scoped to the sources {@code findDescriptor} is consulted for</b> — see
      * {@link #isDescriptorMatchedSource}, and {@link #bindsSameName} for the per-location name-matching
@@ -211,8 +236,13 @@ class RouteValidator {
     }
 
     /**
-     * Returns whether two declarations of one name disagree about multiplicity — exactly one of them
-     * carries a component type. Two collection shapes agree (both bind all values), as do two scalars.
+     * Returns whether two declarations of one name disagree about <em>multiplicity</em> — exactly one of
+     * them carries a component type. Two collection shapes agree on multiplicity (both bind all values),
+     * as do two scalars.
+     *
+     * <p>Agreeing on multiplicity is not the same as binding correctly: a same-multiplicity pair whose
+     * declared types or conversion-affecting annotations differ is still mis-bound, and is deliberately
+     * outside this guard's scope (see {@link #addDuplicateParamMultiplicityViolations}).
      *
      * @param first  the earlier declaration
      * @param second the later declaration
@@ -240,8 +270,9 @@ class RouteValidator {
     /**
      * Rejects a parameter declared as {@code SortedSet<T>} / {@code NavigableSet<T>} whose element type
      * is not comparable to itself (see {@link #isSelfComparable} — which covers an element type that
-     * does not implement {@link Comparable} at all and one whose effective {@code compareTo} accepts a
-     * type the element type is not assignable to).
+     * does not implement {@link Comparable} at all, one whose effective {@code compareTo} accepts a type
+     * the element type is not assignable to, and one that only <em>declares</em> such a
+     * {@code Comparable} without implementing it, as an interface or abstract class does).
      * {@code ParameterExtractor.materializeCollection} builds both shapes with
      * {@code new TreeSet<>(elements)}, which orders elements by their natural ordering, so such a
      * parameter has no valid materialization: every request supplying a value would throw
@@ -363,28 +394,41 @@ class RouteValidator {
      * <p>Raw assignability to {@link Comparable} is <em>not</em> sufficient: a
      * {@code class Money implements Comparable<BigDecimal>} is assignable to {@link Comparable}, but
      * {@code TreeSet} invokes the compiler-synthesized {@code compareTo(Object)} bridge, which casts its
-     * argument to {@code BigDecimal} and throws. What decides is therefore the type that bridge casts
-     * to — and reflection already exposes it directly: the bridge's whole job is to cast and delegate to
-     * the <em>effective non-bridge</em> {@code compareTo(X)} the type actually inherits, so {@code X} is
-     * the cast target. This predicate reads {@code X} off
-     * {@link Class#getMethods()} rather than trying to substitute type arguments through the
-     * hierarchy — the erasure rules are already applied for us by the compiler that emitted those
-     * signatures.
+     * argument to {@code BigDecimal} and throws. What decides is therefore <b>the type that bridge casts
+     * to</b>, and the verdict is whether that type is assignable <em>from</em> {@code elementType} — i.e.
+     * whether an element can be passed to its own comparison method.
      *
-     * <p>Scanning {@code getMethods()} (which includes inherited public methods) and skipping
-     * {@linkplain java.lang.reflect.Method#isBridge() bridge} and
-     * {@linkplain java.lang.reflect.Method#isSynthetic() synthetic} declarations leaves the effective
-     * {@code compareTo}; the most specific parameter type wins when several are visible. The verdict is
-     * then simply whether that parameter type is assignable <em>from</em> {@code elementType}, i.e.
-     * whether the element can be passed to its own comparison method.
-     *
-     * <p>The rule resolves every shape uniformly, with no carve-outs:
+     * <p>Two independent pieces of reflective evidence name that cast target, and <b>neither is
+     * sufficient alone</b> — the rule is their conjunction ({@link #comparableCastTarget} plus
+     * {@link #declaredCompareToTargets}, combined by {@link #resolveCastTarget}):
      *
      * <ul>
-     *   <li>not {@link Comparable} at all &rarr; <b>rejected</b> (no {@code compareTo} to find);
+     *   <li><b>The declaration site</b> — the erasure of {@link Comparable}'s type argument where the
+     *       hierarchy instantiates it. This is the only evidence for a <em>declaration-only</em> element
+     *       type (an interface, a sealed interface, or an abstract class that leaves {@code compareTo}
+     *       abstract): such a type declares no concrete {@code compareTo} at all, so the method scan sees
+     *       nothing but the erased {@code Comparable.compareTo(Object)} and would accept it
+     *       unconditionally. It is also what distinguishes the real {@link Comparable} implementation from
+     *       an unrelated {@code compareTo} overload. It yields nothing when the argument is a type
+     *       variable bound further down the hierarchy.
+     *   <li><b>The effective {@code compareTo}</b> — the parameter type of the non-{@linkplain
+     *       java.lang.reflect.Method#isBridge() bridge}, non-{@linkplain
+     *       java.lang.reflect.Method#isSynthetic() synthetic} {@code compareTo} the type actually
+     *       inherits. This is the only evidence for a <em>forwarded type variable</em>, where the compiler
+     *       has already applied erasure for us: the declaration site sees only {@code T}, while the
+     *       emitted signature names the leftmost bound the bridge really casts to.
+     * </ul>
+     *
+     * <p>The rule resolves every shape without carve-outs:
+     *
+     * <ul>
+     *   <li>not {@link Comparable} at all &rarr; <b>rejected</b>;
      *   <li>{@code Comparable<Self>}, {@code Comparable<Supertype>}, or
      *       {@code Comparable<ParameterizedSupertype<?>>} — e.g. {@code LocalDateTime}'s
      *       {@code Comparable<ChronoLocalDateTime<?>>} &rarr; <b>accepted</b>;
+     *   <li>{@code Comparable<Unrelated>} &rarr; <b>rejected</b>, whether the argument is declared on the
+     *       element type, on an ancestor, on an <em>interface</em>, on a <em>sealed interface</em>, or on
+     *       an <em>abstract class</em> that never declares {@code compareTo};
      *   <li>a <em>raw</em> {@code implements Comparable} &rarr; <b>accepted</b>: the effective method is
      *       {@code compareTo(Object)};
      *   <li>an {@code enum} &rarr; <b>accepted</b> without a special case: {@code Enum<E extends
@@ -399,7 +443,10 @@ class RouteValidator {
      *       orders all three — while {@code class Bad implements Ord<String>} and a subclass of a
      *       <em>bounded</em> {@code Base<T extends CharSequence> implements Comparable<T>} are
      *       <b>rejected</b>, because their effective {@code compareTo} takes {@code String} /
-     *       {@code CharSequence} and the bridge cast throws.
+     *       {@code CharSequence} and the bridge cast throws;
+     *   <li>a forwarded type variable that reaches <em>no</em> concrete {@code compareTo} either — e.g.
+     *       {@code abstract class C implements Ord<String>} — &rarr; <b>rejected</b>, the fail-closed
+     *       answer for a shape whose safety no available evidence proves.
      * </ul>
      *
      * @param elementType the declared element type of a {@code SortedSet}/{@code NavigableSet} shape
@@ -409,20 +456,158 @@ class RouteValidator {
         if (!Comparable.class.isAssignableFrom(elementType)) {
             return false;
         }
-        Class<?> castTarget = null;
+        Class<?> castTarget =
+                resolveCastTarget(comparableCastTarget(elementType), declaredCompareToTargets(elementType));
+        return castTarget != null && castTarget.isAssignableFrom(elementType);
+    }
+
+    /**
+     * Combines the two pieces of cast-target evidence {@link #isSelfComparable} collects into the single
+     * type the {@code compareTo(Object)} bridge casts to. The result is <b>independent of
+     * {@link Class#getMethods()} iteration order</b>, which the JDK explicitly leaves unspecified.
+     *
+     * <p>The precedence, in order:
+     *
+     * <ol>
+     *   <li><b>No concrete {@code compareTo} below {@link Comparable}</b> &rarr; the declaration site is
+     *       the only evidence, so it decides (possibly {@code null}). This is the declaration-only case:
+     *       an interface or abstract element type whose implementors emit the bridge.
+     *   <li><b>The declaration site names one of the declared parameter types</b> &rarr; that type. This
+     *       is the deterministic answer whenever several {@code compareTo} overloads are visible: the
+     *       {@link Comparable} implementation is the one whose parameter matches the declared argument,
+     *       and an unrelated overload — which no {@code TreeSet} ever calls — cannot displace it.
+     *   <li><b>Otherwise</b> &rarr; the most specific declared parameter type, i.e. the unique candidate
+     *       every other candidate is assignable from (see {@link #mostSpecific}). This resolves the
+     *       forwarded-type-variable shapes, whose declaration site yields nothing. When no unique most
+     *       specific candidate exists the declaration site is used as a last resort, so an unresolvable
+     *       ambiguity ends as {@code null} — rejected — rather than as an order-dependent coin flip.
+     * </ol>
+     *
+     * @param declaredAtSite  the erasure of {@link Comparable}'s type argument at its declaration site,
+     *                        or {@code null} when the argument is a type variable or another non-erasable
+     *                        shape
+     * @param declaredTargets the parameter types of every effective {@code compareTo} declared below
+     *                        {@link Comparable} itself; possibly empty
+     * @return the bridge's cast target, or {@code null} when no evidence names one
+     */
+    private static Class<?> resolveCastTarget(Class<?> declaredAtSite, Set<Class<?>> declaredTargets) {
+        if (declaredTargets.isEmpty()) {
+            return declaredAtSite;
+        }
+        if (declaredAtSite != null && declaredTargets.contains(declaredAtSite)) {
+            return declaredAtSite;
+        }
+        Class<?> specific = mostSpecific(declaredTargets);
+        return specific != null ? specific : declaredAtSite;
+    }
+
+    /**
+     * Collects the parameter type of every effective {@code compareTo} that {@code elementType} inherits
+     * from a declaration <em>below</em> {@link Comparable} itself.
+     *
+     * <p>{@link Class#getMethods()} exposes inherited public methods, so this sees a {@code compareTo}
+     * declared on any ancestor. {@linkplain java.lang.reflect.Method#isBridge() Bridge} and
+     * {@linkplain java.lang.reflect.Method#isSynthetic() synthetic} methods are skipped — the bridge is
+     * what we are trying to characterize, not evidence about itself.
+     *
+     * <p><b>{@link Comparable}'s own erased {@code compareTo(Object)} is excluded</b>, and that exclusion
+     * is the whole point: for an element type that declares no concrete {@code compareTo} — an interface,
+     * a sealed interface, or an abstract class leaving it abstract — {@code getMethods()} still reports
+     * the interface's abstract {@code compareTo(Object)}. Counting it would make {@link Object} the cast
+     * target and accept every such declaration unconditionally, including
+     * {@code interface Bad extends Comparable<String>}, whose implementors' bridges cast to
+     * {@link String}. Excluding it makes the empty result an honest signal — "no concrete implementation
+     * is visible, defer to the declaration site" — rather than a false accept.
+     *
+     * @param elementType the element type, already known to be assignable to {@link Comparable}
+     * @return the distinct declared parameter types, in {@code getMethods()} order; empty when no
+     *         concrete {@code compareTo} exists below {@link Comparable}
+     */
+    private static Set<Class<?>> declaredCompareToTargets(Class<?> elementType) {
+        Set<Class<?>> targets = new LinkedHashSet<>();
         for (Method candidate : elementType.getMethods()) {
             if (!"compareTo".equals(candidate.getName()) || candidate.getParameterCount() != 1) {
                 continue;
             }
-            if (candidate.isBridge() || candidate.isSynthetic()) {
+            if (candidate.isBridge() || candidate.isSynthetic() || candidate.getDeclaringClass() == Comparable.class) {
                 continue;
             }
-            Class<?> parameterType = candidate.getParameterTypes()[0];
-            if (castTarget == null || castTarget.isAssignableFrom(parameterType)) {
-                castTarget = parameterType;
+            targets.add(candidate.getParameterTypes()[0]);
+        }
+        return targets;
+    }
+
+    /**
+     * Returns the unique most specific type in {@code candidates}, i.e. the one every other candidate is
+     * assignable from.
+     *
+     * @param candidates the candidate types; never empty
+     * @return the most specific candidate, or {@code null} when two candidates are mutually unassignable
+     *         and no single one subsumes the rest
+     */
+    private static Class<?> mostSpecific(Set<Class<?>> candidates) {
+        for (Class<?> candidate : candidates) {
+            if (candidates.stream().allMatch(other -> other.isAssignableFrom(candidate))) {
+                return candidate;
             }
         }
-        return castTarget != null && castTarget.isAssignableFrom(elementType);
+        return null;
+    }
+
+    /**
+     * Resolves the erasure of {@link Comparable}'s type argument at the site where {@code elementType}'s
+     * hierarchy instantiates it — the type a bridge generated for that declaration casts its argument to.
+     *
+     * <p>The declaration is looked up over the element type's own class chain (most-derived first, so the
+     * closest declaration wins) and then over every transitively implemented interface
+     * ({@link TypeResolver#getAllInterfaces(Class)}). A compiling type can instantiate {@link Comparable}
+     * at most once, so the first declaration found is the only one. An interface element type has no
+     * superclass chain, so its own {@code extends} clause is inspected first and its superinterfaces
+     * after.
+     *
+     * @param elementType the element type, already known to be assignable to {@link Comparable}
+     * @return {@link Object} for a raw {@code implements Comparable} (no cast is generated), the erasure
+     *         of the declared type argument, or {@code null} when the argument is a type variable (or
+     *         another non-erasable shape) whose concrete binding lives elsewhere in the hierarchy
+     */
+    private static Class<?> comparableCastTarget(Class<?> elementType) {
+        List<Class<?>> declarationSites = new ArrayList<>();
+        for (Class<?> current = elementType; current != null && current != Object.class; ) {
+            declarationSites.add(current);
+            current = current.getSuperclass();
+        }
+        declarationSites.addAll(TypeResolver.getAllInterfaces(elementType));
+        for (Class<?> site : declarationSites) {
+            for (Type declared : site.getGenericInterfaces()) {
+                if (declared == Comparable.class) {
+                    return Object.class;
+                }
+                if (declared instanceof ParameterizedType parameterized
+                        && parameterized.getRawType() == Comparable.class) {
+                    return erasure(parameterized.getActualTypeArguments()[0]);
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Returns the erasure of a declared type argument, i.e. the class the compiler casts to when it
+     * synthesizes a bridge for it.
+     *
+     * @param type the declared type argument
+     * @return the argument's own class, the raw type of a parameterized argument, or {@code null} for a
+     *         type variable, wildcard, or generic array — none of which names a concrete cast target
+     *         without substituting the surrounding declaration
+     */
+    private static Class<?> erasure(Type type) {
+        if (type instanceof Class<?> concrete) {
+            return concrete;
+        }
+        if (type instanceof ParameterizedType parameterized && parameterized.getRawType() instanceof Class<?> raw) {
+            return raw;
+        }
+        return null;
     }
 
     /**
