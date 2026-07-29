@@ -125,9 +125,8 @@ public record RouteRegistrationViolation(String operationId, ViolationType type,
 
         /**
          * A parameter declared as {@code SortedSet<T>} or {@code NavigableSet<T>} has an element type
-         * that is not comparable to <em>itself</em> — it does not implement {@link Comparable} at all,
-         * it implements {@code Comparable<X>} for a type {@code X} that is not {@code T} or a supertype
-         * of it, or its {@code Comparable} declaration names no concrete type at all (see below). Both
+         * that is not comparable to <em>itself</em> — it does not implement {@link Comparable} at all, or
+         * its effective {@code compareTo} takes a type the element type is not assignable to. Both
          * shapes are materialized as a {@link java.util.TreeSet}, which orders elements by their natural
          * ordering, so the first request supplying a value would throw {@code ClassCastException} — from
          * the comparison itself when the type is not {@link Comparable}, or from the
@@ -139,23 +138,30 @@ public record RouteRegistrationViolation(String operationId, ViolationType type,
          * <p>Declare the parameter as {@code Set<T>}, {@code List<T>}, or {@code Collection<T>} — none
          * of which imposes an ordering — or make the element type implement {@code Comparable<T>}.
          *
-         * <p>What decides is the <em>erasure of the type argument at the {@code Comparable} declaration
-         * site</em>, because that is exactly what the bridge casts to. Two declarations carry no such
-         * argument yet are known safe and are therefore accepted: an {@code enum} (whose
-         * {@code compareTo} lives in {@link Enum} itself, so the bridge casts to {@link Enum}) and a raw
-         * {@code implements Comparable} (which implements {@code compareTo(Object)} directly, so no cast
-         * is generated). Any other unresolvable argument is <b>rejected</b>: with
-         * {@code interface Fwd<T> extends Comparable<T>} and {@code class Bad implements Fwd<String>} the
-         * concrete argument is bound below the declaration, so the bridge in {@code Bad} casts to
-         * {@code String} and a {@code TreeSet} of {@code Bad} throws.
+         * <p>What decides is the parameter type of the element type's <em>effective non-bridge</em>
+         * {@code compareTo} method, because that is precisely what the {@code compareTo(Object)} bridge
+         * casts to before delegating. Reading it off {@link Class#getMethods()} needs no special cases:
+         * a raw {@code implements Comparable} yields {@code compareTo(Object)}; an {@code enum} yields
+         * {@link Enum}'s {@code compareTo(Enum)}; a type variable forwarded through an interface or
+         * superclass yields its <em>leftmost bound</em>, exactly as the compiler erased it. So
+         * {@code class X implements Ord<X>} (over {@code interface Ord<T> extends Comparable<T>}),
+         * {@code class Node<T extends Node<T>> implements Comparable<T>}, and a subclass of an
+         * <em>unbounded</em> {@code Base<T> implements Comparable<T>} are all accepted — a real
+         * {@code TreeSet} orders them — while {@code class Bad implements Ord<String>} and a subclass of
+         * a <em>bounded</em> {@code Base<T extends CharSequence> implements Comparable<T>} are rejected,
+         * because their effective {@code compareTo} takes {@code String}/{@code CharSequence}.
          *
-         * <p>Scoped to the sources whose values are materialized element-wise — {@code QUERY},
-         * {@code HEADER}, {@code COOKIE}, and {@code FORM}. A {@code BODY} parameter is
-         * <em>deserialized</em> by the body decoders and never materialized as a {@code TreeSet}, so a
-         * {@code SortedSet<T>} body is legal whatever its element type; the scoping matters because the
-         * generated dispatch path resolves a {@code componentType} for BODY while the reflective scanner
-         * does not. {@code FILE_UPLOADS}/{@code ENTITY_PARTS} are excluded for the same reason: they are
-         * always {@code List<T>} and are materialized natively.
+         * <p>Scoped to the sources that can carry a component type and are materialized element-wise —
+         * {@code QUERY}, {@code HEADER}, {@code COOKIE}, and {@code FORM}. A {@code BODY} parameter is
+         * excluded because a body's validity belongs to the selected {@code RequestBodyDecoder}, not to
+         * route validation: the decoder <em>deserializes</em> the body instead of materializing it
+         * element-wise. That is not a claim that a {@code SortedSet<T>} body is universally safe — under
+         * the built-in JSON decoder Jackson's concrete type for {@code SortedSet}/{@code NavigableSet} is
+         * {@code TreeSet}, so a non-self-comparable element fails that decoder per request — but a custom
+         * decoder may return a comparator-backed set, so the choice is the decoder's. The scoping also
+         * preserves runtime/codegen parity: the generated dispatch path resolves a {@code componentType}
+         * for BODY while the reflective scanner does not. {@code FILE_UPLOADS}/{@code ENTITY_PARTS} are
+         * excluded because they are always {@code List<T>} and are materialized natively.
          *
          * <p>Only collection-shaped parameters are inspected (those for which a component type was
          * resolved), so array shapes are unaffected: an array is never a {@code SortedSet}, and its

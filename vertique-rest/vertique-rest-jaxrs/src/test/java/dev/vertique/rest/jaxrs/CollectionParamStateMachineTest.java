@@ -17,6 +17,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import dev.vertique.core.sanitization.Canonicalizer;
 import dev.vertique.core.sanitization.InputLocation;
 import dev.vertique.core.sanitization.InputValueContext;
@@ -46,12 +50,15 @@ import java.util.NavigableSet;
 import java.util.Set;
 import java.util.SortedSet;
 import java.util.stream.Stream;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.slf4j.LoggerFactory;
 
 /**
  * Tests for the collection parameter state machine frozen in
@@ -974,6 +981,127 @@ class CollectionParamStateMachineTest {
 
             Object[] args = extractorFor(meta).extractArguments(null, req);
             assertEquals(42, args[0]);
+        }
+    }
+
+    // --- 11. Multiplicity-disagreement diagnostic ---
+
+    /**
+     * Pins the WARN {@code ParameterExtractor.extractScalarValue} emits when a collection-declared
+     * parameter is handed a non-{@link JsonArray} bound value, i.e. when the binder and the parameter
+     * metadata disagree about multiplicity.
+     *
+     * <p>Two properties are load-bearing and neither is provable from the degrade behavior alone (the
+     * one-element collection materializes identically with or without the log statement):
+     *
+     * <ul>
+     *   <li><b>The diagnostic exists.</b> Only the resulting 500 made the last such disagreement (a
+     *       case-sensitivity split on header/cookie names) discoverable, so the class of defect must stay
+     *       observable now that the extractor degrades instead of failing.</li>
+     *   <li><b>It fires once per route and parameter, not per request.</b> The disagreement is static
+     *       metadata, so a per-request WARN would let a client amplify logs by replaying one request.</li>
+     * </ul>
+     */
+    @Nested
+    @DisplayName("The multiplicity-disagreement WARN fires once per route and parameter")
+    class MultiplicityDisagreementDiagnostic {
+
+        private Logger extractorLogger;
+        private Level previousLevel;
+        private ListAppender<ILoggingEvent> appender;
+
+        @BeforeEach
+        void captureExtractorLogs() {
+            extractorLogger = (Logger) LoggerFactory.getLogger(ParameterExtractor.class);
+            previousLevel = extractorLogger.getLevel();
+            extractorLogger.setLevel(Level.WARN);
+            appender = new ListAppender<>();
+            appender.start();
+            extractorLogger.addAppender(appender);
+        }
+
+        @AfterEach
+        void releaseExtractorLogs() {
+            extractorLogger.detachAppender(appender);
+            appender.stop();
+            extractorLogger.setLevel(previousLevel);
+        }
+
+        /**
+         * Collects the multiplicity-disagreement warnings captured so far.
+         *
+         * @return the formatted messages, in emission order
+         */
+        private List<String> multiplicityWarnings() {
+            return appender.list.stream()
+                    .filter(event -> event.getLevel() == Level.WARN)
+                    .map(ILoggingEvent::getFormattedMessage)
+                    .filter(message -> message.contains("disagree about multiplicity"))
+                    .toList();
+        }
+
+        @Test
+        @DisplayName("A scalar-shaped value for a collection param warns exactly once across repeated requests")
+        void warnsOncePerParameterAcrossRequests() throws Exception {
+            Method method = CollectionResource.class.getMethod("list", List.class);
+            ResourceMethodMeta meta =
+                    metaFor(method, List.of(paramMeta("tags", QUERY, List.class, String.class, null)));
+            ParameterExtractor extractor = extractorFor(meta);
+
+            BoundRequest req = boundRequest(QUERY, Map.of("tags", RequestValue.of("a")));
+            for (int request = 0; request < 5; request++) {
+                extractor.extractArguments(null, req);
+            }
+
+            List<String> warnings = multiplicityWarnings();
+            assertEquals(
+                    1,
+                    warnings.size(),
+                    "the disagreement is static metadata: it must be reported once per route and parameter, not "
+                            + "once per request (client-driven log amplification) and not zero times (silently "
+                            + "dropped values are how the last such defect stayed hidden) — was: " + warnings);
+            String warning = warnings.get(0);
+            assertTrue(warning.contains("'tags'"), "the warning must name the parameter (was: " + warning + ")");
+            assertTrue(warning.contains("QUERY"), "the warning must name the source (was: " + warning + ")");
+            assertTrue(
+                    warning.contains(String.class.getName()),
+                    "the warning must name the offending bound value's type (was: " + warning + ")");
+        }
+
+        @Test
+        @DisplayName("A well-formed JsonArray value emits no multiplicity warning")
+        void wellFormedCollectionStaysSilent() throws Exception {
+            Method method = CollectionResource.class.getMethod("list", List.class);
+            ResourceMethodMeta meta =
+                    metaFor(method, List.of(paramMeta("tags", QUERY, List.class, String.class, null)));
+            ParameterExtractor extractor = extractorFor(meta);
+
+            BoundRequest req = boundRequest(QUERY, Map.of("tags", RequestValue.of(new JsonArray().add("a"))));
+            extractor.extractArguments(null, req);
+
+            assertTrue(
+                    multiplicityWarnings().isEmpty(),
+                    "the normal path must stay silent, otherwise the once-per-parameter assertion above would "
+                            + "pass for the wrong reason");
+        }
+
+        @Test
+        @DisplayName("Each affected route reports the disagreement for itself")
+        void warnsPerRoute() throws Exception {
+            Method method = CollectionResource.class.getMethod("list", List.class);
+            BoundRequest req = boundRequest(QUERY, Map.of("tags", RequestValue.of("a")));
+
+            for (int route = 0; route < 2; route++) {
+                ResourceMethodMeta meta =
+                        metaFor(method, List.of(paramMeta("tags", QUERY, List.class, String.class, null)));
+                extractorFor(meta).extractArguments(null, req);
+            }
+
+            assertEquals(
+                    2,
+                    multiplicityWarnings().size(),
+                    "the guard is scoped to one extractor (one route), so a second affected route must still be "
+                            + "diagnosed — a process-wide latch would hide it");
         }
     }
 }

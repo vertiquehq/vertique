@@ -3,7 +3,6 @@
 
 package dev.vertique.rest.jaxrs;
 
-import dev.vertique.core.util.TypeResolver;
 import dev.vertique.rest.core.context.RestContextMessages;
 import dev.vertique.rest.core.context.RestContextTypes;
 import dev.vertique.rest.core.request.FilePart;
@@ -18,8 +17,7 @@ import jakarta.ws.rs.PathParam;
 import jakarta.ws.rs.QueryParam;
 import jakarta.ws.rs.core.EntityPart;
 import java.lang.annotation.Annotation;
-import java.lang.reflect.ParameterizedType;
-import java.lang.reflect.Type;
+import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -83,8 +81,8 @@ class RouteValidator {
     /**
      * Rejects a parameter declared as {@code SortedSet<T>} / {@code NavigableSet<T>} whose element type
      * is not comparable to itself (see {@link #isSelfComparable} — which covers an element type that
-     * does not implement {@link Comparable} at all, one that implements it against an unrelated type,
-     * and one whose {@code Comparable} argument cannot be resolved to a concrete cast target).
+     * does not implement {@link Comparable} at all and one whose effective {@code compareTo} accepts a
+     * type the element type is not assignable to).
      * {@code ParameterExtractor.materializeCollection} builds both shapes with
      * {@code new TreeSet<>(elements)}, which orders elements by their natural ordering, so such a
      * parameter has no valid materialization: every request supplying a value would throw
@@ -92,21 +90,38 @@ class RouteValidator {
      * {@link java.util.Comparator}. Startup therefore fails fast, exactly as it does for an
      * unsupported native multipart shape (see {@link #addMultipartCollectionShapeViolations}).
      *
-     * <p><b>Scoped to the sources that are materialized element-wise</b> — {@code QUERY},
-     * {@code HEADER}, {@code COOKIE}, and {@code FORM} (see {@link #isElementWiseMaterializedSource}).
-     * Those are exactly the sources whose values reach
-     * {@code ParameterExtractor.materializeCollection}. A {@code BODY} parameter is
-     * <em>deserialized</em> by the body decoders ({@code extractParamValue} dispatches BODY to
-     * {@code deserializeBody}), so no {@code TreeSet} is ever built from its elements and a
-     * {@code SortedSet<T>} body is a perfectly legal declaration — Jackson populates it through the
-     * declared type. The gate is load-bearing rather than cosmetic: the generated dispatch path
-     * <em>does</em> resolve a {@code componentType} for BODY
+     * <p><b>Scoped to the sources that can carry a non-{@code null} {@code componentType} and are
+     * materialized element-wise</b> — {@code QUERY}, {@code HEADER}, {@code COOKIE}, and {@code FORM}
+     * (see {@link #isElementWiseMaterializedSource}).
+     *
+     * <p>{@code PATH} shares the very same code block: the {@code componentType != null} branch of
+     * {@code ParameterExtractor.extractScalarValue} is reached from the same {@code switch} that maps
+     * {@code PATH} to {@code boundRequest.pathParameters()}, so nothing in the extractor exempts it.
+     * PATH is safe here only because <em>no</em> PATH parameter ever carries a component type: both
+     * {@code ResourceScanner.resolveComponentType} and
+     * {@code EffectiveJaxRsContractResolver.resolvesComponentType} gate collection resolution to the
+     * other bindable sources, because {@code @PathParam} collection support is not implemented.
+     * <b>Implementing it would silently drop PATH out of this guard's coverage</b> — the same change
+     * must add {@code PATH} to {@link #isElementWiseMaterializedSource}.
+     *
+     * <p>A {@code BODY} parameter is excluded because <b>body validity belongs to the selected
+     * {@code RequestBodyDecoder}, so the route validator does not adjudicate it</b>:
+     * {@code extractParamValue} dispatches BODY to {@code deserializeBody}, so
+     * {@code ParameterExtractor.materializeCollection} never sees it. That is a statement about
+     * <em>ownership</em>, not a safety claim — {@code JsonRequestBodyDecoder.decodeArray} calls
+     * {@code TypeFactory.constructCollectionType(SortedSet.class, elementClass)}, and Jackson's default
+     * concrete type for {@code SortedSet}/{@code NavigableSet} <em>is</em> {@code TreeSet}, so under
+     * that decoder a non-self-comparable body element does fail per request. A custom decoder may
+     * instead return a comparator-backed set, which is exactly why the decision is the decoder's and
+     * not this validator's. The scoping is also load-bearing for runtime/codegen parity: the generated
+     * dispatch path <em>does</em> resolve a {@code componentType} for BODY
      * ({@code EffectiveJaxRsContractResolver.resolvesComponentType}, a deliberately deferred
-     * divergence), so without the source scoping a codegen'd resource with a
-     * {@code SortedSet<Pojo>} body would fail startup while its reflective twin — whose scanner
-     * hard-codes {@code componentType = null} for BODY — mounts fine. {@code FILE_UPLOADS} /
-     * {@code ENTITY_PARTS} are likewise excluded: both are always declared {@code List<T>} and are
-     * materialized natively, never through a {@code TreeSet}.
+     * divergence), so without it a codegen'd resource with a {@code SortedSet<Pojo>} body would fail
+     * startup while its reflective twin — whose scanner hard-codes {@code componentType = null} for
+     * BODY — mounts fine.
+     *
+     * <p>{@code FILE_UPLOADS} / {@code ENTITY_PARTS} are likewise excluded: both are always declared
+     * {@code List<T>} and are materialized natively, never through a {@code TreeSet}.
      *
      * <p>Running from {@link #validateMethodParams} places this check <em>before</em> the
      * {@code UNRESOLVABLE_PARAM_CONVERTER} probe in {@code JaxRsRouteRegistrar} (which skips the rest
@@ -167,6 +182,10 @@ class RouteValidator {
      * declared collection type by {@code ParameterExtractor.materializeCollection} — the only path that
      * builds a {@code TreeSet} and therefore the only one the sorted-shape guard applies to.
      *
+     * <p>{@code PATH} is absent only because no PATH parameter can carry a component type today, not
+     * because the extractor treats it differently; see {@link #addSortedSetElementViolations} before
+     * adding {@code @PathParam} collection support.
+     *
      * @param source the parameter's source
      * @return {@code true} for {@code QUERY}, {@code HEADER}, {@code COOKIE}, and {@code FORM}
      */
@@ -185,34 +204,43 @@ class RouteValidator {
      * <p>Raw assignability to {@link Comparable} is <em>not</em> sufficient: a
      * {@code class Money implements Comparable<BigDecimal>} is assignable to {@link Comparable}, but
      * {@code TreeSet} invokes the compiler-synthesized {@code compareTo(Object)} bridge, which casts its
-     * argument to {@code BigDecimal} and throws. What decides is therefore the <em>erasure of the type
-     * argument at the {@code Comparable} declaration site</em> — precisely the type that bridge casts to
-     * (see {@link #comparableCastTarget}).
+     * argument to {@code BigDecimal} and throws. What decides is therefore the type that bridge casts
+     * to — and reflection already exposes it directly: the bridge's whole job is to cast and delegate to
+     * the <em>effective non-bridge</em> {@code compareTo(X)} the type actually inherits, so {@code X} is
+     * the cast target. This predicate reads {@code X} off
+     * {@link Class#getMethods()} rather than trying to substitute type arguments through the
+     * hierarchy — the erasure rules are already applied for us by the compiler that emitted those
+     * signatures.
      *
-     * <p>The verdict:
+     * <p>Scanning {@code getMethods()} (which includes inherited public methods) and skipping
+     * {@linkplain java.lang.reflect.Method#isBridge() bridge} and
+     * {@linkplain java.lang.reflect.Method#isSynthetic() synthetic} declarations leaves the effective
+     * {@code compareTo}; the most specific parameter type wins when several are visible. The verdict is
+     * then simply whether that parameter type is assignable <em>from</em> {@code elementType}, i.e.
+     * whether the element can be passed to its own comparison method.
+     *
+     * <p>The rule resolves every shape uniformly, with no carve-outs:
      *
      * <ul>
-     *   <li>not {@link Comparable} at all &rarr; <b>rejected</b>;
-     *   <li>an {@code enum} &rarr; <b>accepted</b>. {@code Enum<E extends Enum<E>> implements
-     *       Comparable<E>} declares {@code compareTo(E)} in {@link Enum} itself, so the bridge casts to
-     *       {@link Enum} and every enum constant passes it. This is a known-safe carve-out, not a
-     *       fail-open: the declaration's type argument is a type variable that carries no concrete
-     *       target on its own;
-     *   <li>a <em>raw</em> {@code implements Comparable} &rarr; <b>accepted</b>: {@code compareTo(Object)}
-     *       is implemented directly, no bridge cast exists, and every argument passes;
-     *   <li>a resolved cast target &rarr; accepted only when it is assignable <em>from</em>
-     *       {@code elementType} (so {@code Comparable<Self>}, {@code Comparable<Supertype>}, and
+     *   <li>not {@link Comparable} at all &rarr; <b>rejected</b> (no {@code compareTo} to find);
+     *   <li>{@code Comparable<Self>}, {@code Comparable<Supertype>}, or
      *       {@code Comparable<ParameterizedSupertype<?>>} — e.g. {@code LocalDateTime}'s
-     *       {@code Comparable<ChronoLocalDateTime<?>>} — pass, while {@code Comparable<Unrelated>} does
-     *       not);
-     *   <li>a {@code Comparable} declaration whose argument resolves to <em>no</em> concrete cast target
-     *       &rarr; <b>rejected</b>. That is the type-variable-forwarding case: with
-     *       {@code interface Fwd<T> extends Comparable<T>} and {@code class Bad implements Fwd<String>},
-     *       the concrete argument is bound one level below the declaration, so the bridge generated in
-     *       {@code Bad} casts to {@code String} and a {@code TreeSet} of {@code Bad} throws. Resolving
-     *       such a declaration would require substituting type arguments through the hierarchy, which
-     *       the shared {@link TypeResolver} deliberately does not do; rejecting is the fail-<em>closed</em>
-     *       answer, so a shape whose safety cannot be proven fails at startup instead of per request.
+     *       {@code Comparable<ChronoLocalDateTime<?>>} &rarr; <b>accepted</b>;
+     *   <li>a <em>raw</em> {@code implements Comparable} &rarr; <b>accepted</b>: the effective method is
+     *       {@code compareTo(Object)};
+     *   <li>an {@code enum} &rarr; <b>accepted</b> without a special case: {@code Enum<E extends
+     *       Enum<E>>} erases {@code compareTo(E)} to {@code compareTo(Enum)}, which every constant
+     *       satisfies;
+     *   <li>a type variable forwarded through an interface or superclass &rarr; decided by that
+     *       variable's <b>leftmost bound</b>, which is exactly what the compiler erased it to. So
+     *       {@code class X implements Ord<X>} (with {@code interface Ord<T> extends Comparable<T>}),
+     *       {@code class Node<T extends Node<T>> implements Comparable<T>}, and
+     *       {@code class Sub extends Base<String>} over an <em>unbounded</em>
+     *       {@code Base<T> implements Comparable<T>} are all <b>accepted</b> — a real {@code TreeSet}
+     *       orders all three — while {@code class Bad implements Ord<String>} and a subclass of a
+     *       <em>bounded</em> {@code Base<T extends CharSequence> implements Comparable<T>} are
+     *       <b>rejected</b>, because their effective {@code compareTo} takes {@code String} /
+     *       {@code CharSequence} and the bridge cast throws.
      * </ul>
      *
      * @param elementType the declared element type of a {@code SortedSet}/{@code NavigableSet} shape
@@ -222,66 +250,20 @@ class RouteValidator {
         if (!Comparable.class.isAssignableFrom(elementType)) {
             return false;
         }
-        if (elementType.isEnum()) {
-            return true;
-        }
-        Class<?> castTarget = comparableCastTarget(elementType);
-        return castTarget != null && castTarget.isAssignableFrom(elementType);
-    }
-
-    /**
-     * Resolves the type the {@code compareTo(Object)} bridge of {@code elementType}'s
-     * {@link Comparable} implementation casts its argument to — the erasure of the type argument at the
-     * declaration site.
-     *
-     * <p>The declaration is looked up over the element type's own class chain (most-derived first, so
-     * the closest declaration wins) and then over every transitively implemented interface
-     * ({@link TypeResolver#getAllInterfaces(Class)}). A compiling type can instantiate
-     * {@link Comparable} at most once, so the first declaration found is the only one.
-     *
-     * @param elementType the element type, already known to be assignable to {@link Comparable}
-     * @return {@link Object} for a raw {@code implements Comparable} (no cast is generated), the
-     *     erasure of the declared type argument, or {@code null} when the argument is a type variable
-     *     (or another non-erasable shape) whose concrete binding lives elsewhere in the hierarchy
-     */
-    private static Class<?> comparableCastTarget(Class<?> elementType) {
-        List<Class<?>> declarationSites = new ArrayList<>();
-        for (Class<?> current = elementType; current != null && current != Object.class; ) {
-            declarationSites.add(current);
-            current = current.getSuperclass();
-        }
-        declarationSites.addAll(TypeResolver.getAllInterfaces(elementType));
-        for (Class<?> site : declarationSites) {
-            for (Type declared : site.getGenericInterfaces()) {
-                if (declared == Comparable.class) {
-                    return Object.class;
-                }
-                if (declared instanceof ParameterizedType parameterized
-                        && parameterized.getRawType() == Comparable.class) {
-                    return erasure(parameterized.getActualTypeArguments()[0]);
-                }
+        Class<?> castTarget = null;
+        for (Method candidate : elementType.getMethods()) {
+            if (!"compareTo".equals(candidate.getName()) || candidate.getParameterCount() != 1) {
+                continue;
+            }
+            if (candidate.isBridge() || candidate.isSynthetic()) {
+                continue;
+            }
+            Class<?> parameterType = candidate.getParameterTypes()[0];
+            if (castTarget == null || castTarget.isAssignableFrom(parameterType)) {
+                castTarget = parameterType;
             }
         }
-        return null;
-    }
-
-    /**
-     * Returns the erasure of a declared type argument, i.e. the class the compiler casts to when it
-     * synthesizes a bridge for it.
-     *
-     * @param type the declared type argument
-     * @return the argument's own class, the raw type of a parameterized argument, or {@code null} for a
-     *     type variable, wildcard, or generic array — none of which names a concrete cast target
-     *     without substituting the surrounding declaration
-     */
-    private static Class<?> erasure(Type type) {
-        if (type instanceof Class<?> concrete) {
-            return concrete;
-        }
-        if (type instanceof ParameterizedType parameterized && parameterized.getRawType() instanceof Class<?> raw) {
-            return raw;
-        }
-        return null;
+        return castTarget != null && castTarget.isAssignableFrom(elementType);
     }
 
     /**

@@ -14,8 +14,18 @@ import java.util.SortedSet;
  * JAX-RS resource fixture declaring a {@code SortedSet<T>} <em>entity body</em> whose element type is
  * not {@link Comparable}. Used by
  * {@link dev.vertique.rest.jaxrs.RouteStartupValidationTest} to prove that the sorted-shape startup
- * guard is scoped to the sources whose values are materialized as a {@code TreeSet}, and therefore
- * leaves a BODY parameter alone.
+ * guard is <b>scoped</b> to the sources whose values {@code ParameterExtractor} materializes as a
+ * {@code TreeSet}, and therefore leaves a BODY parameter to the selected {@code RequestBodyDecoder}.
+ *
+ * <p><b>What "registers cleanly" does and does not promise.</b> It promises only that route
+ * registration does not reject this declaration — nothing about whether a request against it succeeds.
+ * Under the built-in {@code JsonRequestBodyDecoder} it will <em>not</em>: {@code decodeArray} calls
+ * {@code TypeFactory.constructCollectionType(SortedSet.class, elementClass)} and Jackson's concrete
+ * type for {@code SortedSet}/{@code NavigableSet} is {@code TreeSet}, so a non-{@link Comparable}
+ * element yields a {@code ClassCastException} (a 500) at request time. That failure is deliberately
+ * the decoder's to own: a custom {@code RequestBodyDecoder} may return a comparator-backed set, so the
+ * route validator has no basis to adjudicate a body's element ordering. The fixture therefore exercises
+ * registration only — it never sends a request.
  *
  * <p>The shape only occurs on the <em>generated</em> dispatch path: the reflective
  * {@code ResourceScanner} hard-codes {@code componentType = null} for BODY, while the codegen
@@ -26,7 +36,12 @@ import java.util.SortedSet;
 @Path("/sorted-body")
 public class SortedSetBodyResource {
 
-    /** Body element type — deliberately NOT {@link Comparable}. */
+    /**
+     * Body element type — deliberately NOT {@link Comparable}, which is the whole point of the fixture:
+     * it is the element shape that the built-in JSON decoder cannot materialize into a
+     * {@code SortedSet}. Registration must still admit it, because whether the shape works is the
+     * decoder's contract, not the route validator's.
+     */
     public static final class BodyElement {
 
         /** Public field so the type is a plain JSON-deserializable bean. */
@@ -35,8 +50,13 @@ public class SortedSetBodyResource {
 
     /**
      * Accepts a JSON array body deserialized into a {@code SortedSet}. A body is deserialized by the
-     * body decoders, never materialized element-wise as a {@code TreeSet} by
-     * {@code ParameterExtractor.materializeCollection}, so the element type needs no natural ordering.
+     * selected {@code RequestBodyDecoder}, never materialized element-wise as a {@code TreeSet} by
+     * {@code ParameterExtractor.materializeCollection}, so the sorted-shape startup guard does not
+     * apply.
+     *
+     * <p>This method is never invoked by the tests: with the built-in JSON decoder a request would fail
+     * inside Jackson (see the class javadoc), and proving <em>registration</em> is the fixture's only
+     * job.
      *
      * @param body the deserialized body collection
      * @return the element count

@@ -10,7 +10,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vertique.rest.core.convert.ParamConversionResolver;
 import dev.vertique.rest.core.convert.ParamConverterRegistry;
+import dev.vertique.rest.core.security.SecurityPolicy;
 import dev.vertique.rest.jaxrs.runtime.fixture.SortedSetBodyResource;
+import dev.vertique.rest.jaxrs.runtime.fixture.SortedSetBodyResource_JaxRsDescriptor;
 import io.swagger.v3.oas.annotations.Operation;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
@@ -34,6 +36,7 @@ import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.ext.ParamConverter;
 import jakarta.ws.rs.ext.ParamConverterProvider;
 import java.lang.annotation.Annotation;
+import java.lang.reflect.Method;
 import java.lang.reflect.Type;
 import java.time.LocalDateTime;
 import java.time.ZonedDateTime;
@@ -42,13 +45,18 @@ import java.util.List;
 import java.util.NavigableSet;
 import java.util.Set;
 import java.util.SortedSet;
+import java.util.TreeSet;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Supplier;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 
 /**
  * Verifies the fail-fast startup/build validation introduced in PRD-REST-018 slice 1.3: registering a
@@ -551,10 +559,11 @@ public class RouteStartupValidationTest {
 
     /**
      * An element type whose {@code Comparable} argument is bound on a <em>forwarding interface</em>
-     * rather than on the {@code Comparable} declaration itself. The synthesized
-     * {@code compareTo(Object)} bridge casts to {@link String}, so a {@code TreeSet} of these throws
-     * {@code ClassCastException} — the guard must reject it rather than fail open just because the
-     * declaration site carries a type variable.
+     * rather than on the {@code Comparable} declaration itself, to an <em>unrelated</em> type. Its
+     * effective {@code compareTo} takes {@link String}, so the synthesized {@code compareTo(Object)}
+     * bridge casts to {@link String} and a {@code TreeSet} of these throws {@code ClassCastException} —
+     * the guard must reject it. Contrast {@link SelfForwardedComparable}, which forwards through the same
+     * interface but binds the argument to itself and is therefore safe.
      */
     public static final class ForwardedComparable implements ForwardingComparable<String> {
         @Override
@@ -564,8 +573,10 @@ public class RouteStartupValidationTest {
     }
 
     /**
-     * A generic superclass declaring {@code Comparable<T>} over its own type variable, so a subclass
-     * binds the argument without restating the {@code Comparable} declaration.
+     * A generic superclass declaring {@code Comparable<T>} over its own <em>unbounded</em> type variable,
+     * so a subclass binds the argument without restating the {@code Comparable} declaration. Because
+     * {@code T} is unbounded it erases to {@link Object}: the compiled method really is
+     * {@code compareTo(Object)} and no bridge cast is ever generated.
      *
      * @param <T> the type this class's instances compare themselves against
      */
@@ -577,12 +588,72 @@ public class RouteStartupValidationTest {
     }
 
     /**
-     * An element type whose {@code Comparable} argument is bound on a <em>generic superclass</em>.
-     * Nothing in the reachable declarations names a concrete cast target, so self-comparability cannot
-     * be proven and the shape must be rejected: with a bounded type variable
-     * ({@code <T extends CharSequence>}) the identical shape genuinely throws from the bridge cast.
+     * An element type whose {@code Comparable} argument is bound on an <em>unbounded</em> generic
+     * superclass. This shape is <b>safe</b> and must be accepted: {@code T} erases to {@link Object}, so
+     * the inherited method really is {@code compareTo(Object)}, no bridge is synthesized in the
+     * subclass, and {@code new TreeSet<>(...)} of two instances does not throw. The hazard belongs to
+     * the <em>bounded</em> variant ({@link BoundedForwardedComparable}), not to this one.
      */
     public static final class SuperclassForwardedComparable extends GenericComparableBase<String> {}
+
+    /**
+     * A generic superclass declaring {@code Comparable<T>} over a type variable <em>bounded</em> by
+     * {@link CharSequence}, so the compiler erases its {@code compareTo} to {@code compareTo(CharSequence)}
+     * and synthesizes a {@code compareTo(Object)} bridge that casts to {@link CharSequence}.
+     *
+     * @param <T> the {@link CharSequence} subtype this class's instances compare themselves against
+     */
+    public abstract static class BoundedComparableBase<T extends CharSequence> implements Comparable<T> {
+        @Override
+        public int compareTo(T other) {
+            return 0;
+        }
+    }
+
+    /**
+     * An element type whose {@code Comparable} argument is bound on a <em>bounded</em> generic
+     * superclass. The effective {@code compareTo} takes {@link CharSequence}, which this type is not,
+     * so the bridge cast throws and a {@code TreeSet} of these genuinely fails — the guard must reject
+     * it.
+     */
+    public static final class BoundedForwardedComparable extends BoundedComparableBase<String> {}
+
+    /**
+     * An element type that forwards {@code Comparable}'s argument through {@link ForwardingComparable}
+     * but binds it to <em>itself</em>. The effective {@code compareTo} takes this very type, so a
+     * {@code TreeSet} orders it fine and the guard must accept it — rejecting a forwarded declaration
+     * merely because its argument is declared one level below {@code Comparable} would break a working
+     * application at startup.
+     */
+    public static final class SelfForwardedComparable implements ForwardingComparable<SelfForwardedComparable> {
+        @Override
+        public int compareTo(SelfForwardedComparable other) {
+            return 0;
+        }
+    }
+
+    /**
+     * The self-bounded (F-bounded) generic idiom: {@code Comparable}'s argument is this class's own
+     * recursively bounded type variable. {@code T} erases to the raw class itself, so the effective
+     * {@code compareTo} accepts instances of this type and a {@code TreeSet} orders them — the guard
+     * must accept it.
+     *
+     * @param <T> the self type
+     */
+    public static class RecursiveSelfComparable<T extends RecursiveSelfComparable<T>> implements Comparable<T> {
+        @Override
+        public int compareTo(T other) {
+            return 0;
+        }
+    }
+
+    /**
+     * A concrete binding of the self-bounded idiom, so a JAX-RS parameter can name it without a raw
+     * type. It inherits the erased {@code compareTo(RecursiveSelfComparable)}, which accepts its own
+     * instances, so it must be accepted too.
+     */
+    public static final class ConcreteRecursiveSelfComparable
+            extends RecursiveSelfComparable<ConcreteRecursiveSelfComparable> {}
 
     /**
      * Resolves a no-op converter for the sorted-shape element fixtures above (and only for the element
@@ -610,6 +681,15 @@ public class RouteStartupValidationTest {
             }
             if (rawType == SuperclassForwardedComparable.class) {
                 return (ParamConverter<T>) noOp(new SuperclassForwardedComparable());
+            }
+            if (rawType == BoundedForwardedComparable.class) {
+                return (ParamConverter<T>) noOp(new BoundedForwardedComparable());
+            }
+            if (rawType == SelfForwardedComparable.class) {
+                return (ParamConverter<T>) noOp(new SelfForwardedComparable());
+            }
+            if (rawType == ConcreteRecursiveSelfComparable.class) {
+                return (ParamConverter<T>) noOp(new ConcreteRecursiveSelfComparable());
             }
             return null;
         }
@@ -697,21 +777,53 @@ public class RouteStartupValidationTest {
         }
     }
 
-    /** Resource declaring a sorted shape whose element binds {@code Comparable} on a superclass. */
-    @Path("/superclass-forwarded-comparable-sorted-set")
-    public static class SuperclassForwardedComparableSortedSetResource {
+    /**
+     * Resource declaring a sorted shape whose element binds {@code Comparable} on a superclass with a
+     * {@link CharSequence}-bounded type variable.
+     */
+    @Path("/bounded-forwarded-comparable-sorted-set")
+    public static class BoundedForwardedComparableSortedSetResource {
 
         /**
-         * Declares a {@code @QueryParam SortedSet<SuperclassForwardedComparable>}, whose
-         * self-comparability cannot be proven without substituting the superclass's type argument.
+         * Declares a {@code @QueryParam SortedSet<BoundedForwardedComparable>}, whose effective
+         * {@code compareTo} takes {@link CharSequence} — so the {@code TreeSet}'s bridge cast throws.
          *
-         * @param values the repeated superclass-forwarded query values
+         * @param values the repeated bounded-superclass query values
          * @return never reached (the router build fails first)
          */
         @GET
         @Produces(MediaType.TEXT_PLAIN)
-        @Operation(operationId = "superclassForwardedComparableSortedSet")
-        public String get(@QueryParam("g") SortedSet<SuperclassForwardedComparable> values) {
+        @Operation(operationId = "boundedForwardedComparableSortedSet")
+        public String get(@QueryParam("g") SortedSet<BoundedForwardedComparable> values) {
+            return "unreachable";
+        }
+    }
+
+    /**
+     * Resource declaring the three generic sorted shapes that a real {@code TreeSet} orders without
+     * throwing, and which therefore must <em>not</em> be rejected at startup.
+     */
+    @Path("/generic-self-comparable-sorted-sets")
+    public static class GenericSelfComparableSortedSetResource {
+
+        /**
+         * Declares sorted shapes over a forwarded-self element, the self-bounded (F-bounded) idiom, and
+         * an element whose {@code Comparable} argument is bound on an <em>unbounded</em> generic
+         * superclass. All three are provably safe, so the guard must accept them — over-rejection breaks
+         * startup for a working application.
+         *
+         * @param forwardedSelf a {@code SortedSet} of {@link SelfForwardedComparable}
+         * @param recursiveSelf a {@code NavigableSet} of {@link ConcreteRecursiveSelfComparable}
+         * @param unbounded     a {@code SortedSet} of {@link SuperclassForwardedComparable}
+         * @return never reached in this test (only the router build is exercised)
+         */
+        @GET
+        @Produces(MediaType.TEXT_PLAIN)
+        @Operation(operationId = "genericSelfComparableSortedSets")
+        public String get(
+                @QueryParam("f") SortedSet<SelfForwardedComparable> forwardedSelf,
+                @QueryParam("r") NavigableSet<ConcreteRecursiveSelfComparable> recursiveSelf,
+                @QueryParam("u") SortedSet<SuperclassForwardedComparable> unbounded) {
             return "unreachable";
         }
     }
@@ -836,9 +948,9 @@ public class RouteStartupValidationTest {
         RouteRegistrationException thrown = assertThrows(
                 RouteRegistrationException.class,
                 () -> mount.createRouter(vertx),
-                "Comparable's type argument is forwarded through Forwarding<T>, so the bridge casts to "
-                        + "String and the TreeSet throws — a declaration whose self-comparability cannot be "
-                        + "proven must be rejected, not admitted by the fail-open");
+                "Comparable's type argument is forwarded through Forwarding<T> and bound to String, so the "
+                        + "effective compareTo takes String, the bridge casts to String, and the TreeSet throws "
+                        + "— the guard must reject it");
         String message = String.valueOf(thrown.getMessage());
         assertTrue(
                 message.contains("NON_COMPARABLE_SORTED_SET_ELEMENT"),
@@ -854,29 +966,49 @@ public class RouteStartupValidationTest {
 
     @Test
     @DisplayName("A SortedSet whose element binds Comparable's argument on a generic superclass fails router build")
-    void superclassForwardedComparableSortedSetElementFailsRouterBuild(Vertx vertx, VertxTestContext ctx) {
+    void boundedForwardedComparableSortedSetElementFailsRouterBuild(Vertx vertx, VertxTestContext ctx) {
         ParamConversionResolver resolver = ParamConversionResolver.of(
                 ParamConverterRegistry.of(Set.of()), Set.of(new SortedElementFixtureProvider()));
         JaxRsRouterMount.Factory factory =
                 TestFactories.builder().paramConversionResolver(resolver).build();
         JaxRsRouterMount mount =
-                factory.create("/*", "openapi.json", Set.of(new SuperclassForwardedComparableSortedSetResource()));
+                factory.create("/*", "openapi.json", Set.of(new BoundedForwardedComparableSortedSetResource()));
 
         RouteRegistrationException thrown = assertThrows(
                 RouteRegistrationException.class,
                 () -> mount.createRouter(vertx),
-                "the Comparable argument is a type variable bound only on the generic superclass, so no "
-                        + "concrete cast target resolves and the shape must be rejected");
+                "the superclass's type variable is bounded by CharSequence, so the effective compareTo takes "
+                        + "CharSequence and the TreeSet's bridge cast throws — this shape must be rejected. The "
+                        + "UNBOUNDED variant is safe and is asserted ACCEPTED by "
+                        + "genericSelfComparableSortedSetElementsPassValidation");
         String message = String.valueOf(thrown.getMessage());
         assertTrue(
                 message.contains("NON_COMPARABLE_SORTED_SET_ELEMENT"),
                 "the violation must be the sorted-element one (was: " + message + ")");
         assertTrue(
-                message.contains("'g'") && message.contains("SortedSet<SuperclassForwardedComparable>"),
+                message.contains("'g'") && message.contains("SortedSet<BoundedForwardedComparable>"),
                 "the diagnostic must name the parameter and its declared shape (was: " + message + ")");
         assertTrue(
                 !message.contains("UNRESOLVABLE_PARAM_CONVERTER"),
                 "the element type has a converter, so the only violation must be the shape one (was: " + message + ")");
+        ctx.completeNow();
+    }
+
+    @Test
+    @DisplayName("Forwarded-self, self-bounded, and unbounded-superclass sorted shapes pass validation")
+    void genericSelfComparableSortedSetElementsPassValidation(Vertx vertx, VertxTestContext ctx) {
+        ParamConversionResolver resolver = ParamConversionResolver.of(
+                ParamConverterRegistry.of(Set.of()), Set.of(new SortedElementFixtureProvider()));
+        JaxRsRouterMount.Factory factory =
+                TestFactories.builder().paramConversionResolver(resolver).build();
+        JaxRsRouterMount mount =
+                factory.create("/*", "openapi.json", Set.of(new GenericSelfComparableSortedSetResource()));
+
+        assertDoesNotThrow(
+                () -> mount.createRouter(vertx),
+                "a real TreeSet orders all three shapes, so rejecting them would break startup for a WORKING "
+                        + "application — the guard must resolve a forwarded type variable to its leftmost bound "
+                        + "instead of treating it as unprovable");
         ctx.completeNow();
     }
 
@@ -895,18 +1027,54 @@ public class RouteStartupValidationTest {
         ctx.completeNow();
     }
 
+    /**
+     * Proves the sorted-shape guard is <b>scoped away from BODY</b> — nothing more. Registration
+     * succeeding is <em>not</em> a promise that a request against this route works: under the built-in
+     * {@code JsonRequestBodyDecoder} it does not, because
+     * {@code TypeFactory.constructCollectionType(SortedSet.class, …)} resolves to a {@code TreeSet} and
+     * {@link SortedSetBodyResource.BodyElement} is not {@link Comparable}. Body validity is the selected
+     * {@code RequestBodyDecoder}'s contract (a custom decoder may return a comparator-backed set), so the
+     * route validator deliberately does not adjudicate it. The load-bearing part is parity: the generated
+     * path resolves a BODY {@code componentType} while the reflective scanner does not, so an ungated
+     * guard would fail startup for a codegen'd resource whose reflective twin mounts fine.
+     *
+     * <p>The generated-descriptor assertions come first so the test cannot pass vacuously: if the
+     * companion were not picked up, the reflective scan would emit {@code componentType == null} for BODY
+     * and the guard would be unreachable for a reason unrelated to its scoping.
+     *
+     * @param vertx the injected Vert.x instance
+     * @param ctx   the test context
+     */
     @Test
     @DisplayName("A generated SortedSet<T> BODY param with a non-Comparable element registers cleanly")
     void generatedSortedSetBodyParamRegistersCleanly(Vertx vertx, VertxTestContext ctx) {
+        // Non-vacuity gate: prove the GENERATED descriptor is the one describing this resource, i.e. that
+        // the BODY param really carries a componentType. A reflective fallback would make the guard
+        // unreachable no matter how it is scoped.
+        List<ResourceMethodMeta> scanned =
+                new ResourceScanner(new SecurityPolicyBuilder()).scanResource(new SortedSetBodyResource());
+        assertEquals(1, scanned.size(), "the fixture declares exactly one resource method");
+        assertEquals(
+                SortedSetBodyResource_JaxRsDescriptor.OPERATION_ID,
+                scanned.get(0).operationId(),
+                "the generated companion must supply the operationId — the reflective scanner would derive it "
+                        + "from the method name instead, which would mean the descriptor was not used");
+        ResourceMethodMeta.ParamMeta body = scanned.get(0).params().get(0);
+        assertEquals(ResourceMethodMeta.ParamSource.BODY, body.source(), "the single param is the entity body");
+        assertEquals(
+                SortedSetBodyResource.BodyElement.class,
+                body.componentType(),
+                "only the generated path resolves a componentType for BODY; without it this test would prove "
+                        + "nothing about the guard's source scoping");
+
         JaxRsRouterMount.Factory factory = TestFactories.builder().build();
         JaxRsRouterMount mount = factory.create("/*", "openapi.json", Set.of(new SortedSetBodyResource()));
 
         assertDoesNotThrow(
                 () -> mount.createRouter(vertx),
-                "a BODY parameter is deserialized by the body decoders, never materialized as a TreeSet, so "
-                        + "the sorted-shape guard must not reject it — the generated path resolves a BODY "
-                        + "componentType, so an ungated guard fails startup for a legal declaration that the "
-                        + "reflective path mounts fine");
+                "a BODY parameter is deserialized by the selected RequestBodyDecoder, never materialized "
+                        + "element-wise as a TreeSet by ParameterExtractor, so the sorted-shape guard must leave it "
+                        + "to the decoder — registering it promises only that startup does not reject it");
         ctx.completeNow();
     }
 
@@ -954,5 +1122,180 @@ public class RouteStartupValidationTest {
                                 ctx.completeNow();
                             }));
                 }));
+    }
+
+    // --- Sorted-element self-comparability shape matrix ---
+
+    /**
+     * One row of the sorted-element self-comparability shape matrix.
+     *
+     * @param label       a human-readable shape name, used as the test display name
+     * @param elementType the declared element type of the {@code SortedSet} shape
+     * @param factory     supplies an instance of {@code elementType} for the ground-truth
+     *                    {@code TreeSet} insertion
+     * @param mustAccept  whether route registration must accept a {@code SortedSet} over it
+     */
+    private record SortedElementShape(
+            String label, Class<?> elementType, Supplier<Object> factory, boolean mustAccept) {
+
+        @Override
+        public String toString() {
+            return label;
+        }
+    }
+
+    /**
+     * The shape matrix rows. Every generic shape the predicate has to reason about appears exactly once,
+     * on the side a real {@code TreeSet} puts it.
+     *
+     * @return one row per element-type shape
+     */
+    private static Stream<SortedElementShape> sortedElementShapes() {
+        return Stream.of(
+                // --- accepted: a real TreeSet orders these ---
+                new SortedElementShape("String", String.class, () -> "a", true),
+                new SortedElementShape("Integer", Integer.class, () -> 1, true),
+                new SortedElementShape("enum", Season.class, () -> Season.SPRING, true),
+                new SortedElementShape(
+                        "Comparable<ParameterizedSupertype<?>>", LocalDateTime.class, LocalDateTime::now, true),
+                new SortedElementShape("raw implements Comparable", RawComparable.class, RawComparable::new, true),
+                new SortedElementShape(
+                        "Comparable<Supertype> via superclass",
+                        InheritedComparable.class,
+                        InheritedComparable::new,
+                        true),
+                new SortedElementShape(
+                        "forwarded to SELF through an interface",
+                        SelfForwardedComparable.class,
+                        SelfForwardedComparable::new,
+                        true),
+                new SortedElementShape(
+                        "self-bounded idiom, raw",
+                        RecursiveSelfComparable.class,
+                        () -> new RecursiveSelfComparable<>(),
+                        true),
+                new SortedElementShape(
+                        "self-bounded idiom, concrete binding",
+                        ConcreteRecursiveSelfComparable.class,
+                        ConcreteRecursiveSelfComparable::new,
+                        true),
+                new SortedElementShape(
+                        "UNBOUNDED generic superclass",
+                        SuperclassForwardedComparable.class,
+                        SuperclassForwardedComparable::new,
+                        true),
+                // --- rejected: a real TreeSet throws ClassCastException ---
+                new SortedElementShape("not Comparable at all", MyType.class, () -> new MyType("x"), false),
+                new SortedElementShape("Comparable<Unrelated>", ForeignComparable.class, ForeignComparable::new, false),
+                new SortedElementShape(
+                        "forwarded to an UNRELATED type through an interface",
+                        ForwardedComparable.class,
+                        ForwardedComparable::new,
+                        false),
+                new SortedElementShape(
+                        "BOUNDED generic superclass",
+                        BoundedForwardedComparable.class,
+                        BoundedForwardedComparable::new,
+                        false));
+    }
+
+    /**
+     * Pins the sorted-element self-comparability predicate against <b>real {@code TreeSet} behavior</b>,
+     * one row per generic shape.
+     *
+     * <p>Why a matrix: inspection alone reached a wrong verdict on this predicate twice — first a
+     * fail-open that admitted {@code Comparable<Unrelated>}, then a narrowing that rejected three shapes
+     * a real {@code TreeSet} orders without complaint. Each row therefore asserts two facts against each
+     * other: what {@code new TreeSet<>()} actually does with instances of the element type, and what
+     * {@link RouteValidator#validateMethodParams} decides about a {@code @QueryParam SortedSet<E>}
+     * declared over it. Drift in either direction fails here — a false accept costs a per-request 500, a
+     * false reject breaks startup for a working application.
+     *
+     * @param shape the matrix row under test
+     */
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("sortedElementShapes")
+    @DisplayName("The sorted-element guard's verdict equals real TreeSet behavior for every shape")
+    void sortedElementGuardMatchesTreeSetBehavior(SortedElementShape shape) {
+        assertEquals(
+                shape.mustAccept(),
+                treeSetOrders(shape.factory()),
+                "stale matrix row '" + shape.label() + "': the expectation must be whatever a real TreeSet does, "
+                        + "and the runtime disagrees with the row");
+
+        assertEquals(
+                shape.mustAccept(),
+                sortedElementViolations(shape.elementType()).isEmpty(),
+                "'" + shape.label() + "': startup validation must agree with the TreeSet — accepting an unsafe "
+                        + "shape yields a per-request 500, rejecting a safe one breaks startup for a working app");
+    }
+
+    /**
+     * Ground truth: can a natural-ordering {@link TreeSet} hold instances of the supplied type without a
+     * {@link ClassCastException}?
+     *
+     * @param factory supplies the instances to insert
+     * @return {@code true} when both insertions succeed
+     */
+    private static boolean treeSetOrders(Supplier<Object> factory) {
+        try {
+            Set<Object> sorted = new TreeSet<>();
+            sorted.add(factory.get());
+            sorted.add(factory.get());
+            return true;
+        } catch (ClassCastException classCast) {
+            return false;
+        }
+    }
+
+    /**
+     * Runs the production validator over a synthesized {@code @QueryParam SortedSet<elementType>}
+     * declaration and returns only its sorted-element violations.
+     *
+     * @param elementType the declared element type
+     * @return the {@code NON_COMPARABLE_SORTED_SET_ELEMENT} violations reported for the declaration
+     */
+    private static List<RouteRegistrationViolation> sortedElementViolations(Class<?> elementType) {
+        ResourceMethodMeta.ParamMeta param = new ResourceMethodMeta.ParamMeta(
+                "v", ResourceMethodMeta.ParamSource.QUERY, SortedSet.class, elementType, null, null, (Annotation[])
+                        null);
+        return RouteValidator.validateMethodParams(shapeMatrixMeta(param)).stream()
+                .filter(violation ->
+                        violation.type() == RouteRegistrationViolation.ViolationType.NON_COMPARABLE_SORTED_SET_ELEMENT)
+                .toList();
+    }
+
+    /**
+     * Wraps a single parameter in a minimal {@link ResourceMethodMeta} for the shape matrix. The reflected
+     * method is borrowed from an existing fixture; only its name reaches the diagnostic message.
+     *
+     * @param param the parameter to validate
+     * @return the synthesized method metadata
+     */
+    private static ResourceMethodMeta shapeMatrixMeta(ResourceMethodMeta.ParamMeta param) {
+        Method method;
+        try {
+            method = NonComparableSortedSetResource.class.getMethod("get", SortedSet.class);
+        } catch (NoSuchMethodException noSuchMethod) {
+            throw new IllegalStateException(
+                    "fixture drift: NonComparableSortedSetResource.get(SortedSet) is gone", noSuchMethod);
+        }
+        return new ResourceMethodMeta(
+                new NonComparableSortedSetResource(),
+                method,
+                "sortedElementShapeMatrix",
+                "GET",
+                "/shape-matrix",
+                List.of(param),
+                String.class,
+                false,
+                false,
+                new SecurityPolicy.None(),
+                new ResourceMethodMeta.MediaTypes(List.of(), List.of()),
+                null,
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of());
     }
 }

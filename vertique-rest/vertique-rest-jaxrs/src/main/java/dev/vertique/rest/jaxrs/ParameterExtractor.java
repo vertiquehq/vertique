@@ -142,6 +142,27 @@ final class ParameterExtractor {
             new ConcurrentHashMap<>();
 
     /**
+     * Parameters for which the binder/metadata multiplicity disagreement diagnosed in
+     * {@link #extractScalarValue} has already been logged, so the warning fires <b>once per route and
+     * parameter</b> instead of once per request.
+     *
+     * <p>The disagreement is a property of static metadata (a descriptor lookup that missed, a
+     * name-casing split), so a per-request warning would be pure client-driven log amplification: every
+     * request to the affected route repeats the identical line.
+     *
+     * <p>Keyed by the {@link ResourceMethodMeta.ParamMeta} instance, following
+     * {@link #scalarContextCache}/{@link #componentContextCache}: the same instance recurs across
+     * requests (route params are built once at scan time; bean-param fields are cached in
+     * {@link #BEAN_PARAM_CACHE}), and {@code ParamMeta}'s equality bottoms out on its
+     * identity-compared {@code ParameterMetadata} component, so the set behaves as a per-parameter
+     * identity set with a cheap hash. This keeps the steady state <em>allocation-free</em>: after the
+     * single warning, {@link java.util.Set#add(Object)} finds the existing node, returns {@code false},
+     * and allocates nothing — whereas a "have I logged?" flag built from a string key would allocate on
+     * every request. Since the extractor is one per route, per-route scoping falls out for free.
+     */
+    private final Set<ResourceMethodMeta.ParamMeta> multiplicityMismatchLogged = ConcurrentHashMap.newKeySet(2);
+
+    /**
      * Creates a new {@code ParameterExtractor} for the given resource method.
      * Input object processing is disabled when using this constructor.
      *
@@ -423,13 +444,19 @@ final class ParameterExtractor {
                 // the last such disagreement (a case-sensitivity split on header/cookie names)
                 // discoverable at all. Log so the class of defect stays observable instead of surfacing
                 // as quietly dropped values.
-                log.warn(
-                        "Collection-valued parameter '{}' ({}) received a non-JsonArray bound value of type {};"
-                                + " binding it as a single element. The bound request and the parameter"
-                                + " metadata disagree about multiplicity for this parameter.",
-                        paramMeta.name(),
-                        paramMeta.source(),
-                        bound == null ? "null" : bound.getClass().getName());
+                //
+                // Once per route+parameter, never per request: the disagreement is static metadata, so
+                // repeating it would let a client amplify logs by replaying the same request.
+                if (multiplicityMismatchLogged.add(paramMeta)) {
+                    log.warn(
+                            "Collection-valued parameter '{}' ({}) received a non-JsonArray bound value of type {};"
+                                    + " binding it as a single element. The bound request and the parameter"
+                                    + " metadata disagree about multiplicity for this parameter."
+                                    + " Logged once per route and parameter.",
+                            paramMeta.name(),
+                            paramMeta.source(),
+                            bound == null ? "null" : bound.getClass().getName());
+                }
                 rawValues = Collections.singletonList(bound);
             }
             return coerceCollection(rawValues, paramMeta, policies);
