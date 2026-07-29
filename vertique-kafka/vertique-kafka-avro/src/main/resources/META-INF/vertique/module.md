@@ -34,7 +34,7 @@ Do not use when only JSON payloads are needed — add `vertique-kafka-json` (and
 
 ### Byte-level wrapping, Confluent-wire format
 
-Avro serialization operates at the `byte[]` level inside the framework's own `KafkaSerializer`/`KafkaDeserializer` wrappers. The native Kafka client stays on `ByteArraySerializer`/`ByteArrayDeserializer`. The wire encoding is **Confluent-wire-compatible**: magic byte + 4-byte schema-id prepended to the payload, Kafka headers disabled. This format survives the consumer's UTF-8 header stringification and the DLQ raw-bytes republish intact. See ADR-0074 for the full rationale.
+Avro serialization operates at the `byte[]` level inside the framework's own `KafkaSerializer`/`KafkaDeserializer` wrappers. The native Kafka client stays on `ByteArraySerializer`/`ByteArrayDeserializer`. The wire encoding is **Confluent-wire-compatible**: magic byte + 4-byte schema-id prepended to the payload, Kafka headers disabled. This format survives the consumer's UTF-8 header stringification and the DLQ raw-bytes republish intact.
 
 ### SpecificRecord only
 
@@ -303,10 +303,3 @@ For Model-3 `matchProperty` routing with Avro, the dispatcher uses the per-entry
 | `dev.vertique:vertique-kafka-core` | compile | `KafkaSerdeProvider` SPI, `KafkaSerializer`/`KafkaDeserializer`, `DeserializationException` |
 | `io.apicurio:apicurio-registry-avro-serde-kafka` | compile | `AvroKafkaSerializer`/`AvroKafkaDeserializer`; Confluent-wire framing via `Default4ByteIdHandler` |
 | `org.apache.avro:avro` | compile (transitive) | `SpecificRecord`, `GenericRecord` |
-
----
-
-## Related ADRs
-
-- ADR-0074: Pluggable Kafka Value Serde Formats (Apicurio Avro Default) — records all load-bearing design decisions: byte-level wrapping, Confluent-wire choice, Apicurio over Confluent, SpecificRecord-first, producer SPI break, format precedence, event-loop-safety contract, serde-config separation, and router routing via the SPI.
-- ADR-0075: Format-Neutral Kafka Core (Multi-Module Family) — records the multi-module family layout (`vertique-kafka-core` / `vertique-kafka-json` / `vertique-kafka-avro`), JSON becoming an ordinary provider, the `convertRouted` SPI addition, and the provider-required validation rule. Partially supersedes ADR-0074 on the single-module and JSON-built-in decisions.

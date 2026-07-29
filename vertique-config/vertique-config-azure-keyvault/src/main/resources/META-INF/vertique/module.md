@@ -255,10 +255,3 @@ NFR-CONF-002 applies throughout this module:
 - `io.vertx:vertx-core` — `JsonObject` (config parsing)
 
 The two Azure SDK artifacts bring `azure-core-http-netty` as a transitive dependency, which provides the Netty-based HTTP client used for timeout configuration. No Dagger runtime dependency. No Vert.x web dependency.
-
----
-
-## Related ADRs
-
-- ADR-0096: Bootstrap Config Relocation and `config.stores` Two-Phase Load — establishes the two-phase bootstrap model and the distinction between merge-based `config.stores` and lookup-based `config.propertySources`; this module implements the latter.
-- ADR-0097: Placeholder Grammar and Progressive Resolution Chain — defines the `${key}` grammar, tree-first chain order, self-reference fall-through, fail-closed source-error contract, and the three-pass model that this module's on-demand lookup strategy satisfies.
