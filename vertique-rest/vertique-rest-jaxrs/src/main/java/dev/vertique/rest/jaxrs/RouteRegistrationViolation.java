@@ -124,56 +124,6 @@ public record RouteRegistrationViolation(String operationId, ViolationType type,
         UNSUPPORTED_MULTIPART_COLLECTION_SHAPE,
 
         /**
-         * A parameter declared as {@code SortedSet<T>} or {@code NavigableSet<T>} has an element type
-         * that is not comparable to <em>itself</em> — it does not implement {@link Comparable} at all, or
-         * its effective {@code compareTo} takes a type the element type is not assignable to. Both
-         * shapes are materialized as a {@link java.util.TreeSet}, which orders elements by their natural
-         * ordering, so the first request supplying a value would throw {@code ClassCastException} — from
-         * the comparison itself when the type is not {@link Comparable}, or from the
-         * compiler-synthesized {@code compareTo(Object)} bridge's cast when it compares against an
-         * unrelated type. A JAX-RS parameter declaration cannot supply a {@link java.util.Comparator},
-         * so the shape has no valid materialization at all and is rejected at registration instead of
-         * failing per-request.
-         *
-         * <p>Declare the parameter as {@code Set<T>}, {@code List<T>}, or {@code Collection<T>} — none
-         * of which imposes an ordering — or make the element type implement {@code Comparable<T>}.
-         *
-         * <p>What decides is the parameter type of the element type's <em>effective non-bridge</em>
-         * {@code compareTo} method, because that is precisely what the {@code compareTo(Object)} bridge
-         * casts to before delegating. Reading it off {@link Class#getMethods()} needs no special cases:
-         * a raw {@code implements Comparable} yields {@code compareTo(Object)}; an {@code enum} yields
-         * {@link Enum}'s {@code compareTo(Enum)}; a type variable forwarded through an interface or
-         * superclass yields its <em>leftmost bound</em>, exactly as the compiler erased it. So
-         * {@code class X implements Ord<X>} (over {@code interface Ord<T> extends Comparable<T>}),
-         * {@code class Node<T extends Node<T>> implements Comparable<T>}, and a subclass of an
-         * <em>unbounded</em> {@code Base<T> implements Comparable<T>} are all accepted — a real
-         * {@code TreeSet} orders them — while {@code class Bad implements Ord<String>} and a subclass of
-         * a <em>bounded</em> {@code Base<T extends CharSequence> implements Comparable<T>} are rejected,
-         * because their effective {@code compareTo} takes {@code String}/{@code CharSequence}.
-         *
-         * <p>Scoped to the sources that can carry a component type and are materialized element-wise —
-         * {@code QUERY}, {@code HEADER}, {@code COOKIE}, and {@code FORM}. A {@code BODY} parameter is
-         * excluded because a body's validity belongs to the selected {@code RequestBodyDecoder}, not to
-         * route validation: the decoder <em>deserializes</em> the body instead of materializing it
-         * element-wise. That is not a claim that a {@code SortedSet<T>} body is universally safe — under
-         * the built-in JSON decoder Jackson's concrete type for {@code SortedSet}/{@code NavigableSet} is
-         * {@code TreeSet}, so a non-self-comparable element fails that decoder per request — but a custom
-         * decoder may return a comparator-backed set, so the choice is the decoder's. The scoping also
-         * preserves runtime/codegen parity: the generated dispatch path resolves a {@code componentType}
-         * for BODY while the reflective scanner does not. {@code FILE_UPLOADS}/{@code ENTITY_PARTS} are
-         * excluded because they are always {@code List<T>} and are materialized natively.
-         *
-         * <p>Only collection-shaped parameters are inspected (those for which a component type was
-         * resolved), so array shapes are unaffected: an array is never a {@code SortedSet}, and its
-         * component type is restricted to {@code Comparable} scalars anyway. Bean-param fields carry no
-         * component type and are likewise invisible here. A native multipart element type
-         * ({@code FileUpload}/{@code EntityPart}) is also excluded so it keeps its more accurate
-         * diagnostic — {@link #UNSUPPORTED_MULTIPART_COLLECTION_SHAPE} on {@code FORM},
-         * {@link #UNRESOLVABLE_PARAM_CONVERTER} on any other source.
-         */
-        NON_COMPARABLE_SORTED_SET_ELEMENT,
-
-        /**
          * Two parameters of the same method bind the <em>same name</em> from the same request source but
          * declare <em>incompatible multiplicities</em>: one is collection-shaped (it carries a component
          * type — {@code List<T>}, {@code Set<T>}, {@code SortedSet<T>}, {@code NavigableSet<T>},
@@ -227,8 +177,8 @@ public record RouteRegistrationViolation(String operationId, ViolationType type,
          * at all.
          *
          * <p>The check is independent of the other shape guards: a conflicting pair whose collection half
-         * is <em>also</em> e.g. a non-self-comparable {@code SortedSet} reports both violations, because
-         * both are real and each has its own fix.
+         * is <em>also</em> an unsupported shape reports both violations, because both are real and each
+         * has its own fix.
          */
         DUPLICATE_PARAM_NAME_MULTIPLICITY_CONFLICT
     }

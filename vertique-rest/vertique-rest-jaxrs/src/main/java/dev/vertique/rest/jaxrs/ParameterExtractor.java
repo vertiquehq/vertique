@@ -631,20 +631,21 @@ final class ParameterExtractor {
      *   <li>{@link List} and {@link Collection} materialise a wrapped {@link ArrayList}.</li>
      * </ol>
      *
-     * <p>The {@code TreeSet} shapes require {@link Comparable} elements, and that is <em>not</em>
-     * implied by the element type alone. It holds for array shapes, whose component type
+     * <p><b>The {@code TreeSet} shapes require an element type comparable to itself, and nothing
+     * validates that.</b> A {@code SortedSet}/{@code NavigableSet} parameter whose element type does not
+     * implement {@link Comparable}, or implements it against an unrelated type (so the synthesized
+     * {@code compareTo(Object)} bridge casts and throws), makes {@code new TreeSet<>(elements)} throw
+     * {@link ClassCastException} on the first request carrying a value — surfacing as a 500. That is
+     * <em>not</em> checked at registration: the framework does not adjudicate element comparability, so
+     * declaring a sorted shape over a comparable element type is the application's responsibility.
+     *
+     * <p>The comparability holds by construction only for array shapes, whose component type
      * {@code ResourceScanner.isScalarArrayComponent} restricts to {@link String}, a boxed numeric,
-     * {@link Boolean}, {@link Character}, or an enum — all {@code Comparable}. The parameterized
-     * collection shapes are unrestricted: {@code ResourceScanner.isSupportedCollectionRawType} gates
-     * only the raw type, and the type-argument read accepts <em>any</em> concrete class as the element
-     * type, including a non-{@code Comparable} one. What makes the {@code TreeSet} branches safe is the
-     * startup guard: a {@code SortedSet}/{@code NavigableSet} parameter whose element type is not
-     * comparable to <em>itself</em> — it does not implement {@code Comparable}, or implements it against
-     * an unrelated type, whose {@code compareTo(Object)} bridge would cast and throw — is rejected at
-     * registration with
-     * {@link RouteRegistrationViolation.ViolationType#NON_COMPARABLE_SORTED_SET_ELEMENT}
-     * ({@code RouteValidator.addSortedSetElementViolations}), so no such parameter ever reaches this
-     * method.
+     * {@link Boolean}, {@link Character}, or an enum — all {@code Comparable} — and which do not use the
+     * {@code TreeSet} branches anyway. The parameterized collection shapes are unrestricted:
+     * {@code ResourceScanner.isSupportedCollectionRawType} gates only the raw type, and the
+     * type-argument read accepts <em>any</em> concrete class as the element type, including a
+     * non-{@code Comparable} one.
      *
      * <p>Element ordering is whatever the underlying transport reported (Vert.x documents no ordering
      * for repeated parameters), except for the sorted shapes; it is explicitly not a framework
