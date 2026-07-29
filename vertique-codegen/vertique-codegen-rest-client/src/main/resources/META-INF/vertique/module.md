@@ -20,8 +20,6 @@ Runtime selection is transparent: `RestClientBuilder.build()` and `RestClientFac
 
 In addition to the performance win, the processor lifts structural validation to compile time: `@Path` placeholder / `@PathParam` mismatches, missing HTTP verb annotations, and non-`Future<T>` return types all surface as build errors.
 
-See ADR-0026 for the discovery mechanism decisions and alternatives considered.
-
 ## Adoption
 
 Applications inheriting `vertique-app-parent` declare `vertique-rest-client` as a runtime
@@ -32,58 +30,24 @@ retains the JDK proxy as its fallback.
 
 ---
 
-## Package Layout
-
-| Package | Contents |
-|---------|----------|
-| `dev.vertique.codegen.rest.client.processor` | `RestClientProcessor`, `ClientInterfaceModel`, `MethodModel`, `ParamModel` |
-| `dev.vertique.codegen.rest.client.processor.scan` | `ClientInterfaceScanner` (APT-side), `BeanParamScanner` |
-| `dev.vertique.codegen.rest.client.processor.validate` | `ReturnTypeValidator`, `PathPlaceholderValidator`, `HttpVerbValidator` |
-| `dev.vertique.codegen.rest.client.processor.emit` | `ProxyEmitter`, `BeanAccessorEmitter` |
-
----
-
 ## Key Classes
 
-### `RestClientProcessor`
+### Processor Options
 
-`AbstractProcessor` registered via `META-INF/services/javax.annotation.processing.Processor`. Entry point for the round-based processing lifecycle.
+`RestClientProcessor` is registered automatically via `META-INF/services/javax.annotation.processing.Processor` and recognizes `@RestClient`-annotated interfaces. It supports two options:
 
 ```
-@SupportedAnnotationTypes("dev.vertique.rest.client.RestClient")
-@SupportedSourceVersion(SourceVersion.RELEASE_21)
 @SupportedOptions({
     "vertique.codegen.package",
     "vertique.codegen.restclient.warnExternalBeans"   // default: true
 })
 ```
 
-> **Note:** `vertique.codegen.package` is currently **not end-to-end for REST client artifacts** — the override is honored by `BeanAccessorEmitter` and the scanner's same-package access check, but the proxy emitter does not add the required import for the `@RestClient` interface and the runtime `BeanParamAccessorRegistry` derives the accessor FQN from the bean's binary name (not the override package). Setting this option for `@RestClient` interfaces will produce a generated proxy that fails to compile and/or accessors that the runtime cannot discover. Tracked as [#20](https://github.com/vertiquehq/vertique/issues/20). Until that is resolved, leave the option unset for projects using `@RestClient`.
-
-Lifecycle:
-1. `init(env)` — instantiates `CodegenContext`, scanners, validators, emitters.
-2. `process(annotations, round)`:
-   - Collects `@RestClient`-annotated `TypeElement`s.
-   - Skips non-interface types and types annotated `@NoAutoWire`.
-   - For each interface: builds `ClientInterfaceModel`, runs all validators, emits proxy and (deduplicated) bean accessors.
-3. Returns `false` so other processors (Dagger, Lombok) see the same elements.
-
-### `ClientInterfaceScanner` (APT-side)
-
-Mirrors the runtime `ClientInterfaceScanner` in `vertique-rest-client`. Reads class-level `@Path`, per-method HTTP verb, `@Path` suffix, return type, and parameter annotations. For `@BeanParam` parameters, delegates to `BeanParamScanner` to expand the bean's fields into a flat `List<ParamModel>`.
-
-### `BeanParamScanner`
-
-Operates on a `TypeElement` representing a `@BeanParam` type:
-
-- If `getKind() == RECORD` — iterates `getRecordComponents()` and inspects each component's accessor and annotations.
-- Otherwise — walks the superclass chain (stopping at `Object`) collecting declared fields.
-
-Produces an ordered `List<ParamModel>` and sets `fullyGeneratable = false` when any field is inaccessible (see "Per-field access path resolution" below).
+> **Note:** `vertique.codegen.package` is currently **not end-to-end for REST client artifacts** — the override is honored when generating the bean-param accessor and by the scanner's same-package access check, but the proxy generator does not add the required import for the `@RestClient` interface, and the runtime `BeanParamAccessorRegistry` derives the accessor FQN from the bean's binary name (not the override package). Setting this option for `@RestClient` interfaces will produce a generated proxy that fails to compile and/or accessors that the runtime cannot discover. Tracked as [#20](https://github.com/vertiquehq/vertique/issues/20). Until that is resolved, leave the option unset for projects using `@RestClient`.
 
 ### Validators
 
-Each validator emits compile-time diagnostics via CG-001's `Diagnostics` class:
+Each validator emits compile-time diagnostics via a shared `Diagnostics` helper (from `vertique-codegen-core`):
 
 | Validator | What it checks | Diagnostic |
 |-----------|---------------|------------|
@@ -91,13 +55,13 @@ Each validator emits compile-time diagnostics via CG-001's `Diagnostics` class:
 | `PathPlaceholderValidator` | `{name}` in `@Path` must have a matching `@PathParam("name")` and vice versa | `ERROR` |
 | `HttpVerbValidator` | Non-`default` methods must have one of `@GET`/`@POST`/`@PUT`/`@DELETE`/`@PATCH`/`@HEAD`; `@OPTIONS` intentionally rejected to match the runtime scanner's supported set | `ERROR` |
 
-### `ProxyEmitter`
+### Generated `{Client}_RestClientProxy`
 
 Generates `{ClientSimpleName}_RestClientProxy` in the origin interface's package. Key properties of the generated class:
 
 - Static `Method` constants resolved once in the class initializer via `{Interface}.class.getDeclaredMethod(...)`. Signature-precise and overload-safe — matches the `Map<Method, ClientMethodMeta>` shape the runtime scanner already produces.
 - Constructor: `(RestClientDispatcher dispatcher, BeanParamAccessorRegistry registry, Map<Method, ClientMethodMeta> methodMetas)`. Per-method `ClientMethodMeta` references are stored in `final` fields for O(1) access on the hot path.
-- Each method body calls `dispatcher.newRequest(meta)`, then for every PATH/QUERY/HEADER/COOKIE parameter calls the matching `dispatcher.applyPathParam`/`applyQueryParam`/`applyHeaderParam`/`applyCookieParam(req, meta, name, value, defaultValue)` — passing the raw typed value, not a `.toString()`-serialized one — and finally calls `dispatcher.send(req, meta)`. Outbound serialization runs through the ADR-0142 inside the dispatcher, so a `UUID`, `java.time` type, enum, or app-registered converter serializes consistently with the inbound jaxrs side. `@BeanParam` fields route through the same four `apply*Param` calls, keyed by each field's JAX-RS wire name.
+- Each method body calls `dispatcher.newRequest(meta)`, then for every PATH/QUERY/HEADER/COOKIE parameter calls the matching `dispatcher.applyPathParam`/`applyQueryParam`/`applyHeaderParam`/`applyCookieParam(req, meta, name, value, defaultValue)` — passing the raw typed value, not a `.toString()`-serialized one — and finally calls `dispatcher.send(req, meta)`. Outbound serialization runs through the dispatcher's param-conversion resolver, so a `UUID`, `java.time` type, enum, or app-registered converter serializes consistently with the inbound jaxrs side. `@BeanParam` fields route through the same four `apply*Param` calls, keyed by each field's JAX-RS wire name.
 - A `null` required `@PathParam` (top-level or a `@BeanParam` field) with no `@DefaultValue` throws `RestClientException` from the generated proxy *before* the dispatcher call — the reflective fallback (`RestClientRequestFactory.collectParamsWithMeta`) fails identically, so both proxy flavors reject the call at the same point.
 
 Example for a two-parameter method:
@@ -143,11 +107,11 @@ public final class UserClient_RestClientProxy implements UserClient {
 }
 ```
 
-### `BeanAccessorEmitter`
+### Generated `{Bean}_BeanParamAccessor`
 
-Generates `{BeanSimpleName}_BeanParamAccessor` in the bean type's package. Uses a `switch` expression over field names for both record and class bean types, so the JIT can apply tableswitch or indy-string dispatch. Previous versions used `if/else-if` chains for class bean types; those are now also emitted as `switch`. The generated class has a public no-arg constructor, which is required by `BeanParamAccessorRegistry.resolve()`.
+Generates `{BeanSimpleName}_BeanParamAccessor` in the bean type's package. Uses a `switch` expression over field names for both record and class bean types, so the JIT can apply tableswitch or indy-string dispatch. The generated class has a public no-arg constructor, which is required by `BeanParamAccessorRegistry.resolve()`.
 
-`BeanParamScanner.scanClass` deduplicates fields by `javaName` with subclass-wins ordering: when a subclass field shadows a superclass field of the same name, only the subclass field is emitted. This prevents duplicate `case` labels in the generated `switch` expression (which would fail to compile in the consumer's build) and matches Java field-hiding semantics.
+Field deduplication is subclass-wins: when a subclass field shadows a superclass field of the same name, only the subclass field is emitted, keyed by field name. This prevents duplicate `case` labels in the generated `switch` expression (which would fail to compile in the consumer's build) and matches Java field-hiding semantics.
 
 Example for a record bean:
 
@@ -246,7 +210,7 @@ try {
 
 The registry is process-wide. `BeanParamAccessorRegistry.shared()` returns a static singleton backed by `ReflectiveBeanParamAccessor` as the fallback. `RestClientBuilder` defaults to this shared instance so standalone construction (`new RestClientBuilder(vertx)`, `RestClientBuilder.create(vertx)`) and Dagger-injected construction (`RestClientFactory`) use the same lookup cache. `RestClientModule` provides a `BeanParamAccessorRegistry` binding that returns `BeanParamAccessorRegistry.shared()`. `RestClientBuilder.beanParamAccessorRegistry(...)` allows override (e.g. in tests).
 
-The registry's internal lookup table is backed by `ClassValue<BeanParamAccessor<?>>` rather than a `static final ConcurrentHashMap`. `ClassValue` is classloader-scoped: each classloader gets its own entry, so the registry does not retain bean types across classloader boundaries in OSGi or multi-classloader containers. The observable behavior — one resolved accessor per type, for the lifetime of the classloader — is identical to the previous `ConcurrentHashMap` approach.
+The registry's internal lookup table is backed by `ClassValue<BeanParamAccessor<?>>` rather than a `static final ConcurrentHashMap`. `ClassValue` is classloader-scoped: each classloader gets its own entry, so the registry does not retain bean types across classloader boundaries in OSGi or multi-classloader containers. The observable behavior is one resolved accessor per type, for the lifetime of the classloader.
 
 ### Nested-Class FQN Translation
 
@@ -270,17 +234,17 @@ These are compile errors (`ERROR`-level diagnostics), not warnings.
 - Level 1: `ClassValue<ConcurrentHashMap<String, Resolved>>` — one map per bean class, scoped to the classloader.
 - Level 2: the inner map caches the resolved accessor by field name using a sealed `Resolved` carrier: `RecordHit(Method)` for record components, `ClassHit(Field)` for direct field access, and `Miss` as a negative sentinel.
 
-`setAccessible(true)` is called once at resolve time and never again. The `Miss` sentinel prevents repeated superclass walks on unknown field names, so even error paths are bounded. This eliminates the per-call hierarchy walk and repeated `setAccessible` calls that were previously the reflective fallback's hot-path cost.
+`setAccessible(true)` is called once at resolve time and never again. The `Miss` sentinel prevents repeated superclass walks on unknown field names, so even error paths are bounded — the reflective fallback pays no per-call hierarchy walk or repeated `setAccessible` cost on its hot path.
 
 ### PATH `null` Without `@DefaultValue`: Aligned Fail-Fast
 
-Both the generated proxy and the reflective fallback (`RestClientRequestFactory.collectParams`) now throw `RestClientException` when a `@PathParam` — whether a top-level method parameter or a `@BeanParam` field — is `null` and no `@DefaultValue` is set. The message is:
+Both the generated proxy and the reflective fallback (`RestClientRequestFactory.collectParams`) throw `RestClientException` when a `@PathParam` — whether a top-level method parameter or a `@BeanParam` field — is `null` and no `@DefaultValue` is set. The message is:
 
 ```
 path param '<name>' was null and has no @DefaultValue
 ```
 
-This parity gap was previously documented as intentional: the generated path threw `NullPointerException` while the reflective path silently omitted the segment. Both paths now fail fast with a descriptive exception. Applications that depended on silent omission must add `@DefaultValue` or guard against `null` before calling the method.
+Both paths fail fast with this descriptive exception. Applications that rely on a `null` path segment being silently omitted must add `@DefaultValue` or guard against `null` before calling the method.
 
 ---
 
@@ -294,7 +258,7 @@ This parity gap was previously documented as intentional: the generated path thr
 
 - **Bean-level fallback for un-accessible fields.** A bean with private fields and no getters (and no record components) will not receive a generated accessor. The processor emits a `NOTE` rather than a `WARNING` because the runtime handles such beans correctly via `ReflectiveBeanParamAccessor`. If maximum performance is required, add public getters or convert to a record.
 
-- **PATH `null` without `@DefaultValue` fails fast on both paths.** Both the generated proxy and the reflective fallback now throw `RestClientException` when a `@PathParam` is `null` with no `@DefaultValue`. See "Runtime Integration" above.
+- **PATH `null` without `@DefaultValue` fails fast on both paths.** Both the generated proxy and the reflective fallback throw `RestClientException` when a `@PathParam` is `null` with no `@DefaultValue`. See "Runtime Integration" above.
 
 ---
 
@@ -309,26 +273,3 @@ None. The processor emits no Dagger binding modules. Generated proxies and acces
 - `dev.vertique:vertique-codegen-core` — `CodegenContext`, `TypeResolver`, `AnnotationMirrors`, `Diagnostics`, `Identifiers`
 - `com.squareup:javapoet` — source generation (compile-only; not on runtime classpath)
 - `javax.annotation.processing` APIs — part of the JDK; not a separate Maven dependency
-
----
-
-## Related ADRs
-
-- ADR-0142: Param-Conversion SPI — Registry, Resolver, and ConversionContext — establishes the dispatcher chokepoint (`applyPathParam`/`applyQueryParam`/`applyHeaderParam`/`applyCookieParam`) the generated proxy now calls instead of serializing inline, so generated and reflective proxies share one `ParamConversionResolver`-backed serialization path.
-- ADR-0143: REST Metadata-Record Unification onto `core.codegen` — makes `ClientMethodMeta`/`ClientParamMeta` compose `core.codegen.MethodMetadata`/`ParameterMetadata` instead of holding a live `Method`, supplying the context the dispatcher's conversion resolver needs.
-
----
-
-## Version History
-
-| Date | Change |
-|------|--------|
-| 2026-04-30 | Initial release: `RestClientProcessor` for `@RestClient` interfaces; `BeanAccessorEmitter` with bean-level fallback for un-accessible fields; `ProxyEmitter` with static `Method` constants and `ClientMethodMeta` cache; compile-time validation of `@Url` constraints, `@Path` placeholder/`@PathParam` parity, HTTP verb presence, and `Future<T>` return types; `BeanParamAccessorRegistry` and `RestClientDispatcher` SPI in `vertique-rest-client` |
-| 2026-04-30 | Round-7 follow-up: `BeanParamAccessorRegistry` migrated from `ConcurrentHashMap` to `ClassValue` (classloader-scoped, eliminates OSGi/multi-classloader retention); `ReflectiveBeanParamAccessor` gains two-level `(Class, fieldName)` cache with sealed `Resolved` carrier and `Miss` negative sentinel — `setAccessible` called once at resolve time; `BeanAccessorEmitter` now emits `switch(fieldName)` for class bean types (was `if/else-if`), enabling JIT tableswitch + indy-string dispatch; `BeanParamScanner.scanClass` deduplicates fields by `javaName` with subclass-wins ordering to prevent duplicate `case` labels; PATH `null` divergence closed — `RestClientRequestFactory.collectParams` now throws `RestClientException` on null `@PathParam` without `@DefaultValue`, aligning the reflective path with the generated path |
-
----
-
-## Planned Additions
-
-- Compile-time URL format validation for `@RestClient#value()`.
-- Cross-module accessor discovery via a build-time aggregator (APT currently only sees the current compilation unit; bean types from other source-sets in a multi-module build require a Maven plugin phase).
