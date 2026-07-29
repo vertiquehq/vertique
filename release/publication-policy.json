@@ -154,6 +154,12 @@
       "sources",
       "javadoc"
     ],
-    "emptyJavadocExceptions": []
+    "$emptyJavadocComment": "FR-REL-034 permits an absent/empty Javadoc payload ONLY for a module with no Java API, and requires the exception to be recorded. Every entry here is proved to have no src/main/java sources by publication-contract.test.mjs, so this list cannot be used to silence a genuinely missing Javadoc.",
+    "emptyJavadocExceptions": [
+      "vertique-archetype-rest",
+      "vertique-archetype-rest-postgresql",
+      "vertique-archetype-services",
+      "vertique-codegen-all"
+    ]
   }
 }

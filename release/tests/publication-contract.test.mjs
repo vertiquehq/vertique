@@ -18,7 +18,8 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -405,6 +406,30 @@ describe('PublicVersionContractTest', () => {
     // step never has to re-derive it.
     for (const unit of inventory.published) {
       assert.ok(Array.isArray(unit.payloads), `${unit.artifactId} has no resolved payload set`);
+    }
+  });
+
+  it('everyEmptyJavadocExceptionIsAModuleWithNoJavaApi', () => {
+    // FR-REL-034 permits an absent Javadoc payload only where a module has no
+    // Java API. Without this proof the exception list would be a way to
+    // silence a genuinely missing Javadoc for a module that does have one.
+    const policy = loadPolicy(POLICY_PATH);
+    const inventory = deriveInventory(REPO_ROOT, policy);
+    const exceptions = policy.payloadPolicy.emptyJavadocExceptions ?? [];
+
+    for (const artifactId of exceptions) {
+      const module = inventory.published.find((u) => u.artifactId === artifactId);
+      assert.ok(module, `empty-Javadoc exception "${artifactId}" is not a published module`);
+
+      const sourceDir = path.join(REPO_ROOT, module.relPath, 'src', 'main', 'java');
+      const javaFiles = existsSync(sourceDir)
+        ? execFileSync('find', [sourceDir, '-name', '*.java'], { encoding: 'utf8' }).split('\n').filter(Boolean)
+        : [];
+      assert.deepEqual(
+        javaFiles,
+        [],
+        `"${artifactId}" declares an empty-Javadoc exception but has ${javaFiles.length} Java source(s); it must publish a real Javadoc JAR`
+      );
     }
   });
 });
