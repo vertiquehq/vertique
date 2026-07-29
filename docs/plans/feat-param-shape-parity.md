@@ -308,14 +308,19 @@ see Amendment 14:
 
 ```java
 /**
- * Two parameters of one method bind the same name at the same location but declare incompatible
- * multiplicity — one collection-shaped, one scalar. {@code DefaultBoundRequest.findDescriptor} is
- * first-match, so one descriptor decides multiplicity for both and the other parameter is always
- * mis-bound. Scoped to the locations {@code findDescriptor} serves; FORM is excluded because form
- * extraction reads {@code formAttributes()} directly. Name comparison mirrors the binder:
- * case-insensitive for header and cookie, case-sensitive for path and query. Two same-name
- * parameters with the same multiplicity are out of this check's scope — which is a scope statement,
- * not a safety guarantee, since they still share one descriptor.
+ * Two parameters of one method bind the same name at the same location but cannot share one
+ * declared parameter. Binding resolves a name to the FIRST matching descriptor, and that single
+ * declaration decides, for every parameter reading the name, the multiplicity of the bound value,
+ * the scalar conversion applied to it, and the one parameter schema derived for it. A pair
+ * disagreeing about any of those has no correct binding. Reported disagreements: incompatible
+ * multiplicity; different declared (or element) types; differing binding-affecting annotations.
+ * A pair agreeing on every shared decision is accepted — including two collection shapes over one
+ * element type (`List<String>` plus `Set<String>`), which bind correctly because materialization
+ * reads each parameter's own metadata rather than the shared descriptor. Scoped to the locations
+ * `findDescriptor` serves; FORM is excluded because form extraction reads `formAttributes()` per
+ * parameter. Name comparison mirrors the binder: case-insensitive for header and cookie,
+ * case-sensitive for path and query. The constant name is narrower than the rule it now covers,
+ * but it is public API and is documented rather than renamed.
  */
 DUPLICATE_PARAM_NAME_MULTIPLICITY_CONFLICT
 ```
@@ -890,3 +895,16 @@ The Contract Appendix (§4) is untouched throughout.
    version was falsified by *execution*, never by inspection. When a check's correctness depends on
    Java erasure subtleties, build the executed shape matrix before the check — and be willing to
    conclude the check is not worth its cost.
+15. **2026-07-29 — duplicate-name guard WIDENED (USER-APPROVED; consumer-visible).** It now rejects any
+   same-name pair that cannot share one descriptor, not only a multiplicity conflict — differing declared
+   or element types, and differing binding-affecting annotations. Promoted from the deferral list at the
+   step-8.5 gate. Two premises in the delegation were wrong and were corrected during implementation
+   rather than encoded: `List<String>` plus `Set<String>` binds correctly and is accepted, and the
+   element-type rejection rests on schema-keying plus fail-closed element conversion, not on
+   materialization. Landed in `e232deb`.
+
+16. **2026-07-29 — merged `main` after 60 commits (as-built).** `main` restructured both touched
+   `module.md` files and added `scripts/verify-module-docs.sh` content rules that FORBID `ADR-NNNN`
+   references in a packaged module doc. The two docs were rebuilt on `main`'s baseline and the ADR-0191
+   pointers were stripped to comply. Neither module has a `DEVELOPMENT.md`, so ADR-0191 traceability
+   currently lives only in the ADR itself — routed in §11.
