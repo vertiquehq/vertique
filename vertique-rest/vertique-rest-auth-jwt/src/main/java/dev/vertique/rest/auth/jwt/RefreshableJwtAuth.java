@@ -95,12 +95,11 @@ public final class RefreshableJwtAuth implements JWTAuth {
      * <p>Example usage:
      * <pre>{@code
      * RefreshableJwtAuth.create(vertx, "https://auth.example.com/.well-known/jwks.json", Duration.ofMinutes(5))
-     *     .compose(jwtAuth -> {
-     *         AppComponent c = DaggerAppComponent.builder()
-     *             .appModule(new AppModule(jwtAuth))
-     *             .build();
-     *         return c.verticleDeploymentManager().deployAll();
-     *     });
+     *     .compose(jwtAuth -> VertiqueApplicationBootstrap.start(
+     *         VertiqueRuntime.of(vertx, config()),
+     *         rt -> DaggerAppComponent.builder()
+     *                 .appModule(new AppModule(jwtAuth))
+     *                 .build()));
      * }</pre>
      *
      * @param vertx           the Vert.x instance, must not be {@code null}

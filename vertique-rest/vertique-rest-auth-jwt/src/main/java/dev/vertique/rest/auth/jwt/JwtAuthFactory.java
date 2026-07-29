@@ -79,15 +79,15 @@ public final class JwtAuthFactory {
      * <p><strong>Warning:</strong> For {@code http://} and {@code https://} locations, this method
      * performs synchronous I/O that blocks the calling thread. When called from an event-loop
      * thread (e.g., inside {@code Verticle.start()}), use {@link #fromJwksAsync(Vertx, String)}
-     * instead and compose the result into the Dagger component creation:
+     * instead and compose the result into application startup — the {@code JWTAuth} must exist
+     * before the Dagger component that consumes it is built:
      * <pre>{@code
      * JwtAuthFactory.fromJwksAsync(vertx, jwksUri)
-     *     .compose(jwtAuth -> {
-     *         AppComponent c = DaggerAppComponent.builder()
-     *             .appModule(new AppModule(jwtAuth))
-     *             .build();
-     *         return c.verticleDeploymentManager().deployAll();
-     *     });
+     *     .compose(jwtAuth -> VertiqueApplicationBootstrap.start(
+     *         VertiqueRuntime.of(vertx, config()),
+     *         rt -> DaggerAppComponent.builder()
+     *                 .appModule(new AppModule(jwtAuth))
+     *                 .build()));
      * }</pre>
      *
      * @param vertx    the Vert.x instance
@@ -201,12 +201,11 @@ public final class JwtAuthFactory {
      * <pre>{@code
      * JwtAuthFactory.fromJwksRefreshing(vertx, "https://auth.example.com/.well-known/jwks.json",
      *         Duration.ofMinutes(5))
-     *     .compose(jwtAuth -> {
-     *         AppComponent c = DaggerAppComponent.builder()
-     *             .appModule(new AppModule(jwtAuth))
-     *             .build();
-     *         return c.verticleDeploymentManager().deployAll();
-     *     });
+     *     .compose(jwtAuth -> VertiqueApplicationBootstrap.start(
+     *         VertiqueRuntime.of(vertx, config()),
+     *         rt -> DaggerAppComponent.builder()
+     *                 .appModule(new AppModule(jwtAuth))
+     *                 .build()));
      * }</pre>
      *
      * @param vertx           the Vert.x instance
