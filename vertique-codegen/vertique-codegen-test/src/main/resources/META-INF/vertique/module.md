@@ -15,15 +15,6 @@ The harness is JUnit-version-agnostic: all assertion failures throw `org.opentes
 
 ---
 
-## Package Layout
-
-| Package | Contents |
-|---------|----------|
-| `dev.vertique.codegen.test` | `ProcessorTestHarness` |
-| `dev.vertique.codegen.test.fixtures` | `SourceFiles` (inline source helper) |
-
----
-
 ## Key Classes
 
 ### ProcessorTestHarness
@@ -135,17 +126,3 @@ None. Test-utility library only.
 | `com.google.testing.compile:compile-testing:0.23.0` | compile | In-process Java compiler with `Compilation` result and `JavaFileObjects` utilities |
 | `org.opentest4j:opentest4j:1.3.0` | compile | `AssertionFailedError` thrown by all `Result` assertions |
 | `com.palantir.javapoet:javapoet:0.14.0` | compile | Fixtures may build source objects via JavaPoet |
-
----
-
-## Version History
-
-| Date | Change |
-|------|--------|
-| 2026-04-29 | Initial release: `ProcessorTestHarness` with `--release 21` pin for JDK-version stability; `fixtures.SourceFiles` inline helper; opentest4j-based assertion API |
-
----
-
-## Planned Additions
-
-- Classpath-source helpers for building `JavaFileObject` stubs of Vertique framework types (e.g., `@ServiceContract`, `@Path`) so downstream processor tests can compile fixtures that import framework annotations without pulling the full framework module onto the processor classpath. Deferred until CG-002+ needs to compile against `vertique-services` or `vertique-rest-jaxrs` types.
