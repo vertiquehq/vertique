@@ -62,6 +62,12 @@ is true: `metrics.enabled=false`; no `MeterRegistryProvider` on the classpath; t
 not launched via `VertiqueApplication` (contributor never ran). Health endpoints are unaffected in
 all cases.
 
+**Cardinality guarding happens upstream.** `vertique-micrometer-core`'s composite-level cardinality
+guard (`metrics.cardinality.*`) is installed on the composite registry before this module's backend
+is added as a child. A `vertique.*` meter denied by that guard is never created on any child
+registry, including this module's `PrometheusMeterRegistry` — the Prometheus scrape output already
+reflects the bounded cardinality.
+
 ---
 
 ## Key Classes
@@ -217,8 +223,7 @@ contributes a `SpanContext` binding backed by `OpenTelemetrySpanContext` (from
 exemplar-sample time. When that module is absent, the optional is empty and exemplars remain
 inactive regardless of `metrics.prometheus.exemplars.enabled`.
 
-See `dev.vertique:vertique-opentelemetry-prometheus` for installation details and
-ADR-0102 for the layering rationale.
+See `dev.vertique:vertique-opentelemetry-prometheus` for installation details.
 
 To wire a custom span context instead:
 
@@ -281,11 +286,3 @@ interface AppComponent {
 - `io.vertx:vertx-web` — `Router` (management endpoint mounting)
 - `com.google.dagger:dagger`, `jakarta.inject:jakarta.inject-api`
 - `org.slf4j:slf4j-api`, `org.projectlombok:lombok` (provided)
-
----
-
-## Related ADRs
-
-- ADR-0098: Micrometer Facade and Pluggable Registry Backends — establishes why backends are pluggable via ServiceLoader, why `PrometheusBackend` is a package-private static holder rather than a Dagger binding, and the publish-on-success + rollback-safe backend-handle contract.
-- ADR-0099: Metric Naming, Tag, and Cardinality Policy — establishes the `vertique.*` naming scheme and cardinality guard applied at the composite level before any backend (including Prometheus) sees meters.
-- ADR-0100: Management Endpoint Contribution SPI — the `ManagementEndpointContributor` SPI that this module's scrape endpoint is the first consumer of (management-port-only exposure, ordered contribution, fail-fast on a throwing contributor). The scrape-endpoint specifics — opt-in exemplars via the `DeferredSpanContext` bridge and Accept-driven content-type negotiation — are described in this module doc above rather than in a dedicated ADR.

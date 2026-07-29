@@ -34,6 +34,7 @@ import io.vertx.ext.web.RoutingContext;
 import jakarta.annotation.Nullable;
 import jakarta.ws.rs.core.EntityPart;
 import java.lang.annotation.Annotation;
+import java.lang.reflect.Array;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.RecordComponent;
@@ -42,9 +43,13 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.NavigableSet;
 import java.util.Set;
+import java.util.SortedSet;
+import java.util.TreeSet;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
@@ -365,7 +370,8 @@ final class ParameterExtractor {
     /**
      * Shared scalar extraction logic operating on a {@link RequestValue}, used by both the
      * reflective and generated paths (both now read from a {@link BoundRequest}) so the two
-     * never diverge. Applies the {@code @DefaultValue}-or-null rule for absent values, coerces the
+     * never diverge. Applies the {@code @DefaultValue}-or-null rule for absent scalars, routes an
+     * absent collection-valued parameter through {@link #absentCollectionValue}, coerces the
      * present value to the declared scalar type, and runs the input processor for String values when
      * a route chain is active.
      *
@@ -378,6 +384,12 @@ final class ParameterExtractor {
     private Object extractScalarValue(
             ResourceMethodMeta.ParamMeta paramMeta, EffectiveInputPolicies policies, RequestValue rv) {
         if (rv == null || rv.isNull()) {
+            // A collection-valued parameter has its own absence contract (ADR-0190 / Jakarta REST 4.0):
+            // it must never ask for a converter targeting the *collection* type, which is what
+            // coerceString would do (there is none, so it would 500).
+            if (paramMeta.componentType() != null) {
+                return absentCollectionValue(paramMeta);
+            }
             if (paramMeta.defaultValue() != null) {
                 return coerceString(paramMeta.defaultValue(), paramMeta);
             }
@@ -389,7 +401,7 @@ final class ParameterExtractor {
         // the declared component type and materialise the collection. Without this the raw JsonArray
         // would reach the resource method and fail the invocation.
         if (paramMeta.componentType() != null && rv.get() instanceof io.vertx.core.json.JsonArray jsonArray) {
-            return coerceCollection(jsonArray, paramMeta);
+            return coerceCollection(jsonArray, paramMeta, policies);
         }
 
         Object value = coerce(rv, paramMeta);
@@ -404,29 +416,38 @@ final class ParameterExtractor {
 
     /**
      * Coerces a bound multi-value {@link io.vertx.core.json.JsonArray} of raw strings into the declared
-     * collection type for a {@code List<T>}/{@code Set<T>}/{@code T[]} parameter, coercing each element
-     * to the parameter's component type via the {@link ParamConversionResolver}. Element conversion is
-     * <em>fail-closed</em>: a malformed element propagates the resolver's
+     * collection type for a {@code List<T>}/{@code Set<T>}/{@code SortedSet<T>}/{@code NavigableSet<T>}/
+     * {@code Collection<T>}/{@code T[]} parameter, coercing each element to the parameter's component
+     * type via the {@link ParamConversionResolver}. Element conversion is <em>fail-closed</em>: a
+     * malformed element propagates the resolver's
      * {@link dev.vertique.rest.core.convert.ParamConversionException} (mapped to 400) rather than
      * silently retaining the raw string, so a single bad element fails the whole collection cleanly.
      *
-     * <p>The collection type is selected to be assignable to the declared parameter type, matching the
-     * collection raw types {@code ResourceScanner.isSupportedCollectionRawType} accepts: a
-     * {@code SortedSet}/{@code NavigableSet} param materialises a {@link java.util.TreeSet} (a
-     * {@code LinkedHashSet} is NOT assignable to those and would make reflective {@code Method.invoke}
-     * throw {@code IllegalArgumentException} → 500); any other {@code Set} materialises a
-     * {@link java.util.LinkedHashSet}; an array materialises an array; otherwise a {@link List}. The
-     * {@code TreeSet} requires {@link Comparable} elements — the coerced scalar element types here
-     * (String, boxed numerics, Boolean) are all {@code Comparable}; a non-{@code Comparable} declared
-     * component type would be an application error surfacing as a 500.
+     * <p>Each converted element that is still a {@link String} then traverses the input-policy chain
+     * exactly as a scalar parameter value does in {@link #extractScalarValue} — same guard
+     * ({@code objectProcessor != null && !policies.hasNoRouteChains()}), same
+     * {@link InputObjectProcessor#processStructuredBody} call, same {@link InputLocation} derived from
+     * the parameter source. Without this a {@code @QueryParam List<String>} would bypass the
+     * canonicalization/sanitization chain that the equivalent {@code @QueryParam String} traverses.
+     *
+     * <p>Materialization (declared-type selection and the read-only guarantee) is delegated to
+     * {@link #materializeCollection}.
      *
      * @param jsonArray the bound multi-value array (elements are raw request strings)
      * @param paramMeta the parameter metadata supplying the collection type and component type
-     * @return the materialised {@link List}, {@link java.util.Set}, or array of coerced elements
+     * @param policies  the effective input policies applied to each {@link String} element
+     * @return the materialised read-only {@link List}/{@link Set}/{@link SortedSet}/
+     *     {@link NavigableSet}, or the materialised array, of coerced elements
      */
-    private Object coerceCollection(io.vertx.core.json.JsonArray jsonArray, ResourceMethodMeta.ParamMeta paramMeta) {
+    private Object coerceCollection(
+            io.vertx.core.json.JsonArray jsonArray,
+            ResourceMethodMeta.ParamMeta paramMeta,
+            EffectiveInputPolicies policies) {
         Class<?> componentType = paramMeta.componentType();
         var elementContext = componentContext(paramMeta, componentType);
+        // Hoisted out of the loop: both operands are per-route constants.
+        boolean processElements = objectProcessor != null && !policies.hasNoRouteChains();
+        InputLocation location = processElements ? toInputLocation(paramMeta.source()) : null;
         List<Object> coerced = new ArrayList<>(jsonArray.size());
         for (int i = 0; i < jsonArray.size(); i++) {
             Object raw = jsonArray.getValue(i);
@@ -436,24 +457,103 @@ final class ParameterExtractor {
             }
             // Fail-closed per element: a malformed element propagates ParamConversionException (400)
             // rather than retaining the raw string, matching the declared-type contract of the collection.
-            coerced.add(paramConversionResolver.fromString(raw.toString(), elementContext));
+            Object element = paramConversionResolver.fromString(raw.toString(), elementContext);
+            if (processElements && element instanceof String s) {
+                element = objectProcessor.processStructuredBody(s, String.class, policies, location);
+            }
+            coerced.add(element);
         }
-        Class<?> type = paramMeta.type();
-        if (type.isArray()) {
-            Object array = java.lang.reflect.Array.newInstance(componentType, coerced.size());
-            for (int i = 0; i < coerced.size(); i++) {
-                java.lang.reflect.Array.set(array, i, coerced.get(i));
+        return materializeCollection(coerced, paramMeta.type(), componentType);
+    }
+
+    /**
+     * Applies the absence contract for a collection-valued parameter — a parameter whose
+     * {@code componentType()} is non-{@code null} — when the request supplied no value for its name.
+     *
+     * <p>Per Jakarta REST 4.0 (and ADR-0190):
+     * <ul>
+     *   <li>with a {@code @DefaultValue}, the result is a <em>single-entry</em> collection holding the
+     *       default converted through the same per-element context {@link #coerceCollection} uses (the
+     *       declared collection type has no converter of its own, so the element context is the only
+     *       correct one);</li>
+     *   <li>without a {@code @DefaultValue}, the result is an <em>empty</em> collection for
+     *       {@link List}/{@link Set}/{@link SortedSet}/{@link NavigableSet}/{@link Collection}, and
+     *       {@code null} for an array — an array is not one of the collection interfaces the spec
+     *       names, so {@code @DefaultValue}'s "{@code null} for other object types" rule applies.</li>
+     * </ul>
+     *
+     * <p>A {@code @DefaultValue} on an array is not covered by the spec; the framework materialises a
+     * single-element array by analogy with the single-entry collection rule (ADR-0190). Defaults are
+     * <em>not</em> submitted to the input-policy chain, mirroring the scalar rule in
+     * {@link #extractScalarValue}.
+     *
+     * @param paramMeta the collection-valued parameter metadata (its {@code componentType()} is
+     *                  non-{@code null})
+     * @return the read-only empty or single-entry collection, the single-element array, or
+     *     {@code null} for an absent array with no default
+     */
+    private Object absentCollectionValue(ResourceMethodMeta.ParamMeta paramMeta) {
+        Class<?> declaredType = paramMeta.type();
+        Class<?> componentType = paramMeta.componentType();
+        String defaultValue = paramMeta.defaultValue();
+        if (defaultValue == null) {
+            return declaredType.isArray() ? null : materializeCollection(List.of(), declaredType, componentType);
+        }
+        Object element = paramConversionResolver.fromString(defaultValue, componentContext(paramMeta, componentType));
+        return materializeCollection(Collections.singletonList(element), declaredType, componentType);
+    }
+
+    /**
+     * Materialises already-converted elements into the declared collection or array type, returning a
+     * <em>read-only</em> collection as Jakarta REST 4.0 requires ("the resulting collection is
+     * read-only").
+     *
+     * <p>The cascade order is load-bearing and matches the declared shapes
+     * {@code ResourceScanner.isSupportedCollectionRawType} accepts:
+     * <ol>
+     *   <li>an array materialises an array — no read-only wrapper exists for arrays, so an injected
+     *       array is mutable by construction (a deliberate, documented asymmetry);</li>
+     *   <li>{@link NavigableSet} is tested <em>before</em> {@link SortedSet}, because
+     *       {@link Collections#unmodifiableSortedSet} returns a {@code SortedSet} that is NOT
+     *       assignable to a {@code NavigableSet}-declared parameter and would make reflective
+     *       {@code Method.invoke} throw {@code IllegalArgumentException} → 500;</li>
+     *   <li>{@link SortedSet} materialises a wrapped {@link TreeSet};</li>
+     *   <li>any other {@link Set} materialises a wrapped {@link LinkedHashSet};</li>
+     *   <li>{@link List} and {@link Collection} materialise a wrapped {@link ArrayList}.</li>
+     * </ol>
+     *
+     * <p>The {@code TreeSet} shapes require {@link Comparable} elements — the coerced scalar element
+     * types here (String, boxed numerics, Boolean, Character, enums) are all {@code Comparable}; a
+     * non-{@code Comparable} declared component type would be an application error surfacing as a 500.
+     *
+     * <p>Element ordering is whatever the underlying transport reported (Vert.x documents no ordering
+     * for repeated parameters), except for the sorted shapes; it is explicitly not a framework
+     * guarantee.
+     *
+     * @param elements      the already-converted, already-policy-processed elements
+     * @param declaredType  the declared parameter type (a supported collection interface or an array)
+     * @param componentType the element type, used as the array component type
+     * @return the read-only collection, or the array, assignable to {@code declaredType}
+     */
+    private static Object materializeCollection(List<Object> elements, Class<?> declaredType, Class<?> componentType) {
+        if (declaredType.isArray()) {
+            Object array = Array.newInstance(componentType, elements.size());
+            for (int i = 0; i < elements.size(); i++) {
+                Array.set(array, i, elements.get(i));
             }
             return array;
         }
-        if (java.util.SortedSet.class.isAssignableFrom(type)) {
-            // SortedSet/NavigableSet: a TreeSet is assignable to both and sorts the coerced elements.
-            return new java.util.TreeSet<>(coerced);
+        // NavigableSet MUST precede SortedSet: unmodifiableSortedSet returns a plain SortedSet.
+        if (NavigableSet.class.isAssignableFrom(declaredType)) {
+            return Collections.unmodifiableNavigableSet(new TreeSet<>(elements));
         }
-        if (java.util.Set.class.isAssignableFrom(type)) {
-            return new java.util.LinkedHashSet<>(coerced);
+        if (SortedSet.class.isAssignableFrom(declaredType)) {
+            return Collections.unmodifiableSortedSet(new TreeSet<>(elements));
         }
-        return coerced;
+        if (Set.class.isAssignableFrom(declaredType)) {
+            return Collections.unmodifiableSet(new LinkedHashSet<>(elements));
+        }
+        return Collections.unmodifiableList(new ArrayList<>(elements));
     }
 
     /**

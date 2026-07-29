@@ -5,31 +5,100 @@ SPDX-License-Identifier: EUPL-1.2
 
 # Codegen Service Contract Module
 
-> **Status:** Beta (Iteration 2 — contract-group contributor with `@ConditionalOnProperty`)
+> **Status:** Beta
 > **Package:** `dev.vertique.codegen.services.processor`
 > **Artifact:** `vertique-codegen-services`
-> **Depends on:** `vertique-codegen-core` (compile)
+> **Depends on:** `vertique-codegen-core` (compile), `vertique-security-core` (compile)
 
-`vertique-codegen-services` is an annotation processor that generates `ServiceContractContributor` implementations at compile time, turning structural service contract mistakes (wrong return types, blank `@ServiceOperation` values, payload overloads, handler-pattern mismatches, multi-impl layout violations) into build errors. It is the single generated service-registration path; CG-002 (`AutoWireProcessor`) does not emit `@Services` bindings.
+`vertique-codegen-services` is an annotation processor that generates `ServiceContractContributor`
+implementations at compile time, turning structural service-contract mistakes — wrong return types,
+blank `@ServiceOperation` values, payload overloads, handler-pattern mismatches, multi-implementation
+layout violations — into build errors instead of startup failures.
 
-The generated contributor delegates entry construction to the existing `ServiceContractEntries.deployable()` builder API. The startup cost reduction comes from eliminating the `ContractDiscovery` / `MethodValidator` / `ParameterClassifier` / `ReturnTypeResolver` / `PolicyResolver` reflection pass at boot.
+It is the generated service-registration path. Its output replaces the reflective contract-discovery
+and validation pass that `dev.vertique:vertique-services` would otherwise run at boot; hand-written
+contributors and `@Services` objects remain supported alongside it.
 
-**CG-011 (Iteration 2)**: one `{Contract}_ContractContributor` is emitted **per contract** (not per impl). The contributor injects `Provider<Impl>` for each candidate, emits per-impl `PropertyCondition[]` constants, and at startup selects the winning implementation using `dev.vertique.core.config.PropertyCondition.matchesAll(config, CONDITIONS)` — see [Generated Code Shape](#generated-code-shape).
+---
+
+## When To Use It
+
+Add this processor to any application module that declares `@ServiceContract` implementations.
+Applications inheriting `vertique-app-parent` receive the complete processor facade automatically by
+declaring `vertique-services` as a runtime dependency. Custom-parent applications import
+`vertique-bom` and configure the versionless Dagger and `vertique-codegen-all` processor paths — see
+`docs/packaging.md`.
+
+The processor has no opt-in flag: its presence on `<annotationProcessorPaths>` is the opt-in. Per-type
+opt-out is `@NoAutoWire`.
+
+---
+
+## Core Concepts
+
+### Two implementation patterns
+
+The processor scans **concrete implementation types** in the compilation round, not annotated
+interfaces, so a contract interface compiled in another module is handled correctly.
+
+| Shape | Pattern | Result |
+|---|---|---|
+| Any supertype carries `@ServiceContract` | DIRECT | Contract method and invoked method are the same |
+| Implements `ServiceHandler<C>` where `C` carries `@ServiceContract` | HANDLER | Contract method and handler method are separate; the handler may add injectable parameters |
+| Both of the above | — | Compile error |
+| Neither | — | Skipped silently |
+| Carries `@NoAutoWire` | — | Skipped silently |
+
+Interfaces and abstract classes are never candidates.
+
+### Contract groups and implementation selection
+
+All candidates for the same contract interface form one **contract group**, and a group emits exactly
+one contributor. Each candidate is injected as a `Provider`, so an implementation that is not selected
+is never instantiated.
+
+Selection happens at startup, against the application config, with these rules:
+
+| Group shape | Behavior at startup |
+|---|---|
+| One implementation, unconditional | Always registers. |
+| One implementation, conditional | Registers when its conditions match; otherwise contributes **nothing** — it does not fail. |
+| Several implementations | Every conditional candidate is evaluated. Exactly one match registers. No match falls back to the unconditional default when the group has one. No match and no default, or more than one match, throws `ServiceRegistrationException`. |
+
+Conditions come from `dev.vertique.codegen.ConditionalOnProperty` (repeatable via
+`ConditionalOnProperties`) and are evaluated by
+`dev.vertique.core.config.PropertyCondition.matchesAll(config, conditions)`.
+
+```java
+package com.example.app;
+
+import dev.vertique.codegen.ConditionalOnProperty;
+import jakarta.inject.Inject;
+
+@ConditionalOnProperty(name = "sandboxEnabled")
+public class UserServiceSandbox implements UserService {
+
+    @Inject
+    public UserServiceSandbox() {}
+
+    // ...
+}
+```
+
+`@ConditionalOnProperty` has `name()` (required), `havingValue()` (default `"true"`), and
+`matchIfMissing()` (default `false`).
 
 ---
 
 ## Adoption Recipe
 
-Two steps are required — leaving either one out produces a detectable failure:
+Two steps. Leaving either one out produces a detectable failure.
 
-### Step 1 — use the application processor boundary
+### Step 1 — put the processor on the annotation-processor path
 
-Applications inheriting `vertique-app-parent` declare `vertique-services` as a runtime dependency
-and receive the complete processor facade automatically. Custom-parent applications import
-`vertique-bom` and configure only the versionless Dagger and `vertique-codegen-all` processor
-paths. See `docs/packaging.md`.
+See **When To Use It** above.
 
-### Step 2 — add `GeneratedServicesModule` to `@Component`
+### Step 2 — add `GeneratedServicesModule` to the Dagger component
 
 ```java
 @Singleton
@@ -39,211 +108,35 @@ paths. See `docs/packaging.md`.
     RestModule.class,
     DispatchModule.class,
     GeneratedJaxRsResourcesModule.class,
-    GeneratedServicesModule.class,  // generated by CG-005
+    GeneratedServicesModule.class,
     AppModule.class,
 })
 interface AppComponent { ... }
 ```
 
-Including this class in the component serves as a compile-time guard: if the processor is misconfigured, the generated class will not exist and the build fails immediately with an unknown-symbol error at the component, rather than silently deploying with zero registered services.
+Naming the generated class in the component is a compile-time guard: when the processor is
+misconfigured the class does not exist and the build fails at the component with an unknown-symbol
+error, instead of deploying with an empty service registry.
 
 ---
 
-## Overview
+## Generated Artifacts
 
-### Discovery
-
-`ServiceContractProcessor` performs an **impl-rooted scan** of every concrete type compiled in the round. This matches how `ServiceRegistrar` discovers impls at runtime and correctly handles the common case where the `@ServiceContract` interface lives in a different module than the implementation.
-
-For each concrete (non-abstract, non-interface) `TypeElement` in the round:
-
-1. If any supertype carries `@ServiceContract` → **DIRECT** pattern.
-2. If it implements `ServiceHandler<C>` where `C` carries `@ServiceContract` → **HANDLER** pattern.
-3. Both (double-pattern) → rejected with ERROR.
-4. Neither → skipped silently.
-5. Annotated `@NoAutoWire` → skipped silently (preserves manual binding for types that opt out of codegen).
-
-### Client Contract Discovery
-
-`ServiceContractProcessor` runs a second, independent scan in the same round to emit client proxies: an **annotation-rooted scan** over every `@ServiceContract`-annotated interface compiled in the round, processed in fully-qualified-name order for deterministic output.
-
-This scan is **independent of implementation presence** — every source-root `@ServiceContract` interface is a candidate, whether or not a concrete implementation is compiled in the same unit. A contract with a compiled impl gets both a `{Contract}_ContractContributor` (from the impl-rooted scan above) and a `{Contract}_ServiceClientProxy`; a contract with no impl in this compilation unit still gets the client proxy.
-
-It is equally **independent of implementation validity**. Only a failure rooted in the *contract's own shape* — the contract-overload, return-type, payload-parameter, operation-value, and operation-collision rules — suppresses client-proxy emission, and only so those five validators do not report the same error twice (once from each scan). An impl-side rejection — double-pattern, a missing/overloaded/mis-parameterised handler method, a missing `@Inject` constructor, or a multi-impl group conflict — leaves the client proxy emitted, because the proxy is a function of the contract alone. The compilation still fails on the impl-side error; the proxy is simply there once that error is fixed.
-
----
-
-## Validation Behavior
-
-Every structural mistake below fails the build with a compile-time `ERROR` (compilation cannot
-succeed while any impl or contract violates them) unless marked otherwise. The "client proxy?"
-column states whether a *different, otherwise-valid* contract in the same compilation unit still
-gets its `{Contract}_ServiceClientProxy` — the client proxy is a function of the contract's shape
-alone, so an impl-only defect never withholds it, while a contract-shape defect does (both scans
-would otherwise report the same error twice).
-
-**Per-implementation checks:**
-
-| Check | Rule | Client proxy for that contract? |
+| Generated type | Package | Cardinality |
 |---|---|---|
-| Return type | Contract method must return parameterized `Future<T>`; raw `Future` is rejected | Yes |
-| Payload parameters | At most one PAYLOAD parameter per contract method; `DispatchEnvelope<?>` parameters rejected outright | Yes |
-| Contract overloads | No method-name overloads on the contract interface | Yes |
-| Operation value | `@ServiceOperation` value must not be blank | Yes |
-| Operation collisions | No duplicate resolved operation names within a contract | Yes |
-| Handler overloads | No method-name overloads on the handler class | No — impl-only |
-| `@Inject` constructor | Exactly one `@Inject` constructor is required (zero or more than one is an error) | No — impl-only |
-| Handler contract shape | For `ServiceHandler<C>`: `C` must carry `@ServiceContract`; implementing both the handler and the contract directly (double-pattern) is rejected; a handler must not implement any other `@ServiceContract` interface | No — impl-only |
-| Handler method match | Each contract method needs exactly one matching handler method: same name, identical payload parameters in order and type, and any extra handler parameters must be `SecurityContext` or `@DispatchContextValue`-annotated, with the same `Future<T>` return type | No — impl-only |
+| `{Contract}_ContractContributor` | The **contract interface's** package | One per contract group |
+| `{Contract}_ServiceClientProxy` | The **contract interface's** package | One per source-root `@ServiceContract` interface |
+| `GeneratedServicesModule` | Longest common prefix of the emitted contributors' packages, or the `vertique.codegen.package` option when set | One per compilation unit |
 
-**Per-contract-group checks** (CG-011 — apply only once two or more implementations of the same
-contract are compiled together):
+Each contributor is `public final`, annotated `@Generated` and `@Singleton`, implements
+`dev.vertique.services.ServiceContractContributor`, and takes one `jakarta.inject.Provider<Impl>` per
+candidate through an `@Inject` constructor. Its `contribute(JsonObject config)` builds entries through
+the `ServiceContractEntries.deployable()` builder, resolving every `java.lang.reflect.Method`,
+resilience annotation list, and annotation list once into `private static final` fields rather than
+per call. Deployment options are read from `services.contracts.{namespace}.{name}`.
 
-| Check | Rule |
-|---|---|
-| Multiple defaults | At most one unconditional (no `@ConditionalOnProperty`) implementation is allowed per contract group |
-| Conditional required on non-default | Once a group has an unconditional default, every other implementation in the group must carry `@ConditionalOnProperty` |
-
-**Skipped, not rejected** (the build succeeds; only the specific generated artifact is withheld):
-
-| Situation | Result |
-|---|---|
-| Impl type annotated `@NoAutoWire` | Skipped from contributor generation entirely (manual wiring is preserved). A compile-time `WARNING` is emitted if the same type also carries `@ConditionalOnProperty`, since the condition has no effect on an opted-out type |
-| Concrete type implements neither pattern | Skipped silently — not every class in a compilation unit is a service |
-| `@ServiceContract` interface with unresolved generics after substitution (its own type parameters, or a generic method) | No `{Contract}_ServiceClientProxy` is generated; an informational `NOTE` explains why. The contract keeps working — callers resolve it through the reflective client proxy at runtime instead |
-| `@ServiceContract` interface using an identifier the generated proxy reserves for itself (see [Limitations](#reserved-identifier-collisions-skip-client-proxy-emission)) | Same informational-`NOTE`, same reflective-proxy fallback as the generic-contract case |
-
----
-
-## Generated Code Shape
-
-### Single-impl, unconditional
-
-For `UserServiceImpl implements UserService` (no `@ConditionalOnProperty`) where `UserService` is annotated `@ServiceContract(namespace = "integration", value = "user-service")`:
-
-```java
-@Generated("dev.vertique.codegen.services.processor.ServiceContractProcessor")
-@Singleton
-public final class UserService_ContractContributor implements ServiceContractContributor {
-
-    private final Provider<UserServiceImpl> implProvider;
-
-    @Inject
-    public UserService_ContractContributor(Provider<UserServiceImpl> implProvider) {
-        this.implProvider = implProvider;
-    }
-
-    @Override
-    public List<ContractEntry<?>> contribute(JsonObject config) {
-        return List.of(
-            ServiceContractEntries.deployable()
-                .contract(UserService.class)
-                .serviceInstance(implProvider.get())
-                .namespace("integration")
-                .name("user-service")
-                .operation("get-user")
-                    .method(resolveMethod(UserService.class, "getUser", String.class))
-                    .returnType(UserResponse.class)
-                    .payloadType(String.class)
-                    .param("userId", ParamSource.PAYLOAD, String.class)
-                    .resilienceAnnotations(ResilienceAnnotations.resolve(UserService.class,
-                        resolveMethod(UserService.class, "getUser", String.class)))
-                    .methodAnnotations(AnnotationResolver.resolveMethodAnnotations(
-                        resolveMethod(UserService.class, "getUser", String.class)))
-                    .classAnnotations(AnnotationResolver.resolveClassAnnotations(UserService.class))
-                    .done()
-                .deploymentOptions(config, "services", "contracts", "integration", "user-service")
-                .build());
-    }
-
-    private static Method resolveMethod(Class<?> cls, String n, Class<?>... p) {
-        try {
-            return cls.getMethod(n, p);
-        } catch (NoSuchMethodException e) {
-            throw new IllegalStateException(e);
-        }
-    }
-}
-```
-
-### Multi-impl, conditional + default (CG-011 contract-group shape)
-
-For `UserServiceSandbox` (annotated `@ConditionalOnProperty(name = "sandboxEnabled")`) and `UserServiceImpl` (unconditional default):
-
-```java
-@Generated("dev.vertique.codegen.services.processor.ServiceContractProcessor")
-@Singleton
-public final class UserService_ContractContributor implements ServiceContractContributor {
-
-    private static final PropertyCondition[] SANDBOX_CONDITIONS = new PropertyCondition[] {
-        new PropertyCondition("sandboxEnabled", "true", false)
-    };
-    private static final PropertyCondition[] EMPTY_CONDITIONS = new PropertyCondition[0];
-
-    private final Provider<UserServiceSandbox> sandboxProvider;
-    private final Provider<UserServiceImpl> implProvider;
-
-    @Inject
-    public UserService_ContractContributor(
-            Provider<UserServiceSandbox> sandboxProvider,
-            Provider<UserServiceImpl> implProvider) {
-        this.sandboxProvider = sandboxProvider;
-        this.implProvider = implProvider;
-    }
-
-    @Override
-    public List<ContractEntry<?>> contribute(JsonObject config) {
-        List<ContractEntry<?>> matches = new java.util.ArrayList<>();
-
-        if (PropertyCondition.matchesAll(config, SANDBOX_CONDITIONS)) {
-            matches.add(buildEntry(config, sandboxProvider.get()));
-        }
-
-        if (matches.size() > 1) {
-            throw new ServiceRegistrationException(...);
-        }
-        if (matches.size() == 1) {
-            return matches;
-        }
-        // fall back to default
-        return List.of(buildEntry(config, implProvider.get()));
-    }
-
-    private ContractEntry<?> buildEntry(JsonObject config, UserService impl) {
-        return ServiceContractEntries.deployable()
-            .contract(UserService.class)
-            .serviceInstance(impl)
-            ...
-            .build();
-    }
-
-    private static Method resolveMethod(Class<?> cls, String n, Class<?>... p) { ... }
-}
-```
-
-### Handler-pattern
-
-For `ShippingServiceHandler implements ServiceHandler<ShippingService>` where the contract method is `Future<Void> notifyShipped(ShipmentRequest)` and the handler method is `Future<Void> notifyShipped(ShipmentRequest, SecurityContext)`:
-
-```java
-.operation("notify-shipped")
-    .method(resolveMethod(ShippingService.class, "notifyShipped", ShipmentRequest.class))
-    .handlerMethod(resolveMethod(ShippingServiceHandler.class, "notifyShipped",
-        ShipmentRequest.class, SecurityContext.class))
-    .returnType(Void.class)
-    .payloadType(ShipmentRequest.class)
-    .param("request", ParamSource.PAYLOAD, ShipmentRequest.class)
-    .handlerParam("request", ParamSource.PAYLOAD, ShipmentRequest.class)
-    .handlerParam("sc", ParamSource.DISPATCH_CONTEXT, SecurityContext.class)
-    .resilienceAnnotations(ResilienceAnnotations.resolve(ShippingService.class,
-        resolveMethod(ShippingService.class, "notifyShipped", ShipmentRequest.class)))
-    .methodAnnotations(AnnotationResolver.resolveMethodAnnotations(
-        resolveMethod(ShippingService.class, "notifyShipped", ShipmentRequest.class)))
-    .classAnnotations(AnnotationResolver.resolveClassAnnotations(ShippingService.class))
-    .done()
-```
-
-### Generated module
+`GeneratedServicesModule` is an abstract `@Module` with one
+`@Provides @IntoSet static ServiceContractContributor` method per emitted contributor:
 
 ```java
 @Generated("dev.vertique.codegen.services.processor.ServiceContractProcessor")
@@ -255,18 +148,38 @@ public abstract class GeneratedServicesModule {
     static ServiceContractContributor userService(UserService_ContractContributor c) {
         return c;
     }
-
-    @Provides
-    @IntoSet
-    static ServiceContractContributor shippingService(ShippingService_ContractContributor c) {
-        return c;
-    }
 }
 ```
 
+Applications never edit or subclass these types. They are referenced in exactly one place — the
+`@Component` modules list — and are otherwise consumed by `DispatchModule`'s
+`Set<ServiceContractContributor>` multibinding.
+
+### Client Contract Discovery
+
+`ServiceContractProcessor` runs a second, independent scan in the same round to emit client proxies:
+an annotation-rooted scan over every `@ServiceContract`-annotated interface compiled in the round —
+distinct from the impl-rooted scan in [Two implementation patterns](#two-implementation-patterns) —
+processed in fully-qualified-name order for deterministic output.
+
+This scan is independent of implementation presence: every source-root `@ServiceContract` interface
+is a candidate, whether or not a concrete implementation is compiled in the same unit. A contract
+with a compiled impl gets both a `{Contract}_ContractContributor` (from the impl-rooted scan above)
+and a `{Contract}_ServiceClientProxy`; a contract with no impl in this compilation unit still gets the
+client proxy.
+
+It is equally independent of implementation validity. Only a failure rooted in the contract's own
+shape — the same five contract-shape checks marked "Yes" in [Validation Failures](#validation-failures)
+below — suppresses client-proxy emission. An impl-side rejection (double-pattern, a
+missing/overloaded/mis-parameterised handler method, a missing `@Inject` constructor, or a
+contract-group conflict) leaves the client proxy emitted, because the proxy is a function of the
+contract alone. The compilation still fails on the impl-side error; the proxy is simply there once
+that error is fixed.
+
 ### Service client proxy
 
-For `com.example.DemoContract` (a source-root `@ServiceContract` interface) declaring `Future<String> greet(SecurityContext sc, String name)`:
+For `com.example.DemoContract` (a source-root `@ServiceContract` interface) declaring
+`Future<String> greet(SecurityContext sc, String name)`:
 
 ```java
 @Generated("dev.vertique.codegen.services.processor.ServiceContractProcessor")
@@ -323,62 +236,89 @@ public final class DemoContract_ServiceClientProxy implements DemoContract {
 }
 ```
 
-The constructor is the one place the generated proxy can throw before any dispatch happens: every baked operation id (`"greet"` here) is looked up in `_entry_.operations()`, and a missing entry throws `IllegalStateException` whose message always starts with the literal `Service client contract mismatch: `. Every other per-operation field — `greetPayloadIndex`, `greetSecurityContextIndex`, `greetOneWay` — is derived from the resolved `ServiceMethodMeta`, not from the source method signature, so the proxy always tracks whatever registered the contract, even if that registration used a different mechanism than this emitter.
+The constructor is the one place the generated proxy can throw before any dispatch happens: every
+baked operation id (`"greet"` here) is looked up in `_entry_.operations()`, and a missing entry throws
+`IllegalStateException` whose message always starts with the literal
+`Service client contract mismatch: `. Every other per-operation field — `greetPayloadIndex`,
+`greetSecurityContextIndex`, `greetOneWay` — is derived from the resolved `ServiceMethodMeta`, not
+from the source method signature, so the proxy always tracks whatever registered the contract, even
+if that registration used a different mechanism than this emitter.
 
 ---
 
-## `OperationBuilder` Extensions in `vertique-services`
+## Recognized Annotations and Types
 
-Four backwards-compatible setters were added to `ServiceContractEntries.OperationBuilder`. Existing callers (`DelayedJobContractContributor`, hand-written contributors) are unaffected — they do not call the new setters and defaults preserve current behavior.
-
-| Method | Default when not called | Use case |
+| Symbol | Owner | Role |
 |---|---|---|
-| `.handlerMethod(Method)` | Equals `method` (direct-impl equivalence) | Handler-pattern: the method to invoke reflectively differs from the contract method |
-| `.handlerParam(String, ParamSource, Class<?>)` | Defaults to the same list as `.param(...)` calls | Handler-pattern: adds injectable params (`SecurityContext`) beyond the contract's payload params |
-| `.methodAnnotations(List<Annotation>)` | Auto-resolved from `method` via `AnnotationResolver` | Override annotation-origin: derive from contract method even when handler method differs |
-| `.classAnnotations(List<Annotation>)` | Auto-resolved from `serviceInstance.getClass()` | Override annotation-origin: derive from contract interface class, not the impl class |
+| `dev.vertique.services.ServiceContract` | `vertique-services` | Marks the contract interface; supplies `namespace()` and `value()` |
+| `dev.vertique.services.ServiceOperation` | `vertique-services` | Names an operation and creates its stable id; the value must not be blank |
+| `dev.vertique.services.OneWay` | `vertique-services` | Marks a fire-and-forget operation |
+| `dev.vertique.services.ServiceHandler` | `vertique-services` | The handler-pattern supertype |
+| `dev.vertique.security.SecurityContext` | `vertique-security-core` | Recognized as a dispatch-context parameter on handler methods |
+| `dev.vertique.core.eventbus.DispatchContextValue` | `vertique-core` | Marks a **handler**-method parameter as a dispatch-context value. On a contract-interface method it has no effect — the parameter is classified as an ordinary payload parameter like any other |
+| `dev.vertique.core.eventbus.DispatchEnvelope` | `vertique-core` | Rejected as a contract parameter |
+| `dev.vertique.codegen.NoAutoWire` | `vertique-codegen-core` | Excludes a type from generation |
+| `dev.vertique.codegen.ConditionalOnProperty` | `vertique-codegen-core` | Config-driven implementation selection |
 
-These setters close the annotation-origin gap that previously existed when `ServiceRegistrar` (which always reads annotations from the contract) was the only registration path. Generated contributors always pass contract-derived annotations, so `DispatchPipeline` construction and `ServiceDispatchContext` metadata are correct for both direct-impl and handler-pattern services.
-
----
-
-## Failure Modes
-
-### Silent empty registry (dangerous)
-
-When `GeneratedServicesModule` is **not** included in `@Component(modules=...)`:
-
-- `Set<ServiceContractContributor>` is empty by default (`@Multibinds` in `DispatchModule`).
-- `ServiceContractRegistry.build()` succeeds with zero entries.
-- Services silently do not register — no compile error, no startup exception.
-
-**Mitigation**: the adoption recipe's step 2 (explicit `GeneratedServicesModule.class` in `@Component`) turns this into a compile error when the processor is misconfigured (the generated class will not exist).
-
-### Compile error on processor misconfiguration (safe)
-
-When `GeneratedServicesModule` is listed in `@Component`, but `vertique-codegen-services` is absent from `<annotationProcessorPaths>`:
-
-- The generated class does not exist.
-- The `@Component` references an unknown type.
-- The build fails with a Java compiler error pointing directly at the component.
-
-This is the desired guard: any missing step in the adoption recipe produces a visible failure.
+To place `@NoAutoWire` or `@ConditionalOnProperty` on a class, the owning module needs
+`vertique-codegen-core` on its compile path (`provided` scope is enough — both annotations have
+`SOURCE` retention).
 
 ---
 
-## Limitations
+## Processor Options
 
-### Multi-impl-per-contract setups — cross-module collision
+| Option | Effect |
+|---|---|
+| `-Avertique.codegen.package=<pkg>` | Overrides the output package of `GeneratedServicesModule`. Individual contributors always land in their contract's package and are unaffected. |
 
-CG-011 supports multi-impl-per-contract within the same compilation unit (the processor sees all candidate types and can validate the group). Cross-module collisions (same contract, different impls in separate Maven modules) remain a runtime concern; CG-011 compile-time validation does not apply across module boundaries.
+The processor is registered in `META-INF/services/javax.annotation.processing.Processor`, declares
+`@SupportedAnnotationTypes("*")` and `@SupportedSourceVersion(RELEASE_21)`, and always returns `false`
+from `process` so Dagger, Lombok, and other processors see unmodified elements.
 
-### Config-only cron jobs
+---
 
-`@CronJob` annotations on handler methods reference a service contract target. Those target addresses are discovered at runtime by `CronJobRegistrar`; they are not affected by the registration path. Both paths (codegen and manual) produce the same runtime addresses, so no change is needed for cron setups.
+## Validation Failures
 
-### `@NoAutoWire` dependency
+Every rule below is a compile-time `ERROR` unless stated otherwise. All applicable validators run
+before the processor gives up on a candidate, so one build surfaces the complete list rather than one
+error per cycle.
 
-To annotate an impl class `@NoAutoWire`, the impl module must add `vertique-codegen-core` as a `provided` (or `compileOnly`) dependency. This is the same requirement as for CG-002.
+The **client proxy for that contract?** column states whether a *different, otherwise-valid* contract
+in the same compilation unit still gets its `{Contract}_ServiceClientProxy` (see
+[Client Contract Discovery](#client-contract-discovery) above) — the client proxy is a function of the
+contract's shape alone, so an impl-only defect never withholds it, while a contract-shape defect does
+(both scans would otherwise report the same error twice).
+
+**Per implementation:**
+
+| Rule | Rejected because | Client proxy for that contract? |
+|---|---|---|
+| A contract method must return a parameterized `Future<T>` | A raw `Future`, `void`, or any other type has no dispatchable result shape | Yes |
+| At most one payload parameter per contract method | The dispatch envelope carries a single payload | Yes |
+| `DispatchEnvelope<?>` may not appear as a contract parameter | It is the transport wrapper, not application data | Yes |
+| No overloaded method names on the contract interface | Operation names derive from method names, so overloads collide on one event-bus address | Yes |
+| No overloaded **public** method names on a handler class | The runtime resolves handler methods by name only; private and package-private helpers sharing a name are ignored and do not trigger this | No — impl-only |
+| `@ServiceOperation` value must not be blank | A blank value produces an empty operation id and malformed addresses | Yes |
+| No two operations in a contract may resolve to the same operation name | One would silently shadow the other on the event bus | Yes |
+| Exactly one `@Inject` constructor on the implementation | Zero means Dagger cannot construct it; more than one is ambiguous | No — impl-only |
+| `ServiceHandler<C>`: `C` must be a `@ServiceContract` interface, and the handler must not implement `C` directly or any other `@ServiceContract` interface | Ambiguous registration shape | No — impl-only |
+| Each contract method needs exactly one matching handler method: same name, identical payload parameters in order and type, identical `Future<T>` return type | Name-based matching cannot disambiguate anything looser | No — impl-only |
+| Extra handler parameters must be `SecurityContext` subtypes or `@DispatchContextValue`-annotated types | Anything else cannot be supplied at dispatch time; the diagnostic names the offending parameter | No — impl-only |
+
+**Per contract group:**
+
+| Rule | Rejected because |
+|---|---|
+| At most one unconditional implementation per group | Two defaults make selection ambiguous. The error is emitted on every unconditional implementation and names all the others, so one pass shows the whole conflict. |
+| When a group has an unconditional default, every other implementation must carry at least one `@ConditionalOnProperty` | An ungated non-default is indistinguishable from a second default |
+
+A group that fails either group rule is excluded from emission. Client-proxy emission is unaffected
+by group-level validation — it has no meaning without a compiled implementation.
+
+**Warning (not an error):** a type carrying both `@NoAutoWire` and `@ConditionalOnProperty` compiles
+with a warning — the condition has no effect, because manual wiring owns selection for opted-out
+types.
 
 ### Generic contracts skip client-proxy emission
 
@@ -403,32 +343,49 @@ Client-proxy emission shares the same `emitted` guard as contributor emission: `
 
 ---
 
-## Examples
+## Failures, Constraints, and Common Mistakes
 
-`examples/vertique-example-services-codegen` — two-service codegen path:
-- `BillingService` (direct-impl): `BillingServiceImpl implements BillingService`
-- `ShippingService` (handler-pattern): `ShippingServiceHandler implements ServiceHandler<ShippingService>` with `SecurityContext` injection
-
-`examples/vertique-example-services` (CG-011 migration) — conditional impl selection:
-- `UserServiceSandbox` annotated `@ConditionalOnProperty(name = "sandboxEnabled")` — selected when `sandboxEnabled=true`
-- `UserServiceImpl` annotated `@NoAutoWire` (retained as direct-impl reference, not a codegen candidate)
-- Both `UserServiceIT` (default) and `UserServiceSandboxIT` (sandbox) pass
-
-Both examples include `GeneratedServicesModule` in `AppComponent`.
-
----
-
-## Module Dagger Bindings
-
-None at processor time. The processor emits a Dagger `@Module` (`GeneratedServicesModule`) into the user's source set. That module provides `@Provides @IntoSet ServiceContractContributor` bindings; it is not part of `vertique-codegen-services`'s own Dagger graph.
+- **Omitting `GeneratedServicesModule` from `@Component` fails silently.** The
+  `Set<ServiceContractContributor>` multibinding is empty by default, the registry builds with zero
+  entries, and no service registers — no compile error, no startup exception. Step 2 of the adoption
+  recipe exists to convert this into a compile error.
+- **Listing `GeneratedServicesModule` with the processor missing fails loudly**, which is the intended
+  direction: the generated class does not exist and `javac` reports an unknown type at the component.
+- **Cross-module implementation collisions are not caught at compile time.** Group validation sees
+  only the candidates in the current compilation unit. Two modules that each contribute an
+  implementation of the same contract remain a runtime concern.
+- **`@ConditionalOnProperty` on a `@NoAutoWire` type does nothing.** Pick one.
+- **Conditions are evaluated against the resolved application config**, so a condition naming a key
+  that no config source supplies matches only when `matchIfMissing = true`.
+- **`@CronJob` targets are unaffected.** Cron targets are resolved by address at runtime, and both the
+  generated and manual registration paths produce identical addresses.
 
 ---
 
 ## Dependencies
 
 | Artifact | Scope | Purpose |
-|----------|-------|---------|
-| `vertique-codegen-core` | compile | `CodegenContext`, `TypeResolver`, `AnnotationMirrors`, `Diagnostics`, `Identifiers`, `Conditions`, `InjectConstructorValidator`, `@NoAutoWire` |
-| `com.palantir.javapoet:javapoet` | compile | Source generation for all three emitters; not on runtime classpath |
+|---|---|---|
+| `dev.vertique:vertique-codegen-core` | compile | `CodegenContext`, `TypeResolver`, `AnnotationMirrors`, `Diagnostics`, `PackageResolver`, `DaggerModuleWriter`, `Identifiers`, `Conditions`, `Constructors`, `InjectConstructorValidator`, and the `@NoAutoWire` / `@ConditionalOnProperty` annotations |
+| `dev.vertique:vertique-security-core` | compile | `SecurityContext`, recognized as a dispatch-context parameter type |
+| `com.palantir.javapoet:javapoet` | compile | Source generation; not on the application runtime classpath |
 
-Test-only dependencies: `vertique-codegen-test`, `vertique-services`, `vertique-core`.
+The processor itself contributes no Dagger bindings. It emits a `@Module` into the consuming
+module's generated sources; that module is part of the application's graph, not this artifact's.
+
+Test-only dependencies: `vertique-codegen-test`, `vertique-services`, `vertique-core`,
+`vertique-config-core`, and Dagger.
+
+---
+
+## Examples
+
+- `examples/vertique-example-services-codegen` — both patterns side by side: `BillingServiceImpl`
+  (direct) and `ShippingServiceHandler implements ServiceHandler<ShippingService>` with
+  `SecurityContext` injection.
+- `examples/vertique-example-services` — conditional selection: `UserServiceSandbox` annotated
+  `@ConditionalOnProperty(name = "sandboxEnabled")`, `UserServiceHandler` as the unconditional
+  handler-pattern default, and `UserServiceImpl` annotated `@NoAutoWire` so it stays a manual
+  reference rather than a candidate. `UserServiceIT` and `UserServiceSandboxIT` cover both selections.
+
+Both examples list `GeneratedServicesModule` in their `AppComponent`.

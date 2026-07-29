@@ -66,7 +66,7 @@ wf.task("review")
   .build();
 ```
 
-Assignment can be literal or resolved from workflow state. Decisions carry typed payloads and update workflow state before moving to their next step. Due dates and reminders require the delayed workflow module.
+Assignment can be literal or resolved from workflow state. Decisions carry typed payloads and update workflow state before moving to their next step. Use `void.class` as the payload type to declare a decision that carries no payload. Due dates and reminders require the delayed workflow module.
 
 Version-stable tasks compare the reviewed subject version supplied by the caller with the version snapshotted when the task was created. This is useful for approval flows over mutable domain objects.
 
@@ -136,15 +136,3 @@ Application code should use `TaskService` or `TransactionalTaskService<TX>`. It 
 ## Dependencies
 
 - **workflow-core** - task records, filters, commands, service interfaces, and engine SPIs.
-
----
-
-## Related ADRs
-
-- ADR-0042: Tasks SPI shape — `TaskStore<TX>` is storage-only; `TransactionalTaskCallbacks<TX>` is the engine seam.
-- ADR-0043: Decision payload typing — typed decisions; `void.class` for no-payload decisions.
-- ADR-0044: Task completion idempotency — canonical fingerprint envelope, mutation-result vocabulary.
-- ADR-0045: Task lock order — `workflow_timers → workflow_tasks → workflow_instances`.
-- ADR-0048: Actor as audit identity — required actor on every mutation command.
-- ADR-0055: Version-aware approvals — subject-version stability semantics.
-- ADR-0057: Task complete fingerprint v2 — fingerprint envelope schema (`v: 2`) including `reviewedSubjectVersion`.

@@ -158,7 +158,7 @@ How an optional property surfaces in the generated spec depends on which optiona
 
 In every case the property is **neither `required` nor `nullable`**. That matches the runtime wire form: `JacksonDefaults` sets `NON_ABSENT` inclusion, so an empty optional is **omitted** from the payload rather than written as JSON `null`.
 
-**Clients omit, they do not send `null`.** The generated schema is not nullable, so any consumer that validates against this spec — a generated client, an API gateway, a contract test's request-validation filter, or the opt-in `openapi-contract` strategy — rejects an explicit `"prop": null`. The default `web-validation` strategy does *not* read `openapi.json` (ADR-0121; `vertique-rest-validation` synthesizes its schemas from the Java types at runtime), so on that path an explicit `null` is accepted and bound to `Optional.empty()`. Omitting the property is therefore the portable form — accepted on every path, and binding identically.
+**Clients omit, they do not send `null`.** The generated schema is not nullable, so any consumer that validates against this spec — a generated client, an API gateway, a contract test's request-validation filter, or the opt-in `openapi-contract` strategy — rejects an explicit `"prop": null`. The default `web-validation` strategy does *not* read `openapi.json` — `vertique-rest-validation` synthesizes its schemas from the Java types at runtime — so on that path an explicit `null` is accepted and bound to `Optional.empty()`. Omitting the property is therefore the portable form — accepted on every path, and binding identically.
 
 ---
 
@@ -253,9 +253,12 @@ It is not a runtime dependency of applications. It is only used as a `<dependenc
 
 ---
 
-## Related ADRs
+## Runtime Impact
 
-- ADR-0121: `openapi.json` is documentation-only; binding is separate from validation — the spec this module's converters and extension shape is generated at build time. Routing is always built directly from JAX-RS metadata, never from the spec. The default `web-validation` strategy does not load `openapi.json` either — it synthesizes request-body schemas from the Java types at runtime — so on that path a defect in this module's output affects documentation and generated clients only. The opt-in `openapi-contract` strategy (`vertique-rest-openapi-validation`) **does** load `openapi.json` at runtime and validates requests against it, so an application on that strategy also has its request validation shaped by this module's output.
+This module itself runs only at build time — see [Dependencies](#dependencies) above. Whether a defect in its output also affects a deployed application's runtime behavior depends on which request-validation strategy that application selects:
+
+- **Default `web-validation` strategy** (`vertique-rest-validation`) never loads `openapi.json`; it synthesizes request-body schemas from the Java types at runtime, and routing is always built directly from JAX-RS metadata, never from the spec. On this path, a defect in this module's converters or extension affects only the published documentation and any client generated from the spec.
+- **Opt-in `openapi-contract` strategy** (`vertique-rest-openapi-validation`) loads `openapi.json` at runtime and validates requests against it. An application on that strategy also has its request validation shaped by this module's output.
 
 ---
 

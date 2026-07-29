@@ -247,10 +247,3 @@ silently becomes a no-op when no recording span is present.
   `RequestInterceptor`
 - `com.google.dagger:dagger`, `jakarta.inject:jakarta.inject-api`
 - `org.slf4j:slf4j-api`, `org.projectlombok:lombok` (provided)
-
----
-
-## Related ADRs
-
-- ADR-0098: Micrometer Facade and Pluggable Registry Backends — establishes the telemetry-module bootstrap pattern and the observe-only, compile-API-only adapter model that this module follows.
-- ADR-0101: Trace-Log Correlation via TraceReferenceResolver — establishes the `TraceReferenceResolver` boundary and the validity-only span-context check; the same validity guard (`SpanContext.isValid()`) is used in this module.

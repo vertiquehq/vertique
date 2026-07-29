@@ -247,9 +247,3 @@ The `config.stores` entry is resolved against the phase-1 tree before phase-2 ru
 - `dev.vertique:vertique-config-core` — `BootstrapConfigLoader` and `BootstrapConfigException` used in end-to-end integration tests. Not required at runtime; main sources do not import it.
 
 No Dagger runtime dependency.
-
----
-
-## Related ADRs
-
-- ADR-0096: Bootstrap Config Relocation and `config.stores` Two-Phase Load — establishes the two-phase bootstrap model, the `config.stores` declaration schema, the declared-store priority slot, and the non-optional store semantics that this module implements.

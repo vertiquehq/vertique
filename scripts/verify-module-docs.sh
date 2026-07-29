@@ -41,6 +41,28 @@ bom_pom="$repository_root/vertique-bom/pom.xml"
 root_pom="$repository_root/pom.xml"
 canonical_suffix="/src/main/resources/META-INF/vertique/module.md"
 
+# --- Document content rules ---
+#
+# The rules docs/module-doc-template.md states for a packaged canonical document,
+# as patterns the per-document loop below applies. Parity alone let 102 of 115
+# documents drift, because a document can satisfy every set comparison in this
+# script while telling an application developer something false.
+
+# A published artifact must not reference a private decision record. Both the
+# hyphenated form the records themselves use and the spaced form that occurs in
+# prose are matched; the leading boundary keeps a word merely ending in "adr"
+# from claiming a citation.
+private_decision_pattern='(^|[^[:alpha:]])ADR[-[:space:]][0-9]{3,4}'
+
+# Sections whose subject matter is private decision or roadmap material. The
+# heading is rejected on its own: "## Related ADRs" carries that material even
+# when it names no record number, so the citation pattern above cannot see it.
+forbidden_heading_pattern='^##[[:space:]]+(Related ADRs|Version History|Planned Additions|Changelog)[[:space:]]*$'
+
+# The template mandates the blockquote status header, which is how a reader
+# learns whether the module's surface is safe to depend on.
+status_header_pattern='^>[[:space:]]*\*\*Status:\*\*'
+
 for required_file in "$index" "$bom_pom" "$root_pom"; do
     if [[ ! -f "$required_file" ]]; then
         echo "Required file is missing: ${required_file#"$repository_root"/}" >&2
@@ -318,6 +340,47 @@ module_artifact_id() {
     project_element_value artifactId "$1"
 }
 
+# Prints one "line-number<TAB>path" record per backticked repository-relative
+# path in the canonical document at $1.
+#
+# Only a path anchored at one of the repository's top-level directories is
+# extracted. Module documents are full of backticked tokens shaped like paths
+# that name nothing on disk — MIME types (`application/json`), classpath
+# resources (`META-INF/services/...`), HTTP routes (`services/users/ping`),
+# build output (`target/classes/openapi.json`) and Java constructs
+# (`try/catch`) — so matching every slash-bearing token would report each of
+# them as a broken link and make the rule unusable.
+backticked_repository_paths() {
+    awk '
+        {
+            rest = $0
+            while (match(rest, /`(docs|examples|scripts)\/[^`[:space:]]+`/) > 0) {
+                print NR "\t" substr(rest, RSTART + 1, RLENGTH - 2)
+                rest = substr(rest, RSTART + RLENGTH)
+            }
+        }
+    ' "$1"
+}
+
+# Reports every line of the canonical document $2, owned by artifact $1, that
+# matches the extended regular expression $4 as a violation of the rule named in
+# $3. Every match is reported rather than only the first: an author fixing one
+# citation would otherwise have to re-run the verifier to discover the next.
+report_matching_document_lines() {
+    local artifact_id="$1"
+    local document="$2"
+    local rule_description="$3"
+    local pattern="$4"
+    local match
+
+    while IFS= read -r match; do
+        [[ -n "$match" ]] || continue
+        # grep -n emits "<line-number>:<line>", and the offending line is quoted
+        # back so the diagnostic names what to change, not merely where.
+        report_failure "$artifact_id $rule_description: ${match#*:} (${document#"$repository_root"/} line ${match%%:*})"
+    done < <(grep -niE "$pattern" "$document" || true)
+}
+
 # Prints why an artifactId may never be BOM-managed or indexed, or returns 1
 # when the artifact is a legitimate consumable module.
 forbidden_artifact_reason() {
@@ -483,6 +546,33 @@ while IFS=$'\t' read -r artifact_id link; do
         continue
     fi
 
+    # Content rules. Each is evaluated independently and none of them skips the
+    # rest of the row: a drifted document usually breaks several at once, and
+    # reporting only the first would hide the others behind the edit that fixes
+    # it. Existence and parity are settled above, so a failure here is always a
+    # statement about what the document says.
+    report_matching_document_lines "$artifact_id" "$document" \
+        "cites a private decision record in its canonical module document" \
+        "$private_decision_pattern"
+
+    report_matching_document_lines "$artifact_id" "$document" \
+        "has a forbidden section in its canonical module document" \
+        "$forbidden_heading_pattern"
+
+    if ! grep -qE "$status_header_pattern" "$document"; then
+        report_failure "$artifact_id has no \"> **Status:**\" blockquote in its canonical module document at $relative_link"
+    fi
+
+    # A repository-relative path is the one link form a packaged document may use
+    # for material that ships nowhere near the artifact, so an unresolved one
+    # sends the reader to a file that exists only in another repository.
+    while IFS=$'\t' read -r line_number referenced_path; do
+        [[ -n "$referenced_path" ]] || continue
+        if [[ ! -e "$repository_root/$referenced_path" ]]; then
+            report_failure "$artifact_id references a repository path that does not exist in its canonical module document: $referenced_path ($relative_link line $line_number)"
+        fi
+    done < <(backticked_repository_paths "$document")
+
     module_pom="$repository_root/$module_source_root/pom.xml"
     if [[ ! -f "$module_pom" ]]; then
         report_failure "$artifact_id has no owning Maven module at $module_source_root/pom.xml"
@@ -515,6 +605,21 @@ while IFS=$'\t' read -r artifact_id link; do
             ;;
     esac
 done < "$work_dir/index-rows.txt"
+
+# --- Maintainer documents ---
+
+# Maintainer documentation was moved to a separate governance repository, so
+# DEVELOPMENT.md is not a document with content rules but a file that must not
+# exist here at all. The sweep is repository-wide rather than driven by the index
+# above, because a stray copy under a module that has no index row — or under no
+# module at all — is exactly the one nothing else would look at. Build output and
+# agent scratch space are pruned because neither is repository source.
+while IFS= read -r maintainer_document; do
+    [[ -n "$maintainer_document" ]] || continue
+    report_failure "${maintainer_document#"$repository_root"/} must not exist: maintainer documentation belongs in the private governance repository"
+done < <(find "$repository_root" \
+    \( -name target -o -name .claude -o -name .git \) -prune -o \
+    -type f -name DEVELOPMENT.md -print)
 
 # --- Verdict ---
 

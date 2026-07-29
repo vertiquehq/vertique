@@ -234,9 +234,3 @@ dedicated mode) instead.
 - `org.testcontainers:postgresql` — `PostgreSQLContainer`
 - `org.junit.jupiter:junit-jupiter` — `BeforeAllCallback`, `AfterAllCallback`
 - `org.slf4j:slf4j-api`
-
----
-
-## Related ADRs
-
-- ADR-0145: Shared PostgreSQL server for integration tests — establishes the shared-server / per-database isolation model for `PostgresContainer`'s no-arg constructor and why the custom-image constructor keeps dedicated-container behavior.

@@ -146,9 +146,3 @@ a real `@VertiqueApp` component naming only this aggregate, builds it through th
 application factory, and asserts that the lifecycle step sets and the deployment manager resolve.
 A dependency fixture materializes the compile and runtime classpaths and fails when the direct
 ledger drifts or a launcher, test, or code-generation artifact leaks in.
-
----
-
-## Related ADRs
-
-Decision: ADR-0188 — Static Starter Aggregates and Separate Archetypes.

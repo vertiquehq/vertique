@@ -8,85 +8,131 @@ SPDX-License-Identifier: EUPL-1.2
 > **Status:** Implemented
 > **Package:** `dev.vertique.job.delayed`
 > **Artifact:** `vertique-job-delayed`
-> **Depends on:** job-core, job-postgresql, services, deploy
+> **Depends on:** job-core, job-postgresql, services, deploy, core, context, db-core, logging, config-core
 
-Persistent delayed job queue with configurable retry and dead-letter behavior. Application code enqueues `DelayedJob` descriptors via `DelayedJobService`; the `DelayedJobPoller` verticle polls the database on a timer, claims executions with `FOR UPDATE SKIP LOCKED`, and dispatches each via fire-and-report over the event bus. Handler methods are annotated with `@DelayedJobHandlerMethod` and discovered at startup by scanning service implementations. Future-scheduled jobs use `ENQUEUED` state with a future `scheduled_at` value — no separate SCHEDULED state or transition timer is needed because the claim query filters by `scheduled_at <= NOW()`.
+`vertique-job-delayed` is a durable one-shot job queue. An application enqueues a job — now, at an
+instant, or after a delay — and the framework persists it, claims it on some node, dispatches it to a
+handler method, and applies retry, backoff and dead-letter policy to the outcome. Multiple named
+queues are supported, each with its own concurrency, backoff and poller-instance count.
 
-Multiple named queues are supported, each with independent concurrency, backoff configuration, and poller instance count.
+Two authoring styles coexist. The **typed contract** style pairs a `@DelayedJobContract` client
+interface with a `DelayedJobExecutor` implementation and gives compile-time type safety between the
+enqueue site and the handler. The **annotation** style marks an existing service implementation
+method with `@DelayedJobHandlerMethod` and enqueues against it by name through `DelayedJobService`.
+
+This is not a cron replacement. Use `dev.vertique:vertique-job-cron` for recurring schedules; use
+this module when the work fires once, at a known time, and must survive a restart.
 
 ---
 
-## Package Layout
+## When To Use It
 
-| Package | Contents |
-|---------|----------|
-| `dev.vertique.job.delayed` | `DelayedJob`, `DelayedJobConfig`, `DelayedJobService`, `DelayedJobPoller`, `@DelayedJobHandlerMethod`, `DelayedJobHandlerRegistrar`, `BackoffStrategyType`, `DelayedJobExceptionMapper`, `@DelayedJobContract`, `DelayedJobClient<P>`, `DelayedJobExecutor<P, C>`, `DelayedJobOptions`, `DelayedJobClientFactory`, `DelayedJobClientProxy`, `DelayedJobContractContributor`, `DelayedJobTargetResolver`, `DefaultDelayedJobTargetResolver`, `ResolvedDelayedJobTarget` |
-| `dev.vertique.job.delayed.exception` | `DelayedJobConfigurationException`, `DelayedJobRegistrationException`, `DelayedJobTechnicalException`, `DelayedJobPersistenceException` |
-| `dev.vertique.job.delayed.dagger` | `DelayedJobModule`, `@DelayedJobs` |
+Install it when work must run **later** and **exactly once**, and losing it on a restart is
+unacceptable — send a reminder in an hour, retry a webhook with backoff, expire a reservation at a
+deadline. Enqueue inside your own transaction when the job must not exist unless the business write
+commits. Reach for `dev.vertique:vertique-job-cron` instead for recurring wall-clock schedules, and
+for a plain `dev.vertique:vertique-services` call when you need sub-second latency — this queue is
+poll-based. PostgreSQL is required: the module pulls in `dev.vertique:vertique-job-postgresql`, and
+the `JobRepository` binding is not optional.
+
+---
+
+## Core Concepts
+
+**There is no scheduled state.** A future-dated job is persisted as `ENQUEUED` with a future
+`scheduledAt`; claim queries filter by `scheduled_at <= NOW()`, so the job becomes claimable exactly
+when its time arrives. Nothing transitions it and nothing wakes up early.
+
+**One row, many attempts.** A delayed job reuses a single execution row: `executionId` is stable and
+`attemptNumber` increments. `maxAttempts` is inclusive, so an attempt remains while
+`attemptNumber + 1 < maxAttempts`. When the last attempt fails the row moves to `DEAD_LETTER` and
+stays there — nothing re-drives it.
+
+**Retry versus interruption.** A handler that returns a **failed** future consumes an attempt: if
+attempts remain, the failure and the re-enqueue are recorded in one transaction at
+`now + backoff.delay(nextAttempt)`; otherwise the row is dead-lettered. An execution that never
+replies within `job.coordinator.executionTimeoutMs` is an **interruption**, not a handler failure —
+it is atomically marked `ABANDONED` and re-enqueued when attempts remain, or dead-lettered directly
+when they are exhausted. Either way exactly one state transition is recorded.
+
+Backoff is configured **per queue**, not per job:
+
+| Strategy | Delay for attempt *n* (zero-based) |
+|---|---|
+| `FIXED` | `backoffBaseDelayMs` |
+| `LINEAR` *(default)* | `min(backoffBaseDelayMs × (n + 1), backoffMaxDelayMs)` |
+| `EXPONENTIAL` | `backoffBaseDelayMs × 2ⁿ`, capped at `backoffMaxDelayMs` |
+
+**Ordering and concurrency.** Claiming is exclusive across nodes and poller instances, so deploying
+more instances is always safe, and higher `priority` is claimed first. There is **no** per-job
+ordering guarantee: two jobs enqueued in order may run concurrently or out of order.
+
+**What a handler receives.** Handlers run as ordinary service operations, so `JobContext` and
+`JobDispatchContext` from `dev.vertique:vertique-job-core` are injected simply by declaring them as
+parameters; cancellation, progress and structured logging all go through `JobContext`.
 
 ---
 
 ## Key Classes
 
-### `DelayedJob`
+### DelayedJobService
 
-Lombok `@Builder` value object describing a job to enqueue. Only `handler` is required.
-
-| Field | Default | Description |
-|-------|---------|-------------|
-| `handler` | required | Handler name; maps to a registered `@DelayedJobHandlerMethod` |
-| `payload` | `null` | Any Jackson-serializable object; stored as JSONB in DB |
-| `runAt` | `null` | Future execution time; `null` or past = immediately claimable |
-| `queue` | `"default"` | Logical queue name |
-| `priority` | `0` | Higher values claimed first |
-| `maxAttempts` | `3` | Maximum attempts before dead-letter; must be in `[1, 1000]` |
-| `jobId` | auto-generated | Logical job ID; stable across retries; auto-generated if `null` |
-| `metadata` | empty `DurableMetadata` | `DurableMetadata` document carrying durable propagation context; persisted as a `{"context": {namespace: {...}}}` carrier in `job_executions.metadata` JSONB (see ADR 0065) |
-
-The `metadata` field carries durable propagation context as a `DurableMetadata` namespaced document. Application code does not normally populate this field directly — the framework captures and encodes context into the `DurableMetadata` carrier via `DelayedJobService` at enqueue time. The field is available for advanced use cases where a pre-built `DurableMetadata` document must be supplied by the caller.
+The untyped enqueue API — inject it for the `@DelayedJobHandlerMethod` style.
+`enqueue(DelayedJob)` uses the default pool; `enqueue(DelayedJob, SqlClient)` joins the caller's
+transaction. Two `enqueuePremerged` overloads exist for framework-internal use: they persist a
+pre-assembled propagation document without re-capturing context, are `public` only so generated
+proxies can reach them, and fail closed on a document carrying identity context. Application code
+uses `enqueue`.
 
 ```java
-DelayedJob job = DelayedJob.builder()
-    .handler("send-welcome-email")
-    .payload(new WelcomeEmailPayload(userId, email))
-    .runAt(Instant.now().plusSeconds(60))
-    .maxAttempts(5)
-    .build();
-delayedJobService.enqueue(job);
+Future<UUID> executionId = delayedJobService.enqueue(
+        DelayedJob.builder()
+                .handler("send-welcome-email")
+                .payload(new WelcomeEmailPayload(userId, email))
+                .runAt(Instant.now().plusSeconds(60))
+                .maxAttempts(5)
+                .build());
 ```
 
-### `DelayedJobService`
-
-Singleton service for enqueueing delayed jobs. Validates the handler name against a pattern (`[a-zA-Z0-9._-]{1,128}`) and verifies it against the registered handler map. `maxAttempts` must be in `[1, 1000]`.
-
-Supports two enqueue modes:
-
-**Standalone (default pool):**
-
-```java
-Future<UUID> executionId = delayedJobService.enqueue(job);
-```
-
-**Transactional (outbox pattern):**
+Transactional (outbox) enqueue — the job exists only if the business write commits:
 
 ```java
 pool.withTransaction(conn ->
-    orderRepository.save(order, conn)
-        .compose(v -> delayedJobService.enqueue(welcomeEmailJob, conn))
-);
+        orderRepository.save(order, conn)
+                .compose(v -> delayedJobService.enqueue(welcomeEmailJob, conn)));
 ```
 
-The transactional overload calls `PgJobRepository.save(execution, client)` so the INSERT participates in the caller's transaction. The handler address stored on the execution is resolved at enqueue time from `DelayedJobHandlerRegistrar.handlerAddresses()`, ensuring the persisted address matches the actual event bus address.
+Validation runs before the database is touched and returns a **failed future** rather than throwing:
+the handler name must match `[a-zA-Z0-9._-]{1,128}` and be registered (the message lists the
+registered names), and `maxAttempts` must be in `[1, 1000]`. The handler's event bus address is
+resolved at enqueue time from the registered handler map, so the persisted address is the one the
+poller will dispatch to.
 
-**Durable context propagation (producer side):** `DelayedJobService.toExecution(job)` calls `DurableContextPropagator.mergeCaptured(job.metadata(), "DELAYED_JOB")` before persisting the execution row. This encodes any currently bound durable-encoder-registered context values into namespaced entries of the `DurableMetadata` document and writes the result — serialised as a `{"context": {namespace: {...}}}` carrier — into `job_executions.metadata`. The caller-supplied `DurableMetadata` (from `job.metadata()`) is the base; framework-captured namespace entries are merged on top under standard collision rules (a collision fails if a context of that encoder's namespace is already present; caller namespace entries pass through unchanged if no such context is currently bound).
+### DelayedJob
 
-**Pre-merged enqueue (`DelayedJobService.enqueuePremerged`):** A `public` overload (two signatures: standalone and transactional) for callers that have already captured and encoded a `DurableMetadata` document — specifically workflow timer create, workflow timer recovery, and the generated `{Contract}_DelayedJobProxy`. Supplying `DelayedJobOptions.premergedMetadata` (a `DurableMetadata`) routes through this path and persists the document as-is with no re-capture. This is not a public-API bypass: re-capture would double-encode context that was already merged at the timer-create site. The method is `public` so generated proxies (which land in the contract's own package, not `dev.vertique.job.delayed`) can call it; the invariant that only framework-assembled `DurableMetadata` documents must be supplied is recorded in its javadoc. See ADR-0071.
+Lombok `@Builder` value object. Only `handler` is required.
 
-**Exception mapping:** All four `enqueue*` methods wrap an escaping `DataAccessException` into `DelayedJobPersistenceException` (extends `DelayedJobTechnicalException` → core `TechnicalException`) via `DelayedJobExceptionMapper`. The mapper applies a `retryable` signal: transient failures (optimistic/pessimistic locking, deadlocks) set `retryable=true`; generic data-access failures set `retryable=false`. This ensures callers of the enqueue API never see a raw `DataAccessException`.
+| Field | Default | Description |
+|---|---|---|
+| `handler` | *required* | Handler name; must match a registered handler |
+| `payload` | `null` | Any Jackson-serializable object; stored as JSONB |
+| `runAt` | `null` | Eligibility time; `null` or past means immediately claimable |
+| `queue` | `"default"` | Logical queue name |
+| `priority` | `0` | Higher values claimed first |
+| `maxAttempts` | `3` | Attempts before dead-letter; must be in `[1, 1000]` |
+| `jobId` | auto-generated | Logical job id, stable across retries; generated as `delayed-<uuid>` when `null` |
+| `metadata` | empty `DurableMetadata` | Durable propagation context; normally left alone |
 
-### `@DelayedJobHandlerMethod`
+`metadata` exists for advanced callers that must supply a pre-built `DurableMetadata` document. In
+the normal path the framework captures ambient durable context at enqueue time and merges it over
+whatever the caller supplied; a caller-supplied namespace that collides with a currently bound
+framework context fails the enqueue rather than silently overwriting.
 
-Method-level annotation that marks a service implementation method as the handler for a named delayed job type. Place on the implementation method, not the contract interface.
+### @DelayedJobHandlerMethod
+
+Method-level annotation marking a service **implementation** method as the handler for a named job
+type. Its single attribute `value()` is the handler name and must be unique across every registered
+handler. Placing the annotation on the contract interface is a startup error.
 
 ```java
 @DelayedJobHandlerMethod("send-welcome-email")
@@ -94,135 +140,85 @@ public Future<Void> sendWelcomeEmail(WelcomeEmailPayload payload, JobContext ctx
     ctx.logger().info("Sending welcome email");
     ctx.progress().setTotal(1);
     return emailService.send(payload.email())
-        .onSuccess(v -> ctx.progress().incrementSucceeded());
+            .onSuccess(v -> ctx.progress().incrementSucceeded());
 }
 ```
 
-| Attribute | Description |
-|-----------|-------------|
-| `value()` | Handler name; must be unique across all registered handlers |
+### Exceptions
 
-### `DelayedJobHandlerRegistrar`
+Two semantic roots: `DelayedJobConfigurationException` (core `ConfigurationException`) for startup
+problems, with `DelayedJobRegistrationException` under it exposing `violations()`; and
+`DelayedJobTechnicalException` (core `TechnicalException`) for runtime failures, with
+`DelayedJobPersistenceException` under it.
 
-Scans all registered service implementations via `ServiceContractRegistry` for `@DelayedJobHandlerMethod` annotations at startup. Validates:
+Every `enqueue*` method translates persistence failures automatically, so callers never see a raw
+`DataAccessException`. They surface as `DelayedJobPersistenceException`, whose `retryable()` flag is
+`true` for optimistic-locking, pessimistic-locking and transient data-access failures (deadlock,
+query timeout, connection failure) and `false` for any other data-access failure. Anything that is
+not a data-access failure — including validation errors — passes through unchanged. The translated
+message deliberately excludes the database message text; the original exception is the cause.
 
-- Annotation is on the implementation method, not the contract interface
-- Handler name is not blank
-- No duplicate handler names
-- Annotated method corresponds to a registered service operation
+### Invariants & Gotchas
 
-Throws `DelayedJobRegistrationException` (extends `DelayedJobConfigurationException` → core `ConfigurationException`, with all violations collected before throwing) if any check fails.
-
-`handlerAddresses()` returns an immutable `Map<String, String>` from handler name to event bus address, used by `DelayedJobService` for address resolution at enqueue time.
-
-### `DelayedJobPoller`
-
-Vert.x `AbstractVerticle` that polls a single named queue. Multiple instances per queue are safe — `FOR UPDATE SKIP LOCKED` prevents duplicate claims. Each instance runs one poll timer.
-
-**Poll timer:** A recurring one-shot timer (`vertx.setTimer`) that wakes up every `sleepDelayMs` milliseconds, claims up to `maxConcurrentJobs - inFlight` executions, dispatches each, and reschedules.
-
-**Concurrency control:** An `AtomicInteger` semaphore tracks in-flight dispatches. When the in-flight count reaches `maxConcurrentJobs`, the poll cycle skips claiming and reschedules immediately.
-
-**Dispatch sequence for each claimed execution:**
-1. Call `DurableContextPropagator.decodeToDispatchContext(execution.metadata(), "DELAYED_JOB")` — the poller runs on the verticle's **non-duplicated** deployment context, so no holder write happens at this site; the decoded namespaced context values ride in the outgoing envelope's `callerOverrides`
-2. Build `DispatchEnvelope` with payload, MDC context, `DefaultJobContext`, `JobDispatchContext`, a `DeferredExecutionOrigin` (`kind = "delayed-job"`, `reference` = the execution's handler address — the stable dispatch address, deliberately not the often auto-generated job id — falling back to the kind string when blank) proving the dispatch is deferred execution, and the decoded caller overrides
-3. Register a one-time reply consumer on `job.completions.<executionId>`
-4. Fire `JobInterceptor.onDispatch()` in OrderedExtension order (phase → priority → orderKey)
-5. Send to the handler's event bus address via `EventBusClient.send()`
-6. On the consumer's duplicated context, `InboundDispatchScope.install` binds the decoded values (including `DurablePropagationMetadata`) before invoking the handler
-7. On reply: fire `JobInterceptor.onComplete()`, delegate to `JobCompletionHandler` for DB update (success/retry/dead-letter)
-
-**Consumer timeout:** When `executionTimeoutMs > 0`, a local Vert.x timer marks the execution `ABANDONED` and releases the concurrency slot if no reply arrives. The coordinator can then re-enqueue the execution.
-
-**Cooperative cancellation:** A consumer on `job.cancel.<executionId>` sets `DefaultJobContext.setCancelled(true)`. Handlers should poll `ctx.isCancelled()` and exit gracefully.
-
-**Progress flush:** When `progressFlushIntervalMs > 0` and a repository is available, a periodic timer writes changed `ProgressSnapshot` values to the repository.
-
-**Graceful shutdown:** On `stop()`, the poll timer is cancelled and all active reply consumers are unregistered. In-flight executions complete independently.
-
-### `DelayedJobConfig`
-
-Per-queue configuration, deserialized from `delayedJob.queues.<name>` in the application config.
-
-| Field | Default | Description |
-|-------|---------|-------------|
-| `sleepDelayMs` | `5000` | Milliseconds between poll cycles |
-| `maxConcurrentJobs` | `5` | Maximum in-flight dispatches per poller instance |
-| `backoffStrategy` | `"LINEAR"` | `FIXED`, `LINEAR`, or `EXPONENTIAL` |
-| `backoffBaseDelayMs` | `30000` | Base delay in ms for backoff computation |
-| `backoffMaxDelayMs` | `3600000` | Maximum delay cap in ms |
-| `instances` | `1` | Number of poller verticle instances to deploy for this queue |
-
-Multiple instances multiply throughput: total concurrency for a queue = `instances × maxConcurrentJobs`.
-
-### `BackoffStrategyType`
-
-Maps config string values to `BackoffStrategy` instances via `fromConfig(String)` (case-insensitive).
-
-| Constant | Formula |
-|----------|---------|
-| `FIXED` | Constant `baseDelay` ms |
-| `LINEAR` | `min(baseDelay × (attempt + 1), maxDelay)` |
-| `EXPONENTIAL` | `baseDelay × 2^attempt`, capped at `maxDelay` |
+- **Handler names are globally unique.** A name claimed by both a `@DelayedJobContract` and a
+  `@DelayedJobHandlerMethod` is a startup failure, not a last-one-wins merge — and registration
+  reports every violation at once, so one restart shows the full picture.
+- **Enqueue validation is a failed future, not an exception** — chain `onFailure`/`recover`. A
+  `runAt` in the past is not an error; it simply makes the job immediately claimable.
+- **`Duration`-based enqueue is resolved at call time.** `enqueue(payload, Duration.ofMinutes(5))`
+  computes `Instant.now().plus(delay)` in the client, so a slow transaction shifts the effective
+  delay earlier relative to commit.
+- **A dead-lettered job stays dead-lettered.** There is no automatic re-drive and no built-in
+  dead-letter management API.
+- **Retry backoff is per queue.** Two jobs with different retry profiles need different queues.
+- **In-flight work is not interrupted on shutdown.** The poller stops claiming and unregisters its
+  reply consumers; already-dispatched executions run to completion, and their completion callbacks
+  may land after the verticle stopped.
 
 ---
 
 ## Typed Job Contracts
 
-The typed contract pattern separates the enqueue API (client) from the execution logic (server) using a pair of generic interfaces linked by a shared contract annotation. This provides compile-time type safety between the enqueue site and the handler implementation.
+The typed pattern splits the enqueue API from the execution logic across two generic interfaces
+linked by one annotation: `@DelayedJobContract` carries the name and defaults,
+`DelayedJobClient<P>` is the client side (enqueue only, never implemented by hand), and
+`DelayedJobExecutor<P, C>` is the server side (execute only, holding your business logic). At
+startup the framework resolves `P` and `C` from the executor's type arguments, reads
+`@DelayedJobContract` from `C`, and registers the executor as a service contract entry at the event
+bus address `jobs/delayed/{name}/execute`.
 
-### Pattern Overview
-
-```
-@DelayedJobContract        ← annotation on the client interface, carries name/maxAttempts/queue/priority
-DelayedJobClient<P>        ← client-side interface (enqueue only); proxy generated by DelayedJobClientFactory
-DelayedJobExecutor<P, C>   ← server-side interface (execute only); implement with business logic
-```
-
-The framework resolves `C` and `P` from the executor's generic type arguments at startup, reads the `@DelayedJobContract` annotation from `C`, and registers the executor as a service contract entry with event bus address `jobs/delayed/{name}/execute`.
-
-### `@DelayedJobContract`
-
-Type-level annotation on a `DelayedJobClient<P>` extension interface. Provides the contract name and default enqueue parameters.
+### @DelayedJobContract and DelayedJobClient
 
 | Attribute | Default | Description |
-|-----------|---------|-------------|
-| `name` | required | Handler name; must match `[a-zA-Z0-9._-]{1,128}`; used as address key |
-| `maxAttempts` | `3` | Max attempts `[1, 1000]`; overridable via config |
-| `queue` | `"default"` | Logical queue name; overridable via config |
-| `priority` | `0` | Job priority; higher values claimed first; overridable via config |
-
-### `DelayedJobClient<P>`
-
-Client-side interface. Never implement directly — obtain a proxy via `DelayedJobClientFactory`. Extend and annotate with `@DelayedJobContract` to create a named contract interface.
+|---|---|---|
+| `name` | *required* | Handler name; must match `[a-zA-Z0-9._-]{1,128}` |
+| `maxAttempts` | `3` | Must be in `[1, 1000]`; overridable via config |
+| `queue` | `"default"` | Overridable via config |
+| `priority` | `0` | Higher values claimed first; overridable via config |
 
 ```java
 @DelayedJobContract(name = "deliver-webhook", maxAttempts = 2)
 public interface DeliverWebhookJob extends DelayedJobClient<WebhookPayload> {}
 ```
 
-**Enqueue methods:**
+`DelayedJobClient<P>` declares six `enqueue` overloads: `(P)`, `(P, Instant runAt)`,
+`(P, Duration delay)`, `(P, SqlClient tx)`, `(P, DelayedJobOptions)`, and
+`(P, DelayedJobOptions, SqlClient tx)`. Passing `null` for the `SqlClient` argument of a
+transactional overload fails the returned future with a `NullPointerException` rather than silently
+degrading to a non-transactional enqueue.
 
-| Method | Description |
-|--------|-------------|
-| `enqueue(P payload)` | Immediate execution with contract defaults |
-| `enqueue(P payload, Instant runAt)` | Scheduled for a specific time |
-| `enqueue(P payload, Duration delay)` | Delayed by a duration from now |
-| `enqueue(P payload, SqlClient tx)` | Transactional enqueue with contract defaults |
-| `enqueue(P payload, DelayedJobOptions options)` | Per-enqueue overrides |
-| `enqueue(P payload, DelayedJobOptions options, SqlClient tx)` | Transactional with per-enqueue overrides |
-
-### `DelayedJobExecutor<P, C extends DelayedJobClient<P>>`
-
-Server-side interface. Implement with business logic. The type parameter `C` links to the client contract interface for compile-time safety.
+### DelayedJobExecutor
 
 ```java
 @Singleton
-class DeliverWebhookJobImpl
-        implements DelayedJobExecutor<WebhookPayload, DeliverWebhookJob> {
+class DeliverWebhookJobImpl implements DelayedJobExecutor<WebhookPayload, DeliverWebhookJob> {
+
+    private final WebhookClient webhookClient;
 
     @Inject
-    DeliverWebhookJobImpl(WebhookClient webhookClient) { ... }
+    DeliverWebhookJobImpl(WebhookClient webhookClient) {
+        this.webhookClient = webhookClient;
+    }
 
     @Override
     public Future<Void> execute(WebhookPayload payload, JobContext ctx) {
@@ -232,190 +228,126 @@ class DeliverWebhookJobImpl
 }
 ```
 
-The `execute(P payload, JobContext ctx)` method receives the deserialized payload and a `JobContext` for progress tracking, structured logging, and cooperative cancellation. A failed future triggers retry according to `maxAttempts`.
+`execute` receives the deserialized payload and a `JobContext`. A failed future consumes an attempt
+and triggers retry according to the effective `maxAttempts`.
 
-### `DelayedJobOptions`
+Implement `DelayedJobExecutor` **directly with concrete type arguments**. An intermediate abstract
+base class that forwards the type variables (`abstract class BaseJob<P, C> implements
+DelayedJobExecutor<P, C>`) is not supported — startup type resolution cannot trace `P` and `C`
+through it, and registration fails.
 
-Lombok `@Builder` value object for per-enqueue overrides. All fields are nullable — `null` means "use contract default".
+### DelayedJobOptions
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `runAt` | `Instant` | When the job becomes eligible; `null` = immediate |
-| `queue` | `String` | Queue override |
-| `priority` | `Integer` | Priority override |
-| `maxAttempts` | `Integer` | Max attempts override |
-| `jobId` | `String` | Stable job ID for idempotency; auto-generated if `null` |
-| `premergedMetadata` | `DurableMetadata` | **Internal/advanced.** Pre-captured and pre-encoded `DurableMetadata` document; when non-null, routes through `DelayedJobService.enqueuePremerged` and persists the document as-is without re-capture. Intended for callers that already ran `mergeCaptured` at a separate site (workflow timer create, workflow timer recovery). Application code should not set this field — use `DelayedJob.metadata` for caller-supplied metadata. |
+Per-enqueue overrides; every field is nullable and `null` means "use the effective contract default".
+`runAt` (`Instant`), `queue` (`String`), `priority` (`Integer`), `maxAttempts` (`Integer`) and
+`jobId` (`String`, a stable id for idempotency) are the application-facing fields.
+`premergedMetadata` is framework-internal — leave it `null`.
 
 ```java
 job.enqueue(payload, DelayedJobOptions.builder()
-    .runAt(Instant.now().plusHours(1))
-    .queue("priority")
-    .jobId("webhook-pay_123")
-    .build());
+        .runAt(Instant.now().plusHours(1))
+        .queue("priority")
+        .jobId("webhook-pay_123")
+        .build());
 ```
 
-### `DelayedJobClientFactory`
+### DelayedJobClientFactory
 
-Singleton factory that creates client proxies for `DelayedJobClient` contract interfaces. Inject it and call `create(Class<T>)`:
+Creates the client proxy for a contract interface via `create(Class<T>)`, rejecting a non-interface
+or an interface without `@DelayedJobContract` with `IllegalArgumentException`. See
+[Registering a typed job](#registering-a-typed-job) for the binding.
 
-```java
-@Provides @Singleton
-static DeliverWebhookJob deliverWebhookClient(DelayedJobClientFactory factory) {
-    return factory.create(DeliverWebhookJob.class);
-}
-```
+When `dev.vertique:vertique-codegen-delayed-job` has generated a static
+`{Contract}_DelayedJobProxy`, the factory uses it; otherwise it falls back to an equivalent
+reflective proxy. A generated class that is present but cannot be instantiated raises
+`IllegalStateException` — it never degrades silently.
 
-`create` validates that the interface is annotated with `@DelayedJobContract` and routes all `enqueue` calls to `DelayedJobService` using contract defaults merged with config overrides and per-call `DelayedJobOptions`.
+**Effective configuration priority**, highest first: per-enqueue `DelayedJobOptions`, then
+application config at `delayedJob.contracts.{name}.*`, then `@DelayedJobContract` defaults.
+Precedence applies **per field** — setting only `maxAttempts` in config leaves `queue` and `priority`
+at their annotation values.
 
-**Runtime proxy selection:** `create` first tries `Class.forName` for a generated `{Contract}_DelayedJobProxy` (produced by the `vertique-codegen-delayed-job` annotation processor). When found, that zero-reflection static proxy is returned. On `ClassNotFoundException` it falls back to the JDK dynamic `DelayedJobClientProxy`. A present-but-broken generated class (`ReflectiveOperationException` or `LinkageError`) throws `IllegalStateException` — it never silently degrades to the JDK proxy. See ADR-0070 for the selection rationale and `dev.vertique:vertique-codegen-delayed-job` for processor setup.
+### DelayedJobTargetResolver
 
-**Configuration priority (highest first):**
-1. Per-enqueue `DelayedJobOptions`
-2. Application config under `delayedJob.contracts.{name}.*`
-3. `@DelayedJobContract` annotation defaults
-
-### Config Overrides for Contracts
-
-```json
-{
-  "delayedJob": {
-    "contracts": {
-      "deliver-webhook": {
-        "maxAttempts": 5,
-        "queue": "priority",
-        "priority": 10
-      }
-    }
-  }
-}
-```
-
-### Dagger Wiring
-
-Contribute the executor to the `@DelayedJobs` multibinding and bind the client proxy via `DelayedJobClientFactory`:
-
-```java
-@Module
-public class WebhookModule {
-
-    // Server side — executor registered into the @DelayedJobs multibinding
-    @Provides @IntoSet @DelayedJobs
-    static Object deliverWebhookExecutor(DeliverWebhookJobImpl impl) {
-        return impl;
-    }
-
-    // Client side — typed proxy created by the factory
-    @Provides @Singleton
-    static DeliverWebhookJob deliverWebhookClient(DelayedJobClientFactory factory) {
-        return factory.create(DeliverWebhookJob.class);
-    }
-}
-```
-
-The `DelayedJobContractContributor` (registered by `DelayedJobModule`) picks up all objects in the `@DelayedJobs` set at startup, resolves their type arguments, and registers each executor as a service contract entry with address `jobs/delayed/{name}/execute`. The contributor namespace is `"delayed-job"`.
-
-### `DelayedJobTargetResolver`
-
-Interface for resolving delayed-job targets by target ID. The default implementation (`DefaultDelayedJobTargetResolver`) is built at startup from all registered typed contracts and handler registrations.
+Resolves a target to its runtime address and effective defaults — for integrations that persist a
+stable target id and need the current dispatch address.
 
 ```java
 public interface DelayedJobTargetResolver {
+    ResolvedDelayedJobTarget resolve(Class<? extends DelayedJobClient<?>> contractInterface);
     ResolvedDelayedJobTarget resolve(String targetId);
+    Set<String> supportedTargetIds();
 }
 ```
 
-### `ResolvedDelayedJobTarget`
+Both `resolve` overloads throw `IllegalArgumentException` when the target is not registered.
+`supportedTargetIds()` returns every id this node can dispatch, which is what capability-aware relays
+claim against. `ResolvedDelayedJobTarget` is a record with components, in order: `targetId`,
+`handlerName`, `handlerAddress` (e.g. `jobs/delayed/deliver-webhook/execute`), `queue`, `priority`,
+`maxAttempts`.
 
-Immutable record returned by `DelayedJobTargetResolver.resolve(String)`. Carries the complete, effective execution settings for a delayed-job target.
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `targetId` | `String` | Stable durable target ID (`@DelayedJobContract.name()` or `@DelayedJobHandlerMethod.value()`) |
-| `handlerName` | `String` | Handler name used for dispatch |
-| `handlerAddress` | `String` | Current event bus address (`jobs/delayed/{targetId}/execute`) |
-| `queue` | `String` | Effective queue (config override → annotation → default) |
-| `priority` | `int` | Effective priority (config override → annotation → default) |
-| `maxAttempts` | `int` | Effective max attempts (config override → annotation → default) |
-
-Resolution precedence for defaults follows the same order as `DelayedJobClientFactory`:
-1. Application config at `delayedJob.contracts.{name}.*`
-2. `@DelayedJobContract` annotation
-3. Framework defaults
-
-```java
-ResolvedDelayedJobTarget target = resolver.resolve("deliver-webhook");
-// target.handlerAddress() → "jobs/delayed/deliver-webhook/execute"
-// target.queue()          → effective queue from config or annotation
-// target.maxAttempts()    → effective max attempts
-```
-
-### `@DelayedJobs` Qualifier
-
-Dagger `@Qualifier` for the executor multibinding set. Use `@Provides @IntoSet @DelayedJobs` to contribute executor instances. The `DelayedJobModule` declares the empty `@Multibinds` binding so applications can contribute zero or more executors.
-
-**Generated auto-wiring:**
-
-Applications inheriting `vertique-app-parent` declare `vertique-job-delayed` as a runtime
-dependency and receive the complete processor facade automatically. Custom-parent applications
-use the BOM plus `vertique-codegen-all` recipe in `docs/packaging.md`.
-`vertique-codegen-dagger` owns the generated `@Provides @IntoSet @DelayedJobs Object` bindings for
-classes that implement `DelayedJobExecutor<P, C>` and carry a single `@Inject` constructor. Include
-`GeneratedDelayedJobsModule.class` in the `@Component`; annotate an executor with `@NoAutoWire` to
-keep its manual binding canonical. Because `@NoAutoWire` is a source-retained annotation,
-applications using that opt-out also declare `vertique-codegen-core` with `provided` scope as
-documented in `docs/packaging.md`.
-
-### Throughput Knobs
-
-| Setting | Where | Effect |
-|---------|-------|--------|
-| `delayedJob.queues.{name}.instances` | Config | Number of poller verticles per queue; safe with `FOR UPDATE SKIP LOCKED` |
-| `delayedJob.queues.{name}.maxConcurrentJobs` | Config | Max in-flight jobs per poller instance |
-| `services.contracts.delayed-job.{name}.instances` | Config | Executor service verticle instances (from `ServiceContractEntries.deploymentOptions`) |
-
-Total queue throughput = `poller.instances × poller.maxConcurrentJobs`. Executor instances control parallel dispatch capacity on the service side.
+Typed contracts and annotation-based handlers are both resolvable by id; only typed contracts are
+resolvable by class. A typed contract resolves to its effective config/annotation values, while an
+annotation-based handler resolves to the framework defaults (`"default"` queue, priority `0`,
+`maxAttempts` `3`), because `@DelayedJobHandlerMethod` carries no defaults of its own.
 
 ---
 
 ## Configuration
 
+### Queues — `delayedJob.queues.{name}`
+
+| Field | Default | Description |
+|---|---|---|
+| `sleepDelayMs` | `5000` | Base interval between poll cycles. While a queue yields nothing the poller backs off — doubling up to 4× this value, capped at 60 s — and resets to the base as soon as work is found |
+| `maxConcurrentJobs` | `5` | Maximum in-flight dispatches per poller instance |
+| `backoffStrategy` | `"LINEAR"` | `FIXED`, `LINEAR` or `EXPONENTIAL`, case-insensitive |
+| `backoffBaseDelayMs` | `30000` | Base retry delay |
+| `backoffMaxDelayMs` | `3600000` | Retry delay cap |
+| `instances` | `1` | Poller verticles deployed for this queue |
+
+Every numeric field must be `> 0` and `backoffStrategy` must name a known strategy; a violation fails
+startup with a message naming the offending queue. If no queues are configured, a single `"default"`
+queue is created with the defaults above.
+
 ```json
 {
   "delayedJob": {
     "queues": {
-      "default": {
-        "sleepDelayMs": 5000,
-        "maxConcurrentJobs": 5,
-        "backoffStrategy": "LINEAR",
-        "backoffBaseDelayMs": 30000,
-        "backoffMaxDelayMs": 3600000,
-        "instances": 1
-      },
-      "emails": {
-        "sleepDelayMs": 2000,
-        "maxConcurrentJobs": 10,
-        "backoffStrategy": "EXPONENTIAL",
-        "backoffBaseDelayMs": 10000,
-        "backoffMaxDelayMs": 600000,
-        "instances": 2
-      }
+      "emails": { "sleepDelayMs": 2000, "maxConcurrentJobs": 10, "instances": 2,
+                  "backoffStrategy": "EXPONENTIAL", "backoffBaseDelayMs": 10000,
+                  "backoffMaxDelayMs": 600000 }
+    },
+    "contracts": {
+      "deliver-webhook": { "maxAttempts": 5, "queue": "priority", "priority": 10 }
     }
   }
 }
 ```
 
-If no queues are configured, a single `"default"` queue is created with default settings.
+### Contract overrides — `delayedJob.contracts.{name}`
 
-Execution timeout and progress-flush interval are sourced from `JobCoordinatorConfig` (`job.coordinator.executionTimeoutMs` and `job.coordinator.progressFlushIntervalMs`), ensuring all pollers share the same timeout policy.
+`maxAttempts`, `queue` and `priority` are all optional; an omitted field inherits the annotation
+value rather than a config default. The contract name must be non-blank.
+
+### Shared timing and throughput
+
+`executionTimeoutMs` and `progressFlushIntervalMs` come from `job.coordinator` in
+`dev.vertique:vertique-job-core`, so every queue shares one timeout policy; setting either to `0`
+disables that behaviour. Total claim capacity for a queue is
+`delayedJob.queues.{name}.instances × maxConcurrentJobs`, while executor-side parallelism is set
+separately by `services.contracts.delayed-job.{name}.instances` — raising claim capacity without
+raising executor capacity just moves the queue.
 
 ---
 
 ## Extension Points
 
-### `JobInterceptor`
+### JobInterceptor
 
-Register interceptors via Dagger `@IntoSet` multibinding. Interceptors fire around every dispatch on all queues:
+Interceptors from `dev.vertique:vertique-job-core` fire around every dispatch on every queue, in the
+framework extension order — `onDispatch` before the send, `onComplete` when the reply arrives, before
+persistence. Register them with a plain `@IntoSet` multibinding:
 
 ```java
 @Provides @IntoSet
@@ -424,79 +356,86 @@ static JobInterceptor metricsInterceptor(MetricsService metrics) {
 }
 ```
 
-See `dev.vertique:vertique-job-core` for the full `JobInterceptor` interface.
+For durable outcomes on *every* path — including timeout, dead-node recovery and cancellation — use
+`JobExecutionStateTransitionListener` instead. See `dev.vertique:vertique-job-core` for both SPIs.
 
 ---
 
-## Dagger Wiring
+## Module Dagger Bindings
 
-`DelayedJobModule` includes `JobModule`, `JobPostgresqlModule`, and `JobCoordinatorModule` automatically.
+`DelayedJobModule` is the single module to include. It transitively includes `JobModule`,
+`JobPostgresqlModule`, `JobCoordinatorModule`, the context runtime and the logging context module.
 
 ```java
-@Component(modules = {
-    VertxModule.class,
-    DispatchModule.class,
-    DbPostgresqlModule.class,
-    DbFlywayModule.class,
-    DelayedJobModule.class,
-    AppModule.class
-})
+@Component(modules = {VertxModule.class, DispatchModule.class, DbPostgresqlModule.class,
+                      DbFlywayModule.class, DelayedJobModule.class, AppModule.class})
 public interface AppComponent { ... }
 ```
 
-**What `DelayedJobModule` provides:**
+| Binding | Kind | Description |
+|---|---|---|
+| `DelayedJobService` | `@Singleton` | Untyped enqueue API |
+| `DelayedJobClientFactory` | `@Singleton` | Typed client proxies |
+| `DelayedJobTargetResolver` | `@Singleton` | Target id → address and effective defaults |
+| `DelayedJobHandlerRegistrar` | `@Singleton` | Handler scan; **already scanned** when injected |
+| `JobCompletionHandler` | `@Singleton` | Shared completion handling, wired to `JobRepository` |
+| `ServiceContractContributor` | `@IntoSet` | Registers typed executors as service contracts |
+| `Set<VerticleDeployment>` | `@ElementsIntoSet` | One poller deployment per queue, `SERVICES` phase, priority 100 |
+| `Set<Object>` | `@Multibinds @DelayedJobs` | Empty executor set, so contributing zero executors is valid |
 
-| Binding | Type | Description |
-|---------|------|-------------|
-| `JobCompletionHandler` | Singleton | Shared completion handler wired with `JobRepository` |
-| `DelayedJobService` | Singleton | Enqueue API |
-| `DelayedJobHandlerRegistrar` | Singleton | Startup handler scan |
-| `Set<VerticleDeployment>` | `@ElementsIntoSet` | One `DelayedJobPoller` per configured queue, deployed in `SERVICES` phase at priority 100 |
+Handler registration runs eagerly inside the `DelayedJobHandlerRegistrar` provider — application code
+does **not** call `scan()`. A registration violation therefore fails Dagger graph construction at
+startup, before any poller is deployed.
 
-**Startup sequence:**
+### Registering a typed job
 
-Call `delayedJobHandlerRegistrar.scan()` to validate and register all handlers before the pollers start. The `VerticleDeploymentManager` handles poller deployment automatically.
+```java
+@Module
+public class WebhookModule {
 
----
+    // Server side — the executor joins the @DelayedJobs multibinding
+    @Provides @IntoSet @DelayedJobs
+    static Object deliverWebhookExecutor(DeliverWebhookJobImpl impl) {
+        return impl;
+    }
 
-## Related ADRs
+    // Client side — the typed proxy
+    @Provides @Singleton
+    static DeliverWebhookJob deliverWebhookClient(DelayedJobClientFactory factory) {
+        return factory.create(DeliverWebhookJob.class);
+    }
+}
+```
 
-- ADR-0070: Delayed-Job Static Proxy Codegen — records the factory-selection mechanism: generated proxy preferred via `Class.forName`, reflective proxy retained as fallback, loud-fail for broken generated class, origin-package pinning, and full-member contract-shape validation.
-- ADR-0071: `DelayedJobService.enqueuePremerged` Visibility Widening — records why `enqueuePremerged` was widened from package-private to `public` so generated proxies (living in the contract's package) can call it.
-- ADR-0112: Framework exception hierarchy and REST mapping — establishes `DelayedJobConfigurationException` → core `ConfigurationException` and `DelayedJobTechnicalException` → core `TechnicalException` as the delayed-job semantic roots; `DelayedJobRegistrationException` extends `DelayedJobConfigurationException`; `DelayedJobPersistenceException` extends `DelayedJobTechnicalException`; enqueue methods wrap escaping `DataAccessException` via `DelayedJobExceptionMapper` so the public API never leaks persistence-layer types.
-- ADR-0165: Deferred-Execution Provenance and Bounded SYSTEM-Minting — establishes why `DelayedJobPoller` binds a `DeferredExecutionOrigin` into the dispatch context, letting the receive-side identity-snapshot reconstruction initializer distinguish proven deferred execution from an ordinary context-empty dispatch.
+The executor binding can also be generated. Applications inheriting `vertique-app-parent` get the
+annotation-processor facade automatically; custom-parent applications follow the BOM plus
+`vertique-codegen-all` recipe in `docs/packaging.md`. `dev.vertique:vertique-codegen-dagger` then
+emits the `@Provides @IntoSet @DelayedJobs Object` binding for every class implementing
+`DelayedJobExecutor<P, C>` with a single `@Inject` constructor — include
+`GeneratedDelayedJobsModule.class` in the `@Component`, and annotate an executor with `@NoAutoWire`
+to keep a hand-written binding canonical. Because `@NoAutoWire` is source-retained, applications
+using that opt-out also declare `vertique-codegen-core` at `provided` scope.
 
 ---
 
 ## Dependencies
 
-- **job-core** — `JobRepository` SPI, `JobContext`, `JobDispatchContext`, `JobInterceptor`, `JobCompletionHandler`, `JobCoordinatorConfig`, state machine
-- **job-postgresql** — `PgJobRepository` (transactional save overload), `JobPostgresqlModule`
-- **services** — `ServiceContractRegistry` (handler discovery), `ServiceMethodInvoker` (handler dispatch with MDC/context injection)
-- **deploy** — `VerticleDeployment`, `LifecyclePhase`
-- **core** — `BackoffStrategy`, `DispatchEnvelope`, `Result`, event bus codec
+- **job-core** — `JobRepository`, `JobContext`, `JobDispatchContext`, `JobInterceptor`,
+  `JobCompletionHandler`, `JobCoordinatorConfig`, `JobExecution` and the state machine.
+- **job-postgresql** — the `JobRepository` binding and the transactional
+  `save(execution, SqlClient)` overload behind transactional enqueue.
+- **services** — handler discovery through `ServiceContractRegistry`, and dispatch through the
+  services invoker, which is what injects `JobContext`/`JobDispatchContext` into handler methods.
+- **deploy** — `VerticleDeployment` and `LifecyclePhase` for the per-queue poller deployments.
+- **core** — event bus dispatch (`DispatchEnvelope`, `EventBusClient`, `Result`), `BackoffStrategy`,
+  the exception roots, `ConfigParser` and the keyed-config support.
+- **context** — durable context propagation across the persistence hop.
+- **db-core** — the `DataAccessException` family the enqueue exception mapper translates.
+- **logging** — the MDC context facade used on the dispatch and reply paths.
+- **config-core** — the `ConfigParser` implementation the module's config boundary resolves.
 
-> **MDC note.** `DelayedJobPoller` enriches MDC before dispatching each job execution.
-> Enrichment that runs on the poller verticle thread (non-duplicated context) uses
-> `org.slf4j.MDC` directly because the framework facade (`dev.vertique.logging.MDC`) requires
-> a duplicated Vert.x context and would throw otherwise. Enrichment inside event-bus consumer
-> handlers (which run on duplicated contexts) uses the framework facade normally.
-
----
-
-## Version History
-
-| Date | Change |
-|------|--------|
-| 2026-04-04 | Phase 1: `DelayedJob` builder, `DelayedJobConfig` (per-queue config with `instances` field), `DelayedJobService` (standalone + transactional enqueue, handler name validation, maxAttempts bounds `[1,1000]`), `@DelayedJobHandlerMethod`, `DelayedJobHandlerRegistrar`, `DelayedJobPoller` (AbstractVerticle: poll timer, `AtomicInteger` concurrency guard, fire-and-report dispatch, MDC propagation, `JobInterceptor` chain, consumer timeout, cancel listener, progress flush), `BackoffStrategyType` (FIXED/LINEAR/EXPONENTIAL), `DelayedJobModule`, `DelayedJobRegistrationException`; no SCHEDULED state — future jobs use `ENQUEUED` with future `scheduled_at` |
-| 2026-04-05 | Typed contract pattern: `@DelayedJobContract`, `DelayedJobClient<P>` (6 enqueue overloads), `DelayedJobExecutor<P, C>` (server-side execute interface), `DelayedJobOptions` (per-enqueue nullable overrides), `DelayedJobClientFactory` (JDK dynamic proxy via `create(Class<T>)`), `DelayedJobClientProxy` (InvocationHandler), `DelayedJobContractContributor` (implements `ServiceContractContributor` SPI), `@DelayedJobs` Dagger qualifier; event bus address pattern: `job/{name}/execute`; config overrides at `delayedJob.contracts.{name}.*`; `@DelayedJobHandler` renamed to `@DelayedJobHandlerMethod` |
-| 2026-04-08 | `DelayedJobTargetResolver` interface + `DefaultDelayedJobTargetResolver` for O(1) stable-target-id lookup; `ResolvedDelayedJobTarget` record (targetId, handlerName, handlerAddress, queue, priority, maxAttempts); canonical address namespace changed to `jobs/delayed/{name}/execute`; contributor type discriminator changed from `"job"` to `"delayed-job"` |
-| 2026-04-10 | `DelayedJobPoller` now uses `EventBusClient.send()` for fire-and-forget dispatch instead of calling `vertx.eventBus().send()` directly — consistent `dispatch.envelope` codec wiring (codec was named `dispatch.body` at the time of this entry; renamed when the context-propagation substrate landed) |
-
----
-
-## Planned Additions
-
-- **Batch enqueue** — `enqueue(List<DelayedJob>)` and `enqueue(List<DelayedJob>, SqlClient)` for bulk inserts
-- **Dead-letter management API** — re-enqueue dead-letter jobs with reset attempt counter; configurable retention cleanup
-- **Per-handler retry config** — override `backoffStrategy`/`maxAttempts` per handler name via config
+> **MDC note.** The poller enriches MDC before dispatching each job execution. Enrichment that runs
+> on the poller verticle thread (a non-duplicated Vert.x context) writes through SLF4J's `MDC`
+> directly, because the framework facade (`dev.vertique.logging.MDCContexts`) requires a duplicated
+> Vert.x context and would throw otherwise. Enrichment inside event-bus consumer handlers, which do
+> run on duplicated contexts, uses the framework facade normally.

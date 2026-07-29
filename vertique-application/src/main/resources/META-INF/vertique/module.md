@@ -113,14 +113,13 @@ The `VertiqueComponentFactory` can be registered in two ways:
   `dev.vertique.starter.core.CoreApplicationModule` satisfies this because `CoreApplicationModule`
   includes `VertxModule`. Custom-parent applications use the BOM plus `vertique-codegen-all` recipe
   in `docs/packaging.md`. The `vertique-codegen-application` processor owns factory-class and
-  `META-INF/services` generation. See ADR-0132.
+  `META-INF/services` generation.
 - **Manual (explicit)** — write a `VertiqueComponentFactory` implementation and register it in
   `META-INF/services/dev.vertique.core.VertiqueComponentFactory` by hand. Both paths are
   supported simultaneously; only one may be registered per application (exactly-one rule).
 
 See `dev.vertique:vertique-launcher` for the full standalone entry sequence, factory discovery
-rules, and the opt-out system property. See ADR-0131
-for the design rationale. For container and local-run packaging, see `docs/packaging.md`.
+rules, and the opt-out system property. For container and local-run packaging, see `docs/packaging.md`.
 
 ---
 
@@ -362,14 +361,3 @@ For the validator to run, the application `@Component` must include `CoreLifecyc
 The module has no compile dependency on `vertique-launcher`, `vertique-services`,
 `vertique-workflow`, or any host framework. Lifecycle step _contributions_ come from other modules
 at Dagger wiring time; the runner only sees the merged multibinding sets.
-
----
-
-## Related ADRs
-
-- ADR-0130: Lifecycle Ownership — Passive Component + Separate Host-Neutral Runner — establishes the passive-component + host-neutral runner split; the host-owned-Vertx teardown contract; and the `@IntoSet` step-contribution model that keeps `vertique-application` decoupled from its contributors.
-- ADR-0129: Single `LifecyclePhase` Vocabulary Supersedes `DeploymentPhase` — establishes the eight-value `LifecyclePhase` enum and the `LifecycleOrdered` ordering contract that the runner consumes.
-- ADR-0126: `VertiqueRuntime` — Container-Neutral Graph-Input Seam — establishes `VertiqueRuntime` and `VertiqueComponentFactory<C>` as the two types this module depends on for its entry point.
-- ADR-0131: Standalone Entry via `verticleSupplier()` and ServiceLoader Factory Discovery — records how the standalone launcher's `VertiqueBootstrapVerticle` consumes this module's runner, and why exactly-one ServiceLoader discovery is used for `VertiqueComponentFactory`.
-- ADR-0132: `@VertiqueApp` Annotation Processor — Generated Factory and SPI Registration — records the decision to annotate the `@Component` interface directly and reference the Dagger-generated builder by name, producing the `VertiqueComponentFactory` and SPI file without reflection.
-- ADR-0133: Jib Container Packaging over Maven Shade Fat-JAR — records why `@VertiqueApp` applications package as OCI container images via Jib rather than fat-JARs, and why Jib is not bound to the `package` lifecycle phase. See also `docs/packaging.md` for the practical guide.

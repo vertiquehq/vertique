@@ -55,11 +55,11 @@ Run this command from an empty directory of your choice — it creates a new `re
 inside it.
 
 `VERTIQUE_VERSION` is declared once below and reused for both the archetype version and the
-generated project's `vertiqueVersion` property. `0.0.0-SNAPSHOT` is the framework source revision
+generated project's `vertiqueVersion` property. `0.1.0-SNAPSHOT` is the framework source revision
 this documentation ships with, not a released version.
 
 ```bash
-VERTIQUE_VERSION=0.0.0-SNAPSHOT
+VERTIQUE_VERSION=0.1.0-SNAPSHOT
 
 mvn -B -ntp archetype:generate \
   -DarchetypeGroupId=dev.vertique \

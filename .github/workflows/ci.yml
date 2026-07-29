@@ -1,5 +1,18 @@
 # SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
 # SPDX-License-Identifier: EUPL-1.2
+#
+# RELEASE-001 required CI (FR-REL-010, FR-REL-014, FR-REL-023, NFR-REL-001,
+# NFR-REL-006).
+#
+# This is the required check for pull requests and pushes to main. It holds
+# read-only permissions and references no secret, so no package, release, tag
+# or repository-content write credential is ever available to code arriving
+# through a pull request.
+#
+# Every step binds an event or invokes a versioned, locally runnable
+# repository-owned entry point; substantive logic never lives in this YAML.
+# SNAPSHOT publication is a separate, non-required workflow so its failure
+# cannot erase this workflow's already-established result.
 
 name: CI
 
@@ -30,6 +43,13 @@ jobs:
           distribution: temurin
           java-version: "21"
           cache: maven
+
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: "22"
+
+      - name: Verify release contracts
+        run: node --test release/tests/publication-contract.test.mjs
 
       - name: Build and test
         run: ./mvnw -ntp -T 1 clean verify

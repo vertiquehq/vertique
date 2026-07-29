@@ -45,6 +45,9 @@ explained in full further down this page, in its own module reference, or on its
 - **Durable work.** Workflows, jobs, and inbox/outbox messaging plug into the same component and
   lifecycle phases as everything else, composed as direct modules rather than through a starter —
   see [Workflows](workflows.md).
+- **The management plane.** Health and readiness live on a management surface separate from the
+  application edge (port `9090` in generated applications): liveness answers whether the process
+  can run, readiness whether it should receive traffic — see [Deployment](deployment.md).
 
 ## What the launcher owns
 

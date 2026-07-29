@@ -133,7 +133,9 @@ in the Dagger graph, the endpoint wires the `DeferredSpanContext` to the live im
 
 Exemplar trace IDs are visible in the OpenMetrics scrape output on the management port. See the
 exposure guidance in `vertique-micrometer-registry-prometheus`'s documentation (NFR-TEL-005):
-never expose the management port to public networks.
+never expose the management port to public networks. Exemplar trace and span IDs are per-sample
+annotations attached at scrape time — they are not meter tags, so `vertique-micrometer-core`'s
+cardinality guard (which bounds distinct tag *values* per key) does not apply to them.
 
 ---
 
@@ -145,12 +147,3 @@ never expose the management port to public networks.
 - `com.google.dagger:dagger`, `jakarta.inject:jakarta.inject-api`
 
 No dependency on any `dev.vertique` module.
-
----
-
-## Related ADRs
-
-- ADR-0098: Micrometer Facade and Pluggable Registry Backends — establishes why telemetry backends are pluggable and why neither core owns the other's integration point; the bridge module is a direct consequence of that principle.
-- ADR-0099: Metric Naming, Tag, and Cardinality Policy — exemplars are an output of the Prometheus backend governed by this policy; exemplar trace IDs are not subject to the cardinality guard (they are per-sample, not per-series).
-- ADR-0101: Trace-Log Correlation via TraceReferenceResolver — establishes the canonical OTel span-reading pattern; this module applies the same `Span.current()` idiom at the exemplar-sampling boundary rather than at correlation-ingress time.
-- ADR-0102: OpenTelemetry→Prometheus Exemplar Bridge as a Dedicated Module — records why the bridge is a separate module, why neither core hosts it, and supersedes FR-TEL-022's original placement.

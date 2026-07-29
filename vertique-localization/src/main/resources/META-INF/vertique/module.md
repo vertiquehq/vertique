@@ -18,7 +18,7 @@ The module deliberately has no REST dependency. HTTP integration (Accept-Languag
 
 ## When To Use It
 
-Install `LocalizationModule` in any application that needs to serve locale-aware messages, needs deterministic locale negotiation from `Accept-Language` or language-tag lists, or needs to carry locale / zone preferences through service calls and durable async boundaries. Durable propagation requires `ContextRuntimeModule` from `vertique-context` in the same AppComponent (see ADR-0066).
+Install `LocalizationModule` in any application that needs to serve locale-aware messages, needs deterministic locale negotiation from `Accept-Language` or language-tag lists, or needs to carry locale / zone preferences through service calls and durable async boundaries. Durable propagation requires `ContextRuntimeModule` from `vertique-context` in the same AppComponent.
 
 Pair with `vertique-rest-localization` (v1 inbound shipped — binds `LocalizationContext` at REST inbound via the `LocaleSource` chain; see `dev.vertique:vertique-rest-localization`) to add REST-side locale extraction and localized error responses.
 
@@ -216,7 +216,7 @@ Sample configuration:
 
 ### LocalizationContext
 
-Immutable record carrying locale, zone, and optional formatting preferences for a unit of work. Annotated `@DispatchContextValue` (and a `ContextValue`) for future in-process propagation.
+Immutable record carrying locale, zone, and optional formatting preferences for a unit of work. Annotated `@DispatchContextValue` (and a `ContextValue`), so it propagates across in-process service-dispatch calls and durable boundaries through the codecs below.
 
 ```java
 @DispatchContextValue
@@ -236,7 +236,7 @@ Convenience accessor `languageTag()` returns `locale.toLanguageTag()` (e.g. `"sv
 
 Framework-produced `localeSource` values: `rest-accept-language`, `default-locale`, `persisted-metadata`, `unspecified`. Framework-produced `zoneSource` values: `default-zone`, `persisted-metadata`, `unspecified`. Applications may add their own values (e.g. `user-profile`).
 
-`LocalizationContext` propagates automatically across in-process service-dispatch and durable async boundaries whenever `LocalizationModule` and `ContextRuntimeModule` are both installed. See ADR-0066 for the codec design and decode contract.
+`LocalizationContext` propagates automatically across in-process service-dispatch and durable async boundaries whenever `LocalizationModule` and `ContextRuntimeModule` are both installed. The codecs and the decoder contract are described below.
 
 ### LocalizationContextHolder
 
@@ -385,10 +385,3 @@ public class OrderService {
 Maven Enforcer `bannedDependencies` rule excludes all `dev.vertique:vertique-rest-*` artifacts to keep the module REST-free (AC-LOC-005).
 
 `ContextRuntimeModule` from `vertique-context` is not a compile-time dependency of this module — it declares the multibinding sets that `LocalizationModule` contributes into, but `LocalizationModule` need not depend on `vertique-context` directly. Applications include both modules in their AppComponent.
-
----
-
-## Related ADRs
-
-- ADR-0066: Localization context propagation — establishes the identity service-dispatch codec and the `localization` durable namespace shape, including the three-case decode contract and strict BCP 47 locale validation.
-- ADR-0065: Structured durable context metadata — establishes `DurableMetadata` and the namespace model that the localization durable codec builds on.

@@ -21,7 +21,9 @@ application model, compile-time guardrails, and executable verification paths. T
 [vertique-skills](https://github.com/vertiquehq/vertique-skills) repository packages that design
 for agent harnesses — Claude Code, Codex CLI, GitHub Copilot, and Cursor — answering module
 questions from the canonical reference inside the exact artifact versions your application
-resolves, alongside starter and archetype selection guidance. The framework grows
+resolves, alongside starter and archetype selection guidance. That contract is provenance, not a
+claim that an agent is always right — generated wiring, typed configuration, compiler failures,
+and executable tests remain the authority. The framework grows
 out of years of building production microservices, carried forward into this same explicit,
 non-blocking design.
 

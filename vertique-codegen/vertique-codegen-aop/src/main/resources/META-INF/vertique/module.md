@@ -227,11 +227,3 @@ Example: `@Outer` (`ordering=1000`) + `@Timed` (`ordering=2000`) → chain is `[
 | `javapoet` | compile | Source generation (via `DaggerModuleWriter` and inline `TypeSpec`/`MethodSpec` construction) |
 
 Test-only: `vertique-codegen-test`, `dagger` (for Dagger wiring tests).
-
----
-
-## Related ADRs
-
-- ADR-0139: Method-AOP Model & SPI — establishes the compile-time subclass-proxy model, annotation-literal design, binding-origin constraint, scope-replication rule, and proxyability diagnostics.
-- ADR-0141: Method/Parameter Metadata SPI — establishes `MethodMetadata`/`ParameterMetadata` in `dev.vertique.core.codegen` and the `MetadataEmitter` in `vertique-codegen-core` that this processor delegates to for metadata class generation; ships parameter-level `findAnnotation` as a v1 stub.
-- ADR-0143: REST Metadata-Record Unification onto `core.codegen` — resolves the ADR-0141 parameter-level `findAnnotation` stub by backing it with generated literals; this processor's `materializeParameterAnnotations` is the producer of those parameter-level annotation literals that `MetadataEmitter` consumes.

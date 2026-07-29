@@ -8,314 +8,225 @@ SPDX-License-Identifier: EUPL-1.2
 > **Status:** Implemented
 > **Package:** `dev.vertique.context`
 > **Artifact:** `vertique-context`
-> **Depends on:** vertique-core
+> **Depends on:** `dev.vertique:vertique-core`
 
-Substrate runtime for context propagation. Owns the `ContextHolder` implementation, the typed per-context value map (keyed by FQCN, backed by a single Vert.x `ContextLocal` slot), and the orchestration layer that captures, encodes, carries, and restores typed values across service-dispatch and durable boundaries (Kafka, outbox, delayed jobs, workflow timers).
+Runtime substrate for context propagation. It implements the `ContextHolder` contract declared in `dev.vertique.core.context`, stores typed per-request values in a single Vert.x context-local slot keyed by fully qualified class name, and carries those values across two boundaries: in-process service dispatch (event-bus envelopes) and durable boundaries (Kafka headers, the outbox `metadata` column, delayed jobs, workflow timers).
 
-This module sits between the API/SPI contracts in `vertique-core` and the feature modules that contribute context values (MDC in `vertique-logging`, `SecurityContext` propagation in `vertique-rest-security`). The substrate has no MDC-specific code and no security-specific code — it discovers feature adapters through `ServiceLoader` and feature encoders/decoders through Dagger multibindings.
+The substrate contains no feature-specific code. It knows nothing about MDC, security identity, correlation, or localization — each of those is contributed by its own module through the extension points below. Applications interact with it in three ways: reading and binding values through `ContextValues`, constructing outbound envelopes through `DispatchEnvelopeBuilder`, and contributing encoders, decoders, adapters, or initializers for their own context types.
 
 ---
 
 ## When To Use It
 
-Every application that needs context propagation across dispatch boundaries must include `ContextRuntimeModule` in its AppComponent. REST applications get it transitively via `RestCoreModule`. Non-REST applications (services, Kafka consumers, workflow, job runners) include it directly alongside `LoggingContextModule` from `vertique-logging`.
+`ContextRuntimeModule` must be in the application component for any code that binds or reads holder values. In practice it is almost always already there: `RestCoreModule` (`dev.vertique:vertique-rest-core`), `DispatchModule` (`dev.vertique:vertique-services`), `KafkaModule` (`dev.vertique:vertique-kafka-core`), the cron and delayed-job modules (`dev.vertique:vertique-job-cron`, `dev.vertique:vertique-job-delayed`), `WorkflowEngineModule` (`dev.vertique:vertique-workflow-engine`), and the transactional-messaging modules all include it transitively.
+
+Include it explicitly only in a component that uses `ContextValues` or `DispatchEnvelopeBuilder` without installing any of those modules — for example a bespoke transport adapter or a focused test component:
 
 ```java
-// Non-REST AppComponent
 @Singleton
 @Component(modules = {
     VertxModule.class,
     ContextRuntimeModule.class,    // substrate
-    LoggingContextModule.class,    // MDC service-dispatch propagation
-    DispatchModule.class,
+    LoggingContextModule.class,    // optional: MDC propagation across dispatch
     // ... application modules
 })
-interface AppComponent { ... }
+interface AppComponent { }
 ```
+
+Adding a *feature* to the propagation pipeline is a separate decision from installing the substrate. MDC propagation needs `LoggingContextModule` (`dev.vertique:vertique-logging`); `SecurityContext` propagation is registered by `AuthModule` (`dev.vertique:vertique-rest-security`); correlation and localization are registered by their own modules.
 
 ---
 
 ## Core Concepts
 
-### Single slot, FQCN-keyed map
+### One slot, FQCN-keyed map
 
-All per-request typed values share one `ContextLocal<Map<String,Object>>` slot registered by `ContextLocalServiceProvider` at Vert.x bootstrap. Values are keyed by their type's fully qualified class name:
+All typed per-context values share a single `ContextLocal<Map<String, Object>>` slot that the module registers with Vert.x at bootstrap through the `io.vertx.core.spi.VertxServiceProvider` service file. Each value is keyed by its type's fully qualified class name:
 
 ```
 Vert.x duplicated context
-  └─ ContextLocal<Map<String,Object>>   (single substrate slot)
-       ├─ "dev.vertique.security.SecurityContext"    → SecurityContext
-       ├─ "dev.vertique.logging.MDCContext"               → MDCContext
+  └─ ContextLocal<Map<String,Object>>          (one substrate slot)
+       ├─ "dev.vertique.security.SecurityContext"                → SecurityContext
        ├─ "dev.vertique.core.context.DurablePropagationMetadata" → DurablePropagationMetadata
-       └─ <any future typed value>                        → …
+       └─ <any registered context value>                         → …
 ```
+
+Registration is idempotent per JVM, so a test suite that boots several `Vertx` instances still ends up with exactly one slot.
 
 ### Write-guarded, read-lenient
 
-Write operations (`ContextValues.bind`, `MDCContexts.put`, etc.) fail fast with `IllegalStateException` when called outside a duplicated Vert.x context. Read operations (`ContextValues.current`, `MDCContexts.get`) return empty/null when called outside a context. This invariant is enforced in `DefaultContextHolder.requireDuplicatedContextForWrite()`.
+Writes (`ContextValues.bind`, `mutate`, `mutateIfPresent`, `remove`, `bindSnapshot`) require an active **duplicated** Vert.x context and throw `IllegalStateException` otherwise — once for "no Vert.x context at all" and once for "a Vert.x context that is not a duplicate". Reads (`ContextValues.current`, `ContextValues.snapshot`) never throw: outside a context they return an empty `Optional` and the empty snapshot.
 
-### ContextValue marker and write-path enforcement
+Every framework transport boundary — event-bus consumers, Kafka record dispatch, the outbox relay, cron and delayed jobs — enters a duplicated context before writing. Application code running on a plain deployment context (a verticle `start` method, a timer callback) must not bind directly.
 
-`ContextValue` (`dev.vertique.core.context.ContextValue`) is a behavior-free marker interface that identifies types eligible to be stored in the holder. The nine framework context types implement it: `CorrelationContext`, `SecurityContext`, `DurablePropagationMetadata`, `LocalizationContext`, `MDCContext`, `JobContext`, `JobDispatchContext`, `KafkaRecordContext`, and `TransactionalMessageContext`. Every `@DispatchContextValue`-annotated type is also a `ContextValue`; the converse is not required.
+On the erased install paths a present key mapped to `null` is rejected as malformed rather than treated as a removal, and a `null` key is rejected before any mutation. Validation is a pre-pass over the whole batch, so one bad entry rejects the entire install and nothing is written or cleared. Deletion has its own shapes: `ContextValues.remove(Class<?>)` for a single key, and the `clearTypes` argument of the authoritative durable bind.
 
-**Compile-time enforcement (typed entry points):** `ContextHolder.bind`, `ContextValues.bind`/`mutate`/`mutateIfPresent`, and `ContextScopeBinder.bindAll` are all bounded `<T extends ContextValue>`. Passing a non-`ContextValue` type to any of these entry points is a compile error.
+### ContextValue and @DispatchContextValue
 
-**Runtime enforcement (erased entry points):** Two private-helper-based guard points cover paths where compile-time types are lost (wire-decoded values, snapshot restores, durable-boundary reinstalls):
+`dev.vertique.core.context.ContextValue` is a behavior-free marker interface. A type must implement it to be stored in the holder. The typed entry points (`ContextHolder.bind`, `ContextValues.bind` / `mutate` / `mutateIfPresent`) are bounded `<T extends ContextValue>`, so passing an unmarked type is a compile error. Erased entry points — snapshot restore and durable decode, where the compile-time type is gone — run the same check at runtime and throw `IllegalArgumentException` naming the offending key and class.
 
-- `installScopedRaw` — shared by `installScoped` (inbound dispatch reinstatement) and `bindSnapshot` (snapshot restore). Performs a null-safe `requireContextValue(key, value)` pre-pass over the entire batch before any mutation. A single rejected entry rejects the whole batch; nothing is installed or cleared on rejection.
-- `installScopedAuthoritative` — used by `ContextScopeBinder.bindAllAuthoritative` (durable boundary restoration). Runs the same `requireContextValue` pre-pass over the full `bindings` map and rejects a null entry in `removeKeys`, all before installing or clearing any entry.
+The read path is deliberately unbounded: `ContextHolder.current(Class<T>)` and `ContextValues.current(Class<T>)` accept any type, so test helpers and introspection utilities can probe by type without declaring a `ContextValue` dependency.
 
-`requireContextValue` rejects both a **null key** and a value that is null or not a `ContextValue`, throwing `IllegalArgumentException` that names the offending key/type. A present key mapped to a null value — and a null key itself — are malformed erased input: the pre-pass rejects them before any mutation, and never treats null as a delete. Explicit deletion uses the delete-shaped APIs: `removeKey`, `installScopedAuthoritative(..., removeKeys)`, `ContextScopeBinder.bindAllAuthoritative(..., clearTypes)`.
-
-**Typed vs. erased composite binders:** `ContextScopeBinder.bindAll` takes `Map<Class<? extends ContextValue>, ? extends ContextValue>` — compile-time proof that every value is a `ContextValue`. Because a heterogeneous map cannot carry the full key/value pairing guarantee, `bindAll` also performs a runtime `type.isInstance(value)` pre-pass before installing any binding. `ContextScopeBinder.bindAllAuthoritative` stays `Map<Class<?>, Object>` (its values arrive from erased durable decoders) and is guarded solely by the `installScopedAuthoritative` runtime pre-pass. Both composite binders reject a null `Class` key up front with an `IllegalArgumentException` rather than surfacing a bare `NullPointerException`.
-
-**Read path stays unbounded:** `ContextHolder.current(Class<T>)` deliberately has no `ContextValue` bound so any code (test helpers, introspection utilities, type inspectors) can probe by type without declaring a `ContextValue` dependency.
-
-**Exemptions (intentionally un-guarded):**
-- `ContextLocalServiceProvider.deepCopyValue` (`duplicate(true)` duplicator, FR-CTX-206) — re-copies values that already passed a write-path check when originally bound; guarding a copy of a validated value would be redundant.
-- `DefaultContextHolder.mutateIfPresentOnContext` — a scope-close escape hatch for already-validated values (e.g., `MDCContexts.MdcKeyScope` restore); it operates on an install-time context, not a bind path.
+`dev.vertique.core.eventbus.DispatchContextValue` is a narrower, additional marker. Every `@DispatchContextValue`-annotated type is also a `ContextValue`; the annotation additionally declares that a service handler method may take the type as a parameter and have the dispatch framework resolve it from the envelope's dispatch-context map. Annotate a type with it only when handler-parameter injection is wanted — the annotation is not required for propagation.
 
 ### Scoped LIFO restoration
 
-`ContextHolder.Scope` is `AutoCloseable`. Binding a value captures the prior value at that key; closing the scope restores it. Multiple scopes can be composed (e.g., `CompositeContextScope`) and always unwind in LIFO order.
+`ContextHolder.Scope` extends `AutoCloseable`. Binding captures whatever was previously at that key and restores it on `close()`; a key that was absent before is removed again. Composite scopes returned by the inbound helpers close their constituents in LIFO order, and `close()` is idempotent. Always close in a `try`-with-resources or an equivalent `finally`.
 
-### Contribution model
+### Two boundaries, four contribution levels
 
-Feature modules contribute context propagation at four levels:
+Service dispatch carries values in the `dispatchContext` map inside a `DispatchEnvelope`; durable boundaries carry them in a namespace-partitioned `DurableMetadata` document. The two are independent — a type that must survive a durable hop needs a durable pair even if it already has a service-dispatch pair.
 
-| Level | Mechanism | When to use |
-|-------|-----------|-------------|
-| 1 | `ContextValueAdapter` via `ServiceLoader` | Deep-copy semantics on `duplicate(true)` — required for mutable values like `MDCContext` |
-| 2 | `@Provides @IntoSet ServiceDispatchContextEncoder/Decoder` | Propagate a value through in-process service-dispatch envelopes |
-| 3 | `@Provides @IntoSet DurableContextMetadataEncoder/Decoder` | Propagate a value through durable boundaries (Kafka headers, outbox `headers` column) |
-| 4 | `@Provides @IntoSet InboundContextInitializer` | Run first-ingress initialization logic on inbound dispatch or durable receive |
+| Level | Mechanism | Use when |
+|-------|-----------|----------|
+| 1 | `ContextValueAdapter` via `ServiceLoader` | The value is mutable and needs deep-copy on `duplicate(true)`, or snapshot/restore semantics |
+| 2 | `@Provides @IntoSet ServiceDispatchContextEncoder` / `Decoder` | The value must cross in-process service-dispatch hops (event bus) |
+| 3 | `@Provides @IntoSet DurableContextMetadataEncoder` / `Decoder` | The value must cross a durable boundary (Kafka, outbox, delayed jobs, workflow timers) |
+| 4 | `@Provides @IntoSet InboundContextInitializer` | A default must be seeded at first ingress when nothing was decoded |
 
-Helper factories (`ServiceDispatchCodecs`, `DurableJsonContextCodecs`) cover the common encoder/decoder patterns. Bespoke encoder/decoder classes are only justified when the helper cannot express the filter or schema rules.
+`ServiceDispatchCodecs` and `DurableJsonContextCodecs` cover the common encoder/decoder shapes. Write a bespoke implementation only when the helper cannot express the required filtering or schema rules.
 
 ---
 
 ## Key Classes
 
-### Holder
+### ContextValues
 
-#### DefaultContextHolder
-
-`@Singleton` implementation of `ContextHolder` (SPI in `vertique-core`). Manages a `ConcurrentHashMap`-backed per-context value map via the registered `ContextLocal` slot. Provides instance methods `current(Class)` and `bind(Class, value)` as well as package-internal static helpers used by `ContextValues` and `InboundDispatchScope`.
-
-Key invariants:
-- `bind(Class, value)` is bounded `<T extends ContextValue>` — a compile-time guard. Returns a `ContextHolder.Scope` that captures the prior binding and restores it on `close()`.
-- `installScoped(Map)` installs multiple FQCN-keyed values atomically for one logical scope. Delegates to `installScopedRaw`, which runs a `requireContextValue` pre-pass over the entire batch before any mutation — a single rejected entry (non-`ContextValue` or null value) rejects the whole batch.
-- `installScopedAuthoritative(Map, Set)` is used at durable boundaries: it installs present keys AND clears absent keys for the scope's lifetime, preventing ambient-context leak into subsequent `capture`/`mergeCaptured` calls. Runs its own `requireContextValue` pre-pass over the `bindings` map before installing any entry.
-- `mutateIfPresentOnContext(Context, Class, Consumer)` is a public escape hatch for scope-close paths (e.g., `MDCContexts.MdcKeyScope`) that must restore against the install-time context, not the current context. This is an intentionally un-guarded path — values it operates on were already validated when originally bound.
-
-#### ContextLocalServiceProvider
-
-`VertxServiceProvider` SPI entry loaded automatically at Vert.x bootstrap via `META-INF/services/io.vertx.core.spi.VertxServiceProvider`. Registers the single `ContextLocal<Map<String,Object>>` slot with a deep-copy duplicator. The duplicator is invoked only on `ContextInternal.duplicate(true)` (the framework's per-dispatch copy); it delegates per-value deep-copy to registered `ContextValueAdapter` instances discovered via `ServiceLoader<ContextValueAdapter>`. Values with no registered adapter are stored by reference, which is correct for immutable types.
-
-The adapter maps (`ADAPTERS_BY_TYPE`, `ADAPTERS_BY_FQCN`) are populated once at class-init time and shared read-only with `DefaultContextHolder` via package-private accessors.
-
-**`init()` is idempotent and thread-safe across multiple `Vertx` instances in one JVM.** When a
-test suite boots more than one `Vertx` instance in the same JVM (e.g., to exercise different
-lifecycle configurations), `ContextLocalServiceProvider.init()` is called once per `Vertx`
-creation. The implementation delegates to `DefaultContextHolder.initContextLocalIfAbsent`, which
-guards against double-registration with a volatile-read + double-checked synchronized block: the
-`ContextLocal` slot is registered exactly once (by the thread that wins the lock); subsequent
-`init()` calls from the same or a later `Vertx` instance are no-ops. The adapter maps are
-populated at class-init time (before `init()` runs) and are therefore consistent across all `Vertx`
-instances.
-
-#### ContextValues
-
-Public static facade over `DefaultContextHolder`. All write methods route through `DefaultContextHolder.requireDuplicatedContextForWrite()`.
+The static facade applications use to read and write holder values. Every write routes through the duplicated-context guard.
 
 ```java
-// Reads — lenient outside Vert.x; T is unbounded (any type may be probed)
+// Reads — lenient outside Vert.x; T is unbounded
 Optional<T>          ContextValues.current(Class<T> type)
 ContextSnapshot      ContextValues.snapshot()
 
-// Writes — bounded <T extends ContextValue>; fail fast outside a duplicated context
+// Writes — bounded <T extends ContextValue>; require a duplicated Vert.x context
 ContextHolder.Scope  ContextValues.bind(Class<T> type, T value)
 void                 ContextValues.mutate(Class<T> type, Supplier<? extends T> init, Consumer<? super T> mutation)
 void                 ContextValues.mutateIfPresent(Class<T> type, Consumer<? super T> mutation)
 void                 ContextValues.remove(Class<?> type)
-ContextHolder.Scope  ContextValues.bindSnapshot(ContextSnapshot snapshot)  // runtime-guarded via installScopedRaw
+ContextHolder.Scope  ContextValues.bindSnapshot(ContextSnapshot snapshot)
 ```
-
-#### ContextSnapshot
-
-`public final class` (not a record) capturing an immutable point-in-time snapshot of all holder entries. Created only by `ContextValues.snapshot()`; consumed only by `ContextValues.bindSnapshot(ContextSnapshot)`. For each entry whose FQCN has a registered `ContextValueAdapter`, the adapter's `snapshot(value)` method produces a frozen form; on restore, `restoreFromSnapshot(frozen)` materialises a fresh live value. Entries with no adapter are stored by reference. `isEmpty()` is the only public inspector.
-
----
-
-### Scopes
-
-#### ContextScopeBinder
-
-Internal helper that installs multiple values atomically and unwinds them in reverse order on `close()`. Used by `DurableContextPropagator.bindFrom(...)` to install the full decoded durable-metadata set in one scope.
-
-`bindAll(Map<Class<? extends ContextValue>, ? extends ContextValue>)` — compile-time-bounded typed variant. Performs a runtime `type.isInstance(value)` pairing pre-pass before installing any binding (a heterogeneous map cannot carry the full key/value pairing guarantee at compile time).
-
-`bindAllAuthoritative(Map<Class<?>, Object> bindings, Set<Class<?>> clearTypes)` — erased variant for durable-boundary restoration (values arrive from erased decoders). Simultaneously installs present keys and clears absent keys; runtime-guarded via `installScopedAuthoritative`'s `requireContextValue` pre-pass. Used at durable boundaries to prevent ambient-context values from leaking into the scope.
-
-#### CompositeContextScope
-
-`public` scope that composes an array of child scopes and closes them in LIFO order. Most call sites should not use this directly — `InboundExecutionContextScope` and `InboundDispatchScope` return a composite scope that already combines all per-dispatch/per-durable installs plus initializer scopes.
-
-#### InboundDispatchScope
-
-`@Singleton` that installs a sanitized FQCN-keyed dispatch-context map for the lifetime of one service-dispatch call. Used by `ServiceMethodInvoker` in `vertique-services` and by `InboundExecutionContextScope`.
-
----
-
-### Propagation
-
-#### ServiceDispatchContextRegistry
-
-`@Singleton` that validates and holds the set of `ServiceDispatchContextEncoder<?>`/`ServiceDispatchContextDecoder<?>` contributed via Dagger multibindings. Validates at construction that no two encoders or two decoders claim the same FQCN key.
-
-#### ServiceDispatchContextCapturer
-
-`@Singleton` that iterates registered encoders to encode currently-bound holder values into the FQCN-keyed `dispatchContext` map of an outbound `DispatchEnvelope`. Throws on duplicate-key collision (FR-CTX-063). Used by `DispatchEnvelopeBuilder`.
-
-#### DurableContextMetadataRegistry
-
-`@Singleton` that validates and holds the set of `DurableContextMetadataEncoder<?>`/`DurableContextMetadataDecoder<?>` contributed via Dagger multibindings.
-
-#### DurableContextPropagator
-
-`@Singleton` with three lifecycle methods used by all durable-boundary dispatchers and consumers:
-
-| Method | When used |
-|--------|-----------|
-| `capture()` | At the durable publish site — encodes currently-bound values to a `DurableMetadata` document |
-| `mergeCaptured(DurableMetadata base, String boundary)` | At the durable publish site — merges a base `DurableMetadata` document (e.g., from a prior capture) with the current capture |
-| `bindFrom(DurableMetadata metadata, String boundary)` | At the durable receive site — decodes the `DurableMetadata` document and installs all decoded values as an authoritative scope |
-
-#### DurableMetadataHeaderCodec
-
-Utility class (`dev.vertique.core.context`) that projects a `DurableMetadata` document to and from
-a flat string-keyed header map (e.g. Kafka record headers). Each namespace maps to exactly one
-reserved header named `vertique-<namespace>` whose value is the namespace body as a JSON string.
-
-| Method | Description |
-|--------|-------------|
-| `toHeaders(DurableMetadata)` | Projects all namespaces to reserved `vertique-*` headers; returns immutable map |
-| `fromHeaders(Map<String,String>)` | Reconstructs a `DurableMetadata` from reserved headers; malformed namespace headers skipped |
-| `mergeForEgress(appHeaders, context)` | Builds the outbound header set: validates no app header uses `vertique-*`, then overlays projected context headers |
-| `isReservedHeader(String)` | Returns `true` when the name starts with `vertique-` |
-
-`mergeForEgress` is the single collision-enforcement point for the `vertique-*` prefix. It is used
-by both the direct Kafka producer path and the outbox→Kafka relay so that application headers and
-framework context headers can never collide.
-
----
-
-### Lifecycle
-
-#### InboundExecutionContextScope
-
-`@Singleton` lifecycle helper that combines inbound dispatch/durable binding with fan-out to registered `InboundContextInitializer` instances. Inbound call sites inject this class and use one of its two entry points:
 
 ```java
-// Service-dispatch boundary
-ContextHolder.Scope scope = inboundExecutionContextScope.installDispatch(dispatchContext, boundary);
-
-// Durable boundary (Kafka, outbox)
-ContextHolder.Scope scope = inboundExecutionContextScope.installDurable(metadata, boundary);
+try (ContextHolder.Scope scope = ContextValues.bind(TenantContext.class, new TenantContext("acme"))) {
+    // TenantContext is visible to everything on this duplicated context
+}
+// prior binding restored here
 ```
 
-Both methods open the inbound scope first, then invoke each registered initializer in iteration order. If any initializer throws, all previously opened scopes (initializer scopes in LIFO order, then the inbound scope) are closed before the exception propagates — no partial state leaks. The returned composite scope closes in LIFO order on `close()`.
+`mutate` initializes through the supplier when the key is absent *or* holds a value of a different type; the supplier must not return `null`.
 
----
+Injecting `ContextHolder` is the alternative to the static facade and exposes the same read and single-bind operations.
 
-### Helpers
+### ContextSnapshot
 
-#### ServiceDispatchCodecs
+An opaque, immutable point-in-time copy of every holder entry. Produced by `ContextValues.snapshot()` (or `ContextSnapshot.empty()`), consumed by `ContextValues.bindSnapshot(...)`. `isEmpty()` is the only inspector — there is deliberately no accessor for the underlying map.
 
-Static factory for `ServiceDispatchContextEncoder<T>` and `ServiceDispatchContextDecoder<T>` implementations covering two patterns:
+For each entry whose type has a registered `ContextValueAdapter`, the adapter's `snapshot(...)` produces a frozen form and `restoreFromSnapshot(...)` materializes a fresh live value on rebind, so the snapshot stays independent of later mutation on either side. Entries without an adapter are carried by reference, which is correct for immutable values.
 
-| Pattern | Encoder | Decoder |
-|---------|---------|---------|
-| Snapshot | `snapshotEncoder(Class<T>, Function<T, ?>)` | `snapshotDecoder(Class<T>, Class<S>, Function<S, T>)` |
-| Pass-through (immutable values) | `passThroughEncoder(Class<T>)` | `passThroughDecoder(Class<T>)` |
+Use it to carry context onto a thread or callback that is not on the originating dispatch context — take the snapshot while the context is live, rebind it inside the target duplicated context.
 
-Use snapshot when the live value is mutable and must be isolated on the wire. Use pass-through when the live value is immutable and can be shared by reference across dispatch boundaries.
+### DispatchEnvelopeBuilder
+
+The single construction point for outbound `DispatchEnvelope` instances. Every framework dispatcher builds envelopes through it so that registered service-dispatch encoders capture the currently bound holder values. Constructing an envelope with `DispatchEnvelope.of(...)` directly bypasses context capture.
 
 ```java
-// Example: MDCContext (mutable) — snapshot pattern
-ServiceDispatchContextEncoder<?> encoder = ServiceDispatchCodecs.snapshotEncoder(
-    MDCContext.class,
-    live -> new DiagnosticContextSnapshot(live.copy()));
+@Singleton
+public class OrderDispatcher {
 
-ServiceDispatchContextDecoder<?> decoder = ServiceDispatchCodecs.snapshotDecoder(
-    MDCContext.class,
-    DiagnosticContextSnapshot.class,
-    MDCContext::fromSnapshot);
+    private final DispatchEnvelopeBuilder envelopeBuilder;
 
-// Example: SecurityContext (immutable) — pass-through pattern
-ServiceDispatchContextEncoder<?> encoder = ServiceDispatchCodecs.passThroughEncoder(SecurityContext.class);
-ServiceDispatchContextDecoder<?> decoder = ServiceDispatchCodecs.passThroughDecoder(SecurityContext.class);
+    @Inject
+    public OrderDispatcher(DispatchEnvelopeBuilder envelopeBuilder) {
+        this.envelopeBuilder = envelopeBuilder;
+    }
+
+    public DispatchEnvelope<OrderPlaced> envelopeFor(OrderPlaced payload) {
+        // payload, caller-supplied dispatch-context overrides (FQCN keys), boundary id
+        return envelopeBuilder.build(payload, Map.of(), "service-dispatch");
+    }
+}
 ```
 
-#### DurableJsonContextCodecs
+| Method | Purpose |
+|---|---|
+| `build(T payload, Map<String,Object> callerOverrides, String boundary)` | Merge caller overrides with encoder output and build the envelope |
+| `build(T payload, Map<String,Object> callerOverrides, String boundary, String replyAddress)` | Same, plus a fire-and-report reply address the invoker publishes to instead of replying |
+| `DispatchEnvelopeBuilder.forTesting()` | A builder backed by empty registries, for plain-JUnit fixtures with no Dagger graph — never for production |
 
-Static factory for `DurableContextMetadataEncoder<T>` and `DurableContextMetadataDecoder<T>` implementations that serialize/deserialize through Jackson JSON using the Vert.x shared `DatabindCodec.mapper()`. The namespace name is passed as a parameter and becomes the single key in the produced `DurableMetadata` document.
+`callerOverrides` keys **must** be type FQCNs and may be empty, but must not be `null`. A caller key that collides with a key an encoder produces throws `IllegalStateException` (FR-CTX-063); an encoder that returns `null` also throws `IllegalStateException` (FR-CTX-050).
+
+### DurableContextPropagator
+
+The injectable orchestrator for durable-boundary propagation. Producers capture; consumers bind.
+
+| Method | Where it is used |
+|---|---|
+| `DurableMetadata capture(String boundary)` | Producer side — encode currently bound values into a metadata document |
+| `DurableMetadata mergeCaptured(DurableMetadata callerContext, String boundary)` | Producer side — merge caller-supplied metadata with the current capture |
+| `DurableMetadata mergeCaptured(..., DurableCarrierDescriptor carrier)` | Same, binding the captured envelope to a specific persisted row |
+| `DurableMetadata mergeCaptured(..., DurableCarrierDescriptor carrier, Instant fireTime)` | Same, additionally declaring the row's intended fire time |
+| `ContextHolder.Scope bindFrom(DurableMetadata metadata, String boundary)` | Consumer side — decode and install as an authoritative scope |
+| `ContextHolder.Scope bindFrom(..., DurableCarrierDescriptor carrier)` | Same, verifying the envelope was signed for that row |
+| `Map<String,Object> decodeToDispatchContext(DurableMetadata metadata, String boundary)` | Consumer side on a **non**-duplicated context — decode without touching the holder |
+| `DurableMetadata sanitizeInboundCarrier(DurableMetadata carrier)` | Strip authenticated-only namespaces from a sender-supplied carrier before binding it |
+
+**Authoritative binding.** `bindFrom` treats the metadata as the complete snapshot taken at the producer. It always binds `DurablePropagationMetadata` (FR-CTX-141), installs every successfully decoded type, and **clears** every other registered durable type for the scope's lifetime (FR-CTX-178). That is what stops ambient context at the consumer from leaking into a `mergeCaptured` performed inside the scope. Closing the scope restores everything, including the cleared values (FR-CTX-157).
+
+**Decode failures are contained.** A decoder that throws, returns `null`, or reports warnings is logged at WARN (throttled per boundary and decoder) and its type is simply not bound; other decoders proceed normally (FR-CTX-156).
+
+**Choosing between `bindFrom` and `decodeToDispatchContext`.** `bindFrom` must run on a duplicated Vert.x context (FR-CTX-157b) — on a non-duplicated context the holder's write guard throws. A transport whose callback lands on a plain deployment context (an outbox relay, a delayed-job poller) must call `decodeToDispatchContext` instead and merge the returned FQCN-keyed map into `DispatchEnvelopeBuilder.build(...)` as caller overrides; the receiving dispatcher then installs the values on its own duplicated context. Outside any Vert.x context at all, `bindFrom` logs a throttled warning and returns a no-op scope so plain-JUnit fixtures still run.
+
+**Producer collision rule.** `mergeCaptured` throws `IllegalStateException` when a namespace already present in the caller-supplied document is also owned by an encoder whose type is currently bound (FR-CTX-153). When the encoder's type is *not* bound, the caller's namespace passes through unchanged (FR-CTX-154). An encoder must return exactly its own declared namespace, or an empty document to signal "nothing to encode".
+
+### DurableMetadataHeaderCodec
+
+Utility in `dev.vertique.core.context` (shipped in `dev.vertique:vertique-core`) that projects a `DurableMetadata` document to and from a flat string-keyed header map, as used for Kafka record headers. Each namespace becomes exactly one reserved header named `vertique-<namespace>` whose value is that namespace's body as a JSON string.
+
+| Method | Behavior |
+|---|---|
+| `toHeaders(DurableMetadata)` | Projects every namespace to its reserved header; returns an immutable map |
+| `fromHeaders(Map<String,String>)` | Reconstructs a document from reserved headers; malformed namespace headers are skipped |
+| `mergeForEgress(Map<String,String> appHeaders, DurableMetadata context)` | Validates that no application header uses the `vertique-` prefix, then overlays the projected context headers |
+| `isReservedHeader(String)` | `true` when the name starts with `vertique-` |
+
+`mergeForEgress` is the single enforcement point for the reserved prefix, so application headers and framework context headers can never collide. Build outbound headers through it rather than merging maps by hand.
+
+### InboundExecutionContextScope
+
+The injectable helper a custom inbound boundary uses to install context and run registered initializers in one step. It opens the inbound scope first, then invokes each `InboundContextInitializer` in iteration order.
 
 ```java
-// Example: CorrelationId propagated via durable boundary
-DurableContextMetadataEncoder<CorrelationId> encoder = DurableJsonContextCodecs.jsonEncoder(
-    CorrelationId.class,
-    "correlation",                         // namespace name
-    id -> new CorrelationEnvelope(id.value()),
-    CorrelationEnvelope.class);
+// Service-dispatch boundary — dispatchContext is the envelope's FQCN-keyed map
+try (ContextHolder.Scope scope = inbound.installDispatch(dispatchContext, "service-dispatch")) {
+    // handler work
+}
 
-DurableContextMetadataDecoder<CorrelationId> decoder = DurableJsonContextCodecs.jsonDecoder(
-    CorrelationId.class,
-    "correlation",                         // namespace name
-    CorrelationEnvelope.class,
-    env -> new CorrelationId(env.value()));
+// Durable boundary
+try (ContextHolder.Scope scope = inbound.installDurable(metadata, "kafka")) {
+    // consumer work
+}
 ```
 
----
+`installDurableAndRun(DurableMetadata, String, Supplier<Future<T>>)` is the asynchronous form: it installs the scope, invokes the supplier inside it, and closes the scope when the returned future settles — on success and on failure. A `RuntimeException` thrown synchronously by the supplier is converted into a failed future after the scope is closed, so the binding cannot leak into the caller.
 
-### Built-ins
+If any initializer throws, every scope already opened is closed — initializer scopes in LIFO order, then the inbound scope — before the exception propagates, so no partial state escapes.
 
-#### DurablePropagationMetadataServiceDispatchEncoder / Decoder
+### ContextRuntimeModule
 
-Built-in encoder/decoder pair for `DurablePropagationMetadata` (the `DurableMetadata` durable context document view). Registered directly in `ContextRuntimeModule` via `@Provides @IntoSet` so that raw durable metadata travels through in-process service-dispatch hops without needing a feature module to wire it.
+The Dagger module that wires the substrate. It binds `ContextHolder` to the substrate implementation, declares the five empty multibinding sets (`ServiceDispatchContextEncoder`, `ServiceDispatchContextDecoder`, `DurableContextMetadataEncoder`, `DurableContextMetadataDecoder`, `InboundContextInitializer`), and contributes the built-in service-dispatch encoder/decoder pair for `DurablePropagationMetadata` so raw durable metadata survives in-process hops without any feature module (FR-CTX-143).
 
----
+No feature-specific bindings live here.
 
-### Envelope
+### Invariants & Gotchas
 
-#### DispatchEnvelopeBuilder
-
-`@Singleton` single construction helper for outbound `DispatchEnvelope` instances. All framework dispatchers (services, job dispatchers, Kafka producers) must construct envelopes through this builder so that registered `ServiceDispatchContextEncoder`s capture currently-bound holder values. Direct `DispatchEnvelope.of(...)` construction bypasses context capture and should only be used in test scenarios where no propagation is required.
-
-```java
-@Inject DispatchEnvelopeBuilder envelopeBuilder;
-
-// Outbound dispatch — captures all registered context values
-DispatchEnvelope<MyPayload> envelope = envelopeBuilder
-    .payload(payload)
-    .build();
-```
-
----
-
-### Dagger wiring
-
-#### ContextRuntimeModule
-
-Abstract Dagger `@Module`. Include this in every AppComponent that uses context propagation.
-
-Provides:
-- `@Binds ContextHolder ← DefaultContextHolder`
-- Five `@Multibinds` empty sets: `Set<ServiceDispatchContextEncoder<?>>`, `Set<ServiceDispatchContextDecoder<?>>`, `Set<DurableContextMetadataEncoder<?>>`, `Set<DurableContextMetadataDecoder<?>>`, `Set<InboundContextInitializer>`
-- `@Provides @IntoSet ServiceDispatchContextEncoder<?>` — built-in `DurablePropagationMetadataServiceDispatchEncoder`
-- `@Provides @IntoSet ServiceDispatchContextDecoder<?>` — built-in `DurablePropagationMetadataServiceDispatchDecoder`
-
-No feature-specific bindings live in this module. MDC propagation is registered by `LoggingContextModule` in `vertique-logging`. `SecurityContext` propagation is registered by `AuthModule` in `vertique-rest-security`.
+- **Bind only on a duplicated context.** A write from a verticle `start` method, a bare `vertx.setTimer` callback, or a worker thread throws `IllegalStateException`. Enter the framework dispatch path, or capture a `ContextSnapshot` and rebind it where a duplicated context exists.
+- **Deep copy happens only on `duplicate(true)`.** Vert.x consults the substrate's duplicator on that call alone. On the ordinary `duplicate(false)` path the duplicated context's slot is empty and the duplicator is never invoked.
+- **Mutable values need an adapter.** Without a registered `ContextValueAdapter`, a value is stored, snapshotted, and duplicated by reference. That is correct for immutable types and a cross-dispatch mutation hazard for anything else.
+- **Registry validation is a startup gate.** Duplicate dispatch keys, duplicate handled types, duplicate durable namespaces, and a durable namespace that is blank or begins with the reserved `vertique-` prefix all throw `IllegalStateException` while the registry is constructed. The failure surfaces as a Dagger component construction error at startup, never as a first-dispatch surprise.
+- **A durable encoder owns exactly one namespace.** Returning a document whose namespace set differs from `namespace()` throws `IllegalStateException`; return `DurableMetadata.empty()` to signal there is nothing to encode.
+- **Close every scope.** Scopes restore prior values on `close()` and are idempotent, but a scope that is never closed leaves the binding in place for the rest of the context's life.
+- **`DispatchEnvelope.of(...)` skips capture.** Use it only in tests that deliberately need an envelope with no propagated context.
 
 ---
 
@@ -323,67 +234,150 @@ No feature-specific bindings live in this module. MDC propagation is registered 
 
 ### ContextValueAdapter (ServiceLoader)
 
-Provides deep-copy semantics for mutable holder values when a Vert.x context is duplicated with `duplicate(true)`. Discovered from `META-INF/services/dev.vertique.core.context.ContextValueAdapter`. The substrate bootstraps before Dagger — adapters must be pure `ServiceLoader` providers with a public no-arg constructor. The SPI is bounded `<T extends ContextValue>` on its context-type parameter — implementing an adapter for a non-`ContextValue` type is a compile error.
+Declares snapshot, restore, and deep-copy behavior for one holder value type. The substrate is loaded during Vert.x bootstrap, before Dagger exists, so adapters are discovered through `java.util.ServiceLoader` and must be public classes with a public no-arg constructor and no injected dependencies. The SPI is bounded `<T extends ContextValue>`.
 
 ```java
-// META-INF/services/dev.vertique.core.context.ContextValueAdapter:
-// dev.vertique.logging.MDCContextValueAdapter
+// META-INF/services/dev.vertique.core.context.ContextValueAdapter
+// com.example.TenantContextValueAdapter
 
-public class MDCContextValueAdapter implements ContextValueAdapter<MDCContext> {
-    @Override public Class<MDCContext> type() { return MDCContext.class; }
-    @Override public Object snapshot(MDCContext value) { return Map.copyOf(value.mapView()); }
-    @Override public MDCContext restoreFromSnapshot(Object frozen) {
-        return MDCContext.fromSnapshot((Map<String,String>) frozen);
+public final class TenantContextValueAdapter implements ContextValueAdapter<TenantContext> {
+
+    @Override
+    public Class<TenantContext> type() {
+        return TenantContext.class;
     }
-    @Override public MDCContext duplicate(MDCContext value) {
-        return MDCContext.fromSnapshot(Map.copyOf(value.mapView()));
+
+    @Override
+    public Object snapshot(TenantContext live) {
+        return Map.copyOf(live.attributes());
+    }
+
+    @Override
+    @SuppressWarnings("unchecked")
+    public TenantContext restoreFromSnapshot(Object frozen) {
+        return TenantContext.fromAttributes((Map<String, String>) frozen);
+    }
+
+    @Override
+    public TenantContext duplicate(TenantContext live) {
+        return TenantContext.fromAttributes(Map.copyOf(live.attributes()));
     }
 }
 ```
 
-### ServiceDispatchContextEncoder/Decoder (Dagger multibinding)
+`duplicate` has a default that returns the live value unchanged, which is correct for immutable types; override it for anything mutable. This SPI governs holder lifecycle only — boundary propagation uses the encoder/decoder SPIs below.
 
-Both SPIs are bounded `<T extends ContextValue>` on their context-type parameter; only the wire-envelope type parameter stays unbounded. Contribute via `@Provides @IntoSet` on the feature's Dagger module. Use `ServiceDispatchCodecs` unless the encoder/decoder needs filter or schema logic that the helper cannot express.
+### ServiceDispatchContextEncoder / ServiceDispatchContextDecoder (Dagger multibinding)
+
+Carry a value across in-process service-dispatch hops. Both are bounded `<T extends ContextValue>` on the context type; the wire type stays unbounded. `key()` defaults to the context type's FQCN and is what the dispatch-context map is keyed by.
 
 ```java
-// In LoggingContextModule (vertique-logging)
-@Provides @IntoSet
-static ServiceDispatchContextEncoder<?> mdcContextEncoder() {
-    return MDCContexts.serviceDispatchEncoder();
+public interface ServiceDispatchContextEncoder<T extends ContextValue> {
+    Class<T> type();
+    default String key() { return type().getName(); }
+    Object encode(T value, ServiceDispatchEncodeContext context);
 }
 
-@Provides @IntoSet
-static ServiceDispatchContextDecoder<?> mdcContextDecoder() {
-    return MDCContexts.serviceDispatchDecoder();
+public interface ServiceDispatchContextDecoder<T extends ContextValue> {
+    Class<T> type();
+    default String key() { return type().getName(); }
+    ContextDecodeResult<T> decode(Object value, ServiceDispatchDecodeContext context);
 }
 ```
 
-### DurableContextMetadataEncoder/Decoder (Dagger multibinding)
+Use `ServiceDispatchCodecs` rather than implementing the interfaces directly unless filtering or schema logic is required:
 
-Both SPIs are bounded `<T extends ContextValue>` on their context-type parameter; the `DurableMetadata` wire type stays unbounded. Contribute via `@Provides @IntoSet` on the feature's Dagger module. Each encoder and decoder owns exactly one short namespace name returned by `namespace()` (e.g. `"correlation"`, `"localization"`).
-Boot-time validation rejects duplicate namespaces across encoders or across decoders.
+| Pattern | Encoder | Decoder |
+|---|---|---|
+| Snapshot (mutable live value) | `snapshotEncoder(Class<T> type, Function<T,?> snapshotFn)` | `snapshotDecoder(Class<T> type, Class<S> snapshotType, Function<S,T> restoreFn)` |
+| Pass-through (immutable live value) | `passThroughEncoder(Class<T> type)` | `passThroughDecoder(Class<T> type)` |
 
-Encoders return a single-namespace `DurableMetadata` document built with
-`DurableMetadata.of(namespace(), body)`. Decoders receive the full `DurableMetadata` document and
-read their namespace via `metadata.body(namespace())`.
+```java
+@Provides
+@IntoSet
+static ServiceDispatchContextEncoder<?> tenantEncoder() {
+    return ServiceDispatchCodecs.passThroughEncoder(TenantContext.class);
+}
 
-Use `DurableJsonContextCodecs` for JSON serialization helpers, or implement the SPI directly for
-custom filtering or schema-version logic.
+@Provides
+@IntoSet
+static ServiceDispatchContextDecoder<?> tenantDecoder() {
+    return ServiceDispatchCodecs.passThroughDecoder(TenantContext.class);
+}
+```
+
+An encoder must not return `null` (FR-CTX-050). A decoder returns a `ContextDecodeResult`: `of(value)` on success, `empty()` when there is nothing to decode, or `failure(warnings)` when the wire value is unusable. Prefer a `failure` result over throwing.
+
+### DurableContextMetadataEncoder / DurableContextMetadataDecoder (Dagger multibinding)
+
+Carry a value across durable boundaries. Both are bounded `<T extends ContextValue>` and own exactly one short namespace name (`"correlation"`, `"localization"`, …) returned by `namespace()`; duplicates across encoders or across decoders are rejected at startup.
+
+```java
+public interface DurableContextMetadataEncoder<T extends ContextValue> {
+    Class<T> type();
+    String namespace();
+    DurableMetadata encode(T value, DurableEncodeContext context);
+}
+
+public interface DurableContextMetadataDecoder<T extends ContextValue> {
+    Class<T> type();
+    String namespace();
+    ContextDecodeResult<T> decode(DurableMetadata metadata, DurableDecodeContext context);
+    default boolean acceptsExplicitCarrier() { return true; }
+}
+```
+
+Encoders return a single-namespace document built with `DurableMetadata.of(namespace(), body)`, where `body` is a `JsonObject`. Decoders receive the **full** document and read their own namespace via `metadata.body(namespace())`, which returns an `Optional<JsonObject>`. A namespace that is blank or begins with the reserved `vertique-` prefix is rejected at startup.
+
+Override `acceptsExplicitCarrier()` to return `false` for a namespace that must only ever arrive from a framework-produced carrier. `DurableContextPropagator.sanitizeInboundCarrier(...)` strips exactly those namespaces from a sender-supplied explicit carrier before it is bound, logging the stripped namespace names — never their bodies.
+
+`DurableJsonContextCodecs` covers JSON serialization through the Vert.x shared databind mapper:
+
+```java
+@Provides
+@IntoSet
+static DurableContextMetadataEncoder<?> tenantDurableEncoder() {
+    return DurableJsonContextCodecs.jsonEncoder(
+            TenantContext.class,
+            "tenant",
+            tenant -> new TenantEnvelope(tenant.id()));
+}
+
+@Provides
+@IntoSet
+static DurableContextMetadataDecoder<?> tenantDurableDecoder() {
+    return DurableJsonContextCodecs.jsonDecoder(
+            TenantContext.class,
+            "tenant",
+            TenantEnvelope.class,
+            env -> new TenantContext(env.id()));
+}
+```
 
 ### InboundContextInitializer (Dagger multibinding)
 
-Contribute via `@Provides @IntoSet` or `@Binds @IntoSet` on the feature's Dagger module. Called by `InboundExecutionContextScope` at every inbound dispatch and durable receive site, after the inbound scope is opened.
+Seeds a default value at first ingress when nothing was decoded for that concern. Called by the inbound helpers at every service-dispatch and durable-receive site, after the inbound scope opens, and its returned scope is closed with the rest.
 
 ```java
-@Provides @IntoSet
-static InboundContextInitializer myInitializer(MyService service) {
+public interface InboundContextInitializer {
+    ContextHolder.Scope initialize(InboundContextInitializationContext context);
+}
+```
+
+```java
+@Provides
+@IntoSet
+static InboundContextInitializer tenantDefault(TenantResolver resolver) {
     return ctx -> {
-        // ctx.boundary() identifies the ingress boundary (e.g., "service-dispatch", "kafka")
-        MyValue value = service.resolveForBoundary(ctx.boundary());
-        return ContextValues.bind(MyValue.class, value);
+        if (ContextValues.current(TenantContext.class).isPresent()) {
+            return () -> {}; // already decoded upstream — do not overwrite
+        }
+        return ContextValues.bind(TenantContext.class, resolver.forBoundary(ctx.boundary()));
     };
 }
 ```
+
+`context.boundary()` identifies the ingress point (`"service-dispatch"`, `"kafka"`, `"outbox"`, …). An initializer that finds its concern already bound should return a no-op scope rather than overwriting the decoded value. Throwing from `initialize` aborts the whole ingress installation and unwinds every scope already opened.
 
 ---
 
@@ -391,17 +385,10 @@ static InboundContextInitializer myInitializer(MyService service) {
 
 | Dependency | Why |
 |------------|-----|
-| `vertique-core` | Consumes `ContextHolder`, `ContextValueAdapter`, and all SPI contracts from `core.context` |
-| `io.vertx:vertx-core` | `ContextLocal`, `VertxServiceProvider`, `ContextInternal.duplicate(true)` |
-| `com.google.dagger:dagger` | `ContextRuntimeModule` is a Dagger `@Module`; `DefaultContextHolder`, `DispatchEnvelopeBuilder`, etc. use `@Singleton` and `@Inject` |
-| `jakarta.inject` | `@Inject`, `@Singleton` |
-| `com.fasterxml.jackson.databind` | `DurableJsonContextCodecs` uses `DatabindCodec.mapper()` for JSON serialization |
-| `org.slf4j:slf4j-api` | Logging inside `WarningThrottle` and propagation paths |
-
----
-
-## Related ADRs
-
-- ADR-0065: Structured durable context metadata (context/delivery separation) — establishes `DurableMetadata`, the namespace model, `DurableMetadataHeaderCodec`'s `mergeForEgress` collision guard, and the outbox `metadata JSONB` / `OutboxMetadata { context, delivery }` split.
-- ADR-0068: ContextValue marker + ContextHolder write-path & SPI enforcement — records the decision to introduce `ContextValue` as a behavior-free marker interface, the choice of interface over annotation (enabling both compile-time bounds and cheap `instanceof` runtime checks), the two atomic runtime guard points (`installScopedRaw` + `installScopedAuthoritative`), the null-is-malformed rule, the `<T extends ContextValue>` bounds on the five context-producing SPIs, and the two intentional exemptions (FR-CTX-206 duplicator + `mutateIfPresentOnContext`).
-- ADR-0147: Instance-Level Durable Context with Base-Wins/Instance-Fill Binding — the workflow-side extension of the ADR-0065 substrate; records the bind gate, the base-wins/instance-fill merge order, fork absorption, and the duplicated-context break.
+| `dev.vertique:vertique-core` | `ContextHolder`, `ContextValue`, `ContextValueAdapter`, the encoder/decoder and initializer SPIs, `DurableMetadata`, `DurableMetadataHeaderCodec`, `DispatchEnvelope` |
+| `io.vertx:vertx-core` | `ContextLocal`, the `VertxServiceProvider` bootstrap hook, and duplicated-context detection |
+| `com.fasterxml.jackson.core:jackson-databind` | JSON serialization in `DurableJsonContextCodecs` |
+| `com.google.dagger:dagger` | `ContextRuntimeModule` bindings and the five multibinding sets |
+| `jakarta.inject:jakarta.inject-api` | `@Inject`, `@Singleton` |
+| `jakarta.annotation:jakarta.annotation-api` | Annotation support on substrate types |
+| `org.slf4j:slf4j-api` | Throttled decode-failure and boundary warnings |

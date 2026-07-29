@@ -16,19 +16,6 @@ Runtime selection is transparent: `DelayedJobClientFactory.create` tries `Class.
 
 In addition to the performance win, the processor lifts contract-shape validation to compile time: an unresolvable payload type, duplicate contract names, or extra instance methods on the contract all surface as build errors rather than startup failures or silent misbehavior.
 
-See ADR-0070 for the factory-selection mechanism and ADR-0071 for the `enqueuePremerged` visibility decision.
-
----
-
-## Package Layout
-
-| Package | Contents |
-|---------|----------|
-| `dev.vertique.codegen.delayed.processor` | `DelayedJobContractProcessor`, `DelayedJobContractModel` |
-| `dev.vertique.codegen.delayed.processor.scan` | `DelayedJobContractScanner` |
-| `dev.vertique.codegen.delayed.processor.validate` | `DelayedJobValidator` |
-| `dev.vertique.codegen.delayed.processor.emit` | `DelayedJobProxyEmitter` |
-
 ---
 
 ## Key Classes
@@ -90,7 +77,7 @@ Generates `{Contract}_DelayedJobProxy` in the contract's own package. Key proper
 - `public final`, implements the contract interface, annotated `@Generated("...DelayedJobContractProcessor")`.
 - Constructor `(DelayedJobService, DelayedJobContract, JsonObject)` — resolves `effectiveMaxAttempts`, `effectiveQueue`, `effectivePriority` from the config object with annotation-default fallback (same merge order as `DelayedJobClientProxy`).
 - Each of the six `enqueue` overloads delegates to a private `doEnqueue(P, Instant, SqlClient, DelayedJobOptions)` helper; `Duration`-bearing overloads normalize to `Instant.now().plus(delay)`. Null-`SqlClient` transactional overloads fail fast with `NullPointerException`.
-- `doEnqueue` applies `DelayedJobOptions` overrides in the same order as the reflective proxy, and routes through `DelayedJobService.enqueuePremerged` when `options.premergedMetadata()` is non-null (see ADR-0071).
+- `doEnqueue` applies `DelayedJobOptions` overrides in the same order as the reflective proxy, and routes through `DelayedJobService.enqueuePremerged` — public specifically so a generated proxy in the contract's own package can call it — when `options.premergedMetadata()` is non-null.
 - `toString` returns `"DelayedJobClient[name]"`; `equals`/`hashCode` use identity semantics — identical to the JDK proxy's `Object`-method handling.
 
 Example generated class for a contract with a single payload type:
@@ -149,7 +136,7 @@ public final class DeliverWebhookJob_DelayedJobProxy implements DeliverWebhookJo
 
 ```java
 // Prefer the generated static proxy when present (zero reflection); fall back to the JDK
-// dynamic proxy otherwise. A present-but-broken generated class fails loudly. See ADR-0070.
+// dynamic proxy otherwise. A present-but-broken generated class fails loudly.
 String generatedFqn = GeneratedNames.companionFqn(contractInterface, "_DelayedJobProxy");
 try {
     Class<?> generated = Class.forName(generatedFqn, true, contractInterface.getClassLoader());
@@ -226,10 +213,3 @@ None. The processor emits no Dagger binding modules. Generated proxies are disco
 - `dev.vertique:vertique-job-delayed` — `@DelayedJobContract`, `DelayedJobClient`, `DelayedJobExecutor`, `DelayedJobService`, `DelayedJobOptions` (processor classpath only; not on runtime classpath)
 - `com.palantir.javapoet:javapoet` — source generation (compile-only; not on runtime classpath)
 - `javax.annotation.processing` APIs — part of the JDK; not a separate Maven dependency
-
----
-
-## Related ADRs
-
-- ADR-0070: Delayed-Job Static Proxy Codegen — factory-via-reflection instantiation (not Dagger), origin-package pinning, full-member contract-shape validation, warning-by-default for missing executor, loud-fail for broken generated class.
-- ADR-0071: `DelayedJobService.enqueuePremerged` Visibility Widening — why `enqueuePremerged` was widened to `public` so the generated proxy (in the contract's package) can call it.

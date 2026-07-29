@@ -146,6 +146,10 @@ Per-request timer. One sample is recorded per `RestRequestCompletedEvent`.
 | `outcome` | Low-cardinality bucket: `INFORMATIONAL`, `SUCCESS`, `REDIRECTION`, `CLIENT_ERROR`, `SERVER_ERROR`, `UNKNOWN` | Derived by integer division of the status code by 100; status 0 or outside 100–599 → `UNKNOWN` |
 | `error.type` | `failureCode`, else `wireFailureCode`, else `none` | Simple class name of the pipeline-mapped failure (e.g. `IllegalStateException`); when absent, falls back to the post-handoff wire-failure classification on `RestRequestCompletedEvent` (e.g. `ConnectionClosed`) |
 
+All tags above are part of `vertique-micrometer-core`'s frozen cardinality-guarded tag-key set —
+each key is capped at `metrics.cardinality.maxTagValuesPerKey` distinct values (default `200`)
+across the composite. See `vertique-micrometer-core`'s module reference for the guard mechanism.
+
 **`error.type` on a 200-status series.** Because `error.type` falls back to `wireFailureCode`, a
 timer sample tagged `status=200` MAY carry a non-`none` `error.type` — that combination (`status`
 200 with a non-`none` `error.type`) is the truncated-response signature: the client received a 200
@@ -187,10 +191,3 @@ Prometheus rendering: `vertique_rest_server_active`.
   `RequestInterceptor`, `RestRequestCompletionEmitter` constants.
 - `com.google.dagger:dagger`, `jakarta.inject:jakarta.inject-api`
 - `org.slf4j:slf4j-api`, `org.projectlombok:lombok` (provided)
-
----
-
-## Related ADRs
-
-- ADR-0098: Micrometer Facade and Pluggable Registry Backends — establishes the `@BindsOptionalOf` adapter dependency rule (D-J) that allows this module to compile without `vertique-micrometer-core`, and the publish-on-success bootstrap contract that guarantees the injected registry is always non-null.
-- ADR-0099: Metric Naming, Tag, and Cardinality Policy — establishes the `vertique.*` naming scheme, the `UNKNOWN`/`none` sentinel convention, the `GUARDED_TAG_KEYS` frozen list that covers `route`, `operation`, `method`, `status`, `outcome`, and `error.type`, and the per-event registry lookup policy (no adapter cache).

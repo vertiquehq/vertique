@@ -10,7 +10,7 @@ SPDX-License-Identifier: EUPL-1.2
 > **Artifact:** `vertique-codegen-jaxrs`
 > **Depends on:** `vertique-codegen-core` (compile), `vertique-rest-core` (compile — for `dev.vertique.rest.core.security.Authorized`), `vertique-rest-jaxrs` (compile — runtime SPI types)
 
-`vertique-codegen-jaxrs` is a unified annotation processor that owns the entire compile-time JAX-RS pipeline: discovery, effective-contract resolution, validation, Dagger DI binding emission, and runtime performance optimization via generated descriptor, bean-param model, and execution plan companions. It also absorbs the `@Path`-resource binding work previously owned by `vertique-codegen-dagger`'s `PathResourceCollector` (CG-002).
+`vertique-codegen-jaxrs` is a unified annotation processor that owns the entire compile-time JAX-RS pipeline: discovery, effective-contract resolution, validation, Dagger DI binding emission, and runtime performance optimization via generated descriptor, bean-param model, and execution plan companions.
 
 Codegen is a **performance optimization, not a feature gate.** Both the generated path and the reflective runtime produce identical `ResourceMethodMeta` tuples and identical behavior — including full support for interface-declared JAX-RS contracts. Removing the processor from `annotationProcessorPaths` reverts the application to the reflective runtime with no source changes and no Dagger wiring changes.
 
@@ -24,9 +24,8 @@ and receive the complete processor facade automatically. Custom-parent applicati
 paths. See `docs/packaging.md`. No `@Component` changes are required beyond including the generated
 `GeneratedJaxRsResourcesModule`.
 
-**Ownership change.** CG-010 moved `@Path`-resource binding from
-`vertique-codegen-dagger` to `vertique-codegen-jaxrs`. The former retains responsibility for
-`@RestClient`, `@KafkaListener`/`@KafkaSource`, and `DelayedJobExecutor` wiring.
+`vertique-codegen-jaxrs` owns `@Path`-resource Dagger binding. `vertique-codegen-dagger` retains
+responsibility for `@RestClient`, `@KafkaListener`/`@KafkaSource`, and `DelayedJobExecutor` wiring.
 
 ---
 
@@ -34,9 +33,9 @@ paths. See `docs/packaging.md`. No `@Component` changes are required beyond incl
 
 `JaxRsPipelineProcessor` runs in four logical steps per build:
 
-1. **Discover** — `JaxRsCandidateScanner` walks `roundEnv.getRootElements()` (always-run via `@SupportedAnnotationTypes("*")`) and collects concrete classes with an effective `@Path` (direct or via a transitively implemented interface).
-2. **Resolve** — `EffectiveJaxRsContractResolver` builds an `EffectiveResourceContract` for each candidate applying the precedence rule: direct annotations → superclass chain → BFS interfaces.
-3. **Validate** — the four CG-009 validators run against each resolved contract.
+1. **Discover** — collects concrete (non-abstract, non-interface) classes with an effective `@Path` — direct on the class, in the superclass chain, or on any transitively implemented interface.
+2. **Resolve** — builds an `EffectiveResourceContract` for each candidate applying the precedence rule: direct annotations → superclass chain → BFS interfaces (see "EffectiveJaxRsContractResolver" below).
+3. **Validate** — all five validators run against each resolved contract.
 4. **Emit** — four artifact types are written when applicable: the `GeneratedJaxRsResourcesModule` Dagger module, `{Resource}_JaxRsDescriptor` companions, `{Bean}_BeanParamModel` companions, and `{Resource}_{method}_{idx}_ExecutionPlan` companions.
 
 **Semantic vs. DI candidates.** "Is this a JAX-RS resource?" (semantic) is independent of "Should we generate a Dagger binding for it?" (DI eligibility). Validation and descriptor/plan emission apply to all semantic candidates; Dagger module generation applies only to DI-eligible candidates (those with an `@Inject` constructor that are not annotated `@NoAutoWire`).
@@ -44,16 +43,6 @@ paths. See `docs/packaging.md`. No `@Component` changes are required beyond incl
 ---
 
 ## Key Classes
-
-### `JaxRsPipelineProcessor`
-
-`AbstractProcessor` extension registered via `META-INF/services/javax.annotation.processing.Processor`. Entry point for the entire pipeline. Initializes `EffectiveJaxRsContractResolver`, all four validators, and all four emitters. Uses a single `emitted` flag to prevent re-emission on later APT rounds (e.g., the round triggered by Dagger writing its own sources).
-
-Honors `-Avertique.codegen.autoWire=false` to suppress Dagger module emission. Honors `-Avertique.codegen.package=...` via `PackageResolver` (promoted from `vertique-codegen-dagger` to `vertique-codegen-core` in CG-010).
-
-### `JaxRsCandidateScanner`
-
-Walks `roundEnv.getRootElements()` and returns all concrete (non-abstract, non-interface) classes that have an effective `@Path` — either directly on the class, in the superclass chain, or on any transitively implemented interface. Uses `EffectiveJaxRsContractResolver.hasEffectivePath(TypeElement)` as the cheap yes/no predicate before full resolution.
 
 ### `EffectiveJaxRsContractResolver`
 
@@ -81,22 +70,26 @@ Produces `EffectiveResourceContract` (one per class), which contains `EffectiveM
 | `PathParamAlignmentValidator` | Bidirectional check between `@Path` placeholders and `@PathParam` declarations. Handles `@BeanParam` and `@RequestParams` composite types including record components. |
 | `BodyFormValidator` | Mirrors `RouteValidator.validateMethodParams`: at most one body parameter; body and form parameters mutually exclusive. |
 
-`ContextParamValidator` runs first in `JaxRsPipelineProcessor` before the remaining four validators. All five validators take `EffectiveResourceContract`. Diagnostic wording is preserved so existing tests continue to pass.
+`ContextParamValidator` runs first, before the remaining four — see the short-circuit behavior noted under "Validation Rules" below. All five validators take `EffectiveResourceContract`.
 
-### Emitters
+### Generated Artifacts
 
-| Class | Artifact | Timing |
-|---|---|---|
-| `GeneratedJaxRsResourcesModuleEmitter` | `GeneratedJaxRsResourcesModule` Dagger module — `@Provides @ElementsIntoSet @JaxRsResources Set<Object>` for each DI-eligible resource (CG-011: uniform `@ElementsIntoSet` shape; conditional resources return `Set.of()` when conditions do not match) | First non-final round |
-| `JaxRsDescriptorEmitter` | `{Resource}_JaxRsDescriptor` per resource — precomputes `SecurityPolicy` constants and method/parameter metadata; eliminates reflective `getDeclaredMethods()` walk at startup | First non-final round |
-| `BeanParamModelEmitter` | `{Bean}_BeanParamModel` per `@BeanParam`/`@RequestParams` type — static field-metadata list; eliminates `ParameterExtractor.computeBeanFields` reflective scan | First non-final round |
-| `ExecutionPlanEmitter` | `{Resource}_{methodName}_{idx}_ExecutionPlan` per resource method — precomputed `EffectiveInputPolicies` constants + direct typed method call; eliminates `Method.invoke` from the request hot path. For `CONTEXT` parameters, emits a static `Class<?>` constant (`CTX{i}`) loaded once at class-initialization time and a `support.resolveContext(CTX{i}, ctx, "<declaringClassFqn>", "<method>")` call per parameter — no per-request reflection, no `ParamMeta`/policy entry emitted for CONTEXT params. | First non-final round |
+Four artifact types are emitted for every semantic candidate:
+
+| Artifact | What it does |
+|---|---|
+| `GeneratedJaxRsResourcesModule` Dagger module | `@Provides @ElementsIntoSet @JaxRsResources Set<Object>` for each DI-eligible resource — see "Generated Binding Shape" below |
+| `{Resource}_JaxRsDescriptor` | Precomputes `SecurityPolicy` constants and method/parameter metadata, eliminating the reflective `getDeclaredMethods()` walk at startup |
+| `{Bean}_BeanParamModel` | Static field-metadata list per `@BeanParam`/`@RequestParams` type, eliminating the reflective bean-field scan |
+| `{Resource}_{methodName}_{idx}_ExecutionPlan` | Precomputed `EffectiveInputPolicies` constants plus a direct typed method call, eliminating `Method.invoke` from the request hot path. For `CONTEXT` parameters, emits a static `Class<?>` constant (`CTX{i}`) loaded once at class-initialization time and a `support.resolveContext(CTX{i}, ctx, "<declaringClassFqn>", "<method>")` call per parameter — no per-request reflection, no `ParamMeta`/policy entry for `CONTEXT` params |
+
+Only the Dagger module row is gated by DI eligibility (see "Semantic vs. DI candidates" above) — the other three are emitted for every semantic candidate regardless.
 
 ---
 
-## Generated Binding Shape (CG-011)
+## Generated Binding Shape
 
-All JAX-RS resource bindings use a uniform `@Provides @ElementsIntoSet @JaxRsResources Set<Object>` form (previously `@Provides @IntoSet @JaxRsResources Object`). This enables conditional resources to return `Set.of()` at startup without contributing to the Dagger graph.
+All JAX-RS resource bindings use a uniform `@Provides @ElementsIntoSet @JaxRsResources Set<Object>` form. This enables conditional resources to return `Set.of()` at startup without contributing to the Dagger graph.
 
 **Unconditional resource binding:**
 
@@ -134,11 +127,11 @@ Inactive resources are never instantiated (lazy `Provider` injection). Descripto
 
 ## Interface-Declared Contracts
 
-CG-010 enables the common OpenAPI Generator pattern where the contract is declared on an interface and the concrete class is mostly unannotated.
+The processor supports the common OpenAPI Generator pattern where the contract is declared on an interface and the concrete class is mostly unannotated.
 
 **Codegen path** — `EffectiveJaxRsContractResolver` walks the BFS interface graph and produces an `EffectiveResourceContract` that captures all interface-declared annotations. The descriptor and execution-plan emitters then generate artifacts from the effective contract.
 
-**Reflective runtime path** — `ResourceScanner.scanResource`, `resolveHttpMethod`, `resolveParams`, and `AnnotationSecurityPolicyResolver` were updated in CG-010 (adjacent defects #29/#30/#31) to consume `AnnotationResolver`-merged annotation lists that include interface-declared annotations. After these fixes, interface-backed contracts work correctly even when the processor is absent.
+**Reflective runtime path** — `ResourceScanner.scanResource`, `resolveHttpMethod`, `resolveParams`, and `AnnotationSecurityPolicyResolver` consume `AnnotationResolver`-merged annotation lists that include interface-declared annotations, so interface-backed contracts work correctly even when the processor is absent.
 
 Both paths produce identical `ResourceMethodMeta` and identical `SecurityPolicy` outcomes. Removing `vertique-codegen-jaxrs` from `annotationProcessorPaths` changes performance, not behavior.
 
@@ -155,11 +148,11 @@ The runtime SPI lives in `dev.vertique.rest.jaxrs.runtime`. These types are part
 | `GeneratedJaxRsDescriptorRegistry` | Process-wide singleton; `ClassValue<LookupResult>` cache; derives companion FQN as `{resource.binaryName}_JaxRsDescriptor`; caches `ClassNotFoundException` as an empty miss (normal fallback); wraps and rethrows linkage/instantiation failures |
 | `GeneratedJaxRsBeanParamModel` | SPI interface implemented by each `{Bean}_BeanParamModel` companion; returns a list of `BeanParamFieldMeta` descriptors |
 | `GeneratedJaxRsBeanParamRegistry` | Process-wide singleton; analogous to `GeneratedJaxRsDescriptorRegistry`; companion FQN suffix is `_BeanParamModel` |
-| `BeanParamFieldMeta` | Immutable record describing a single bean-param field: name, source, type, `@DefaultValue` |
+| `BeanParamFieldMeta` | Immutable record `(String name, ResourceMethodMeta.ParamMeta meta)` describing a single bean-param field; `meta` carries the field's JAX-RS source, type, `@DefaultValue`, and annotations — including input-policy annotations (`@Canonicalize`, `@Sanitize`, `@Skip*`) that sanitization/canonicalization consume |
 | `ResourceExecutionPlan` | SPI interface implemented by each `{Resource}_{method}_{idx}_ExecutionPlan`; two methods: `extractArguments(RoutingContext, BoundRequest, GeneratedJaxRsSupport)` and `invoke(Object resource, Object[] args)` |
-| `GeneratedJaxRsSupport` | Per-request helper bag for generated execution plans: `extractScalarParam`, `extractFormParam`, `deserializeBody`, `extractBeanParam`, `resolveContext(Class<?>, RoutingContext, String, String)`, etc.; backed by `ParameterExtractorBackedSupport`. The `bridgeJaxRsSecurityContext` and `currentFrameworkSecurityContext` methods from prior generated code are removed — context resolution now goes through `resolveContext` and the `RestContextResolver` chain. |
+| `GeneratedJaxRsSupport` | Per-request helper bag for generated execution plans: `extractScalarParam`, `extractFormParam`, `deserializeBody`, `extractBeanParam`, `resolveContext(Class<?>, RoutingContext, String, String)`, etc.; backed by `ParameterExtractorBackedSupport`. Context resolution goes through `resolveContext` and the `RestContextResolver` chain. |
 
-`ResourceMethodMeta.ParamMeta` composes `dev.vertique.core.codegen.ParameterMetadata` (name, raw type, generic type, `annotationsLazy()`) rather than holding an eager live `Annotation[]`. Both codegen construction paths follow a **parity-first, reflection-free-as-best-effort** policy (see ADR-0146): every parameter annotation whose member shape can be rendered at compile time is literal-backed; a parameter carrying an annotation that cannot be is not left with a gap — it gets a lazy per-parameter reflective fallback instead, so runtime behavior is always identical to the reflective-scan path regardless of what a given annotation's members look like.
+`ResourceMethodMeta.ParamMeta` composes `dev.vertique.core.codegen.ParameterMetadata` (name, raw type, generic type, `annotationsLazy()`) rather than holding an eager live `Annotation[]`. Both codegen construction paths follow a **parity-first, reflection-free-as-best-effort** policy: every parameter annotation whose member shape can be rendered at compile time is literal-backed; a parameter carrying an annotation that cannot be is not left with a gap — it gets a lazy per-parameter reflective fallback instead, so runtime behavior is always identical to the reflective-scan path regardless of what a given annotation's members look like.
 
 - **`ExecutionPlanEmitter`** — feeds the per-request extraction path (`ParameterExtractor`'s scalar/collection coercion). For each extractable parameter it materializes the parameter's `@Retention(RUNTIME)` annotations into a standalone `ParameterMetadata` implementation — one generated class per parameter, emitted as a top-level sibling of the execution plan (named `{PlanSimpleName}_P{paramIndex}Meta`) — reusing `vertique-codegen-core`'s `MetadataEmitter.emitParameterMetadata` and `AnnotationLiteralEmitter`, the same machinery `vertique-codegen-aop`'s `AopProxyEmitter` uses for its own parameter-level literals.
 - **`JaxRsDescriptorEmitter`** — feeds the `JaxRsOperationDescriptor` (startup validation, OpenAPI, security-policy adaptation). It materializes parameter annotations the same way, into a standalone impl named `{DescriptorSimpleName}_M{methodIdx}P{paramIndex}Meta`, replacing the earlier live `support.effectiveParameterAnnotations(method, index)` reflective read.
@@ -168,11 +161,11 @@ The runtime SPI lives in `dev.vertique.rest.jaxrs.runtime`. These types are part
 - **Mixed literal/reflective mode.** When every annotation on a parameter is renderable, the generated `ParameterMetadata` is purely literal-backed and fully reflection-free — the same v1 attribute-kind boundary `AnnotationLiteralEmitter` enforces for AOP (no `char`/`float`/`double`, no nested-annotation members) still applies. When at least one annotation on the parameter carries an unsupported member kind (most commonly Swagger's `@Parameter`, whose `schema` member defaults to a nested `@Schema` instance even when unset), the generated `ParameterMetadata` instead bakes in literals for every annotation it *can* render and additionally carries a lazy reflective fallback for the rest, sourced from `dev.vertique.rest.jaxrs.runtime.GeneratedJaxRsReflectiveAnnotations.mergedParameterAnnotations(...)` — which resolves the same merged concrete+superclass+interface annotation set `AnnotationResolver.resolveParameterAnnotations` produces for the reflective `ResourceScanner` path. `findAnnotation`/`hasAnnotation` check the literals first, then the reflective fallback; `annotationsLazy()` returns the full merged effective array (defensively cloned). No annotation is ever silently dropped and no compile error is ever raised for an unsupported member on this path — every supported annotation on the parameter is literal-backed, and any unsupported one is resolved reflectively instead.
 - The generated `annotationsLazy()` returns a defensive copy (`annotations.clone()` in the pure-literal case; a cloned merged reflective array in the mixed case), not a shared backing array, since `ParamConversionResolver` passes the array directly to external `ParamConverterProvider`s and the backing field/reflective read is reused across requests on the same generated route.
 
-The reflective runtime path (`ResourceScanner`) backs the composed view with `dev.vertique.core.codegen.ReflectiveParameterMetadata` — the same reflective implementation `rest-client`'s scan path uses, not a jaxrs-local duplicate — wrapping the parameter's merged `Annotation[]` (from `AnnotationResolver.resolveParameterAnnotations`) via a small internal `AnnotatedElement` adapter on `ResourceMethodMeta.ParamMeta`'s convenience constructor. `annotationsLazy()` is consulted only when a JAX-RS `ParamConverterProvider` is registered (see ADR-0142); a registered provider sees real, materialized parameter annotations identically on the reflective-scan path and on both codegen paths — including a parameter whose annotations are only partly literalizable, via the mixed literal/reflective mode above.
+The reflective runtime path (`ResourceScanner`) backs the composed view with `dev.vertique.core.codegen.ReflectiveParameterMetadata` — the same reflective implementation `rest-client`'s scan path uses, not a jaxrs-local duplicate — wrapping the parameter's merged `Annotation[]` (from `AnnotationResolver.resolveParameterAnnotations`) via a small internal `AnnotatedElement` adapter on `ResourceMethodMeta.ParamMeta`'s convenience constructor. `annotationsLazy()` is consulted only when a JAX-RS `ParamConverterProvider` is registered; a registered provider sees real, materialized parameter annotations identically on the reflective-scan path and on both codegen paths — including a parameter whose annotations are only partly literalizable, via the mixed literal/reflective mode above.
 
-**`JaxRsParamSource` enum (in `vertique-rest-jaxrs`).** The codegen pipeline uses `JaxRsParamSource` as its local counterpart to the runtime `ResourceMethodMeta.ParamSource`. The enum has a single `CONTEXT` value for all `@Context`-annotated parameters regardless of type; the previous `SECURITY_CONTEXT` and `JAXRS_SECURITY_CONTEXT` values are removed. This enum is kept in lockstep with the runtime `ParamSource` — they are not interchangeable at runtime, but their value spaces must agree.
+**`JaxRsParamSource` enum (in `vertique-rest-jaxrs`).** The codegen pipeline uses `JaxRsParamSource` as its local counterpart to the runtime `ResourceMethodMeta.ParamSource`. The enum has a single `CONTEXT` value for all `@Context`-annotated parameters regardless of type. This enum is kept in lockstep with the runtime `ParamSource` — they are not interchangeable at runtime, but their value spaces must agree.
 
-**Fallback policy** (matching the CG-008 pattern): `ClassNotFoundException` is cached as a normal miss; the caller falls back to the reflective path. Any other `ReflectiveOperationException` or cast failure is wrapped, cached, and rethrown on every subsequent access — a broken generated class is a build defect, not a silent miss.
+**Fallback policy:** `ClassNotFoundException` is cached as a normal miss; the caller falls back to the reflective path. Any other `ReflectiveOperationException` or cast failure is wrapped, cached, and rethrown on every subsequent access — a broken generated class is a build defect, not a silent miss.
 
 ---
 
@@ -210,13 +203,11 @@ Class-level and method-level security conflicts are checked independently. Conte
 
 ## Shared Helpers
 
-`PathPlaceholders` and `JaxRsBeanScanner` live in `vertique-codegen-core` and are shared with the rest-client codegen validator.
+`PathPlaceholders`, `JaxRsBeanScanner`, and `PackageResolver` live in `vertique-codegen-core`.
 
-`PathPlaceholders.extract(String path)` returns placeholder names with any `:regex` suffix stripped — for example, `{id:[0-9]+}` yields `id`.
+`PathPlaceholders` and `JaxRsBeanScanner` are shared with the rest-client codegen validator. `PathPlaceholders.extract(String path)` returns placeholder names with any `:regex` suffix stripped — for example, `{id:[0-9]+}` yields `id`. `JaxRsBeanScanner` recursively scans composite types (annotated `@RequestParams` or `@BeanParam`) for `@PathParam` and `@FormParam` names, covering both fields and record components.
 
-`JaxRsBeanScanner` recursively scans composite types (annotated `@RequestParams` or `@BeanParam`) for `@PathParam` and `@FormParam` names, covering both fields and record components.
-
-`PackageResolver` (promoted from `vertique-codegen-dagger` to `vertique-codegen-core` in CG-010) computes the output package for generated files via LCP of origin-element packages. Override with `-Avertique.codegen.package=...`.
+`PackageResolver` computes the output package for generated files via LCP of origin-element packages. Override with `-Avertique.codegen.package=...`.
 
 ---
 
@@ -270,27 +261,7 @@ Test-only dependencies: `vertique-codegen-test`.
 
 ---
 
-## Version History
-
-| Date | Change |
-|------|--------|
-| 2026-05-02 | CG-009 initial release: `JaxRsResourceProcessor` with `SecurityAnnotationValidator`, `HttpVerbValidator`, `PathParamAlignmentValidator`, `BodyFormValidator`; shared helpers `PathPlaceholders` and `JaxRsBeanScanner` added to `vertique-codegen-core`; `PathPlaceholderValidator` in `vertique-codegen-rest-client` refactored to use `PathPlaceholders`; example-hello migrated to `GeneratedJaxRsResourcesModule` via CG-002 auto-wire; rest-client codegen scanners updated to preserve literal annotation values |
-| 2026-05-03 | CG-009 parity loop: `RuntimeParityTest` (codegen-jaxrs) and `ResourceScannerOrchestrationParityTest` (rest-jaxrs) verify APT validators agree with runtime behavior |
-| 2026-05-03 | CG-010: unified `JaxRsPipelineProcessor` replaces `JaxRsResourceProcessor` and absorbs `@Path`-resource DI binding from `vertique-codegen-dagger`; `EffectiveJaxRsContractResolver` with BFS interface walking + conflict-as-error policy; validators refactored to take `EffectiveResourceContract`; four emitters added (Dagger module, descriptor, bean-param model, execution plan); runtime SPI added to `vertique-rest-jaxrs` (`GeneratedJaxRsResourceDescriptor`, `GeneratedJaxRsDescriptorRegistry`, `GeneratedJaxRsBeanParamModel`, `GeneratedJaxRsBeanParamRegistry`, `BeanParamFieldMeta`, `ResourceExecutionPlan`, `GeneratedJaxRsSupport`, `ParameterExtractorBackedSupport`); reflective runtime gains interface support via `AnnotationResolver`-merged annotation lists (adjacent defects #29 setAccessible, #30 bean-param subclass-wins, #31 interface-backed contract); `PackageResolver` promoted to `vertique-codegen-core`; benchmark suite (registration 82–93×, invocation 46–52× vs reflective path) |
-| 2026-05-03 | CG-010 round-2 parity fix: `BeanParamModelEmitter` now emits `ANN_n` static annotation-array constants (loaded from field/accessor at class-init via `loadFieldAnnotations`/`loadRecordComponentAnnotations`) so that `ParamMeta.annotations()` carries input-policy annotations (`@Canonicalize`, `@Sanitize`, `@Skip*`); `ParameterExtractor.materializeBean` and `GeneratedJaxRsSupport` signatures updated to remove the `perFieldPolicies[]` parameter — per-field policies are now derived internally from `meta().annotations()` + route baseline, eliminating the codegen/reflective path divergence; `autoWire=false` doc corrected to clarify only DI module emission is suppressed |
-| 2026-05-05 | CG-011: `GeneratedJaxRsResourcesModuleEmitter` switched all bindings from `@Provides @IntoSet @JaxRsResources Object` to uniform `@Provides @ElementsIntoSet @JaxRsResources Set<Object>`. Each binding accepts `@VertxConfig JsonObject config` + `Provider<Resource>` parameters. Conditional resources (annotated `@ConditionalOnProperty`) emit a `PropertyCondition[]` constant and return `Set.of(provider.get())` when matched, `Set.of()` otherwise. Descriptor and execution-plan emission unchanged. |
-
----
-
 ## Known Gaps
 
 - **`T[]` repeated query/header params are not supported by generated dispatch (V1 limitation).** The codegen path does not recognize array shapes (`String[]`, `Integer[]`, etc.) as multi-value parameters: `EffectiveJaxRsContractResolver.resolveComponentType` intentionally excludes `T[]` because the emitted FQN form (`"java.lang.Integer[]"`) cannot be resolved via `Class.forName` at runtime. As a result, generated dispatch treats an array-typed query or header param as a scalar and binds only the first value. The reflective path (`ResourceScanner.resolveComponentType`) handles `T[]` fully and is unaffected. **Use `List<T>`, `Set<T>`, `SortedSet<T>`, or `NavigableSet<T>` for repeated params** — both paths support these collection shapes. `T[]` multi-value params are tracked for a future codegen release.
 - Descriptor-registry hierarchy walk for proxy/subclass resource patterns — the current registry uses `resource.getClass()` exactly and does not walk superclasses to find a companion for a subclass or proxy.
-
----
-
-## Related ADRs
-
-- ADR-0069: REST Context Resolver Chain and Single Context Source — collapses `SECURITY_CONTEXT` and `JAXRS_SECURITY_CONTEXT` into a single `CONTEXT` `JaxRsParamSource` value; establishes `ContextParamValidator` as the compile-time enforcement of FR-REST-187/188/189; defines the `resolveContext` generated-dispatch shape and static `CTX{i}` class constant.
-- ADR-0143: REST Metadata-Record Unification onto `core.codegen` — makes `ResourceMethodMeta.ParamMeta` compose `core.codegen.ParameterMetadata` and backs parameter-level `findAnnotation` with generated literals, removing the eager live `Annotation[]` this module's emitters used to construct.
-- ADR-0146: jaxrs codegen parity-first parameter annotations — completes ADR-0143's deferred item: both `ExecutionPlanEmitter` and `JaxRsDescriptorEmitter` materialize parameter annotations into compile-time literals via `MetadataEmitter.emitParameterMetadata` (a new standalone-emission entry point ported from `vertique-codegen-aop`'s `AopProxyEmitter` pattern) and fall back to a lazy per-parameter reflective read for any annotation a literal cannot represent, sharing one per-round literal-dedup set across both emitters and guaranteeing full runtime parity with the reflective scan path.

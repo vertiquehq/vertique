@@ -193,7 +193,7 @@ interface AppComponent {
 
 Contribute verticle deployments to the multibinding. `VerticleDeploymentManager` picks them up at startup.
 
-**Ordering note:** `VerticleDeployment` is deliberately **not** an `OrderedExtension`. It is a value record with its own `LifecyclePhase phase()` component (must be a verticle-subset phase; validated at construction) and is ordered via `groupingBy(priority, TreeMap)` where same-priority verticles within a phase deploy **in parallel** — it has no total order by design. Imposing `OrderedExtension` would change those semantics and collide on `phase()`. See ADR-0085 for the rationale behind this exclusion.
+**Ordering note:** `VerticleDeployment` is deliberately **not** an `OrderedExtension`. It is a value record with its own `LifecyclePhase phase()` component (must be a verticle-subset phase; validated at construction) and is ordered via `groupingBy(priority, TreeMap)` where same-priority verticles within a phase deploy **in parallel** — it has no total order by design. Imposing `OrderedExtension` would change those semantics and collide on `phase()`.
 
 ```java
 // In an app module
@@ -246,10 +246,3 @@ Mirror of the startup-step multibinding for teardown work. Same ordering contrac
 - `jakarta.annotation:jakarta.annotation-api`
 - `org.slf4j:slf4j-api`
 - `org.projectlombok:lombok` (provided)
-
----
-
-## Related ADRs
-
-- ADR-0129: Single `LifecyclePhase` Vocabulary Supersedes `DeploymentPhase` — establishes `LifecyclePhase` (8 values: 4 non-verticle + 4 verticle-subset) as the single lifecycle ordering vocabulary; records the construction-time validation on `VerticleDeployment`, the `LifecycleOrdered` contract, and why `OrderedExtension` cannot be reused for lifecycle steps.
-- ADR-0085: OrderedExtension Rolled Out Across Sorted Behavioral SPIs — `VerticleDeployment` is intentionally excluded from the `OrderedExtension` contract; its deploy ordering (phase bucket + parallel same-priority group) is deliberately divergent.

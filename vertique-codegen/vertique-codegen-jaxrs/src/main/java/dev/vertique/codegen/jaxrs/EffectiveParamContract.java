@@ -32,8 +32,11 @@ import javax.lang.model.type.TypeMirror;
  *                             declares an empty name (CG-009 blank-name parity)
  * @param defaultValue         the value from {@code @DefaultValue}, or {@code null} if absent
  * @param type                 the parameter type mirror; never {@code null}
- * @param componentType        the element type if the parameter is a generic collection type (e.g.
- *                             {@code List<String>} → {@code String}), or {@code null} otherwise
+ * @param componentType        the element type if the parameter is a multi-value shape — a generic
+ *                             collection ({@code List<String>} → {@code String}) or a scalar array
+ *                             ({@code String[]} → {@code String}) — or {@code null} otherwise;
+ *                             primitive arrays such as {@code byte[]} stay {@code null} so they
+ *                             remain binary/buffer body shapes
  * @param beanParamType        the declared type if the parameter is a composite bean parameter
  *                             ({@code @BeanParam} or {@code @RequestParams}), or {@code null}
  *                             otherwise

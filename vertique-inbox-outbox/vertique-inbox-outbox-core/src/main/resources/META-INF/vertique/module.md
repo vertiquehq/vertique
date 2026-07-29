@@ -16,15 +16,6 @@ This module has no dependency on `services`, `job-delayed`, or `kafka` — those
 
 ---
 
-## Package Layout
-
-| Package | Contents |
-|---------|----------|
-| `dev.vertique.inboxoutbox` | `InboxService`, `OutboxService`, `InboxResult`, `OutboxEntry`, `OutboxRecord`, `OutboxEnvelope`, `OutboxPublishResult`, `OutboxDestinationHandler`, `ClaimScope`, `RelayCapabilities`, `DestinationType`, `OutboxEntryState`, `TransactionalMessageContext`, `TransactionalMessagingConfig`, `RelayConfig`, `InboxConfig` |
-| `dev.vertique.inboxoutbox.exception` | `InboxOutboxConfigurationException`, `InboxOutboxTechnicalException`, `InboxOutboxPersistenceException` |
-
----
-
 ## Key Classes
 
 ### `InboxService`
@@ -161,7 +152,7 @@ Immutable record passed to `OutboxDestinationHandler.publish()` at relay time.
 | `aggregateType` / `aggregateId` / `eventType` | Row columns (used e.g. for the Kafka message key) |
 | `destination` / `payload` / `scheduledAt` / `attempt` / `createdAt` | Delivery fields from the row |
 | `headers` | Application/transport headers only (`OutboxEntry.headers`) — no framework keys |
-| `metadata` | `OutboxMetadata`: durable propagation context (`context`) plus delivery control (`delivery.outbox` relay control projected from the row columns, `delivery.delayedJob` scheduling). See ADR 0065 |
+| `metadata` | `OutboxMetadata`: durable propagation context (`context`) plus delivery control (`delivery.outbox`: `OutboxRelayControl`, relay control projected from the row columns; `delivery.delayedJob`: scheduling) |
 
 Framework relay control (`x-message-id`, `eventType`, `aggregate*`) is **not** merged into `headers`; it lives in `metadata.delivery.outbox`. Durable context lives in `metadata.context`, not headers.
 
@@ -255,7 +246,15 @@ The relay constructs this record from the registered `OutboxDestinationHandler` 
 
 ### `TransactionalMessageContext`
 
-Publish-side access to the application/transport headers for an outbound message (application-only). Framework durable context (correlation, trace, locale, …) is NOT carried here — it is captured from the ambient bound context into `OutboxMetadata.context` at publish. Outbox relay fields (message id, `eventType`, aggregate ids) are delivery control surfaced at relay time via `metadata.delivery.outbox`, not via this context. See ADR 0065.
+Publish-side access to the application/transport headers for an outbound message (application-only). Framework durable context (correlation, trace, locale, …) is NOT carried here — it is captured from the ambient bound context into `OutboxMetadata.context` at publish. Outbox relay fields (message id, `eventType`, aggregate ids) are delivery control surfaced at relay time via `metadata.delivery.outbox`, not via this context.
+
+### Exceptions
+
+| Exception | Extends | Description |
+|-----------|---------|-------------|
+| `InboxOutboxConfigurationException` | core `ConfigurationException` | Configuration or contract failure raised during inbox/outbox startup or wiring — e.g. an invalid claim-scope supplier or a misconfigured destination handler. |
+| `InboxOutboxTechnicalException` | core `TechnicalException` | Technical root for inbox/outbox infrastructure failures. |
+| `InboxOutboxPersistenceException` | `InboxOutboxTechnicalException` | Raised when an inbox/outbox operation fails because of a persistence-layer error. Adapter modules translate the underlying data-access failure into this type at the API boundary, so callers of `InboxService`/`OutboxService` see inbox/outbox exceptions rather than raw data-access exceptions. `retryable()` reports whether re-attempting the operation has a reasonable chance of succeeding — `true` for transient infrastructure failures (deadlock, lock timeout, optimistic/pessimistic locking), `false` otherwise. |
 
 ---
 
@@ -263,7 +262,7 @@ Publish-side access to the application/transport headers for an outbound message
 
 ```json
 {
-  "transactionalMessaging": {
+  "inboxOutbox": {
     "relay": {
       "strategy": "LISTEN_NOTIFY",
       "pollingIntervalMs": 1000,
@@ -272,12 +271,13 @@ Publish-side access to the application/transport headers for an outbound message
       "maxAttempts": 20,
       "backoffBaseDelayMs": 1000,
       "backoffMaxDelayMs": 300000,
-      "publishedRetentionDays": 7,
-      "deadLetterRetentionDays": 30
+      "instances": 1
     },
-    "inbox": {
-      "retentionDays": 30,
-      "defaultMessageIdHeader": "x-message-id"
+    "cleanup": {
+      "publishedRetentionDays": 7,
+      "deadLetterRetentionDays": 30,
+      "inboxRetentionDays": 30,
+      "cleanupBatchSize": 1000
     }
   },
   "cron": {
@@ -289,9 +289,9 @@ Publish-side access to the application/transport headers for an outbound message
 }
 ```
 
-Cleanup cadence is now owned by the framework's cron infrastructure. The legacy `inbox.cleanupIntervalHours` field was removed; configs that still set it are accepted and the value ignored. Tune via `cron.jobs.<id>.cron`.
+Cleanup cadence is owned by the framework's cron infrastructure, not by the cleanup config block itself. The legacy `cleanupIntervalHours` field was removed from the cleanup config; configs that still set it are accepted (and the value ignored) via `@JsonIgnoreProperties`. Tune cadence via `cron.jobs.<id>.cron` — e.g. `cron.jobs.outbox-cleanup.cron` (default above) and `cron.jobs.outbox-stale-lease-recovery.cron`.
 
-Config classes: `TransactionalMessagingConfig` (root), `RelayConfig` (`relay` block), `InboxConfig` (`inbox` block).
+Config classes: `OutboxRelayConfig` (`inboxOutbox.relay`), `InboxOutboxCleanupConfig` (`inboxOutbox.cleanup`).
 
 ---
 
@@ -372,19 +372,3 @@ inbox-outbox-core  <--  inbox-outbox-postgresql  (persistence + relay verticle)
                    <--  inbox-outbox-delayed-job  (DELAYED_JOB adapter)
                    <--  inbox-outbox-kafka        (KAFKA adapter)
 ```
-
----
-
-## Version History
-
-| Date | Change |
-|------|--------|
-| 2026-04-09 | Initial implementation: `InboxService`, `OutboxService`, `InboxResult` (sealed: Processed/Duplicate), `OutboxEntry` builder, `OutboxRecord`, `OutboxEnvelope`, `OutboxPublishResult` (sealed: success/retryable/permanent/unresolvable), `OutboxDestinationHandler` SPI, `RelayCapabilities`, `OutboxState` (PENDING/PROCESSING/PUBLISHED/DEAD_LETTER), `DestinationType` (SERVICE/DELAYED_JOB/KAFKA), `TransactionalMessageContext`, `TransactionalMessagingConfig`, `RelayConfig`, `InboxConfig` |
-
----
-
-## Related ADRs
-
-- ADR-0081: DestinationType Is an Open Value Type, Not a Closed Enum — establishes `DestinationType` as a `final class` wrapping a validated string id so adapter modules can declare new destination types with no edit to core.
-- ADR-0082: Adapter-Owned Relay Claim Eligibility via Per-Handler ClaimScope — introduces the `ClaimScope` SPI and the mandatory `claimScope()` method on `OutboxDestinationHandler`, making the relay claim query fully dynamic and eliminating the hardcoded `@ServiceTargetIds`/`@DelayedJobTargetIds` multibindings.
-- ADR-0112: Framework Exception Hierarchy and REST Mapping — defines the inbox-outbox semantic exception roots (`InboxOutboxConfigurationException` → core `ConfigurationException`; `InboxOutboxTechnicalException` → core `TechnicalException`; `InboxOutboxPersistenceException` extends `InboxOutboxTechnicalException` with a `retryable` signal) and the API-boundary wrapping of `DataAccessException`.

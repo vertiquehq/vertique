@@ -10,7 +10,6 @@ import java.lang.annotation.Annotation;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 
 /**
  * Stateless runtime helper bag exposed to generated JAX-RS resource descriptor and bean-param
@@ -24,7 +23,10 @@ import java.util.Map;
  *
  * <p>Primitive type names ({@code "int"}, {@code "long"}, {@code "boolean"}, etc.) are
  * recognised and mapped to the matching {@link Class} without invoking {@link Class#forName},
- * which does not accept primitive type names.
+ * which does not accept primitive type names. Array types arrive in Java <em>source</em> form
+ * ({@code "java.lang.String[]"}, {@code "byte[]"}) — the form the emitter produces — and are
+ * resolved via {@link ArrayFqns}, since {@code Class.forName} accepts only the JVM binary array
+ * form.
  *
  * <p>Caching policy: results are <strong>not</strong> cached at the support level. Each
  * generated descriptor instance is free to cache its own resolutions in its own fields after
@@ -42,24 +44,6 @@ import java.util.Map;
 public final class GeneratedJaxRsDescriptorSupport {
 
     /**
-     * Map from primitive type name to its corresponding {@link Class} object.
-     *
-     * <p>{@link Class#forName(String)} does not accept primitive names; this table provides
-     * the mapping so that {@code resolveClass("int", ...)} returns {@code int.class} rather
-     * than throwing {@link ClassNotFoundException}.
-     */
-    private static final Map<String, Class<?>> PRIMITIVES = Map.of(
-            "boolean", boolean.class,
-            "byte", byte.class,
-            "char", char.class,
-            "short", short.class,
-            "int", int.class,
-            "long", long.class,
-            "float", float.class,
-            "double", double.class,
-            "void", void.class);
-
-    /**
      * Creates a new support instance. Intended to be called by generated descriptor or
      * bean-param model classes on their first {@code describe()} / {@code fields()} call.
      */
@@ -70,20 +54,23 @@ public final class GeneratedJaxRsDescriptorSupport {
     /**
      * Resolves a single class by its fully-qualified name using the given class loader.
      *
-     * <p>Primitive type names ({@code "int"}, {@code "long"}, etc.) are handled without
-     * invoking {@link Class#forName}.
+     * <p>Accepts three forms: a binary reference name ({@code com.example.Outer$Inner}), a Java
+     * primitive name ({@code "int"}), and — new — an array type in Java <em>source</em> form with
+     * one or more trailing {@code []} pairs ({@code "java.lang.String[]"}, {@code "byte[]"},
+     * {@code "com.example.Outer$Inner[][]"}). Array FQNs are resolved by counting and stripping the
+     * {@code []} pairs and applying {@link java.lang.reflect.Array#newInstance(Class, int...)} to
+     * the resolved base type — {@code Class.forName} cannot load the source array form. Reference
+     * types are resolved with class initialization enabled, unchanged from before.
      *
-     * @param fqn the fully-qualified class name or primitive type name; must not be {@code null}
-     * @param cl  the class loader to use for non-primitive types; must not be {@code null}
+     * @param fqn the fully-qualified class name, primitive type name, or source-form array type
+     *            name; must not be {@code null}
+     * @param cl  the class loader to use for reference types; must not be {@code null}
      * @return the resolved {@link Class}; never {@code null}
-     * @throws ClassNotFoundException if the class is not found on {@code cl}'s classpath
+     * @throws ClassNotFoundException if the class (or an array's component type) is not found on
+     *                                {@code cl}'s classpath
      */
     public Class<?> resolveClass(String fqn, ClassLoader cl) throws ClassNotFoundException {
-        Class<?> primitive = PRIMITIVES.get(fqn);
-        if (primitive != null) {
-            return primitive;
-        }
-        return Class.forName(fqn, true, cl);
+        return ArrayFqns.resolve(fqn, cl, true);
     }
 
     /**

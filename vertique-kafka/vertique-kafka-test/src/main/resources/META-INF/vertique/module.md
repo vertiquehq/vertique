@@ -5,6 +5,11 @@ SPDX-License-Identifier: EUPL-1.2
 
 # Kafka Test Module
 
+> **Status:** Alpha
+> **Package:** `dev.vertique.kafka.test`
+> **Artifact:** `vertique-kafka-test`
+> **Depends on:** no framework module — Testcontainers and the Vert.x Kafka client only
+
 Shared integration-test support for the Vertique Kafka family. The module supplies one
 reachability-verified Testcontainers Kafka broker per Surefire/Failsafe JVM fork so Kafka
 integration tests do not start a broker for every test class.

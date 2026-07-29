@@ -215,10 +215,3 @@ NFR-CONF-002 applies throughout this module:
 The two AWS SDK artifacts are governed by the `software.amazon.awssdk:bom` BOM, imported at version `${aws.sdk.version}` in the parent `<dependencyManagement>`. Application POMs do not need to declare SDK versions directly.
 
 No Dagger runtime dependency. No Vert.x web dependency.
-
----
-
-## Related ADRs
-
-- ADR-0096: Bootstrap Config Relocation and `config.stores` Two-Phase Load — establishes the two-phase bootstrap model and the distinction between merge-based `config.stores` and lookup-based `config.propertySources`; this module implements the latter.
-- ADR-0097: Placeholder Grammar and Progressive Resolution Chain — defines the `${key}` grammar, tree-first chain order, self-reference fall-through, fail-closed source-error contract, and the three-pass model that this module's eager-load strategy is designed to satisfy.

@@ -18,19 +18,6 @@ The reflective `KafkaConsumerScanner` is retained as the runtime fallback. Appli
 shared parent-or-facade processor boundary described below; no processor-leaf selection or Dagger
 graph changes are required.
 
-See ADR-0072 for the metadata shape decisions, the three-way `Kind` discriminator rationale, and the dual-hook integration design.
-
----
-
-## Package Layout
-
-| Package | Contents |
-|---------|----------|
-| `dev.vertique.codegen.kafka.processor` | `KafkaConsumerProcessor`, `KafkaCodegenAnnotations` |
-| `dev.vertique.codegen.kafka.processor.scan` | `KafkaListenerScanner`, `KafkaSourceScanner`, `KafkaParamClassifier`, `KafkaParamModel`, `KafkaAttrs`, `ListenerModel`, `RouteModel`, `KafkaSourceModel`, `KafkaSourceMethodModel` |
-| `dev.vertique.codegen.kafka.processor.validate` | `KafkaConsumerValidator`, `KafkaSourceValidator`, `ListenerTopicValidator`, `HandlerMatchValidator`, `HandlerParamValidator`, `HandlerReturnTypeValidator`, `DirectHandlerValidator` |
-| `dev.vertique.codegen.kafka.processor.emit` | `BindingMetaEmitter` |
-
 ---
 
 ## Key Classes
@@ -56,7 +43,7 @@ Lifecycle:
    - Iterates the union of origin types; calls `BindingMetaEmitter.emit(listenerModel, sourceModel)` — for a type carrying both a `@KafkaListener` and `@KafkaSource` methods, the emitter aggregates all metas into one companion.
 3. Returns `false` so other processors (Dagger, Lombok) see the same elements.
 
-**Dual-annotation aggregation:** A class that is both a `@KafkaListener` direct-handler (Model 4) and carries `@KafkaSource` methods produces one companion. The `METAS` list contains the HANDLER entry followed by all SOURCE entries. The runtime loader's `scanKafkaSources` hook filters to SOURCE metas; `scanListeners` takes HANDLER (or ROUTER) metas. See ADR-0072.
+**Dual-annotation aggregation:** A class that is both a `@KafkaListener` direct-handler (Model 4) and carries `@KafkaSource` methods produces one companion. The `METAS` list contains the HANDLER entry followed by all SOURCE entries. The runtime loader's `scanKafkaSources` hook filters to SOURCE metas; `scanListeners` takes HANDLER (or ROUTER) metas.
 
 ### Scanners
 
@@ -122,7 +109,7 @@ At each hook:
 
 **What the generated path eliminates:** annotation reads, `KafkaParamClassifier` generic resolution, `TypeResolver.resolveTypeArgument` for direct handlers. **What the generated path does not eliminate:** runtime target resolution via `ServiceTargetResolver` (event-bus address, stable target id, one-way flag — these require the live `ServiceContractRegistry`).
 
-The NFR's "≥50% lower scan time" is a scan/classify-fraction claim. Measuring the actual fraction requires a dedicated benchmark (deferred; see ADR-0072 Consequences).
+The NFR's "≥50% lower scan time" is a scan/classify-fraction claim. Measuring the actual fraction requires a dedicated benchmark, which is deferred.
 
 **Loud-fail contract:** if a generated companion is found but has no `METAS` field, a wrong type, or an inaccessible field, `load` throws `KafkaRegistrationException` immediately. The loader never silently falls back to reflective scanning when a companion is present but broken.
 
@@ -162,7 +149,7 @@ No `@Component` changes are required. `KafkaConsumerScanner` automatically uses 
 
 ## Module Dagger Bindings
 
-None. The processor emits no Dagger binding modules. Generated companions are discovered at runtime via `Class.forName` inside `GeneratedBindingMetaLoader` and do not require any Dagger graph participation. CG-002 (`vertique-codegen-dagger`) retains ownership of the `@KafkaConsumers` multibinding wiring.
+None. The processor emits no Dagger binding modules. Generated companions are discovered at runtime via `Class.forName` inside `GeneratedBindingMetaLoader` and do not require any Dagger graph participation. `vertique-codegen-dagger` retains ownership of the `@KafkaConsumers` multibinding wiring.
 
 ---
 
@@ -172,9 +159,3 @@ None. The processor emits no Dagger binding modules. Generated companions are di
 - `dev.vertique:vertique-kafka-core` — `@KafkaListener`, `@KafkaHandler`, `@KafkaSource`, `KafkaRecordHandler`, `KafkaBindingMeta`, `ErrorStrategy`, `CommitStrategy`. **Test-scope in this processor module** (the processor only needs these types to compile its own tests, not at processing time). A **consuming application** needs `vertique-kafka-core` on its normal compile/runtime classpath — it carries the consumer annotations the app authors against, and the generated `{Consumer}_BindingMeta` references `KafkaBindingMeta`/`ErrorStrategy`/`CommitStrategy` — so adding the processor never pulls in a new runtime dependency. Applications also include at least one format module (`vertique-kafka-json` and/or `vertique-kafka-avro`) for serialization.
 - `com.palantir.javapoet:javapoet` — source generation (compile-only; not on runtime classpath)
 - `javax.annotation.processing` APIs — part of the JDK; not a separate Maven dependency
-
----
-
-## Related ADRs
-
-- ADR-0072: Kafka `KafkaBindingMeta` Shape and Registrar Integration — why `KafkaBindingMeta` carries only compile-time-knowable data (runtime target resolution deferred to boot), the three-way `Kind` discriminator, companion origin-package pinning, dual-hook load-prefer-with-reflective-fallback, erased value types in generated code, and the shared `KafkaConsumerValidation` extraction.

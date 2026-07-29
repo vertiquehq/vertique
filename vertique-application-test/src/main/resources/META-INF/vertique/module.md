@@ -5,6 +5,11 @@ SPDX-License-Identifier: EUPL-1.2
 
 # Vertique Application Test
 
+> **Status:** Alpha
+> **Package:** `dev.vertique.application.test`
+> **Artifact:** `vertique-application-test`
+> **Depends on:** application, core, deploy
+
 ## Testing
 
 `vertique-application-test` provides `VertiqueAppExtension`, a JUnit 5 extension that boots a
