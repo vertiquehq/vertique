@@ -13,10 +13,10 @@ import static com.github.tomakehurst.wiremock.client.WireMock.post;
 import static com.github.tomakehurst.wiremock.client.WireMock.put;
 import static com.github.tomakehurst.wiremock.client.WireMock.urlEqualTo;
 import static com.github.tomakehurst.wiremock.client.WireMock.urlPathEqualTo;
+import static com.github.tomakehurst.wiremock.core.WireMockConfiguration.wireMockConfig;
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.github.tomakehurst.wiremock.WireMockServer;
-import com.github.tomakehurst.wiremock.core.WireMockConfiguration;
+import com.github.tomakehurst.wiremock.junit5.WireMockExtension;
 import dev.vertique.config.parser.DefaultConfigMapper;
 import dev.vertique.config.parser.DefaultConfigParser;
 import dev.vertique.core.config.ConfigParser;
@@ -48,13 +48,12 @@ import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
-import org.junit.jupiter.api.AfterAll;
-import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.api.extension.RegisterExtension;
 
 /**
  * Integration tests for the REST client proxy end-to-end, using WireMock as the HTTP server.
@@ -82,19 +81,15 @@ public class RestClientIntegrationIT {
 
     // --- WireMock lifecycle ---
 
-    private static WireMockServer wireMock;
+    @RegisterExtension
+    static WireMockExtension wireMock = WireMockExtension.newInstance()
+            .options(wireMockConfig().dynamicPort())
+            .build();
 
-    @BeforeAll
-    static void startWireMock() {
-        wireMock = new WireMockServer(WireMockConfiguration.wireMockConfig().dynamicPort());
-        wireMock.start();
-    }
-
-    @AfterAll
-    static void stopWireMock() {
-        wireMock.stop();
-    }
-
+    /**
+     * Resets all WireMock stubs and serve-events before each test so that stub registrations and
+     * request counts from one test do not bleed into the next.
+     */
     @BeforeEach
     void resetStubs() {
         wireMock.resetAll();
@@ -222,7 +217,7 @@ public class RestClientIntegrationIT {
      * @return a builder pre-configured with the WireMock base URL
      */
     private RestClientBuilder builderFor(Vertx vertx) {
-        return new RestClientBuilder(vertx).baseUrl("http://localhost:" + wireMock.port());
+        return new RestClientBuilder(vertx).baseUrl(wireMock.baseUrl());
     }
 
     // --- Tests ---
@@ -792,10 +787,7 @@ public class RestClientIntegrationIT {
         JsonObject config = new JsonObject()
                 .put(
                         "restClient",
-                        new JsonObject()
-                                .put(
-                                        "test-service",
-                                        new JsonObject().put("baseUrl", "http://localhost:" + wireMock.port())));
+                        new JsonObject().put("test-service", new JsonObject().put("baseUrl", wireMock.baseUrl())));
 
         new RestClientBuilder(vertx)
                 .config(dev.vertique.rest.client.config.RestClientConfig.indexFromConfig(config, configParser())
@@ -892,7 +884,7 @@ public class RestClientIntegrationIT {
                                 .put(
                                         "test-service",
                                         new JsonObject()
-                                                .put("baseUrl", "http://localhost:" + wireMock.port())
+                                                .put("baseUrl", wireMock.baseUrl())
                                                 .put(
                                                         "webClient",
                                                         new JsonObject()
@@ -928,7 +920,7 @@ public class RestClientIntegrationIT {
                                 .put(
                                         "test-service",
                                         new JsonObject()
-                                                .put("baseUrl", "http://localhost:" + wireMock.port())
+                                                .put("baseUrl", wireMock.baseUrl())
                                                 // Override only connectTimeoutMs; keepAlive stays from baseline
                                                 .put("webClient", new JsonObject().put("connectTimeoutMs", 9000))));
 
@@ -964,7 +956,7 @@ public class RestClientIntegrationIT {
                 new RestClientFactory(vertx, java.util.Set.of(globalInterceptor), java.util.Map.of(), null);
 
         factory.builder()
-                .baseUrl("http://localhost:" + wireMock.port())
+                .baseUrl(wireMock.baseUrl())
                 .build(TestClient.class)
                 .getItem("f")
                 .onComplete(ctx.succeeding(item -> ctx.verify(() -> {

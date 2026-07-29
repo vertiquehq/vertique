@@ -3,7 +3,7 @@
 
 package dev.vertique.rest.client;
 
-import com.github.tomakehurst.wiremock.WireMockServer;
+import com.github.tomakehurst.wiremock.junit.Stubbing;
 import com.github.tomakehurst.wiremock.stubbing.StubMapping;
 
 /**
@@ -24,7 +24,7 @@ public interface WiremockScenarioPreparer {
      * @param server the WireMock server to configure
      * @return the registered stub mapping
      */
-    StubMapping prepare(WireMockServer server);
+    StubMapping prepare(Stubbing server);
 
     /**
      * Returns the exception type that the REST client is expected to throw for this scenario.

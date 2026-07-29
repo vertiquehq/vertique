@@ -10,11 +10,11 @@ import static com.github.tomakehurst.wiremock.client.WireMock.get;
 import static com.github.tomakehurst.wiremock.client.WireMock.okJson;
 import static com.github.tomakehurst.wiremock.client.WireMock.post;
 import static com.github.tomakehurst.wiremock.client.WireMock.urlEqualTo;
+import static com.github.tomakehurst.wiremock.core.WireMockConfiguration.wireMockConfig;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import com.github.tomakehurst.wiremock.WireMockServer;
-import com.github.tomakehurst.wiremock.core.WireMockConfiguration;
+import com.github.tomakehurst.wiremock.junit5.WireMockExtension;
 import dev.vertique.rest.client.exception.RestClientException;
 import dev.vertique.rest.client.exception.RestClientResponseException;
 import dev.vertique.rest.client.interceptor.RestClientInterceptor;
@@ -33,13 +33,12 @@ import jakarta.ws.rs.QueryParam;
 import java.net.URI;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
-import org.junit.jupiter.api.AfterAll;
-import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.api.extension.RegisterExtension;
 
 /**
  * Integration tests for the {@link Url} parameter annotation feature, using WireMock as the HTTP
@@ -55,19 +54,15 @@ public class RestClientUrlIT {
 
     // --- WireMock lifecycle ---
 
-    private static WireMockServer wireMock;
+    @RegisterExtension
+    static WireMockExtension wireMock = WireMockExtension.newInstance()
+            .options(wireMockConfig().dynamicPort())
+            .build();
 
-    @BeforeAll
-    static void startWireMock() {
-        wireMock = new WireMockServer(WireMockConfiguration.wireMockConfig().dynamicPort());
-        wireMock.start();
-    }
-
-    @AfterAll
-    static void stopWireMock() {
-        wireMock.stop();
-    }
-
+    /**
+     * Resets all WireMock stubs and serve-events before each test so that stub registrations and
+     * request counts from one test do not bleed into the next.
+     */
     @BeforeEach
     void resetStubs() {
         wireMock.resetAll();
@@ -199,7 +194,7 @@ public class RestClientUrlIT {
      * @return base URL string, e.g. {@code http://localhost:54321}
      */
     private String baseUrl() {
-        return "http://localhost:" + wireMock.port();
+        return wireMock.baseUrl();
     }
 
     // --- Happy-path tests ---
@@ -420,7 +415,7 @@ public class RestClientUrlIT {
         // strict HTTP servers that require a path component before the query string.
         wireMock.stubFor(get(urlEqualTo("/?added=2")).willReturn(okJson("{\"name\":\"root\"}")));
 
-        URI url = URI.create("http://localhost:" + wireMock.port());
+        URI url = URI.create(wireMock.baseUrl());
         buildClient(vertx)
                 .getWithQuery(url, "2")
                 .onComplete(ctx.succeeding(item -> ctx.verify(() -> {

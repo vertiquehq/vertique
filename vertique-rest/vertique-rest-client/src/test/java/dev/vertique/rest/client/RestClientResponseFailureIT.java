@@ -3,11 +3,11 @@
 
 package dev.vertique.rest.client;
 
+import static com.github.tomakehurst.wiremock.core.WireMockConfiguration.wireMockConfig;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.github.tomakehurst.wiremock.WireMockServer;
-import com.github.tomakehurst.wiremock.core.WireMockConfiguration;
+import com.github.tomakehurst.wiremock.junit5.WireMockExtension;
 import dev.vertique.rest.client.exception.RestClientResponseException;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
@@ -18,12 +18,12 @@ import jakarta.ws.rs.Path;
 import jakarta.ws.rs.Produces;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.api.extension.RegisterExtension;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 
@@ -54,20 +54,21 @@ class RestClientResponseFailureIT {
         Future<Item> get();
     }
 
-    private WireMockServer wireMock;
+    @RegisterExtension
+    static WireMockExtension wireMock = WireMockExtension.newInstance()
+            .options(wireMockConfig().dynamicPort())
+            .build();
+
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
+    /**
+     * Resets all WireMock stubs and serve-events before each test. The server stays up for the
+     * whole class: restarting it per test races stub registration against in-flight dispatch
+     * under full-suite load, which surfaces as unexplained 404s.
+     */
     @BeforeEach
-    void startWireMock() {
-        wireMock = new WireMockServer(WireMockConfiguration.wireMockConfig().dynamicPort());
-        wireMock.start();
-    }
-
-    @AfterEach
-    void stopWireMock() {
-        if (wireMock != null && wireMock.isRunning()) {
-            wireMock.stop();
-        }
+    void resetStubs() {
+        wireMock.resetAll();
     }
 
     /**
@@ -77,9 +78,7 @@ class RestClientResponseFailureIT {
      * @return a ready-to-use test client
      */
     private ResponseFailureClient buildClient(Vertx vertx) {
-        return new RestClientBuilder(vertx)
-                .baseUrl("http://localhost:" + wireMock.port())
-                .build(ResponseFailureClient.class);
+        return new RestClientBuilder(vertx).baseUrl(wireMock.baseUrl()).build(ResponseFailureClient.class);
     }
 
     @ParameterizedTest(name = "{0}")

@@ -7,12 +7,12 @@ import static com.github.tomakehurst.wiremock.client.WireMock.aResponse;
 import static com.github.tomakehurst.wiremock.client.WireMock.equalTo;
 import static com.github.tomakehurst.wiremock.client.WireMock.get;
 import static com.github.tomakehurst.wiremock.client.WireMock.urlEqualTo;
+import static com.github.tomakehurst.wiremock.core.WireMockConfiguration.wireMockConfig;
 import static com.github.tomakehurst.wiremock.stubbing.Scenario.STARTED;
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.github.tomakehurst.wiremock.WireMockServer;
-import com.github.tomakehurst.wiremock.core.WireMockConfiguration;
 import com.github.tomakehurst.wiremock.http.Fault;
+import com.github.tomakehurst.wiremock.junit5.WireMockExtension;
 import dev.vertique.core.extension.ExtensionPhase;
 import dev.vertique.core.resilience.BackoffStrategy;
 import dev.vertique.core.resilience.Retry;
@@ -36,12 +36,12 @@ import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.api.extension.RegisterExtension;
 
 /**
  * Integration tests for the per-physical-attempt observer hooks on REST client proxies.
@@ -208,21 +208,20 @@ public class RestClientAttemptObserverIT {
 
     // --- WireMock lifecycle ---
 
-    private WireMockServer wireMock;
+    @RegisterExtension
+    static WireMockExtension wireMock = WireMockExtension.newInstance()
+            .options(wireMockConfig().dynamicPort())
+            .build();
 
-    /** Starts a WireMock server on a dynamic port before each test. */
+    /**
+     * Resets all WireMock stubs and serve-events before each test so that stub registrations and
+     * request counts from one test do not bleed into the next. The server itself stays up for the
+     * whole class: restarting it per test races stub registration against in-flight dispatch under
+     * full-suite load, which surfaces as unexplained 404s.
+     */
     @BeforeEach
-    void startWireMock() {
-        wireMock = new WireMockServer(WireMockConfiguration.wireMockConfig().dynamicPort());
-        wireMock.start();
-    }
-
-    /** Stops WireMock after each test. */
-    @AfterEach
-    void stopWireMock() {
-        if (wireMock != null && wireMock.isRunning()) {
-            wireMock.stop();
-        }
+    void resetStubs() {
+        wireMock.resetAll();
     }
 
     // --- Client builder helpers ---
@@ -235,7 +234,7 @@ public class RestClientAttemptObserverIT {
      * @return a ready-to-use proxy
      */
     private ObserverClient buildClient(Vertx vertx, RestClientInterceptor... interceptors) {
-        RestClientBuilder b = new RestClientBuilder(vertx).baseUrl("http://localhost:" + wireMock.port());
+        RestClientBuilder b = new RestClientBuilder(vertx).baseUrl(wireMock.baseUrl());
         for (RestClientInterceptor i : interceptors) {
             b.register(i);
         }
@@ -252,9 +251,8 @@ public class RestClientAttemptObserverIT {
      */
     private ObserverClient buildClientWithCapturer(
             Vertx vertx, RestClientContextCapturer<?> capturer, RestClientInterceptor... interceptors) {
-        RestClientBuilder b = new RestClientBuilder(vertx)
-                .baseUrl("http://localhost:" + wireMock.port())
-                .registerCapturer(capturer);
+        RestClientBuilder b =
+                new RestClientBuilder(vertx).baseUrl(wireMock.baseUrl()).registerCapturer(capturer);
         for (RestClientInterceptor i : interceptors) {
             b.register(i);
         }
@@ -288,7 +286,7 @@ public class RestClientAttemptObserverIT {
                     // Safe-by-type target — scheme/host/port/pathTemplate, never the expanded URI.
                     assertThat(a.target().scheme()).isEqualTo("http");
                     assertThat(a.target().host()).isEqualTo("localhost");
-                    assertThat(a.target().port()).isEqualTo(wireMock.port());
+                    assertThat(a.target().port()).isEqualTo(wireMock.getPort());
                     assertThat(a.target().pathTemplate()).isEqualTo("/single");
                     ctx.completeNow();
                 })));
@@ -309,7 +307,7 @@ public class RestClientAttemptObserverIT {
                 .baseUrl("http://configured-base:9999")
                 .register(obs)
                 .build(ObserverClient.class);
-        java.net.URI target = java.net.URI.create("http://localhost:" + wireMock.port() + "/url-target");
+        java.net.URI target = java.net.URI.create(wireMock.baseUrl() + "/url-target");
 
         client.viaUrl(target)
                 .onComplete(ctx.succeeding(body -> ctx.verify(() -> {
@@ -317,7 +315,7 @@ public class RestClientAttemptObserverIT {
                     CapturingObserver.Attempt a = obs.attempts.get(0);
                     assertThat(a.target().scheme()).isEqualTo("http");
                     assertThat(a.target().host()).isEqualTo("localhost"); // the @Url host, not "configured-base"
-                    assertThat(a.target().port()).isEqualTo(wireMock.port());
+                    assertThat(a.target().port()).isEqualTo(wireMock.getPort());
                     assertThat(a.target().pathTemplate()).isNull(); // @Url has no route template
                     ctx.completeNow();
                 })));
@@ -675,7 +673,7 @@ public class RestClientAttemptObserverIT {
         };
 
         new RestClientBuilder(vertx)
-                .baseUrl("http://localhost:" + wireMock.port())
+                .baseUrl(wireMock.baseUrl())
                 .register(systemFirst)
                 .register(appLast)
                 .build(ObserverClient.class)
