@@ -55,7 +55,7 @@ WARN for each mount that selects this strategy; `@FilePart` and verifier executi
 
 **Error sanitization.** Validation errors produced by the `openapi-contract` strategy are sanitized before reaching the client: submitted values, client-supplied property names, and raw validator internals are stripped from the error response. The 400 response body contains only the violation location (JSON pointer), the failed keyword, and a stable message — no echoed request data.
 
-**JSON profile first-parse.** When a non-`vertx` JSON mapper profile is resolved for a route (see `dev.vertique:vertique-rest-jaxrs` → request-body profiles), the `openapi-contract` strategy runs that profile mapper's **first parse** of the request body — applying its strict parser features and rejecting a non-conforming body with a 400 — *before* OpenAPI schema validation, consistent with the default `web-validation` strategy. No profile is stashed for the `vertx` default, in which case this is a no-op and OpenAPI validation runs unchanged. (See ADR-0126.)
+**JSON profile first-parse.** When a non-`vertx` JSON mapper profile is resolved for a route (see `dev.vertique:vertique-rest-jaxrs` → request-body profiles), the `openapi-contract` strategy runs that profile mapper's **first parse** of the request body — applying its strict parser features and rejecting a non-conforming body with a 400 — *before* OpenAPI schema validation, consistent with the default `web-validation` strategy. No profile is stashed for the `vertx` default, in which case this is a no-op and OpenAPI validation runs unchanged.
 
 ---
 
@@ -140,7 +140,7 @@ Internal helper that wraps the Vert.x `OpenAPIContract`-backed validation handle
 - **File verification is inactive.** `openapi-contract` does not run `@FilePart` constraints or
   `FileContentVerifier`; bound verifiers cause a per-mount startup WARN.
 - **`vertx-openapi` is a preview artifact.** Its API shape may change across Vert.x minor versions. This module pins the `vertx-openapi` version via the parent BOM.
-- **Security semantics.** The active security model is OR-of-AND-with-scopes (see ADR-0124). The `openapi-contract` strategy inherits the same security handling as all other strategies — security is applied by `JaxRsRouteRegistrar`, not by the validation strategy itself. The validation gate runs after the auth/authorization chain and is unaffected by the security model shape.
+- **Security semantics.** The active security model is OR-of-AND-with-scopes. The `openapi-contract` strategy inherits the same security handling as all other strategies — security is applied by `JaxRsRouteRegistrar`, not by the validation strategy itself. The validation gate runs after the auth/authorization chain and is unaffected by the security model shape.
 
 ---
 
@@ -150,13 +150,3 @@ Internal helper that wraps the Vert.x `OpenAPIContract`-backed validation handle
 - `io.vertx:vertx-openapi`
 - `com.google.dagger:dagger`
 - `jakarta.inject:jakarta.inject-api`
-
----
-
-## Related ADRs
-
-- ADR-0119: Security-Scheme Handler Decoupling from RouterBuilder — establishes the plain-router registration path on which validation gates run.
-- ADR-0120: Annotation-Synthesized, Strategy-Pluggable Validation — governs the strategy SPI and the rationale for isolating `vertx-openapi` to this module rather than the default path.
-- ADR-0124: Security Model as OR-of-AND-with-Scopes, Fail-Closed on the Unsupported Subset — security handling is owned by the route registrar; the per-mount `bindToMount` guard preventing wrong-contract validation is a direct consequence of this ADR's fail-closed principle.
-- ADR-0142: Shared Parameter Conversion SPI — establishes the single `ParamConversionResolver` that `OpenApiContractValidationStrategy` injects and threads into its `DefaultBoundRequest`, alongside the `rest-jaxrs` dispatch path and the `rest-validation` strategy.
-- ADR-0179: File-Part Validation and Content Verifier — records why file validation is strategy-scoped and why inactive verifier bindings warn per mount.

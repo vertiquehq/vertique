@@ -164,9 +164,3 @@ application factory, and asserts that representative routing, validation, securi
 management bindings resolve. A dependency fixture materializes the compile and runtime classpaths
 and fails when the direct ledger drifts or a services, database, JWT, launcher, test, or
 code-generation artifact leaks in.
-
----
-
-## Related ADRs
-
-Decision: ADR-0188 — Static Starter Aggregates and Separate Archetypes.

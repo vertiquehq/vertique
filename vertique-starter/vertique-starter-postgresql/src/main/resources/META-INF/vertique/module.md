@@ -167,9 +167,3 @@ the `MIGRATE`-phase Flyway startup contribution all resolve while the `VerticleD
 empty. A dependency fixture materializes the compile and runtime classpaths and fails when the direct
 ledger drifts or an application, REST, management, services, launcher, test, code-generation, or
 Testcontainers artifact leaks in.
-
----
-
-## Related ADRs
-
-Decision: ADR-0188 — Static Starter Aggregates and Separate Archetypes.
