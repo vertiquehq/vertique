@@ -3,6 +3,7 @@
 
 package dev.vertique.job.cron;
 
+import dev.vertique.core.async.Combinators;
 import dev.vertique.core.context.ContextHolder;
 import dev.vertique.core.context.DeferredExecutionOrigin;
 import dev.vertique.core.eventbus.DispatchEnvelope;
@@ -408,9 +409,11 @@ final class CronJobDispatcher {
         }
         activeConsumers.clear();
         // Cancel per-execution resources (timeout timers, progress-flush timers, cancel consumers)
-        // and drain each execution's buffered log entries one last time.
-        List<Future<Void>> cutoffFlushes = new ArrayList<>();
-        for (ExecutionResources resources : activeExecutions.values()) {
+        // and drain each execution's buffered log entries one last time. The cancels stay in their
+        // own loop so a cancelTimer/unregister throw still propagates rather than being swallowed
+        // and mislabelled as a flush failure.
+        List<ExecutionResources> pending = new ArrayList<>(activeExecutions.values());
+        for (ExecutionResources resources : pending) {
             if (resources.timeoutId() != -1L) {
                 vertx.cancelTimer(resources.timeoutId());
             }
@@ -418,23 +421,17 @@ final class CronJobDispatcher {
                 vertx.cancelTimer(resources.progressFlushId());
             }
             resources.cancelConsumer().unregister();
-            // The timeout bound is load-bearing, not belt-and-braces: recover() alone only handles
-            // a *failed* future, and a wedged connection pool yields one that never settles at all
-            // — which would hang undeploy forever.
-            cutoffFlushes.add(resources
-                    .logFlusher()
-                    .flush()
-                    .timeout(SHUTDOWN_FLUSH_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-                    .recover(err -> {
-                        log.warn("Shutdown job-log flush did not settle: {}", err.getMessage());
-                        return Future.succeededFuture();
-                    }));
         }
         activeExecutions.clear();
 
-        // Every element is already recovered to success, so this cannot fail — map to a plain
-        // succeeded future rather than propagating a composite result.
-        return Future.join(new ArrayList<>(cutoffFlushes)).mapEmpty();
+        // joinAllSwallow waits for every flush to settle without short-circuiting and always
+        // succeeds — the all-settled-swallow contract this shutdown needs. The timeout bound stays
+        // inside the hook and is load-bearing, not belt-and-braces: swallowing only handles a
+        // *failed* future, and a wedged connection pool yields one that never settles at all.
+        return Combinators.joinAllSwallow(
+                pending,
+                resources -> resources.logFlusher().flush().timeout(SHUTDOWN_FLUSH_TIMEOUT_SECONDS, TimeUnit.SECONDS),
+                (resources, err) -> log.warn("Shutdown job-log flush did not settle: {}", err.getMessage()));
     }
 
     /**

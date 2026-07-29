@@ -26,23 +26,28 @@ import java.util.List;
  *       backing array changes mid-read, which makes it unusable for a batch drain.
  * </ul>
  *
- * <p>The deque plus removal on {@link #ack()} avoids all three.
+ * <p>The deque removes the first and third hazards outright. It bounds the second only while a
+ * {@link JobLogFlusher} is actually draining this buffer: in the no-op modes documented on
+ * {@link JobLogFlusher} (no repository bound, untracked cron fire, foreign {@link JobContext})
+ * nothing ever claims, and during a sustained write outage {@link #nack(List)} returns every failed
+ * batch to the head — so the buffer is bounded in practice, not guaranteed.
  *
  * <p>Instances are created per execution by {@link DefaultJobContext}.
  */
 public class DefaultJobLogger implements JobLogger {
 
-    /** Guards {@link #buffer} and {@link #inFlightBatch}. */
+    /** Guards {@link #buffer} and {@link #flushInFlight}. */
     private final Object lock = new Object();
 
     private final Deque<LogEntry> buffer = new ArrayDeque<>();
 
     /**
-     * The batch handed out by the last successful {@link #claim()}, or {@code null} when no flush is
-     * in flight. A non-{@code null} value is the in-flight marker: it is set only by a claim that
-     * drained at least one entry, and cleared by {@link #ack()} or {@link #nack(List)}.
+     * Whether a batch handed out by {@link #claim()} is still outstanding. Set only by a claim that
+     * drained at least one entry, and cleared by {@link #ack()} or {@link #nack(List)}. The claimed
+     * entries themselves are held by the flusher, not here — retaining a second reference would pin
+     * them for the whole in-flight window without ever being read.
      */
-    private List<LogEntry> inFlightBatch;
+    private boolean flushInFlight;
 
     @Override
     public void info(String message) {
@@ -101,12 +106,12 @@ public class DefaultJobLogger implements JobLogger {
      */
     List<LogEntry> claim() {
         synchronized (lock) {
-            if (inFlightBatch != null || buffer.isEmpty()) {
+            if (flushInFlight || buffer.isEmpty()) {
                 return List.of();
             }
             List<LogEntry> batch = List.copyOf(buffer);
             buffer.clear();
-            inFlightBatch = batch;
+            flushInFlight = true;
             return batch;
         }
     }
@@ -117,7 +122,7 @@ public class DefaultJobLogger implements JobLogger {
      */
     void ack() {
         synchronized (lock) {
-            inFlightBatch = null;
+            flushInFlight = false;
         }
     }
 
@@ -139,7 +144,7 @@ public class DefaultJobLogger implements JobLogger {
                     buffer.addFirst(batch.get(i));
                 }
             }
-            inFlightBatch = null;
+            flushInFlight = false;
         }
     }
 }

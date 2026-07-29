@@ -11,9 +11,11 @@ import java.util.function.Supplier;
 /**
  * In-memory implementation of {@link JobContext}.
  *
- * <p>All state is held in-memory for the duration of the execution. When a {@link JobRepository}
- * is present (Phase 2+), the cron trigger or coordinator may flush logs to persistent storage
- * after the execution completes.
+ * <p>Metadata, completed steps, progress, and the cancellation flag live in memory for the duration
+ * of the execution and are never persisted. Log entries are the exception: the scheduling modules
+ * drain this context's {@link #logger()} buffer through a {@link JobLogFlusher} <em>during</em> the
+ * execution — on the progress tick as well as at every ending site — and a drained entry is removed
+ * from the buffer, so {@link JobLogger#entries()} is not a transcript of the whole execution.
  *
  * <p>Thread-safe: uses {@link ConcurrentHashMap} for metadata and steps, and a {@code volatile}
  * flag for cancellation.
