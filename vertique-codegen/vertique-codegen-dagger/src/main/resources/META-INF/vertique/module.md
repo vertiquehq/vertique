@@ -19,9 +19,9 @@ Three framework qualifiers use the multibinding emit shape; one uses a direct si
 | `DelayedJobExecutor<P,C>` impls | root-element scan | `@Provides @IntoSet @DelayedJobs Object` |
 | `@RestClient` interfaces | annotation-rooted | `@Provides @Singleton {Interface} provideXxx(RestClientFactory)` |
 
-**`@Path` (JAX-RS) resource binding is no longer owned by this processor.** As of CG-010, `@Path`-resource DI binding (`@Provides @IntoSet @JaxRsResources Object`) is emitted by `vertique-codegen-jaxrs`'s `JaxRsPipelineProcessor`, which also handles discovery, validation, and runtime optimization for JAX-RS resources. `vertique-codegen-dagger` retains no ownership for that qualifier. See `dev.vertique:vertique-codegen-jaxrs`.
+**`@Path` (JAX-RS) resource binding is not owned by this processor.** `@Path`-resource DI binding (`@Provides @IntoSet @JaxRsResources Object`) is emitted by `vertique-codegen-jaxrs`'s `JaxRsPipelineProcessor`, which also handles discovery, validation, and runtime optimization for JAX-RS resources. See `dev.vertique:vertique-codegen-jaxrs`.
 
-`@ServiceContract` implementation wiring is owned by `vertique-codegen-services` (CG-005), not by this processor.
+`@ServiceContract` implementation wiring is owned by `vertique-codegen-services`, not by this processor.
 
 The processor uses `@SupportedAnnotationTypes("*")` so it runs every round regardless of which annotations are present. It always returns `false` from `process()` so Dagger, Lombok, and other processors see the same elements unmodified.
 
@@ -36,8 +36,6 @@ The processor uses `@SupportedAnnotationTypes("*")` so it runs every round regar
 | `dev.vertique.codegen.dagger.processor.emit` | `MultibindingModuleEmitter`, `RestClientModuleEmitter` |
 | `dev.vertique.codegen.dagger.processor.support` | `Filters`, `FilerWriter` |
 
-`PathResourceCollector` and the `JAX_RS_RESOURCES` `Qualifier` enum entry were removed in CG-010. `PackageResolver` was promoted to `vertique-codegen-core` in CG-010 so both `AutoWireProcessor` and `JaxRsPipelineProcessor` share the same LCP-based resolution logic.
-
 ---
 
 ## Key Classes
@@ -51,7 +49,7 @@ The processor uses `@SupportedAnnotationTypes("*")` so it runs every round regar
 1. **Annotation-rooted collectors** — `RestClientCollector`, `KafkaConsumerCollector` each pull candidates from `round.getElementsAnnotatedWith(MarkerAnnotation.class)`.
 2. **Root-element scan** — a single pass over `round.getRootElements()` feeds `DelayedJobExecutorScanner`.
 
-`@Path`-resource collection was removed from this processor in CG-010. JAX-RS resource discovery and DI binding emission are now owned by `JaxRsPipelineProcessor` in `vertique-codegen-jaxrs`.
+`@Path`-resource collection is not part of this processor. JAX-RS resource discovery and DI binding emission are owned by `JaxRsPipelineProcessor` in `vertique-codegen-jaxrs`.
 
 In the first non-final round the processor calls the appropriate emitter for each qualifier with non-empty bindings, then flips an `emitted` flag so subsequent rounds (e.g., the round triggered when Dagger writes its own generated sources) skip collection and emission. See "Pitfalls" below for the multi-round consequence — types first introduced by another processor's generated source in a later round are NOT auto-wired.
 
@@ -65,7 +63,7 @@ DELAYED_JOBS      → dev.vertique.job.delayed.dagger.DelayedJobs  → Generated
 REST_CLIENTS      → (no qualifier — direct binding)          → GeneratedRestClientsModule
 ```
 
-`JAX_RS_RESOURCES` was removed in CG-010. `GeneratedJaxRsResourcesModule` is now emitted by `vertique-codegen-jaxrs`'s `JaxRsPipelineProcessor`. `@ServiceContract` impls are **not** a qualifier in this enum; that wiring is owned by `vertique-codegen-services` (CG-005), which generates `GeneratedServicesModule` with `@Provides @IntoSet ServiceContractContributor` bindings.
+`JAX_RS_RESOURCES` is not a qualifier in this enum; `GeneratedJaxRsResourcesModule` is emitted by `vertique-codegen-jaxrs`'s `JaxRsPipelineProcessor`. `@ServiceContract` impls are **not** a qualifier in this enum; that wiring is owned by `vertique-codegen-services`, which generates `GeneratedServicesModule` with `@Provides @IntoSet ServiceContractContributor` bindings.
 
 ### `Binding`
 
@@ -73,7 +71,7 @@ Package-private record: `TypeElement origin`, `ClassName implType`, `Optional<Cl
 
 ### `PackageResolver` (in `vertique-codegen-core`)
 
-`PackageResolver` was promoted to `vertique-codegen-core` in CG-010. `AutoWireProcessor` and `JaxRsPipelineProcessor` both consume it; the semantics are unchanged:
+`PackageResolver` lives in `vertique-codegen-core`. `AutoWireProcessor` and `JaxRsPipelineProcessor` both consume it:
 
 1. If `-Avertique.codegen.package` is set, use it verbatim.
 2. Otherwise, compute the longest common prefix (LCP) of `Elements.getPackageOf(binding.origin())` across all bindings in the round.
@@ -198,11 +196,11 @@ Each generated module must be listed explicitly in the `@Component` it participa
 interface AppComponent { ... }
 ```
 
-`GeneratedJaxRsResourcesModule` is now emitted by `JaxRsPipelineProcessor` (`vertique-codegen-jaxrs`), not by `AutoWireProcessor`. The module class name and `@Component` wiring are unchanged; only the source of the generated file moved.
+`GeneratedJaxRsResourcesModule` is emitted by `JaxRsPipelineProcessor` (`vertique-codegen-jaxrs`), not by `AutoWireProcessor`.
 
 One line per qualifier is the explicit participation signal. Removing the line opts out of that qualifier's auto-wiring without touching `annotationProcessorPaths`.
 
-For `@ServiceContract` impl wiring, add `GeneratedServicesModule.class` — generated by `vertique-codegen-services` (CG-005). See `dev.vertique:vertique-codegen-services`.
+For `@ServiceContract` impl wiring, add `GeneratedServicesModule.class` — generated by `vertique-codegen-services`. See `dev.vertique:vertique-codegen-services`.
 
 ### Step 3 — delete the corresponding manual bindings
 
@@ -289,19 +287,3 @@ None. `vertique-codegen-dagger` is a compile-time annotation processor with no r
 | `com.palantir.javapoet:javapoet` | compile | JavaPoet `CodeBlock` patterns not covered by `DaggerModuleWriter` |
 
 Test-only dependencies (not in the processor jar's runtime classpath): `vertique-codegen-test`, `jakarta.ws.rs-api`, `jakarta.inject-api`, `dagger`, `vertique-services`, `vertique-rest-core`, `vertique-rest-client`, `vertique-kafka-core`, `vertique-job-delayed`.
-
----
-
-## Version History
-
-| Date | Change |
-|------|--------|
-| 2026-04-30 | Initial release: `AutoWireProcessor` for `@Path`/`@RestClient`/`@KafkaListener`/`@KafkaSource` (annotation-rooted) and `DelayedJobExecutor` impls (root-element scan); 4 qualifiers (`@JaxRsResources`, `@KafkaConsumers`, `@DelayedJobs`, REST clients); `@NoAutoWire` opt-out in `vertique-codegen-core`; `PackageResolver` (LCP-based output package, `-Avertique.codegen.package` override); `Diagnostics.duplicateInjectConstructor` shared formatter; same-simple-name collision detection in both emitters; `@ServiceContract` impl wiring delegated to `vertique-codegen-services` (CG-005); `ServiceContractImplScanner` removed; `Qualifier.SERVICES` removed |
-| 2026-05-03 | CG-010: `PathResourceCollector` and `Qualifier.JAX_RS_RESOURCES` removed; `@Path`-resource DI binding is now owned by `JaxRsPipelineProcessor` in `vertique-codegen-jaxrs`; `PackageResolver` promoted to `vertique-codegen-core` (semantics preserved byte-for-byte); `AutoWireProcessor` continues to own `@KafkaConsumers`, `@DelayedJobs`, and `@RestClient` qualifiers |
-
----
-
-## Planned Additions
-
-- **Model 3 Kafka router auto-wiring** — `@KafkaListener` interfaces contribute a `Class<?>` literal, not an instance. A future emitter shape could generate the `Class<?>` contribution when the interface is in the compilation unit, but requires a distinct emit path from `MultibindingModuleEmitter`.
-- **Cross-round accumulation** — if a downstream PRD chains into `AutoWireProcessor` (e.g., a processor that generates `@Path` classes), types introduced in later rounds could be accumulated and emitted at `processingOver()`. Requires coordination between processors.

@@ -214,9 +214,3 @@ When a bean injects `Event<X>` but the processor is absent from `annotationProce
 | `javapoet` | compile | Source generation (via `DaggerModuleWriter` and inline `TypeSpec`/`MethodSpec` construction) |
 
 Test-only: `vertique-codegen-test`, `dagger` (for Dagger wiring tests).
-
----
-
-## Related ADRs
-
-- ADR-0140: `@Observes` Subtype-Routed Events — establishes the subtype-routing model, the `@IntoSet ObserverRegistration` cross-module aggregation pattern, the `fire()`-never-fails contract, sequential fan-out via `Combinators.foldSequential`, and the `Event<T>` publisher-from-inventory model this processor implements.
