@@ -29,7 +29,7 @@ processor facade:
 <parent>
     <groupId>dev.vertique</groupId>
     <artifactId>vertique-app-parent</artifactId>
-    <version>0.0.0-SNAPSHOT</version> <!-- replace with the released Vertique version -->
+    <version>0.1.0-SNAPSHOT</version> <!-- replace with the released Vertique version -->
     <relativePath/>
 </parent>
 
@@ -75,7 +75,7 @@ Plugin with exactly Dagger and the Vertique facade. Versions are intentionally o
         <dependency>
             <groupId>dev.vertique</groupId>
             <artifactId>vertique-bom</artifactId>
-            <version>0.0.0-SNAPSHOT</version> <!-- replace with the released Vertique version -->
+            <version>0.1.0-SNAPSHOT</version> <!-- replace with the released Vertique version -->
             <type>pom</type>
             <scope>import</scope>
         </dependency>

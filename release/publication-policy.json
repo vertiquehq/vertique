@@ -1,0 +1,165 @@
+{
+  "$comment": "RELEASE-001 public publication policy. Publication eligibility is DERIVED from these rules, never selected ad hoc and never inferred from reactor membership (ADR-0007). Changing the reactor, the BOM, or the archetype set without updating expectedPublishableGavCount fails release/tests/publication-contract.test.mjs by design.",
+  "schemaVersion": 1,
+  "product": "public",
+  "groupIdPrefix": "dev.vertique",
+  "publish": {
+    "fixed": [
+      "vertique-parent",
+      "vertique-app-parent",
+      "vertique-bom"
+    ],
+    "bomManaged": {
+      "pomPath": "vertique-bom/pom.xml",
+      "groupIdPrefix": "dev.vertique"
+    },
+    "archetypes": {
+      "aggregatorPath": "vertique-archetype",
+      "packaging": "maven-archetype"
+    }
+  },
+  "deny": [
+    {
+      "$comment": "Authoritative and evaluated before the publish rules, so adding an example to the BOM cannot make it publishable.",
+      "reason": "example",
+      "pathPrefix": "examples"
+    },
+    {
+      "reason": "integration-tests",
+      "artifactIdSuffix": "-integration-tests"
+    }
+  ],
+  "skip": [
+    {
+      "reason": "aggregator",
+      "packaging": "pom"
+    }
+  ],
+  "expectedPublishableGavCount": 93,
+  "expectedPublishableGavs": [
+    "dev.vertique:vertique-aop",
+    "dev.vertique:vertique-app-parent",
+    "dev.vertique:vertique-application",
+    "dev.vertique:vertique-application-test",
+    "dev.vertique:vertique-archetype-rest",
+    "dev.vertique:vertique-archetype-rest-postgresql",
+    "dev.vertique:vertique-archetype-services",
+    "dev.vertique:vertique-bom",
+    "dev.vertique:vertique-bootstrap",
+    "dev.vertique:vertique-codegen-all",
+    "dev.vertique:vertique-codegen-aop",
+    "dev.vertique:vertique-codegen-application",
+    "dev.vertique:vertique-codegen-core",
+    "dev.vertique:vertique-codegen-cron",
+    "dev.vertique:vertique-codegen-dagger",
+    "dev.vertique:vertique-codegen-delayed-job",
+    "dev.vertique:vertique-codegen-events",
+    "dev.vertique:vertique-codegen-jaxrs",
+    "dev.vertique:vertique-codegen-kafka",
+    "dev.vertique:vertique-codegen-rest-client",
+    "dev.vertique:vertique-codegen-sanitization",
+    "dev.vertique:vertique-codegen-services",
+    "dev.vertique:vertique-codegen-test",
+    "dev.vertique:vertique-codegen-workflow",
+    "dev.vertique:vertique-config-aws-secrets",
+    "dev.vertique:vertique-config-aws-ssm",
+    "dev.vertique:vertique-config-azure-keyvault",
+    "dev.vertique:vertique-config-core",
+    "dev.vertique:vertique-config-vault",
+    "dev.vertique:vertique-context",
+    "dev.vertique:vertique-core",
+    "dev.vertique:vertique-correlation",
+    "dev.vertique:vertique-db-core",
+    "dev.vertique:vertique-db-flyway",
+    "dev.vertique:vertique-db-postgresql",
+    "dev.vertique:vertique-db-test",
+    "dev.vertique:vertique-deploy",
+    "dev.vertique:vertique-events",
+    "dev.vertique:vertique-inbox-outbox-core",
+    "dev.vertique:vertique-inbox-outbox-delayed-job",
+    "dev.vertique:vertique-inbox-outbox-kafka",
+    "dev.vertique:vertique-inbox-outbox-postgresql",
+    "dev.vertique:vertique-inbox-outbox-services",
+    "dev.vertique:vertique-job-core",
+    "dev.vertique:vertique-job-cron",
+    "dev.vertique:vertique-job-delayed",
+    "dev.vertique:vertique-job-postgresql",
+    "dev.vertique:vertique-json",
+    "dev.vertique:vertique-kafka-avro",
+    "dev.vertique:vertique-kafka-core",
+    "dev.vertique:vertique-kafka-json",
+    "dev.vertique:vertique-kafka-test",
+    "dev.vertique:vertique-launcher",
+    "dev.vertique:vertique-localization",
+    "dev.vertique:vertique-logging",
+    "dev.vertique:vertique-management",
+    "dev.vertique:vertique-micrometer-core",
+    "dev.vertique:vertique-micrometer-registry-prometheus",
+    "dev.vertique:vertique-micrometer-rest",
+    "dev.vertique:vertique-micrometer-services",
+    "dev.vertique:vertique-opentelemetry-core",
+    "dev.vertique:vertique-opentelemetry-prometheus",
+    "dev.vertique:vertique-opentelemetry-rest",
+    "dev.vertique:vertique-opentelemetry-services",
+    "dev.vertique:vertique-parent",
+    "dev.vertique:vertique-rest-auth-jwt",
+    "dev.vertique:vertique-rest-client",
+    "dev.vertique:vertique-rest-core",
+    "dev.vertique:vertique-rest-jaxrs",
+    "dev.vertique:vertique-rest-localization",
+    "dev.vertique:vertique-rest-openapi-plugin",
+    "dev.vertique:vertique-rest-openapi-validation",
+    "dev.vertique:vertique-rest-security",
+    "dev.vertique:vertique-rest-validation",
+    "dev.vertique:vertique-rest-websocket",
+    "dev.vertique:vertique-sanitization",
+    "dev.vertique:vertique-security-config",
+    "dev.vertique:vertique-security-core",
+    "dev.vertique:vertique-security-runtime",
+    "dev.vertique:vertique-services",
+    "dev.vertique:vertique-starter-core",
+    "dev.vertique:vertique-starter-postgresql",
+    "dev.vertique:vertique-starter-rest",
+    "dev.vertique:vertique-starter-services",
+    "dev.vertique:vertique-validation",
+    "dev.vertique:vertique-workflow-core",
+    "dev.vertique:vertique-workflow-definition",
+    "dev.vertique:vertique-workflow-delayed",
+    "dev.vertique:vertique-workflow-engine",
+    "dev.vertique:vertique-workflow-events",
+    "dev.vertique:vertique-workflow-postgresql",
+    "dev.vertique:vertique-workflow-services",
+    "dev.vertique:vertique-workflow-tasks"
+  ],
+  "payloadPolicy": {
+    "$comment": "FR-REL-034. Enforced by the S2/S4 file-repository integration tests, not by inventory derivation.",
+    "pom": [
+      "pom"
+    ],
+    "jar": [
+      "pom",
+      "jar",
+      "sources",
+      "javadoc"
+    ],
+    "maven-plugin": [
+      "pom",
+      "jar",
+      "sources",
+      "javadoc"
+    ],
+    "maven-archetype": [
+      "pom",
+      "jar",
+      "sources",
+      "javadoc"
+    ],
+    "$emptyJavadocComment": "FR-REL-034 permits an absent/empty Javadoc payload ONLY for a module with no Java API, and requires the exception to be recorded. Every entry here is proved to have no src/main/java sources by publication-contract.test.mjs, so this list cannot be used to silence a genuinely missing Javadoc.",
+    "emptyJavadocExceptions": [
+      "vertique-archetype-rest",
+      "vertique-archetype-rest-postgresql",
+      "vertique-archetype-services",
+      "vertique-codegen-all"
+    ]
+  }
+}

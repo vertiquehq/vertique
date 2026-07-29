@@ -72,7 +72,7 @@ SPDX-License-Identifier: EUPL-1.2
     </modules>
 
     <properties>
-        <revision>0.0.0-SNAPSHOT</revision>
+        <revision>0.1.0-SNAPSHOT</revision>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
 
@@ -133,6 +133,10 @@ SPDX-License-Identifier: EUPL-1.2
         <!-- Downstream parents may disable only this boundary rule and supply their own equivalent. -->
         <vertique.open-core.boundary.skip>false</vertique.open-core.boundary.skip>
         <maven.shade.plugin.version>3.6.1</maven.shade.plugin.version>
+        <maven.source.plugin.version>3.3.1</maven.source.plugin.version>
+        <maven.javadoc.plugin.version>3.12.0</maven.javadoc.plugin.version>
+        <!-- RELEASE-001 frozen pin: staging invokes this exact deploy-file coordinate. -->
+        <maven.deploy.plugin.version>3.1.4</maven.deploy.plugin.version>
         <exec-maven-plugin.version>3.0.0</exec-maven-plugin.version>
         <jib-maven-plugin.version>3.5.1</jib-maven-plugin.version>
         <spotless.version>3.3.0</spotless.version>
@@ -1223,4 +1227,67 @@ SPDX-License-Identifier: EUPL-1.2
             </plugin>
         </plugins>
     </build>
+
+    <profiles>
+        <!--
+          RELEASE-001 (FR-REL-034): release-shaped artifacts.
+
+          Every published JAR, Maven plugin and Maven archetype GAV must carry a
+          flattened POM, primary JAR, sources JAR and Javadoc JAR. Producing
+          those on every ordinary build would slow PR CI substantially, so they
+          are confined to this profile, which the isolated release/staging build
+          activates explicitly.
+
+          This profile does not decide publication — release/publication-policy.json
+          does (FR-REL-033). It only guarantees the payloads exist for the GAVs
+          the derived allowlist selects.
+        -->
+        <profile>
+            <id>release</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-source-plugin</artifactId>
+                        <version>${maven.source.plugin.version}</version>
+                        <executions>
+                            <execution>
+                                <id>attach-sources</id>
+                                <phase>package</phase>
+                                <goals>
+                                    <goal>jar-no-fork</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-javadoc-plugin</artifactId>
+                        <version>${maven.javadoc.plugin.version}</version>
+                        <configuration>
+                            <!--
+                              Style lint must not gate a release, but a genuine
+                              Javadoc error still fails the build: an empty
+                              Javadoc JAR is permitted only for a module with no
+                              Java API, and that exception is recorded in the
+                              unit manifest rather than produced by accident.
+                            -->
+                            <doclint>none</doclint>
+                            <failOnError>true</failOnError>
+                            <quiet>true</quiet>
+                        </configuration>
+                        <executions>
+                            <execution>
+                                <id>attach-javadocs</id>
+                                <phase>package</phase>
+                                <goals>
+                                    <goal>jar</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
 </project>
