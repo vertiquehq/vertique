@@ -302,6 +302,34 @@ final class ArrayFqns {
 UNSUPPORTED_MULTIPART_COLLECTION_SHAPE
 ```
 
+Two further constants were added during the review rounds, each user-signed-off at the time
+(Amendments 11 and 13). Both are startup rejections in the same `RouteValidator` family:
+
+```java
+/**
+ * A parameter declared as {@code SortedSet<T>} or {@code NavigableSet<T>} has an element type
+ * that is not comparable to itself, so the {@link java.util.TreeSet} it materializes into would
+ * throw {@code ClassCastException} on the first request carrying a value. Self-comparability is
+ * decided from the element type's effective non-bridge {@code compareTo} method — reflection
+ * exposes the erased signature the bridge casts to — not from the declaration site. Scoped to the
+ * sources that can carry a non-null {@code componentType} and are materialized element-wise; a
+ * body parameter's validity belongs to the selected {@code RequestBodyDecoder}, not to the route
+ * validator.
+ */
+NON_COMPARABLE_SORTED_SET_ELEMENT,
+
+/**
+ * Two parameters of one method bind the same name at the same location but declare incompatible
+ * multiplicity — one collection-shaped, one scalar. {@code DefaultBoundRequest.findDescriptor} is
+ * first-match, so one descriptor decides multiplicity for both and the other parameter is always
+ * mis-bound. Scoped to the locations {@code findDescriptor} serves; FORM is excluded because form
+ * extraction reads {@code formAttributes()} directly. Name comparison mirrors the binder:
+ * case-insensitive for header and cookie, case-sensitive for path and query. Two same-name
+ * parameters with the same multiplicity are redundant but well-defined, and are not rejected.
+ */
+DUPLICATE_PARAM_NAME_MULTIPLICITY_CONFLICT
+```
+
 ```java
 // dev.vertique.rest.jaxrs.ResourceMethodMeta.ParamMeta  (public record — components
 // UNCHANGED; one FORM invariant changes, one explicitly does NOT)
@@ -712,6 +740,10 @@ Each item routes to a GitHub issue in `vertiquehq/vertique-dev` (no backing PRD)
 | **Scalar policy ordering across sources** — FORM scalars process the raw value pre-conversion; QUERY/HEADER/COOKIE scalars process post-conversion and only while still a `String`, so non-`String` scalar targets skip the chain there | Out of scope: unifying it changes shipped behavior for every non-`String` scalar param on those three sources, on both dispatch paths — well beyond param-shape parity. Round 1 fixed only the *collection* half, per source | Issue: "Decide whether input policies run before or after scalar conversion, uniformly across sources" |
 | **`@PathParam` collection shapes** | Out of scope: needs multi-value path extraction that `RoutingContext.pathParams()` (a `Map<String,String>`) does not expose. §4 decision 2 and Amendment 9 scope PATH out deliberately, and after F1 the limitation fails loudly on **both** paths rather than one | Issue: "Decide whether @PathParam collection shapes become supported (repeated path templates)" |
 | **No compile-time mirror for either shape rule** — neither `UNSUPPORTED_MULTIPART_COLLECTION_SHAPE` nor `NON_COMPARABLE_SORTED_SET_ELEMENT` has a processor-side diagnostic | Both are runtime `RouteValidator` checks; the codegen module has no mirror for either. Adding one is a separate slice covering both rules together, not half of one | Issue: "Mirror the FORM shape rules as compile-time diagnostics" |
+| **Inner class of a parameterized owner** — `List<Outer<String>.Inner>` is a `ParameterizedType` reflectively (empty args, parameterized owner) so the reflective scanner resolves no element type, while the codegen mirror accepts it | Near-zero reachability: a non-static member class of a generic outer, used as a String-convertible collection element. Two-line fix plus matrix rows if it ever matters | Issue: "Mirror inner-classes-of-parameterized-owners in the codegen element-type gate" |
+| **RFC 6265 cookie names are case-sensitive** while the framework now matches them case-insensitively on both halves, so `@CookieParam("session")` is satisfiable by a wire cookie named `Session`, and two cookies differing only in case collapse (last wins) | Pre-existing in the map keying; the security fix only made the descriptor half agree with it, which is what was actually broken. Changing the semantic is a separate decision | Issue: "Decide whether cookie name matching should be case-sensitive per RFC 6265" |
+| **`raw.toString()` double-conversion** in the multiplicity fallback, lossy for a converter whose round-trip is not `toString`-symmetric | Its only legal trigger was the duplicate-name declaration now rejected at startup; the remaining triggers are a custom `BoundRequest`, a codegen divergence, or path collection support | Issue: "Avoid toString round-tripping in the collection multiplicity fallback" |
+| **Top-level collection param colliding with a `@BeanParam` field of the same name** — same mis-bind shape as the rejected duplicate, but bean fields are not in `meta.params()` and hard-code a null component type, so the new guard cannot see it | Belongs with the already-routed bean-param collection-field work rather than here | Folded into: "Support collection-typed @BeanParam fields (query + form)" |
 | Legacy tracker hygiene | Post-merge per handoff ruling 2 | Close legacy #153 and #155 with pointers once merged |
 
 ## Review round 1 — outcomes
@@ -737,9 +769,33 @@ Three new deferrals were routed to §11 by the adjudication: the null converted
 `@DefaultValue` element, scalar policy ordering across sources, and `@PathParam`
 collection support.
 
+## Review rounds 2–3 and the security pass — outcomes
+
+| Round | Finding | Verdict | Landed in |
+|---|---|---|---|
+| Security | **MEDIUM** — `findDescriptor` matched header/cookie names case-sensitively while the extractor lower-cases them, so a collection-shaped `@HeaderParam` bound as a scalar and 500d. RFC 9113 mandates lowercase header names on HTTP/2, so it was broken for **every** HTTP/2 client while passing HTTP/1.1 tests | fix now | `edcf5a1` |
+| Security | **LOW** — the `Comparable` guard tested raw assignability, so `Comparable<OtherType>` slipped through | fix now | `edcf5a1` |
+| Security | **LOW** — generated resolver accepted wildcard/type-variable collection elements where reflective rejects them. The obvious mirror (accept only `DeclaredType`) is **wrong** — reflection reifies `List<Inner[]>`'s argument as a plain `Class`, so it reverses the divergence | fix now | `edcf5a1` |
+| Security | **INFO** — schema validation observes raw transport values; the input-policy chain runs afterwards | documented | `edcf5a1` |
+| Codex 2 | **CRITICAL** — the sorted-set guard was source-blind and the generated path resolves a component type for body params, so a codegen'd `SortedSet<Pojo>` body failed startup while the reflective twin mounted | fix now | `e86afe7` |
+| Codex 2 | **WARNING** — three cookie tests could not fail: the defence-in-depth fallback reconstructed the asserted value, so reverting the binder left them green | fix now | `e86afe7` |
+| Codex 2 | **WARNING** — that fallback masked binder/metadata disagreement, the very class of defect that made the header-casing bug discoverable | fix now (WARN) | `e86afe7` |
+| Codex 2 | **WARNING** — `isSelfComparable` failed open on a forwarded type argument | fix now | `e86afe7` |
+| Codex 3 | **CRITICAL** — the round-2 narrowing **over-rejected** working element types (forwarded-self, the self-bounded idiom), breaking startup for a functioning app. Erasure goes to the leftmost bound, not to "unknown" | fix now | `ae33fd5` |
+| Codex 3 | **CRITICAL** — a round-2 test asserted a **safe** shape must be refused: its fixture's unbounded type variable erases to `compareTo(Object)`, so no bridge and no cast are generated | fix now | `ae33fd5` |
+| Codex 3 | **WARNING** — the body justification was factually wrong; Jackson's concrete type for `SortedSet` is `TreeSet`, so a non-comparable body element does fail per request. Scoping still right, reason was not | fix now | `ae33fd5` |
+| Codex 3 | **WARNING** — the multiplicity WARN fired per request on static metadata and was unasserted | fix now | `ae33fd5` |
+| Codex 3 | escalated deferral — `findDescriptor` is first-match, so same-name params with conflicting multiplicity have no correct binding | fix now, user-signed-off | `25ad7fd` |
+| Codex 1 | **F10** — two violations for `@FilePart @FormParam Set<FileUpload>` | false positive; **Codex conceded in round 2** | — |
+
+Method note worth keeping: the sorted-set reasoning defeated inspection twice — once in the
+round-2 fix and once in the test that ratified it. Round 3 settled it by *executing* a shape
+matrix against real `TreeSet` behavior, and that matrix is now in-tree asserting both the runtime
+truth and the validator verdict per row, so a stale row fails rather than misleading.
+
 ## Amendments
 
-Entries 1–5 and 7–9 are as-built notes and corrections of verified facts, so they neither
+Entries 1–5, 7–9 and 12 are as-built notes and corrections of verified facts, so they neither
 re-freeze a contract nor change scope — no sign-off required (`planning.md` § Mid-flight
 amendments). **Entry 6 reduces scope and was user-approved before execution continued.**
 The Contract Appendix (§4) is untouched throughout.
@@ -811,3 +867,22 @@ The Contract Appendix (§4) is untouched throughout.
    collection state machine covers QUERY/HEADER/COOKIE/FORM only. §4 decision 2 and the S4 tests
    already scoped it that way; the error was in a delegated instruction that said "path/query/
    header/cookie/form", and it was caught rather than propagated into the doc.
+10. **2026-07-29 — §4 decision 5 refined per source (USER-APPROVED).** Element policy processing is
+   positioned per source: FORM processes the raw value before conversion, mirroring its own scalar
+   rule; the other three keep post-conversion, String-only. Decision 5's original text cited the
+   QUERY scalar rule for all sources, which left FORM under-specified.
+
+11. **2026-07-29 — `NON_COMPARABLE_SORTED_SET_ELEMENT` added (USER-APPROVED).** New public
+   `ViolationType`; see the appendix. Its predicate was replaced twice before settling — see the
+   review-rounds table for why, and prefer the executed shape matrix over reasoning when changing it.
+
+12. **2026-07-29 — the sorted-set guard is source-scoped (as-built).** It applies to the sources that
+   can carry a non-null `componentType` and are materialized element-wise. A body parameter's
+   validity belongs to the selected `RequestBodyDecoder`; PATH is safe only because both paths
+   guarantee a null component type for it, and the guard's javadoc records that implementing path
+   collection support must add PATH explicitly.
+
+13. **2026-07-29 — `DUPLICATE_PARAM_NAME_MULTIPLICITY_CONFLICT` added (USER-APPROVED; consumer-visible).**
+   Rejects at startup a declaration that has no correct binding. An application that mounts today
+   stops booting; the repo was grepped and no in-tree declaration is newly rejected.
+
