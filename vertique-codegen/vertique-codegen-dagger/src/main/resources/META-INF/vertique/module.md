@@ -11,7 +11,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 `vertique-codegen-dagger` is an annotation processor (`AutoWireProcessor`) that eliminates the `@Provides @IntoSet` ceremony users currently write for every `@Path` resource, `@RestClient` interface, Kafka consumer, and `DelayedJobExecutor`. The information needed to wire each binding already lives on the type itself; the processor discovers these types at compile time and emits a `Generated{Qualifier}Module` for each active qualifier.
 
-Three framework qualifiers use the multibinding emit shape; one uses a direct singleton binding:
+Two framework qualifiers use the multibinding emit shape; one uses a direct singleton binding:
 
 | Marker | Discovery | Emitted binding |
 |--------|-----------|-----------------|
@@ -55,7 +55,7 @@ In the first non-final round the processor calls the appropriate emitter for eac
 
 ### `Qualifier`
 
-Package-private enum mapping each qualifier to its FQN and the simple name of the module it generates:
+Public enum mapping each qualifier to its FQN and the simple name of the module it generates:
 
 ```
 KAFKA_CONSUMERS   → dev.vertique.kafka.KafkaConsumers       → GeneratedKafkaConsumersModule
@@ -67,7 +67,7 @@ REST_CLIENTS      → (no qualifier — direct binding)          → GeneratedRe
 
 ### `Binding`
 
-Package-private record: `TypeElement origin`, `ClassName implType`, `Optional<ClassName> producedType`. Passed from collectors to emitters.
+Public record with two components: `TypeElement origin` (the discovered type — used for package resolution and diagnostics) and `ClassName implType` (the type to provide or contribute; for `@RestClient` this is the interface name). Passed from collectors to emitters.
 
 ### `PackageResolver` (in `vertique-codegen-core`)
 
@@ -106,7 +106,9 @@ Root-element scan: loads `dev.vertique.job.delayed.DelayedJobExecutor` via `Elem
 
 ### `MultibindingModuleEmitter`
 
-Emits `Generated{Qualifier}Module` for the four `@IntoSet` qualifiers using `DaggerModuleWriter.named(...).addIntoSetProvides(qualifierClass, Object.class, methodName, implType).build()`. Method names are derived via `Identifiers.generatedClassName(implType, "Binding")` → e.g., `userServiceImplBinding`.
+Emits `Generated{Qualifier}Module` for the two `@IntoSet` qualifiers (`@KafkaConsumers`, `@DelayedJobs`) using `DaggerModuleWriter.named(...).addIntoSetProvides(qualifierClass, Object.class, methodName, implType).build()`.
+
+Each generated provider method is named after the implementation type's **simple** name, decapitalized, with `Binding` appended — `UserServiceImpl` → `userServiceImplBinding`. A leading acronym keeps its casing (`URLProvider` → `URLProviderBinding`), and a name that would otherwise be a Java keyword gets a trailing underscore.
 
 Detects same-simple-name collisions across packages before emitting: two types with the same simple name in different packages would produce duplicate method names. The emitter calls `Diagnostics.error` rather than writing a malformed module.
 
@@ -283,7 +285,7 @@ None. `vertique-codegen-dagger` is a compile-time annotation processor with no r
 
 | Artifact | Scope | Purpose |
 |----------|-------|---------|
-| `vertique-codegen-core` | compile | `CodegenContext`, `TypeResolver`, `AnnotationMirrors`, `Diagnostics`, `DaggerModuleWriter`, `Identifiers`, `PackageResolver`, `@NoAutoWire` |
+| `vertique-codegen-core` | compile | `CodegenContext`, `AnnotationMirrors`, `Diagnostics`, `DaggerModuleWriter`, `PackageResolver`, `@NoAutoWire` |
 | `com.palantir.javapoet:javapoet` | compile | JavaPoet `CodeBlock` patterns not covered by `DaggerModuleWriter` |
 
 Test-only dependencies (not in the processor jar's runtime classpath): `vertique-codegen-test`, `jakarta.ws.rs-api`, `jakarta.inject-api`, `dagger`, `vertique-services`, `vertique-rest-core`, `vertique-rest-client`, `vertique-kafka-core`, `vertique-job-delayed`.

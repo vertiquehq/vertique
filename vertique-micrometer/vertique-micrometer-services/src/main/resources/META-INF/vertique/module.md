@@ -8,14 +8,14 @@ SPDX-License-Identifier: EUPL-1.2
 > **Status:** Alpha
 > **Package:** `dev.vertique.micrometer.services`
 > **Artifact:** `vertique-micrometer-services`
-> **Depends on:** io.micrometer:micrometer-core (library), vertique-services
+> **Depends on:** io.micrometer:micrometer-core (library), vertique-micrometer-core, vertique-services
 
 Observe-only service dispatch metrics adapter. When installed alongside `DispatchModule` and
 `MicrometerModule`, it emits a per-dispatch timer (`vertique.service.dispatch`) for every terminal
 service outcome observed on the consumer side.
 
-The module has no compile dependency on `vertique-micrometer-core` types. It does, however,
-**require a `MeterRegistry` binding on the Dagger graph** — normally supplied by `MicrometerModule`;
+The module compiles against `vertique-micrometer-core` for the `MetricsConfig` type. It also
+**requires a `MeterRegistry` binding on the Dagger graph** — normally supplied by `MicrometerModule`;
 without it (or another `MeterRegistry` provider) the component does not compile. Only the
 `metrics.enabled` *gate* is optional: the module declares `@BindsOptionalOf MetricsConfig`
 independently, so the gate defaults to enabled when `MicrometerModule` is absent. It never
@@ -43,10 +43,13 @@ rather than `onComplete`. `onTerminalComplete` fires after the recovery pipeline
 failures appear as `SUCCESS` — the `outcome` tag reflects the result the caller ultimately receives.
 `onComplete` fires before recovery and is not used.
 
-**Reply timing.** The event-bus reply is sent to the caller before `onTerminalComplete` fires
-(per the `ServiceMethodInvoker` implementation). Timer duration therefore includes dispatch + handler
-execution but the terminal-status annotation is best-effort by construction — the caller cannot
-observe the span status.
+**Reply timing.** The event-bus reply is sent to the caller before `onTerminalComplete` fires, and
+the hook runs only once the `afterDispatch` handlers and the reply/recovery future have settled (per
+the `ServiceMethodInvoker` implementation). The `endTime` handed to the interceptor is captured at
+that moment, so the recorded duration spans dispatch + handler execution + recovery + `afterDispatch`
+settling. Read it as a server-side measurement that runs past the instant the caller received its
+reply, not as caller-observed latency — the timer sample does not exist yet when the reply is
+delivered, and nothing this module records reaches the caller.
 
 **Per-event registry lookup (no meter cache, D-L).** The interceptor calls
 `Timer.builder(...).tags(...).register(registry)` on every event. Micrometer's internal registry
@@ -74,8 +77,8 @@ Dagger `@Module`. Contributes one binding:
   timer on each terminal service outcome.
 
 Also declares `@BindsOptionalOf MetricsConfig metricsConfig()` so the
-interceptor can inject `Optional<MetricsConfig>` without a compile dependency on
-`vertique-micrometer-core`. When `MicrometerModule` is also installed its
+interceptor can inject `Optional<MetricsConfig>` without requiring `MicrometerModule`
+to be installed. When `MicrometerModule` is also installed its
 `@Provides MetricsConfig` binding satisfies the optional; when absent the optional is
 empty and the interceptor defaults to enabled.
 
@@ -136,9 +139,13 @@ whose terminal result is still a failure produce `outcome=ERROR`.
 ## Dependencies
 
 - `io.micrometer:micrometer-core` — `MeterRegistry`, `Timer`, `Tags`; no Vert.x Micrometer
-  integration types. This is the only Micrometer dependency; the module has no compile dependency on
-  `vertique-micrometer-core`.
+  integration types. This is the only third-party Micrometer artifact on the compile classpath.
+- `dev.vertique:vertique-micrometer-core` — `MetricsConfig`, the `metrics.enabled` gate the
+  interceptor injects as `Optional<MetricsConfig>`.
 - `dev.vertique:vertique-services` — `ServiceInterceptor`, `ServiceDispatchContext`.
-- `dev.vertique:vertique-core` — `Result` (from `core.eventbus`).
+- `dev.vertique:vertique-core` — `Result` (from `core.eventbus`), and `OrderedExtension`, the
+  `ServiceInterceptor` supertype.
+- `io.vertx:vertx-core` — `Future`, the return type of the async `ServiceInterceptor` callbacks this
+  module inherits as no-ops.
 - `com.google.dagger:dagger`, `jakarta.inject:jakarta.inject-api`
 - `org.slf4j:slf4j-api`, `org.projectlombok:lombok` (provided)

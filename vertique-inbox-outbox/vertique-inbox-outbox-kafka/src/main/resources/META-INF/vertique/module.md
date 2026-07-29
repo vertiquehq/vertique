@@ -24,14 +24,20 @@ Kafka adapter for Transactional Messaging. Provides `KafkaOutboxDestinationHandl
 
 At relay time:
 1. Reads `destination` (Kafka topic name) from the `OutboxEnvelope`.
-2. Obtains a producer from `KafkaProducerFactory` for the target topic.
+2. Serializes `OutboxEnvelope.payload()` to JSON bytes (scalar payloads are first unwrapped via `PayloadCodec`). If serialization fails, publishing stops here and the handler returns `OutboxPublishResult.permanent(message, cause)` so the entry is dead-lettered immediately rather than retried — a payload that cannot be serialized will never serialize on a later attempt.
 3. Builds a Kafka record:
    - **Key:** `aggregateId` when present; `null` otherwise.
-   - **Value:** `OutboxEnvelope.record().payload()` serialized to JSON.
+   - **Value:** the serialized payload bytes from step 2.
    - **Headers:** application headers from `OutboxEntry.headers` (application-only) plus the durable propagation context projected to reserved `vertique-<namespace>` headers (e.g. `vertique-correlation`, `vertique-localization`) via `DurableMetadataHeaderCodec`. Relay control (message id, `eventType`, aggregate ids) is **not** emitted as headers — it is carried internally in `OutboxMetadata.delivery.outbox`.
-4. Sends the record. Awaits producer acknowledgment.
+4. Sends the record through the application's shared Kafka producer (`KafkaProducerFactory`). Awaits producer acknowledgment.
 5. On success: returns `OutboxPublishResult.success()`.
-6. On transport/timeout/broker failure: returns `OutboxPublishResult.retryable(error, errorType)`.
+6. On transport/timeout/broker failure: returns `OutboxPublishResult.retryable(message, cause)`.
+7. On a reserved-prefix header collision (see below): returns `OutboxPublishResult.permanent(message, cause)`.
+
+`KafkaProducerFactory` owns **one** shared Kafka producer per application, created lazily on first
+send and reused for every topic and every send path (typed producers, DLQ, outbox relay). There is
+no producer per topic and none to acquire or release per publish — the topic is just an argument to
+the send.
 
 **Outbound headers on every Kafka record:**
 
@@ -75,17 +81,40 @@ Throwing implementations are caught, warn-logged, and discarded; the publish res
 
 ## Dagger Wiring
 
+The module ships three bindings. The handler is built by an explicit `@Provides` method rather than
+from its `@Inject` constructor, because that is what injects the capture-hook set:
+
 ```java
 @Module
 public abstract class TransactionalMessagingKafkaModule {
 
+    // Declares the hook set so it exists (empty) even when nobody contributes.
+    @Multibinds
+    abstract Set<KafkaOutboxCaptureHook> kafkaOutboxCaptureHooks();
+
+    // Builds the handler WITH the registered hooks.
+    @Provides @Singleton
+    static KafkaOutboxDestinationHandler kafkaOutboxDestinationHandler(
+            KafkaProducerFactory producerFactory,
+            ObjectMapper objectMapper,
+            Set<KafkaOutboxCaptureHook> captureHooks) {
+        return new KafkaOutboxDestinationHandler(producerFactory, objectMapper, captureHooks);
+    }
+
     @Provides @IntoSet
-    static OutboxDestinationHandler kafkaHandler(
-            KafkaOutboxDestinationHandler handler) {
+    static OutboxDestinationHandler kafkaHandler(KafkaOutboxDestinationHandler handler) {
         return handler;
     }
 }
 ```
+
+> **Do not replace the `@Provides` method with constructor injection.**
+> `KafkaOutboxDestinationHandler`'s `@Inject` constructor takes only
+> `(KafkaProducerFactory, ObjectMapper)` and binds an empty hook set. If Dagger resolves the handler
+> through that constructor — which is what happens if the `@Provides` method above is dropped — the
+> handler is built with **zero** capture hooks and every contributed `KafkaOutboxCaptureHook`,
+> including the one from `audit-kafka`, is silently ignored. The hook-injecting constructor is the
+> three-argument one used by the `@Provides` method.
 
 Include alongside `TransactionalMessagingPostgresqlModule` and `KafkaModule`:
 

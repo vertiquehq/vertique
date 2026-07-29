@@ -160,12 +160,17 @@ Framework relay control (`x-message-id`, `eventType`, `aggregate*`) is **not** m
 
 Sealed interface returned by `OutboxDestinationHandler.publish()`. The relay uses the result to drive the state machine.
 
-| Factory Method | Effect |
-|----------------|--------|
-| `success()` | Transition to `PUBLISHED`, set `publishedAt` |
-| `retryable(String error, String errorType)` | Transition back to `PENDING`, increment attempt, apply backoff, record error |
-| `permanent(String error, String errorType)` | Transition to `DEAD_LETTER`, record error |
-| `unresolvable()` | Return to `PENDING` with short delay; does NOT increment attempt |
+| Factory Method | Variant | Effect |
+|----------------|---------|--------|
+| `success()` | `Success()` | Transition to `PUBLISHED`, set `publishedAt` |
+| `retryable(String message, Throwable cause)` | `RetryableFailure(String message, Throwable cause)` | Transition back to `PENDING`, increment attempt, apply backoff, record error — or to `DEAD_LETTER` once the incremented attempt reaches `maxAttempts` |
+| `permanent(String message, Throwable cause)` | `PermanentFailure(String message, Throwable cause)` | Transition to `DEAD_LETTER`, record error |
+| `unresolvable(String message)` | `Unresolvable(String message)` | Return to `PENDING` with short delay; does NOT increment attempt |
+
+These four factories are the complete set — there are no overloads. `cause` may be `null` when no
+exception is available. Handlers do **not** supply an error type string: on a failure outcome the
+relay records `message` in the row's `lastError` column and derives `errorType` from the class name
+of `cause` (`null` when no cause was supplied).
 
 The `unresolvable` outcome is a safety net for rare races during rolling deploys. Under normal operation the capability-aware claim filter prevents unresolvable rows from being claimed.
 
@@ -355,7 +360,7 @@ public class ExternalOutboxDestinationHandler implements OutboxDestinationHandle
         return publisher.send(envelope.destination(), envelope.payload())
             .map(ignored -> OutboxPublishResult.success())
             .recover(err -> Future.succeededFuture(
-                OutboxPublishResult.retryable(err.getMessage(), err.getClass().getName())));
+                OutboxPublishResult.retryable(err.getMessage(), err)));
     }
 }
 ```

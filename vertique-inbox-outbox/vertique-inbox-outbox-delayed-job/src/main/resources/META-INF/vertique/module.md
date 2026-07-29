@@ -32,15 +32,16 @@ pool.withTransaction(tx ->
 );
 ```
 
-**Snapshot semantics:** At the moment `publish()` is called, `TransactionalDelayedJobPublisher` resolves the effective queue, priority, `maxAttempts`, and `scheduledAt` from `DelayedJobTargetResolver` and stores them as snapshot data in `OutboxEntry.headers`. The relay reads these snapshots at publish time and does not re-resolve them from contract or config defaults. Later config changes do not affect already-recorded outbox rows.
+**Snapshot semantics:** At the moment `publish()` is called, `TransactionalDelayedJobPublisher` resolves the effective queue, priority, and `maxAttempts` from `DelayedJobTargetResolver` and records them as a `DelayedJobControl` snapshot on `OutboxEntry.delayedJob()`. The relay reads that snapshot at publish time and does not re-resolve it from contract or config defaults, so later config changes do not affect already-recorded outbox rows. `scheduledAt` is *not* part of the snapshot — it is a first-class field of the outbox entry. Application `headers` are left untouched: they carry no scheduling data and are not forwarded to the job.
 
 **`publish()` overloads:**
 
 | Method | Description |
 |--------|-------------|
-| `publish(Class<C> contract, P payload, SqlClient tx)` | Immediate; uses contract defaults |
-| `publish(Class<C> contract, P payload, Instant runAt, SqlClient tx)` | Scheduled for a specific time |
-| `publish(Class<C> contract, P payload, Duration delay, SqlClient tx)` | Delayed by a duration from now |
+| `publish(Class<? extends DelayedJobClient<P>> contract, P payload, SqlClient tx)` | Eligible as soon as the transaction commits; uses contract defaults |
+| `publish(Class<? extends DelayedJobClient<P>> contract, P payload, Instant scheduledAt, SqlClient tx)` | Scheduled for a specific time; a `null` `scheduledAt` behaves like the three-argument form |
+
+There is no duration-based overload — pass `Instant.now().plus(delay)` to the scheduled form.
 
 Returns `Future<Long>` carrying the outbox entry id. Does not return the eventual job execution UUID because the job is not enqueued until the relay fires after commit.
 
@@ -51,13 +52,16 @@ Returns `Future<Long>` carrying the outbox entry id. Does not return the eventua
 **Claim scope:** Returns `ClaimScope.destinations(DelayedJobTargetResolver::supportedTargetIds)` from `claimScope()`. This node claims only `DELAYED_JOB` outbox rows whose `destination` value is present in the resolver's supported target id set — i.e., delayed-job handlers registered on this node. Rows for targets not reachable here are left for another node that hosts the relevant handler.
 
 At relay time:
-1. Reads `destination` (durable delayed-job target id) from the `OutboxEnvelope`.
-2. Reads snapshotted queue, priority, `maxAttempts`, and `runAt` from `envelope.record().headers()`.
-3. Resolves the current handler address via `DelayedJobTargetResolver`.
-4. If the target id is not resolvable, returns `OutboxPublishResult.unresolvable()`.
+1. Reads `destination` (durable delayed-job target id) from the `OutboxEnvelope` and resolves the current handler via `DelayedJobTargetResolver`.
+2. If the target id is not registered on this node, returns `OutboxPublishResult.unresolvable(message)` — the relay backs off and retries once the handler is deployed.
+3. Reads the snapshotted queue, priority, and `maxAttempts` from the `DelayedJobControl` in `envelope.metadata().delivery().delayedJob()`. If that snapshot is absent, returns `OutboxPublishResult.permanent(message, cause)` — an authoring bug that retrying cannot fix.
+4. Builds the `DelayedJob`, taking `runAt` from `envelope.scheduledAt()` and forwarding the durable propagation context from `envelope.metadata().context()` verbatim into `DelayedJob.metadata()`, so context captured at publish time survives the relay hop.
 5. Calls `DelayedJobService.enqueue(job)` — standalone enqueue (not transactional), because the relay only sees committed outbox rows and the business transaction has already committed.
 6. On successful enqueue: returns `OutboxPublishResult.success()`.
-7. On transient enqueue failure: returns `OutboxPublishResult.retryable(...)`.
+7. If the enqueue is rejected as invalid (an `IllegalArgumentException`, e.g. the handler name fails `DelayedJobService` validation): returns `OutboxPublishResult.permanent(message, cause)`.
+8. On any other enqueue failure — typically transient infrastructure trouble: returns `OutboxPublishResult.retryable(message, cause)`.
+
+The returned `Future` always completes successfully with an `OutboxPublishResult`; the handler never propagates a failed future.
 
 **Snapshot priority:** Queue, priority, and `maxAttempts` always come from the snapshot stored on the outbox row. The adapter never re-reads `@DelayedJobContract` defaults or config overrides for already-recorded rows. This guarantees that delayed-job behavior is determined at write time, not at relay time.
 
@@ -82,15 +86,13 @@ public abstract class TransactionalMessagingDelayedJobModule {
             DelayedJobOutboxDestinationHandler handler) {
         return handler;
     }
-
-    @Provides @Singleton
-    static TransactionalDelayedJobPublisher transactionalJobPublisher(
-            DelayedJobTargetResolver resolver,
-            OutboxService outboxService) {
-        return new TransactionalDelayedJobPublisher(resolver, outboxService);
-    }
 }
 ```
+
+The module contributes only the destination handler. `TransactionalDelayedJobPublisher` needs no
+`@Provides` method: it is a `@Singleton` with an `@Inject` constructor, so including this module in
+the component is enough to inject it. Construct neither class directly — both constructors are
+package-private and exist for Dagger.
 
 Include alongside `TransactionalMessagingPostgresqlModule` and `DelayedJobModule`:
 
@@ -112,11 +114,28 @@ public interface AppComponent { ... }
 
 ## Snapshot Data Format
 
-The adapter stores snapshot data in `OutboxEntry.headers` under well-known keys:
+The write-time snapshot is a `DelayedJobControl` recorded on `OutboxEntry.delayedJob()`. It is
+persisted in the outbox row's structured `metadata` column, under `delivery.delayedJob`:
 
-| Key | Value |
-|-----|-------|
-| `dj-queue` | Effective queue name at write time |
-| `dj-priority` | Effective priority at write time |
-| `dj-max-attempts` | Effective `maxAttempts` at write time |
-| `dj-run-at` | ISO-8601 scheduled time, if `scheduledAt` was provided |
+```json
+{
+  "delivery": {
+    "delayedJob": { "queue": "default", "priority": 0, "maxAttempts": 3 }
+  },
+  "context": { "…": "durable propagation context" }
+}
+```
+
+| Field | Value |
+|-------|-------|
+| `queue` | Effective queue name at write time |
+| `priority` | Effective priority at write time |
+| `maxAttempts` | Effective `maxAttempts` at write time |
+
+Two things deliberately live outside this snapshot:
+
+- **`scheduledAt`** is a first-class field of the outbox entry, not a snapshot field. The relay reads
+  it from `envelope.scheduledAt()` and uses it as the job's `runAt`.
+- **`headers`** are application/transport-only. The adapter neither reads scheduling data from them
+  nor forwards them to the enqueued job; durable context reaches the job through
+  `metadata.context` instead.

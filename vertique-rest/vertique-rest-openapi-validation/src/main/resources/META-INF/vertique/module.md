@@ -27,9 +27,12 @@ For most new applications, the default `web-validation` strategy (annotation-syn
 ## Core Concepts
 
 The `openapi-contract` strategy starts one asynchronous `OpenAPIContract` load at strategy
-construction, caches the contract and its standalone Vert.x `RequestValidator`, and returns a
-contract-backed gate for every operation. `jaxrs.validationMode` belongs to `web-validation`; this
-strategy uses the standalone validator's result directly.
+construction, caches the contract and the standalone Vert.x validator derived from it
+(`io.vertx.openapi.validation.RequestValidator` — a `vertx-openapi` type, not a Vertique one), and
+returns a contract-backed gate for every operation. Validation strictness is therefore whatever the
+Vert.x validator enforces against the contract; the framework adds no schema layer of its own.
+`jaxrs.validationMode` belongs to `web-validation`; this strategy uses the standalone validator's
+result directly.
 
 `OpenApiContractValidationStrategy` is a Dagger singleton and loads the one global
 `jaxrs.openapiPath` configured for that instance. Multiple mounts can use it only when their
@@ -123,10 +126,6 @@ a request reaches a gate. The separate mount-path divergence check fails synchro
 startup.
 
 The strategy also injects the framework's `ParamConversionResolver` (`vertique-rest-core`) and threads it into the `DefaultBoundRequest` it constructs to trigger the JSON-profile first-parse, so this strategy's parameter coercion goes through the same shared conversion chain as the `web-validation` strategy and the `rest-jaxrs` dispatch path rather than a separate one.
-
-### RequestValidator
-
-Internal helper that wraps the Vert.x `OpenAPIContract`-backed validation handler. Not part of the public SPI; used internally by `OpenApiContractValidationStrategy`.
 
 ---
 
