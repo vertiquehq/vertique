@@ -71,10 +71,21 @@ cd "$REPO_ROOT"
 MVN="./mvnw"
 [[ -x "$MVN" ]] || MVN="mvn"
 
+# deploy-file refuses to deploy a file that lives inside the local repository it
+# was given ("Cannot deploy artifact from the local repository"), and every
+# payload we deploy lives inside the isolated install repository by
+# construction. So the deploy invocations get their own local repository, used
+# only to resolve the deploy plugin itself — the payload paths are passed
+# explicitly and are never resolved from it.
+PLUGIN_REPO="$(mktemp -d "${TMPDIR:-/tmp}/vertique-deploy-plugins.XXXXXX")"
+
 # Resolve the immutable payload units. This fails closed if any allowlisted GAV
 # is missing a required POM, primary, sources or Javadoc payload.
 PLAN_FILE="$(mktemp "${TMPDIR:-/tmp}/vertique-deploy-plan.XXXXXX")"
-trap 'rm -f "$PLAN_FILE"' EXIT
+
+# Registered after both paths exist, so `set -u` cannot trip on an unset name
+# while the trap runs.
+trap 'rm -rf "$PLAN_FILE" "$PLUGIN_REPO"' EXIT
 
 node release/verify-publication.mjs \
   --deploy-plan "$LOCAL_REPOSITORY" \
@@ -108,7 +119,7 @@ while IFS=$'\t' read -r groupId artifactId version packaging pomFile jarFile sou
   args=(
     "$DEPLOY_PLUGIN"
     -B -ntp
-    "-Dmaven.repo.local=$LOCAL_REPOSITORY"
+    "-Dmaven.repo.local=$PLUGIN_REPO"
     "-DrepositoryId=$REPOSITORY_ID"
     "-Durl=$TARGET_URL"
     "-DpomFile=$pomFile"
