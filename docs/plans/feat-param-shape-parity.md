@@ -708,7 +708,34 @@ Each item routes to a GitHub issue in `vertiquehq/vertique-dev` (no backing PRD)
 | **HTTP-transport e2e coverage for generated dispatch** (any shape, not just `byte[]`) | Not constructible in `vertique-codegen-jaxrs`; needs an invoker project under `vertique-codegen-integration-tests` that runs the processor and boots a server. Pre-existing gap, not introduced here (Amendment 6, user-approved) | Issue: "Add HTTP-transport e2e coverage for generated JAX-RS dispatch" |
 | **BODY `componentType` diverges between paths** — the codegen resolver computes it source-independently while `ResourceScanner:474-481` hard-codes `null` for BODY, so a BODY `List<Foo>` already carries `componentType=Foo` generated vs `null` reflectively. S3 extends this to `String[]`/boxed-array bodies (primitive-array bodies stay `null`, so `byte[]` is unaffected) | Pre-existing and audited **inert**: `ResourceMethodMetaToDescriptorAdapter.mapParameters` skips non-bindable sources so no `ParamDescriptor` is produced and `wrapValues` never sees it; `mapFileParts`/`RouteValidator` only compare against `FileUpload`/`EntityPart`; both BODY paths pass only `type()`/`genericType()` into `deserializeBody`. Source-gating it would also change BODY *collection* `componentType` — a consumer-visible change to the public `ParamMeta` record that §4 does not decide | Issue: "Reconcile BODY componentType between generated and reflective paths" |
 | **Generated `loadClass` resolution order** — now TCCL-first with the plan's own loader as fallback. Own-loader-*first* is arguably more correct, since the plan is compiled into the same artifact as the resource and multi-classloader deployments can resolve one FQN to two different `Class` objects | The S3 fix chose minimal blast radius: TCCL-first preserves resolution for everything that worked before. Reordering is a production-semantics change with no test pinning it | Issue: "Decide classloader precedence in generated loadClass helpers" |
+| **Null converted `@DefaultValue` element** — `absentCollectionValue` wraps the converted default in `singletonList`; a converter returning `null` NPEs inside `new TreeSet<>(...)` | Design decision: the outcome is a 500 either way, and choosing the semantics for a null converted default (`[null]`, empty, or reject) is a policy §4 does not make. The same hazard exists for a converter returning null on a *present* value, so a real fix belongs in the materializer under a decided policy | Issue: "Decide the contract for a ParamConverter returning null for a collection element or @DefaultValue" |
+| **Scalar policy ordering across sources** — FORM scalars process the raw value pre-conversion; QUERY/HEADER/COOKIE scalars process post-conversion and only while still a `String`, so non-`String` scalar targets skip the chain there | Out of scope: unifying it changes shipped behavior for every non-`String` scalar param on those three sources, on both dispatch paths — well beyond param-shape parity. Round 1 fixed only the *collection* half, per source | Issue: "Decide whether input policies run before or after scalar conversion, uniformly across sources" |
+| **`@PathParam` collection shapes** | Out of scope: needs multi-value path extraction that `RoutingContext.pathParams()` (a `Map<String,String>`) does not expose. §4 decision 2 and Amendment 9 scope PATH out deliberately, and after F1 the limitation fails loudly on **both** paths rather than one | Issue: "Decide whether @PathParam collection shapes become supported (repeated path templates)" |
+| **No compile-time mirror for either shape rule** — neither `UNSUPPORTED_MULTIPART_COLLECTION_SHAPE` nor `NON_COMPARABLE_SORTED_SET_ELEMENT` has a processor-side diagnostic | Both are runtime `RouteValidator` checks; the codegen module has no mirror for either. Adding one is a separate slice covering both rules together, not half of one | Issue: "Mirror the FORM shape rules as compile-time diagnostics" |
 | Legacy tracker hygiene | Post-merge per handoff ruling 2 | Close legacy #153 and #155 with pointers once merged |
+
+## Review round 1 — outcomes
+
+Codex review + `triage` adjudication on HEAD `25fce8f`, after a green full reactor
+(21,666 tests). Eleven findings; one Critical was a regression this branch introduced.
+
+| # | Finding | Verdict | Landed in |
+|---|---|---|---|
+| F1 | Generated `componentType` not source-gated → codegen `@PathParam String[]` registers and 500s per request where reflective rejects at startup | **fix now** (Critical) | `da942f0` |
+| F6 | Parity matrix had no source dimension — 10 rows, all query/body; F1's missing proof | **fix now** | `da942f0` (19 rows) |
+| F3 | `CollectionParamStateMachineTest`'s cookie row asserted a `BoundRequest` shape the real binder never produces — a test that could not fail | **fix now** | `7c0538d` |
+| F2 | `bindCookies` always wrapped a scalar, so a *present* `@CookieParam` collection 500d while absence was conformant and the doc claimed support | **fix now** | `7c0538d` |
+| F9 | Absence coverage was `List` + array only; the "default is not policy-processed" guarantee had no test | **fix now** | `7c0538d` |
+| F4 | FORM elements processed post-conversion while FORM *scalars* process the raw value pre-conversion — asymmetry inside one source | **fix now**, user-signed-off (§4 decision 5) | `8b77008` |
+| F5 | `SortedSet`/`NavigableSet` of a non-`Comparable` element type passed startup and threw `ClassCastException` per request; javadoc overclaimed | **fix now**, user-signed-off (new `ViolationType`) | `8b77008` |
+| F7 | Comment claimed bounded type variables are not scalar elements; erasure makes them so | **fix now** (comment) | this commit |
+| F8 | `ArrayFqns.resolve` documented only `ClassNotFoundException`, can throw `IllegalArgumentException` | **fix now** (javadoc) | this commit |
+| F10 | `@FilePart @FormParam Set<FileUpload>` yields two violations | **false positive** — two independent defects, both accurate, both fail startup; the "reported once" javadoc is scoped to the converter probe in the same sentence | — |
+| F11 | `module.md` shapes table: only the `@FormParam` row lists collection shapes; `GeneratedFormParamParityTest` covers only `Set<String>` | **fix now** | docs pass (pending) |
+
+Three new deferrals were routed to §11 by the adjudication: the null converted
+`@DefaultValue` element, scalar policy ordering across sources, and `@PathParam`
+collection support.
 
 ## Amendments
 

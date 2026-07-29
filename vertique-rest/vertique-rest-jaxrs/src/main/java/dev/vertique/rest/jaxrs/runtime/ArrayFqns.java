@@ -49,7 +49,14 @@ final class ArrayFqns {
      *                   {@link GeneratedJaxRsDescriptorSupport}, {@code false} for
      *                   {@link GeneratedJaxRsReflectiveAnnotations}
      * @return the resolved {@link Class}; never {@code null}
-     * @throws ClassNotFoundException if a reference (component) type cannot be found on {@code cl}
+     * @throws ClassNotFoundException   if a reference (component) type cannot be found on {@code cl}
+     * @throws IllegalArgumentException if the base type cannot form an array — {@code "void[]"}, or
+     *                                  more than 255 dimensions, both rejected by
+     *                                  {@link Array#newInstance(Class, int...)}. Neither is
+     *                                  reachable from the emitters that feed this method today
+     *                                  ({@code void} is only ever a return type), but this is the
+     *                                  single resolver for two public-API callers, so the contract
+     *                                  states it rather than leaving it to be discovered.
      */
     static Class<?> resolve(String fqn, ClassLoader cl, boolean initialize) throws ClassNotFoundException {
         // Strip trailing "[]" pairs to count array dimensions, leaving the base component type.

@@ -1073,7 +1073,10 @@ public final class EffectiveJaxRsContractResolver {
         }
         TypeMirror erased = ctx.types().erasure(componentType);
         if (!(ctx.types().asElement(erased) instanceof TypeElement te)) {
-            // Nested arrays (String[][]), type variables, wildcards — not scalar elements.
+            // Nested arrays (String[][]) and wildcards — not scalar elements. Note a *bounded* type
+            // variable does NOT land here: erasure resolves it to its bound, so <T extends Season> T[]
+            // arrives as the enum Season and is accepted below. That is deliberate parity — the
+            // reflective scanner sees the same erased Season[] from Parameter.getType().
             return false;
         }
         if (te.getKind() == ElementKind.ENUM) {
