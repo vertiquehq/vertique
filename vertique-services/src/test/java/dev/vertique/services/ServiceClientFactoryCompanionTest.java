@@ -31,7 +31,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * <p>This module cannot run its own downstream annotation processor against its own test sources,
  * so the generated companions this factory would select are hand-written stand-ins
  * ({@link SelectableContract_ServiceClientProxy}, {@link BrokenContract_ServiceClientProxy},
- * {@link DriftContract_ServiceClientProxy}) that mimic the §4.1 companion contract exactly: a
+ * {@link DriftContract_ServiceClientProxy}, {@link NestedHolder_Inner_ServiceClientProxy}) that
+ * mimic the §4.1 companion contract exactly: a
  * {@code public final} class implementing the contract, a 3-arg constructor
  * {@code (ServiceRequestSender, DispatchEnvelopeBuilder, ContractEntry<?>)}, and the §4.2 mismatch
  * prefix baked into any constructor-time completeness failure.
@@ -41,14 +42,15 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * {@link ServiceContractRegistry#build(Set, JsonObject, ConfigParser)} directly) — the same
  * approach used by {@link ServiceClientFactoryTest.CreateTimeCompletenessCheck}.
  *
- * <p>Until the companion-selection seam is implemented, {@code create()} unconditionally returns a
- * JDK dynamic proxy: {@code shouldSelectGeneratedCompanionWhenPresent},
- * {@code shouldFailLoudlyOnBrokenCompanion}, and {@code shouldUnwrapBakedIdDriftToFailFast} are
- * therefore red. {@code shouldFallBackToDynamicProxyWhenCompanionAbsent} and
- * {@code shouldFailCreateWhenEntryMissingOperation_generatedPath} are green on arrival — the
- * former because the current unconditional behavior already is the dynamic-proxy fallback, the
- * latter because the §4.2 step-2 completeness check (already implemented) fires before any
- * companion-selection attempt would occur.
+ * <p>{@code create()} selects the generated companion whenever one is present, falling back to a
+ * JDK dynamic proxy only when none exists: {@code shouldSelectGeneratedCompanionWhenPresent} pins
+ * the selection itself, {@code shouldFailLoudlyOnBrokenCompanion} pins the present-but-broken
+ * fail-fast, and {@code shouldUnwrapBakedIdDriftToFailFast} pins the narrow baked-id-drift unwrap.
+ * {@code shouldFallBackToDynamicProxyWhenCompanionAbsent} pins the complementary fallback path —
+ * a contract with no companion anywhere on the classpath is still served by a JDK dynamic proxy —
+ * and {@code shouldFailCreateWhenEntryMissingOperation_generatedPath} pins that the §4.2 step-2
+ * completeness check fires before any companion-selection attempt is made, identically on both
+ * paths.
  */
 @ExtendWith(VertxExtension.class)
 @DisplayName("ServiceClientFactory - Companion Selection")
@@ -96,8 +98,9 @@ class ServiceClientFactoryCompanionTest {
      * companion on the classpath must make {@code create()} return an instance of that companion
      * class, not a dynamic proxy.
      *
-     * <p>Red now: {@code ServiceClientFactory} has no companion-selection seam yet and
-     * unconditionally returns a JDK dynamic proxy.
+     * <p>Pins the primary selection path: {@code ServiceClientFactory} resolves and instantiates
+     * the generated companion instead of falling back to a JDK dynamic proxy whenever one is
+     * present on the classpath.
      *
      * @param vertx the Vert.x instance
      * @throws NoSuchMethodException never — {@code ping} is a real declared method
@@ -132,6 +135,47 @@ class ServiceClientFactoryCompanionTest {
     }
 
     /**
+     * Selection composes for nested contracts: a complete registry entry for
+     * {@link NestedHolder.Inner} plus the hand-written companion on the classpath must make
+     * {@code create()} return an instance of the flattened companion class
+     * ({@link NestedHolder_Inner_ServiceClientProxy}), not a dynamic proxy — proving the factory
+     * derives the lookup name via {@code GeneratedNames.companionFqn} (which flattens
+     * {@code Outer$Inner} to {@code Outer_Inner}) rather than {@code Class.getName() + suffix}
+     * (which would yield {@code NestedHolder$Inner_ServiceClientProxy} and miss the stand-in).
+     *
+     * @param vertx the Vert.x instance
+     * @throws NoSuchMethodException never — {@code ping} is a real declared method
+     */
+    @Test
+    @DisplayName("Should select the flattened generated companion class for a nested contract")
+    void shouldSelectGeneratedCompanionForNestedContract(Vertx vertx) throws NoSuchMethodException {
+        Method pingMethod = NestedHolder.Inner.class.getMethod("ping", String.class);
+        NestedHolder.Inner impl = x -> Future.succeededFuture(x);
+        ServiceContractRegistry.ContractEntry<?> entry = ServiceContractEntries.deployable()
+                .contract(NestedHolder.Inner.class)
+                .serviceInstance(impl)
+                .name("nested-inner")
+                .operation("ping")
+                .method(pingMethod)
+                .payloadType(String.class)
+                .returnType(String.class)
+                .param("x", ParamSource.PAYLOAD, String.class)
+                .done()
+                .build();
+        ServiceContractRegistry registry = ServiceClientFactoryTest.registryOf(entry);
+        ServiceClientFactory factory =
+                new ServiceClientFactory(ServiceClientFactoryTest.availableSender(vertx), registry);
+
+        NestedHolder.Inner client = factory.create(NestedHolder.Inner.class);
+
+        assertEquals(
+                NestedHolder_Inner_ServiceClientProxy.class,
+                client.getClass(),
+                "create() must return the flattened generated companion instance for a nested"
+                        + " contract, not a dynamic proxy");
+    }
+
+    /**
      * Fallback: a contract with no generated companion anywhere on the classpath must still be
      * served by a JDK dynamic proxy.
      *
@@ -163,8 +207,9 @@ class ServiceClientFactoryCompanionTest {
      * as present-but-broken, wrapping the fixture's cause — never a silent fallback to the dynamic
      * proxy.
      *
-     * <p>Red now: no seam exists yet, so {@code create()} currently returns a working dynamic
-     * proxy instead of throwing.
+     * <p>Pins the present-but-broken fail-fast: {@code create()} must not silently fall back to a
+     * working dynamic proxy when a companion class is present on the classpath but cannot be
+     * instantiated.
      *
      * @param vertx the Vert.x instance
      * @throws NoSuchMethodException never — {@code ping} is a real declared method
@@ -215,8 +260,9 @@ class ServiceClientFactoryCompanionTest {
      * {@link IllegalStateException} — narrowly unwrapped, not re-wrapped in the generic
      * "present but could not be instantiated" message.
      *
-     * <p>Red now: no seam exists yet, so {@code create()} currently returns a working dynamic
-     * proxy instead of throwing.
+     * <p>Pins the narrow baked-id-drift unwrap: {@code create()} must surface the generated
+     * constructor's own contract-mismatch exception rather than falling back to a working dynamic
+     * proxy.
      *
      * @param vertx the Vert.x instance
      * @throws NoSuchMethodException never — {@code opA} is a real declared method
@@ -258,9 +304,8 @@ class ServiceClientFactoryCompanionTest {
      * completeness check runs immediately after {@code registry.resolve()} and before any
      * companion-selection attempt, on both the reflective and generated paths alike.
      *
-     * <p>Green on arrival — the §4.2 step-2 completeness check already exists in
-     * {@code ServiceClientFactory} (CG-015 S2) and already fires before any companion selection
-     * would be attempted, regardless of whether the seam itself exists yet.
+     * <p>This check predates the companion-selection seam (added in CG-015 S2, before CG-015 S3's
+     * selection logic) and continues to hold unconditionally now that selection is in place.
      *
      * @param vertx the Vert.x instance
      * @throws NoSuchMethodException never — {@code ping} is a real declared method

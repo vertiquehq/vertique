@@ -5,6 +5,7 @@ package dev.vertique.codegen.services.processor;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
@@ -42,6 +43,7 @@ import io.vertx.core.internal.ContextInternal;
 import io.vertx.core.json.JsonObject;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 import java.util.List;
@@ -91,7 +93,7 @@ import org.opentest4j.AssertionFailedError;
  * mock {@link ServiceRequestSender}):
  * <ol>
  *   <li>{@link #scenario1PayloadExtraction()} — payload-only operation; also carries the
- *       <b>RED ANCHOR</b>: {@code create()} must return an instance whose class name equals
+ *       <b>SELECTION ANCHOR</b>: {@code create()} must return an instance whose class name equals
  *       {@link GeneratedNames#companionFqn(Class, String)} for the companion suffix, and must
  *       <em>not</em> be a {@link Proxy#isProxyClass(Class) JDK dynamic proxy}, on path (a). This
  *       identity check is asserted exactly once (here) rather than in every scenario below, since
@@ -109,20 +111,21 @@ import org.opentest4j.AssertionFailedError;
  *       partial entry: identical {@link IllegalStateException} message on both paths. Unlike the
  *       other scenarios, this exercises no sender interaction at all — the §4.2 step-2 completeness
  *       check throws before proxy construction is ever attempted on either path.</li>
+ *   <li>{@link #scenario8SecurityContextIndexDriftParity()} — runtime metadata marks a
+ *       non-{@code SecurityContext}-typed parameter position as the SC slot: both paths must throw
+ *       {@link ClassCastException} from the invocation rather than one of them silently forwarding
+ *       a wrong-typed caller override.</li>
  * </ol>
  *
- * <p><b>Expected state before CG-015 §6 S3 lands (current state — do not "fix" by relaxing
- * assertions):</b> {@code ServiceClientFactory.create()} unconditionally builds a JDK dynamic proxy
- * (no companion-selection seam exists yet). {@link #scenario1PayloadExtraction()} therefore fails at
- * the RED ANCHOR described above — the returned instance is a dynamic proxy, not the companion — and
- * the rest of that test method's body never runs once that assertion fails. Every other scenario
- * method (2, 3, 4, 5, 6) asserts only dispatch-parity facts that the existing reflective dispatch
- * already gets right regardless of whether an unused companion class happens to sit on the
- * classpath, so those pass unmodified today. {@link #scenario7CreateTimeFailFastParity()} and
- * {@link #noCompanionCompilationProducesNoCompanionClass()} pass unmodified today and after S3,
- * since neither touches companion selection at all. Once S3 lands, {@code create()} selects the
- * companion whenever one is present, the RED ANCHOR flips green, and scenario 1's dispatch-parity
- * assertions run and pass for the first time.
+ * <p><b>Shipped state (do not "fix" by relaxing assertions):</b> {@code ServiceClientFactory.create()}
+ * selects the generated companion whenever one is present on the classpath (path (a)) and falls back
+ * to a JDK dynamic proxy only when none exists (path (b)). {@link #scenario1PayloadExtraction()}'s
+ * SELECTION ANCHOR pins that selection fact directly — its class-identity assertions must pass before
+ * the rest of that test method's dispatch-parity assertions run. Every other scenario method
+ * (2, 3, 4, 5, 6) asserts dispatch-parity facts that both paths get right identically, independent of
+ * whether a companion class happens to sit on the classpath. {@link #scenario7CreateTimeFailFastParity()}
+ * and {@link #noCompanionCompilationProducesNoCompanionClass()} likewise assert facts that hold
+ * regardless of companion selection.
  */
 @ExtendWith(VertxExtension.class)
 @DisplayName("Service client factory — companion vs dynamic-proxy dispatch parity (CG-015 §6 S3)")
@@ -135,6 +138,7 @@ class ServiceClientProxyParityTest {
     private static final String PARITY_SC_GREETER_FQN = "com.example.parity.ParityScGreeter";
     private static final String PARITY_ONE_WAY_GREETER_FQN = "com.example.parity.ParityOneWayGreeter";
     private static final String PARITY_PARTIAL_GREETER_FQN = "com.example.parity.ParityPartialGreeter";
+    private static final String PARITY_SC_DRIFT_GREETER_FQN = "com.example.parity.ParityScDriftGreeter";
 
     private static final JavaFileObject PARITY_GREETER = SourceFiles.inline(PARITY_GREETER_FQN, """
             package com.example.parity;
@@ -178,6 +182,25 @@ class ServiceClientProxyParityTest {
             }
             """);
 
+    /**
+     * A legal contract — one {@code SecurityContext} param, one payload param — whose hand-built
+     * entry deliberately swaps both roles, so the runtime {@code SecurityContext} slot lands on the
+     * {@code String} parameter. That is the metadata drift scenario 8 drives through both paths.
+     */
+    private static final JavaFileObject PARITY_SC_DRIFT_GREETER = SourceFiles.inline(PARITY_SC_DRIFT_GREETER_FQN, """
+            package com.example.parity;
+            import dev.vertique.security.SecurityContext;
+            import dev.vertique.services.ServiceContract;
+            import dev.vertique.services.ServiceOperation;
+            import io.vertx.core.Future;
+
+            @ServiceContract("parity-sc-drift-greeter")
+            public interface ParityScDriftGreeter {
+                @ServiceOperation("driftOp")
+                Future<String> driftOp(SecurityContext sc, String name);
+            }
+            """);
+
     /** Two operations; the hand-built entry deliberately omits {@code opB} (§4.2 step 2 fail-fast). */
     private static final JavaFileObject PARITY_PARTIAL_GREETER = SourceFiles.inline(PARITY_PARTIAL_GREETER_FQN, """
             package com.example.parity;
@@ -201,6 +224,7 @@ class ServiceClientProxyParityTest {
             PARITY_GREETER,
             PARITY_SC_GREETER,
             PARITY_ONE_WAY_GREETER,
+            PARITY_SC_DRIFT_GREETER,
             PARITY_PARTIAL_GREETER);
 
     /**
@@ -208,7 +232,12 @@ class ServiceClientProxyParityTest {
      * companion class is ever produced. See the class javadoc for why this is the chosen mechanism.
      */
     private static final ProcessorTestHarness.Result NO_COMPANION = ProcessorTestHarness.run(
-            List.<Processor>of(), PARITY_GREETER, PARITY_SC_GREETER, PARITY_ONE_WAY_GREETER, PARITY_PARTIAL_GREETER);
+            List.<Processor>of(),
+            PARITY_GREETER,
+            PARITY_SC_GREETER,
+            PARITY_ONE_WAY_GREETER,
+            PARITY_SC_DRIFT_GREETER,
+            PARITY_PARTIAL_GREETER);
 
     private static final ConfigParser CONFIG_PARSER = new DefaultConfigParser(DefaultConfigMapper.lenient());
 
@@ -224,16 +253,16 @@ class ServiceClientProxyParityTest {
                 "an empty explicit processor list must not produce a generated companion class");
     }
 
-    // --- Scenario 1: payload extraction + RED ANCHOR (companion selection) ---
+    // --- Scenario 1: payload extraction + SELECTION ANCHOR (companion selection) ---
 
     @Test
-    @DisplayName("Scenario 1 — payload extraction: create() selects the companion (RED); both paths dispatch alike")
+    @DisplayName("Scenario 1 — payload extraction: create() selects the companion; both paths dispatch alike")
     void scenario1PayloadExtraction() throws Exception {
         DualPathCapture captures = greeterDualPathCapture("echo:x", "x");
 
-        // RED ANCHOR (CG-015 §6 S3): create() must select the generated companion instance — not a
-        // JDK dynamic proxy — whenever one is present on the classpath. Fails today because the
-        // factory has no companion-selection seam yet and always returns a dynamic proxy.
+        // SELECTION ANCHOR (CG-015 §6 S3): create() selects the generated companion instance — not
+        // a JDK dynamic proxy — whenever one is present on the classpath. Asserted once here rather
+        // than in every scenario, since every scenario drives the identical selection call.
         assertEquals(
                 GeneratedNames.companionFqn(captures.contractA(), "_ServiceClientProxy"),
                 captures.proxyA().getClass().getName(),
@@ -439,6 +468,40 @@ class ServiceClientProxyParityTest {
         assertEquals(exA.getMessage(), exB.getMessage(), "the mismatch message shape must be identical on both paths");
     }
 
+    // --- Scenario 8: SecurityContext-index drift ---
+
+    /**
+     * The contradiction pattern of {@code ServiceClientProxyRoundtripTest}'s D1 tests, applied to the
+     * {@code SecurityContext} slot and driven through <em>both</em> paths: the runtime metadata marks
+     * parameter position 1 — a plain {@code String} in the source — as the
+     * {@code SecurityContext}-keyed dispatch-context param.
+     *
+     * <p>The reflective path casts that argument ({@code (SecurityContext) args[i]}) and therefore
+     * throws {@link ClassCastException}. Parity demands the companion do exactly the same rather than
+     * silently forwarding a wrong-typed override, so both paths must fail identically here — the
+     * entry is deliberately wrong; do not "correct" it to match the source.
+     *
+     * @throws Exception if either path's proxy cannot be built
+     */
+    @Test
+    @DisplayName("Scenario 8 — SecurityContext-index drift: both paths throw ClassCastException on invocation")
+    void scenario8SecurityContextIndexDriftParity() throws Exception {
+        DualPathProxies proxies = scDriftDualPathProxies();
+        SecurityContext payloadByDrift = ServiceClientProxyRoundtripTest.testSecurityContext("payload-by-drift");
+
+        InvocationTargetException thrownA = assertThrows(
+                InvocationTargetException.class,
+                () -> proxies.methodA().invoke(proxies.proxyA(), payloadByDrift, "not-a-security-context"),
+                "path (a) must not silently accept a wrong-typed SecurityContext override");
+        InvocationTargetException thrownB = assertThrows(
+                InvocationTargetException.class,
+                () -> proxies.methodB().invoke(proxies.proxyB(), payloadByDrift, "not-a-security-context"),
+                "path (b) must reject a wrong-typed SecurityContext override");
+
+        assertInstanceOf(ClassCastException.class, thrownA.getCause(), "path (a) must fail with a ClassCastException");
+        assertInstanceOf(ClassCastException.class, thrownB.getCause(), "path (b) must fail with a ClassCastException");
+    }
+
     // --- Entry-building helpers (one hand-built ContractEntry per fixture contract) ---
 
     /**
@@ -509,6 +572,32 @@ class ServiceClientProxyParityTest {
                 .returnType(Void.class)
                 .param("name", ParamSource.PAYLOAD, String.class)
                 .oneWay()
+                .done()
+                .build();
+    }
+
+    /**
+     * Builds a deliberately drifted entry for {@link #PARITY_SC_DRIFT_GREETER}, the mirror image of
+     * its source declaration: parameter position 0 (the {@code SecurityContext}) is registered as the
+     * payload and position 1 (a {@code String}) as the {@code SecurityContext}-keyed dispatch-context
+     * param. Both dispatch paths must reject the wrong-typed slot; do not "correct" this entry.
+     *
+     * @param contractClass the loaded {@code ParityScDriftGreeter} interface (either compilation)
+     * @return the built contract entry, with a wrong-typed SC slot
+     * @throws ReflectiveOperationException if {@code driftOp} cannot be found on {@code contractClass}
+     */
+    private static ContractEntry<?> parityScDriftEntry(Class<?> contractClass) throws ReflectiveOperationException {
+        Method driftOpMethod = contractClass.getMethod("driftOp", SecurityContext.class, String.class);
+        return ServiceContractEntries.deployable()
+                .contract(contractClass)
+                .serviceInstance(new Object())
+                .name("parity-sc-drift-greeter")
+                .operation("driftOp")
+                .method(driftOpMethod)
+                .payloadType(SecurityContext.class)
+                .returnType(String.class)
+                .param("sc", ParamSource.PAYLOAD, SecurityContext.class)
+                .param("name", ParamSource.DISPATCH_CONTEXT, SecurityContext.class)
                 .done()
                 .build();
     }
@@ -637,7 +726,7 @@ class ServiceClientProxyParityTest {
      *
      * <p>Shared by scenarios 1, 4, and 6, which repeat this exact build-invoke-capture shape and vary
      * only the stubbed success value and the invocation argument. Per-scenario assertions — including
-     * scenario 1's RED-ANCHOR class-identity checks — stay in the scenario methods; this helper only
+     * scenario 1's SELECTION-ANCHOR class-identity checks — stay in the scenario methods; this helper only
      * builds, invokes, and captures.
      *
      * @param stubValue     the value the mock sender's stubbed {@link Result#success} completes with
@@ -645,6 +734,43 @@ class ServiceClientProxyParityTest {
      * @return both paths' constructed proxy instances and captured dispatch outcomes
      * @throws Exception if either path's proxy cannot be built or invoked
      */
+    /**
+     * Both paths' constructed proxy instances and the contract method to invoke on each, for
+     * scenarios whose invocation is expected to throw and therefore cannot be captured.
+     *
+     * @param proxyA  path (a)'s constructed proxy instance (the generated companion)
+     * @param methodA path (a)'s contract method, resolved on path (a)'s contract class
+     * @param proxyB  path (b)'s constructed proxy instance (the JDK dynamic proxy)
+     * @param methodB path (b)'s contract method, resolved on path (b)'s contract class
+     */
+    private record DualPathProxies(Object proxyA, Method methodA, Object proxyB, Method methodB) {}
+
+    /**
+     * Builds both dispatch paths for the {@link #PARITY_SC_DRIFT_GREETER} fixture against the drifted
+     * entry from {@link #parityScDriftEntry(Class)}.
+     *
+     * <p>The senders are bare mocks: dispatch never reaches them, because both paths fail while
+     * assembling the caller overrides.
+     *
+     * @return both paths' proxies and their {@code driftOp} methods
+     * @throws Exception if either path's proxy cannot be built
+     */
+    private static DualPathProxies scDriftDualPathProxies() throws Exception {
+        Class<?> contractA = WITH_COMPANION.loadGeneratedClass(PARITY_SC_DRIFT_GREETER_FQN);
+        Object proxyA = factoryFor(parityScDriftEntry(contractA), mock(ServiceRequestSender.class))
+                .create(contractA);
+
+        Class<?> contractB = NO_COMPANION.loadGeneratedClass(PARITY_SC_DRIFT_GREETER_FQN);
+        Object proxyB = factoryFor(parityScDriftEntry(contractB), mock(ServiceRequestSender.class))
+                .create(contractB);
+
+        return new DualPathProxies(
+                proxyA,
+                contractA.getMethod("driftOp", SecurityContext.class, String.class),
+                proxyB,
+                contractB.getMethod("driftOp", SecurityContext.class, String.class));
+    }
+
     private static DualPathCapture greeterDualPathCapture(String stubValue, Object invocationArg) throws Exception {
         Class<?> contractA = WITH_COMPANION.loadGeneratedClass(PARITY_GREETER_FQN);
         ContractEntry<?> entryA = parityGreeterEntry(contractA);

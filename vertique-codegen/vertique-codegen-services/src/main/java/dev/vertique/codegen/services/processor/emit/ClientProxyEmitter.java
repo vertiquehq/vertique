@@ -20,6 +20,7 @@ import dev.vertique.codegen.services.processor.scan.ParamModel;
 import dev.vertique.codegen.support.Identifiers;
 import java.io.IOException;
 import java.util.List;
+import java.util.Optional;
 import javax.annotation.processing.Generated;
 import javax.lang.model.element.Modifier;
 import javax.lang.model.element.TypeElement;
@@ -125,6 +126,21 @@ public final class ClientProxyEmitter {
     private static final String PAYLOAD_INDEX_HELPER = "_payloadIndex_";
     private static final String SC_INDEX_HELPER = "_securityContextIndex_";
 
+    /**
+     * Method-local names the generated dispatch body owns. A contract parameter carrying one of
+     * these names would shadow the local and silently change dispatch, so the contract is skipped —
+     * see {@link #reservedIdentifierCollision(ClientContractModel)}.
+     */
+    private static final List<String> RESERVED_PARAM_NAMES =
+            List.of(ARGS_LOCAL, PAYLOAD_LOCAL, OVERRIDES_LOCAL, ENVELOPE_LOCAL, DISPATCH_LOCAL);
+
+    /**
+     * Method names the generated class owns (the two private static index helpers). A same-named
+     * contract method is in fact a legal overload, so this set deliberately over-reserves: the
+     * remedy is a reflective fallback that costs nothing but a NOTE, never a rejected contract.
+     */
+    private static final List<String> RESERVED_METHOD_NAMES = List.of(PAYLOAD_INDEX_HELPER, SC_INDEX_HELPER);
+
     private final CodegenContext ctx;
 
     /**
@@ -136,11 +152,56 @@ public final class ClientProxyEmitter {
         this.ctx = ctx;
     }
 
+    // --- Generatability ---
+
+    /**
+     * Reports whether the given contract uses an identifier this emitter reserves for itself.
+     *
+     * <p>The emitter owns the names, so it owns the check. Two families are reserved:
+     * <ul>
+     *   <li><b>Parameter names</b> — the dispatch body declares {@code _args_}, {@code _payload_},
+     *       {@code _overrides_}, {@code _envelope_}, and {@code _dispatch_} as method-locals; a
+     *       contract parameter of the same name would shadow one of them and silently corrupt
+     *       dispatch.</li>
+     *   <li><b>Method names</b> — the class declares the private static helpers
+     *       {@code _payloadIndex_} and {@code _securityContextIndex_}. A same-named contract method
+     *       is really a legal overload (different signature), so this half deliberately
+     *       over-reserves; the cost of a false positive is only a reflective fallback.</li>
+     * </ul>
+     *
+     * <p>Fields ({@code _sender_}, {@code _envelopeBuilder_}, and the per-operation
+     * {@code <method>Target} / {@code …PayloadIndex} / {@code …SecurityContextIndex} /
+     * {@code …OneWay} state) and constructor locals need no check: every field read in a dispatch
+     * body is {@code this.}-qualified, and the constructor sees no contract-declared identifier at
+     * all.
+     *
+     * @param model the extracted contract-only model; must not be {@code null}
+     * @return the first colliding identifier in declaration order, or {@link Optional#empty()} when
+     *         the contract is safe to emit
+     */
+    public static Optional<String> reservedIdentifierCollision(ClientContractModel model) {
+        for (OperationModel op : model.operations()) {
+            String methodName = methodName(op);
+            if (RESERVED_METHOD_NAMES.contains(methodName)) {
+                return Optional.of(methodName);
+            }
+            for (ParamModel param : op.params()) {
+                if (RESERVED_PARAM_NAMES.contains(param.name())) {
+                    return Optional.of(param.name());
+                }
+            }
+        }
+        return Optional.empty();
+    }
+
     // --- Emission ---
 
     /**
      * Emits the {@code {Contract}_ServiceClientProxy} class for the given validated contract-only
      * model.
+     *
+     * <p>Callers must first clear {@link #reservedIdentifierCollision(ClientContractModel)} — this
+     * method assumes the contract owns none of the emitter's identifiers.
      *
      * <p>Write failures are reported as compiler errors on the contract element rather than thrown,
      * matching {@link ContributorEmitter}'s behaviour.
@@ -278,6 +339,11 @@ public final class ClientProxyEmitter {
      * The single unchecked cast at the end is what the declared {@code Future<T>} return type needs;
      * it is why the method carries {@code @SuppressWarnings("unchecked")}.
      *
+     * <p>The override value is cast to {@code SecurityContext} unconditionally, matching the
+     * reflective path's cast. Runtime metadata that marks a non-{@code SecurityContext} parameter
+     * position as the SC slot therefore fails identically — with a {@link ClassCastException} — on
+     * both paths, instead of one path silently forwarding a wrong-typed value.
+     *
      * @param op the operation to emit; must not be {@code null}
      * @return the method spec
      */
@@ -322,10 +388,17 @@ public final class ClientProxyEmitter {
                 scIndexField(op),
                 CONTEXT_VALUES,
                 SECURITY_CONTEXT);
+        // The cast is load-bearing, not cosmetic: it reproduces the ClassCastException the reflective
+        // path throws (ServiceClientFactory's `(SecurityContext) args[i]`) when runtime metadata
+        // marks a non-SecurityContext parameter position as the SC slot. Silently forwarding the
+        // wrong-typed value would break dispatch parity and hide the drift. It is unconditional
+        // rather than an instanceof guard for exactly that reason; the enclosing null check keeps
+        // `null` legal.
         method.addStatement(
-                "$L = $T.of($T.class.getName(), $L[this.$L])",
+                "$L = $T.of($T.class.getName(), ($T) $L[this.$L])",
                 OVERRIDES_LOCAL,
                 MAP,
+                SECURITY_CONTEXT,
                 SECURITY_CONTEXT,
                 ARGS_LOCAL,
                 scIndexField(op));

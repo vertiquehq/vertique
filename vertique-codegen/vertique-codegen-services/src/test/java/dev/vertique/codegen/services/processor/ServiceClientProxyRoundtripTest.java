@@ -62,31 +62,27 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 
 /**
- * CG-015 §6 S1 roundtrip proof for the (not-yet-emitted) {@code {Contract}_ServiceClientProxy}
+ * CG-015 §6 S1 direct-instantiation proof for the generated {@code {Contract}_ServiceClientProxy}
  * companion.
  *
  * <p>Compiles fixture {@code @ServiceContract} interfaces (no impl classes — the fixtures are
  * contract-only) against the real framework classpath via {@link ServiceContractProcessor}, loads
  * the generated proxy class through {@link ProcessorTestHarness.Result#loadGeneratedClass(String)},
  * and instantiates it directly via its public 3-arg constructor
- * {@code (ServiceRequestSender, DispatchEnvelopeBuilder, ContractEntry<?>)} — the
- * {@code ServiceClientFactory} companion-selection seam does not exist until CG-015 §6 S3, so every
- * test here bypasses the factory entirely and drives the constructor and generated methods by
- * reflection.
- *
- * <p><strong>Why every test here is currently RED:</strong> {@code ClientProxyEmitter} does not
- * exist yet, so the contract-only fixtures compile cleanly (a lone {@code @ServiceContract}
- * interface with no impl is simply skipped by {@link
- * dev.vertique.codegen.services.processor.scan.ImplCandidateScanner}, which only scans concrete
- * impl classes) but produce no {@code _ServiceClientProxy} class. Every test therefore fails at
- * {@code loadGeneratedClass("...{Contract}_ServiceClientProxy")}.
+ * {@code (ServiceRequestSender, DispatchEnvelopeBuilder, ContractEntry<?>)} — every test here
+ * bypasses {@code ServiceClientFactory} entirely and drives the generated constructor and methods
+ * by reflection, proving the generated proxy's construction and dispatch semantics in isolation.
+ * The factory-selection half — that {@code ServiceClientFactory.create()} actually selects this
+ * companion over the JDK dynamic-proxy fallback — is proven separately by
+ * {@code ServiceClientProxyParityTest} (this module) and {@code ServiceClientFactoryCompanionTest}
+ * ({@code vertique-services}).
  *
  * <p><strong>D1 falsifiability tests</strong> ({@link #runtimeOneWayContradictionWins()} and
  * {@link #runtimeParamIndexContradictionWins()}) hand-build a {@link ContractEntry} whose runtime
  * {@link ServiceMethodMeta} deliberately contradicts the fixture's source declaration. Per CG-015
  * D1, {@code oneWay} and payload/SecurityContext parameter indices are runtime-owned (read from
  * {@code entry.operations()} at construction), not baked from the source signature at APT time — an
- * emitter that bakes either at compile time fails these tests once the emitter exists.
+ * emitter that bakes either at compile time fails these tests.
  *
  * <p>The mismatch-message protocol (CG-015 §4.2) is pinned by {@link
  * #ctorFailsFastOnMissingOperation()}: the generated constructor's message for a baked operation id
@@ -486,6 +482,13 @@ class ServiceClientProxyRoundtripTest {
      * signature says — so an emitter that baked parameter roles at annotation-processing time would
      * dispatch the {@code String} and fail this test; do not "correct" the entry to match the source.
      *
+     * <p>The second argument is deliberately {@code null}: this test isolates the <em>payload</em>
+     * index contradiction, and both dispatch paths cast the drifted SC slot's argument to
+     * {@link SecurityContext} — a {@code null} is legal there and short-circuits the override block
+     * ahead of the cast, whereas a non-null {@code String} would (correctly) raise
+     * {@link ClassCastException}. That wrong-typed SC-slot case is the subject of
+     * {@code ServiceClientProxyParityTest}'s scenario 8, which proves both paths fail identically.
+     *
      * @throws Exception if the generated proxy cannot be loaded, constructed, or invoked
      */
     @Test
@@ -517,7 +520,7 @@ class ServiceClientProxyRoundtripTest {
         Method opProxyMethod = proxyClass.getMethod("op", SecurityContext.class, String.class);
 
         SecurityContext scArg = testSecurityContext("payload-by-runtime-index");
-        opProxyMethod.invoke(proxy, scArg, "secondArg");
+        opProxyMethod.invoke(proxy, scArg, null);
 
         ArgumentCaptor<DispatchEnvelope<?>> envelopeCaptor = forClass(DispatchEnvelope.class);
         verify(sender).send(any(), envelopeCaptor.capture());
