@@ -109,6 +109,16 @@ class FormParamCollectionBindTest {
         }
 
         @SuppressWarnings("unused")
+        public String integer(Integer id) {
+            return String.valueOf(id);
+        }
+
+        @SuppressWarnings("unused")
+        public String integerList(List<Integer> ids) {
+            return String.valueOf(ids);
+        }
+
+        @SuppressWarnings("unused")
         public String fileUpload(FileUpload upload) {
             return "unused";
         }
@@ -189,6 +199,23 @@ class FormParamCollectionBindTest {
                 Object intermediateBody, Type targetType, EffectiveInputPolicies policies, InputLocation location) {
             if (intermediateBody instanceof String s) {
                 return s.toUpperCase(Locale.ROOT);
+            }
+            return intermediateBody;
+        }
+    }
+
+    /**
+     * {@link InputObjectProcessor} stub standing in for a real canonicalizer that <em>normalizes</em> a
+     * value rather than merely rewriting it: it strips surrounding whitespace, so {@code " 5"} becomes
+     * {@code "5"}. Whether it runs before or after conversion is therefore observable — a numeric
+     * element only converts when the chain ran <em>first</em>.
+     */
+    static final class TrimmingProcessor implements InputObjectProcessor {
+        @Override
+        public Object processStructuredBody(
+                Object intermediateBody, Type targetType, EffectiveInputPolicies policies, InputLocation location) {
+            if (intermediateBody instanceof String s) {
+                return s.strip();
             }
             return intermediateBody;
         }
@@ -527,6 +554,38 @@ class FormParamCollectionBindTest {
                 List.of("A", "B"),
                 list,
                 "collection elements must traverse the input-policy chain identically to a scalar FORM value");
+    }
+
+    // --- 8b. FORM elements traverse the chain in the FORM scalar ORDER (before conversion) ---
+
+    @Test
+    @DisplayName("@FormParam Integer and @FormParam List<Integer> both canonicalize before conversion")
+    void formParamScalarAndCollection_bothProcessRawValueBeforeConversion() throws Exception {
+        // The FORM scalar branch processes the RAW form string and only then converts, so a
+        // canonicalizer that normalizes " 5" to "5" makes the scalar convert cleanly. The element path
+        // must traverse the same chain in the same ORDER, otherwise the raw " 5" reaches the Integer
+        // converter and the collection 400s while its own scalar equivalent succeeds — an asymmetry
+        // inside a single source.
+        Method scalarMethod = FormResource.class.getMethod("integer", Integer.class);
+        ResourceMethodMeta.ParamMeta scalarParam = formParam("a", Integer.class, null);
+        ResourceMethodMeta scalarMeta =
+                metaFor(scalarMethod, List.of(scalarParam), List.of(MarkerCanonicalizer.class), List.of());
+        Object[] scalarArgs = extractorFor(scalarMeta, new TrimmingProcessor())
+                .extractArguments(formRoutingContext(Map.of("a", List.of(" 5")), List.of()), emptyBoundRequest());
+        assertEquals(5, scalarArgs[0], "a scalar @FormParam Integer canonicalizes the raw value before converting");
+
+        Method listMethod = FormResource.class.getMethod("integerList", List.class);
+        ResourceMethodMeta.ParamMeta listParam = formParam("a", List.class, Integer.class);
+        ResourceMethodMeta listMeta =
+                metaFor(listMethod, List.of(listParam), List.of(MarkerCanonicalizer.class), List.of());
+        Object[] listArgs = extractorFor(listMeta, new TrimmingProcessor())
+                .extractArguments(formRoutingContext(Map.of("a", List.of(" 5")), List.of()), emptyBoundRequest());
+
+        List<?> list = assertInstanceOf(List.class, listArgs[0]);
+        assertEquals(
+                List.of(5),
+                list,
+                "a @FormParam List<Integer> element must traverse the chain in the same order as the scalar");
     }
 
     // --- 9. Native multipart shapes are unaffected (regression guard) ---

@@ -422,12 +422,13 @@ final class ParameterExtractor {
      * {@link dev.vertique.rest.core.convert.ParamConversionException} (mapped to 400) rather than
      * silently retaining the raw string, so a single bad element fails the whole collection cleanly.
      *
-     * <p>Each converted element that is still a {@link String} then traverses the input-policy chain
-     * exactly as a scalar parameter value does in {@link #extractScalarValue} — same guard
-     * ({@code objectProcessor != null && !policies.hasNoRouteChains()}), same
+     * <p>Every element also traverses the input-policy chain exactly as its own source's scalar value
+     * does — same guard ({@code objectProcessor != null && !policies.hasNoRouteChains()}), same
      * {@link InputObjectProcessor#processStructuredBody} call, same {@link InputLocation} derived from
-     * the parameter source. Without this a {@code @QueryParam List<String>} would bypass the
-     * canonicalization/sanitization chain that the equivalent {@code @QueryParam String} traverses.
+     * the parameter source, and the same position relative to conversion (before it for FORM, after it
+     * for QUERY/HEADER/COOKIE — see {@link #convertElements}). Without this a
+     * {@code @QueryParam List<String>} would bypass the canonicalization/sanitization chain that the
+     * equivalent {@code @QueryParam String} traverses.
      *
      * <p>Element conversion and policy processing are delegated to {@link #convertElements};
      * materialization (declared-type selection and the read-only guarantee) to
@@ -462,6 +463,25 @@ final class ParameterExtractor {
      * path uses ({@code objectProcessor != null && !policies.hasNoRouteChains()}) and the
      * {@link InputLocation} derived from the parameter source.
      *
+     * <p><strong>The chain's position relative to conversion is per source</strong>, because each
+     * source's own scalar rule differs and an element must traverse exactly the chain its scalar
+     * equivalent traverses:
+     * <ul>
+     *   <li><b>FORM</b> — the <em>raw</em> form string is processed <em>before</em> conversion, and the
+     *       post-conversion pass is skipped. This mirrors {@link #extractFormParam}'s scalar text-field
+     *       branch, which processes {@code getFormAttribute(name)} and only then calls
+     *       {@code coerceString}. Without it a canonicalizer that <em>normalizes</em> a value (say,
+     *       stripping whitespace) would fix {@code @FormParam Integer} but not
+     *       {@code @FormParam List<Integer>}: the raw {@code " 5"} would reach the {@code Integer}
+     *       converter and 400 while the scalar succeeded — an asymmetry inside one source.</li>
+     *   <li><b>QUERY / HEADER / COOKIE</b> — the <em>converted</em> element is processed, and only when
+     *       it is still a {@link String}. This mirrors {@link #extractScalarValue}, which coerces the
+     *       bound value first and processes only a {@code String} result.</li>
+     * </ul>
+     *
+     * <p>Defaults are not processed on either path, mirroring the scalar rule (see
+     * {@link #absentCollectionValue}).
+     *
      * @param rawValues the raw request values, in whatever order the transport reported them (F8 —
      *                  ordering is not a framework guarantee); {@code null} entries are preserved
      * @param paramMeta the collection parameter metadata (its {@code componentType()} is non-{@code null})
@@ -471,8 +491,9 @@ final class ParameterExtractor {
     private List<Object> convertElements(
             List<?> rawValues, ResourceMethodMeta.ParamMeta paramMeta, EffectiveInputPolicies policies) {
         ConversionContext elementContext = componentContext(paramMeta, paramMeta.componentType());
-        // Hoisted out of the loop: both operands are per-route constants.
+        // Hoisted out of the loop: all of these are per-route constants.
         boolean processElements = objectProcessor != null && !policies.hasNoRouteChains();
+        boolean processBeforeConversion = paramMeta.source() == ResourceMethodMeta.ParamSource.FORM;
         InputLocation location = processElements ? toInputLocation(paramMeta.source()) : null;
         List<Object> coerced = new ArrayList<>(rawValues.size());
         for (Object raw : rawValues) {
@@ -480,8 +501,13 @@ final class ParameterExtractor {
                 coerced.add(null);
                 continue;
             }
-            Object element = paramConversionResolver.fromString(raw.toString(), elementContext);
-            if (processElements && element instanceof String s) {
+            String rawValue = raw.toString();
+            if (processElements && processBeforeConversion) {
+                // Same cast as the FORM scalar branch: a String target must yield a String.
+                rawValue = (String) objectProcessor.processStructuredBody(rawValue, String.class, policies, location);
+            }
+            Object element = paramConversionResolver.fromString(rawValue, elementContext);
+            if (processElements && !processBeforeConversion && element instanceof String s) {
                 element = objectProcessor.processStructuredBody(s, String.class, policies, location);
             }
             coerced.add(element);
@@ -545,9 +571,18 @@ final class ParameterExtractor {
      *   <li>{@link List} and {@link Collection} materialise a wrapped {@link ArrayList}.</li>
      * </ol>
      *
-     * <p>The {@code TreeSet} shapes require {@link Comparable} elements — the coerced scalar element
-     * types here (String, boxed numerics, Boolean, Character, enums) are all {@code Comparable}; a
-     * non-{@code Comparable} declared component type would be an application error surfacing as a 500.
+     * <p>The {@code TreeSet} shapes require {@link Comparable} elements, and that is <em>not</em>
+     * implied by the element type alone. It holds for array shapes, whose component type
+     * {@code ResourceScanner.isScalarArrayComponent} restricts to {@link String}, a boxed numeric,
+     * {@link Boolean}, {@link Character}, or an enum — all {@code Comparable}. The parameterized
+     * collection shapes are unrestricted: {@code ResourceScanner.isSupportedCollectionRawType} gates
+     * only the raw type, and the type-argument read accepts <em>any</em> concrete class as the element
+     * type, including a non-{@code Comparable} one. What makes the {@code TreeSet} branches safe is the
+     * startup guard: a {@code SortedSet}/{@code NavigableSet} parameter whose element type does not
+     * implement {@code Comparable} is rejected at registration with
+     * {@link RouteRegistrationViolation.ViolationType#NON_COMPARABLE_SORTED_SET_ELEMENT}
+     * ({@code RouteValidator.addSortedSetElementViolations}), so no such parameter ever reaches this
+     * method.
      *
      * <p>Element ordering is whatever the underlying transport reported (Vert.x documents no ordering
      * for repeated parameters), except for the sorted shapes; it is explicitly not a framework

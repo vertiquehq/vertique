@@ -121,6 +121,29 @@ public record RouteRegistrationViolation(String operationId, ViolationType type,
          * multipart-shape problem. Bean-param fields never reach this check either, since they
          * carry no component type at all.
          */
-        UNSUPPORTED_MULTIPART_COLLECTION_SHAPE
+        UNSUPPORTED_MULTIPART_COLLECTION_SHAPE,
+
+        /**
+         * A parameter declared as {@code SortedSet<T>} or {@code NavigableSet<T>} has an element type
+         * that does not implement {@link Comparable}. Both shapes are materialized as a
+         * {@link java.util.TreeSet}, which orders elements by their natural ordering, so the first
+         * request supplying a value would throw {@code ClassCastException} inside the constructor. A
+         * JAX-RS parameter declaration cannot supply a {@link java.util.Comparator}, so the shape has
+         * no valid materialization at all and is rejected at registration instead of failing
+         * per-request.
+         *
+         * <p>Declare the parameter as {@code Set<T>}, {@code List<T>}, or {@code Collection<T>} — none
+         * of which imposes an ordering — or make the element type implement {@link Comparable}.
+         *
+         * <p>Only collection-shaped parameters are inspected (those for which
+         * {@code ResourceScanner.resolveComponentType} resolved an element type), so array shapes are
+         * unaffected: an array is never a {@code SortedSet}, and its component type is restricted to
+         * {@code Comparable} scalars anyway. Bean-param fields carry no component type and are
+         * likewise invisible here. A native multipart element type
+         * ({@code FileUpload}/{@code EntityPart}) is also excluded so it keeps its more accurate
+         * diagnostic — {@link #UNSUPPORTED_MULTIPART_COLLECTION_SHAPE} on {@code FORM},
+         * {@link #UNRESOLVABLE_PARAM_CONVERTER} on any other source.
+         */
+        NON_COMPARABLE_SORTED_SET_ELEMENT
     }
 }

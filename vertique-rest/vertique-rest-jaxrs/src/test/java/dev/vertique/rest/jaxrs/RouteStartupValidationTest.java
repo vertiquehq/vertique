@@ -34,8 +34,11 @@ import jakarta.ws.rs.ext.ParamConverter;
 import jakarta.ws.rs.ext.ParamConverterProvider;
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Type;
+import java.util.Collection;
 import java.util.List;
+import java.util.NavigableSet;
 import java.util.Set;
+import java.util.SortedSet;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.AfterEach;
@@ -406,6 +409,144 @@ public class RouteStartupValidationTest {
         assertTrue(
                 message.contains("y") || message.contains(UnconvertibleType.class.getSimpleName()),
                 "the failure must name the offending bean field or its type (was: " + message + ")");
+        ctx.completeNow();
+    }
+
+    /** An enum element type — an enum implements {@link Comparable}, so sorted shapes accept it. */
+    public enum Season {
+        SPRING,
+        SUMMER
+    }
+
+    /**
+     * Resource declaring a {@code SortedSet} whose element type does not implement {@link Comparable}.
+     *
+     * <p>{@link MyType} is deliberately the element type: {@link StrictMyTypeProvider} resolves a
+     * converter for it, so the parameter passes {@code UNRESOLVABLE_PARAM_CONVERTER} and the rejection
+     * can only come from the sorted-shape guard itself.
+     */
+    @Path("/non-comparable-sorted-set")
+    public static class NonComparableSortedSetResource {
+
+        /**
+         * Declares a {@code @QueryParam SortedSet<MyType>}, which is materialized as a {@code TreeSet}
+         * and would therefore throw {@code ClassCastException} on every request supplying a value.
+         *
+         * @param values the repeated non-{@link Comparable} query values
+         * @return never reached (the router build fails first)
+         */
+        @GET
+        @Produces(MediaType.TEXT_PLAIN)
+        @Operation(operationId = "nonComparableSortedSet")
+        public String get(@QueryParam("v") SortedSet<MyType> values) {
+            return "unreachable";
+        }
+    }
+
+    /** Resource declaring every sorted-shape element type that IS {@link Comparable}. */
+    @Path("/comparable-sorted-sets")
+    public static class ComparableSortedSetResource {
+
+        /**
+         * Declares sorted shapes over {@link String}, a boxed numeric, {@link Character},
+         * {@link Boolean}, and an enum — every one {@link Comparable}, so all must pass validation.
+         *
+         * @param strings    a {@code SortedSet<String>}
+         * @param integers   a {@code NavigableSet<Integer>}
+         * @param characters a {@code SortedSet<Character>}
+         * @param booleans   a {@code NavigableSet<Boolean>}
+         * @param seasons    a {@code SortedSet} of an enum
+         * @return never reached in this test (only the router build is exercised)
+         */
+        @GET
+        @Produces(MediaType.TEXT_PLAIN)
+        @Operation(operationId = "comparableSortedSets")
+        public String get(
+                @QueryParam("s") SortedSet<String> strings,
+                @QueryParam("i") NavigableSet<Integer> integers,
+                @QueryParam("c") SortedSet<Character> characters,
+                @QueryParam("b") NavigableSet<Boolean> booleans,
+                @QueryParam("e") SortedSet<Season> seasons) {
+            return "unreachable";
+        }
+    }
+
+    /** Resource declaring a non-{@link Comparable} element in UNSORTED shapes, which stay legal. */
+    @Path("/unsorted-non-comparable")
+    public static class UnsortedNonComparableResource {
+
+        /**
+         * Declares {@code Set}/{@code List}/{@code Collection} of a non-{@link Comparable} element
+         * type. None is materialized as a {@code TreeSet}, so the sorted-shape guard must not fire.
+         *
+         * @param set        a {@code Set<MyType>}
+         * @param list       a {@code List<MyType>}
+         * @param collection a {@code Collection<MyType>}
+         * @return never reached in this test (only the router build is exercised)
+         */
+        @GET
+        @Produces(MediaType.TEXT_PLAIN)
+        @Operation(operationId = "unsortedNonComparable")
+        public String get(
+                @QueryParam("s") Set<MyType> set,
+                @QueryParam("l") List<MyType> list,
+                @QueryParam("c") Collection<MyType> collection) {
+            return "unreachable";
+        }
+    }
+
+    @Test
+    @DisplayName("A SortedSet of a non-Comparable element type fails router build, naming the param and shape")
+    void nonComparableSortedSetElementFailsRouterBuild(Vertx vertx, VertxTestContext ctx) {
+        ParamConversionResolver resolver =
+                ParamConversionResolver.of(ParamConverterRegistry.of(Set.of()), Set.of(new StrictMyTypeProvider()));
+        JaxRsRouterMount.Factory factory =
+                TestFactories.builder().paramConversionResolver(resolver).build();
+        JaxRsRouterMount mount = factory.create("/*", "openapi.json", Set.of(new NonComparableSortedSetResource()));
+
+        // RED today: nothing inspects the element type against Comparable, so this route mounts and
+        // materializeCollection's `new TreeSet<>(elements)` throws ClassCastException per request.
+        RouteRegistrationException thrown = assertThrows(
+                RouteRegistrationException.class,
+                () -> mount.createRouter(vertx),
+                "a SortedSet of a non-Comparable element type has no valid materialization and must fail startup");
+        String message = String.valueOf(thrown.getMessage());
+        assertTrue(
+                message.contains("NON_COMPARABLE_SORTED_SET_ELEMENT"),
+                "the violation must name the sorted-element type (was: " + message + ")");
+        assertTrue(
+                message.contains("'v'") && message.contains("SortedSet<MyType>"),
+                "the diagnostic must name the parameter and its declared shape (was: " + message + ")");
+        assertTrue(
+                !message.contains("UNRESOLVABLE_PARAM_CONVERTER"),
+                "the parameter must be reported once, not also as an unresolvable converter (was: " + message + ")");
+        ctx.completeNow();
+    }
+
+    @Test
+    @DisplayName("Sorted shapes over String/Integer/Character/Boolean/enum elements pass validation")
+    void comparableSortedSetElementsPassValidation(Vertx vertx, VertxTestContext ctx) {
+        JaxRsRouterMount.Factory factory = TestFactories.builder().build();
+        JaxRsRouterMount mount = factory.create("/*", "openapi.json", Set.of(new ComparableSortedSetResource()));
+
+        assertDoesNotThrow(
+                () -> mount.createRouter(vertx),
+                "every Comparable element type must remain accepted in a SortedSet/NavigableSet");
+        ctx.completeNow();
+    }
+
+    @Test
+    @DisplayName("Set/List/Collection of a non-Comparable element type still pass validation")
+    void unsortedNonComparableElementsPassValidation(Vertx vertx, VertxTestContext ctx) {
+        ParamConversionResolver resolver =
+                ParamConversionResolver.of(ParamConverterRegistry.of(Set.of()), Set.of(new StrictMyTypeProvider()));
+        JaxRsRouterMount.Factory factory =
+                TestFactories.builder().paramConversionResolver(resolver).build();
+        JaxRsRouterMount mount = factory.create("/*", "openapi.json", Set.of(new UnsortedNonComparableResource()));
+
+        assertDoesNotThrow(
+                () -> mount.createRouter(vertx),
+                "the guard is scoped to TreeSet-materialized shapes; unsorted shapes impose no ordering");
         ctx.completeNow();
     }
 

@@ -21,13 +21,15 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.SortedSet;
 
 /**
  * Validates route registration constraints at startup.
  *
  * <p>Checks include: body parameter count, form/body conflicts, unsupported native multipart
- * collection shapes, duplicate operationIds, unmatched operationIds, and security annotations
- * present without an auth module installed.
+ * collection shapes, non-{@link Comparable} elements in a {@code SortedSet}/{@code NavigableSet}
+ * shape, duplicate operationIds, unmatched operationIds, and security annotations present without an
+ * auth module installed.
  * All methods are static; this class is not intended to be instantiated.
  */
 class RouteValidator {
@@ -71,7 +73,67 @@ class RouteValidator {
         addContextParamViolations(meta, violations);
         addFilePartViolations(meta, violations);
         addMultipartCollectionShapeViolations(meta, violations);
+        addSortedSetElementViolations(meta, violations);
         return violations;
+    }
+
+    /**
+     * Rejects a parameter declared as {@code SortedSet<T>} / {@code NavigableSet<T>} whose element type
+     * does not implement {@link Comparable}. {@code ParameterExtractor.materializeCollection} builds
+     * both shapes with {@code new TreeSet<>(elements)}, which orders elements by their natural
+     * ordering, so such a parameter has no valid materialization: every request supplying a value would
+     * throw {@code ClassCastException} (a 500), and a JAX-RS declaration cannot supply a
+     * {@link java.util.Comparator}. Startup therefore fails fast, exactly as it does for an
+     * unsupported native multipart shape (see {@link #addMultipartCollectionShapeViolations}).
+     *
+     * <p>Running from {@link #validateMethodParams} places this check <em>before</em> the
+     * {@code UNRESOLVABLE_PARAM_CONVERTER} probe in {@code JaxRsRouteRegistrar} (which skips the rest
+     * of the operation as soon as method-param validation reports anything), so a non-{@link Comparable}
+     * element type that also lacks a converter is reported once, with the shape-specific diagnostic.
+     *
+     * <p>Native multipart element types ({@link FileUpload} / {@link EntityPart}) are skipped: they are
+     * not {@link Comparable} either, but their accurate diagnostic is
+     * {@code UNSUPPORTED_MULTIPART_COLLECTION_SHAPE} on {@code FORM} (reported by
+     * {@link #addMultipartCollectionShapeViolations}) and {@code UNRESOLVABLE_PARAM_CONVERTER} on any
+     * other source. Only collection-shaped
+     * parameters are inspected, so array shapes and bean-param fields — neither of which carries a
+     * component type here — never reach the check.
+     *
+     * @param meta       the resource method metadata to inspect
+     * @param violations mutable list to which any non-{@code Comparable} sorted-element violations are
+     *                   appended
+     */
+    private static void addSortedSetElementViolations(
+            ResourceMethodMeta meta, List<RouteRegistrationViolation> violations) {
+        for (ResourceMethodMeta.ParamMeta pm : meta.params()) {
+            if (pm.componentType() == null || !SortedSet.class.isAssignableFrom(pm.type())) {
+                continue;
+            }
+            if (Comparable.class.isAssignableFrom(pm.componentType()) || isNativeMultipartCollection(pm)) {
+                continue;
+            }
+            String shape = pm.type().getSimpleName();
+            String element = pm.componentType().getSimpleName();
+            violations.add(new RouteRegistrationViolation(
+                    meta.operationId(),
+                    RouteRegistrationViolation.ViolationType.NON_COMPARABLE_SORTED_SET_ELEMENT,
+                    String.format(
+                            "Parameter '%s' of %s.%s() declares %s<%s>, but %s does not implement Comparable; "
+                                    + "a %s is materialized as a TreeSet, so every request carrying a value would "
+                                    + "fail — declare it as Set<%s>, List<%s>, or Collection<%s>, or make %s "
+                                    + "implement Comparable.",
+                            pm.name(),
+                            meta.method().getDeclaringClass().getSimpleName(),
+                            meta.method().getName(),
+                            shape,
+                            element,
+                            element,
+                            shape,
+                            element,
+                            element,
+                            element,
+                            element)));
+        }
     }
 
     /**
