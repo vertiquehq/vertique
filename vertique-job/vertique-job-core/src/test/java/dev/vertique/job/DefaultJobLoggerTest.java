@@ -106,6 +106,14 @@ class DefaultJobLoggerTest {
 
         // A cursor-only implementation that never removes acked entries would re-deliver them here.
         assertTrue(logger.claim().isEmpty(), "second claim after ack must be empty");
+
+        // Append after the ack and claim again: the batch must be gone, not merely masked by the
+        // single-flight guard. Without this, a no-op ack() still passes — the guard alone would
+        // make the claim above empty.
+        logger.info("third");
+        List<LogEntry> afterAck = logger.claim();
+        assertEquals(1, afterAck.size(), "acked entries must not be re-delivered alongside new ones");
+        assertEquals("third", afterAck.get(0).message());
     }
 
     @Test
