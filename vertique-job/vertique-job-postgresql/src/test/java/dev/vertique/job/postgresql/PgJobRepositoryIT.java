@@ -523,6 +523,51 @@ public class PgJobRepositoryIT {
     }
 
     @Test
+    @DisplayName("saveLogs is all-or-nothing: a mid-batch constraint violation persists zero rows")
+    void saveLogsBatchIsAtomicOnPartialFailure(VertxTestContext ctx) {
+        // This test pins a PostgreSQL guarantee the job-log flush design depends on.
+        //
+        // job_logs has `id BIGSERIAL PRIMARY KEY` and no natural key, so there is no way to
+        // deduplicate a re-sent batch. The retry-on-failure drain in DefaultJobLogger (nack puts
+        // the whole batch back for the next flush) is only safe if a failed saveLogs batch leaves
+        // NO rows behind — otherwise the committed prefix would be duplicated on every retry.
+        //
+        // ANSWER (verified against PostgreSQL 16 via Testcontainers): the batch is ATOMIC.
+        // The failing statement aborts the implicit transaction that wraps the pipelined batch,
+        // so the count below is 0 — the valid rows before AND after the bad row are rolled back.
+        String queue = "logs-atomic-" + UUID.randomUUID();
+        JobExecution exec = newExecution(queue, 0);
+
+        // job_logs.level is VARCHAR(5): entries 1 and 3 fit, entry 2 does not and fails the INSERT.
+        List<LogEntry> entries = List.of(
+                new LogEntry("INFO", "before the bad row", Instant.now()),
+                new LogEntry("TOOLONGLEVEL", "violates VARCHAR(5)", Instant.now()),
+                new LogEntry("INFO", "after the bad row", Instant.now()));
+
+        repository
+                .save(exec)
+                .compose(id -> repository
+                        .saveLogs(exec.id(), entries)
+                        .map(v -> Boolean.FALSE)
+                        .otherwise(err -> Boolean.TRUE))
+                .compose(failed -> {
+                    ctx.verify(() -> assertTrue(failed, "saveLogs must fail when a row violates the level width"));
+                    return pool.preparedQuery("SELECT COUNT(*) FROM job_logs WHERE execution_id = $1")
+                            .execute(Tuple.of(exec.id()))
+                            .map(rows -> rows.iterator().next().getLong(0));
+                })
+                .onSuccess(count -> ctx.verify(() -> {
+                    assertEquals(
+                            0L,
+                            count,
+                            "a failed saveLogs batch must persist zero rows — a committed prefix would be"
+                                    + " duplicated by the nack-and-retry drain, which cannot deduplicate");
+                    ctx.completeNow();
+                }))
+                .onFailure(ctx::failNow);
+    }
+
+    @Test
     @DisplayName("save with SqlClient participates in the caller's transaction")
     void saveWithSqlClientUsesProvidedTransaction(VertxTestContext ctx) {
         JobExecution exec = newExecution("tx-test-" + UUID.randomUUID(), 0);
