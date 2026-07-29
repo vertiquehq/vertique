@@ -23,8 +23,9 @@ import org.mockito.ArgumentCaptor;
 
 /**
  * Unit tests for {@link JobLogFlusher}: batch delivery to the repository, ack on success,
- * nack-and-retain on failure (without failing the caller), and the no-op constructions used for
- * executions that have no {@code job_executions} row to reference.
+ * nack-and-retain on failure (without failing the caller), resolution of the drainable logger from
+ * a {@link DefaultJobContext}, and the no-op constructions used for executions that have no
+ * {@code job_executions} row to reference or no drainable buffer at all.
  */
 @DisplayName("JobLogFlusher")
 class JobLogFlusherTest {
@@ -119,6 +120,36 @@ class JobLogFlusherTest {
 
         assertTrue(result.succeeded(), "flush without a repository must succeed");
         assertEquals(1, logger.entries().size(), "entries must stay buffered, not be claimed and dropped");
+    }
+
+    @Test
+    @DisplayName("flush is a no-op for a foreign JobContext (no drainable buffer to claim)")
+    void flushIsNoOpForForeignJobContext() {
+        JobContext foreign = mock(JobContext.class);
+        JobLogFlusher flusher = new JobLogFlusher(repository, executionId, foreign);
+
+        Future<Void> result = flusher.flush();
+
+        assertTrue(result.succeeded(), "flush over a foreign JobContext must succeed");
+        verifyNoInteractions(repository);
+    }
+
+    @Test
+    @DisplayName("flush drains the logger of a DefaultJobContext resolved through the JobContext overload")
+    void flushDrainsDefaultJobContextLogger() {
+        when(repository.saveLogs(any(), any())).thenReturn(Future.succeededFuture());
+        DefaultJobContext context = new DefaultJobContext("job-1", executionId, 0, JobType.DELAYED);
+        context.logger().info("from the context");
+        JobLogFlusher flusher = new JobLogFlusher(repository, executionId, context);
+
+        Future<Void> result = flusher.flush();
+
+        assertTrue(result.succeeded(), "flush must succeed when saveLogs succeeds");
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<LogEntry>> captor = ArgumentCaptor.forClass(List.class);
+        verify(repository).saveLogs(eq(executionId), captor.capture());
+        assertEquals(1, captor.getValue().size());
+        assertEquals("from the context", captor.getValue().get(0).message());
     }
 
     @Test

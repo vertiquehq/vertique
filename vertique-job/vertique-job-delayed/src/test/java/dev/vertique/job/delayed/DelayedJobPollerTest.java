@@ -4,6 +4,7 @@
 package dev.vertique.job.delayed;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -35,6 +36,7 @@ import dev.vertique.core.eventbus.EventBusClient;
 import dev.vertique.core.eventbus.EventBusExceptionMapper;
 import dev.vertique.core.eventbus.LocalMessageCodec;
 import dev.vertique.core.eventbus.Result;
+import dev.vertique.job.DefaultJobContext;
 import dev.vertique.job.JobCompletionHandler;
 import dev.vertique.job.JobContext;
 import dev.vertique.job.JobDispatchContext;
@@ -43,6 +45,7 @@ import dev.vertique.job.JobInterceptor;
 import dev.vertique.job.JobRepository;
 import dev.vertique.job.JobState;
 import dev.vertique.job.JobType;
+import dev.vertique.job.LogEntry;
 import dev.vertique.job.ProgressSnapshot;
 import dev.vertique.job.delayed.config.DelayedJobQueueConfig;
 import io.vertx.core.Future;
@@ -112,8 +115,16 @@ class DelayedJobPollerTest {
                 .build();
     }
 
-    /** Creates a sample PROCESSING execution. */
+    /** Creates a sample PROCESSING execution on its first attempt, with three attempts allowed. */
     private static JobExecution sampleExecution(String jobId, String handler) {
+        return sampleExecution(jobId, handler, 3);
+    }
+
+    /**
+     * Creates a sample PROCESSING execution on its first attempt with an explicit attempt budget.
+     * Pass {@code maxAttempts = 1} to make a timeout dead-letter rather than retry.
+     */
+    private static JobExecution sampleExecution(String jobId, String handler, int maxAttempts) {
         return new JobExecution(
                 UUID.randomUUID(),
                 jobId,
@@ -122,7 +133,7 @@ class DelayedJobPollerTest {
                 "default",
                 JobState.PROCESSING,
                 0,
-                3,
+                maxAttempts,
                 null,
                 0,
                 null,
@@ -837,6 +848,195 @@ class DelayedJobPollerTest {
                         assertTrue(cancelObserved.get(), "JobContext should have isCancelled=true after cancel signal");
                         ctx.completeNow();
                     }));
+        }
+    }
+
+    // --- Job log durability tests ---
+
+    /**
+     * Proves the poller drains the per-execution {@link dev.vertique.job.JobLogger} buffer into
+     * {@link JobRepository#saveLogs} while the execution is still running, and again on the paths
+     * that end an execution.
+     *
+     * <p>Every test here is sleep-free: the {@code saveLogs} mock <em>is</em> the completion
+     * signal. Each answer is guarded by a latch because the periodic flush timer keeps firing
+     * after the assertion has been made.
+     */
+    @Nested
+    @DisplayName("job log flush")
+    class JobLogFlush {
+
+        @Test
+        @DisplayName("flushes buffered log entries to the repository on the periodic progress tick")
+        void flushesLogsOnProgressTick(Vertx vertx, VertxTestContext ctx) {
+            String handlerAddress = "test.logflush.tick.handler";
+            JobExecution execution = sampleExecution("log-tick-job", handlerAddress);
+
+            when(repository.claimNextJob(anyString(), anyInt()))
+                    .thenReturn(Future.succeededFuture(List.of(execution)))
+                    .thenReturn(Future.succeededFuture(List.of()));
+
+            AtomicBoolean asserted = new AtomicBoolean(false);
+            when(repository.saveLogs(eq(execution.id()), any())).thenAnswer(invocation -> {
+                List<LogEntry> batch = invocation.getArgument(1);
+                if (asserted.compareAndSet(false, true)) {
+                    ctx.verify(() -> assertTrue(
+                            batch.stream().anyMatch(entry -> "hello from handler".equals(entry.message())),
+                            "the periodic tick must flush the handler's buffered entry"));
+                    ctx.completeNow();
+                }
+                return Future.succeededFuture();
+            });
+
+            // The handler logs once and NEVER replies. With executionTimeoutMs = 0 there is no
+            // timeout path either, so the periodic tick is the only thing that can call saveLogs.
+            AtomicBoolean logged = new AtomicBoolean(false);
+            vertx.eventBus().consumer(handlerAddress, msg -> {
+                if (!(msg.body() instanceof DispatchEnvelope<?> body) || !logged.compareAndSet(false, true)) {
+                    return;
+                }
+                DefaultJobContext jobCtx =
+                        (DefaultJobContext) body.metadata().dispatchContext().get(JobContext.class.getName());
+                jobCtx.logger().info("hello from handler");
+            });
+
+            DelayedJobPoller poller = new DelayedJobPoller(
+                    "default",
+                    fastConfig(),
+                    repository,
+                    completionHandler,
+                    Set.of(),
+                    testEventBusClient(vertx),
+                    0L,
+                    100L,
+                    DispatchEnvelopeBuilder.forTesting(),
+                    noOpPropagator());
+
+            vertx.deployVerticle(poller).onFailure(ctx::failNow);
+        }
+
+        @Test
+        @DisplayName("does not re-send entries a previous flush already acked")
+        void doesNotResendAlreadyFlushedEntriesOnCompletion(Vertx vertx, VertxTestContext ctx) {
+            String handlerAddress = "test.logflush.ack.handler";
+            JobExecution execution = sampleExecution("log-ack-job", handlerAddress);
+
+            when(repository.claimNextJob(anyString(), anyInt()))
+                    .thenReturn(Future.succeededFuture(List.of(execution)))
+                    .thenReturn(Future.succeededFuture(List.of()));
+            when(completionHandler.handleCompletion(any(), any(), any())).thenReturn(Future.succeededFuture());
+
+            AtomicReference<DefaultJobContext> contextRef = new AtomicReference<>();
+            AtomicReference<String> replyAddressRef = new AtomicReference<>();
+
+            // The handler logs "first" and does not reply yet — the saveLogs mock below drives
+            // the sequencing, so no sleep is needed to order the tick flush before the reply.
+            AtomicBoolean logged = new AtomicBoolean(false);
+            vertx.eventBus().consumer(handlerAddress, msg -> {
+                if (!(msg.body() instanceof DispatchEnvelope<?> body) || !logged.compareAndSet(false, true)) {
+                    return;
+                }
+                DefaultJobContext jobCtx =
+                        (DefaultJobContext) body.metadata().dispatchContext().get(JobContext.class.getName());
+                contextRef.set(jobCtx);
+                replyAddressRef.set(body.replyAddress().orElseThrow());
+                jobCtx.logger().info("first");
+            });
+
+            AtomicInteger flushCount = new AtomicInteger();
+            when(repository.saveLogs(eq(execution.id()), any())).thenAnswer(invocation -> {
+                List<LogEntry> batch = invocation.getArgument(1);
+                int call = flushCount.incrementAndGet();
+                if (call == 1) {
+                    // The tick flush claimed "first". Buffer one more entry, then let the handler
+                    // "finish" by replying, so the next flush is driven by an execution ending.
+                    contextRef.get().logger().info("second");
+                    vertx.eventBus()
+                            .send(
+                                    replyAddressRef.get(),
+                                    DispatchEnvelope.of(
+                                            Result.success(null), dev.vertique.core.eventbus.DispatchMetadata.empty()),
+                                    new DeliveryOptions().setCodecName("dispatch.envelope"));
+                } else if (call == 2) {
+                    ctx.verify(() -> {
+                        assertFalse(
+                                batch.stream().anyMatch(entry -> "first".equals(entry.message())),
+                                "an acked entry must never be re-sent by a later flush");
+                        assertTrue(
+                                batch.stream().anyMatch(entry -> "second".equals(entry.message())),
+                                "the entry buffered after the first flush must still be delivered");
+                    });
+                    ctx.completeNow();
+                }
+                return Future.succeededFuture();
+            });
+
+            DelayedJobPoller poller = new DelayedJobPoller(
+                    "default",
+                    fastConfig(),
+                    repository,
+                    completionHandler,
+                    Set.of(),
+                    testEventBusClient(vertx),
+                    0L,
+                    100L,
+                    DispatchEnvelopeBuilder.forTesting(),
+                    noOpPropagator());
+
+            vertx.deployVerticle(poller).onFailure(ctx::failNow);
+        }
+
+        @Test
+        @DisplayName("flushes buffered log entries on the timeout path before dead-lettering")
+        void flushesOnTimeoutBeforeDeadLetter(Vertx vertx, VertxTestContext ctx) {
+            String handlerAddress = "test.logflush.timeout.handler";
+            // attemptNumber = 0 with maxAttempts = 1 → the timeout dead-letters instead of retrying.
+            JobExecution execution = sampleExecution("log-timeout-job", handlerAddress, 1);
+
+            when(repository.claimNextJob(anyString(), anyInt()))
+                    .thenReturn(Future.succeededFuture(List.of(execution)))
+                    .thenReturn(Future.succeededFuture(List.of()));
+            when(repository.completeExecution(
+                            any(UUID.class), eq(JobState.DEAD_LETTER), anyString(), anyString(), any()))
+                    .thenReturn(Future.succeededFuture(Optional.of(execution)));
+
+            AtomicBoolean asserted = new AtomicBoolean(false);
+            when(repository.saveLogs(eq(execution.id()), any())).thenAnswer(invocation -> {
+                List<LogEntry> batch = invocation.getArgument(1);
+                if (asserted.compareAndSet(false, true)) {
+                    ctx.verify(() -> assertTrue(
+                            batch.stream().anyMatch(entry -> "before the timeout".equals(entry.message())),
+                            "the timeout path must flush the buffered entry"));
+                    ctx.completeNow();
+                }
+                return Future.succeededFuture();
+            });
+
+            // The handler logs once and never replies; with progressFlushIntervalMs = 0 there is
+            // no periodic tick, so only the timeout path can produce the flush.
+            AtomicBoolean logged = new AtomicBoolean(false);
+            vertx.eventBus().consumer(handlerAddress, msg -> {
+                if (!(msg.body() instanceof DispatchEnvelope<?> body) || !logged.compareAndSet(false, true)) {
+                    return;
+                }
+                DefaultJobContext jobCtx =
+                        (DefaultJobContext) body.metadata().dispatchContext().get(JobContext.class.getName());
+                jobCtx.logger().info("before the timeout");
+            });
+
+            DelayedJobPoller poller = new DelayedJobPoller(
+                    "default",
+                    fastConfig(),
+                    repository,
+                    completionHandler,
+                    Set.of(),
+                    testEventBusClient(vertx),
+                    300L,
+                    0L,
+                    DispatchEnvelopeBuilder.forTesting(),
+                    noOpPropagator());
+
+            vertx.deployVerticle(poller).onFailure(ctx::failNow);
         }
     }
 }

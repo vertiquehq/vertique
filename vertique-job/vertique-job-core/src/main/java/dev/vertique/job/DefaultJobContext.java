@@ -83,6 +83,20 @@ public class DefaultJobContext implements JobContext {
         return jobLogger;
     }
 
+    /**
+     * Returns the concrete per-execution logger, exposing the package-private claim/ack drain
+     * protocol that {@link JobLogFlusher} needs.
+     *
+     * <p>Deliberately package-private and deliberately <em>not</em> a widening of
+     * {@link #logger()}: the drain protocol is an internal contract between this context and the
+     * flusher, not part of the public {@link JobLogger} API.
+     *
+     * @return the drainable logger backing {@link #logger()}, never {@code null}
+     */
+    DefaultJobLogger jobLogger() {
+        return jobLogger;
+    }
+
     @Override
     public boolean isCancelled() {
         return cancelled;

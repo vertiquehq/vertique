@@ -22,6 +22,7 @@ import dev.vertique.job.JobDispatchContext;
 import dev.vertique.job.JobExecution;
 import dev.vertique.job.JobInterceptor;
 import dev.vertique.job.JobInterceptors;
+import dev.vertique.job.JobLogFlusher;
 import dev.vertique.job.JobRepository;
 import dev.vertique.job.JobState;
 import dev.vertique.job.JobType;
@@ -29,15 +30,18 @@ import dev.vertique.job.ProgressSnapshot;
 import dev.vertique.job.delayed.config.DelayedJobQueueConfig;
 import dev.vertique.logging.MDCContexts;
 import io.vertx.core.AbstractVerticle;
+import io.vertx.core.Future;
 import io.vertx.core.Promise;
 import io.vertx.core.eventbus.MessageConsumer;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import lombok.extern.slf4j.Slf4j;
 
@@ -84,6 +88,9 @@ import lombok.extern.slf4j.Slf4j;
  * <p><b>Graceful shutdown:</b> On {@link #stop(Promise)}, the poll timer is cancelled and all
  * active reply consumers are unregistered. In-flight executions are not interrupted — they will
  * complete independently but their completion callbacks may run after the verticle is stopped.
+ * Each in-flight execution's buffered job logs are drained one last time before the stop promise
+ * completes; because the handler keeps running, that is a cutoff snapshot rather than a final
+ * flush.
  *
  * <p><b>Consumer timeout:</b> When {@code executionTimeoutMs} is positive, a local Vert.x timer
  * is set per dispatched execution. If no reply arrives before the timer fires, the execution is
@@ -100,11 +107,25 @@ import lombok.extern.slf4j.Slf4j;
  * <p><b>Progress flush:</b> When {@code progressFlushIntervalMs} is positive, a periodic timer
  * writes {@link dev.vertique.job.ProgressSnapshot} changes to the repository. Only changed
  * snapshots are flushed, avoiding redundant DB writes for jobs that do not report progress.
+ *
+ * <p><b>Job log flush:</b> Buffered {@link dev.vertique.job.JobLogger} entries are drained to the
+ * repository through a per-execution {@link JobLogFlusher} — on the same periodic tick (there
+ * unconditionally, since log entries change independently of the progress snapshot) and on every
+ * path that ends the execution: completion, timeout, and verticle stop. With
+ * {@code progressFlushIntervalMs = 0} only the ending sites flush, so logs remain durable but are
+ * not visible until the execution ends.
  */
 @Slf4j
 public class DelayedJobPoller extends AbstractVerticle {
 
     // --- Constants ---
+
+    /**
+     * Upper bound, in seconds, on how long {@link #stop(Promise)} waits for one execution's
+     * shutdown log flush to settle. A wedged connection pool can yield a future that never
+     * settles at all, so this bound — not error recovery — is what keeps undeploy from hanging.
+     */
+    private static final long SHUTDOWN_FLUSH_TIMEOUT_SECONDS = 5L;
 
     // --- Dependencies ---
 
@@ -156,22 +177,26 @@ public class DelayedJobPoller extends AbstractVerticle {
     private final Set<MessageConsumer<?>> activeConsumers = ConcurrentHashMap.newKeySet();
 
     /**
-     * Tracks per-execution resources (timeout timer, progress-flush timer, cancel consumer) for
-     * cleanup when the consumer replies, the timeout fires, or the poller stops.
+     * Tracks per-execution resources (timeout timer, progress-flush timer, cancel consumer, log
+     * flusher) for cleanup when the consumer replies, the timeout fires, or the poller stops.
      */
     private final Map<UUID, ExecutionResources> activeExecutions = new ConcurrentHashMap<>();
 
     // --- Inner types ---
 
     /**
-     * Per-execution resource bundle: timeout timer ID, progress-flush timer ID, and cancel
-     * consumer. Timer IDs use {@code -1L} as the sentinel for "not set".
+     * Per-execution resource bundle: timeout timer ID, progress-flush timer ID, cancel consumer,
+     * and job-log flusher. Timer IDs use {@code -1L} as the sentinel for "not set".
      *
      * @param timeoutId       Vert.x timer ID for the execution timeout, or {@code -1}
      * @param progressFlushId Vert.x timer ID for the progress-flush periodic timer, or {@code -1}
      * @param cancelConsumer  event-bus consumer for cooperative cancellation signals
+     * @param logFlusher      drains this execution's buffered job log entries to the repository;
+     *                        retained so {@link #stop(Promise)} can take a cutoff snapshot of an
+     *                        execution that is still in flight
      */
-    private record ExecutionResources(long timeoutId, long progressFlushId, MessageConsumer<?> cancelConsumer) {}
+    private record ExecutionResources(
+            long timeoutId, long progressFlushId, MessageConsumer<?> cancelConsumer, JobLogFlusher logFlusher) {}
 
     /**
      * Current adaptive poll delay in milliseconds. Starts at {@link DelayedJobQueueConfig#sleepDelayMs()},
@@ -300,10 +325,16 @@ public class DelayedJobPoller extends AbstractVerticle {
 
     /**
      * Stops the poller by cancelling the poll timer, unregistering all active reply consumers,
-     * and cleaning up per-execution resources (timeout timers, progress-flush timers, cancel
-     * consumers).
+     * cleaning up per-execution resources (timeout timers, progress-flush timers, cancel
+     * consumers), and taking a final cutoff snapshot of each in-flight execution's job logs.
      *
-     * @param stopPromise the shutdown promise to complete when cleanup is done
+     * <p><b>The shutdown flush is a cutoff snapshot, not a final flush.</b> In-flight executions
+     * are not interrupted, so a handler may keep logging after its buffer is drained here; those
+     * later entries are lost. The snapshot bounds what a graceful shutdown loses — it does not
+     * eliminate loss.
+     *
+     * @param stopPromise the shutdown promise, completed once every cutoff flush has settled or
+     *                    hit its per-execution timeout bound
      */
     @Override
     public void stop(Promise<Void> stopPromise) {
@@ -316,6 +347,8 @@ public class DelayedJobPoller extends AbstractVerticle {
         }
         activeConsumers.clear();
         // Cancel per-execution resources (timeout timers, progress-flush timers, cancel consumers)
+        // and drain each execution's buffered log entries one last time.
+        List<Future<Void>> cutoffFlushes = new ArrayList<>();
         for (ExecutionResources resources : activeExecutions.values()) {
             if (resources.timeoutId() != -1L) {
                 vertx.cancelTimer(resources.timeoutId());
@@ -324,10 +357,26 @@ public class DelayedJobPoller extends AbstractVerticle {
                 vertx.cancelTimer(resources.progressFlushId());
             }
             resources.cancelConsumer().unregister();
+            // The timeout bound is load-bearing, not belt-and-braces: recover() alone only handles
+            // a *failed* future, and a wedged connection pool yields one that never settles at all
+            // — which would hang undeploy forever.
+            cutoffFlushes.add(resources
+                    .logFlusher()
+                    .flush()
+                    .timeout(SHUTDOWN_FLUSH_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+                    .recover(err -> {
+                        log.warn("Shutdown job-log flush did not settle for queue='{}': {}", queue, err.getMessage());
+                        return Future.succeededFuture();
+                    }));
         }
         activeExecutions.clear();
-        log.info("DelayedJobPoller stopped for queue='{}'", queue);
-        stopPromise.complete();
+
+        // Every element is already recovered to success, so this cannot fail — complete the stop
+        // promise unconditionally rather than propagating a composite result.
+        Future.join(new ArrayList<>(cutoffFlushes)).onComplete(ar -> {
+            log.info("DelayedJobPoller stopped for queue='{}'", queue);
+            stopPromise.complete();
+        });
     }
 
     // --- Poll loop ---
@@ -411,6 +460,9 @@ public class DelayedJobPoller extends AbstractVerticle {
      *       remain it atomically re-enqueues via {@code abandonAndScheduleRetry} (one
      *       {@link JobState#ABANDONED} transition); otherwise it dead-letters directly. Only active
      *       when {@code executionTimeoutMs > 0}.</li>
+     *   <li><b>Job log flusher</b> — drains the {@link DefaultJobContext}'s buffered log entries to
+     *       {@code job_logs} on the progress tick and on every execution-ending path. Built
+     *       unconditionally, independently of {@link #progressFlushIntervalMs}.</li>
      * </ul>
      *
      * @param execution the claimed execution to dispatch
@@ -482,6 +534,12 @@ public class DelayedJobPoller extends AbstractVerticle {
             log.info("Cancel requested for delayed job '{}' execution {}", execution.jobId(), executionId);
         });
 
+        // Job log flush: drains the context's buffered log entries to job_logs. Constructed
+        // OUTSIDE the progressFlushIntervalMs guard on purpose — the ending sites below flush
+        // through it too, so building it inside the guard would mean a 0 interval (periodic flush
+        // disabled) silently made job logs non-durable rather than merely less timely.
+        final JobLogFlusher logFlusher = new JobLogFlusher(repository, executionId, jobContext);
+
         // Progress flush: periodically write changed snapshots to the repository
         final ProgressSnapshot[] lastFlushed = {ProgressSnapshot.EMPTY};
         final long progressFlushId = (progressFlushIntervalMs > 0)
@@ -494,6 +552,11 @@ public class DelayedJobPoller extends AbstractVerticle {
                                 .onFailure(err -> log.debug(
                                         "Progress flush failed for '{}': {}", execution.jobId(), err.getMessage()));
                     }
+                    // Unconditional: log entries change independently of the progress snapshot, so
+                    // gating this on the snapshot-changed check would strand the logs of any job
+                    // that logs without reporting progress. The flusher is itself a no-op when
+                    // nothing is buffered.
+                    logFlusher.flush();
                 })
                 : -1L;
 
@@ -510,6 +573,12 @@ public class DelayedJobPoller extends AbstractVerticle {
                             vertx.cancelTimer(progressFlushId);
                         }
                         activeExecutions.remove(executionId);
+
+                        // Both timeout outcomes below (abandon-and-retry, dead-letter) end this
+                        // execution, so the single flush inside this latch covers both. The
+                        // handler is not interrupted and may still append entries afterwards;
+                        // those are lost unless a later attempt reuses the same execution id.
+                        logFlusher.flush();
 
                         // Enrich the scheduler thread's SLF4J MDC for the timeout log line. Timer
                         // callbacks run on the verticle's deployment context (not a duplicated
@@ -568,7 +637,8 @@ public class DelayedJobPoller extends AbstractVerticle {
                 : -1L;
 
         // Track resources for cleanup on stop() or early reply
-        activeExecutions.put(executionId, new ExecutionResources(timeoutId, progressFlushId, cancelConsumer));
+        activeExecutions.put(
+                executionId, new ExecutionResources(timeoutId, progressFlushId, cancelConsumer, logFlusher));
 
         // --- Completion consumer ---
 
@@ -585,6 +655,12 @@ public class DelayedJobPoller extends AbstractVerticle {
 
             consumer.unregister();
             activeConsumers.remove(consumer);
+
+            // The handler has reported, so nothing more will be appended: this drains whatever the
+            // periodic tick had not yet claimed. Fire-and-forget — a failed log flush must never
+            // delay or fail completion handling (JobLogFlusher always returns a succeeded future).
+            logFlusher.flush();
+
             Instant endTime = Instant.now();
 
             // Wrap the MDC-scoped block in an outer try/finally so the in-flight counter is

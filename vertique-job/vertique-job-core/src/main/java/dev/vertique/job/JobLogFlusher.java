@@ -26,8 +26,9 @@ import lombok.extern.slf4j.Slf4j;
  * deliberately not written back through the {@link JobLogger} — that would feed the failure into
  * the very buffer that failed to flush.
  *
- * <p>Construction with a {@code null} repository or a {@code null} execution id yields a genuine
- * no-op flusher that never touches the repository. This is required, not merely defensive:
+ * <p>Construction with a {@code null} repository, a {@code null} execution id, or a
+ * {@link JobContext} that is not a {@link DefaultJobContext} yields a genuine no-op flusher that
+ * never touches the repository. The first two are required, not merely defensive:
  * {@code job_logs.execution_id} is {@code NOT NULL REFERENCES job_executions(id)}, so flushing for
  * an untracked cron fire — which has no {@code job_executions} row — would be a foreign-key
  * violation.
@@ -46,19 +47,49 @@ public final class JobLogFlusher {
     private final boolean persistable;
 
     /**
-     * Creates a flusher for one execution.
+     * Creates a flusher for one execution, resolving the drainable buffer from the dispatch-time
+     * {@link JobContext}.
+     *
+     * <p>Only the framework's own {@link DefaultJobContext} owns a drainable buffer — the
+     * claim/ack drain protocol is package-private state on {@link DefaultJobLogger}, not part of
+     * the public {@link JobLogger} interface. A foreign {@link JobContext} implementation
+     * therefore yields a genuine no-op flusher (the same {@code persistable == false} path as a
+     * {@code null} repository): there is nothing to claim, and a foreign logger's entries are
+     * outside this framework's delivery contract.
      *
      * @param repository  the repository that persists log entries, or {@code null} for a no-op
      *                    flusher (in-memory-only mode)
      * @param executionId the execution the entries belong to, or {@code null} when the execution
      *                    has no persisted {@code job_executions} row (untracked cron fire)
-     * @param logger      the per-execution logger whose buffer is drained
+     * @param context     the dispatch-time job context whose logger is drained; anything other
+     *                    than a {@link DefaultJobContext} (including {@code null}) yields a no-op
      */
-    public JobLogFlusher(JobRepository repository, UUID executionId, DefaultJobLogger logger) {
+    public JobLogFlusher(JobRepository repository, UUID executionId, JobContext context) {
+        this(
+                repository,
+                executionId,
+                context instanceof DefaultJobContext defaultContext ? defaultContext.jobLogger() : null);
+    }
+
+    /**
+     * Creates a flusher for one execution directly over its concrete logger.
+     *
+     * <p>Package-private: callers outside {@code dev.vertique.job} reach the concrete logger
+     * through the {@link JobContext} overload rather than downcasting the public
+     * {@link JobLogger} interface themselves.
+     *
+     * @param repository  the repository that persists log entries, or {@code null} for a no-op
+     *                    flusher (in-memory-only mode)
+     * @param executionId the execution the entries belong to, or {@code null} when the execution
+     *                    has no persisted {@code job_executions} row (untracked cron fire)
+     * @param logger      the per-execution logger whose buffer is drained, or {@code null} for a
+     *                    no-op flusher
+     */
+    JobLogFlusher(JobRepository repository, UUID executionId, DefaultJobLogger logger) {
         this.repository = repository;
         this.executionId = executionId;
         this.logger = logger;
-        this.persistable = repository != null && executionId != null;
+        this.persistable = repository != null && executionId != null && logger != null;
     }
 
     /**
