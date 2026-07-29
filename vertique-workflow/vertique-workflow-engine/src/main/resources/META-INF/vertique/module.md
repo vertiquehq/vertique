@@ -323,12 +323,3 @@ which case `WorkflowReminderComposeValidator` aborts startup.
 - **context** — `DurableContextPropagator` injected into `ForkJoinCoordinator` for branch durable-context capture.
 - **vertx-sql-client** — `io.vertx.sqlclient.SqlClient` used as the concrete `<TX>` type throughout
   all SPI signatures and the engine implementation.
-
----
-
-## Related ADRs
-
-- ADR-0111: Workflow Engine / Adapter Module Split — governs the three-layer decomposition, the Portable/Dialect classification rule, the cross-module visibility model, and the maven-enforcer portability proof.
-- ADR-0109: Workflow Repository SPIs and Transaction-Runner Seam — Phase 1 prerequisite: introduced the six `<TX>`-generic SPIs and the `WorkflowTransactionRunner` interface that this module's SPI package now owns.
-- ADR-0110: Layered Workflow Exception Mapping — governs the two-stage mapping wired into `PgWorkflowTransactionRunner`; `WorkflowExceptionMapper` (stage 2) is defined in this module.
-- ADR-0147: Instance-Level Durable Context with Base-Wins/Instance-Fill Binding — governs `WorkflowContextBinder`'s bind gate and base-wins/instance-fill compose, and the `effectiveBaseOverride` seam on `BranchTransitionEngine.driveBranchTransitions`.

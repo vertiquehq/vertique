@@ -27,7 +27,7 @@ Install this module when workflows must survive process restarts, run across mor
 | `TimerStore<SqlClient>` | Workflow timer persistence (`PgTimerStore`) |
 | `WorkflowTransactionRunner<SqlClient>` | Pg implementation of the engine's transaction seam |
 | Query services | `PgWorkflowInstanceQueryService` — read model for workflow instances and branch state |
-| Retention service | `PgWorkflowRetentionService` — SKIP LOCKED archive + purge sweep |
+| Retention service | `PgWorkflowRetentionService` — SKIP LOCKED archive + purge sweep; the application drives the batch loop and cadence, there is no built-in scheduler |
 | Recovery service | `PgWorkflowBranchRecoveryService` — opt-in cluster-singleton branch recovery cron |
 | Migration support | Optional in-flight workflow definition migration (`WorkflowMigrationModule`) |
 | Flyway schema | `V1__create_workflow_tables.sql` — all workflow tables and indexes |
@@ -54,6 +54,8 @@ In-flight instances are pinned to the definition version and plan hash recorded 
 
 The `WorkflowTransactionRunner` in this module delegates to `vertique-db-core`'s `TransactionBuilder`. Write paths run at the connection's default isolation (0 `SET TRANSACTION` statements); the `query()` read path uses `REPEATABLE READ` (1 statement, no `READ ONLY`).
 
+Failures raised inside the transaction pass through a two-stage exception mapper. A DB-boundary stage owned by this module translates raw SQL/driver exceptions into `DataAccessException` subtypes, reusing the PostgreSQL SQL-state rules from `db-postgresql`; already-thrown workflow exceptions and other non-DB throwables pass through unchanged. A workflow-boundary stage owned by `vertique-workflow-engine` then translates those `DataAccessException` subtypes into the workflow exception hierarchy (for example `WorkflowConflictException` for a 409, `WorkflowPersistenceException` for a 500). See `dev.vertique:vertique-workflow-engine` for the full translation table.
+
 ---
 
 ## Schema Overview
@@ -65,7 +67,7 @@ The module owns workflow persistence tables, including:
 | `workflow_instances` | Current snapshot of each workflow instance; includes `metadata JSONB` for the durable context captured once at start |
 | `workflow_history` | Append-only engine history |
 | `workflow_dedup` | Idempotency and signal deduplication |
-| `workflow_timers` | Durable timer state; includes `metadata JSONB` for durable context |
+| `workflow_timers` | Durable timer state; includes `metadata JSONB` for durable context. This row is the authoritative source of timer status — `vertique-workflow-delayed` treats it as such when reconciling against the delayed-job scheduler. |
 | `workflow_tasks` | Human task rows |
 | `workflow_branch_tokens` | Active branch execution state; includes `metadata JSONB` for durable context |
 | `workflow_join_states` | Fan-in state for fork/join workflows |
@@ -181,7 +183,7 @@ Management REST endpoints are intentionally separate from this persistence modul
 
 ## Durable Context Propagation Seams
 
-This module implements the workflow-side durable context propagation surfaces for timers, branches, and instance-level fill on carrier rows (see ADR-0147 for the full base-wins/instance-fill model; the portable half of the model — the `WorkflowContextBinder` binder-row seam used by signal/cancel/retry/migrate/instance-owned task and timer drives — lives in `vertique-workflow-engine`, documented in `dev.vertique:vertique-workflow-engine`).
+This module implements the workflow-side durable context propagation surfaces for timers, branches, and instance-level fill on carrier rows. The portable half of the base-wins/instance-fill model — the `WorkflowContextBinder` binder-row seam used by signal/cancel/retry/migrate/instance-owned task and timer drives — lives in `vertique-workflow-engine`, documented in `dev.vertique:vertique-workflow-engine`.
 
 **Branch create:** `WorkflowEngine.handleForkNode` (in `vertique-workflow-engine`) captures the current durable context into `workflow_branch_tokens.metadata` under the `"WORKFLOW"` boundary. Metadata is written once and never updated.
 
@@ -217,23 +219,3 @@ Before each row's scope opens, the sweep loads the owning `WorkflowInstance` (a 
 - **db-postgresql** - Postgres pool, `PgDbExceptionMapper`, and `PgSqlRepository` base.
 - **vertx-sql-client** - SQL connection, pool, and transaction types.
 - **jackson-databind** - workflow state and history payload serialization.
-
----
-
-## Related ADRs
-
-- ADR-0030: Snapshot + history persistence — instance row holds the snapshot; history rows record each transition.
-- ADR-0032: Transactional signal seam — signal claim is race-safe and follows lock order.
-- ADR-0035: Timer transactional enqueue — timer rows are written inside the workflow transaction.
-- ADR-0036: Timer cancellation source of truth — the timer row is authoritative; delayed jobs are the scheduling mechanism.
-- ADR-0040: Timer dead-letter policy — failed timers leave instances waiting for explicit recovery.
-- ADR-0045: Task lock order — `workflow_timers → workflow_tasks → workflow_instances`.
-- ADR-0053: Soft delete + retention — archive-then-purge, app-driven cadence.
-- ADR-0054: Incubating → Stable promotion — promotion criteria for this module.
-- ADR-0057: Task complete fingerprint v2 — completion idempotency envelope includes `reviewedSubjectVersion`.
-- ADR-0058: Parallel branch tokens — branch token + join state tables.
-- ADR-0059: Branch lock order + FK omission — why branch-id columns intentionally have no FK.
-- ADR-0109: Workflow repository SPIs and transaction-runner seam — the `<TX>`-generic repository SPI contracts and the `WorkflowTransactionRunner<TX>` seam that decouples the engine from concrete Pg types.
-- ADR-0110: Layered workflow exception mapping — the two-stage DB-to-workflow exception translation wired into `PgWorkflowTransactionRunner`; establishes `WorkflowPersistenceException` as the workflow-boundary failure type.
-- ADR-0111: Workflow engine adapter module split — establishes the `core ← engine ← postgresql` layering; this module is the PostgreSQL adapter that implements the engine SPIs.
-- ADR-0147: Instance-level durable context with base-wins/instance-fill binding — extends ADR-0065; this module owns the `workflow_instances.metadata` column and the branch-recovery instance-fill seam (`effectiveBase = token.metadata().merge(instance.metadata(), CALLER_WINS)`).
