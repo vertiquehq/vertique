@@ -33,7 +33,9 @@ import jakarta.ws.rs.core.MediaType;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
@@ -62,16 +64,56 @@ import org.junit.jupiter.api.extension.ExtendWith;
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
 public class ProfiledBodyParseIT {
 
+    // --- Class-scoped resources (shared across all @Test methods) ---
+
+    private static Vertx vertx;
+    private static HttpClient client;
+
+    // --- Per-test resources ---
+
     private HttpServer server;
-    private HttpClient client;
 
-    // --- Teardown ---
+    // --- Setup / teardown ---
 
+    /**
+     * Creates the class-scoped {@link Vertx} instance and shared {@link HttpClient} once for the
+     * entire test class. Allocating a fresh client per test accumulates netty channel pools that
+     * surface under full-reactor load as connection failures.
+     *
+     * @param v   the class-scoped Vert.x instance injected by vertx-junit5
+     * @param ctx the test context used to signal setup completion
+     */
+    @BeforeAll
+    static void setUpClass(Vertx v, VertxTestContext ctx) {
+        vertx = v;
+        client = v.createHttpClient();
+        ctx.completeNow();
+    }
+
+    /**
+     * Closes the per-test {@link HttpServer}. The shared {@link HttpClient} is closed only in
+     * {@link #tearDownClass(VertxTestContext)}.
+     *
+     * @param ctx the test context used to signal teardown completion
+     */
     @AfterEach
     void tearDown(VertxTestContext ctx) {
         Future<?> serverClose = server != null ? server.close() : Future.succeededFuture();
-        Future<?> clientClose = client != null ? client.close() : Future.succeededFuture();
-        Future.join(serverClose, clientClose).onComplete(ar -> ctx.completeNow());
+        serverClose.onComplete(ar -> ctx.completeNow());
+    }
+
+    /**
+     * Closes the shared {@link HttpClient} after all tests in the class have run.
+     *
+     * @param ctx the test context used to signal teardown completion
+     */
+    @AfterAll
+    static void tearDownClass(VertxTestContext ctx) {
+        if (client != null) {
+            client.close().onComplete(ar -> ctx.completeNow());
+        } else {
+            ctx.completeNow();
+        }
     }
 
     // --- Strict profile fixture ---
@@ -223,7 +265,7 @@ public class ProfiledBodyParseIT {
 
     @Test
     @DisplayName("A duplicate JSON key on a strict-profiled body is rejected with 400")
-    void strictProfile_rejectsDuplicateKeys_returns400(Vertx vertx, VertxTestContext ctx) {
+    void strictProfile_rejectsDuplicateKeys_returns400(VertxTestContext ctx) {
         // STRICT_DUPLICATE_DETECTION makes the profile mapper reject the duplicate "name" key during
         // the FIRST PARSE in DefaultBoundRequest, which must surface as a 400 — not a 200 (last-wins,
         // as the lenient vertx path would do) and not a 500.
@@ -238,7 +280,7 @@ public class ProfiledBodyParseIT {
 
     @Test
     @DisplayName("Trailing tokens after a strict-profiled body are rejected with 400")
-    void strictProfile_rejectsTrailingTokens_returns400(Vertx vertx, VertxTestContext ctx) {
+    void strictProfile_rejectsTrailingTokens_returns400(VertxTestContext ctx) {
         // FAIL_ON_TRAILING_TOKENS makes the profile mapper reject the extra "{}" after the object
         // during the FIRST PARSE, which must surface as a 400.
         postStrict(
@@ -252,12 +294,12 @@ public class ProfiledBodyParseIT {
 
     @Test
     @DisplayName("The vertx (default) profile accepts a normal body unchanged (2xx)")
-    void vertxProfile_acceptsBody_unchanged(Vertx vertx, VertxTestContext ctx) {
+    void vertxProfile_acceptsBody_unchanged(VertxTestContext ctx) {
         // The /plain resource has no @JsonProfile, so the effective profile is vertx and the body is
         // parsed by today's default path — a normal body must dispatch to 200, proving the strict
         // parse change does not touch the vertx path.
         deploy(vertx, ctx, Set.of(new PlainResource()), (port, c) -> {
-            c.request(HttpMethod.POST, port, "localhost", "/plain")
+            c.request(HttpMethod.POST, port, "127.0.0.1", "/plain")
                     .compose(req -> req.putHeader("Content-Type", "application/json")
                             .send(Buffer.buffer("{\"name\":\"alice\"}")))
                     .compose(resp -> resp.body().map(b -> resp.statusCode() + "|" + b.toString()))
@@ -273,7 +315,7 @@ public class ProfiledBodyParseIT {
 
     @Test
     @DisplayName("A coerced scalar on a no-coercion-profiled POJO body is rejected with 400")
-    void strictProfile_rejectsCoercedScalar_returns400(Vertx vertx, VertxTestContext ctx) {
+    void strictProfile_rejectsCoercedScalar_returns400(VertxTestContext ctx) {
         // ALLOW_COERCION_OF_SCALARS is a MATERIALIZATION feature: the body parses fine, but binding the
         // string "5" into the primitive int `count` must throw on the no-coercion PROFILE mapper at
         // convertValue and surface as 400. The vertx mapper (coercion enabled, verified) coerces "5" and
@@ -297,7 +339,7 @@ public class ProfiledBodyParseIT {
 
     @Test
     @DisplayName("A coerced scalar on a no-coercion-profiled List element is rejected with 400")
-    void strictProfile_listBody_usesProfileMapper(Vertx vertx, VertxTestContext ctx) {
+    void strictProfile_listBody_usesProfileMapper(VertxTestContext ctx) {
         // The List<Payload> body materialization must route through the profile mapper too: a string "5"
         // for an element's primitive int `count` must be rejected with 400, proving the collection/array
         // binding site (not just the POJO site) uses the profile mapper (slice 2.3 collection site,
@@ -320,7 +362,7 @@ public class ProfiledBodyParseIT {
 
     @Test
     @DisplayName("The vertx (default) profile coerces a string scalar exactly as today (2xx)")
-    void vertxProfile_coercedScalar_acceptedAsToday(Vertx vertx, VertxTestContext ctx) {
+    void vertxProfile_coercedScalar_acceptedAsToday(VertxTestContext ctx) {
         // Same body on the no-profile /plain resource: the effective profile is vertx, whose global
         // mapper coerces the string "5" into the primitive int `count` (verified default), so the body
         // binds and dispatches to 200 — proving the materialization change is scoped to profiled
@@ -375,7 +417,7 @@ public class ProfiledBodyParseIT {
             String path,
             Buffer body,
             java.util.function.IntConsumer assertion) {
-        client.request(HttpMethod.POST, port, "localhost", path)
+        client.request(HttpMethod.POST, port, "127.0.0.1", path)
                 .compose(
                         req -> req.putHeader("Content-Type", "application/json").send(body))
                 .compose(resp -> resp.body().map(b -> resp.statusCode()))
@@ -409,11 +451,10 @@ public class ProfiledBodyParseIT {
                 .compose(apiRouter -> {
                     Router root = Router.router(vertx);
                     root.route("/*").subRouter(apiRouter);
-                    return vertx.createHttpServer().requestHandler(root).listen(0);
+                    return vertx.createHttpServer().requestHandler(root).listen(0, "127.0.0.1");
                 })
                 .onComplete(ctx.succeeding(s -> {
                     server = s;
-                    client = vertx.createHttpClient();
                     afterListen.accept(s.actualPort(), client);
                 }));
     }

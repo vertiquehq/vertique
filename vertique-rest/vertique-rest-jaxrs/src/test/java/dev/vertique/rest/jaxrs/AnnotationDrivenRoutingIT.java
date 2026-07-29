@@ -35,7 +35,9 @@ import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
@@ -65,14 +67,54 @@ import org.junit.jupiter.api.extension.ExtendWith;
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
 public class AnnotationDrivenRoutingIT {
 
-    private HttpServer server;
-    private HttpClient client;
+    // --- Class-scoped resources (shared across all @Test methods) ---
 
+    private static Vertx vertx;
+    private static HttpClient client;
+
+    // --- Per-test resources ---
+
+    private HttpServer server;
+
+    /**
+     * Creates the class-scoped {@link Vertx} instance and shared {@link HttpClient} once for the
+     * entire test class. Allocating a fresh client per test accumulates netty channel pools that
+     * surface under full-reactor load as connection failures.
+     *
+     * @param v   the class-scoped Vert.x instance injected by vertx-junit5
+     * @param ctx the test context used to signal setup completion
+     */
+    @BeforeAll
+    static void setUpClass(Vertx v, VertxTestContext ctx) {
+        vertx = v;
+        client = v.createHttpClient();
+        ctx.completeNow();
+    }
+
+    /**
+     * Closes the per-test {@link HttpServer}. The shared {@link HttpClient} is closed only in
+     * {@link #tearDownClass(VertxTestContext)}.
+     *
+     * @param ctx the test context used to signal teardown completion
+     */
     @AfterEach
     void tearDown(VertxTestContext ctx) {
         Future<?> serverClose = server != null ? server.close() : Future.succeededFuture();
-        Future<?> clientClose = client != null ? client.close() : Future.succeededFuture();
-        Future.join(serverClose, clientClose).onComplete(ar -> ctx.completeNow());
+        serverClose.onComplete(ar -> ctx.completeNow());
+    }
+
+    /**
+     * Closes the shared {@link HttpClient} after all tests in the class have run.
+     *
+     * @param ctx the test context used to signal teardown completion
+     */
+    @AfterAll
+    static void tearDownClass(VertxTestContext ctx) {
+        if (client != null) {
+            client.close().onComplete(ar -> ctx.completeNow());
+        } else {
+            ctx.completeNow();
+        }
     }
 
     // --- Resource fixtures ---
@@ -241,7 +283,7 @@ public class AnnotationDrivenRoutingIT {
 
     @Test
     @DisplayName("Route is created and dispatches with no openapi.json on the classpath")
-    void routeCreatedWithNoOpenApiJsonPresent(Vertx vertx, VertxTestContext ctx) {
+    void routeCreatedWithNoOpenApiJsonPresent(VertxTestContext ctx) {
         request(vertx, ctx, Set.of(new UserResource()), HttpMethod.GET, "/users/42", body -> {
             assertEquals("id=42", body);
         });
@@ -251,9 +293,9 @@ public class AnnotationDrivenRoutingIT {
 
     @Test
     @DisplayName("JAX-RS {id:\\d+} translates to a regex route whose param binds by name; non-digits 404")
-    void javaxPathTemplateWithRegexTranslates(Vertx vertx, VertxTestContext ctx) {
+    void javaxPathTemplateWithRegexTranslates(VertxTestContext ctx) {
         deploy(vertx, ctx, Set.of(new NumericResource()), port -> client.request(
-                        HttpMethod.GET, port, "localhost", "/num/42")
+                        HttpMethod.GET, port, "127.0.0.1", "/num/42")
                 .compose(req -> req.send())
                 .compose(resp -> {
                     int status = resp.statusCode();
@@ -265,7 +307,7 @@ public class AnnotationDrivenRoutingIT {
                         // which DefaultBoundRequest reads by name, so the coerced int reaches the method.
                         assertEquals("200|num=42", statusAndBody, "regex-constrained param must bind by name");
                     });
-                    return client.request(HttpMethod.GET, port, "localhost", "/num/abc");
+                    return client.request(HttpMethod.GET, port, "127.0.0.1", "/num/abc");
                 })
                 .compose(req -> req.send())
                 .onComplete(ctx.succeeding(resp -> {
@@ -278,7 +320,7 @@ public class AnnotationDrivenRoutingIT {
 
     @Test
     @DisplayName("Path template with multiple params translates and binds each by name")
-    void pathTemplateWithMultipleParamsTranslates(Vertx vertx, VertxTestContext ctx) {
+    void pathTemplateWithMultipleParamsTranslates(VertxTestContext ctx) {
         request(vertx, ctx, Set.of(new MultiParamResource()), HttpMethod.GET, "/multi/a/x/b/y", body -> {
             assertEquals("p=x,q=y", body);
         });
@@ -288,7 +330,7 @@ public class AnnotationDrivenRoutingIT {
 
     @Test
     @DisplayName("BoundRequest binds a query param under the none strategy (no gate)")
-    void boundRequestPopulatedForAllStrategies(Vertx vertx, VertxTestContext ctx) {
+    void boundRequestPopulatedForAllStrategies(VertxTestContext ctx) {
         request(vertx, ctx, Set.of(new BindingResource()), HttpMethod.GET, "/bind/query?extra=hello", body -> {
             assertEquals("extra=hello", body);
         });
@@ -298,7 +340,7 @@ public class AnnotationDrivenRoutingIT {
 
     @Test
     @DisplayName("Undeclared query param is still bound (binding is not spec-limited)")
-    void undeclaredQueryParamStillBound(Vertx vertx, VertxTestContext ctx) {
+    void undeclaredQueryParamStillBound(VertxTestContext ctx) {
         request(vertx, ctx, Set.of(new BindingResource()), HttpMethod.GET, "/bind/query?extra=world", body -> {
             assertEquals("extra=world", body);
         });
@@ -306,9 +348,9 @@ public class AnnotationDrivenRoutingIT {
 
     @Test
     @DisplayName("Undeclared header param is still bound, case-insensitively")
-    void undeclaredHeaderParamStillBound(Vertx vertx, VertxTestContext ctx) {
+    void undeclaredHeaderParamStillBound(VertxTestContext ctx) {
         deploy(vertx, ctx, Set.of(new BindingResource()), port -> {
-            client.request(HttpMethod.GET, port, "localhost", "/bind/header")
+            client.request(HttpMethod.GET, port, "127.0.0.1", "/bind/header")
                     .compose(req -> req.putHeader("x-custom", "value").send())
                     .compose(resp -> resp.body())
                     .onComplete(ctx.succeeding(body -> {
@@ -320,9 +362,9 @@ public class AnnotationDrivenRoutingIT {
 
     @Test
     @DisplayName("Undeclared cookie param is still bound")
-    void undeclaredCookieParamStillBound(Vertx vertx, VertxTestContext ctx) {
+    void undeclaredCookieParamStillBound(VertxTestContext ctx) {
         deploy(vertx, ctx, Set.of(new BindingResource()), port -> {
-            client.request(HttpMethod.GET, port, "localhost", "/bind/cookie")
+            client.request(HttpMethod.GET, port, "127.0.0.1", "/bind/cookie")
                     .compose(req -> req.putHeader("Cookie", "session=abc").send())
                     .compose(resp -> resp.body())
                     .onComplete(ctx.succeeding(body -> {
@@ -336,7 +378,7 @@ public class AnnotationDrivenRoutingIT {
 
     @Test
     @DisplayName("@BeanParam query fields are bound")
-    void beanParamQueryFieldBound(Vertx vertx, VertxTestContext ctx) {
+    void beanParamQueryFieldBound(VertxTestContext ctx) {
         request(vertx, ctx, Set.of(new SearchResource()), HttpMethod.GET, "/search?q=foo&page=3", body -> {
             assertEquals("q=foo,page=3", body);
         });
@@ -346,7 +388,7 @@ public class AnnotationDrivenRoutingIT {
 
     @Test
     @DisplayName("Repeated query values bind to a List in declaration order")
-    void repeatedQueryValuesCollectionParam(Vertx vertx, VertxTestContext ctx) {
+    void repeatedQueryValuesCollectionParam(VertxTestContext ctx) {
         request(vertx, ctx, Set.of(new BindingResource()), HttpMethod.GET, "/bind/ids?ids=1&ids=2&ids=3", body -> {
             assertEquals("ids=[1, 2, 3]", body);
         });
@@ -356,7 +398,7 @@ public class AnnotationDrivenRoutingIT {
 
     @Test
     @DisplayName("Repeated query values for a scalar param bind the first value")
-    void repeatedQueryValuesScalarParam(Vertx vertx, VertxTestContext ctx) {
+    void repeatedQueryValuesScalarParam(VertxTestContext ctx) {
         request(vertx, ctx, Set.of(new BindingResource()), HttpMethod.GET, "/bind/id?id=1&id=2", body -> {
             assertEquals("id=1", body);
         });
@@ -453,7 +495,7 @@ public class AnnotationDrivenRoutingIT {
 
     @Test
     @DisplayName("A text/plain body binds to a String param and reaches the resource (no 500)")
-    void textPlainBodyBindsToStringParam(Vertx vertx, VertxTestContext ctx) {
+    void textPlainBodyBindsToStringParam(VertxTestContext ctx) {
         postBody(
                 vertx,
                 ctx,
@@ -465,7 +507,7 @@ public class AnnotationDrivenRoutingIT {
 
     @Test
     @DisplayName("An application/octet-stream body binds to a byte[] param and reaches the resource (no 500)")
-    void octetStreamBodyBindsToByteArrayParam(Vertx vertx, VertxTestContext ctx) {
+    void octetStreamBodyBindsToByteArrayParam(VertxTestContext ctx) {
         postBody(
                 vertx,
                 ctx,
@@ -477,7 +519,7 @@ public class AnnotationDrivenRoutingIT {
 
     @Test
     @DisplayName("A JSON-array body binds to a List<Dto> param and reaches the resource (no 500)")
-    void jsonArrayBodyBindsToListParam(Vertx vertx, VertxTestContext ctx) {
+    void jsonArrayBodyBindsToListParam(VertxTestContext ctx) {
         postBody(
                 vertx,
                 ctx,
@@ -517,12 +559,11 @@ public class AnnotationDrivenRoutingIT {
                 .compose(apiRouter -> {
                     Router root = Router.router(vertx);
                     root.route("/*").subRouter(apiRouter);
-                    return vertx.createHttpServer().requestHandler(root).listen(0);
+                    return vertx.createHttpServer().requestHandler(root).listen(0, "127.0.0.1");
                 })
                 .onComplete(ctx.succeeding(s -> {
                     server = s;
-                    client = vertx.createHttpClient();
-                    client.request(HttpMethod.POST, s.actualPort(), "localhost", path)
+                    client.request(HttpMethod.POST, s.actualPort(), "127.0.0.1", path)
                             .compose(req ->
                                     req.putHeader("Content-Type", contentType).send(body))
                             .compose(resp -> {
@@ -538,7 +579,7 @@ public class AnnotationDrivenRoutingIT {
 
     @Test
     @DisplayName("The gate builds and stashes one BoundRequest the invoker reuses (body read once)")
-    void bodyReadOnce(Vertx vertx, VertxTestContext ctx) {
+    void bodyReadOnce(VertxTestContext ctx) {
         // A gate that materialises the BoundRequest (reads the body once) and stashes it; the invoker
         // must reuse that stash rather than re-reading. We assert the stashed instance identity is the
         // same one the invoker uses by recording the BoundRequest identity hash in both places.
@@ -557,12 +598,11 @@ public class AnnotationDrivenRoutingIT {
                 .compose(apiRouter -> {
                     Router root = Router.router(vertx);
                     root.route("/*").subRouter(apiRouter);
-                    return vertx.createHttpServer().requestHandler(root).listen(0);
+                    return vertx.createHttpServer().requestHandler(root).listen(0, "127.0.0.1");
                 })
                 .onComplete(ctx.succeeding(s -> {
                     server = s;
-                    client = vertx.createHttpClient();
-                    client.request(HttpMethod.POST, s.actualPort(), "localhost", "/echo")
+                    client.request(HttpMethod.POST, s.actualPort(), "127.0.0.1", "/echo")
                             .compose(req -> req.putHeader("Content-Type", "application/json")
                                     .send("{\"name\":\"Alice\"}"))
                             .compose(resp -> resp.body())
@@ -655,7 +695,7 @@ public class AnnotationDrivenRoutingIT {
 
     @Test
     @DisplayName("Handlers run in order: auth -> gate -> contributors (identity@80, authz@100) -> invoker")
-    void handlerExecutionOrderIsPreserved(Vertx vertx, VertxTestContext ctx) {
+    void handlerExecutionOrderIsPreserved(VertxTestContext ctx) {
         List<String> log = new ArrayList<>();
 
         // A security scheme handler that records "auth" before the operation, applied via the
@@ -684,12 +724,11 @@ public class AnnotationDrivenRoutingIT {
                 .compose(apiRouter -> {
                     Router root = Router.router(vertx);
                     root.route("/*").subRouter(apiRouter);
-                    return vertx.createHttpServer().requestHandler(root).listen(0);
+                    return vertx.createHttpServer().requestHandler(root).listen(0, "127.0.0.1");
                 })
                 .onComplete(ctx.succeeding(s -> {
                     server = s;
-                    client = vertx.createHttpClient();
-                    client.request(HttpMethod.GET, s.actualPort(), "localhost", "/secured")
+                    client.request(HttpMethod.GET, s.actualPort(), "127.0.0.1", "/secured")
                             .compose(req -> req.send())
                             .compose(resp -> resp.body())
                             .onComplete(ctx.succeeding(body -> {
@@ -756,7 +795,7 @@ public class AnnotationDrivenRoutingIT {
 
     @Test
     @DisplayName("A secured op with @Consumes registers without the Vert.x AUTHENTICATION-after-USER error")
-    void securedConsumesRouteRegistersWithoutOrderingError(Vertx vertx, VertxTestContext ctx) {
+    void securedConsumesRouteRegistersWithoutOrderingError(VertxTestContext ctx) {
         // An auth handler that is a real Vert.x AuthenticationHandler, so Vert.x classifies the route's
         // first handler as AUTHENTICATION (matching production JwtBearerSecuritySchemeHandler). If the
         // @Consumes USER handler were added first, createRouter would fail with IllegalStateException.
@@ -850,7 +889,7 @@ public class AnnotationDrivenRoutingIT {
 
     @Test
     @DisplayName("A static /r/secured route is not shadowed by an earlier /r/{name}: it hits the auth handler (401)")
-    void staticRouteNotShadowedByEarlierParamRoute(Vertx vertx, VertxTestContext ctx) {
+    void staticRouteNotShadowedByEarlierParamRoute(VertxTestContext ctx) {
         // A real Vert.x AuthenticationHandler that rejects (401) when no credentials are present, so a
         // request reaching the secured route is rejected, while a request shadowed onto /r/{name} would
         // return 200. This directly distinguishes "secured route matched" from "auth bypassed".
@@ -865,14 +904,13 @@ public class AnnotationDrivenRoutingIT {
                 .compose(apiRouter -> {
                     Router root = Router.router(vertx);
                     root.route("/*").subRouter(apiRouter);
-                    return vertx.createHttpServer().requestHandler(root).listen(0);
+                    return vertx.createHttpServer().requestHandler(root).listen(0, "127.0.0.1");
                 })
                 .onComplete(ctx.succeeding(s -> {
                     server = s;
-                    client = vertx.createHttpClient();
                     // No Authorization header → the secured route's auth handler must reject with 401.
                     // If /r/{name} shadowed it, the response would be 200 "name=secured".
-                    client.request(HttpMethod.GET, s.actualPort(), "localhost", "/r/secured")
+                    client.request(HttpMethod.GET, s.actualPort(), "127.0.0.1", "/r/secured")
                             .compose(req -> req.send())
                             .compose(resp -> {
                                 int status = resp.statusCode();
@@ -884,7 +922,7 @@ public class AnnotationDrivenRoutingIT {
                                         "/r/secured must hit the secured route's auth handler (401), not be"
                                                 + " shadowed onto /r/{name} (was: " + statusAndBody + ")"));
                                 // And the unsecured /r/{name} route still works for a non-shadowed name.
-                                client.request(HttpMethod.GET, s.actualPort(), "localhost", "/r/alice")
+                                client.request(HttpMethod.GET, s.actualPort(), "127.0.0.1", "/r/alice")
                                         .compose(req -> req.send())
                                         .compose(resp -> resp.body())
                                         .onComplete(ctx.succeeding(body -> {
@@ -992,7 +1030,7 @@ public class AnnotationDrivenRoutingIT {
 
     @Test
     @DisplayName("Two alternative @SecurityRequirements are OR: either credential authorizes, neither is 401")
-    void alternativeSecuritySchemesAreEnforcedAsOr(Vertx vertx, VertxTestContext ctx) {
+    void alternativeSecuritySchemesAreEnforcedAsOr(VertxTestContext ctx) {
         // schemeA accepts credential "A"; schemeB accepts credential "B". With OR semantics a request
         // carrying A's credential OR B's credential reaches dispatch (200); a request carrying neither
         // is rejected (401). Under the old AND chain the A-only and B-only requests would be rejected.
@@ -1008,11 +1046,10 @@ public class AnnotationDrivenRoutingIT {
                 .compose(apiRouter -> {
                     Router root = Router.router(vertx);
                     root.route("/*").subRouter(apiRouter);
-                    return vertx.createHttpServer().requestHandler(root).listen(0);
+                    return vertx.createHttpServer().requestHandler(root).listen(0, "127.0.0.1");
                 })
                 .onComplete(ctx.succeeding(s -> {
                     server = s;
-                    client = vertx.createHttpClient();
                     int port = s.actualPort();
                     // Request satisfying schemeA only → authorized (200).
                     statusFor(port, "A")
@@ -1045,7 +1082,7 @@ public class AnnotationDrivenRoutingIT {
      * @return a future of the response status code
      */
     private Future<Integer> statusFor(int port, String credential) {
-        return client.request(HttpMethod.GET, port, "localhost", "/or-secured")
+        return client.request(HttpMethod.GET, port, "127.0.0.1", "/or-secured")
                 .compose(req -> req.putHeader("X-Credential", credential).send())
                 .compose(resp -> resp.body().map(b -> resp.statusCode()));
     }
@@ -1054,7 +1091,7 @@ public class AnnotationDrivenRoutingIT {
 
     @Test
     @DisplayName("An unknown validationStrategy id fails router build with RestConfigurationException")
-    void unknownStrategyFailsFast(Vertx vertx, VertxTestContext ctx) {
+    void unknownStrategyFailsFast(VertxTestContext ctx) {
         JaxRsConfig config =
                 JaxRsConfig.builder().validationStrategy("does-not-exist").build();
         JaxRsRouterMount.Factory factory =
@@ -1138,7 +1175,7 @@ public class AnnotationDrivenRoutingIT {
             HttpMethod method,
             String path,
             java.util.function.Consumer<String> assertion) {
-        deploy(vertx, ctx, resources, port -> client.request(method, port, "localhost", path)
+        deploy(vertx, ctx, resources, port -> client.request(method, port, "127.0.0.1", path)
                 .compose(req -> req.send())
                 .compose(resp -> resp.body())
                 .onComplete(ctx.succeeding(body -> {
@@ -1164,11 +1201,10 @@ public class AnnotationDrivenRoutingIT {
                 .compose(apiRouter -> {
                     Router root = Router.router(vertx);
                     root.route("/*").subRouter(apiRouter);
-                    return vertx.createHttpServer().requestHandler(root).listen(0);
+                    return vertx.createHttpServer().requestHandler(root).listen(0, "127.0.0.1");
                 })
                 .onComplete(ctx.succeeding(s -> {
                     server = s;
-                    client = vertx.createHttpClient();
                     afterListen.accept(s.actualPort());
                 }));
     }

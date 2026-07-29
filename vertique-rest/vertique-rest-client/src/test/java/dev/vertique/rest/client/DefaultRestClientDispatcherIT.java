@@ -9,10 +9,10 @@ import static com.github.tomakehurst.wiremock.client.WireMock.get;
 import static com.github.tomakehurst.wiremock.client.WireMock.okJson;
 import static com.github.tomakehurst.wiremock.client.WireMock.post;
 import static com.github.tomakehurst.wiremock.client.WireMock.urlEqualTo;
+import static com.github.tomakehurst.wiremock.core.WireMockConfiguration.wireMockConfig;
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.github.tomakehurst.wiremock.WireMockServer;
-import com.github.tomakehurst.wiremock.core.WireMockConfiguration;
+import com.github.tomakehurst.wiremock.junit5.WireMockExtension;
 import dev.vertique.rest.client.exception.RestClientResponseException;
 import dev.vertique.rest.client.interceptor.RestClientInterceptor;
 import dev.vertique.rest.client.interceptor.RestClientRequestContext;
@@ -29,13 +29,12 @@ import jakarta.ws.rs.Produces;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
-import org.junit.jupiter.api.AfterAll;
-import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.api.extension.RegisterExtension;
 
 /**
  * Integration tests for {@link DefaultRestClientDispatcher} verifying that the pipeline
@@ -52,19 +51,15 @@ class DefaultRestClientDispatcherIT {
 
     // --- WireMock lifecycle ---
 
-    private static WireMockServer wireMock;
+    @RegisterExtension
+    static WireMockExtension wireMock = WireMockExtension.newInstance()
+            .options(wireMockConfig().dynamicPort())
+            .build();
 
-    @BeforeAll
-    static void startWireMock() {
-        wireMock = new WireMockServer(WireMockConfiguration.wireMockConfig().dynamicPort());
-        wireMock.start();
-    }
-
-    @AfterAll
-    static void stopWireMock() {
-        wireMock.stop();
-    }
-
+    /**
+     * Resets all WireMock stubs and serve-events before each test so that stub registrations and
+     * request counts from one test do not bleed into the next.
+     */
     @BeforeEach
     void resetStubs() {
         wireMock.resetAll();
@@ -99,7 +94,7 @@ class DefaultRestClientDispatcherIT {
     // --- Builder helper ---
 
     private RestClientBuilder builderFor(Vertx vertx) {
-        return new RestClientBuilder(vertx).baseUrl("http://localhost:" + wireMock.port());
+        return new RestClientBuilder(vertx).baseUrl(wireMock.baseUrl());
     }
 
     // --- Tests ---
