@@ -6,8 +6,10 @@ package dev.vertique.codegen.services.processor.validate;
 import dev.vertique.codegen.AnnotationMirrors;
 import dev.vertique.codegen.CodegenContext;
 import dev.vertique.codegen.services.processor.ServiceAnnotations;
-import dev.vertique.codegen.services.processor.scan.ContractModel;
+import dev.vertique.codegen.services.processor.scan.OperationModel;
+import java.util.List;
 import javax.lang.model.element.ExecutableElement;
+import javax.lang.model.element.TypeElement;
 
 /**
  * Validates that every {@code @ServiceOperation} annotation on a contract method has a non-blank
@@ -33,14 +35,17 @@ public final class OperationValueValidator {
     }
 
     /**
-     * Validates that all {@code @ServiceOperation} annotations in the model have non-blank values.
+     * Validates that all {@code @ServiceOperation} annotations on the given operations have
+     * non-blank values.
      *
-     * @param model the contract model to validate; must not be {@code null}
+     * @param contractType the {@code @ServiceContract} interface the operations belong to; used for
+     *                     diagnostic messages; must not be {@code null}
+     * @param operations   the extracted operations to validate; must not be {@code null}
      * @return {@code true} if all pass; {@code false} if any error was emitted
      */
-    public boolean validate(ContractModel model) {
+    public boolean validate(TypeElement contractType, List<OperationModel> operations) {
         boolean valid = true;
-        for (var op : model.operations()) {
+        for (var op : operations) {
             ExecutableElement method = op.contractMethod();
             var mirror = AnnotationMirrors.findByFqn(method, ServiceAnnotations.SERVICE_OPERATION);
             if (mirror.isEmpty()) {
@@ -52,7 +57,7 @@ public final class OperationValueValidator {
                         .error(
                                 method,
                                 "@ServiceOperation on %s.%s() has a blank value — the operation id must be non-blank",
-                                model.contractType().getSimpleName(),
+                                contractType.getSimpleName(),
                                 method.getSimpleName());
                 valid = false;
             }

@@ -186,9 +186,3 @@ static ObserverRegistration myObserver(MyBean bean) {
 | `vertique-core` | `Combinators.foldSequential` (sequential fan-out with swallow step); `TypeResolver.getAllInterfaces` (interface supertype walk in `ObserverRegistry`) |
 | `vertx-core` | `io.vertx.core.Future` — the return type of `Event.fire()` |
 | `jakarta.inject-api` | `@Inject`, `@Singleton` on `ObserverRegistry` |
-
----
-
-## Related ADRs
-
-- ADR-0140: `@Observes` Subtype-Routed Events — establishes the subtype-routing model, the new `ObserverRegistry` (vs. reusing `TypeResolver`), sequential priority-ordered fan-out via `Combinators.foldSequential`, the `fire()`-never-fails contract, void-only sync observers, and cross-module aggregation via `@IntoSet ObserverRegistration` multibinding.

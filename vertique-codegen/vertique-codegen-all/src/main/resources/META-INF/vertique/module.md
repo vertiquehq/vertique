@@ -63,8 +63,3 @@ The twelve processor leaves above are the facade's complete direct dependency se
 excludes transitive `org.projectlombok:lombok`, so resolving the facade cannot activate Lombok's
 annotation processor through a processor leaf's runtime dependencies. Applications that use
 Lombok declare and append it explicitly.
-
-## Related ADRs
-
-- ADR-0186: Maven Codegen Facade and Application Parent — establishes the dependency-only facade,
-  frozen processor ledger, Maven-first application-parent boundary, and explicit Lombok opt-in.

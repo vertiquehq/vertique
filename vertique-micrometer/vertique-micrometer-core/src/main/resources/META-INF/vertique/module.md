@@ -386,11 +386,3 @@ Measured on JVM 21 (3 × 1 million counter increment runs):
 
 The empty-composite path costs the same order as a real registry. Applications that add this
 module but never add a backend module incur no measurable overhead.
-
----
-
-## Related ADRs
-
-- ADR-0098: Micrometer Facade and Pluggable Registry Backends — establishes why Micrometer is used as the metrics facade, why backends are pluggable via ServiceLoader, why `MeterRegistryHolder` is used instead of `Metrics.globalRegistry` or `BackendRegistries`, and the publish-on-success + secret-safe bootstrap contract.
-- ADR-0099: Metric Naming, Tag, and Cardinality Policy — establishes the `vertique.*` naming scheme, the `AuthMethod.normalizedKind()` tag convention, the `GUARDED_TAG_KEYS` frozen list and the reasoning behind segment-based secret-key rejection.
-- ADR-0095: ServiceLoader as the Pre-DI Bootstrap Seam — records why ServiceLoader is used for pre-DI discovery, which `MeterRegistryProvider` relies on.

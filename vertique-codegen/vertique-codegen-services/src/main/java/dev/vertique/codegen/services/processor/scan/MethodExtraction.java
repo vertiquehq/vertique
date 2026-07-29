@@ -12,6 +12,7 @@ import javax.lang.model.element.ExecutableElement;
 import javax.lang.model.element.Modifier;
 import javax.lang.model.element.TypeElement;
 import javax.lang.model.type.DeclaredType;
+import javax.lang.model.type.ExecutableType;
 import javax.lang.model.type.TypeKind;
 import javax.lang.model.type.TypeMirror;
 import javax.lang.model.util.ElementFilter;
@@ -74,7 +75,47 @@ final class MethodExtraction {
      * @return the unwrapped type argument, or {@code null} when an error was emitted
      */
     static TypeMirror unwrapReturnType(ExecutableElement method, CodegenContext ctx, boolean[] errorSink) {
-        TypeMirror returnType = method.getReturnType();
+        return unwrapFutureType(method, method.getReturnType(), ctx, errorSink);
+    }
+
+    /**
+     * Unwraps the {@code T} from {@code Future<T>} on the given method's <em>resolved</em> return
+     * type.
+     *
+     * <p>Identical to {@link #unwrapReturnType(ExecutableElement, CodegenContext, boolean[])} except
+     * that the return type is read from {@code resolved} — the {@link ExecutableType} produced by
+     * {@link javax.lang.model.util.Types#asMemberOf(javax.lang.model.type.DeclaredType, javax.lang.model.element.Element)}
+     * — so that type variables inherited from a generic super-interface are already substituted
+     * (e.g. {@code Future<T>} declared on {@code Parent<T>} reads as {@code Future<String>} when
+     * viewed as a member of {@code Child extends Parent<String>}).
+     *
+     * @param method    the method whose return type is unwrapped, used for diagnostics; must not be
+     *                  {@code null}
+     * @param resolved  the method's type as a member of the viewing type; must not be {@code null}
+     * @param ctx       the codegen context; must not be {@code null}
+     * @param errorSink a mutable one-element {@code boolean[]} used as an out-parameter;
+     *                  {@code errorSink[0]} is set to {@code true} when an error is emitted
+     * @return the unwrapped type argument, or {@code null} when an error was emitted
+     */
+    static TypeMirror unwrapReturnType(
+            ExecutableElement method, ExecutableType resolved, CodegenContext ctx, boolean[] errorSink) {
+        return unwrapFutureType(method, resolved.getReturnType(), ctx, errorSink);
+    }
+
+    /**
+     * Shared implementation of the two {@code unwrapReturnType} overloads.
+     *
+     * @param method     the method the return type belongs to, used for diagnostics; must not be
+     *                   {@code null}
+     * @param returnType the return type to unwrap (element-declared or resolved); must not be
+     *                   {@code null}
+     * @param ctx        the codegen context; must not be {@code null}
+     * @param errorSink  a mutable one-element {@code boolean[]} used as an out-parameter;
+     *                   {@code errorSink[0]} is set to {@code true} when an error is emitted
+     * @return the unwrapped type argument, or {@code null} when an error was emitted
+     */
+    private static TypeMirror unwrapFutureType(
+            ExecutableElement method, TypeMirror returnType, CodegenContext ctx, boolean[] errorSink) {
         TypeElement futureElement = ctx.elements().getTypeElement(ServiceAnnotations.FUTURE);
 
         if (futureElement == null || returnType.getKind() != TypeKind.DECLARED) {

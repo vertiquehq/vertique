@@ -205,7 +205,7 @@ this.<Job>query("SELECT id, payload FROM work_queue WHERE status = $1")
 
 ### `DbPostgresqlModule`
 
-Dagger `@Module` that provides the PostgreSQL connection pool, exception mapper singleton, and optional connection handler binding.
+Dagger `@Module` that provides the PostgreSQL connection pool, exception mapper singleton, optional connection handler binding, and the database readiness health check.
 
 ```java
 @Singleton
@@ -232,6 +232,18 @@ interface AppComponent {
 | `Pool` | `@Singleton` | PostgreSQL connection pool built from `DbPoolConfig` |
 | `PgDbExceptionMapper` | `@Singleton` | Pre-configured PostgreSQL exception mapper |
 | `PoolConnectHandler` | `@BindsOptionalOf` | Optional; provide via `@Provides` to initialize new connections |
+| `HealthCheck` | `@IntoSet` `@Readiness` | `DatabaseHealthCheck`, contributed automatically |
+
+---
+
+### `DatabaseHealthCheck`
+
+Readiness probe that verifies database connectivity by executing `SELECT 1` against the pool. It is
+contributed automatically as a `@Readiness` health check whenever `DbPostgresqlModule` is included —
+no application wiring is required.
+
+It reports under the name `database`, resolving to UP when the query succeeds and DOWN with the
+failure message otherwise.
 
 ---
 
@@ -306,18 +318,6 @@ static ExceptionMapper<?> connectionMapper(ConnectionExceptionMapper m) { return
 
 ---
 
-## Version History
-
-| Date | Change |
-|------|--------|
-| 2026-03 | Initial implementation — `PgDbExceptionMapper` with SQL state translations, `PgSqlRepository`, `PgQuery`, `PgPagedQuery`, `PgLockMode`, `DbPostgresqlModule`, `DatabaseHealthCheck` readiness probe |
-| 2026-03 | Simplified `PoolConnectHandler` to a single `Handler<SqlConnection>` (removed intermediate adapter layer) |
-| 2026-04-03 | Added `PgOffsetPagedQuery` (offset pagination with `LIMIT`/`OFFSET`); extracted `PgSqlComposer` (shared `validateBaseSql`, `quoteColumns`, `appendOrderBy` utilities); `PgSqlRepository.offsetPagedQuery()` factory method |
-| 2026-04-10 | `PgDbFailureMapper` renamed to `PgDbExceptionMapper`; redundant `FailureTranslatorBinding` safety-net contribution removed from `DbPostgresqlModule`; repository constructor parameter renamed from `failureMapper` to `exceptionMapper` |
-| 2026-06-15 | `PgDbExceptionMapper` drops its redundant `DataAccessException` pass-through and `Throwable` catch-all registrations — both are now inherited from `DbExceptionMapper` (pass-through via its constructor, catch-all via its `fallback` override); SQL-state translations are unchanged (see ADR-0108) |
-
----
-
 ## Dependencies
 
 - `dev.vertique:db-core` — `DbExceptionMapper`, `AbstractSqlRepository`, `DbPoolConfig`, `PoolConnectHandler`
@@ -327,9 +327,3 @@ static ExceptionMapper<?> connectionMapper(ConnectionExceptionMapper m) { return
 - `jakarta.inject:jakarta.inject-api`
 - `org.slf4j:slf4j-api`
 - `org.projectlombok:lombok` (provided)
-
----
-
-## Related ADRs
-
-- ADR-0108: Unify exception mapping on a context-aware FailureMapper — `PgDbExceptionMapper` drops its redundant `DataAccessException` pass-through and `Throwable` catch-all; both behaviours are now inherited from `DbExceptionMapper`.

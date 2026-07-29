@@ -169,9 +169,3 @@ generated application factory without any REST module present, and asserts that 
 resolve. A dependency fixture materializes the compile and runtime classpaths and fails when the
 direct ledger drifts or a REST, database, launcher, test, code-generation, or Testcontainers
 artifact leaks in.
-
----
-
-## Related ADRs
-
-Decision: ADR-0188 — Static Starter Aggregates and Separate Archetypes.

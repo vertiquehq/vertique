@@ -7,240 +7,423 @@ SPDX-License-Identifier: EUPL-1.2
 
 > **Status:** Implemented
 > **Package:** `dev.vertique.rest.websocket`
-> **Artifact:** `rest-websocket`
-> **Depends on:** rest-core, rest-security, core
+> **Artifact:** `vertique-rest-websocket`
+> **Depends on:** rest-core, rest-security, core, context, security-core, security-runtime, logging
 
-Annotation-driven WebSocket endpoint module. Provides a dedicated `RouterMount`-based WebSocket runtime separate from JAX-RS. Endpoints use `@WebSocketEndpoint` with lifecycle hooks and typed Jackson message handling.
+`vertique-rest-websocket` is the annotation-driven WebSocket transport for Vertique. You write a
+plain class annotated with `@WebSocketEndpoint`, add lifecycle methods (`@OnOpen`, `@OnMessage`,
+`@OnClose`, `@OnError`), and contribute it to a Dagger multibinding. The module mounts a dedicated
+Vert.x sub-router ahead of the JAX-RS router, authenticates and authorizes the HTTP upgrade request
+using the same security annotations JAX-RS resources use, and propagates the request's ambient
+context — security context, correlation, MDC — into the connection for its whole lifetime.
+
+It is **not** a JAX-RS transport: WebSocket endpoints are not `@Path` resources, they are not
+described in the generated OpenAPI document, and there is no per-message authorization. Every
+security decision is made once, at upgrade time, before the 101 response is written.
 
 ---
 
-## Overview
+## When To Use It
 
-`rest-websocket` provides:
+Install this module when the application serves WebSocket connections and wants Vertique's
+authentication, typed message handling, and context propagation on them rather than hand-rolling a
+`ServerWebSocket` handler.
 
-- `@WebSocketEndpoint` — class-level annotation declaring a WebSocket path and optional auth scheme
-- `@OnOpen`, `@OnMessage`, `@OnClose`, `@OnError` — lifecycle method annotations
-- `WebSocketSession` — session interface for interacting with the connected client
-- `WebSocketMount` — `RouterMount` implementation that registers all scanned endpoints; default priority -100 (mounts before the JAX-RS router)
-- `WebSocketEndpointScanner` — startup annotation scanner with structural validation
-- `WebSocketEndpointRegistrar` — route registration wired with security integration
-- `WebSocketMessageCodec` — Jackson serialization/deserialization using the shared `ObjectMapper`
-- `WebSocketPathMatcher` — path template to regex compiler for `{param}` extraction
-- `WebSocketConfig` — configuration value object (basePath, maxFrameSize, maxMessageSize)
-- `WebSocketModule` — Dagger module including `RestCoreModule`
+| You also want | Also install |
+|---|---|
+| Bearer-token authentication on the upgrade | `dev.vertique:vertique-rest-auth-jwt` (or another module contributing a `RouteAuthHandler`) |
+| Role/scope enforcement and a resolved `SecurityContext` | `dev.vertique:vertique-rest-security` (`AuthModule` + `SecurityModule`) |
+| `@RequiresAction` action gates on endpoints | `dev.vertique:vertique-security-runtime` (`SecurityAuthzModule`) |
+| Bean Validation on typed messages | `dev.vertique:vertique-validation` (`ValidationModule`) |
+| Canonicalization/sanitization of inbound values | `dev.vertique:vertique-sanitization` (`SanitizationModule`) |
 
-Security uses the same annotations as JAX-RS (`@Authorized`, `@RolesAllowed`, `@PermitAll`, `@DenyAll`). Authorization is enforced at connection time via `SecurityPolicyEnforcer` + `RouteAuthHandler`.
+Without a security module the endpoints still work, unauthenticated. That is a supported
+configuration for local development and for genuinely public sockets.
+
+---
+
+## Core Concepts
+
+### The upgrade is the security boundary
+
+A WebSocket endpoint's route runs four handlers in a fixed order before the socket exists:
+
+1. **Authentication** — installed only when the endpoint's policy is `@RolesAllowed`/`@Authorized`
+   (or when a class-level `@RequiresAction` is present). It sets the Vert.x user and appends
+   authentication evidence.
+2. **Identity resolution** — resolves the framework `SecurityContext` from that evidence.
+3. **Authorization** — evaluates the role/scope policy AND, when present, the `@RequiresAction`
+   action gate. Both must pass.
+4. **Upgrade** — only now is `HttpServerRequest.toWebSocket()` called.
+
+A rejected caller therefore never reaches step 4 and never sees a 101 response. The client observes
+an ordinary HTTP failure status on the handshake.
+
+### There is no per-message authorization
+
+Authorization runs once, at upgrade. `@RequiresAction` is accepted at **class level only**; placing
+it on `@OnOpen`, `@OnMessage`, `@OnClose`, or `@OnError` fails startup rather than being silently
+ignored. If a connection's privileges must change mid-stream, refresh the channel identity (see
+[Identity refresh](#identity-refresh)) — do not expect the framework to re-check a gate per frame.
+
+### Frames are gated until `@OnOpen` completes
+
+The socket is paused the moment the handshake succeeds and is resumed only after your `@OnOpen`
+method has completed successfully. A message sent by the peer immediately after connecting is
+queued, not dropped, and is delivered after `@OnOpen`. If `@OnOpen` throws or returns a failed
+future, the socket is **never** resumed and is closed with code `1011`.
+
+### Context is carried across the handshake
+
+Everything bound to the request's ambient context at upgrade time — the `SecurityContext`,
+`CorrelationContext`, MDC keys, and any other typed context value — is captured and re-bound onto
+the connection for its lifetime. Read it inside any lifecycle callback:
+
+```java
+@OnMessage
+void onMessage(WebSocketSession session, SecurityContext ctx, ChatMessage msg) {
+    ctx.identity().subject().ifPresent(p -> log.info("message from {}", p));
+}
+```
+
+`WebSocketSession` deliberately has no `securityContext()` accessor and no way to close the live
+scope. Read the context one of three ways:
+
+| Access | Notes |
+|---|---|
+| A `dev.vertique.security.SecurityContext` lifecycle-method parameter | Simplest; `null` when no security module is installed |
+| An injected `dev.vertique.rest.core.security.SecurityRuntime`, then `current()` | `SecurityRuntime` is an interface bound only when `SecurityModule` is installed |
+| `dev.vertique.context.ContextValues.current(SecurityContext.class)` | Static; returns `Optional<SecurityContext>` |
+
+All three re-read the ambient value on every invocation, so they observe an identity refresh.
+
+---
+
+## Getting Started
+
+```java
+@WebSocketEndpoint("/ws/chat/{roomId}")
+@RolesAllowed("chat:connect")
+@Singleton
+public class ChatEndpoint {
+
+    private final ChatRoomRegistry registry;
+
+    @Inject
+    ChatEndpoint(ChatRoomRegistry registry) {
+        this.registry = registry;
+    }
+
+    @OnOpen
+    void onOpen(WebSocketSession session, @PathParam("roomId") String roomId) {
+        registry.join(roomId, session);
+    }
+
+    @OnMessage
+    Future<Void> onMessage(WebSocketSession session, ChatMessage msg) {
+        String roomId = session.pathParams().get("roomId");
+        return registry.broadcast(roomId, msg);
+    }
+
+    @OnClose
+    void onClose(WebSocketSession session) {
+        registry.leave(session.id());
+    }
+
+    @OnError
+    void onError(WebSocketSession session, Throwable error) {
+        log.error("WebSocket error on session {}", session.id(), error);
+    }
+}
+```
+
+Contribute the endpoint instance:
+
+```java
+@Module
+public abstract class ChatModule {
+
+    @Provides
+    @IntoSet
+    @WebSocketEndpoints
+    static Object chatEndpoint(ChatEndpoint endpoint) {
+        return endpoint;
+    }
+}
+```
+
+Wire the component:
+
+```java
+@Singleton
+@Component(modules = {VertxModule.class, ConfigParsingModule.class,
+                      RestModule.class, JwtAuthModule.class,
+                      WebSocketModule.class, ChatModule.class, AppModule.class})
+interface AppComponent {
+    HttpVerticle httpVerticle();
+}
+```
+
+`WebSocketModule` lives in `dev.vertique.rest.websocket.dagger` — not the module's base package —
+and injects a `ConfigParser`, so `ConfigParsingModule` (from `dev.vertique:vertique-config-core`)
+must be in the graph. `JwtAuthModule` supplies the authentication handler and transitively includes
+`AuthModule` + `SecurityModule`; drop it for an unauthenticated socket.
+
+When no endpoint is contributed the module registers no mount at all, so including it in a component
+that has no WebSocket endpoints costs nothing.
 
 ---
 
 ## Key Classes
 
-### @WebSocketEndpoint
+### `@WebSocketEndpoint`
 
-Class-level annotation that marks a class as a WebSocket endpoint.
+Class-level annotation marking a WebSocket endpoint.
 
 ```java
+@Target(ElementType.TYPE)
+@Retention(RetentionPolicy.RUNTIME)
 public @interface WebSocketEndpoint {
-    /** Path template, e.g. "/ws/chat/{roomId}" */
     String value();
-
-    /** Optional security scheme name (matches an OpenAPI security scheme). */
     String authScheme() default "";
 }
 ```
 
-Use alongside JAX-RS security annotations (`@Authorized`, `@RolesAllowed`, etc.) on the class to declare connection-level authorization policy.
+| Attribute | Default | Meaning |
+|---|---|---|
+| `value` | _(required)_ | Path template. `{name}` placeholders each match exactly one path segment. |
+| `authScheme` | `""` | Selects which registered `RouteAuthHandler` authenticates the upgrade, by `schemeName()`. Empty means auto-select: exactly one handler must be registered, otherwise registration fails. |
 
-### @OnOpen, @OnMessage, @OnClose, @OnError
+The path template is relative to `websocket.basePath`. Combine the annotation with the JAX-RS
+security annotations (`@RolesAllowed`, `@PermitAll`, `@DenyAll`, `@Authorized`) and, optionally,
+`@RequiresAction` — all at class level.
 
-Lifecycle annotations for WebSocket handler methods.
+### Lifecycle annotations
 
-| Annotation | Trigger | Allowed parameters |
-|------------|---------|-------------------|
-| `@OnOpen` | Connection established | `WebSocketSession`, `@PathParam String`, `@QueryParam String` |
-| `@OnMessage` | Frame received | `WebSocketSession`, message DTO (deserialized by `WebSocketMessageCodec`) |
-| `@OnClose` | Connection closed | `WebSocketSession` |
-| `@OnError` | Error during session | `WebSocketSession`, `Throwable` |
+`@OnOpen`, `@OnMessage`, `@OnClose`, and `@OnError` are method-level markers with no attributes. At
+most one method per annotation per endpoint; a second one fails startup. All four are optional.
 
-All lifecycle methods may return either `void` or `Future<Void>`. An async `@OnOpen` failure
-triggers the bootstrap-failure path (registrar tears down the partial scope, logs, closes the
-socket with `1011`); an async `@OnClose` failure is logged at WARN and dispatched to `@OnError`
-(when declared and not the failing method itself) before the session scope is closed.
+| Annotation | Fires when |
+|---|---|
+| `@OnOpen` | The handshake succeeded and the session context is bound. Runs before any frame is delivered. |
+| `@OnMessage` | A complete text or binary message arrives. |
+| `@OnClose` | The connection closed, from either side. |
+| `@OnError` | A socket-level error occurs, an inbound message fails to deserialize or validate, or another lifecycle method throws or returns a failed future. |
 
-### WebSocketSession
+**Return type** must be `void` or `Future<Void>`; anything else fails startup. Only `@OnOpen` and
+`@OnClose` have their futures awaited — `@OnOpen`'s gates `resume()`, `@OnClose`'s gates resource
+release. A failed future from `@OnMessage` or `@OnError` is logged and dispatched to `@OnError`.
 
-Session interface providing access to the connected client and associated context. Sketch
-below; see `dev.vertique.rest.websocket.WebSocketSession`
-for the canonical signatures and javadoc.
+**Parameters** are resolved by type and annotation, in this order:
+
+| Parameter shape | Bound to |
+|---|---|
+| `WebSocketSession` (or a supertype) | The current session |
+| `Throwable` (or a subtype) | The error — only on `@OnError`; otherwise left `null` |
+| `dev.vertique.security.SecurityContext` | `SecurityRuntime.current()` at invocation time; `null` when no security module is installed |
+| `@PathParam("name") T` | The extracted path segment, converted to `T` |
+| any other parameter | The deserialized message — only on `@OnMessage` |
+
+There is no query-parameter, header, or body-annotation injection. Read the upgrade request's query
+string and headers from `session.queryParams()` and `session.headers()`.
+
+`@PathParam` targets support `String`, `int`/`Integer`, and `long`/`Long`. Any other declared type
+throws `IllegalArgumentException` when the callback is invoked. A `@PathParam` name that is not a
+placeholder in the endpoint's path template fails startup.
+
+### Message typing
+
+The `@OnMessage` message parameter is the first parameter that is not a `WebSocketSession`, a
+`Throwable`, a `SecurityContext`, or `@PathParam`-annotated. Its declared type selects the wire
+handling:
+
+| Declared type | Handling |
+|---|---|
+| `String` | Text frames delivered verbatim, no JSON decoding |
+| `io.vertx.core.buffer.Buffer` | The endpoint listens for **binary** messages instead of text |
+| anything else | Text frames decoded from JSON into that type |
+
+An endpoint listens for either text or binary messages, never both — the `Buffer` parameter is what
+switches it. With no message parameter (or no `@OnMessage` at all) the endpoint receives nothing.
+
+JSON encoding and decoding — inbound typed messages and `session.send(Object)` — use the same shared
+Jackson mapper as the REST pipeline, so any `ObjectMapperCustomizer` the application registers
+applies to WebSocket payloads too.
+
+A message that fails to deserialize or fails Bean Validation is **dropped**: `@OnError` is invoked
+with the exception when declared, and `@OnMessage` is not called. The connection stays open.
+
+### `WebSocketSession`
+
+The handle passed to lifecycle methods. Instances are scoped to one connection and are not
+thread-safe — touch them only on the connection's event loop.
 
 ```java
 public interface WebSocketSession {
-    /** Unique session ID (UUID). */
-    String id();
+    String id();                                   // random UUID, stable for the connection
+    ServerWebSocket raw();                         // underlying Vert.x socket
+    String path();                                 // request path from the upgrade
+    Map<String, String> pathParams();              // immutable
+    MultiMap queryParams();                        // from the upgrade request URI
+    MultiMap headers();                            // from the upgrade request
+    Map<String, Object> attributes();              // mutable, application-owned
 
-    /** Underlying Vert.x ServerWebSocket. */
-    ServerWebSocket raw();
-
-    /** Request path from the upgrade request. */
-    String path();
-
-    /** Path parameters extracted from the endpoint path template. */
-    Map<String, String> pathParams();
-
-    /** Query parameters from the upgrade request URL (Vert.x MultiMap). */
-    MultiMap queryParams();
-
-    /** HTTP headers from the upgrade request. */
-    MultiMap headers();
-
-    /**
-     * Mutable session attributes for application use.
-     * SecurityContext is NOT stored here; read it via SecurityRuntime.current() inside
-     * any lifecycle callback — the substrate holder is bound for the session's lifetime.
-     */
-    Map<String, Object> attributes();
-
-    /** Send an object as a JSON text frame (serialized by WebSocketMessageCodec). */
-    Future<Void> send(Object message);
-
-    /** Send a raw text frame. */
+    Future<Void> send(Object message);             // serialized to a JSON text frame
     Future<Void> sendText(String text);
-
-    /** Send a raw binary frame. */
     Future<Void> sendBinary(Buffer data);
 
-    /** Close with normal code (1000). */
-    Future<Void> close();
-
-    /** Close with the given status code and reason. */
+    Future<Void> close();                          // close code 1000
     Future<Void> close(short statusCode, String reason);
-
-    /** Whether the connection is still open. */
     boolean isOpen();
 }
 ```
 
-`WebSocketSession` no longer carries a `securityContext()` accessor. Read the security context
-inside any lifecycle callback via `SecurityRuntime.current()` or
-`ContextValues.current(SecurityContext.class)`. Both work because the substrate holder is bound
-for the entire session lifetime.
+`id()` is also the channel id used by `ChannelIdentityManager`, so it is what you pass to
+`refreshIdentity`.
 
-The `ContextSnapshot` capture and `ContextHolder.Scope` install that drive that binding are
-owned entirely by `WebSocketEndpointRegistrar` and stored on the registrar's package-private
-`DefaultWebSocketSession`. They are deliberately not exposed on the public `WebSocketSession`
-interface — endpoint code must not be able to close or null the live scope mid-connection.
+### `WebSocketConfig`
 
-### WebSocketConfig
+Read from the `websocket` section of the application config.
 
-Configuration value object read from the application config.
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `websocket.basePath` | `String` | `"/*"` | Path at which the WebSocket sub-router is mounted. Must start with `/` and end with `/*`. |
 
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `basePath` | `String` | `""` | Prefix mounted before all WebSocket paths |
-| `maxFrameSizeBytes` | `int` | `65536` | Maximum frame size in bytes |
-| `maxMessageSizeBytes` | `int` | `262144` | Maximum aggregated message size in bytes |
-
-### WebSocketMount
-
-`RouterMount` implementation. Scans endpoint classes via `WebSocketEndpointScanner`, registers routes via `WebSocketEndpointRegistrar`, and applies `WebSocketConfig`. Default priority is `-100`.
-
-```java
-public class WebSocketMount implements RouterMount {
-    @Override
-    public int priority() { return -100; }
-
-    @Override
-    public void mount(Router mainRouter, Router subRouter) { ... }
+```json
+{
+  "websocket": {
+    "basePath": "/ws/*"
+  }
 }
 ```
 
-`WebSocketMount.Factory` is injected by Dagger. Include `WebSocketModule` in your `@Component` and contribute endpoint classes via the `@WebSocketEndpoints` multibinding.
+This module sets **no** frame-size or message-size limits of its own. Those are Vert.x server
+options — configure them on the HTTP server, not here.
 
-### WebSocketEndpointScanner
+### `WebSocketMount.Factory`
 
-Validates endpoint classes at startup:
-
-- Exactly one `@OnMessage` method per endpoint
-- `@OnOpen`, `@OnClose`, `@OnError` are optional (at most one each)
-- Method parameter types are consistent with their annotation
-- Path template syntax is valid
-- `@RequiresAction` is supported **at endpoint/class level only** and enforced once at upgrade (ADR-0115). A `@RequiresAction` on any lifecycle method (`@OnOpen`, `@OnMessage`, `@OnClose`, `@OnError`) **fails startup** — per-method enforcement cannot be honored and is rejected rather than silently ignored (fail-closed).
-- A class-level `@RequiresAction` must parse as a canonical `ActionRef` and be registered in the `ActionRegistry`; if present but the authorization engine is absent, startup fails (fail-closed).
-- A class-level `@RequiresAction` combined with `@PermitAll` or `@DenyAll` fails startup — `@RequiresAction` composes only with `@RolesAllowed`/`@Authorized`.
-
-Throws `RestConfigurationException` on violation (or `IllegalArgumentException` for endpoint-class-level structural violations).
-
-When the authorization engine is absent (no `SecurityAuthzModule`), the scanner is constructed with no `ActionRegistry` — any endpoint declaring `@RequiresAction` fails startup.
-
-The resolved action gate is stored in `WebSocketEndpointMeta.requiredAction()` (`Optional<ActionRef>`), which is `Optional.empty()` when the endpoint declares no action gate.
-
-### WebSocketEndpointRegistrar
-
-Resolves security policy from class-level annotations, calls `SecurityPolicyEnforcer.createHandler()`, and registers the upgrade handler + lifecycle handler chain on the sub-router. Owns the upgrade ordering described below.
-
-### Context Snapshot / Session Handoff
-
-WebSocket sessions share the originating HTTP request's Vert.x duplicated context (Vert.x's
-`ServerWebSocketHandshaker` passes `request.context()` into `ServerWebSocketImpl`). This means
-the WebSocket session's holder writes land on the same context as the request lifecycle. The
-handoff uses `RequestContextLifecycle` and `ContextSnapshot` to bridge this correctly.
-
-**Upgrade ordering (`WebSocketEndpointRegistrar.toWebSocket(...)`):**
-
-1. `ws.pause()` — gate frames before the rebind runs.
-2. `ContextValues.snapshot()` — capture all currently-bound holder values (deep-copies `MDCContext`). Assign to `session.contextSnapshot(snapshot)`.
-3. `lifecycle.afterClose(...)` — register the rebind task to run **after** the HTTP request's scopes have been closed.
-4. `lifecycle.completeNow()` — synchronously runs all `onClose` registrations (LIFO) then `afterClose` tasks (FIFO). This explicit call is required because `Http1xServerResponse.completeHandshake()` writes the 101 response without firing the response end handler.
-
-**Inside the `afterClose` task:**
-
-1. `ContextValues.bindSnapshot(snapshot)` — install the captured snapshot on the now-clean context.
-2. `session.contextScope(sessionScope)` — store the returned scope for the session's lifetime.
-3. Install frame and close handlers (the user's `@OnMessage`, `@OnClose`, `@OnError`).
-4. Invoke the user's `@OnOpen` callback.
-5. `ws.resume()` — unblock queued frames.
-
-The connection close handler closes `session.contextScope()` exactly once after the user's
-`@OnClose` future settles.
-
-**Bootstrap failure policy.** If anything inside the `afterClose` task throws before `ws.resume()`,
-the catch block tears down any partially-bound scope (clearing it from the session), logs the error,
-and closes the WebSocket with close code `1011` (internal server error — `CLOSE_CODE_INTERNAL_ERROR`
-constant) so the client receives a defined failure instead of a hung paused connection.
-`RequestContextLifecycle.closeAll()` runs each `afterClose` task in its own `try/catch`, so a
-failure in this task does not block other registered `afterClose` tasks.
-
-**Why this is generic.** `ContextSnapshot` captures all holder entries, not just `SecurityContext`.
-Future request-scoped types (locale, tenant, correlation) automatically propagate into WebSocket
-sessions through the same snapshot/rebind path — no changes to `WebSocketEndpointRegistrar` or
-`WebSocketSession` are required for each new type.
-
-**Parameter injection.** `SecurityContext`-typed parameters inside lifecycle callbacks resolve via
-`SecurityRuntime.current()`. Generic typed-value parameters resolve via `ContextValues.current(type)`.
-The reflective `isAssignableFrom(SecurityContext.class)` arm that existed in earlier versions is gone.
-
-### WebSocketMessageCodec
-
-Serializes outbound objects and deserializes inbound frames using the shared `ObjectMapper` provided by `JacksonConfigurer`. Honors any registered `ObjectMapperCustomizer` instances.
+Injectable factory for building additional mounts programmatically, e.g. to mount a second endpoint
+group at a different path or ahead of another `RouterMount`.
 
 ```java
-public class WebSocketMessageCodec {
-    public <T> T decode(String json, Class<T> type) throws JsonProcessingException { ... }
-    public String encode(Object value) throws JsonProcessingException { ... }
+public WebSocketMount create(String mountPath, Set<Object> endpoints);
+public WebSocketMount create(String mountPath, Set<Object> endpoints, int priority);
+```
+
+The default mount created from `@WebSocketEndpoints` uses priority `-100`, which places it ahead of
+the JAX-RS mount so WebSocket paths are matched before catch-all REST routes. Contribute a
+hand-built mount to the `Set<RouterMount>` multibinding:
+
+```java
+@Provides
+@IntoSet
+static RouterMount adminSocketMount(WebSocketMount.Factory factory, AdminEndpoint endpoint) {
+    return factory.create("/admin/ws/*", Set.of(endpoint), -200);
 }
 ```
 
-### WebSocketPathMatcher
+### Upgrade failure types
 
-Compiles path templates with `{param}` placeholders to named-group regex patterns. Used by `WebSocketEndpointRegistrar` to extract path parameters at upgrade time.
+A **client** connecting to a Vertique WebSocket endpoint sees the server's refusal through one of
+several raw Vert.x/Netty exception shapes depending on timing. Normalize them instead of
+pattern-matching third-party types:
+
+```java
+public abstract sealed class WebSocketUpgradeException extends TechnicalException
+        permits WebSocketUpgradeRejected, WebSocketUpgradeTransportFailure {}
+
+public final class WebSocketUpgradeRejected extends WebSocketUpgradeException {
+    public int status();          // e.g. 401, 403, 404, 503
+}
+
+public final class WebSocketUpgradeTransportFailure extends WebSocketUpgradeException {}
+
+public final class WebSocketUpgradeExceptions {
+    public static WebSocketUpgradeException translate(Throwable err);
+}
+```
+
+`translate` returns a `WebSocketUpgradeException` unchanged, preserves the structured status of a
+Vert.x `UpgradeRejectedException`, otherwise scans the message for a standalone 1xx–5xx token and
+returns `WebSocketUpgradeRejected` when one is found. With no recoverable status it returns
+`WebSocketUpgradeTransportFailure` — typically "the server closed the socket mid-handshake", which is
+observable but says nothing about *why*. Retry before concluding anything from it.
+
+```java
+client.connect(options).onFailure(err -> {
+    WebSocketUpgradeException upgrade = WebSocketUpgradeExceptions.translate(err);
+    if (upgrade instanceof WebSocketUpgradeRejected rejected && rejected.status() == 401) {
+        refreshTokenAndReconnect();
+    }
+});
+```
+
+These types live in `dev.vertique.rest.websocket.transport` and describe the **client** side of a
+handshake. Nothing on the server path throws them.
+
+---
+
+## Extension Points
+
+### `@WebSocketEndpoints` (multibinding)
+
+The only registration surface. Contribute each endpoint instance as `Object` into the
+`@WebSocketEndpoints`-qualified set; Dagger injects the endpoint's own dependencies normally.
+
+```java
+@Provides
+@IntoSet
+@WebSocketEndpoints
+static Object chatEndpoint(ChatEndpoint endpoint) {
+    return endpoint;
+}
+```
+
+The qualifier is `dev.vertique.rest.websocket.dagger.WebSocketEndpoints`. Endpoints are scanned and
+validated once, at router construction — a structural violation fails startup, not the first
+connection.
+
+### `RouteAuthHandler` (consumed, not declared here)
+
+The upgrade's authentication handler comes from the `Set<RouteAuthHandler>` multibinding declared by
+`dev.vertique:vertique-rest-security`. `dev.vertique:vertique-rest-auth-jwt` contributes the bearer
+handler; contribute your own to authenticate upgrades with a different scheme, then name it with
+`@WebSocketEndpoint(authScheme = "...")` when more than one is registered.
+
+---
+
+## JAX-RS Integration
+
+WebSocket endpoints are not JAX-RS resources, but they reuse two annotation families so an
+application declares security the same way on both transports:
+
+| Annotation | Placement | Effect at upgrade |
+|---|---|---|
+| `@PermitAll` | class | No authentication handler, no authorization gate |
+| `@DenyAll` | class | Every upgrade is refused with 403 |
+| `@RolesAllowed({...})` | class | Authenticate, then require any one of the listed roles |
+| `@Authorized(scopes = {...})` | class | Authenticate, then enforce the declared scopes |
+| `@RequiresAction("...")` | class | Authenticate, then evaluate the action gate — AND-composed with the above |
+| `@PathParam("name")` | lifecycle method parameter | Binds a path-template placeholder |
+| `@ValidateWith(groups = {...})` | `@OnMessage` method | Selects Bean Validation groups |
+
+Method-level security annotations on lifecycle methods are not consulted; the endpoint class is the
+only policy site.
 
 ---
 
 ## Validation and Input Processing
 
-### Bean Validation on @OnMessage
+Both features are optional bindings. When the providing module is absent the step is skipped
+silently — nothing fails.
 
-When `ValidationModule` is included in the Dagger component, typed messages deserialized by `@OnMessage` are automatically validated via `BeanValidator`. Validation runs after deserialization. On failure the `@OnError` handler is invoked with a `BeanValidationException`.
+| Feature | Install | Applies to |
+|---|---|---|
+| Bean Validation | `ValidationModule` | The deserialized `@OnMessage` payload |
+| Canonicalization / sanitization | `SanitizationModule` | The `@OnMessage` payload and `@PathParam` string values |
+
+Bean Validation runs after deserialization (and after sanitization when both are installed). A
+violation raises `BeanValidationException`, which is routed to `@OnError`; the message is discarded.
 
 ```java
 public record CreateRoomMessage(
@@ -248,288 +431,167 @@ public record CreateRoomMessage(
     @Min(1) @Max(100) int maxParticipants
 ) {}
 
-@WebSocketEndpoint("/ws/rooms")
-@Singleton
-public class RoomEndpoint {
-
-    @OnMessage
-    Future<Void> onMessage(WebSocketSession session, CreateRoomMessage msg) {
-        // msg has already passed bean validation
-        return session.send(new RoomCreated(msg.name()));
-    }
-
-    @OnError
-    void onError(WebSocketSession session, Throwable error) {
-        if (error instanceof BeanValidationException ex) {
-            session.send(new ErrorResponse(ex.violations()));
-        }
-    }
-}
-```
-
-Apply `@ValidateWith` on the `@OnMessage` method to specify validation groups:
-
-```java
 @OnMessage
 @ValidateWith(groups = {Default.class, StrictInput.class})
-Future<Void> onMessage(WebSocketSession session, CreateRoomMessage msg) { ... }
-```
-
-`BeanValidator` is bound as `@BindsOptionalOf` — if `ValidationModule` is absent the validator is not present and validation is skipped.
-
-### Canonicalization and Sanitization on @OnMessage
-
-When `SanitizationModule` is included in the Dagger component, `InputObjectProcessor` is applied to typed messages before validation. Processing uses a two-phase deserialization approach:
-
-1. Deserialize the JSON frame to an intermediate representation
-2. Apply canonicalization and sanitization policies defined by `@Canonicalize`/`@Sanitize` on message fields
-3. Materialize the final typed object
-
-Declare processing policy on the `@OnMessage` method. Class-level fallback is **not** used — annotations must be on the method itself.
-
-```java
-@OnMessage
 @Canonicalize(NfkcCanonicalize.class)
 @Sanitize(StripControlCharsSanitize.class)
-Future<Void> onMessage(WebSocketSession session, ChatMessage msg) { ... }
-```
-
-`InputObjectProcessor` is bound as `@BindsOptionalOf` — if `SanitizationModule` is absent it is not present and input processing is skipped.
-
-### Canonicalization on @PathParam Values
-
-`@PathParam` string values extracted from the WebSocket upgrade URL are also processed through `InputObjectProcessor` when `SanitizationModule` is present. Declare `@Canonicalize`/`@Sanitize` on the lifecycle method (e.g., `@OnOpen`) to control how parameter strings are normalized.
-
-```java
-@OnOpen
-@Canonicalize(NfkcCanonicalize.class)
-void onOpen(WebSocketSession session, @PathParam("roomId") String roomId) {
-    // roomId has been NFKC-canonicalized before use
+Future<Void> onMessage(WebSocketSession session, CreateRoomMessage msg) {
+    return session.send(new RoomCreated(msg.name()));
 }
-```
 
-Policy resolution is method-only — there is no class-level fallback for lifecycle methods.
-
-### Optional Module Dependencies
-
-| Feature | Required module | Binding mechanism |
-|---------|----------------|-------------------|
-| Bean Validation | `ValidationModule` | `@BindsOptionalOf BeanValidator` |
-| Input Processing | `SanitizationModule` | `@BindsOptionalOf InputObjectProcessor` |
-
----
-
-## Extension Points
-
-### @WebSocketEndpoints multibinding
-
-Contribute endpoint classes to the runtime via Dagger multibinding. The qualifier `@WebSocketEndpoints` (`Set<Object>`) identifies all registered endpoint instances.
-
-```java
-@Module
-public abstract class MyWebSocketModule {
-    @Provides @IntoSet @WebSocketEndpoints
-    static Object chatEndpoint(ChatEndpoint endpoint) {
-        return endpoint;
+@OnError
+void onError(WebSocketSession session, Throwable error) {
+    if (error instanceof BeanValidationException ex) {
+        session.send(new ErrorResponse(ex.violations()));
     }
 }
 ```
 
-Alternatively, bind the endpoint class in `@Component` and let Dagger inject its dependencies normally.
+**Policy resolution is method-only.** `@Canonicalize`/`@Sanitize` on the endpoint *class* are
+ignored; put them on the lifecycle method whose input they govern. `@PathParam` values are processed
+with the policies declared on the method that receives them, so `@OnOpen` and `@OnMessage` can
+normalize the same path parameter differently.
 
 ---
 
-## Dagger Module
+## Identity Refresh
 
-### WebSocketModule
-
-```java
-@Module(includes = RestCoreModule.class)
-public abstract class WebSocketModule {
-    @Multibinds @WebSocketEndpoints
-    abstract Set<Object> webSocketEndpoints();
-
-    @Provides @Singleton
-    static WebSocketMessageCodec webSocketMessageCodec(ObjectMapper objectMapper) { ... }
-
-    @Provides @Singleton
-    static WebSocketConfig webSocketConfig(JsonObject config) { ... }
-
-    @Provides @IntoSet
-    static RouterMount webSocketMount(WebSocketMount.Factory factory) { ... }
-}
-```
-
-| Binding | Purpose |
-|---------|---------|
-| `@Multibinds @WebSocketEndpoints Set<Object>` | Empty default set; apps contribute endpoint instances via `@IntoSet` |
-| `WebSocketMessageCodec` | Jackson codec using shared ObjectMapper |
-| `WebSocketConfig` | Configuration value object |
-| `Set<RouterMount>` | Contributes `WebSocketMount` at priority -100 |
-| `@BindsOptionalOf Authorizer` | Present when `SecurityAuthzModule` is in the component; threaded into `SecurityPolicyEnforcer` so a class-level `@RequiresAction` is enforced at upgrade; coalesces with `AuthModule`'s declaration when both are present |
-| `@BindsOptionalOf ActionRegistry` | Present when `SecurityAuthzModule` is in the component; used by `WebSocketEndpointScanner` to validate a class-level `@RequiresAction` at startup; absent means any `@RequiresAction` fails startup |
-
----
-
-## Application Setup
-
-1. Include `WebSocketModule.class` and (if auth is needed) `AuthModule.class` + `SecurityModule.class` in the Dagger `@Component`
-2. Implement endpoint classes with `@WebSocketEndpoint` and lifecycle annotations
-3. Contribute endpoints via `@Provides @IntoSet @WebSocketEndpoints`
-
-**Example component:**
+When `AuthModule` is installed, each connection is registered as a channel with
+`dev.vertique.security.channel.ChannelIdentityManager` (from `dev.vertique:vertique-security-core`).
+Use it to swap a live connection's identity after, for example, a token rotation:
 
 ```java
-@Component(modules = {VertxModule.class, RestModule.class, AuthModule.class,
-                      SecurityModule.class, WebSocketModule.class,
-                      AppModule.class, ResourceModule.class})
-interface AppComponent {
-    HttpVerticle httpVerticle();
-}
-```
-
-**Example endpoint:**
-
-```java
-@WebSocketEndpoint("/ws/chat/{roomId}")
-@Authorized(scopes = {"chat:connect"})
 @Singleton
-public class ChatEndpoint {
+public class SessionRefresher {
 
-    private final ChatService chatService;
+    private final ChannelIdentityManager channels;
 
     @Inject
-    public ChatEndpoint(ChatService chatService) {
-        this.chatService = chatService;
+    SessionRefresher(ChannelIdentityManager channels) {
+        this.channels = channels;
     }
 
-    @OnOpen
-    void onOpen(WebSocketSession session, @PathParam("roomId") String roomId) {
-        chatService.join(roomId, session.id());
-    }
-
-    @OnMessage
-    Future<Void> onMessage(WebSocketSession session, ChatMessage message) {
-        return session.send(new ChatAck("ok"));
-    }
-
-    @OnClose
-    void onClose(WebSocketSession session) {
-        chatService.leave(session.id());
-    }
-
-    @OnError
-    void onError(WebSocketSession session, Throwable error) {
-        log.error("WebSocket error for session {}", session.id(), error);
+    public Future<Void> refresh(WebSocketSession session, SecurityContext newContext) {
+        return channels.refreshIdentity(session.id(), newContext);
     }
 }
 ```
 
-**Endpoint contribution:**
+Compose on the returned future — it completes only once the new identity is in effect. The refresh
+replaces the `SecurityContext` only; correlation and MDC bound at upgrade survive it.
 
-```java
-@Module
-public abstract class AppModule {
-    @Provides @IntoSet @WebSocketEndpoints
-    static Object chatEndpoint(ChatEndpoint endpoint) {
-        return endpoint;
-    }
-}
-```
+**`@OnClose` runs before the channel is deregistered**, so your close handler still observes the
+authenticated `SecurityContext` rather than an anonymous one. Cleanup — the channel-closed event,
+expiry-timer cancellation, and scope release — happens after your close logic has settled.
 
-See `examples/vertique-example-websocket` for a working chat-room example demonstrating path-param routing, `@RolesAllowed` connection-level JWT auth, and room broadcast via `ChatRoomRegistry`.
+Without `AuthModule` there is no `ChannelIdentityManager` binding and no channel registration; the
+connection's context scope is released directly on close.
 
 ---
 
-## Channel Identity Management
+## Module Dagger Bindings
 
-When `AuthModule` is present in the Dagger component, `WebSocketMount.Factory` constructs a
-`WebSocketChannelAdapter` inline and wires it into `WebSocketEndpointRegistrar`. The adapter bridges
-the WebSocket lifecycle to `ChannelIdentityManager`:
+`WebSocketModule` (`dev.vertique.rest.websocket.dagger`) includes `RestCoreModule` and
+`SecurityEventsModule`.
 
-### WebSocketChannelBinding
-
-Package-private `ChannelBinding` implementation wrapping a single open `ServerWebSocket`. Holds two
-`ContextHolder.Scope` references: the **combined snapshot scope** bound at upgrade time (the full
-per-channel context — `SecurityContext`, `CorrelationContext`, MDC) and a **`SecurityContext`-only
-override** layered on top by identity refresh. Identity refresh must not drop correlation/MDC, so the
-snapshot scope stays open for the channel's whole lifetime.
-
-**Key semantics:**
-
-| Operation | Behavior |
+| Binding | Purpose |
 |---|---|
-| `rebind(newCtx)` | Hops to the channel's owning Vert.x context via `runOnContext`, closes the prior `SecurityContext`-only override (restoring the snapshot's `SecurityContext`), then layers a new override via `SecurityRuntime.bindCurrent(newCtx)`. The snapshot scope is **not** touched, so `CorrelationContext`/MDC survive the refresh. Returns a `Future<Void>` that completes after the rebind takes effect. |
-| `close(reasonCode)` | Sends WebSocket close frame (code `1000`) on the channel's event loop. Does NOT release any scope. |
-| `releaseResources()` | Idempotent release of the override then the snapshot scope, in LIFO order, using `AtomicReference.getAndSet`. Dispatched on the channel's event loop. |
+| `@Multibinds @WebSocketEndpoints Set<Object>` | Empty default; applications contribute endpoints |
+| `WebSocketConfig` (`@Singleton`) | Parsed from the `websocket` config section |
+| `@ElementsIntoSet Set<RouterMount>` | Contributes one `WebSocketMount` at priority `-100`, or nothing when no endpoint is contributed |
 
-Each scope is held in its own `AtomicReference` so concurrent close/rebind/expiry-timer races from
-external threads are handled without data races.
+It also declares empty `Set<RouteAuthHandler>`, `Set<AuthorizationProvider>`, and
+`Set<SecurityIdentityResolver>` multibindings so the graph resolves with no security module present.
+`AuthModule` contributes into the same sets when it is installed.
 
-### WebSocketChannelAdapter
+Optional bindings (`@BindsOptionalOf`), each absent unless the named module is in the component. All
+coalesce with the same declaration in `AuthModule` when both are present.
 
-Bridge between `WebSocketEndpointRegistrar` lifecycle hooks and `ChannelIdentityManager`. Not a
-Dagger-managed bean — `WebSocketMount.Factory` builds one inline, and only when `AuthModule` is wired
-alongside `WebSocketModule` (so both the optional `ChannelIdentityManager` and `SecurityRuntime` are
-present).
+| Optional binding | Supplied by | Absent means |
+|---|---|---|
+| `SecurityRuntime` | `SecurityModule` | No authentication, identity resolution, or authorization on any endpoint |
+| `ChannelIdentityManager` | `AuthModule` | No channel registration; no identity refresh |
+| `SecurityClaimMapper` | application | The default claim mapper is used |
+| `AuthorizationDecisionPoint` | application | The framework default decision point is used |
+| `AuthorizationPolicy` | application | Same |
+| `Authorizer` | `SecurityAuthzModule` | Any endpoint declaring `@RequiresAction` fails startup |
+| `ActionRegistry` | `SecurityAuthzModule` | Same |
+| `BeanValidator` | `ValidationModule` | Messages are not validated |
+| `InputObjectProcessor` | `SanitizationModule` | Messages and path parameters are not sanitized |
 
-**On WebSocket open (`WebSocketChannelAdapter.onOpen`):**
-1. Creates a `WebSocketChannelBinding` wrapping the connection, handing it the initial
-   `ContextHolder.Scope` from the upgrade handshake
-2. Calls `ChannelIdentityManager.register(channelId, ctx, binding)` — manager takes over the
-   channel lifecycle from this point
+---
 
-**On WebSocket close (`WebSocketChannelAdapter.onClose`):**
-1. Called by `WebSocketEndpointRegistrar` **after** `@OnClose` has settled
-2. Delegates to `ChannelIdentityManager.deregister(channelId, "CHANNEL_CLOSED_BY_PEER")`
-3. The manager emits `ChannelClosedEvent`, cancels any expiry timer, removes the registry entry,
-   and calls `binding.releaseResources()` — in that order
+## Failures, Constraints, and Common Mistakes
 
-**Why `@OnClose` runs before deregister:** This ordering ensures the user's `@OnClose` method
-observes an authenticated `SecurityContext` (the scope is still bound). The manager's cleanup, including
-scope release, happens after all application close logic has settled. See
-ADR-0064.
+### Startup failures
 
-### Identity Refresh
+All of these are raised while the router is built, so a misconfigured endpoint never serves traffic.
 
-To refresh a WebSocket channel's identity (e.g., after token rotation):
+| Condition | Thrown |
+|---|---|
+| Endpoint instance not annotated `@WebSocketEndpoint` | `IllegalArgumentException` |
+| Two methods carry the same lifecycle annotation | `IllegalArgumentException` |
+| A lifecycle method returns something other than `void` or `Future` | `IllegalArgumentException` |
+| `@PathParam("x")` names no placeholder in the path template | `IllegalArgumentException` |
+| Conflicting security annotations on the class | `IllegalArgumentException` |
+| `@RolesAllowed` with an empty value list | `IllegalArgumentException` |
+| `@RequiresAction` on a lifecycle method | `IllegalArgumentException` |
+| `@RequiresAction` that is not a canonical action reference | `IllegalArgumentException` |
+| `@RequiresAction` combined with `@PermitAll` or `@DenyAll` | `IllegalArgumentException` |
+| `@RequiresAction` with no `ActionRegistry` installed | `IllegalArgumentException` |
+| `@RequiresAction` naming an action absent from the `ActionRegistry` | `IllegalArgumentException` |
+| `@RequiresAction` with no authorization enforcement pipeline installed | `IllegalStateException` |
+| `@RequiresAction` with an `ActionRegistry` but no `Authorizer` | `IllegalStateException` |
+| Endpoint needs authentication but no `RouteAuthHandler` is registered | `IllegalStateException` |
+| `authScheme` names no registered `RouteAuthHandler` | `IllegalStateException` |
+| Several `RouteAuthHandler`s registered and no `authScheme` given | `IllegalStateException` |
 
-```java
-@Inject
-ChannelIdentityManager channelIdentityManager;
+Every `@RequiresAction` failure mode above is deliberately fail-closed: an action gate that cannot
+be enforced refuses to boot rather than serving traffic with the gate silently missing.
 
-public Future<Void> refreshSession(String sessionId, SecurityContext newCtx) {
-    return channelIdentityManager.refreshIdentity(sessionId, newCtx);
-    // Returns a Future<Void> — compose on it before depending on the new identity
-}
-```
+### Connection-time outcomes
 
-### Optional Wiring
+| Outcome | What the client sees |
+|---|---|
+| Authentication or authorization denied | The security layer's HTTP status (401 or 403) on the handshake; no 101 |
+| `toWebSocket()` failed | HTTP 400 |
+| Session bootstrap threw, channel registration failed, or `@OnOpen` failed | Handshake succeeds, then an immediate close with code `1011` and no frames |
+| Peer closed while channel registration was still in flight | `@OnOpen` is skipped entirely and the connection is torn down |
+| Normal `session.close()` | Close code `1000` |
 
-`WebSocketModule` declares `@BindsOptionalOf ChannelIdentityManager` (the manager is bound only by
-`AuthModule`). When `AuthModule` is absent (no-auth deployments), the optional manager is empty,
-`WebSocketMount.Factory` builds no `WebSocketChannelAdapter`, and the registrar skips channel
-management registration. This is a supported configuration for auth-absent components and unit tests.
+### Common mistakes
+
+- **Expecting per-message authorization.** There is none. A `@RequiresAction` on a lifecycle method
+  fails startup for exactly this reason — it would suggest a guarantee the transport cannot make.
+- **Storing the `SecurityContext` in `session.attributes()` at `@OnOpen`.** It goes stale across an
+  identity refresh. Read it per invocation instead.
+- **Declaring `@Canonicalize`/`@Sanitize` on the endpoint class.** Class-level policy is not
+  consulted for lifecycle methods.
+- **Assuming a failed `@OnMessage` closes the connection.** It does not; the failure is routed to
+  `@OnError` and the socket stays open. Close it yourself if that is the intent.
+- **Sending from `@OnOpen` and expecting inbound frames first.** Outbound writes work immediately;
+  inbound delivery starts only after `@OnOpen`'s future completes.
+- **Using a `@PathParam` type other than `String`, `int`/`Integer`, or `long`/`Long`.** This passes
+  startup validation and fails per-invocation.
+- **Adding a Vert.x `AuthorizationProvider` and expecting it to change an authorization outcome.**
+  Role and scope decisions are evaluated from the framework's `SecurityContext` claims.
 
 ---
 
 ## Dependencies
 
-- `dev.vertique:rest-core`
-- `dev.vertique:rest-security`
-- `dev.vertique:core`
-- `io.vertx:vertx-core`
-- `io.vertx:vertx-web`
-- `com.fasterxml.jackson.core:jackson-databind`
-- `com.google.dagger:dagger`
-- `org.slf4j:slf4j-api`
-- `org.projectlombok:lombok` (provided scope)
-
----
-
-## Related ADRs
-
-- ADR-0064: Typed Security Identity Model — establishes channel lifecycle close ordering (deregister post-`@OnClose`), `ChannelIdentityManager` as single cleanup owner, and `WebSocketChannelBinding` rebind/release semantics.
-- ADR-0113: Federated Action and Policy Authorship for Framework Authorization — establishes `@RequiresAction` as the mechanism for declaring WebSocket endpoint action gates, with federated authorship in each endpoint module.
-- ADR-0115: WebSocket Action-Authorization Granularity (Class-Level, Upgrade-Time Only) — establishes that WebSocket action authorization is class-level and enforced once at upgrade; per-lifecycle-method `@RequiresAction` fails startup (fail-closed).
-
+| Dependency | Why |
+|---|---|
+| `dev.vertique:vertique-rest-core` | `RouterMount`, request-lifecycle handle, `SecurityRuntime`, `RouteAuthHandler`, input processing |
+| `dev.vertique:vertique-rest-security` | Policy enforcement, identity resolution, claim mapping |
+| `dev.vertique:vertique-core` | Context holder, config parsing, Bean Validation and sanitization contracts |
+| `dev.vertique:vertique-context` | `ContextSnapshot`/`ContextValues` used to carry request context across the handshake |
+| `dev.vertique:vertique-security-core` | `SecurityContext`, `ChannelIdentityManager`, action-gate types |
+| `dev.vertique:vertique-security-runtime` | Security event emission for the connection lifecycle |
+| `dev.vertique:vertique-logging` | Logging conventions |
+| `io.vertx:vertx-web` | Router, routing context, `ServerWebSocket` |
+| `io.vertx:vertx-auth-common` | Vert.x authorization provider types on the security seam |
+| `jakarta.ws.rs:jakarta.ws.rs-api` | `@PathParam` and the JAX-RS security annotations |
+| `com.fasterxml.jackson.core:jackson-databind` | Typed message serialization |
+| `com.google.dagger:dagger` | Module and multibinding declarations |
+| `org.projectlombok:lombok` | Compile-time only |

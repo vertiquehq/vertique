@@ -69,7 +69,7 @@ public interface AspectProvider<A extends Annotation> {
 }
 ```
 
-Both arguments are produced reflection-free by the processor: `target` is a generated `MethodMetadata` implementation (see `MethodMetadata` in `vertique-core`, `dev.vertique.core.codegen`), and `annotation` is a generated annotation-literal carrying the method's attribute values.
+Both arguments are produced reflection-free by the processor: `target` is a generated `MethodMetadata` implementation (see `MethodMetadata` in `vertique-core`, `dev.vertique.core.codegen`), and `annotation` is a generated annotation-literal carrying the method's attribute values. `MethodMetadata`'s constant-only accessors (`name()`, `declaringType()`, `returnType()`, `parameterTypes()`, `parameters()`, `findAnnotation()`, `hasAnnotation()`) are the reflection-free core that generated proxies call. `genericReturnType()` and `asMethod()` are an opt-in reflective-accessor group — never called by generated proxy code, and only safe to call when the caller accepts the reflection they entail.
 
 **Dagger wiring example:**
 
@@ -179,10 +179,3 @@ The processor discovers `@MyAnnotation` as an aspect trigger because it is meta-
 |----------|---------|
 | `vertique-core` | `MethodMetadata` / `ParameterMetadata` SPI (`dev.vertique.core.codegen`); `Combinators` is not used here — the `Invocations` nester is AOP-specific |
 | `vertx-core` | `io.vertx.core.Future` — the uniform async return type of the interceptor chain |
-
----
-
-## Related ADRs
-
-- ADR-0139: Method-AOP Model & SPI — establishes the compile-time subclass-proxy model, the uniform `Future`-returning `MethodInterceptor` SPI, the re-entrant `Invocations` nester, chain-ordering by `@Aspect.ordering()` + FQN tiebreak, and the `@Inject`-constructor-only binding-origin constraint.
-- ADR-0141: Method/Parameter Metadata SPI — establishes `MethodMetadata` and `ParameterMetadata` in `dev.vertique.core.codegen`; explains why the metadata lives in `vertique-core` rather than in `vertique-aop`, and the reflection-free vs. reflective-accessor group split.

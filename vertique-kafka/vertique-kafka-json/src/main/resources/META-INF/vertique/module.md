@@ -42,6 +42,8 @@ The backing `ObjectMapper` is resolved per endpoint with a three-tier precedence
 
 `JsonMapperProfileRegistry` and `JsonConfig` are available because `KafkaJsonModule` includes `JsonRuntimeModule`. The global-tier mapper is computed once in the `JsonSerdeProvider` constructor (an unknown `json.jsonProfile` fails fast at startup; the per-binding `kafka.jsonProfile` is additionally validated by a `ComposeValidator`).
 
+The per-binding profile (tier 1) is selected by placing `@JsonProfile("profile-id")` (`dev.vertique.core.json.JsonProfile`) on the `@KafkaListener` or `@KafkaProducer` **type**. Placing it on a method instead of the type is rejected at build time (FR-JSON-066). When the annotation is absent, resolution falls through to the global and `vertx`-floor tiers above.
+
 ### Property-route routing without a second byte-parse
 
 For Model-3 router consumers that use `matchProperty` routing, `JsonSerdeProvider` overrides all three routing hooks so the dispatcher stays format-agnostic:
@@ -245,13 +247,3 @@ The JSON provider is the reference implementation of the SPI. To implement a cus
 | `dev.vertique:vertique-json` | compile | `JsonMapperProfileRegistry`, `JsonRuntimeModule`, `JsonProfileId` |
 | `com.fasterxml.jackson.core:jackson-databind` | compile | `ObjectMapper`, `JsonNode`, `treeToValue` |
 | `io.vertx:vertx-core` | compile | `DatabindCodec.mapper()` (the shared ObjectMapper) |
-
----
-
-## Related ADRs
-
-- ADR-0075: Format-Neutral Kafka Core (Multi-Module Family) — records the decision to extract JSON into its own module, the `KafkaSerdeProvider` SPI additions (`convertRouted`, routing hooks), the provider-required validation rule, and the multi-module family layout.
-- ADR-0074: Pluggable Kafka Value Serde Formats (Apicurio Avro Default) — the foundational SPI design: byte-level wrapping, format precedence, event-loop-safety contract, and serde config separation. Partially superseded by ADR-0075 on the JSON-built-in and single-module decisions.
-- ADR-0127: Kafka Profile Serde Threading — records how `JsonSerdeProvider` resolves the per-endpoint profile id (carried in the `serdeConfig` bag under the key `"jsonProfile"`) to a backing `ObjectMapper` via the injected `JsonMapperProfileRegistry`, with the `vertx`/default path byte-for-byte unchanged.
-- ADR-0136: Global + per-boundary JSON default-profile config tiers — adds the `kafka.jsonProfile` per-boundary default and the `json.jsonProfile` global tier to the Kafka JSON resolution chain; introduces `KafkaDefaultProfileValidator` (`ComposeValidator`) for unconditional fail-fast validation; and records why kafka-core remains format-agnostic (the global tier is applied in `JsonSerdeProvider`, not `KafkaModule`).
-- ADR-0138: Harmonized `@JsonProfile` selection surface — establishes that `@JsonProfile` is TYPE-level only on Kafka listener and producer types; a method-level placement is rejected at build time (FR-JSON-066).

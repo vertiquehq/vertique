@@ -42,8 +42,7 @@ need to be listed as an application-level dependency.
 The Vertique framework is otherwise Dagger-first: every component in the dependency graph requires a
 live `Vertx` instance. `VertxBuilderContributor` is the deliberate exception — it runs before the
 Dagger graph exists and is therefore discovered via `java.util.ServiceLoader` rather than Dagger
-multibinding. See ADR-0095 for the recorded
-rationale.
+multibinding.
 
 ### Contribution chain
 
@@ -206,20 +205,3 @@ within a module's test run, so the constructor seam avoids polluting parallel te
 
 This module must never depend on Dagger, `vertique-launcher`, `vertique-config-core`, or any module
 that assumes a live `Vertx` instance is available.
-
----
-
-## Related ADRs
-
-- ADR-0084: Framework Extension-Ordering Contract —
-  establishes `OrderedExtension` and `ExtensionPhase`; `VertxBuilderContributor` uses this
-  comparator to sort contributors.
-- ADR-0085: OrderedExtension Rolled Out Across Sorted Behavioral SPIs —
-  documents the rollout of the ordering contract; `VertxBuilderContributor` follows the same
-  comparator convention.
-- ADR-0095: ServiceLoader as the Pre-DI Bootstrap Seam —
-  records why ServiceLoader is used for contributor discovery rather than Dagger multibindings, and
-  establishes the shutdown, ordering, and fail-fast contracts.
-- ADR-0125: Bootstrap Kernel Extraction to `vertique-bootstrap` and SPI-FQN Move —
-  records the decision to extract the kernel from `vertique-launcher` into this module and the
-  SPI filename change from `dev.vertique.launcher.*` to `dev.vertique.bootstrap.*`.

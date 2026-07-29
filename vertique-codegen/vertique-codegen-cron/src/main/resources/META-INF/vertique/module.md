@@ -31,15 +31,6 @@ Config-only cron jobs (`cron.jobs.{id}.target = "service:..."`) are not visible 
 
 ---
 
-## Package Layout
-
-| Package | Contents |
-|---------|----------|
-| `dev.vertique.codegen.cron.processor` | `CronJobProcessor`, `CronAnnotations` |
-| `dev.vertique.codegen.cron.processor.validate` | `CronExpressionValidator`, `ServiceCouplingValidator`, `PolicyValueValidator`, `DuplicateIdValidator` |
-
----
-
 ## Key Classes
 
 ### `CronJobProcessor`
@@ -192,17 +183,3 @@ None. `vertique-codegen-cron` is a compile-time annotation processor with no run
 | `vertique-job-cron` | compile | `CronExpression` parser — invoked at processor-runtime via `new CronExpression(expr)` to reuse the runtime parser logic. The transitive Vert.x runtime classes pulled along are unused at processor time. |
 
 Test-only dependencies: `vertique-codegen-test`, `vertique-services`.
-
----
-
-## Version History
-
-| Date | Change |
-|------|--------|
-| 2026-04-30 | Initial release: `CronJobProcessor` with `CronExpressionValidator`, `ServiceCouplingValidator`, `PolicyValueValidator`, `DuplicateIdValidator`; 25 tests across 6 test classes (incl. META-INF service-discovery sanity check) |
-
----
-
-## Planned Additions
-
-None. This is a pure-validation module; all planned checks are implemented.

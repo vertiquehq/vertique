@@ -51,6 +51,20 @@ SPDX-License-Identifier: EUPL-1.2
             <scope>test</scope>
         </dependency>
 
+        <!-- Mockito for roundtrip tests that mock ServiceRequestSender; vertx-junit5 for the
+             ambient-SecurityContext roundtrip scenario, which requires a real duplicated Vert.x
+             context (ContextValues.bind's write-side guard). -->
+        <dependency>
+            <groupId>org.mockito</groupId>
+            <artifactId>mockito-core</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.vertx</groupId>
+            <artifactId>vertx-junit5</artifactId>
+            <scope>test</scope>
+        </dependency>
+
         <!-- Annotation source for test fixtures: @ServiceContract, @ServiceOperation, ServiceHandler,
              ServiceContractContributor, ServiceContractEntries, etc. Test scope only — keeps them off
              the processor jar's runtime classpath. -->

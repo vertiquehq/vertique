@@ -7,121 +7,177 @@ SPDX-License-Identifier: EUPL-1.2
 
 > **Status:** Implemented
 > **Package:** `dev.vertique.rest.jaxrs`
-> **Artifact:** `rest-jaxrs`
-> **Depends on:** rest-core, core, db-core
+> **Artifact:** `vertique-rest-jaxrs`
+> **Depends on:** rest-core, security-core, json
 
-JAX-RS routing runtime on top of Vert.x. Maps annotated resource classes to plain Vert.x routes via annotation-synthesized validation, invokes methods via reflection, and dispatches responses. Also provides the error pipeline, `ExceptionMapperRegistry`, `ResponsePipeline` (package-private internal orchestrator), and the minimal JAX-RS `RuntimeDelegate`.
+The JAX-RS routing runtime. `vertique-rest-jaxrs` turns annotated resource classes into plain Vert.x
+routes, extracts and coerces method arguments, invokes the resource method, and dispatches whatever it
+returns — an entity, a `jakarta.ws.rs.core.Response`, a `Future`, or an SSE stream — back onto the
+wire. It also owns the error pipeline that every REST failure flows through, the JAX-RS
+`ExceptionMapper` registry, and a minimal `RuntimeDelegate` so `jakarta.ws.rs.core.Response` works
+without Jersey or RESTEasy on the classpath.
 
-`openapi.json` is documentation-only on the default path (generated at build time by `swagger-maven-plugin-jakarta`). The opt-in `openapi-contract` validation strategy (`vertique-rest-openapi-validation`) is the only mode that loads the contract at runtime.
+It is not the extension contract: `RouterMount`, `Middleware`, the interceptor SPIs, body decoders and
+encoders, `RestContextResolver`, and the parameter-conversion stack are all declared in
+`dev.vertique:vertique-rest-core`, and this module is one consumer of them. Request *validation* is
+likewise a separate concern — the default `web-validation` gate lives in
+`dev.vertique:vertique-rest-validation`. On the default path the build-time `openapi.json` is
+documentation only; the opt-in `openapi-contract` strategy in
+`dev.vertique:vertique-rest-openapi-validation` is the only mode that loads it at runtime.
 
 ---
 
-## Overview
+## When To Use It
 
-`rest-jaxrs` is the execution engine of the HTTP stack:
+Include `dev.vertique.rest.jaxrs.RestModule` in the Dagger `@Component` for any application serving
+HTTP endpoints from JAX-RS-annotated classes. `RestModule` includes `RestCoreModule` and
+`JsonRuntimeModule` transitively, so it is the only REST module most applications name directly.
+Applications using `dev.vertique:vertique-starter-rest` get it through
+`RestApplicationModule` instead.
 
-1. At build time, `swagger-maven-plugin-jakarta` scans JAX-RS annotations and generates `openapi.json` — documentation-only on the default `web-validation` path; the opt-in `openapi-contract` strategy (`vertique-rest-openapi-validation`) loads this file at runtime and validates requests against it
-2. At runtime, `JaxRsRouterMount` creates a plain Vert.x `Router`, configures security scheme handlers, and runs the JAX-RS route registration pipeline
-3. `JaxRsRouteRegistrar` maps each resource method to a `ResourceMethodInvoker` keyed by operationId; request validation uses annotation-synthesized schemas (not the generated spec)
-4. `ResourceMethodInvoker` handles each request: extracts parameters, invokes the method, serializes the response, and drives the error pipeline on failure
+Pair it with `dev.vertique:vertique-rest-validation` (request validation and multipart file
+constraints — without it, `jaxrs.validationStrategy` has only the built-in `none` strategy to select),
+`dev.vertique:vertique-validation` (Bean Validation on method parameters),
+`dev.vertique:vertique-rest-security` (authentication and authorization), and
+`dev.vertique:vertique-codegen-jaxrs` (generated resource bindings and reflection-free dispatch).
+
+Depend on `dev.vertique:vertique-rest-core` alone instead when writing a library that must compile
+against the REST extension contract without pulling in the routing runtime.
+
+---
+
+## Core Concepts
+
+### Routes are registered once, at startup
+
+`JaxRsRouterMount` is a `RouterMount` that builds one plain Vert.x sub-router. During
+`createRouter()` it installs the body handler and upload cleanup, runs the router lifecycle hooks,
+configures security-scheme handlers, and then hands the resource set to `JaxRsRouteRegistrar`.
+
+For each public method carrying an HTTP-verb annotation the registrar resolves an `operationId`,
+builds a `ResourceMethodMeta`, validates the declaration, and installs the per-operation handler
+chain:
+
+```
+auth handler(s) → @Consumes 415 gate → validation gate → OperationHandlerContributors → ResourceMethodInvoker
+```
+
+`OperationHandlerContributor`s are sorted by the framework `OrderedExtension` comparator (phase →
+priority → `orderKey`); the invoker is always appended last. Every declaration problem found during
+the scan is **collected**, and the whole set is thrown once as `RouteRegistrationException` after all
+resources have been scanned — so a bad resource class reports all of its faults in one build cycle,
+not one per restart.
+
+The `operationId` comes from `@Operation(operationId = "…")` or falls back to the Java method name. It
+identifies the route internally; it is **not** checked against the generated `openapi.json` at
+runtime.
+
+### One response path for success and failure
+
+Every response — a returned entity, a mapped exception, a 406 from content negotiation — is produced
+as a `jakarta.ws.rs.core.Response` and then sent through one pipeline: `transformResponse`
+interceptors → status and headers onto the wire → `ResponseSerializer` for the body →
+`afterResponse` observers → wire-completion observation.
+
+Two consequences matter to application code. `afterResponse` fires at **handoff**, while a streamed
+body may still be in flight, because observers need the routing context and tracing span still
+active. And status plus headers are already on the wire before a `ResponseSerializer` runs — a
+serializer owns the body only.
+
+### Per-request processing order
+
+```
+1. Validate      RequestValidationStrategy gate (annotation-synthesized schema by default)
+2. Decode        RequestBodyDecoder chain → intermediate Map/List
+3. Canonicalize  InputObjectProcessor: route-level → object-level → field-level canonicalizers,
+   + Sanitize    then route-level → object-level → field-level sanitizers
+4. Validate      BeanValidator.validateParameters()   (only when ValidationModule is present)
+5. Invoke        the resource method, with processed and validated arguments
+```
+
+Step 3 is skipped transparently when `SanitizationModule` is absent and step 4 when
+`ValidationModule` is absent; neither requires an application change.
+
+`@Canonicalize` / `@Sanitize` apply at three scopes — on the resource class or method (route level,
+covering all string values in the body plus scalar and collection-element parameters), on a DTO type
+(object level), and on a field or record component (field level). `@SkipCanonicalization` /
+`@SkipSanitization` opt an individual parameter out. Scalar and collection-element parameters receive
+route-level chains only.
+
+### JSON profiles are symmetric
+
+A resource method's request body and its response body use the same effective `ObjectMapper`. The
+profile is resolved once at router-build time and reused for both directions — see
+[Configuration](#configuration).
 
 ---
 
 ## Key Classes
 
-### JaxRsRouterMount
+### `RestModule`
 
-`RouterMount` implementation that wires JAX-RS annotated resource classes into a plain Vert.x sub-router using annotation-synthesized request validation. Created exclusively via its inner `Factory` class. Default priority is `1000`.
-
-`openapi.json` is documentation-only on the default path. The `openapiPath` config field is used only by the opt-in `openapi-contract` validation strategy (see `vertique-rest-openapi-validation`).
-
-**`createRouter()` pipeline:**
-
-```
-Select RequestValidationStrategy by id
-  → WARN once for this mount if FileContentVerifiers are bound but inactive
-  → RequestValidationStrategy.bindToMount(meta)
-  → Install BodyHandler (order MIN_VALUE; maxBodySize + uploadsDirectory)
-  → Register request-end upload cleanup (order MIN_VALUE + 1)
-  → Install RequestInterceptor.beforeRequest() handler (order MIN_VALUE + 2)
-  → RouterLifecycleHook.beforeAuthSetup hooks
-  → Configure SecuritySchemeHandlers
-  → RouterLifecycleHook.afterAuthSetup hooks
-  → JaxRsRouteRegistrar.registerAll(resources, router, requestInterceptors, contributors,
-                                    errorPipeline, responsePipeline, securityRuntime,
-                                    securityPolicyValidator, authEnabled)
-    → SecurityPolicyValidator.validate() per operation (if present)
-    → RequestValidationStrategy.gateFor() per operation
-    → OperationHandlerContributors.contribute() per operation (sorted by OrderedExtension.comparator())
-    → ResourceMethodInvoker added per operation (always last)
-  → RouterLifecycleHook.afterRouterCreated hooks
-  → Mount API-scoped Middlewares (sorted by OrderedExtension.comparator(); Vert.x route order derived from the sorted index)
-  → Install router-level failure handler (ErrorPipeline)
-```
-
-The `beforeRequest` handler chains all `RequestInterceptor.beforeRequest()` calls sequentially. A failed future from any interceptor routes to the error pipeline instead of propagating as an uncaught error.
-
-Multipart temporary files are request-owned. `BodyHandler` spools them under the non-blank
-`http.uploadsDirectory` (default `file-uploads`), then the next root-order handler registers a
-`RoutingContext` end handler that calls `cancelAndCleanupFileUploads()`. Cleanup is always enabled
-and covers normal completion, failures, connection close, and stream reset. The temporary file stays
-available while the response is streaming, but applications that need it afterwards must move or
-copy it before completing the response. Retaining a `FileUpload` or file-backed `EntityPart` does not
-extend the path's lifetime.
-
-**`meta()` returns:** `MountMeta("jaxrs:" + mountPath, mountPath, openapiPath, resourceTypes)`
-
-**Factory class — holds all shared framework services:**
+The Dagger entry point, declared `@Module(includes = {RestCoreModule.class, JsonRuntimeModule.class})`.
 
 ```java
-public static class Factory {
-    @Inject
-    public Factory(
-        Set<RouterLifecycleHook> routerLifecycleHooks,
-        Set<OperationInterceptor> operationInterceptors,
-        Set<ErrorInterceptor> errorInterceptors,
-        Set<Middleware> middlewares,
-        Set<OperationHandlerContributor> operationHandlerContributors,
-        Set<SecuritySchemeHandler> securitySchemeHandlers,
-        Set<RequestInterceptor> requestInterceptors,
-        RestExceptionMapper restExceptionMapper,
-        ExceptionMapperRegistry exceptionMapperRegistry,
-        RestContextResolution restContextResolution,
-        @Nullable SecurityPolicyValidator securityPolicyValidator,
-        Optional<AuthEnforcementCapability> authEnforcementCapability,
-        List<RequestBodyDecoder> sortedDecoders,
-        List<ResponseBodyEncoder> sortedEncoders,
-        HttpConfig httpConfig,
-        JaxRsConfig jaxRsConfig,
-        Optional<BeanValidator> beanValidator,
-        Optional<InputObjectProcessor> objectProcessor,
-        Set<RestServerRequestEvidenceCapturer> evidenceCapturers,
-        Set<FileContentVerifier> fileContentVerifiers,
-        Set<RequestValidationStrategy> validationStrategies,
-        Optional<OperationSchemaSource> operationSchemaSource) { ... }
-
-    // Create with default priority 1000
-    public JaxRsRouterMount create(String mountPath, String openapiPath, Set<Object> resources) { ... }
-
-    // Create with explicit priority
-    public JaxRsRouterMount create(String mountPath, String openapiPath, Set<Object> resources, int priority) { ... }
+@Singleton
+@Component(modules = {
+    VertxModule.class,
+    RestModule.class,        // includes RestCoreModule and JsonRuntimeModule
+    RestValidationModule.class,
+    AuthModule.class,
+    SecurityModule.class,
+    AppModule.class,
+    ResourceModule.class
+})
+interface AppComponent {
+    HttpVerticle httpVerticle();
 }
 ```
 
-The `Optional<AuthEnforcementCapability>` parameter replaces the former `@Named("auth.enabled")
-Optional<Boolean>`. Its presence — not a Boolean value — is the typed signal that the auth
-enforcement runtime (`AuthModule`) is installed. See `AuthEnforcementCapability` in
-`dev.vertique:vertique-rest-security`.
-
-**Default mount (single-API apps):** `RestModule` provides a default `JaxRsRouterMount` via `@ElementsIntoSet` using the `@JaxRsResources` multibinding and `JaxRsConfig.basePath()` (default `"/*"`). The set is empty (no mount contributed) when `@JaxRsResources` is empty.
-
-**Custom mount (multi-API or path-prefixed):**
+Resources reach it through the `@JaxRsResources Set<Object>` multibinding:
 
 ```java
-// Override jaxrs.basePath to mount under /api/*  (in config/application.json):
-// { "jaxrs": { "basePath": "/api/*" } }
+@Module
+public abstract class ResourceModule {
+    @Provides @IntoSet @JaxRsResources
+    static Object helloResource(HelloResource resource) {
+        return resource;
+    }
+}
+```
 
-// OR: wire two separate JaxRsRouterMounts for multi-API apps
+`dev.vertique:vertique-codegen-jaxrs` generates those bindings for `@Path` classes as
+`GeneratedJaxRsResourcesModule`; include it in the `@Component` and annotate a resource with
+`@NoAutoWire` to keep a hand-written binding canonical instead. Applications inheriting
+`vertique-app-parent` get the processor facade automatically; custom-parent applications follow the
+BOM plus `vertique-codegen-all` recipe in `docs/packaging.md`, and applications using the
+source-retained `@NoAutoWire` opt-out additionally declare `vertique-codegen-core` with `provided`
+scope.
+
+### `JaxRsRouterMount`
+
+The `RouterMount` implementation, constructed only through its injected inner `Factory`. Default
+priority is `1000`; `meta()` reports `MountMeta("jaxrs:" + mountPath, mountPath, openapiPath,
+resourceTypes)`.
+
+```java
+public static class Factory {
+    public JaxRsRouterMount create(String mountPath, String openapiPath, Set<Object> resources);
+    public JaxRsRouterMount create(String mountPath, String openapiPath, Set<Object> resources, int priority);
+}
+```
+
+`RestModule` contributes a default mount at `jaxrs.basePath` (default `/*`) with
+`jaxrs.openapiPath` (default `openapi.json`) via `@ElementsIntoSet`. The set is **empty** — no mount at
+all — when `@JaxRsResources` is empty. For a single API, changing the prefix is a config edit:
+
+```json
+{ "jaxrs": { "basePath": "/api/*" } }
+```
+
+For several APIs on one server, inject the factory and contribute mounts explicitly:
+
+```java
 @Provides @ElementsIntoSet
 static Set<RouterMount> mounts(
         JaxRsRouterMount.Factory factory,
@@ -134,91 +190,293 @@ static Set<RouterMount> mounts(
 }
 ```
 
-### JaxRsRouteRegistrar
+`openapiPath` is consulted only by the opt-in `openapi-contract` validation strategy.
 
-Scans JAX-RS annotated classes and registers handlers on the plain Vert.x `Router` via `RouteRegistration`.
+**Multipart temp files are request-owned.** `BodyHandler` spools uploads under `http.uploadsDirectory`
+(default `file-uploads`) and cleanup is registered immediately after it, covering normal completion,
+failure, connection close, and stream reset. The file stays readable while the response streams, but
+an application that needs it afterwards must move or copy it **before** the response completes.
+Retaining a `FileUpload` or a file-backed `EntityPart` does not extend the path's lifetime.
 
-**Scanning process:**
-1. Iterates over `Set<Object>` resources
-2. Finds classes annotated with `@Path`
-3. For each public method with an HTTP method annotation (`@GET`, `@POST`, `@PUT`, `@DELETE`, `@PATCH`, `@HEAD`, `@OPTIONS`):
-   - Resolves the `operationId` from `@Operation(operationId=...)` or falls back to the method name
-   - Builds `ResourceMethodMeta` with method metadata, parameter info, and `@Consumes`/`@Produces` lists (method-level overrides class-level)
-   - **Startup validation** (all violations collected and thrown as `RouteRegistrationException` after all resources are scanned):
-     - `MULTIPLE_BODY_PARAMS`: more than one unannotated body parameter
-     - `FORM_AND_BODY_CONFLICT`: `@FormParam`/file upload params mixed with a body param
-     - `INVALID_FILE_PART_DECLARATION`: `@FilePart` is placed on an unsupported type, has invalid `allowedTypes`/`maxSizeBytes`, or overlaps another constrained file declaration
-     - `UNSUPPORTED_MULTIPART_COLLECTION_SHAPE`: a `@FormParam` collection parameter's element type is a native multipart target (`FileUpload` or `EntityPart`) but the declared collection shape is not `List` — native multipart binding materializes only a scalar target or `List<T>` (ADR-0191); `Set<T>`, `SortedSet<T>`, `NavigableSet<T>`, `Collection<T>`, and array shapes of `FileUpload`/`EntityPart` fail startup instead of silently falling through to string conversion and failing per-request
-     - `DUPLICATE_PARAM_NAME_MULTIPLICITY_CONFLICT`: two parameters of one method bind the same name from the same source but declare incompatible multiplicities — one collection-shaped (`List<T>`/`Set<T>`/`SortedSet<T>`/`NavigableSet<T>`/`Collection<T>`/`T[]`), the other scalar (e.g. `get(@QueryParam("id") String a, @QueryParam("id") List<String> b)`, which compiles). Binding resolves a name to a *single* declared parameter — the first descriptor matching the location and name — and that one descriptor decides the multiplicity of the bound value for both, so exactly one of the two is always mis-bound: the collection parameter silently degrades to a one-element collection, or the scalar parameter receives a JSON array its type has no converter for. Give the parameters distinct names. Two declarations of one name with the *same* multiplicity — including two different collection shapes, e.g. `List<String>` plus `Set<String>` — stay accepted, because this check is scoped to multiplicity conflicts alone; that is **not** a guarantee that they bind correctly. They do share one descriptor, so its multiplicity fits both, but the shared descriptor is the *first* declaration's and the value is converted once with it: two same-name scalars of different declared types (e.g. `Integer` plus `UUID`) mount and then fail per request in the resource-method invocation, and two of the same declared type but with different conversion-affecting annotations silently apply the first declaration's semantics to both. Nothing validates those shapes today — declare one parameter per name. Scoped to `@PathParam`/`@QueryParam`/`@HeaderParam`/`@CookieParam`, with names compared exactly as binding matches them: case-*insensitively* for headers and cookies (so `@HeaderParam("X-Id")` and `@HeaderParam("x-id")` do conflict), case-*sensitively* for path and query (so `@QueryParam("id")` and `@QueryParam("Id")` do not). Names are never compared across sources — a `@HeaderParam("token")` and a `@QueryParam("token")` read different maps. `@FormParam` is deliberately outside the check: form binding reads all submitted values for the field name per parameter rather than through the shared descriptor, so a scalar and a collection declaration of one field name are both bound correctly
-     - `DUPLICATE_OPERATION_ID`: two methods share the same operationId
-     - `SECURITY_ANNOTATIONS_WITHOUT_AUTH_MODULE`: restrictive annotations present but `AuthModule` absent
-     - `CONTEXT_PARAM_CONFLICT`: a `@Context`-annotated parameter also carries a JAX-RS value-binding annotation (`@PathParam`, `@QueryParam`, `@HeaderParam`, `@CookieParam`, `@FormParam`, or `@BeanParam`) — the two are mutually exclusive
-     - `UNSUPPORTED_JAXRS_CONTEXT_TYPE`: a `@Context` parameter's declared type is a reserved JAX-RS type not supported in V1 (e.g. `UriInfo`, `HttpHeaders`); fails fast to prevent silent `null` injection
-     - `NON_INJECTABLE_CONTEXT_TYPE`: a `@Context` parameter's declared type is neither a built-in injectable type nor a `ContextValue` subtype — would produce a runtime `NullPointerException` without this check
-     - `UNRESOLVABLE_PARAM_CONVERTER`: a declared path/query/header/cookie/form parameter's type (or, for a collection-valued parameter, its element type) has no converter resolvable by the `ParamConversionResolver` chain — checked via `resolver.canResolve(...)` for every convertible parameter the descriptor exposes, **including convertible `@BeanParam` fields** (walked separately since the descriptor exposes only top-level params), so a missing converter fails startup rather than surfacing opaquely on first request
-   - **If `SecurityPolicyValidator` is present:** validates the operation; any violations immediately throw `SecurityPolicyViolationException` (fail fast)
-   - **Invokes each `OperationHandlerContributor`** (sorted by `OrderedExtension.comparator()` — phase → priority → orderKey) passing `OperationRegistrationContext`
-   - Creates a `ResourceMethodInvoker` and registers it as the last handler for that operationId
+### `ResourceMethodMeta`
 
-**operationId resolution:**
-- Explicitly set: `@Operation(operationId = "getHello")` on the method
-- Fallback: the method name itself (e.g., method `getHello()` maps to operationId `getHello`)
-- The operationId drives routing but is NOT validated against the generated `openapi.json` at runtime — that file is documentation-only on the default path
+The immutable per-method descriptor built at startup and consumed on every request. It is the object
+an `OperationHandlerContributor` receives through `OperationRegistrationContext`, so `operationId()`
+and `securityPolicy()` in particular are read at extension-point call sites.
 
-### ResourceMethodInvoker
+```java
+public record ResourceMethodMeta(
+        Object resourceInstance,
+        Method method,
+        String operationId,
+        String httpMethod,
+        String path,
+        List<ParamMeta> params,
+        Class<?> responseBodyType,
+        boolean returnsFuture,
+        boolean returnsVoid,
+        SecurityPolicy securityPolicy,                          // dev.vertique.rest.core.security
+        MediaTypes mediaTypes,                                  // nested record: (List<String> consumes,
+                                                                //   List<String> produces); empty = unconstrained
+        @Nullable Class<?>[] validationGroups,                  // from @ValidateWith; null = default group
+        List<Annotation> methodAnnotations,
+        List<Annotation> classAnnotations,
+        List<Class<? extends Canonicalizer>> routeCanonicalizerChain,
+        List<Class<? extends Sanitizer>> routeSanitizerChain,
+        @Nullable ResourceExecutionPlan executionPlan) { … }    // null = reflective dispatch
+```
 
-Vert.x `Handler<RoutingContext>` that bridges a routing context to a JAX-RS resource method invocation.
+A 16-component convenience constructor omits `executionPlan`. The compact constructor clones
+`validationGroups` and copies the four lists, so every component is immutable regardless of what the
+caller passes. `methodAnnotations` and `classAnnotations` are resolved through
+`dev.vertique.core.util.AnnotationResolver`, which walks the superclass chain and interfaces — an
+annotation on an interface method is visible here.
 
-**Constructor parameters** (primary constructor; shorter overloads default the trailing parameters for older call sites):
-- `ResourceMethodMeta meta` — method metadata
-- `List<OperationInterceptor> interceptors` — sorted per-request interceptors
-- `ErrorPipeline errorPipeline` — error mapping pipeline
-- `ResponsePipeline responsePipeline` — type-aware response dispatch
-- `RestContextResolution restContextResolution` — coordinator for the `@Context` resolver chain
-- `List<RequestBodyDecoder> decoders` — priority-sorted request body decoders
-- `@Nullable BeanValidator beanValidator` — optional Bean Validation; `null` skips validation
-- `@Nullable InputObjectProcessor objectProcessor` — optional canonicalization/sanitization; `null` skips input processing
-- `List<RestServerRequestEvidenceCapturer> evidenceCapturers` — pre-sorted evidence capturers; empty list is the no-op default
-- `@Nullable ObjectMapper resolvedBodyMapper` — effective request-body mapper resolved once at router-build time; `null` means the `vertx` default body path
-- `ParamConversionResolver paramConversionResolver` — the shared `rest-core` conversion resolver, threaded into the `ParameterExtractor` and the per-request `DefaultBoundRequest`
+`ParamMeta` describes one declared parameter:
 
-**Request handling flow:**
+```java
+public record ParamMeta(
+        String name,
+        ParamSource source,                     // ResourceMethodMeta.ParamSource — see the note below
+        Class<?> type,
+        @Nullable Class<?> componentType,       // element type for collection/array parameters
+        @Nullable Type genericType,             // full generic type for body parameters
+        @Nullable String defaultValue,          // from @DefaultValue
+        ParameterMetadata parameterMetadata) { … }
+```
 
-1. Obtain the `BoundRequest` from the routing context
-2. If `@Produces` is declared, store the media type list in `ctx.data()` under key `CTX_KEY_PRODUCES` (`"dev.vertique.produces"`)
-3. Build method arguments from parameter metadata:
-   - `@PathParam` → bound path parameter via `BoundRequest`
-   - `@QueryParam` → bound query parameter via `BoundRequest`
-   - `@HeaderParam` → bound header via `BoundRequest`
-   - `@CookieParam` → bound cookie via `BoundRequest`
-   - `@Context` parameters and unannotated built-in / `ContextValue` types (`CONTEXT` source) → resolved at request time via `RestContextResolution.require(type, ctx, resourceClass, method)` through the `RestContextResolver` chain. Covers `RoutingContext`, `jakarta.ws.rs.core.SecurityContext`, framework `SecurityContext`, and any `ContextValue` subtype. A `@Context` parameter never falls through to body deserialization.
-   - `@FormParam("name") FileUpload` → named file upload from `ctx.fileUploads()`
-   - `@FormParam("name") EntityPart` → named file upload wrapped as `VertxFileUploadEntityPart`, or text field as `FormFieldEntityPart`
-   - `@FormParam("name") List<FileUpload>` → all file uploads with matching name
-   - `@FormParam("name") List<EntityPart>` → all file uploads with matching name, each wrapped as `VertxFileUploadEntityPart`
-   - `@FormParam("name") List<T>` / `Set<T>` / `SortedSet<T>` / `NavigableSet<T>` / `Collection<T>` / `T[]` (of a convertible, non-native element type) → all submitted values for that name, each coerced to the component type (see [Collection Parameter Binding](#collection-parameter-binding) below)
-   - `@FormParam("name") String` (or primitive) → text form attribute, coerced to target type
-   - Unannotated `List<FileUpload>` → all file uploads from the request
-   - Unannotated `List<EntityPart>` → all parts: file uploads as `VertxFileUploadEntityPart`, text fields as `FormFieldEntityPart`
-   - Unannotated other type → treat as request body (see body deserialization below)
-4. Invoke the method via reflection
-5. Handle the return value via `ResponsePipeline`:
-   - `Future<T>` → resolve async, then serialize `T` as JSON (200) or send 204 for `Future<Void>`
-   - `Future<Response>` / `Response` → extract status, headers, entity and send
-   - `T` → serialize as JSON (200)
-   - `void` / `null` → send 204 No Content
-6. On error → error pipeline (see `ErrorPipeline`)
+It **composes** `dev.vertique.core.codegen.ParameterMetadata` rather than holding an eager
+`Annotation[]`; `findAnnotation(Class)`, `hasAnnotation(Class)`, and `annotationsLazy()` all delegate
+to it. A convenience constructor accepting `(name, source, type, componentType, genericType,
+defaultValue, Annotation[])` wraps the array in `ReflectiveParameterMetadata` for call sites that
+have a raw array. `annotationsLazy()` is what a JAX-RS `ParamConverterProvider` receives, so a
+provider that inspects parameter annotations behaves identically on runtime-scanned and
+codegen-generated routes.
 
-**Body deserialization** is delegated to the `RequestBodyDecoder` SPI chain (see `dev.vertique:vertique-rest-core`). The invoker iterates the `OrderedExtension.comparator()`-sorted decoder list and calls the first decoder whose `canDecode(targetType, contentType)` returns `true`. Framework defaults:
+> **`ParamSource` is an ambiguous simple name across the REST modules.**
+> `dev.vertique.rest.jaxrs.ResourceMethodMeta.ParamSource` has 11 constants — `PATH`, `QUERY`,
+> `HEADER`, `COOKIE`, `BODY`, `CONTEXT`, `PRECONDITIONS`, `FORM`, `FILE_UPLOADS`, `ENTITY_PARTS`,
+> `BEAN_PARAM`. It is a different enum from `dev.vertique.rest.core.convert.ParamSource` (5
+> conversion-applicable constants: `PATH`, `QUERY`, `HEADER`, `COOKIE`, `FORM`) and from
+> `dev.vertique.rest.client.meta.ClientParamMeta.ParamSource` in `dev.vertique:vertique-rest-client`
+> (7 constants). Always qualify which one you mean.
 
-| Decoder | Priority | Content-Type match | Target Types |
+### `BoundRequest`
+
+The neutral per-request binding surface. The selected `RequestValidationStrategy` builds one and
+stashes it on the routing context; `ResourceMethodInvoker` reads it when extracting arguments. A
+custom validation strategy is the reason this type is public.
+
+```java
+public interface BoundRequest {
+    String KEY_META_DATA_BOUND_REQUEST     = "vertique.rest.jaxrs.boundRequest";
+    String KEY_RESOLVED_BODY_MAPPER        = "vertique.rest.jaxrs.resolvedBodyMapper";
+    String KEY_ERROR_BODY_MAPPER_DECIDED   = "vertique.rest.jaxrs.errorBodyMapperDecided";
+
+    Map<String, RequestValue> pathParameters();
+    Map<String, RequestValue> query();
+    Map<String, RequestValue> headers();
+    Map<String, RequestValue> cookies();
+    RequestValue body();
+    HttpServerRequest raw();
+}
+```
+
+`DefaultBoundRequest` is the shared implementation every bundled strategy constructs; binding is
+deliberately independent of validation, so a value binds even when a gate would have rejected it.
+
+### `ExceptionMapperRegistry`
+
+Hierarchy-aware `Throwable → jakarta.ws.rs.core.Response` dispatch, assembled from
+`DefaultExceptionMapper` plus the application's `Set<ExceptionMapper<?>>`. Application mappers take
+precedence over framework defaults for the same type.
+
+```java
+public class ExceptionMapperRegistry {
+    public ExceptionMapperRegistry(DefaultExceptionMapper defaults, Set<ExceptionMapper<?>> mappers);
+    public Response toResponse(Throwable throwable);
+    public <T extends Throwable> void register(Class<T> exceptionType, ExceptionMapper<T> mapper);
+    public boolean hasSpecificMapper(Class<? extends Throwable> exceptionClass);
+}
+```
+
+Lookup walks the superclass chain for the most specific registered mapper and caches the result.
+`hasSpecificMapper` reports whether anything other than the `Throwable` catch-all matched; the error
+pipeline uses it to decide whether to restore a Vert.x-intended status code.
+
+### `DefaultExceptionMapper`
+
+The framework's `ExceptionMapper<Throwable>`, pre-configured by `RestModule`:
+
+| Exception | Status | Body |
+|-----------|--------|------|
+| `jakarta.ws.rs.WebApplicationException` | from `getResponse()` | the JAX-RS `Response` as-is — entity passthrough when present, else a problem detail |
+| `RestValidationException` (rest-core) | 400 | `ValidationProblemDetail` with an `errors` array |
+| `BeanValidationException` (core.validation) | 400 | `ValidationProblemDetail`; violations become `ValidationErrorDetail` with `location` `null` |
+| `ValidationException` (core.exception) | 400 | `ProblemDetail` |
+| `ParamConversionException` (rest-core `convert`) | 400 | `ProblemDetail` — an inbound value failed conversion to its declared type |
+| `ParamConverterNotFoundException` (rest-core `convert`) | 500 | `ProblemDetail` — no converter satisfies a declared type at request time |
+| `IllegalArgumentException` | 400 | `ProblemDetail` |
+| `UnauthorizedException` (core.exception) | 401 | `ProblemDetail` |
+| `ForbiddenException` (core.exception) | 403 | `ProblemDetail` |
+| `ConflictException` (core.exception) | 409 | `ProblemDetail` |
+| `NotFoundException` (core.exception) | 404 | `ProblemDetail` |
+| `UnavailableException` (core.exception) | 503 | `ProblemDetail` |
+| `Throwable` (catch-all) | 500 | `ProblemDetail` with the fixed detail `"Internal Server Error"` — the exception message is never echoed |
+
+`UnauthorizedException` and `ForbiddenException` are registered by fully-qualified name to avoid
+ambiguity with `jakarta.ws.rs.NotAuthorizedException` and `jakarta.ws.rs.ForbiddenException`.
+`VertiqueSecurityException` has no mapper of its own and falls through to the catch-all.
+
+### `RestExceptionMapper`
+
+The REST-layer `Throwable → Throwable` pre-translator that runs before the registry. It extends
+`dev.vertique.core.failure.FailureMapper` with covariant overrides so registrations chain:
+
+```java
+public class RestExceptionMapper extends FailureMapper {
+    @Override
+    public <T extends Throwable> RestExceptionMapper on(Class<T> type, FailureTranslator<T> translator);
+    @Override
+    public <T extends Throwable> RestExceptionMapper on(Class<T> type, ContextAwareFailureTranslator<T> translator);
+    // Throwable translate(Throwable) inherited from FailureMapper
+}
+```
+
+`RestModule` wires one instance from the `Set<RestExceptionMapperCustomizer>` multibinding.
+
+### `ErrorPipeline`
+
+The shared failure path, used both per operation and by the router-level failure handler.
+`mapToResponse(RoutingContext, Throwable)` returns a `Future<Response>`; it does not send — the
+response pipeline does.
+
+```
+RequestInterceptor.onError sync observers, with the original cause
+  → store the original Throwable under RequestInterceptor.ORIGINAL_ERROR_KEY
+  → ErrorInterceptor.beforeMapping (async chain, Throwable → Throwable)
+  → RestExceptionMapper.translate(cause)
+  → ExceptionMapperRegistry.toResponse(translated)
+  → Vert.x status-code fallback (only when no specific mapper matched)
+  → ProblemDetail instance enrichment from the request path
+  → ErrorInterceptor.afterMapping (async chain, Response → Response)
+```
+
+The original cause stays on the routing context for the whole of error processing, so audit and
+diagnostic interceptors can still see the root cause after mapping. A `beforeMapping` or
+`afterMapping` handler that fails is logged at WARN and its input passes through unchanged — one bad
+interceptor cannot break the error path.
+
+**Vert.x status-code fallback.** When the failure handler receives a Vert.x `HttpException` that is
+not a validation error, the cause is unwrapped so the registry sees the original exception type, and
+the Vert.x-intended status is stashed under `RequestInterceptor.VERTX_STATUS_CODE_KEY`. If only the
+catch-all matched, that status replaces the response's — preserving, for example, a 401 or 403 raised
+by Vert.x auth middleware.
+
+### `DefaultResponseSerializer`
+
+The `ResponseSerializer` implementation `RestModule` binds. It encodes the entity of a `Response` and
+writes it to the wire, returning the wire-completion future the SPI's dual-channel contract requires.
+Status and headers are already written when it runs; the serializer owns the body only.
+
+It selects the first `ResponseBodyEncoder` in `OrderedExtension` order whose
+`canEncode(entityType, effectiveContentType)` matches, where the effective Content-Type is read from
+the already-written headers. When nothing matches it logs a warning and switches the response to `500`
+/ `application/problem+json`. A `StreamingBody` is piped with `endOnFailure(false)` and is never
+buffered, so a failed pipe leaves termination to the caller observing the returned future.
+
+Override it with a custom `@Provides ResponseSerializer` to emit CBOR, XML, or any other format; a
+replacement must honor the same dual-channel contract, documented under `ResponseSerializer` in
+`dev.vertique:vertique-rest-core`.
+
+### `RouteRegistrationException`
+
+Thrown at startup when route registration found violations. Extends `RestConfigurationException`
+(rest-core) and exposes `violations()` — a `List<RouteRegistrationViolation>` of
+`(operationId, ViolationType, message)`. Security-policy inconsistencies use the separate
+`SecurityPolicyViolationException` instead, and are thrown immediately rather than collected.
+
+---
+
+## Extension Points
+
+Most REST extension points — `RouterMount`, `MountCustomizer`, `Middleware`, `RouterLifecycleHook`,
+`OperationHandlerContributor`, the three interceptor SPIs, `RequestBodyDecoder`,
+`ResponseBodyEncoder`, `ResponseProducer`, `ResponseSerializer`, `RestContextResolver`, and the
+parameter converters — are declared in `dev.vertique:vertique-rest-core` and documented there. The
+ones this module owns are below. `RequestValidationStrategy`, `OperationSchemaSource`, and
+`FileContentVerifier` are declared here but documented with their reference implementations in
+`dev.vertique:vertique-rest-validation`.
+
+### `RestExceptionMapperCustomizer`
+
+Contributes `Throwable → Throwable` translations to the REST error pipeline.
+
+```java
+@FunctionalInterface
+public interface RestExceptionMapperCustomizer extends OrderedExtension {
+    void customize(RestExceptionMapper mapper);
+}
+```
+
+Customizers are applied as an ordered fold: sorted by `OrderedExtension.comparator()` (phase →
+priority → `orderKey`) and then called in sequence, so a customizer sorting **later wins** — its
+registration overwrites an earlier one for the same exception type, and a `SYSTEM_LAST` customizer
+applies last regardless of numeric priority.
+
+```java
+@Provides @IntoSet
+static RestExceptionMapperCustomizer myTranslator() {
+    return mapper -> mapper.on(MyInfrastructureException.class,
+            ex -> new WebApplicationException("Upstream error", 502, ex));
+}
+```
+
+`RestModule` declares the multibinding empty by default.
+
+### `jakarta.ws.rs.ext.ExceptionMapper<T>`
+
+Map one exception type straight to a `Response`. Application mappers outrank the framework defaults
+for the same type.
+
+```java
+public class ItemNotFoundMapper implements ExceptionMapper<ItemNotFoundException> {
+    @Inject public ItemNotFoundMapper() {}
+
+    @Override
+    public Response toResponse(ItemNotFoundException ex) {
+        return Response.status(404)
+                .entity(ProblemDetail.of(404, ex.getMessage()))
+                .type("application/problem+json")
+                .build();
+    }
+}
+
+@Provides @IntoSet
+ExceptionMapper<?> itemNotFoundMapper(ItemNotFoundMapper mapper) { return mapper; }
+```
+
+### Framework decoders and encoders
+
+Both SPIs are declared in `dev.vertique:vertique-rest-core`; the implementations below are what
+`RestModule` contributes. Application implementations default to priority `0` and therefore run
+**before** every framework default — raise the priority above the listed values to sit behind them.
+
+| `RequestBodyDecoder` | Priority | Content-Type match | Target types |
 |---|---|---|---|
 | `TextRequestBodyDecoder` | 1000 | `text/*` | `String` |
 | `BinaryRequestBodyDecoder` | 1000 | `application/octet-stream` | `Buffer`, `byte[]` |
 | `FormUrlencodedRequestBodyDecoder` | 1000 | `application/x-www-form-urlencoded` | any POJO (not `String`, `Buffer`, `byte[]`, `JsonObject`) |
-| `JsonRequestBodyDecoder` | 1100 (fallback) | null or contains `"json"` | `JsonObject` → raw object; `String` → raw string; other → `JsonObject.mapTo(targetType)` |
+| `JsonRequestBodyDecoder` | 1100 (fallback) | absent, or containing `"json"` | `JsonObject` → raw; `String` → raw; other → `JsonObject.mapTo(targetType)` |
 
-Application decoders default to priority `0` and automatically run before all framework defaults. Contribute custom decoders via `@Provides @IntoSet RequestBodyDecoder` in any Dagger module:
+| `ResponseBodyEncoder` | Priority | Handles |
+|---|---|---|
+| `SseBodyEncoder` | 999 | `ReadStream<SseEvent>` with `text/event-stream` |
+| `BufferBodyEncoder` | 1000 | `Buffer` |
+| `ByteArrayBodyEncoder` | 1000 | `byte[]` |
+| `StringBodyEncoder` | 1000 | `String` |
+| `ReadStreamBodyEncoder` | 1000 | `ReadStream<Buffer>` |
+| `JsonBodyEncoder` | 1100 (fallback) | everything else |
 
 ```java
 @Provides @IntoSet
@@ -227,229 +485,206 @@ static RequestBodyDecoder csvDecoder() {
 }
 ```
 
-**Type coercion** for `@PathParam`, `@QueryParam`, `@HeaderParam`, `@CookieParam`, and text `@FormParam` is delegated to the shared `ParamConversionResolver` (`rest-core`, package `dev.vertique.rest.core.convert`; see `dev.vertique:vertique-rest-core` and ADR-0142) rather than a fixed-table scalar converter:
+---
 
-- `String` and `JsonObject` keep identity fast-paths inside `ParameterExtractor.coerce()`.
-- Every other declared type — built-in scalars (`int`/`long`/`float`/`double`/`boolean` and their boxed forms), `UUID`, `java.time` types, `BigDecimal`, enums, and any app-registered `ParamConverterBinding` or JAX-RS `ParamConverterProvider` — is converted via `paramConversionResolver.fromString(value, conversionContext)`.
-- A collection-valued parameter — `List<T>`, `Set<T>`, `SortedSet<T>`, `NavigableSet<T>`, `Collection<T>`, or `T[]` — on `@QueryParam`, `@HeaderParam`, `@CookieParam`, or `@FormParam` coerces each submitted value individually against the declared component type (ADR-0191); a malformed element fails closed with a `ParamConversionException` rather than silently retaining the raw string for the whole collection. See [Collection Parameter Binding](#collection-parameter-binding) below for the full absence/default/read-only contract.
-- A value that fails conversion raises `ParamConversionException` (400); a declared type with no resolvable converter at all raises `ParamConverterNotFoundException` (500) — though `JaxRsRouteRegistrar`'s startup validation (`UNRESOLVABLE_PARAM_CONVERTER`) is intended to catch the latter before any request is served.
-- `ConversionContext` instances are cached per `ResourceMethodMeta.ParamMeta` for the lifetime of the route's `ParameterExtractor`, so the conversion-context allocation happens at most once per parameter, not per request.
-- A JAX-RS `ParamConverterProvider` that inspects *parameter annotations* to decide conversion works identically on runtime-scanned routes and on codegen-generated routes: both `ExecutionPlanEmitter` and `JaxRsDescriptorEmitter` materialize each parameter's runtime-retained annotations into compile-time literals (see `dev.vertique:vertique-codegen-jaxrs` and ADR-0146), so `ConversionContexts.forParamMeta(...).annotationsLazy()` supplies the provider with the real annotation regardless of which path produced the route.
+## JAX-RS Integration
 
-### Collection Parameter Binding
+### Return types
 
-A collection-valued `@QueryParam`, `@HeaderParam`, `@CookieParam`, or `@FormParam` — declared as `List<T>`, `Set<T>`, `SortedSet<T>`, `NavigableSet<T>`, `Collection<T>`, or `T[]` — follows one binding contract on both the reflective and codegen dispatch paths (ADR-0191). `@PathParam` does not support collection shapes; a path segment is always single-valued.
+| Return type | HTTP response |
+|------------|---------------|
+| `Future<T>` | async; serializes `T` with status 200 |
+| `Future<Void>` | async; 204 No Content |
+| `Future<Response>` | async; status, headers, and entity taken from the `Response` |
+| `T` | sync; serializes with status 200 |
+| `void` | sync; 204 No Content |
+| `Response` | sync; status, headers, and entity taken from the `Response` |
+| `ReadStream<SseEvent>` | streaming SSE; `Content-Type: text/event-stream` |
 
-- **Absent, no `@DefaultValue`** — an *empty* collection for the five collection interfaces (`List`, `Set`, `SortedSet`, `NavigableSet`, `Collection`); `null` for `T[]`. An array is not one of the three collection interfaces the Jakarta REST `@DefaultValue` contract names, so it falls under that contract's "`null` for other object types" rule rather than the collection rule.
-- **Absent, `@DefaultValue` present** — a *single-entry* collection holding the converted default value; for `T[]` a single-element array (the Jakarta REST contract is silent on array defaults, so the single-element array is a Vertique extension by analogy with the single-entry collection rule).
-- **Present** — every submitted value is converted individually against the declared component type via the `ParamConversionResolver` chain; a malformed element fails closed with a `ParamConversionException` (400) rather than silently retaining the raw string for the whole collection. `@DefaultValue` is ignored once at least one value is present. A cookie carries exactly one value per name, so a present collection-declared `@CookieParam` always yields a **single-entry** collection — never empty and never multi-valued — regardless of how many other cookies are present in the request.
-- **Read-only** — an injected collection is unmodifiable (`Collections.unmodifiableList`/`unmodifiableSet`/`unmodifiableSortedSet`/`unmodifiableNavigableSet`); mutation throws `UnsupportedOperationException`. This includes the native `@FormParam List<FileUpload>` and `List<EntityPart>` targets and the unannotated `List<FileUpload>`/`List<EntityPart>` aggregates — they are collection injection targets like any other. Arrays remain mutable: no read-only array wrapper exists, and none is invented.
-- **Input policies** — every element traverses the same canonicalization/sanitization chain a scalar parameter of the *same source* would traverse (when `SanitizationModule`/`InputObjectProcessor` is active), in the same position relative to conversion as that source's scalar rule: for `@FormParam` the raw submitted string is processed **before** conversion (so a canonicalizer that normalizes a value — e.g. strips whitespace — makes `@FormParam List<Integer>` accept `" 5"` exactly as `@FormParam Integer` does); for `@QueryParam`/`@HeaderParam`/`@CookieParam` the **converted** element is processed, and only when it is still a `String`. Default values are not processed, mirroring the scalar rule.
-- **Sorted shapes require an element type comparable to itself — the application's responsibility, not checked at startup** — `SortedSet<T>`/`NavigableSet<T>` are materialized as a `TreeSet`, which orders elements by their natural ordering, and a JAX-RS parameter declaration cannot supply a `Comparator`. So `T` must be comparable to *itself*: it must implement `Comparable`, and the type its `compareTo` accepts must be one `T` is assignable to (`class Money implements Comparable<BigDecimal>` is *not* — a `TreeSet` of `Money` throws from the synthesized `compareTo(Object)` bridge's cast). **The framework does not validate this and does not adjudicate it.** A violation is not reported at startup: the route mounts, and the first request carrying a value for that parameter fails with a `ClassCastException`, surfacing as a 500. Declare `Set<T>`, `List<T>`, or `Collection<T>` — none of which imposes an ordering — when the element type is not self-comparable. `String`, the boxed numerics, `Boolean`, `Character`, and enums always are; so is any type whose `compareTo` accepts itself or a supertype of itself (e.g. `LocalDateTime`'s `Comparable<ChronoLocalDateTime<?>>`).
-- **Name matching follows the transport** — `@HeaderParam` and `@CookieParam` names match case-**insensitively**, so a `@HeaderParam("X-Tags")` declaration binds an `x-tags` header (which is what HTTP/2 sends: RFC 9113 §8.2.1 requires lower-case field names on the wire). `@QueryParam` and `@PathParam` names match case-**sensitively**.
-- **One name, one multiplicity** — a name is bound once per source and shared by every parameter declaring it, so declaring the same `@PathParam`/`@QueryParam`/`@HeaderParam`/`@CookieParam` name both collection-shaped and scalar in one method fails route registration with `DUPLICATE_PARAM_NAME_MULTIPLICITY_CONFLICT` (see [Startup validation](#jaxrsrouteregistrar)) rather than mis-binding one of the two per request. Duplicating a name at the *same* multiplicity is outside this check's scope — which is not a guarantee that it binds correctly: the two declarations still share one descriptor, so differing declared types under one name mount and then fail per request, and differing conversion-affecting annotations silently apply the first declaration's semantics to both. Declare one parameter per name. `@FormParam` is outside the rule entirely, since its values are read per parameter rather than through a shared descriptor.
-- **Ordering** — element order is whatever the underlying transport (Vert.x) reported for repeated values; neither Vert.x nor Jakarta REST documents an ordering guarantee, and the framework makes none.
-- **`@FormParam` additionally** applies `@DefaultValue` when the request body is absent or of an unsupported media type, on top of the absence rule above.
+When no `ResponseProducer` is registered for the result type, `Content-Type` is negotiated from the
+`Accept` header against `@Produces` (or `["application/json"]`), and a `406 Not Acceptable` problem
+detail is returned when nothing matches.
 
-**Validation observes the raw values, policies run after it.** Request validation (`RequestValidationStrategy`, step 1 of the [input processing pipeline](#input-processing-pipeline)) inspects the values exactly as the transport delivered them, and the canonicalization/sanitization chain runs later, during parameter extraction. This holds for scalars and for collection elements alike, so a canonicalizer that rewrites a value delivers a resource-method argument that differs from the string the schema approved: a schema `pattern` proves a property of the raw submission, not of the value the method receives. Encode that expectation in the policy chain (or re-check after canonicalization) when a resource depends on the post-policy shape.
+Conditional-request evaluation (`If-None-Match`, `If-Match`, RFC 9110 §13.2.2) runs only when the
+produced response is **2xx and carries a validator** — an `ETag` or `Last-Modified` header. A non-2xx
+response is not a selected representation, and a validator-less 2xx has not opted into conditional
+handling; neither is evaluated. HEAD responses that pass evaluation have their entity stripped.
 
-Native multipart targets (`FileUpload`, `EntityPart`) are `List`-restricted: only a scalar target or `List<T>` is materialized natively. Declaring `Set<FileUpload>`, `SortedSet<EntityPart>`, or any other non-`List` collection shape of a native target fails route registration with `UNSUPPORTED_MULTIPART_COLLECTION_SHAPE` (see [Startup validation](#jaxrsrouteregistrar)) rather than falling through to string conversion and failing per-request.
+### Parameter extraction
 
-### ResourceMethodMeta and ParamMeta
+Parameters are matched in this order:
 
-`ResourceMethodMeta` is the immutable per-method descriptor `JaxRsRouteRegistrar`/`ResourceScanner` build at startup and that `ParameterExtractor`/`ResourceMethodInvoker` consume on every request. Its `ParamMeta` (one per declared method parameter) no longer carries an eager `Annotation[]` field; instead it **composes** a `dev.vertique.core.codegen.ParameterMetadata` view (see `dev.vertique:vertique-codegen-dagger` / ADR-0143 / ADR-0146):
+| Order | Annotation / type | Source | Target types | Notes |
+|-------|-------------------|--------|--------------|-------|
+| 1 | `@Context`, or an unannotated built-in / `ContextValue` type | `CONTEXT` | `RoutingContext`, `jakarta.ws.rs.core.SecurityContext`, `dev.vertique.security.SecurityContext`, any `ContextValue` subtype | Resolved through the `RestContextResolver` chain; never falls through to body deserialization |
+| 1 | type `RequestPreconditions` | `PRECONDITIONS` | `RequestPreconditions` | Injected by type |
+| 2 | type annotated `@RequestParams` | Composite | any annotated record/class | No annotation needed on the method parameter |
+| 3 | `@BeanParam` | Composite | any class/record | Explicit form of the above |
+| 4 | `@PathParam` | `PATH` | any type with a resolvable converter | `@DefaultValue` supported; no collection shapes — a path segment is always single-valued |
+| 4 | `@QueryParam` / `@HeaderParam` / `@CookieParam` | `QUERY` / `HEADER` / `COOKIE` | any type with a resolvable converter, plus `List<T>`/`Set<T>`/`SortedSet<T>`/`NavigableSet<T>`/`Collection<T>`/`T[]` of one | `@DefaultValue` supported; see [Collection parameter shapes](#collection-parameter-shapes) |
+| 5 | `@FormParam` | `FORM` | `FileUpload`, `EntityPart`, `List<FileUpload>`, `List<EntityPart>`, `String`, primitives, and `List<T>`/`Set<T>`/`SortedSet<T>`/`NavigableSet<T>`/`Collection<T>`/`T[]` of a convertible text element type | `@DefaultValue` supported for text fields and collections; see [Collection parameter shapes](#collection-parameter-shapes) |
+| 6 | unannotated `List<FileUpload>` | `FILE_UPLOADS` | `List<FileUpload>` | All uploads on the request |
+| 6 | unannotated `List<EntityPart>` | `ENTITY_PARTS` | `List<EntityPart>` | All parts; files wrapped as `VertxFileUploadEntityPart`, text fields as `FormFieldEntityPart` |
+| 7 | unannotated, any other type | `BODY` | POJO, `JsonObject`, `String`, `Buffer` | Decoded by the `RequestBodyDecoder` chain |
 
-- `ParamMeta.findAnnotation(Class)` / `hasAnnotation(Class)` / `annotationsLazy()` all delegate to the composed `ParameterMetadata`.
-- On the **reflective** scan path (`ResourceScanner`), the composed view is `dev.vertique.core.codegen.ReflectiveParameterMetadata` — the same reflective implementation `rest-client`'s scan path uses — backed by the parameter's merged `Annotation[]`.
-- On the **codegen** path, both `ExecutionPlanEmitter` and `JaxRsDescriptorEmitter` back the composed view with a literal-first `ParameterMetadata` implementation (one standalone generated class per parameter, mirroring `vertique-codegen-aop`'s `MetadataEmitter`-generated metadata). Each renderable `@Retention(RUNTIME)` parameter annotation becomes a JAX-RS-owned `<Ann>$JaxRsLiteral` constant with no reflection at request time or class-registration time. The namespace prevents a collision with an AOP-owned literal for the same annotation type. If an annotation has an unsupported member shape, or the same annotation type occurs with differing values across merged parameter sources, the generated implementation instead wires `GeneratedJaxRsReflectiveAnnotations` as a lazy per-parameter fallback, as specified by ADR-0146.
-- A convenience `ParamMeta(name, source, type, componentType, genericType, defaultValue, Annotation[])` constructor still exists for call sites that build from a raw annotation array (it wraps the array in `dev.vertique.core.codegen.ReflectiveParameterMetadata` via a small internal `AnnotatedElement` adapter, with index `-1`).
+`@RequestParams` is the preferred form for composite query objects such as `OffsetPageRequest` and
+`CursorPageRequest`: no per-method annotation, and the record is reusable across endpoints.
 
-`ParameterExtractor.resolveParamPolicies()` resolves `@Canonicalize`/`@Sanitize`/`@Skip*` input policies via `AnnotationResolver.findMetaAnnotation` over `pm.annotationsLazy().get()`, so meta-annotation-aliased policy annotations are honored identically regardless of which `ParameterMetadata` backing is in play. `ConversionContexts.forParamMeta`/`forComponent` similarly source the JAX-RS-provider-bridge annotation array from `pm.annotationsLazy()`.
+**Type coercion** for `PATH`, `QUERY`, `HEADER`, `COOKIE`, and text `FORM` values goes through the
+shared `dev.vertique.rest.core.convert.ParamConversionResolver`, not a fixed scalar table:
 
-### Input Processing Pipeline
+- `String` and `JsonObject` keep identity fast paths.
+- Everything else — boxed and primitive numerics, `boolean`, `UUID`, `java.time` types, `BigDecimal`,
+  enums, and any application-registered `ParamConverterBinding` or JAX-RS `ParamConverterProvider` —
+  is converted through the resolver.
+- A collection-valued parameter — `List<T>`, `Set<T>`, `SortedSet<T>`, `NavigableSet<T>`, `Collection<T>`,
+  or `T[]` on `@QueryParam`, `@HeaderParam`, `@CookieParam`, or `@FormParam` — coerces each submitted
+  value individually against the declared component type; a malformed element fails closed with
+  `ParamConversionException` rather than leaving the whole collection as raw strings. See
+  [Collection parameter shapes](#collection-parameter-shapes) for the absence/default/read-only contract.
+- A value that fails conversion raises `ParamConversionException` (400). A declared type with no
+  resolvable converter raises `ParamConverterNotFoundException` (500) — a wiring gap that startup
+  validation is meant to catch first.
 
-When `SanitizationModule` is included in the Dagger component, `InputObjectProcessor` is available and the parameter extraction pipeline applies canonicalization and sanitization before Bean Validation.
+### Collection parameter shapes
 
-**Full per-request processing order:**
+`@QueryParam`, `@HeaderParam`, `@CookieParam`, and `@FormParam` additionally accept `List<T>`, `Set<T>`,
+`SortedSet<T>`, `NavigableSet<T>`, `Collection<T>`, or `T[]` of a convertible element type; `@PathParam`
+does not — a path segment is always single-valued.
+
+- **Absent, no `@DefaultValue`** — an empty collection for the five collection interfaces; `null` for
+  `T[]` (an array falls outside the Jakarta REST `@DefaultValue` collection rule).
+- **Absent, `@DefaultValue` present** — a single-entry collection, or single-element array, holding the
+  converted default.
+- **Present** — every submitted value converts individually against the component type; `@DefaultValue`
+  is ignored once at least one value is present. A cookie carries one value per name, so a present
+  collection-declared `@CookieParam` always yields a single-entry collection. `@FormParam` also applies
+  its default when the request body is absent or of an unsupported media type.
+- **Read-only.** An injected collection is unmodifiable; mutation throws `UnsupportedOperationException`.
+  This includes the native `@FormParam List<FileUpload>` / `List<EntityPart>` targets and the unannotated
+  aggregates. Arrays stay mutable — no read-only array wrapper exists.
+- **Input policies** run per element at the position a scalar parameter of that source would use: for
+  `@FormParam` the raw submitted string is canonicalized/sanitized **before** conversion; for
+  `@QueryParam`, `@HeaderParam`, and `@CookieParam` the **converted** element is processed, and only
+  while it is still a `String`.
+- **Ordering** is whatever the transport reported for repeated values — neither Vert.x nor Jakarta REST
+  guarantees one, and the framework makes none.
+- **Case sensitivity follows the transport.** `@HeaderParam`/`@CookieParam` names match
+  case-insensitively; `@PathParam`/`@QueryParam` match case-sensitively.
+- **`SortedSet<T>`/`NavigableSet<T>` require an element type comparable to itself.** They materialize as
+  a `TreeSet`, which orders by natural ordering, and a parameter declaration cannot supply a
+  `Comparator`. This is the application's responsibility and is **not** checked at startup — a
+  non-comparable element type mounts cleanly and fails the first request carrying a value with a
+  `ClassCastException` (500). Declare `Set<T>`, `List<T>`, or `Collection<T>` instead when the element
+  type is not self-comparable.
+- **One name, one multiplicity.** A name is bound once per source and shared by every parameter
+  declaring it, so declaring the same `@PathParam`/`@QueryParam`/`@HeaderParam`/`@CookieParam` name both
+  collection-shaped and scalar in one method fails route registration with
+  `DUPLICATE_PARAM_NAME_MULTIPLICITY_CONFLICT` (see [Startup failures](#startup-failures)) instead of
+  mis-binding one of the two per request. Duplicating a name at the *same* multiplicity is outside that
+  check's scope — not a guarantee it binds correctly: the two declarations still share one descriptor, so
+  differing declared types under one name mount and then fail per request, and differing
+  conversion-affecting annotations silently apply the first declaration's semantics to both.
+  `@FormParam` is outside the rule entirely, since its values are read per parameter rather than through
+  a shared descriptor.
+- **Native multipart targets are `List`-restricted.** `FileUpload`/`EntityPart` materialize natively only
+  as a scalar target or `List<T>`; any other collection shape of a native target fails route
+  registration with `UNSUPPORTED_MULTIPART_COLLECTION_SHAPE` (see [Startup failures](#startup-failures))
+  rather than falling through to string conversion.
+
+Request validation (the `RequestValidationStrategy` gate) inspects values exactly as the transport
+delivered them; the canonicalization/sanitization chain runs afterwards, during parameter extraction —
+for scalars and collection elements alike. A schema `pattern` proves a property of the raw submission,
+not of the value the resource method receives.
+
+### `@FilePart` uploads
+
+The annotation and its grammar are declared in `dev.vertique:vertique-rest-core`; the enforcing gate
+and its error taxonomy live in `dev.vertique:vertique-rest-validation`. This module's part is
+startup-time: `JaxRsRouteRegistrar` rejects an invalid placement, invalid `allowedTypes` or
+`maxSizeBytes`, and overlapping constrained declarations with `INVALID_FILE_PART_DECLARATION`, and
+exposes the immutable view a validation strategy consumes.
+
+`JaxRsOperationDescriptor.fileParts()` is that view — an additional projection, not a replacement:
+named form file parameters also remain in `parameters()`. The public `FilePartDescriptor` constructor
+enforces its own invariants (null-or-non-blank part name, media-type grammar with defensive copying
+and lowercase canonicalization, and a `-1`-or-positive size).
+
+### Server-sent events
+
+An SSE endpoint returns `ReadStream<SseEvent>` from a method annotated
+`@Produces("text/event-stream")`. Inject `SseChannelFactory` (declared in
+`dev.vertique:vertique-rest-core`, bound by `RestModule`) and create a channel inside the method; the
+framework handles buffering, wire formatting, keepalive, and connection lifecycle. Defaults come from
+`jaxrs.sse`.
+
+Each event is written as lines terminated by `\n`, followed by a blank line:
 
 ```
-1. Validate: RequestValidationStrategy (annotation-synthesized JSON Schema by default; pluggable)
-2. Decode: RequestBodyDecoder chain → intermediate Map/List
-3. Canonicalize + Sanitize: InputObjectProcessor applies chains in scope order:
-       route-level → object-level → field-level canonicalizers
-       route-level → object-level → field-level sanitizers
-4. Validate: BeanValidator.validateParameters() (if ValidationModule present)
-5. Invoke: resource method called with processed, validated arguments
+id: <id>          (omitted when null)
+event: <event>    (omitted when null)
+data: <data>      (omitted when null)
+retry: <ms>       (omitted when null)
+: <comment>       (omitted when null)
 ```
 
-**Processing scope:**
+Keepalive comments (`:\n\n`) are emitted at `jaxrs.sse.keepAliveIntervalMs` while no data events flow.
 
-| Scope | Source annotation | Applies to |
-|-------|------------------|-----------:|
-| Route-level | `@Canonicalize`/`@Sanitize` on resource class or method | All string values in body + scalar params and collection elements for this route |
-| Object-level | `@Canonicalize`/`@Sanitize` on DTO type | All fields of that type |
-| Field-level | `@Canonicalize`/`@Sanitize` on field or record component | That specific field only |
+Startup validation pairs the two halves of the contract: a method returning `ReadStream<SseEvent>`
+must declare `@Produces("text/event-stream")`, and a method declaring that media type must return
+`ReadStream<SseEvent>`. Either violation is collected into `RouteRegistrationException`.
 
-Route-level chains are resolved by `ResourceScanner` at startup and stored in `ResourceMethodMeta` as `routeCanonicalizerChain` and `routeSanitizerChain`. Meta-annotations (composed from `@Canonicalize`/`@Sanitize`) are resolved by `AnnotationResolver`.
+`examples/vertique-example-sse` is a complete end-to-end example covering `Last-Event-ID` replay,
+terminal event ordering, and connection cleanup.
 
-**Scalar parameter processing** (`@QueryParam`, `@PathParam`, `@HeaderParam`, `@BeanParam` fields) applies route-level chains only. `@SkipCanonicalization`/`@SkipSanitization` on individual parameters opts them out.
+### JAX-RS runtime support
 
-**Structured body processing** delegates to `InputObjectProcessor.processStructuredBody()` on the intermediate map before DTO materialization. Object-level and field-level metadata is resolved from the target type by `InputPolicyMetadataResolver` (cached).
+`dev.vertique.rest.jaxrs.runtime` installs a minimal `RuntimeDelegate`, so
+`Response.ok(entity).build()`, `Response.status(404).entity(body).type("application/problem+json").build()`,
+`UriBuilder`, and `Link` all work with no JAX-RS implementation on the classpath.
 
-When `InputObjectProcessor` is absent (`SanitizationModule` not included), the pipeline skips steps 3 transparently — no code changes required.
+Two adapters are visible to resource code:
 
-### ErrorPipeline
+| Class | Purpose |
+|-------|---------|
+| `VertxFileUploadEntityPart` | `EntityPart` over a Vert.x `FileUpload`, reading the spooled temp file. `getContent()` is single-use. |
+| `FormFieldEntityPart` | `EntityPart` over a text form field value. `getContent()` is single-use. |
 
-Encapsulates the error mapping pipeline executed on request failure. Used by both `ResourceMethodInvoker` (per-operation) and the router-level failure handler installed by `JaxRsRouterMount`.
-
-**Pipeline stages:**
-
-```
-ErrorInterceptor.beforeMapping (chained, Throwable→Throwable)
-  → RestExceptionMapper.translate(cause)  (rest-jaxrs, Throwable→Throwable pre-translation)
-  → ExceptionMapperRegistry.mapToResponse() (Throwable→jakarta.ws.rs.core.Response)
-  → applyVertxStatusCodeFallback()     (if no specific ExceptionMapper matched)
-  → ErrorInterceptor.afterMapping (chained, Response→Response)
-  → ResponsePipeline.sendResponse() sends the Response
-```
-
-**Vert.x status code fallback:** when the failure handler receives a Vert.x `HttpException` that is not a validation error, it unwraps the cause to pass the original exception type to `ExceptionMapperRegistry`. The Vert.x-intended status code is stored in `RoutingContext.data()` under `RequestInterceptor.VERTX_STATUS_CODE_KEY`. If no specific `ExceptionMapper` matches (only the catch-all fired), `applyVertxStatusCodeFallback()` overrides the response status with the stored code, preserving HTTP semantics (e.g., 401/403 from Vert.x auth middleware).
-
-### RestExceptionMapper
-
-REST-layer `Throwable → Throwable` pre-translator. Extends the shared `core.failure.FailureMapper` and is wired from a `Set<RestExceptionMapperCustomizer>` multibinding. Sits between `ErrorInterceptor.beforeMapping` and `ExceptionMapperRegistry` in the error pipeline.
+### Example resources
 
 ```java
-public class RestExceptionMapper extends FailureMapper {
-    public Throwable translate(Throwable throwable) { ... }  // inherited
+@Path("/hello")
+public class HelloResource {
+    private final HelloConfig config;
+
+    @Inject
+    public HelloResource(HelloConfig config) {
+        this.config = config;
+    }
+
+    @GET
+    @Path("/{name}")
+    @Operation(operationId = "getHello")
+    @ApiResponse(responseCode = "200", description = "Greeting response")
+    public Future<GreetingResponse> getHello(@PathParam("name") String name) {
+        return Future.succeededFuture(new GreetingResponse(String.format(config.hello(), name)));
+    }
+
+    @POST
+    @Operation(operationId = "createItem")
+    public Response createItem(CreateItemRequest request) {
+        if (request.name() == null) {
+            throw new BadRequestException("name is required");
+        }
+        Item item = itemService.create(request);
+        return Response.created(URI.create("/items/" + item.id())).entity(item).build();
+    }
 }
 ```
 
-### RestExceptionMapperCustomizer
-
-Extension point for contributing `Throwable → Throwable` translations to the REST error pipeline. Implement and contribute via Dagger `@IntoSet`:
-
-`RestExceptionMapperCustomizer extends OrderedExtension`. Customizers are applied as an ordered fold — sorted by `OrderedExtension.comparator()` (phase → priority → orderKey) and then called in sequence: a customizer that sorts later wins (its registration overwrites earlier ones for the same exception type). A `SYSTEM_LAST` customizer applies last regardless of numeric priority.
-
-```java
-@FunctionalInterface
-public interface RestExceptionMapperCustomizer extends OrderedExtension {
-    void customize(RestExceptionMapper mapper);
-}
-
-// Example:
-@Provides @IntoSet
-static RestExceptionMapperCustomizer myTranslator() {
-    return mapper -> mapper.on(MyInfrastructureException.class,
-        ex -> new WebApplicationException("Upstream error", 502, ex));
-}
-```
-
-`RestModule` declares the `@Multibinds Set<RestExceptionMapperCustomizer>` empty set.
-
-### ExceptionMapperRegistry
-
-Hierarchy-aware `Throwable → jakarta.ws.rs.core.Response` registry using JAX-RS `ExceptionMapper<T>`. Initialized from a `DefaultExceptionMapper` (framework defaults) and a `Set<ExceptionMapper<?>>` (user contributions). User mappers take precedence over framework defaults for the same exception type.
-
-```java
-public class ExceptionMapperRegistry {
-    public ExceptionMapperRegistry(DefaultExceptionMapper defaults, Set<ExceptionMapper<?>> mappers) { ... }
-    public Response toResponse(Throwable throwable) { ... }
-    public <T extends Throwable> void register(Class<T> type, ExceptionMapper<T> mapper) { ... }
-    public boolean hasSpecificMapper(Class<? extends Throwable> exceptionClass) { ... }
-}
-```
-
-- Walks the superclass chain to find the most specific registered mapper
-- Caches lookups for performance
-- Fallback (no mapper found): 500 Problem Detail response
-- `hasSpecificMapper()` — returns `true` if a mapper is registered for the given type or a superclass before `Throwable`; used by `ErrorPipeline` to distinguish specific user-contributed mappers from the `DefaultExceptionMapper` catch-all when deciding whether to apply the Vert.x status code fallback
-
-### DefaultExceptionMapper
-
-Framework-internal `ExceptionMapper<Throwable>` with a fluent `.on()` API:
-
-```java
-public class DefaultExceptionMapper implements ExceptionMapper<Throwable> {
-    public <T extends Throwable> DefaultExceptionMapper on(Class<T> type, ExceptionMapper<T> mapper) { ... }
-    @Override public Response toResponse(Throwable throwable) { ... }
-}
-```
-
-`RestModule` pre-configures it with:
-
-| Exception | Status | Response body |
-|-----------|--------|---------------|
-| `jakarta.ws.rs.WebApplicationException` | from `getResponse()` | uses the JAX-RS Response directly (entity passthrough if present; else Problem Detail) |
-| `RestValidationException` (rest-core) | 400 | `ValidationProblemDetail` with `errors` array |
-| `BeanValidationException` (core.validation) | 400 | `ValidationProblemDetail` with violations as `ValidationErrorDetail` (location `null`) |
-| `ValidationException` (core.exception) | 400 | Problem Detail |
-| `ParamConversionException` (rest-core `convert`) | 400 | Problem Detail — an inbound path/query/header/cookie/form value failed conversion to its declared type (ADR-0142) |
-| `ParamConverterNotFoundException` (rest-core `convert`) | 500 | Problem Detail — no converter/provider satisfies a declared parameter type at request time (a misconfiguration that startup validation is intended to catch first) |
-| `IllegalArgumentException` | 400 | Problem Detail (backward compat) |
-| `UnauthorizedException` (core.exception) | 401 | Problem Detail |
-| `ForbiddenException` (core.exception) | 403 | Problem Detail |
-| `NotFoundException` (core.exception) | 404 | Problem Detail |
-| `ConflictException` (core.exception) | 409 | Problem Detail |
-| `UnavailableException` (core.exception) | 503 | Problem Detail |
-| `Throwable` (catch-all) | 500 | Problem Detail |
-
-`UnauthorizedException` and `ForbiddenException` are registered in `RestModule` by fully-qualified
-name (`dev.vertique.core.exception.UnauthorizedException` / `...ForbiddenException`) to avoid a
-compile-time ambiguity with `jakarta.ws.rs.NotAuthorizedException` and
-`jakarta.ws.rs.ForbiddenException`. `VertiqueSecurityException` itself has no registered mapper
-— a bare instance falls through to the `Throwable → 500` catch-all.
-
-### Bean Validation Integration
-
-Bean Validation is opt-in: include `ValidationModule` from the `validation` module in the Dagger component to activate it. When absent, method parameter validation is silently skipped.
-
-**Enabling validation:**
-
-```java
-@Singleton
-@Component(modules = {
-    VertxModule.class,
-    RestModule.class,
-    ValidationModule.class,   // activates BeanValidator
-    AppModule.class,
-    ResourceModule.class
-})
-interface AppComponent {
-    HttpVerticle httpVerticle();
-}
-```
-
-**How it works:**
-
-`RestModule` declares `@BindsOptionalOf BeanValidator beanValidator()`. When `ValidationModule` is present, `RestModule` receives the `BeanValidator` instance and passes it to each `ResourceMethodInvoker`. When absent, the optional is empty and validation is skipped.
-
-`ResourceMethodInvoker.validateArguments()` runs after `extractArguments()` and before `method.invoke()`:
-
-1. Reads `meta.validationGroups()` — populated from `@ValidateWith` on the resource method, or `null` for the default group
-2. Calls `beanValidator.checkParameters(instance, method, args, groups)` to collect `ParameterViolation` records
-3. If violations are non-empty, passes them to `ConstraintViolationMapper.toRestValidationException()` and throws the result
-
-**`ConstraintViolationMapper`** maps each `ParameterViolation` to a `ValidationErrorDetail` with an HTTP `location` field inferred from the parameter's `ParamSource`:
-
-| `ParamSource` | HTTP location |
-|---|---|
-| `BODY` | `"body"` |
-| `QUERY` | `"query"` |
-| `PATH` | `"path"` |
-| `HEADER` | `"header"` |
-| `COOKIE` | `"cookie"` |
-| `FORM` | `"form"` |
-| `BEAN_PARAM` | Resolved by reflecting the bean class field annotations (cached) |
-| Other | `null` |
-
-For `BEAN_PARAM` violations, `ConstraintViolationMapper` reflects on the bean class to find the JAX-RS annotation (`@QueryParam`, `@PathParam`, etc.) on the violated field or record component. Results are cached in a `ConcurrentHashMap<Class<?>, Map<String, FieldLocation>>` to eliminate per-request reflection overhead on error paths.
-
-The resulting `RestValidationException` flows into the `DefaultExceptionMapper` mapping:
-- `RestValidationException` → 400 `ValidationProblemDetail` (with `errors` array)
-- `BeanValidationException` (if thrown directly from service code) → 400 `ValidationProblemDetail` (violations converted to `ValidationErrorDetail` with `null` location)
-
-**Example resource with validation:**
+Bean Validation is opt-in: adding `ValidationModule` to the component activates
+`beanValidator.checkParameters(...)` between argument extraction and method invocation.
+`@ValidateWith` selects the validation groups; without it the default group applies.
 
 ```java
 @Path("/users")
@@ -473,7 +708,10 @@ public class UserResource {
 }
 ```
 
-**Validation error response:**
+Violations become a 400 `ValidationProblemDetail`. Each `ValidationErrorDetail` carries an HTTP
+`location` inferred from the parameter's source — `body`, `query`, `path`, `header`, `cookie`, `form`,
+or, for a `@BeanParam`, the location of the JAX-RS annotation on the violated field or record
+component; anything else is `null`.
 
 ```json
 {
@@ -488,313 +726,13 @@ public class UserResource {
 }
 ```
 
----
-
-### ExceptionMapperResolver
-
-Package-private utility that resolves the exception type `T` from each `ExceptionMapper<T>` in a set. Uses `dev.vertique.core.util.TypeResolver` to walk the class and interface hierarchy. Mappers whose type cannot be resolved are logged and skipped.
-
-### DefaultResponseSerializer
-
-Concrete implementation of `ResponseSerializer` (defined in `rest-core`). Encodes the entity of a `jakarta.ws.rs.core.Response` and writes it to the HTTP wire, returning the wire-completion future required by the SPI's dual-channel contract.
-
-The status code and the response headers are **already on the wire** when this serializer runs — `ResponsePipeline.applyToWire` writes them before delegating. The serializer only owns the body.
-
-**Pipeline:**
-1. **Null entity** — invoke `RequestInterceptor.onSerialize()` with a `null` body, then `response.end()`
-2. **Select encoder** — first `ResponseBodyEncoder` in `OrderedExtension.comparator()` order (phase → priority → orderKey) whose `canEncode(entityType, effectiveContentType)` matches; the effective Content-Type is read from the already-written response headers
-3. **No encoder matches** — log a warning, switch the response to `500` / `application/problem+json`, invoke `onSerialize()` with the `ProblemDetail` body, and end with the problem JSON
-4. **Encode** — `encoder.encode(ctx, response, entity)` produces a `SerializedBody`; an encoder failure propagates as a **synchronous throw** with nothing written (this is what makes the `ResponsePipeline` error fail-open retry safe)
-5. **Observe** — invoke all `RequestInterceptor.onSerialize()` hooks with the encoded body (read-only: logging, metrics, audit)
-6. **Dispatch to wire** — apply the encoder's Content-Type (only when the response has none) and Content-Length, then write
-
-| Encoded body | Wire write | Returned future |
-|--------------|-----------|-----------------|
-| `null` entity (step 1) | `response.end()` | the `end()` future |
-| No encoder matched (step 3) | `response.end(problemJson)` after status `500` | the `end(String)` future |
-| `BufferedBody` | `response.end(buffer)` | the `end(Buffer)` future |
-| `StreamingBody` | `stream.pipe().endOnFailure(false).to(response)` | the pipe future |
-
-Framework encoders (all priority `1000`, so an application encoder at the default priority `0` wins): `BufferBodyEncoder`, `ByteArrayBodyEncoder`, `StringBodyEncoder`, `ReadStreamBodyEncoder` (`ReadStream<Buffer>` only), `JsonBodyEncoder` (fallback).
-
-**Streaming failure ownership.** A `StreamingBody` is piped, never buffered (FR-RESTSER-013 / NFR-003), and `endOnFailure(false)` means this serializer does **not** end the response when the pipe fails: the returned future fails with the source or (unwrapped) write cause, and terminal cleanup belongs to the caller observing that future. A successful pipe ends the response and succeeds the future.
-
-`RestModule` provides `DefaultResponseSerializer` as the `ResponseSerializer` binding. Override with a custom `@Provides ResponseSerializer` to use CBOR, XML, or any other format — a custom implementation must honor the same dual-channel contract (see the `ResponseSerializer` section of the `vertique-rest-core` module reference).
-
-### ResponsePipeline
-
-Package-private internal orchestrator for the unified response pipeline. All responses (success and error) flow through the same path: `produce()` → `transformResponse` chain → wire handoff (`applyToWire`) → `afterResponse` observers → wire-completion observation.
-
-```java
-class ResponsePipeline {
-    Response produce(RoutingContext ctx, Object result) { ... }
-    void sendResponse(RoutingContext ctx, Response response) { ... }
-    void handle(RoutingContext ctx, Object result) { ... }  // convenience: produce + sendResponse
-    void sendFallback500(RoutingContext ctx, Throwable cause) { ... }
-}
-```
-
-**`produce()` pipeline:**
-1. **Find producer** — walk the result's superclass hierarchy for a `ResponseProducer<T>`; if none found, apply **Accept header negotiation** (see below); `null` result → `Response.noContent().build()`
-2. **Conditional evaluation** — evaluate `If-None-Match`, `If-Match`, etc. per RFC 9110 §13.2.2, but only when the produced response is **2xx and carries a validator** (an `ETag` or `Last-Modified` header). Both conditions gate the check: a non-2xx response (e.g. a `3xx` redirect or a mapped error) is not a "selected representation" per RFC 9110 §13.2.2, so evaluating preconditions against it would be meaningless at best and actively wrong at worst (an unconditional `If-Match` rewriting an unrelated redirect into a spurious `412`); a validator-less 2xx (e.g. a URL-issuance `200` that carries no `ETag`) has not opted into conditional handling, so it is left untouched rather than spuriously failing an `If-Match` against an absent validator
-3. **HEAD stripping** — strip entity from HEAD responses that passed conditional evaluation
-4. **Return** the Response (does NOT send)
-
-**`sendResponse()` pipeline (unified for success + error):**
-1. **Transform** — chain `RequestInterceptor.transformResponse()` hooks (async, priority-ordered)
-2. **Hand off to the wire** — `applyToWire()` writes status + headers, then ends the response (null entity) or delegates the body to `ResponseSerializer.serialize()` (which invokes `onSerialize` hooks). This *initiates* the write and returns its wire-completion future
-3. **Observe** — fire `RequestInterceptor.afterResponse()` sync observers (both success and error), **after** the handoff and **before** the wire completes
-4. **Observe wire completion** — attach a failure observer to the completion future from step 2
-
-A synchronous throw from step 2 means nothing was written: it routes to `sendFallback500()`, which fires the single `afterResponse` with a synthetic 500 (see the `afterResponse` contract in `dev.vertique:vertique-rest-core`).
-
-**Wire-completion observation (post-handoff failures).** Steps 3 and 4 encode the split between *handoff* and *completion*. `afterResponse` deliberately fires at handoff, while a streamed body may still be in flight, because observers need the routing context and the tracing span to still be active. A failure that surfaces afterwards — a truncated stream, a client abort — is therefore reported through a different channel:
-
-- The request `Context` is captured **before** the handoff. A custom serializer's completion future may settle on any thread, so failure handling is redispatched onto that context (run inline when already on it, or when there is no context).
-- The cause is stored on the routing context under `RestRequestCompletionEmitter.KEY_WIRE_FAILURE` (first writer wins) so the completion event can classify it.
-- A WARN names the method, path, status, and the cause's **class simple name** only — a wire failure message can echo peer or payload detail — with the full throwable at DEBUG.
-- **Termination is pipeline-owned.** The serializer never ends a failed response, so the pipeline closes it if it is not closed already — but *how* it closes depends on whether the truncated response can still be framed honestly:
-  - **Fixed-length mismatch → reset.** Vert.x performs no `Content-Length`-satisfaction check in `end()`. Ending a non-chunked response that declared `Content-Length: N` after `M != N` body bytes were written *succeeds*, fires the end handlers, and leaves the keep-alive connection open carrying a body that violates its own framing — a peer or intermediary then reads the next response's head as this body's remainder (response desync). The pipeline therefore calls `HttpServerResponse.reset()` instead: stream-scoped (RST_STREAM on HTTP/2, connection close on HTTP/1.1), so the client observes an incomplete transfer rather than a well-framed lie. The guard fires for **any** non-chunked response whose declared `Content-Length` does not equal `bytesWritten()` — short *or* surplus, head committed *or* not (Vert.x preserves the explicit header, so an uncommitted `end()` would ship a zero-byte body advertised as a complete `N`-byte one) — and an unparseable declared length **fails closed** (reset), since a length the guard cannot parse is one it cannot verify. Accounting limit: `bytesWritten()` counts *initiated* writes and is not rolled back when a write fails, so equality proves the framing consistency of the initiated writes, not peer delivery.
-  - **Chunked → clean `end()`.** The terminal zero-length chunk frames the truncation honestly, so a chunked stream is simply ended.
-  - The `end()` itself remains fully guarded: it can still raise `IllegalStateException` synchronously (an already-written race, or a write initiated from a foreign thread) and can fail its returned future on a dead connection. Neither escapes into the completion observer, and both fall back to a reset.
-  - **The reset has its own backstop.** Its returned future is observed: when the reset fails (or throws) and the response is still not ended, an **HTTP/1** request closes the connection as the last resort, because that connection is the transport for this one response and leaving it open is the desync this path exists to prevent. **HTTP/2** does nothing further — the connection multiplexes sibling streams that have nothing to do with this response, and a stream reset that could not be delivered means the connection is already gone. The honest guarantee is therefore *reset-or-close* on HTTP/1 and *stream-reset* on HTTP/2; a connection that is already dead needs neither. All of this stays at DEBUG and never escapes into the completion observer.
-- Nothing else happens: no bare 500 (the client already has the status line), no `afterResponse` re-fire, and no `sendFallback500()` re-entry.
-
-`sendFallback500()` observes its own `end()` future the same way — a bare-metal 500 that never reached the client is logged and recorded under the same key. That path is one instance of a wider class: a write failure that surfaces only on the **terminal `end()`** — a buffered `end(buf)`, a null-entity `end()`, or a stream's final `end()` — may settle *after* the response end handler has already emitted the completion event, because Vert.x runs the end handlers inline before `end()` returns. For every such late-`end()` failure the WARN is guaranteed while completion-event enrichment is best-effort.
-
-**Error fail-open and completion.** `serializeErrorWithFailOpen()` retries only on a *synchronous* throw (nothing written yet, FR-JSON-058A) and returns the completion future of the attempt that actually ran, so the pipeline observes exactly one wire completion per response. A failed completion future is a post-handoff failure and is never retried.
-
-**Accept header negotiation:** when no `ResponseProducer` is registered for the result type, the handler negotiates `Content-Type` using `AcceptNegotiator.negotiate()`:
-- Candidates from `@Produces` or `["application/json"]` default
-- `406 Not Acceptable` ProblemDetail returned when no match (flows through same `sendResponse` pipeline)
-
-Created per-mount by `JaxRsRouterMount` (not a Dagger singleton). Application extension via `ResponseProducerBinding` multibinding.
-
-Custom producers are contributed via `@Provides @IntoSet ResponseProducerBinding<?>` in any Dagger module — see `ResponseProducerBinding` in `dev.vertique:vertique-rest-core` for the pattern.
-
-### RouteRegistrationException
-
-Thrown during startup when route registration detects violations. Extends `RestConfigurationException` (from `rest-core`) and contains the collected `RouteRegistrationViolation` records. Security-policy inconsistencies use the separate `SecurityPolicyViolationException`.
-
----
-
-## Server-Sent Events (SSE)
-
-SSE endpoints return `ReadStream<SseEvent>` from a JAX-RS resource method annotated with `@Produces("text/event-stream")`. The framework handles buffering, wire formatting, keepalive, and connection lifecycle automatically.
-
-### Runtime classes (package-private)
-
-| Class | Purpose |
-|-------|---------|
-| `DefaultSseChannel` | `ReadStream<SseEvent>` implementation with bounded in-memory buffer; created by `DefaultSseChannelFactory` |
-| `DefaultSseChannelFactory` | `SseChannelFactory` implementation; reads defaults from `JaxRsConfig.sse()` |
-| `SseReadStream` | `ReadStream<Buffer>` adapter that formats `SseEvent` objects into SSE wire format and writes keepalive comments on a periodic timer |
-| `SseBodyEncoder` | `ResponseBodyEncoder` at priority 999 that detects `ReadStream<SseEvent>` entity, sets `Content-Type: text/event-stream` and `Cache-Control: no-cache`, and pipes the `SseReadStream` to the HTTP response |
-
-### SSE wire format
-
-Each `SseEvent` is formatted as one or more lines terminated by `\n`, followed by a blank line (`\n`):
-
-```
-id: <id>\n          (omitted if id is null)
-event: <event>\n    (omitted if event is null)
-data: <data>\n      (omitted if data is null)
-retry: <ms>\n       (omitted if retryMs is null)
-: <comment>\n       (omitted if comment is null)
-\n
-```
-
-Keepalive comments (`:\n\n`) are emitted at the configured `keepAliveIntervalMs` interval when no data events are sent.
-
-See `examples/vertique-example-sse` for a complete end-to-end example demonstrating `SseChannelFactory`, `Last-Event-ID` replay, terminal event ordering, and connection cleanup.
-
-### Startup validation
-
-`JaxRsRouteRegistrar` validates SSE endpoints at startup:
-- Methods returning `ReadStream<SseEvent>` must declare `@Produces("text/event-stream")`
-- Methods declaring `@Produces("text/event-stream")` must return `ReadStream<SseEvent>`
-
-Violations are collected and thrown as `RouteRegistrationException` after all resources are scanned.
-
-### `SseBodyEncoder`
-
-```java
-// Priority 999 — runs before the JSON fallback encoder
-class SseBodyEncoder implements ResponseBodyEncoder {
-    @Override public int priority() { return 999; }
-    @Override public boolean canEncode(Object entity, String contentType) {
-        return entity instanceof ReadStream && "text/event-stream".equals(contentType);
-    }
-    @Override public void encode(RoutingContext ctx, Object entity, HttpServerResponse response) {
-        // Sets headers, creates SseReadStream, pipes to response
-    }
-}
-```
-
-`SseBodyEncoder` is provided as an `@IntoSet ResponseBodyEncoder` binding by `RestModule` when the `SseChannelFactory` binding is present. No application-level wiring is required.
-
----
-
-## Return Types
-
-| Return Type | HTTP Response |
-|------------|---------------|
-| `Future<T>` | Async; serializes `T` as JSON with status 200 |
-| `Future<Void>` | Async; sends 204 No Content |
-| `Future<Response>` | Async; extracts status, headers, entity from `jakarta.ws.rs.core.Response` |
-| `T` | Sync; serializes as JSON with status 200 |
-| `void` | Sync; sends 204 No Content |
-| `Response` | Sync; extracts status, headers, entity from `jakarta.ws.rs.core.Response` |
-| `ReadStream<SseEvent>` | Streaming SSE; sets `Content-Type: text/event-stream`, pipes events via `SseBodyEncoder` |
-
----
-
-## Parameter Extraction
-
-The following table lists all supported parameter forms, in the order `JaxRsRouteRegistrar.resolveParams()` evaluates them:
-
-| Priority | Annotation / Type | Source | Target Type(s) | Notes |
-|----------|-------------------|--------|----------------|-------|
-| 1 | `@Context` or unannotated built-in / `ContextValue` type | `CONTEXT` — resolver chain | `RoutingContext`, `jakarta.ws.rs.core.SecurityContext`, `dev.vertique.security.SecurityContext`, any `ContextValue` subtype | Resolved via `RestContextResolution.require(type, ctx, ...)` through the `RestContextResolver` chain; never falls through to body deserialization |
-| 1 | (type `RequestPreconditions`) | Conditional-request context | `RequestPreconditions` | Auto-injected by type (`PRECONDITIONS` source) |
-| 2 | (type annotated with `@RequestParams`) | Composite params | Any `@RequestParams`-annotated record/class | No annotation needed on method param; fields carry JAX-RS param annotations |
-| 3 | `@BeanParam` | Composite params | Any class/record | Explicit annotation on method param; backward compatible |
-| 4 | `@PathParam("name")` | URL path segment | `String`, `int`, `long`, `float`, `double`, `boolean`, `JsonObject` | `@DefaultValue` supported |
-| 4 | `@QueryParam("name")` | Query string | `String`, `int`, `long`, `float`, `double`, `boolean`, `JsonObject`, `List<T>`/`Set<T>`/`SortedSet<T>`/`NavigableSet<T>`/`Collection<T>`/`T[]` of a convertible element type | `@DefaultValue` supported; see [Collection Parameter Binding](#collection-parameter-binding) |
-| 4 | `@HeaderParam("name")` | HTTP header | `String`, `List<T>`/`Set<T>`/`SortedSet<T>`/`NavigableSet<T>`/`Collection<T>`/`T[]` of a convertible element type | `@DefaultValue` supported; see [Collection Parameter Binding](#collection-parameter-binding) |
-| 4 | `@CookieParam("name")` | Cookie | `String`, `List<T>`/`Set<T>`/`SortedSet<T>`/`NavigableSet<T>`/`Collection<T>`/`T[]` of a convertible element type | `@DefaultValue` supported; see [Collection Parameter Binding](#collection-parameter-binding) |
-| 5 | `@FormParam("name")` | Multipart/form field | `FileUpload`, `EntityPart`, `List<FileUpload>`, `List<EntityPart>`, `String`, primitives, `List<T>`/`Set<T>`/`SortedSet<T>`/`NavigableSet<T>`/`Collection<T>`/`T[]` of a convertible text element type | `@DefaultValue` supported for text fields and text collections; see [Collection Parameter Binding](#collection-parameter-binding) |
-| 6 | (unannotated, type `List<FileUpload>`) | All uploaded files | `List<FileUpload>` | Auto-detected by type |
-| 6 | (unannotated, type `List<EntityPart>`) | All multipart parts | `List<EntityPart>` | Auto-detected by type |
-| 7 | (unannotated, any other type) | Request body | POJO, `JsonObject`, `String`, `Buffer` | JSON/text/binary via `RequestBodyDecoder` SPI |
-
-**`@DefaultValue`** provides a fallback string value for `@PathParam`, `@QueryParam`, `@HeaderParam`, `@CookieParam`, and text `@FormParam` when the parameter is absent from the request. Type coercion applies (e.g., `@DefaultValue("0")` on an `int` parameter).
-
-**`@RequestParams`** is the preferred approach for composite query-parameter objects such as `OffsetPageRequest` and `CursorPageRequest`. It removes the need for `@BeanParam` on each method parameter and allows reusing the same record across multiple endpoints.
-
----
-
-## Multipart File-Part Validation
-
-`@FilePart` declares post-spool constraints for physical file uploads. It is valid on exactly these resource-parameter shapes:
-
-```java
-@FormParam("avatar")
-@FilePart(allowedTypes = {"image/png", "image/jpeg"}, maxSizeBytes = 5_000_000)
-FileUpload avatar
-
-@FormParam("attachments")
-@FilePart(allowedTypes = {"application/pdf"})
-List<FileUpload> attachments
-
-@FilePart(maxSizeBytes = 10_000_000)
-List<FileUpload> uploads // unannotated aggregate
-```
-
-`allowedTypes` is empty by default (any declared media type); `maxSizeBytes` is `-1` by default (no per-part cap). Allowed types use exactly one slash and RFC 7230 token characters. Only a complete subtype wildcard such as `image/*` is accepted; `*/*`, parameters, whitespace, quality factors, extra slashes, and partial wildcards fail route startup. Values are lowercase-canonicalized when `FilePartDescriptor` is built, and `maxSizeBytes` must be `-1` or positive.
-
-The `web-validation` gate matches named parts case-sensitively and validates every same-name physical upload. Aggregate constraints apply only when no named constraint matches. Duplicate constrained declarations that could cover the same upload fail startup. A missing named upload is not a file error; presence constraints come from ordinary parameter validation. Duplicate error paths are occurrence-indexed (`avatar`, `avatar[1]`, ...).
-
-The client declaration must be concrete and parseable; only the configured subtype may be a wildcard. Synchronous file errors use `ValidationErrorDetail.location = "file"`:
-
-| Type | Meaning |
-|------|---------|
-| `fileContentTypeMissing` | No declared content type |
-| `fileContentTypeMalformed` | Unparseable or wildcard declared type |
-| `fileContentTypeNotAllowed` | Concrete type does not match `allowedTypes` |
-| `fileMaxSize` | Already-spooled file exceeds `maxSizeBytes` |
-
-`@FilePart` is invalid on `EntityPart` and `List<EntityPart>`. An `EntityPart` can be file-backed or text-backed while this gate observes only `RoutingContext.fileUploads()`; accepting the annotation would create a text-part bypass. File-backed entity parts remain eligible for global `FileContentVerifier` extensions through unconstrained descriptors. Multipart text fields are exempt from aggregate file constraints and continue through ordinary form-schema validation.
-
-`JaxRsOperationDescriptor.fileParts()` is an additional immutable validation view; named form file parameters remain in `parameters()`. The public `FilePartDescriptor` constructor enforces its null-or-non-blank part name, media-type grammar, defensive copying/canonicalization, and `-1`-or-positive size invariant.
-
-Per-part size checks happen after `BodyHandler` has written the upload. `http.maxBodySize` is the only ingress limit and returns HTTP 413; `@FilePart.maxSizeBytes` returns a file validation 400 and does not prevent pre-auth disk writes.
-
----
-
-## JAX-RS Runtime Support
-
-The `dev.vertique.rest.jaxrs.runtime` package provides a minimal `RuntimeDelegate` so `jakarta.ws.rs.core.Response` works without Jersey or RESTEasy on the classpath:
-
-| Class | Purpose |
-|-------|---------|
-| `SimpleRuntimeDelegate` | `RuntimeDelegate` implementation; installed automatically |
-| `SimpleResponseBuilder` | `Response.ResponseBuilder` implementation |
-| `SimpleResponse` | `Response` implementation |
-| `SimpleStatusType` | `Response.StatusType` implementation |
-| `SimpleUriBuilder` | `UriBuilder` implementation |
-| `SimpleLink` / `SimpleLinkBuilder` | `Link` / `Link.Builder` implementation |
-| `VertxFileUploadEntityPart` | `EntityPart` adapter wrapping a Vert.x `FileUpload`; reads content from the temp file written by `BodyHandler`. `getContent()` is single-use. |
-| `FormFieldEntityPart` | `EntityPart` adapter wrapping a text form field value. `getContent()` is single-use. |
-
-`Response.ok(entity).build()`, `Response.status(404).entity(body).type("application/problem+json").build()`, etc. all work out-of-the-box.
-
----
-
-## Example Resource
-
-```java
-@Path("/hello")
-public class HelloResource {
-    private final HelloConfig config;
-
-    @Inject
-    public HelloResource(HelloConfig config) {
-        this.config = config;
-    }
-
-    @GET
-    @Path("/{name}")
-    @Operation(operationId = "getHello")
-    @ApiResponse(responseCode = "200", description = "Greeting response")
-    public Future<GreetingResponse> getHello(@PathParam("name") String name) {
-        String message = String.format(config.hello(), name);
-        return Future.succeededFuture(new GreetingResponse(message));
-    }
-
-    @POST
-    @Operation(operationId = "createItem")
-    public Response createItem(CreateItemRequest request) {
-        if (request.name() == null) {
-            throw new BadRequestException("name is required");
-        }
-        Item item = itemService.create(request);
-        URI location = URI.create("/items/" + item.id());
-        return Response.created(location).entity(item).build();
-    }
-}
-```
-
-**Registration in Dagger:**
-
-```java
-@Module
-public abstract class ResourceModule {
-    @Provides @IntoSet @JaxRsResources
-    static Object helloResource(HelloResource resource) {
-        return resource;
-    }
-}
-```
-
-**Generated auto-wiring:**
-
-Applications inheriting `vertique-app-parent` declare `vertique-rest-jaxrs` as a runtime dependency
-and receive the complete processor facade automatically. Custom-parent applications use the BOM
-plus `vertique-codegen-all` recipe in `docs/packaging.md`. `vertique-codegen-jaxrs` owns generated
-`@Provides @IntoSet @JaxRsResources Object` bindings for `@Path` classes. Include
-`GeneratedJaxRsResourcesModule.class` in the `@Component`; annotate a resource with `@NoAutoWire`
-to keep its manual binding canonical. Applications using that source-retained opt-out also declare
-`vertique-codegen-core` with `provided` scope as documented in `docs/packaging.md`.
-
-**File upload resource example:**
+File uploads:
 
 ```java
 @Path("/uploads")
 @Consumes("multipart/form-data")
 public class UploadResource {
 
-    // Single named file upload as Vert.x FileUpload
     @POST
     @Path("/file")
     @Operation(operationId = "uploadFile")
@@ -803,11 +741,10 @@ public class UploadResource {
             @FilePart(allowedTypes = {"image/png"}, maxSizeBytes = 5_000_000)
             FileUpload upload,
             @FormParam("description") String description) {
-        // Move/copy the request-owned temp file before this response completes if persistence is needed.
+        // Move or copy the request-owned temp file before this response completes if it must persist.
         return processFile(upload, description);
     }
 
-    // Single named file upload as JAX-RS EntityPart
     @POST
     @Path("/part")
     @Operation(operationId = "uploadPart")
@@ -817,26 +754,21 @@ public class UploadResource {
         }
     }
 
-    // All multipart parts as List<EntityPart>
     @POST
     @Path("/all-parts")
     @Operation(operationId = "uploadAllParts")
     public Future<List<String>> uploadAllParts(List<EntityPart> parts) {
-        List<String> names = parts.stream()
-                .map(EntityPart::getName)
-                .collect(Collectors.toList());
-        return Future.succeededFuture(names);
+        return Future.succeededFuture(parts.stream().map(EntityPart::getName).toList());
     }
 }
 ```
 
-**Text body and binary body examples:**
+Text and binary bodies:
 
 ```java
 @Path("/data")
 public class DataResource {
 
-    // text/plain body → String parameter
     @POST
     @Path("/text")
     @Consumes("text/plain")
@@ -846,7 +778,6 @@ public class DataResource {
         return "received: " + body;
     }
 
-    // application/octet-stream body → Buffer parameter
     @POST
     @Path("/binary")
     @Consumes("application/octet-stream")
@@ -859,49 +790,40 @@ public class DataResource {
 
 ---
 
-## Profile-Aware Request-Body Parsing
+## Configuration
 
-`rest-jaxrs` selects a per-method `ObjectMapper` for JSON request-body parsing at router-build time. The resolved mapper is stashed on the `RoutingContext` ahead of the validation gate so the two parsing steps — raw bytes to `JsonObject`/`JsonArray` and `JsonObject` to POJO — both run through the same profile mapper.
+This module reads no configuration section of its own; `http` and `jaxrs` are declared and parsed in
+`dev.vertique:vertique-rest-core`. The keys it acts on are `jaxrs.basePath`, `jaxrs.openapiPath`,
+`jaxrs.sse.*`, `jaxrs.validationStrategy`, and the JSON profile keys below.
 
-**Precedence (highest first):**
+### JSON profile selection
 
-1. `@JsonProfile("id")` on the resource **method**
-2. `@JsonProfile("id")` on the resource **class**
-3. `JaxRsConfig.jsonProfile()` (config key `jaxrs.jsonProfile`) when non-blank (per-boundary default)
-4. `JsonConfig.jsonProfile()` (config key `json.jsonProfile`) when non-blank (global default)
-5. `vertx` — the built-in Vert.x codec (unchanged default)
+The `ObjectMapper` used for a resource method is resolved once at router-build time, highest first:
 
-**How it works:**
+1. `@JsonProfile("id")` on the resource **method**;
+2. `@JsonProfile("id")` on the resource **class**;
+3. `jaxrs.jsonProfile` when non-blank (per-boundary default);
+4. `json.jsonProfile` when non-blank (global default);
+5. `vertx` — the built-in Vert.x codec, and the unchanged default.
 
-`RequestBodyProfileResolver` evaluates the precedence at router-build time for each `ResourceMethodMeta`. When the effective id is `vertx`, the resolver returns `null` and the existing body-binding path is byte-for-byte unchanged. For any other id, the resolved `ObjectMapper` is written to the `RoutingContext` under `BoundRequest.KEY_RESOLVED_BODY_MAPPER` (`"vertique.rest.jaxrs.resolvedBodyMapper"`) before the validation gate.
-
-`DefaultBoundRequest` reads `KEY_RESOLVED_BODY_MAPPER` from the routing context and passes it as the `profileMapper` to `bindBody`. When non-null, the profile mapper performs the **first parse** of a JSON-content-type body — deserializing raw bytes to `JsonObject`, `JsonArray`, or a scalar `Object` under that mapper's strict parser features (e.g. `STRICT_DUPLICATE_DETECTION`, `FAIL_ON_TRAILING_TOKENS`), applied uniformly across object, array, and scalar bodies. Only non-JSON content types fall through to the unchanged Vert.x path.
-
-`ProfileBodyMaterialization` handles the **POJO/collection materialization** step: `convertValue(profileMapper, value, targetType)` converts the parsed `JsonObject`/`JsonArray` to the DTO class or collection type. Both helpers wrap any profile-mapper rejection as a `ValidationException("Request body rejected by JSON profile")` — a value-free HTTP 400 that routes through the standard `DefaultExceptionMapper` → `ProblemDetail` pipeline. The original rejection throwable is retained as the `cause` for server-side diagnosis but is never serialized to the client.
-
-An unknown profile id throws `JsonProfileConfigurationException` at **router-build time** (startup), not at the first request.
-
-**Fail-fast validation of the boundary default (`JaxRsDefaultProfileValidator`):**
-
-`JaxRsDefaultProfileValidator` is a `@Singleton ComposeValidator` contributed by `RestModule`. It resolves `JaxRsConfig.jsonProfile()` through the registry at `@Inject` construction time, failing the `VALIDATE` phase immediately when the configured `jaxrs.jsonProfile` names an unknown profile id — independently of whether any resource method is actually deployed.
-
-**Example:**
+An unknown profile id fails at **startup**, not on the first request.
+`JaxRsDefaultProfileValidator` additionally resolves `jaxrs.jsonProfile` during the `VALIDATE` phase,
+so a bad boundary default fails even when no resource method would have used it.
 
 ```java
 @Path("/orders")
-@JsonProfile("strict")          // class-level default for all methods
+@JsonProfile("strict")             // class-level default for every method
 public class OrderResource {
 
     @POST
     @Operation(operationId = "createOrder")
     public Future<Order> createOrder(CreateOrderRequest request) {
-        // first parse and POJO materialization both use the "strict" mapper
         return orderService.create(request);
     }
 
     @PUT
     @Path("/{id}")
-    @JsonProfile("lenient")     // method-level override wins
+    @JsonProfile("lenient")        // method-level override wins
     @Operation(operationId = "updateOrder")
     public Future<Order> updateOrder(@PathParam("id") String id, UpdateOrderRequest request) {
         return orderService.update(id, request);
@@ -909,131 +831,135 @@ public class OrderResource {
 }
 ```
 
-**Application-level default via config:**
-
 ```json
-{
-  "jaxrs": {
-    "jsonProfile": "strict"
-  }
-}
+{ "jaxrs": { "jsonProfile": "strict" } }
 ```
 
-When `jaxrs.jsonProfile` is set and a method carries no `@JsonProfile`, all request-body parsing for that method uses the configured profile. When both `jaxrs.jsonProfile` and the global `json.jsonProfile` are blank or absent, the effective profile is `vertx`.
+**Requests.** When the effective profile is not `vertx`, the resolved mapper performs the **first
+parse** of a JSON-content-type body — raw bytes to `JsonObject`, `JsonArray`, or a scalar — under that
+mapper's parser features (`STRICT_DUPLICATE_DETECTION`, `FAIL_ON_TRAILING_TOKENS`, and so on),
+uniformly for object, array, and scalar bodies. It then performs POJO/collection materialization from
+the parsed value. Non-JSON content types take the unchanged Vert.x path.
+
+A body the profile mapper rejects becomes a value-free HTTP 400 with the detail
+`"Request body rejected by JSON profile"`, routed through the standard problem-detail pipeline. The
+original rejection is kept as the exception `cause` for server-side diagnosis and is **never**
+serialized to the client.
+
+**Responses.** `JsonBodyEncoder` reads the same resolved mapper, so a method's response uses exactly
+the profile its request used. Errors raised inside a matched method use the method's mapper; errors
+raised before a method match — a pre-routing 404, a schema rejection — use the boundary-plus-global
+default resolved inline at router-build time.
+
+**Fail-open for error bodies.** If a profile mapper throws while serializing an error or
+`ProblemDetail` body, serialization falls back to the `vertx` mapper with the mapped status code and
+the `application/problem+json` media type preserved, and logs a WARN. A profile-mapper failure on a
+**success** entity still surfaces as HTTP 500 — the fail-open is scoped to the error pipeline.
 
 ---
 
-## Profile-Aware Response Serialization
+## Failures, Constraints, and Common Mistakes
 
-`JsonBodyEncoder` — the `ResponseBodyEncoder` implementation used for all JSON entity bodies — reads the same `KEY_RESOLVED_BODY_MAPPER` stash that the request path writes. The result is **symmetric**: a resource method's response uses the exact same effective profile as its request.
+### Startup failures
 
-**Success entities:** when the stash is present, `mapper.writeValueAsString(entity)` is called with the resolved profile mapper. When absent (effective profile is `vertx`), `Json.encode(entity)` is used — byte-for-byte unchanged from the pre-profiling baseline.
+`RouteRegistrationException` carries every `RouteRegistrationViolation` found across all resources:
 
-**Error / `ProblemDetail` bodies — matched method:** an error raised within a matched resource method flows through the same `JsonBodyEncoder` automatically, using the method's already-stashed mapper.
+| `ViolationType` | Meaning |
+|---|---|
+| `DUPLICATE_OPERATION_ID` | two methods resolve to the same operationId within one mount |
+| `MULTIPLE_BODY_PARAMS` | more than one unannotated body parameter |
+| `FORM_AND_BODY_CONFLICT` | `@FormParam` or file-upload parameters mixed with a body parameter |
+| `INVALID_FILE_PART_DECLARATION` | `@FilePart` on an unsupported type, invalid `allowedTypes`/`maxSizeBytes`, or overlapping constrained declarations |
+| `UNSUPPORTED_MULTIPART_COLLECTION_SHAPE` | a `@FormParam` collection parameter's element type is a native multipart target (`FileUpload`/`EntityPart`) declared in a shape other than `List` |
+| `DUPLICATE_PARAM_NAME_MULTIPLICITY_CONFLICT` | two parameters bind the same name from the same source with incompatible multiplicities — one collection-shaped, one scalar; scoped to `@PathParam`/`@QueryParam`/`@HeaderParam`/`@CookieParam` |
+| `SECURITY_ANNOTATIONS_WITHOUT_AUTH_MODULE` | restrictive security annotations present but `AuthModule` absent |
+| `CONTEXT_PARAM_CONFLICT` | a `@Context` parameter also carries a JAX-RS value-binding annotation — the two are mutually exclusive |
+| `UNSUPPORTED_JAXRS_CONTEXT_TYPE` | a `@Context` parameter declares a reserved JAX-RS type that is not supported (e.g. `UriInfo`, `HttpHeaders`); fails fast instead of injecting `null` |
+| `NON_INJECTABLE_CONTEXT_TYPE` | a `@Context` parameter's type is neither a built-in injectable nor a `ContextValue` subtype |
+| `REQUIRES_ACTION_INVALID` | a `@RequiresAction` declaration is malformed |
+| `REQUIRES_ACTION_POLICY_CONFLICT` | a `@RequiresAction` declaration conflicts with the operation's resolved security policy |
+| `UNRESOLVABLE_PARAM_CONVERTER` | a path/query/header/cookie/form parameter type — or a collection's element type, or a convertible `@BeanParam` field — has no converter resolvable by the `ParamConversionResolver` chain |
 
-**Error / `ProblemDetail` bodies — no matched method:** for errors raised before a method match (e.g. pre-routing 404, schema-validation rejection), no method stash exists. The per-route failure handler in `JaxRsRouterMount` resolves the boundary + global default inline (`firstNonBlank(jaxRsConfig.jsonProfile(), jsonConfig.jsonProfile())`) at router-build time and stashes it under `KEY_RESOLVED_BODY_MAPPER` before the error body is serialized. The encoder is unaware of this distinction.
+`SecurityPolicyViolationException` is thrown immediately when a `SecurityPolicyValidator` is bound and
+finds a violation, rather than being collected. `JsonProfileConfigurationException` is thrown at
+router-build time for an unknown profile id.
 
-**Fail-open for error bodies (`FR-JSON-058A`):** if a profile mapper throws while serializing an error or `ProblemDetail` body, the framework falls back to the `vertx` mapper (`Json.encode`), preserving the mapped HTTP status code and the `application/problem+json` media type, and logs a WARN. A profile-mapper failure on a **success entity** still propagates as HTTP 500 — the fail-open applies only to the error pipeline. `ResponsePipeline` marks error responses with `KEY_ERROR_RESPONSE` so the wrap is scoped correctly.
+### Request-time failures
 
-**Confinement:** the change is limited to JSON body-string production. Status codes, the RFC 9457 media type, headers, and the exception-mapping chain are untouched.
+Any exception a resource method throws or fails its `Future` with enters the error pipeline and is
+mapped by `ExceptionMapperRegistry`. Unmapped exceptions become a 500 problem detail whose detail is
+the fixed string `"Internal Server Error"` — never the exception message.
+
+A failure that surfaces **after** the response head is on the wire cannot change the status. When a
+streamed or buffered body is truncated, the pipeline closes the response in the way that frames the
+truncation honestly: a chunked response is ended normally, while a non-chunked response whose declared
+`Content-Length` does not match the bytes written is **reset** (RST_STREAM on HTTP/2, connection close
+on HTTP/1.1) rather than ended, so a peer observes an incomplete transfer instead of a well-framed
+lie. Clients must therefore be prepared for a reset mid-response and must not treat a 200 status line
+as proof of a complete body.
+
+### Common mistakes
+
+- **Expecting `openapi.json` to affect routing.** On the default path it is documentation only.
+  Runtime contract validation requires the opt-in `openapi-contract` strategy from
+  `dev.vertique:vertique-rest-openapi-validation`.
+- **Omitting `RestValidationModule` and expecting validation.** Without a module contributing a
+  strategy, only the built-in `none` strategy exists and no request gate is installed.
+- **Assuming an application decoder or encoder is a fallback.** Application implementations default to
+  priority `0`, ahead of every framework default at 999–1100. Raise the priority above 1100 to sit
+  behind them.
+- **Using a temp upload file after the response completes.** Cleanup is unconditional; move or copy the
+  file first. Holding the `FileUpload` or `EntityPart` does not extend its lifetime.
+- **Calling `EntityPart.getContent()` twice.** Both adapters are single-use.
+- **Putting `@FilePart` on `EntityPart` or `List<EntityPart>`.** It is rejected at startup: an
+  `EntityPart` may be text-backed while the gate observes only file uploads, so accepting it would
+  create a text-part bypass.
+- **Mixing `@Context` with a value-binding annotation.** `CONTEXT_PARAM_CONFLICT` fails the build; the
+  two are mutually exclusive by design.
+- **Expecting `@FilePart.maxSizeBytes` to prevent a disk write.** It is checked post-spool and returns
+  400. `http.maxBodySize` is the only ingress limit and returns 413.
+- **Expecting `afterResponse` to mean "the client has the bytes".** It fires at handoff; a streamed
+  body may still be in flight. Observe the wire-completion channel for the delivery outcome.
+- **Setting `@JsonProfile` on a resource method and expecting the response to keep the class
+  profile.** Request and response profiles are symmetric — the method-level override applies to both.
 
 ---
 
-## RestModule (Dagger)
+## Module Dagger Bindings
 
-`RestModule` is the main Dagger `@Module` for the JAX-RS runtime. It includes `RestCoreModule` (from `rest-core`) and `JsonRuntimeModule` (from `vertique-json`) automatically:
-
-```java
-@Module(includes = {RestCoreModule.class, JsonRuntimeModule.class})
-public abstract class RestModule { ... }
-```
-
-`JsonRuntimeModule` installs the `JsonMapperProfileRegistry` binding so the per-method profile resolution in `RequestBodyProfileResolver` can look up named mappers at router-build time.
-
-`RestCoreModule` owns the `ParamConverterRegistry` / `ParamConversionResolver` bindings (and the `Set<ParamConverterBinding<?>>` / `Set<ParamConverterProvider>` multibindings) shared with `rest-client`'s `RestClientModule` (see `dev.vertique:vertique-rest-core` and ADR-0142) — `RestModule` itself only contributes the default exception mappers for the two conversion-failure exception types (below).
-
-Additional bindings beyond `RestCoreModule` and `JsonRuntimeModule`:
+Beyond what `RestCoreModule` and `JsonRuntimeModule` contribute:
 
 | Binding | Value |
 |---------|-------|
-| `RestExceptionMapper` | wired from `Set<RestExceptionMapperCustomizer>` |
-| `DefaultExceptionMapper` | pre-configured with built-in mappings, including `ParamConversionException` (400) and `ParamConverterNotFoundException` (500) — see [DefaultExceptionMapper](#defaultexceptionmapper) |
-| `ExceptionMapperRegistry` | wired from `DefaultExceptionMapper` + `Set<ExceptionMapper<?>>` |
-| `List<RequestInterceptor>` | sorted `Set<RequestInterceptor>` by priority (sorted once, shared by serializer and pipeline) |
-| `List<ResponseBodyEncoder>` | sorted `Set<ResponseBodyEncoder>` by priority, then class name |
-| `List<RequestBodyDecoder>` | sorted `Set<RequestBodyDecoder>` by priority, then class name |
-| `ResponseSerializer` (`DefaultResponseSerializer`) | wired from sorted `List<RequestInterceptor>` and `List<ResponseBodyEncoder>` |
-| `ResponsePipeline` | wired from `Set<ResponseProducerBinding<?>>`, sorted interceptors, and `ResponseSerializer` |
-| `Set<RequestValidationStrategy>` | `@Multibinds` plus built-in `none`; optional modules contribute `web-validation` and `openapi-contract` |
-| `Set<FileContentVerifier>` | empty `@Multibinds` base; applications and `MagicBytesVerifierModule` contribute trusted async verifiers |
-| `Set<RouterMount>` (default JAX-RS) | `@ElementsIntoSet`: `JaxRsRouterMount` at `api.basePath`; empty set when `@JaxRsResources` is empty |
+| `RestExceptionMapper` | built by folding `Set<RestExceptionMapperCustomizer>` in `OrderedExtension` order |
+| `DefaultExceptionMapper` | pre-configured with the mapping table above |
+| `ExceptionMapperRegistry` | `DefaultExceptionMapper` + `Set<ExceptionMapper<?>>` |
+| `List<RequestInterceptor>` | `Set<RequestInterceptor>` sorted once and shared by the serializer and the response pipeline |
+| `List<ResponseBodyEncoder>` / `List<RequestBodyDecoder>` | sorted once in `OrderedExtension` order |
+| `ResponseSerializer` | `DefaultResponseSerializer`, wired from the sorted interceptor and encoder lists |
+| `SseChannelFactory` | `@Singleton`; the factory a resource method injects to create an SSE channel |
+| `Set<ResponseBodyEncoder>` | the six framework encoders, `SseBodyEncoder` included |
+| `Set<RequestBodyDecoder>` | the four framework decoders |
+| `Set<RequestValidationStrategy>` | `@Multibinds` plus the built-in `none` strategy, so the set is never empty |
+| `Set<FileContentVerifier>` | `@Multibinds`, empty by default |
+| `Set<RestExceptionMapperCustomizer>` | `@Multibinds`, empty by default |
+| `Set<RouterMount>` | `@ElementsIntoSet`: the default `JaxRsRouterMount` at `jaxrs.basePath`; empty when `@JaxRsResources` is empty |
+| `ComposeValidator` (`JaxRsDefaultProfileValidator`) | `@IntoSet`; fails the `VALIDATE` phase on an unknown `jaxrs.jsonProfile` |
+| `OperationSchemaSource`, `BeanValidator`, `InputObjectProcessor`, `ActionRegistry`, `Authorizer` | `@BindsOptionalOf`; satisfied by `rest-validation`, `validation`, `sanitization`, and `rest-security` respectively |
 
-Apps use `RestModule.class` in their Dagger `@Component` — this transitively includes `RestCoreModule`:
-
-```java
-@Singleton
-@Component(modules = {
-    VertxModule.class,
-    RestModule.class,       // rest-jaxrs (includes RestCoreModule from rest-core)
-    AuthModule.class,       // rest-security
-    SecurityModule.class,   // rest-security
-    AppModule.class,
-    ResourceModule.class
-})
-interface AppComponent {
-    HttpVerticle httpVerticle();
-}
-```
-
-Custom exception mappers: implement `jakarta.ws.rs.ext.ExceptionMapper<T>` and contribute via `@Provides @IntoSet ExceptionMapper<?>`:
-
-```java
-// Step 1: implement ExceptionMapper<T>
-public class ItemNotFoundMapper implements ExceptionMapper<ItemNotFoundException> {
-    @Inject public ItemNotFoundMapper() {}
-
-    @Override
-    public Response toResponse(ItemNotFoundException ex) {
-        return Response.status(404)
-                .entity(ProblemDetail.of(404, ex.getMessage()))
-                .type("application/problem+json")
-                .build();
-    }
-}
-
-// Step 2: contribute via Dagger multibinding
-@Provides @IntoSet
-ExceptionMapper<?> itemNotFoundMapper(ItemNotFoundMapper mapper) { return mapper; }
-```
+`dev.vertique.rest.jaxrs.runtime.MagicBytesVerifierModule` is a separate opt-in `@Module` that
+contributes the built-in magic-byte `FileContentVerifier`.
 
 ---
 
 ## Dependencies
 
-- `dev.vertique:rest-core`
-- `dev.vertique:core`
-- `dev.vertique:vertique-json` — `JsonMapperProfileRegistry` and `JsonRuntimeModule`; required for per-method JSON profile resolution
-- `io.vertx:vertx-core`
-- `io.vertx:vertx-web`
-- `com.google.dagger:dagger`
-- `jakarta.ws.rs:jakarta.ws.rs-api`
-- `com.fasterxml.jackson.core:jackson-databind`
-- `org.projectlombok:lombok` (provided scope)
+| Dependency | Why |
+|---|---|
+| `dev.vertique:vertique-rest-core` | every extension SPI this runtime consumes, the `http`/`jaxrs` config objects, `ProblemDetail`, `BoundRequest`'s `RequestValue`, the parameter-conversion stack, and `RestCoreModule` |
+| `dev.vertique:vertique-security-core` | `SecurityContext` and the authorization references the security policy resolves against |
+| `dev.vertique:vertique-json` | `JsonMapperProfileRegistry`, `JsonConfig`, and `JsonRuntimeModule` for per-method profile resolution |
+| `io.swagger.core.v3:swagger-annotations-jakarta` | `@Operation` / `@ApiResponse` read at scan time for the operationId and, at build time, by the spec generator |
+| `org.projectlombok:lombok` | `provided` scope — logging and accessors; not a runtime dependency |
 
----
-
-## Related ADRs
-
-- ADR-0069: REST Context Resolver Chain and Single Context Source — establishes the `RestContextResolver` SPI as the single resolution path for all `@Context`-injectable types; unifies `RoutingContext`, JAX-RS `SecurityContext`, framework `SecurityContext`, and `ContextValue` subtypes under a single `CONTEXT` `ParamSource`; adds startup validation for `CONTEXT_PARAM_CONFLICT`, `UNSUPPORTED_JAXRS_CONTEXT_TYPE`, and `NON_INJECTABLE_CONTEXT_TYPE`.
-- ADR-0084: Framework Extension-Ordering Contract — establishes `OrderedExtension` and `ExtensionPhase` as the canonical ordering contract for framework extensions.
-- ADR-0085: OrderedExtension Rolled Out Across Sorted Behavioral SPIs — `RestExceptionMapperCustomizer` and `OperationHandlerContributor` now follow the framework OrderedExtension ordering contract (phase → priority → orderKey).
-- ADR-0108: Unified Failure Mapping on a Context-Aware `FailureMapper` — collapses four layer-specific mapper wrappers onto one concrete `core.failure.FailureMapper`; `RestExceptionMapper` now extends it; `map(...)` renamed to `translate(...)`.
-- ADR-0119: Security-Scheme Handler Decoupling from RouterBuilder — establishes `RouteRegistration`, `SecuritySchemeRegistry`, and `RouterSetup` as transport-neutral replacements for `RouterBuilder`/`OpenAPIRoute`; decouples `OperationHandlerContributor`, `SecuritySchemeHandler`, and `RouterLifecycleHook` from the Vert.x OpenAPI router.
-- ADR-0122: BoundRequest as the Neutral Per-Request Binding Model — replaces `ValidatedRequest`/`RequestParameter` with the neutral `BoundRequest` / `RequestValue` surface; decouples parameter extraction from the validation strategy.
-- ADR-0126: REST Profile-Aware Request Body Binding — makes `DefaultBoundRequest` perform the request body's first parse with the per-method resolved JSON profile mapper (`@JsonProfile` → config → `vertx`); the `vertx` path is unchanged and a profile-rejected body becomes a 400 via the standard error pipeline.
-- ADR-0136: Global + per-boundary JSON default-profile config tiers — adds the `jaxrs.jsonProfile` per-boundary default and the `json.jsonProfile` global tier to the JAX-RS precedence chain; renames `jaxrs.requestJsonProfile` → `jaxrs.jsonProfile` for symmetry; introduces `JaxRsDefaultProfileValidator` (`ComposeValidator`) for unconditional fail-fast validation of the boundary default.
-- ADR-0137: Symmetric JAX-RS request + response JSON profiling — extends profile-awareness to JAX-RS response bodies (success and `ProblemDetail`/error) via the `KEY_RESOLVED_BODY_MAPPER` stash; the per-route failure handler stashes the inline-resolved default for no-method errors; error-body serialization failures fail open to the `vertx` mapper with status and media type preserved.
-- ADR-0142: Param-Conversion SPI — Registry, Resolver, and ConversionContext — introduces the shared `ParamConverterRegistry`/`ParamConversionResolver` in `rest-core` that `ParameterExtractor` now uses for every inbound path/query/header/cookie/form coercion, replacing the old scalar-only `ScalarCoercion` and the dead `BuiltInParamConverterProvider`; adds `JaxRsRouteRegistrar`'s startup converter-resolvability check.
-- ADR-0143: REST Metadata-Record Unification onto `core.codegen` — migrates `ResourceMethodMeta.ParamMeta` onto the neutral `core.codegen.ParameterMetadata` SPI (`annotationsLazy()` replacing the eager `Annotation[]` field), backed reflectively by `ReflectiveParameterMetadata` on the scan path and by generated literals on the codegen path.
-- ADR-0146: jaxrs codegen parity-first parameter annotations — both `ExecutionPlanEmitter` and `JaxRsDescriptorEmitter` materialize each parameter's runtime-retained annotations into compile-time literals, falling back to a lazy per-parameter reflective read for any annotation that cannot be literal-backed, so a codegen route always matches the reflective scan path byte-for-byte; dedups `ReflectiveParameterMetadata` onto the shared `core.codegen` implementation, deleting the jaxrs-local duplicate; removes the startup `WARN` guard that announced the prior gap.
-- ADR-0179: File-Part Validation and Content Verifier — governs `@FilePart` descriptor shapes, strategy-scoped verifier execution, reset-safe temporary-file cleanup, and request-bounded file lifetime.
+Vert.x, Dagger, the JAX-RS API, and Jackson arrive transitively through `vertique-rest-core`.

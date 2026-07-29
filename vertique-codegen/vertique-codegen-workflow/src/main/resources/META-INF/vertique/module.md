@@ -14,66 +14,17 @@ Annotation processor that eliminates per-call reflection in the workflow client 
 
 In addition to the performance win, the processor lifts contract-shape validation to compile time: a missing `@WorkflowStart` method, a signal missing a dedup source, conflicting operation-role annotations, or a disallowed `default` method all surface as build errors rather than startup failures. The STRUCTURAL subset of `WorkflowProxyValidator`'s rules is reproduced using the same `Diagnostics` wording so a violation reads identically at compile time and at runtime.
 
-The processor also generates a single aggregate `GeneratedWorkflowClientsModule` Dagger module whose `@Provides @Singleton` bindings each delegate to `WorkflowClientFactory.create({Contract}.class)`, so registry and plan validation (the four runtime-only rules) still run at application startup regardless of which path is taken. Applications use the shared parent-or-facade processor boundary described below and list `GeneratedWorkflowClientsModule` in the `@Component` (ADR-0025 inclusion model).
+The processor also generates a single aggregate `GeneratedWorkflowClientsModule` Dagger module whose `@Provides @Singleton` bindings each delegate to `WorkflowClientFactory.create({Contract}.class)`, so registry and plan validation (the four runtime-only rules) still run at application startup regardless of which path is taken. Applications use the shared parent-or-facade processor boundary described below and list `GeneratedWorkflowClientsModule` in the `@Component`.
 
 `WorkflowClientFactory` and `WorkflowProxyValidator` are preserved as the runtime fallback and the authoritative validation path. A generated proxy found on the classpath but impossible to instantiate causes a loud `WorkflowClientProxyLinkageException` rather than a silent fallback to the reflective proxy.
-
-See ADR-0073 for the factory-selection mechanism, generated-name convention, and loud-fail rationale.
-
----
-
-## Package Layout
-
-| Package | Contents |
-|---------|----------|
-| `dev.vertique.codegen.workflow.processor` | `WorkflowContractProcessor` |
-| `dev.vertique.codegen.workflow.processor.scan` | `ContractScanner`, `ContractModel`, `OperationModel`, `OperationRole`, `ParamRole`, `ParamRoleModel` |
-| `dev.vertique.codegen.workflow.processor.validate` | `ContractShapeValidator`, `ReturnTypeValidator`, `ParamAnnotationValidator` |
-| `dev.vertique.codegen.workflow.processor.emit` | `WorkflowProxyEmitter`, `WorkflowClientsModuleEmitter` |
 
 ---
 
 ## Key Classes
 
-### `WorkflowContractProcessor`
-
-`AbstractProcessor` registered via `META-INF/services/javax.annotation.processing.Processor`. Entry point for the round-based processing lifecycle.
-
-```
-@SupportedAnnotationTypes("dev.vertique.workflow.contract.WorkflowContract")
-@SupportedSourceVersion(SourceVersion.RELEASE_21)
-@SupportedOptions("vertique.codegen.package")               // aggregate-module package override (see WorkflowClientsModuleEmitter)
-```
-
-Lifecycle:
-1. `init(env)` — instantiates `CodegenContext`, `ContractScanner`, `ContractShapeValidator`, `ReturnTypeValidator`, `ParamAnnotationValidator`, `WorkflowProxyEmitter`, `WorkflowClientsModuleEmitter`.
-2. `process(annotations, round)` (runs exactly once — the first non-final round):
-   - Collects `@WorkflowContract`-annotated `TypeElement`s.
-   - For each: scans into a `ContractModel`, runs all three validators with `&`-combination so every diagnostic surfaces in a single compile cycle.
-   - Emits a proxy for each valid contract.
-   - Emits one `GeneratedWorkflowClientsModule` covering all valid contracts in the compilation unit.
-3. Returns `false` so other processors (Dagger, Lombok) see the same elements.
-
-### `ContractScanner` / `ContractModel`
-
-`ContractScanner.scan(TypeElement)` reads `@WorkflowContract` annotation attributes (`definitionId`, `definitionVersion`) and scans every non-static, non-`Object` method — including methods inherited from super-interfaces via `Elements.getAllMembers` (mirrors `Class.getMethods()` semantics).
-
-The scanner is **tolerant**: it classifies even malformed methods and emits no diagnostics. All shape validation is deferred to the validator slice so a single compilation cycle surfaces the complete error picture.
-
-The result is an immutable `ContractModel` record:
-
-```java
-record ContractModel(
-    TypeElement contractType,
-    String definitionId,
-    long definitionVersion,
-    List<OperationModel> operations   // List.copyOf; immutable
-) {}
-```
-
-Each element of `operations` is an `OperationModel` carrying the APT `ExecutableElement`, its classified parameter list, payload-interface assignability flags, and a convenience `isCleanSingleRoleOp()` predicate (exactly one role annotation and not `default`) that role-specific validators and the emitter gate on.
-
 ### `OperationRole` and `ParamRole`
+
+A `@WorkflowContract` method may be declared directly on the annotated interface or inherited from a super-interface — both are scanned for operation-role annotations.
 
 **`OperationRole`** — the operation kind declared on a contract method:
 
@@ -83,7 +34,7 @@ Each element of `operations` is an `OperationModel` carrying the APT `Executable
 | `SIGNAL` | `@WorkflowSignal` |
 | `QUERY` | `@WorkflowQuery` |
 
-A method may carry more than one annotation (a shape violation caught by `ContractShapeValidator`); `OperationModel.declaredRoles()` lists all.
+A method may carry more than one annotation, which `ContractShapeValidator` catches as a shape violation.
 
 **`ParamRole`** — the role assigned to each parameter in declaration order. Classification precedence (annotation-based beats type-based beats catch-all):
 
@@ -139,7 +90,7 @@ Validates parameter-annotation type and cardinality for clean single-role operat
 | `@SubjectRef` | `START` | `WorkflowSubjectRef` | Yes |
 | `@SignalDedupKey` | `SIGNAL` | `String` | Yes |
 
-### `WorkflowProxyEmitter`
+### Generated `{Contract}_WorkflowClientProxy`
 
 Generates `{Contract}_WorkflowClientProxy` in the contract's own package. Key properties of the generated class:
 
@@ -160,7 +111,7 @@ The proxy is always emitted into the contract's own package (`ctx.packageNameOf(
 
 **Nested-contract FQN translation.** `Class.getName()` uses `$` as the nested-type separator (`com.example.Outer$Inner`). `GeneratedNames.companionFqn` translates this to `com.example.Outer_Inner_WorkflowClientProxy`, matching the name the emitter produces for a nested contract interface.
 
-### `WorkflowClientsModuleEmitter`
+### `GeneratedWorkflowClientsModule`
 
 Generates a single `GeneratedWorkflowClientsModule` covering all valid contracts in the compilation unit.
 
@@ -240,7 +191,7 @@ paths. See `docs/packaging.md`.
 
 ### Step 2 — Include the generated module
 
-Add `GeneratedWorkflowClientsModule` to the application `@Component`. The generated module provides one `@Singleton` binding per `@WorkflowContract` in the compilation unit. Without this step the generated proxy classes exist on the classpath but none of the contracts are bound in the Dagger graph.
+Add `GeneratedWorkflowClientsModule` to the application `@Component`. The generated module provides one `@Singleton` binding per `@WorkflowContract` in the compilation unit. Without this step the generated proxy classes exist on the classpath but none of the contracts are bound in the Dagger graph — any `@Inject` site for a `@WorkflowContract` type then fails Dagger's compile-time graph validation rather than silently resolving to something unexpected.
 
 ```java
 @Component(modules = {
@@ -278,12 +229,3 @@ Generated proxies are discovered at runtime via `Class.forName` inside `Workflow
 - `dev.vertique:vertique-workflow-core` — `@WorkflowContract`, `@WorkflowStart`, `@WorkflowSignal`, `@WorkflowQuery`, `@IdempotencyKey`, `@BusinessKey`, `@SubjectRef`, `@SignalDedupKey`, `IdempotencyKeyed`, `BusinessKeyed`, `SubjectReferenced`, `SignalDedupKeyed`, `WorkflowInstanceId`, `WorkflowView`, `WorkflowSubjectRef`, `WorkflowOperations`, `StartCommand`. **Test-scope in this processor module** (the processor only needs these types to compile its own tests, not at processing time). A **consuming application** needs `vertique-workflow-core` on its normal compile/runtime classpath regardless — it owns the contract annotations the app authors against, and the generated proxy/module reference `WorkflowOperations`/`StartCommand`/`WorkflowClientFactory` — so adding the processor never introduces a new runtime dependency.
 - `com.palantir.javapoet:javapoet` — source generation (compile-only; not on runtime classpath)
 - `javax.annotation.processing` APIs — part of the JDK; not a separate Maven dependency
-
----
-
-## Related ADRs
-
-- ADR-0073: Workflow Client Proxy Codegen — Discovery and Loud-Fail — factory-selection mechanism (validate-first, `Class.forName` prefer-generated, `WorkflowClientProxyLinkageException` for present-but-broken proxy), generated-name convention (`_WorkflowClientProxy` suffix, `GeneratedNames.companionFqn`), origin-package pinning, `GeneratedWorkflowClientsModule` delegation-to-factory invariant, and `WorkflowProxySnapshotTest` tripwire.
-- ADR-0025: Generated Dagger Module Inclusion — the explicit-inclusion model (`GeneratedWorkflowClientsModule` in `@Component`) that converts silent misconfiguration into a compile error.
-- ADR-0070: Delayed-Job Static Proxy Codegen — sibling CG-012 Track B; the `Class.forName`-prefer-generated / loud-fail pattern is shared across Tracks A, B, and C.
-- ADR-0072: Kafka `KafkaBindingMeta` Shape and Registrar Integration — sibling CG-012 Track A; companion pattern and origin-package pinning are analogous.

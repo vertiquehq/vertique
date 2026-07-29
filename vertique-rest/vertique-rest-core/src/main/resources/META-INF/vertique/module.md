@@ -6,949 +6,282 @@ SPDX-License-Identifier: EUPL-1.2
 # REST Core Module
 
 > **Status:** Implemented
-> **Package:** `dev.vertique.rest.core` (+ 10 sub-packages)
-> **Artifact:** `rest-core`
-> **Depends on:** core
+> **Package:** `dev.vertique.rest.core` (+ 17 sub-packages)
+> **Artifact:** `vertique-rest-core`
+> **Depends on:** core, context, correlation, logging, security-core
 
-Extension API for the HTTP layer. Defines all interfaces, annotations, lifecycle hooks, middleware abstractions, and Dagger multibinding declarations used by `rest-jaxrs`, `rest-security`, `audit-rest`, and application modules. Contains no JAX-RS routing runtime — that lives in `rest-jaxrs`. Also owns the REST completion event infrastructure: `RestRequestCompletionEmitter`, `RestRequestCompletedEvent`, `RestRequestCompletedListener`, `RequestCompletionScope`, and `OperationIdCaptureContributor` in `dev.vertique.rest.core.events`.
+`vertique-rest-core` is the extension contract for Vertique's HTTP layer. It owns the HTTP server
+verticle and its mount-composition algorithm, the per-request ordering spine, the configuration
+objects for the server, and the transport-neutral interfaces that every other REST module and every
+application extension registers against — middlewares, interceptors, body decoders and encoders,
+context resolvers, parameter converters, security-scheme handlers, and request-completion listeners.
 
-### Package Layout
-
-| Package | Contents |
-|---------|----------|
-| `rest.core` | `ProblemDetail`, `ValidationProblemDetail`, `ValidationErrorDetail` (with `args`), `RestValidationException`, `RestConfigurationException` |
-| `rest.core.config` | `HttpConfig`, `CorsConfig`, `SslConfig`, `JaxRsConfig`, `DefaultHeadersConfig` |
-| `rest.core.dagger` | `RestCoreModule`, `JaxRsResources` |
-| `rest.core.lifecycle` | `RouterLifecycleHook` |
-| `rest.core.interceptor` | `RequestInterceptor`, `OperationInterceptor`, `ErrorInterceptor`, `OperationContext` |
-| `rest.core.middleware` | `Middleware`, `MiddlewareScope`, `RequestContextLifecycle` (+ `Handle`), `MdcKeys`, `ContextualLoggingMiddleware`, `DefaultHeadersMiddleware`, `ContentTypeValidationMiddleware` |
-| `rest.core.pagination` | `OffsetPage`, `OffsetPageRequest`, `CursorPage`, `CursorPageRequest`, `CursorCodec`, `PlainCursorCodec`, `InvalidCursorException` |
-| `rest.core.request` | `MediaType`, `AcceptNegotiator`, `RequestBodyDecoder`, `RequestParams`, `RequestPreconditions`, `FilePart`; `InputObjectProcessor`, `DefaultInputObjectProcessor`, `EffectiveInputPolicies`, `InputPolicyMetadata` (with nested `FieldPolicyMetadata`), `InputPolicyMetadataResolver` |
-| `rest.core.response` | `ResponseProducer`, `ResponseProducerBinding`, `ResponseBodyEncoder`, `ResponseSerializer`, `BufferedBody`, `StreamingBody`, `SerializedBody` |
-| `rest.core.router` | `HttpVerticle`, `RouterMount`, `MountMeta`, `MountCustomizer`, `RouterCustomizer`, `OperationHandlerContributor`, `OperationRegistrationContext` |
-| `rest.core.context` | `RestContextResolver` (SPI), `RestContextResolution`, `RestContextUnavailableException`, `RestContextTypes`; built-in resolvers: `RoutingContextResolver` (100), `JaxRsSecurityContextResolver` (110), `ContextHolderResolver` (120); `RestContextModule` |
-| `rest.core.security` | `Authorized`, `SecurityRuntime`, `SecuritySchemeHandler`, `SecurityPolicy`, `SecurityPolicyValidator`, `SecurityPolicyViolation`, `SecurityPolicyViolationException`, `SecurityPolicyResolver`, `AnnotationSecurityPolicyResolver`, `RouteAuthHandler` |
-| `rest.core.sse` | `SseEvent`, `SseChannel`, `SseChannelFactory`, `SseChannelOptions`, `BufferOverflowPolicy` |
-| `rest.core.convert` | `ParamConverter` (SPI), `ParamConverterBinding`, `ParamConverterRegistry`, `ParamConversionResolver`, `ConversionContext`, `ParamSource`, `ParamConversionException`, `ParamConverterNotFoundException` |
+It is not a routing runtime. JAX-RS annotation scanning, request binding, dispatch, and response
+serialization live in `dev.vertique:vertique-rest-jaxrs`. This module also carries no OpenAPI
+dependency: route registration is expressed through neutral types (`RouterSetup`,
+`RouteRegistration`, `SecuritySchemeRegistry`, `RestOperationDescriptor`) so an extension compiled
+against it does not bind to a specific contract-validation implementation.
 
 ---
 
-## Overview
+## When To Use It
 
-`rest-core` is the public contract layer of the HTTP stack:
+Applications almost never depend on this artifact directly. Including
+`dev.vertique.starter.rest.RestApplicationModule` (from `dev.vertique:vertique-starter-rest`) or
+`dev.vertique.rest.jaxrs.RestModule` pulls it in transitively, because `RestModule` includes
+`RestCoreModule`.
 
-- `HttpVerticle` — generic HTTP server that composes sub-routers
-- `RouterMount` / `MountCustomizer` / `RouterCustomizer` — sub-router composition API
-- `Middleware` / `MiddlewareScope` — scoped, ordered request handlers
-- `RouterLifecycleHook` — router creation phase hooks
-- Interceptors — `RequestInterceptor`, `OperationInterceptor`, `ErrorInterceptor` (with `OperationContext`)
-- `OperationHandlerContributor` — per-operation handler injection into the OpenAPI chain
-- `ResponseProducer` / `ResponseSerializer` — response pipeline interfaces
-- `ProblemDetail` — RFC 9457 error response body
-- `SecurityRuntime` / `SecurityPolicyValidator` / `SecuritySchemeHandler` — security SPI types
-- `JaxRsResources` — Dagger qualifier for JAX-RS resource multibinding
-- `Authorized` — framework security annotation
-- `RestCoreModule` — Dagger module declaring all multibindings and defaults
+Declare an explicit dependency when you:
+
+- implement a framework extension point — a `Middleware`, interceptor, `RequestBodyDecoder`,
+  `ResponseBodyEncoder`, `ParamConverter`, `RestContextResolver`, `OperationHandlerContributor`, or
+  `RestRequestCompletedListener`;
+- mount a non-JAX-RS sub-router (static assets, a health tree, a hand-written Vert.x router) beside
+  the JAX-RS mount via `RouterMount`;
+- return `ProblemDetail` bodies, pagination envelopes, or SSE streams from resource methods; or
+- build a library that must compile against the REST contract without depending on the JAX-RS
+  runtime.
+
+Pairs with `dev.vertique:vertique-rest-jaxrs` (routing and dispatch),
+`dev.vertique:vertique-rest-security` (authentication, authorization, identity),
+`dev.vertique:vertique-rest-validation` (the default request-validation gate), and
+`dev.vertique:vertique-rest-websocket`.
+
+---
+
+## Core Concepts
+
+### Mount composition
+
+One `HttpVerticle` owns the main Vert.x `Router`. Everything reachable over HTTP arrives as a
+`RouterMount` — a sub-router attached at a path prefix. The JAX-RS mount is one such mount; static
+handlers, health endpoints, or a hand-built router are peers of it, not special cases.
+
+`HttpVerticle` starts in this order, and each step is observable:
+
+1. **Sort mounts** — `phase` → `priority()` → `mountPath()` → `orderKey()`. The `mountPath` tie-break
+   sits before `orderKey` so that, at equal phase and priority, `/api/*` mounts ahead of a broader
+   `/*` catch-all.
+2. **Validate mount paths** — every violation is collected and the start promise fails with one
+   aggregated message. Because validation runs *after* the sort, violations are reported in mounted
+   order.
+3. **Detect overlaps** — duplicate paths and prefix containment log a warning; startup continues.
+4. Sort `MountCustomizer`s by the plain `OrderedExtension` comparator.
+5. Create the main router and attach every `ROOT`-scoped `Middleware` at its own `path()`.
+6. Run `BEFORE_MOUNTS` `RouterCustomizer`s.
+7. Create each mount's router **sequentially**, apply every matching `MountCustomizer`, attach as a
+   sub-router. Creation is sequential precisely so mount order equals the sorted order.
+8. Run `AFTER_MOUNTS` `RouterCustomizer`s.
+9. Bind the server, then publish the bound port into
+   `vertx.sharedData().getLocalMap("vertique")` under the key `http.port`.
+
+A failed `createRouter(...)` future fails startup.
+
+### Extension ordering
+
+Every ordered extension in this module implements `dev.vertique.core.extension.OrderedExtension` and
+sorts by **phase → priority → orderKey**. Phase dominates priority: a `SYSTEM_FIRST` extension always
+precedes an `APPLICATION` one regardless of numeric priority. `RouterMount` adds the `mountPath`
+tie-break described above; nothing else does.
+
+Two interfaces deliberately re-declare `priority()` as **abstract**, suppressing the
+`OrderedExtension` default so no implementation lands in a band by accident:
+
+- `Middleware`
+- `OperationHandlerContributor`
+
+### Middleware scope
+
+`Middleware.scope()` selects where a handler is attached:
+
+| Scope | Attached by | Applies to |
+|---|---|---|
+| `ROOT` (default) | `HttpVerticle`, on the main router at `path()` | every request |
+| `API` | the JAX-RS mount in `vertique-rest-jaxrs` | validated JAX-RS routes only |
+
+`HttpVerticle` mounts only `ROOT`. A custom non-JAX-RS `RouterMount` silently drops `API`-scoped
+middlewares — if a handler must run for such a mount, give it `ROOT` scope and a narrower `path()`.
+
+### The per-request spine
+
+`RequestContextLifecycle` is a `ROOT` middleware at phase `SYSTEM_FIRST`, priority
+`Integer.MIN_VALUE`. It is the single owner of per-request cleanup. It registers exactly one Vert.x
+end handler, first — and because Vert.x Web fires `addEndHandler` callbacks in **reverse**
+registration order, its cleanup runs **last**. Every value bound during the request (security
+context, MDC keys, correlation) therefore stays readable by every other end handler.
+
+The contract that follows from this: **no other component calls `ctx.addEndHandler(...)` for
+cleanup.** Register on the `Handle` instead.
+
+```java
+RequestContextLifecycle.Handle lifecycle = RequestContextLifecycle.fromRoutingContext(ctx);
+lifecycle.onClose(securityRuntime.bindCurrent(securityContext)); // closed LIFO
+lifecycle.bindMdc(Map.of(MdcKeys.USER_ID, userId));              // MDC scope, closed with the rest
+lifecycle.afterClose(() -> metrics.recordRequest());             // runs FIFO, after every onClose
+ctx.next();
+```
+
+Framework middlewares occupy these positions:
+
+| Middleware | Phase | Priority | Scope |
+|---|---|---|---|
+| `RequestContextLifecycle` | `SYSTEM_FIRST` | `Integer.MIN_VALUE` | ROOT |
+| `RestRequestCompletionEmitter` | default | `RequestContextLifecycle.ORDER + 5` | ROOT |
+| `CorrelationIngressMiddleware` | default | `RequestContextLifecycle.ORDER + 10` | ROOT |
+| `ContextualLoggingMiddleware` | default | `0` | ROOT |
+| `DefaultHeadersMiddleware` | default | `10` | ROOT |
+| `ContentTypeValidationMiddleware` | default | `20` | API |
+
+`RequestContextLifecycle.ORDER` and `CorrelationIngressMiddleware.ORDER` are `public` and may be used
+as anchors. An application middleware that must observe an authenticated identity belongs at a
+positive priority.
+
+### Request completion
+
+Exactly one `RestRequestCompletedEvent` is published per HTTP request, carrying method, path, route
+template, operation id, status, timing, an optional security snapshot, an optional correlation
+snapshot, and the request origin. Two deliberate properties:
+
+- A **successful protocol upgrade emits no event** — the 101 is written without firing the response
+  end handler. A *failed* upgrade does emit, because it takes the normal error path.
+- `safeFailureMessage` is always `null`, and `failureCode` is a class simple name only. Raw exception
+  messages can carry SQL text, upstream detail, or PII, so they never reach the event.
+
+### Neutral route registration
+
+`OperationHandlerContributor` is how a module injects a handler into a single operation's chain.
+Contributors receive an `OperationRegistrationContext` exposing the operation id, the resolved
+`SecurityPolicy`, an optional `ActionRef`, the `RestOperationDescriptor`, and a `RouteRegistration`
+to append handlers to. The terminal operation invoker is always appended **after** every
+contributor.
+
+`RestOperationDescriptor.effectiveSecurityPolicy()` is the always-on fail-closed security gate: it
+calls `EffectiveSecurityPolicy.enforceSupportedShape(...)` before folding, so simply reading the
+effective policy throws `RestConfigurationException` for an unsupported declaration shape whether or
+not the optional validator from `vertique-rest-security` is wired.
 
 ---
 
 ## Key Classes
 
-### HttpVerticle
+### `ProblemDetail`
 
-Generic HTTP server verticle that composes a main router from `RouterMount` sub-routers, ROOT-scoped middlewares, and `RouterCustomizer` hooks. Does not know about JAX-RS or OpenAPI — that logic lives in `JaxRsRouterMount` (in `rest-jaxrs`).
-
-**Constructor parameters (all injected via Dagger):**
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `serverOptions` | `HttpServerOptions` | HTTP server options built from `HttpConfig` by `RestCoreModule` |
-| `routerCustomizers` | `Set<RouterCustomizer>` | Main router customization hooks |
-| `middlewares` | `Set<Middleware>` | ROOT-scoped request handlers |
-| `routerMounts` | `Set<RouterMount>` | Sub-routers to compose |
-| `mountCustomizers` | `Set<MountCustomizer>` | Per-mount post-creation hooks |
-
-**Startup sequence:**
-
-```
-1. Validate mount paths (must start with /, end with /*, no double slashes)
-2. Detect overlapping mount paths (warn, don't fail)
-3. Sort mounts in OrderedExtension order: phase → priority → mountPath → orderKey
-4. Create mainRouter
-5. Mount ROOT-scoped Middlewares (sorted by OrderedExtension.comparator(): phase → priority → orderKey)
-6. Run BEFORE_MOUNTS RouterCustomizers (mountPhase() == MountPhase.BEFORE_MOUNTS; ordered within the phase by OrderedExtension.comparator(): phase → priority → orderKey)
-7. For each mount: createRouter(vertx) → apply MountCustomizers → mount as sub-router
-8. Run AFTER_MOUNTS RouterCustomizers (mountPhase() == MountPhase.AFTER_MOUNTS; ordered within the phase by OrderedExtension.comparator(): phase → priority → orderKey)
-9. Start HTTP server on configured port
-```
-
-### RouterMount
-
-Interface for providing a sub-router to mount on the main router at a specific path prefix.
+RFC 9457 problem-details response body — the default error shape for every built-in exception mapper.
+All fields are optional and omitted from JSON when `null`. Extension members declared through
+`extension(...)` are serialized as sibling JSON fields.
 
 ```java
-public interface RouterMount extends OrderedExtension {
-    default String mountPath() { return "/*"; }
-    Future<Router> createRouter(Vertx vertx);
-    default MountMeta meta() {
-        return new MountMeta(getClass().getName(), mountPath(), null, Set.of());
-    }
-}
+ProblemDetail simple = ProblemDetail.of(404, "Item 123 not found");
+ProblemDetail withInstance = ProblemDetail.of(404, "Item 123 not found", "/items/123");
+
+ProblemDetail detailed = ProblemDetail.builder()
+        .type("https://api.example.com/problems/quota-exceeded")
+        .title("Quota Exceeded")
+        .status(429)
+        .detail("Daily quota of 100 requests exhausted")
+        .extension("limit", 100)
+        .extension("resetsAt", "2026-01-01T00:00:00Z")
+        .build();
 ```
 
-| Method | Description |
-|--------|-------------|
-| `mountPath()` | Path prefix; must start with `/` and end with `/*`. Default: `"/*"` |
-| `priority()` | Mount order (lower = earlier). Default: `0` — inherited from `OrderedExtension` |
-| `createRouter(Vertx)` | Async router creation; `HttpVerticle` fails startup if this future fails |
-| `meta()` | Metadata for `MountCustomizer` targeting; override for stable IDs |
+`ProblemDetail.of(int, String)` derives `type` `"about:blank"` and a title from the status code
+(`ProblemDetail.titleForStatus(int)` exposes the same mapping).
 
-Contributed via `Set<RouterMount>` Dagger multibinding.
-
-**Example — simple health check mount:**
+A typed subclass uses `@SuperBuilder` and must repeat the Jackson annotations, because
+`ProblemDetail` is `@Accessors(fluent = true)` and getter-based serialization must stay suppressed:
 
 ```java
-@Provides @IntoSet
-RouterMount healthMount() {
-    return new RouterMount() {
-        @Override public String mountPath() { return "/health/*"; }
-        @Override public Future<Router> createRouter(Vertx vertx) {
-            Router r = Router.router(vertx);
-            r.get("/").handler(ctx -> ctx.response().end("OK"));
-            return Future.succeededFuture(r);
-        }
-    };
-}
-```
+package com.example.api;
 
-### MountMeta
+import static com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.ANY;
+import static com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility.NONE;
 
-Metadata record describing a `RouterMount`. Used by `MountCustomizer#matches()` to selectively target specific mounts.
+import com.fasterxml.jackson.annotation.JsonAutoDetect;
+import com.fasterxml.jackson.annotation.JsonInclude;
+import dev.vertique.rest.core.ProblemDetail;
+import lombok.AccessLevel;
+import lombok.Getter;
+import lombok.experimental.Accessors;
+import lombok.experimental.FieldDefaults;
+import lombok.experimental.SuperBuilder;
 
-```java
-public record MountMeta(
-    String mountId,              // stable ID (FQCN by default, "jaxrs:/api/*" for JaxRsRouterMount)
-    String mountPath,            // path prefix
-    @Nullable String openapiPath, // classpath OpenAPI spec, or null for non-JAX-RS mounts
-    Set<Class<?>> resourceTypes  // JAX-RS resource classes, or empty for non-JAX-RS mounts
-) {}
-```
-
-### MountCustomizer
-
-Per-mount customization hook applied after `RouterMount#createRouter()` completes and before the sub-router is mounted on the main router.
-
-```java
-public interface MountCustomizer extends OrderedExtension {
-    default boolean matches(MountMeta meta) { return true; }
-    void customize(Router mountRouter, MountMeta meta);
-}
-```
-
-**Example — CORS only on JAX-RS mounts:**
-
-```java
-@Provides @IntoSet
-MountCustomizer apiCors() {
-    return new MountCustomizer() {
-        @Override public boolean matches(MountMeta meta) {
-            return meta.mountId().startsWith("jaxrs:");
-        }
-        @Override public void customize(Router router, MountMeta meta) {
-            router.route().handler(CorsHandler.create().addOrigin("*"));
-        }
-    };
-}
-```
-
-### RouterCustomizer
-
-Customize the main Vert.x router. Extends `OrderedExtension`. `MountPhase` controls whether customization runs before or after `RouterMount` sub-routers are mounted:
-
-```java
-public interface RouterCustomizer extends OrderedExtension {
-    void customize(Router router);
-    default MountPhase mountPhase() { return MountPhase.BEFORE_MOUNTS; }
-
-    enum MountPhase {
-        BEFORE_MOUNTS,  // before any sub-routers are mounted (default)
-        AFTER_MOUNTS    // after all sub-routers are mounted
-    }
-}
-```
-
-`mountPhase()` partitions customizers into BEFORE_MOUNTS and AFTER_MOUNTS groups. Within each mount-phase, ordering follows the `OrderedExtension` order (phase → priority → orderKey). Contributed via `Set<RouterCustomizer>` Dagger multibinding.
-
-**Example — global CORS before mounts:**
-
-```java
-@Provides @IntoSet
-RouterCustomizer corsCustomizer() {
-    return router -> router.route().handler(CorsHandler.create()
-        .addOrigin("*")
-        .allowedMethod(HttpMethod.GET)
-        .allowedMethod(HttpMethod.POST));
-}
-```
-
-**Example — SPA fallback after mounts:**
-
-```java
-@Provides @IntoSet
-RouterCustomizer spaFallback() {
-    return new RouterCustomizer() {
-        @Override public MountPhase mountPhase() { return MountPhase.AFTER_MOUNTS; }
-        @Override public void customize(Router router) {
-            router.get("/*").handler(StaticHandler.create("webroot"));
-        }
-    };
-}
-```
-
-### Middleware
-
-Auto-registered, scoped, ordered request handlers. Extends `Handler<RoutingContext>` and `OrderedExtension`:
-
-```java
-public interface Middleware extends Handler<RoutingContext>, OrderedExtension {
-    int priority();  // abstract override of OrderedExtension.priority() — every implementation must declare it
-    default MiddlewareScope scope() { return MiddlewareScope.ROOT; }
-    default String path() { return "/*"; }
-}
-
-public enum MiddlewareScope { ROOT, API }
-```
-
-- `ROOT` scope: applied to the main router (all requests)
-- `API` scope: applied to the OpenAPI sub-router (validated routes only)
-- Sorted by `OrderedExtension.comparator()` (phase → priority → orderKey) before mounting
-- Contributed via `Set<Middleware>` Dagger multibinding
-
-### ProblemDetail
-
-RFC 9457 Problem Details response body. Used as the default error format for all built-in exception mappers.
-
-**Fields** (all optional, omitted from JSON when `null`):
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `type` | `String` | URI reference identifying the problem type |
-| `title` | `String` | Short human-readable summary |
-| `status` | `Integer` | HTTP status code |
-| `detail` | `String` | Human-readable explanation of this occurrence |
-| `instance` | `String` | URI identifying the specific occurrence |
-| extensions | `Map<String, Object>` | RFC 9457 extension members (serialized as inline sibling fields via `@JsonAnyGetter`) |
-
-**Factory methods** (no-builder shorthand):
-
-```java
-// type="about:blank", title auto-derived from status code
-ProblemDetail.of(404, "Item 123 not found");
-ProblemDetail.of(404, "Item 123 not found", "/requests/abc");
-```
-
-**Ad-hoc extension fields** via builder:
-
-```java
-ProblemDetail problem = ProblemDetail.builder()
-    .type("https://api.example.com/problems/validation-failed")
-    .title("Validation Failed")
-    .status(422)
-    .detail(ex.getMessage())
-    .extension("errors", ex.getErrors())   // becomes a sibling JSON field
-    .extension("field", "email")
-    .build();
-```
-
-**Typed subclass** via `@SuperBuilder` (compile-time-safe named fields):
-
-```java
 @Getter
 @SuperBuilder
 @Accessors(fluent = true)
 @FieldDefaults(level = AccessLevel.PRIVATE, makeFinal = true)
 @JsonInclude(JsonInclude.Include.NON_NULL)
 @JsonAutoDetect(fieldVisibility = ANY, getterVisibility = NONE)
-public class GreetingLimitProblemDetail extends ProblemDetail {
+public class QuotaProblemDetail extends ProblemDetail {
 
     int limit;
 
-    public static GreetingLimitProblemDetail of(int limit) {
-        return GreetingLimitProblemDetail.builder()
-            .type("https://api.example.com/problems/greeting-limit-exceeded")
-            .title("Greeting Limit Exceeded")
-            .status(429)
-            .detail("You have exceeded your greeting limit of " + limit)
-            .limit(limit)
-            .build();
+    public static QuotaProblemDetail of(int limit) {
+        return QuotaProblemDetail.builder()
+                .type("https://api.example.com/problems/quota-exceeded")
+                .title("Quota Exceeded")
+                .status(429)
+                .detail("Daily quota of " + limit + " requests exhausted")
+                .limit(limit)
+                .build();
     }
 }
 ```
 
-`ProblemDetail` uses `@Accessors(fluent = true)`, so subclasses must carry the same Jackson annotations to suppress getter-based serialization.
+### `ValidationProblemDetail` and `ValidationErrorDetail`
 
-### ValidationProblemDetail
-
-RFC 9457 Problem Details body for structured validation errors. Extends `ProblemDetail` with an `errors` array. Used by `DefaultExceptionMapper` for both `RestValidationException` and `BeanValidationException`.
-
-```java
-@Getter @SuperBuilder(toBuilder = true) @Accessors(fluent = true)
-@JsonInclude(NON_NULL) @JsonAutoDetect(fieldVisibility = ANY, getterVisibility = NONE)
-public class ValidationProblemDetail extends ProblemDetail {
-    @Singular List<ValidationErrorDetail> errors;
-
-    // Convenience factory — status 400, type "about:blank", title "Bad Request"
-    public static ValidationProblemDetail of(String detail, List<ValidationErrorDetail> errors) { ... }
-}
-```
-
-**JSON shape:**
-
-```json
-{
-  "type": "about:blank",
-  "title": "Bad Request",
-  "status": 400,
-  "detail": "Validation failed",
-  "errors": [
-    { "path": "email", "detail": "must be a well-formed email address", "location": "body", "type": "email" },
-    { "path": "limit", "detail": "must be ≤ 100", "location": "query", "type": "max", "args": { "value": 100 } }
-  ]
-}
-```
-
-### ValidationErrorDetail
-
-Describes a single validation error with HTTP location context. Designed to work with both OpenAPI validation and Jakarta Bean Validation. `null` fields are omitted from JSON serialization.
+`ValidationProblemDetail` extends `ProblemDetail` with an `errors` list.
+`ValidationProblemDetail.of(String detail, List<ValidationErrorDetail> errors)` produces a 400
+`about:blank` / `"Bad Request"` body.
 
 ```java
-@JsonInclude(JsonInclude.Include.NON_NULL)
 public record ValidationErrorDetail(
-    String path,                        // violated field path (e.g. "/name", "email")
-    String detail,                      // human-readable description of the failure
-    @Nullable String location,          // HTTP location: "body", "query", "header", "path", "cookie", "form", "file", or null
-    @Nullable String type,              // error classification: "required", "size", "min", "email", "pattern", etc.
-    @Nullable Map<String, Object> args  // constraint arguments (e.g. {min: 1, max: 100} for @Size); null when none
+        String path,                        // violated field path, e.g. "email"
+        String detail,                      // human-readable failure description
+        @Nullable String location,          // "body", "query", "header", "path", "cookie", "form", "file"
+        @Nullable String type,              // classification: "required", "size", "min", "pattern", …
+        @Nullable Map<String, Object> args  // constraint arguments, e.g. {"min":1,"max":100}
 ) {
-    // Simple factory — no location, type, or args
-    public static ValidationErrorDetail of(String path, String detail) { ... }
+    public static ValidationErrorDetail of(String path, String detail) { … }
 }
 ```
 
-The `args` field carries constraint arguments extracted from the annotation by the `validation` module's `ViolationArgsInspector` SPI. For standard Jakarta constraints, built-in inspectors populate it automatically:
+`null` components are omitted from JSON. `args` is populated for standard Jakarta constraints by the
+`ViolationArgsInspector` SPI in `dev.vertique:vertique-validation`.
 
-| Constraint | `args` example |
-|---|---|
-| `@Size(min=1, max=100)` | `{min: 1, max: 100}` |
-| `@Min(value=0)` | `{value: 0}` |
-| `@Max(value=255)` | `{value: 255}` |
-| `@Pattern(regexp="...")` | `{regexp: "..."}` |
-| `@NotNull`, `@NotBlank` | `null` (no meaningful args) |
+### `RestValidationException`
 
-### RestValidationException
+Extends `dev.vertique.core.exception.ValidationException` with a structured, unmodifiable
+`List<ValidationErrorDetail>` (`errors()`). Throw it to produce a 400 with a
+`ValidationProblemDetail` body.
 
-Extends `ValidationException` (from `core.exception`) with a structured list of `ValidationErrorDetail` entries. Thrown by `ConstraintViolationMapper` in `rest-jaxrs` after Bean Validation and mapped to HTTP 400 by `DefaultExceptionMapper`.
+### `RequestPreconditions`
 
-```java
-public class RestValidationException extends ValidationException {
-    public RestValidationException(String message, List<ValidationErrorDetail> errors) { ... }
-    public List<ValidationErrorDetail> errors() { ... }  // unmodifiable
-}
-```
-
-### MediaType
-
-Immutable value object representing an HTTP media type (RFC 9110). Stores type, subtype, parameters (excluding `q`), and quality factor — all lowercase.
-
-```java
-public final class MediaType {
-    public MediaType(String type, String subtype, Map<String, String> parameters, double qualityFactor) { ... }
-
-    public static MediaType parse(String raw) { ... }  // returns null for null/blank/invalid
-    public static MediaType valueOf(String raw) { ... } // alias for parse()
-
-    public String type() { ... }
-    public String subtype() { ... }
-    public Map<String, String> parameters() { ... }
-    public double qualityFactor() { ... }
-
-    public boolean isWildcardType() { ... }
-    public boolean isWildcardSubtype() { ... }
-    public boolean isCompatible(MediaType other) { ... }  // wildcard-aware
-    public int specificity() { ... }     // 0=*/*,  1=type/*, 2=type/subtype, 3=type/subtype+params
-    public String withoutParameters() { ... }   // "type/subtype"
-}
-```
-
-**Compatibility rules for `isCompatible()`:** either side wildcard type → compatible; types differ → not compatible; either side wildcard subtype → compatible; subtypes match → compatible. Parameters are ignored.
-
-**Equality** excludes the quality factor — two media types with different `q` values but identical type/subtype/parameters are equal.
-
-### AcceptNegotiator
-
-Static utility for RFC 9110 Accept header negotiation. Selects the most preferred server-side media type acceptable to the client.
-
-```java
-public final class AcceptNegotiator {
-    // Returns the best matching server type (lowercase "type/subtype"), or null if no match.
-    // Null/blank accept → returns first server type. Empty serverTypes → null.
-    public static String negotiate(String acceptHeader, List<String> serverTypes) { ... }
-
-    // Parses Accept header into a sorted list (q-value desc, specificity desc tiebreaker).
-    // Entries with q=0 are excluded. Capped at 50 entries.
-    public static List<MediaType> parseAcceptHeader(String accept) { ... }
-}
-```
-
-Used by `ResponsePipeline` (in `rest-jaxrs`) in the unregistered-type fallback to negotiate response content type against `@Produces`, returning 406 when no match is found.
-
-### RequestBodyDecoder
-
-SPI for pluggable request body deserialization. The framework invoker selects the first decoder (by priority) whose `canDecode()` returns `true` and delegates body decoding to it.
-
-```java
-public interface RequestBodyDecoder extends OrderedExtension {
-    boolean canDecode(Class<?> targetType, String contentType);
-
-    Object decode(RoutingContext ctx, BoundRequest request, Class<?> targetType);
-}
-```
-
-Contributed via `@Multibinds Set<RequestBodyDecoder>` (declared in `RestCoreModule`). The framework invoker walks decoders in OrderedExtension order (phase → priority → orderKey); the first decoder whose `canDecode()` returns `true` is used. Application decoders default to priority `0` and therefore precede framework defaults at priority `1000`/`1100`. The `BoundRequest` parameter provides the validated/bound request context; decoders read the raw body buffer from it.
-
-**Registration pattern:**
-
-```java
-@Provides @IntoSet
-static RequestBodyDecoder xmlDecoder(XmlMapper mapper) {
-    return new XmlRequestBodyDecoder(mapper);
-}
-```
-
-### ResourceMethodMeta
-
-Immutable Java record containing all metadata for a single JAX-RS method. Defined in `rest-core` so lifecycle hooks and contributors can inspect method metadata without depending on `rest-jaxrs`:
-
-```java
-public record ResourceMethodMeta(
-    Object resourceInstance,
-    Method method,
-    String operationId,
-    String httpMethod,
-    String path,
-    List<ParamMeta> params,
-    Class<?> responseBodyType,
-    boolean returnsFuture,
-    boolean returnsVoid,
-    SecurityAnnotations securityAnnotations,
-    List<String> consumes,   // from @Consumes; empty = unconstrained
-    List<String> produces    // from @Produces; empty = unconstrained
-) {
-    // Convenience constructor omits componentType (null)
-    public record ParamMeta(String name, ParamSource source, Class<?> type, Class<?> componentType) {}
-
-    public enum ParamSource {
-        /** Value extracted from a URI path segment. */
-        PATH,
-        /** Value extracted from a URI query parameter. */
-        QUERY,
-        /** Value extracted from an HTTP request header. */
-        HEADER,
-        /** Value extracted from a request cookie. */
-        COOKIE,
-        /** Value deserialized from the HTTP request body. */
-        BODY,
-        /**
-         * Any {@code @Context}-injected or auto-injectable type resolved through the
-         * {@code RestContextResolver} chain by declared type — covers {@code RoutingContext},
-         * JAX-RS {@code SecurityContext}, and any {@code ContextValue} (framework
-         * {@code SecurityContext}, correlation, localization, application types).
-         */
-        CONTEXT,
-        /** Conditional request preconditions injected as {@code RequestPreconditions}. */
-        PRECONDITIONS,
-        /** Named form field or file upload from multipart/form-data or application/x-www-form-urlencoded. */
-        FORM,
-        /** All file uploads as List<FileUpload> (unannotated). */
-        FILE_UPLOADS,
-        /** All multipart parts as List<EntityPart> (unannotated). */
-        ENTITY_PARTS,
-        /** Composite parameter object populated from multiple request parameters via {@code @BeanParam}. */
-        BEAN_PARAM
-    }
-}
-```
-
-### JaxRsResources
-
-Dagger qualifier annotation for the `Set<Object>` multibinding of JAX-RS resource instances:
-
-```java
-@Qualifier
-@Retention(RUNTIME)
-public @interface JaxRsResources {}
-```
-
-### Authorized
-
-Framework security annotation for scope-based authorization (complements standard JAX-RS `@RolesAllowed`):
-
-```java
-@Target({METHOD, TYPE})
-@Retention(RUNTIME)
-public @interface Authorized {
-    String[] scopes() default {};
-    boolean matchAll() default false;
-}
-```
-
-Combined `@RolesAllowed` + `@Authorized` = AND semantics (must pass both).
-
-### SecurityRuntime
-
-DI-managed bridge between the Vert.x routing layer and the JAX-RS resource layer. Reads and writes the `SecurityContext` for the current request. Defined in `rest-core`; implemented by `HolderBackedSecurityRuntime` in `rest-security`.
-
-```java
-public interface SecurityRuntime {
-    /** Returns the current SecurityContext, or null if none is bound. Lenient. */
-    SecurityContext current();
-
-    /**
-     * Binds the given SecurityContext into the current Vert.x context via ContextValues.
-     * Returns a Scope that restores the prior binding on close.
-     * Callers MUST register the returned scope with RequestContextLifecycle.Handle.onClose().
-     */
-    ContextHolder.Scope bindCurrent(SecurityContext context);
-
-    jakarta.ws.rs.core.SecurityContext toJaxRs(SecurityContext context, boolean secure);
-}
-```
-
-`JaxRsRouterMount.Factory` (in `rest-jaxrs`) accepts `@Nullable SecurityRuntime` — null when security is not configured.
-
-### SecurityPolicyValidator
-
-Startup validation interface for checking security policy consistency across JAX-RS annotations. Defined in `rest-core`; implemented by `DefaultSecurityPolicyValidator` in `rest-security`.
-
-```java
-public interface SecurityPolicyValidator {
-    List<SecurityPolicyViolation> validate(ResourceMethodMeta meta, RestOperationDescriptor operation);
-}
-```
-
-```java
-public record SecurityPolicyViolation(
-    String operationId,
-    ViolationType type,
-    String message
-) {
-    public enum ViolationType {
-        ANNOTATION_WITHOUT_OPENAPI_SECURITY,
-        OPENAPI_SECURITY_WITHOUT_HANDLER,
-        CONFLICTING_SEMANTICS
-    }
-}
-```
-
-When a `SecurityPolicyValidator` is present (provided by `AuthModule`), any violation causes `SecurityPolicyViolationException` to be thrown immediately during startup. Omit `AuthModule` to skip validation entirely.
-
-### SecurityPolicyResolver
-
-Interface for resolving a `SecurityPolicy` from JAX-RS security annotations on a resource method. Defined in `rest-core`; implemented by `AnnotationSecurityPolicyResolver` (default) and delegated to by `SecurityPolicyBuilder` in `rest-jaxrs`.
-
-```java
-public interface SecurityPolicyResolver {
-    SecurityPolicy resolve(ResourceMethodMeta meta);
-}
-```
-
-`AuthModule` (in `rest-security`) contributes `AnnotationSecurityPolicyResolver` as the default binding. Applications can override by providing a custom `SecurityPolicyResolver` binding.
-
-### AnnotationSecurityPolicyResolver
-
-Default implementation of `SecurityPolicyResolver`, extracted from `SecurityPolicyBuilder`. Reads `@RolesAllowed`, `@PermitAll`, `@DenyAll`, and `@Authorized` annotations from the `ResourceMethodMeta` and constructs the corresponding `SecurityPolicy`.
-
-### RouteAuthHandler
-
-SPI for contributing route-level Vert.x auth handlers. Defined in `rest-core`; contributed via `Set<RouteAuthHandler>` multibinding (declared in `AuthModule` in `rest-security`).
-
-```java
-public interface RouteAuthHandler {
-    String schemeName();
-    Handler<RoutingContext> createHandler();
-}
-```
-
-The framework selects the handler matching the OpenAPI security scheme name for each route. `JwtAuthModule` (in `rest-auth-jwt`) contributes a `RouteAuthHandler` for the configured JWT bearer scheme.
-
----
-
-### SecuritySchemeHandler
-
-Extension interface for registering an `AuthenticationHandler` for a named security scheme. Defined in `rest-core`; contributed via `Set<SecuritySchemeHandler>` multibinding (declared in `RestCoreModule`). The framework calls `configure(SecuritySchemeRegistry)` during router creation; it applies the registered handler to every operation whose security requirements reference `schemeName()`.
-
-```java
-public interface SecuritySchemeHandler {
-    String schemeName();
-    void configure(SecuritySchemeRegistry registry);
-}
-```
-
-`SecuritySchemeRegistry` is the scheme-scoped registration surface; it exposes one method:
-
-```java
-public interface SecuritySchemeRegistry {
-    void authenticationHandler(AuthenticationHandler handler);
-}
-```
-
-The handler type is `AuthenticationHandler` (not a bare `Handler<RoutingContext>`) so the framework can compose multiple alternative `@SecurityRequirement`s into a Vert.x `ChainAuthHandler.any()` — an OR across schemes matching the OpenAPI `security` array semantics.
-
-**Registration example:**
-
-```java
-@Provides @IntoSet
-SecuritySchemeHandler jwtScheme(JWTAuth jwtAuth) {
-    return new SecuritySchemeHandler() {
-        public String schemeName() { return "bearerAuth"; }
-        public void configure(SecuritySchemeRegistry registry) {
-            registry.authenticationHandler(JWTAuthHandler.create(jwtAuth));
-        }
-    };
-}
-```
-
-### RestConfigurationException
-
-Base `ConfigurationException` (from `core.exception`) for all REST startup and wiring errors. Thrown during module initialization when configuration is invalid.
-
-```
-RestConfigurationException (extends ConfigurationException)
-├── SecurityPolicyViolationException  — security policy inconsistency detected at startup
-├── RouteRegistrationException        — route registration failure (in rest-jaxrs)
-└── RestContextUnavailableException   — required @Context parameter unbound at request time
-```
-
-`SecurityPolicyViolationException` is thrown by `JaxRsRouteRegistrar` when `SecurityPolicyValidator` detects violations. Contains the list of `SecurityPolicyViolation` records.
-
----
-
-## Context Resolution (`rest.core.context`)
-
-The `rest.core.context` sub-package defines the SPI and runtime for resolving `@Context`-injectable parameters in JAX-RS resource methods. All context parameters — `RoutingContext`, JAX-RS `SecurityContext`, framework `SecurityContext`, and any `ContextValue` type — are resolved uniformly through a priority-sorted chain of `RestContextResolver` implementations.
-
-### RestContextResolution
-
-`@Singleton` coordinator that drives the resolver chain. Constructed once with the full `Set<RestContextResolver>`; the chain is sorted at construction time and reused for every request.
-
-| Method | Signature | Description |
-|--------|-----------|-------------|
-| `resolve` | `<T> Optional<T> resolve(Class<T> type, RoutingContext ctx)` | Walks the chain; returns the first non-empty result, or `Optional.empty()` |
-| `require` | `<T> T require(Class<T> type, RoutingContext ctx, String resourceClass, String methodName)` | Same as `resolve`, but throws `RestContextUnavailableException` when no resolver matches |
-
-The `require(...)` form is used by the REST dispatch layer for declared `@Context` parameters.
-
-### RestContextUnavailableException
-
-Extends `RestConfigurationException`. Thrown at request dispatch time when `RestContextResolution.require(...)` finds no resolver in the chain for the requested type. Carries the `type`, `resourceClass`, and `methodName` that identify where the missing binding was expected.
-
-### RestContextTypes
-
-Internal (public-but-non-SPI) constants class. Provides FQN string constants (`CONTEXT_VALUE_FQN`, `ROUTING_CONTEXT_FQN`, `JAXRS_SECURITY_CONTEXT_FQN`) used by annotation processors and code-generation paths that work with type mirrors rather than live `Class` objects. Also provides the `isInjectable(Class)` predicate used by the dispatch layer to determine whether a parameter should be resolved from the context chain.
-
-`RESERVED_UNSUPPORTED_JAXRS_FQNS` lists JAX-RS types that are syntactically valid `@Context` targets but are not supported in V1 (e.g. `UriInfo`, `HttpHeaders`). The framework rejects these at startup with a clear error rather than silently injecting `null`.
-
-### RestContextModule
-
-Internal Dagger `@Module` (included by `RestCoreModule`). Declares `@Multibinds Set<RestContextResolver>` and contributes the three built-in `@IntoSet` resolvers. Application code does not reference it directly.
-
-**Built-in resolvers:**
-
-| Resolver | Priority | Handles |
-|----------|----------|---------|
-| `RoutingContextResolver` | 100 | `RoutingContext` (and subtypes) |
-| `JaxRsSecurityContextResolver` | 110 | `jakarta.ws.rs.core.SecurityContext` exactly; delegates to `SecurityRuntime.toJaxRs()`; returns empty when security module is absent |
-| `ContextHolderResolver` | 120 | Any `ContextValue` subtype; delegates to `ContextValues.current(type)` |
-
----
-
-## Pagination
-
-The framework provides two pagination response wrappers and corresponding request parameter objects, covering both offset-based and cursor-based pagination strategies.
-
-### When to Use Offset vs Cursor
-
-| | Offset (`OffsetPage`) | Cursor (`CursorPage`) |
-|---|---|---|
-| **Navigation** | Random access by page number | Sequential (next/previous only) |
-| **Total count** | Exposed (`totalItems`, `totalPages`) | Not exposed |
-| **Stable ordering** | Can drift when rows are inserted/deleted | Stable (no index drift) |
-| **Performance** | `OFFSET N` scans get slower at depth | Constant cost via keyset pagination |
-| **Best for** | Admin UIs, searchable lists with page numbers | Feeds, timelines, high-volume APIs |
-
-### OffsetPage
-
-Generic paginated response wrapper for offset-based collection endpoints.
-
-```java
-@JsonInclude(JsonInclude.Include.NON_NULL)
-public record OffsetPage<T>(
-    List<T> items,
-    long totalItems,
-    int totalPages,
-    int page,
-    int pageSize,
-    boolean first,
-    boolean last
-) {}
-```
-
-| Field | Description |
-|-------|-------------|
-| `items` | Items on this page (defensively copied) |
-| `totalItems` | Total items across all pages |
-| `totalPages` | Total number of pages |
-| `page` | 0-based current page index |
-| `pageSize` | Items per page |
-| `first` | `true` when `page == 0` |
-| `last` | `true` when `page >= totalPages - 1` |
-
-**Factory method** — derives `totalPages`, `first`, and `last` automatically:
-
-```java
-OffsetPage.of(List<T> items, long totalItems, int page, int pageSize)
-```
-
-**Example usage in a JAX-RS resource:**
+Conditional-request evaluation (`If-Match`, `If-None-Match`, `If-Modified-Since`,
+`If-Unmodified-Since`) per RFC 9110. Inject it as a resource-method parameter, or build it from a
+routing context with `RequestPreconditions.from(ctx)` — the instance is cached per request.
 
 ```java
 @GET
-@Path("/items")
-@Operation(operationId = "listItems")
-public Future<OffsetPage<Item>> listItems(OffsetPageRequest page) {
-    int pg = page.page(0);
-    int ps = page.pageSize(20, 100);
-    return repository.findAll(pg, ps)
-        .map(result -> OffsetPage.of(result.items(), result.totalCount(), pg, ps));
-}
-```
-
-**JSON shape:**
-
-```json
-{
-  "items": [...],
-  "totalItems": 243,
-  "totalPages": 25,
-  "page": 2,
-  "pageSize": 10,
-  "first": false,
-  "last": false
-}
-```
-
-### OffsetPageRequest
-
-`@RequestParams` record that binds offset pagination query parameters from the HTTP request. No `@BeanParam` annotation is needed on the method parameter.
-
-**Query parameters:** `page` (0-based page number), `size` (page size), `sort` (sort expression)
-
-```java
-@RequestParams
-public record OffsetPageRequest(
-    @QueryParam("page") @Nullable Integer page,
-    @QueryParam("size") @Nullable Integer pageSize,
-    @QueryParam("sort") @Nullable String sort
-) {}
-```
-
-| Method | Signature | Description |
-|--------|-----------|-------------|
-| `page(defaultValue)` | `int page(int defaultValue)` | Page number or default; clamped to `>= 0` |
-| `pageSize(defaultValue)` | `int pageSize(int defaultValue)` | Page size or default; clamped to `>= 1` |
-| `pageSize(defaultValue, maxValue)` | `int pageSize(int defaultValue, int maxValue)` | Page size clamped to `[1, maxValue]` |
-| `sortOrders()` | `List<SortOrder> sortOrders()` | Parses `sort=field,asc,field2,desc` into `SortOrder` list |
-
-`SortOrder` is a nested record: `SortOrder(String field, Direction direction)` where `Direction` is `ASC` or `DESC`. **Security:** field names are not validated — always check against an allowlist before using in queries.
-
-**Example URL:** `GET /items?page=2&size=10&sort=name,asc`
-
-### CursorPage
-
-Generic cursor-paginated response wrapper. Cursor tokens are encoded through a `CursorCodec` before being returned to clients.
-
-```java
-@JsonInclude(JsonInclude.Include.NON_NULL)
-public record CursorPage<T>(
-    List<T> items,
-    @Nullable String nextCursor,
-    @Nullable String previousCursor
-) {}
-```
-
-| Field | Description |
-|-------|-------------|
-| `items` | Items on this page (defensively copied) |
-| `nextCursor` | Encoded cursor for the next page; `null` when this is the last page |
-| `previousCursor` | Encoded cursor for the previous page; `null` when this is the first page |
-
-Helper methods `hasMore()` and `hasPrevious()` are annotated `@JsonIgnore` — clients detect navigation from cursor field presence.
-
-**Factory methods:**
-
-```java
-// With codec — preferred
-CursorPage.of(List<T> items, String nextRawCursor, String prevRawCursor, CursorCodec codec)
-
-// Without codec (uses PlainCursorCodec)
-CursorPage.of(List<T> items, String nextRawCursor, String prevRawCursor)
-```
-
-`nextRawCursor` and `prevRawCursor` are raw backend tokens — the factory encodes them before returning to the client.
-
-**JSON shape:**
-
-```json
-{
-  "items": [...],
-  "nextCursor": "eyJpZCI6NDIsInRzIjoiMjAyNC0wMS0xNSJ9"
-}
-```
-
-(`previousCursor` is omitted when `null`.)
-
-### CursorPageRequest
-
-`@RequestParams` record that binds cursor pagination query parameters from the HTTP request.
-
-**Query parameters:** `cursor` (encoded cursor token), `pageSize` (page size)
-
-```java
-@RequestParams
-public record CursorPageRequest(
-    @QueryParam("cursor") @Nullable String cursor,
-    @QueryParam("pageSize") @Nullable Integer pageSize
-) {}
-```
-
-| Method | Signature | Description |
-|--------|-----------|-------------|
-| `decodeCursor(codec)` | `Optional<String> decodeCursor(CursorCodec codec)` | Decodes cursor with the given codec; `Optional.empty()` for first page |
-| `decodeCursor()` | `Optional<String> decodeCursor()` | Convenience; uses `PlainCursorCodec` |
-| `pageSize(defaultValue)` | `int pageSize(int defaultValue)` | Page size or default; clamped to `>= 1` |
-| `pageSize(defaultValue, maxValue)` | `int pageSize(int defaultValue, int maxValue)` | Page size clamped to `[1, maxValue]` |
-
-**Example usage:**
-
-```java
-@GET
-@Path("/items")
-@Operation(operationId = "listItems")
-public Future<CursorPage<Item>> listItems(CursorPageRequest pageRequest) {
-    int size = pageRequest.pageSize(20, 100);
-    PageCursor cursor = pageRequest.decodeCursor(cursorCodec)
-        .map(raw -> PageCursor.fromToken(raw).withPageSize(size))
-        .orElseGet(() -> PageCursor.first(size));
-    return repository.findItems(cursor)
-        .map(result -> CursorPage.of(
-            result.items(), result.nextCursorToken(), result.previousCursorToken(), cursorCodec));
-}
-```
-
----
-
-## Cursor Codec SPI
-
-### CursorCodec
-
-SPI for encoding and decoding cursor tokens. Implementations transform raw backend cursor strings to opaque, URL-safe tokens for clients.
-
-```java
-public interface CursorCodec {
-    String encode(String rawCursor);
-    String decode(String opaqueToken) throws InvalidCursorException;
-}
-```
-
-**URL-safety contract:** `encode()` SHOULD return only Base64URL characters (`A-Za-z0-9_-`, no padding `=`) so tokens are safe in query parameters and `Link` headers without percent-encoding. `PlainCursorCodec` is an intentional exception.
-
-**No default Dagger binding is provided.** Applications that want DI-managed codec injection add their own `@Provides CursorCodec`. Applications that don't need DI use the convenience no-arg overloads on `CursorPageRequest` and `CursorPage`.
-
-### PlainCursorCodec
-
-Pass-through implementation — `encode()` and `decode()` return the token unchanged. Suitable for development or internal services where token integrity is enforced at the network layer.
-
-```java
-// Use the singleton, not new PlainCursorCodec()
-PlainCursorCodec.INSTANCE
-```
-
-**Warning:** provides no tamper protection. A client can craft arbitrary cursor tokens.
-
-### InvalidCursorException
-
-Thrown by `CursorCodec.decode()` when a token is malformed, tampered with, or expired. Extends `ValidationException` (from `core.exception`), which maps to HTTP 400 via `DefaultExceptionMapper`.
-
-Override the status by registering a custom `ExceptionMapper<InvalidCursorException>` (e.g., map to 404 if a missing cursor is semantically "not found").
-
-### Implementing a Custom Codec
-
-```java
-public class HmacCursorCodec implements CursorCodec {
-    private final byte[] secret;
-
-    public HmacCursorCodec(byte[] secret) {
-        this.secret = secret;
+@Path("/items/{id}")
+public Response getItem(@PathParam("id") String id, RequestPreconditions preconditions) {
+    Item item = repository.find(id);
+    Response notModified = preconditions.evaluate(new EntityTag(item.version()), item.updatedAt());
+    if (notModified != null) {
+        return notModified;                       // 304 or 412, already built
     }
-
-    @Override
-    public String encode(String rawCursor) {
-        String sig = hmacBase64Url(rawCursor, secret);
-        return Base64.getUrlEncoder().withoutPadding()
-            .encodeToString(rawCursor.getBytes(StandardCharsets.UTF_8)) + "." + sig;
-    }
-
-    @Override
-    public String decode(String opaqueToken) throws InvalidCursorException {
-        int dot = opaqueToken.lastIndexOf('.');
-        if (dot < 0) throw new InvalidCursorException("Invalid cursor format");
-        String encoded = opaqueToken.substring(0, dot);
-        String sig = opaqueToken.substring(dot + 1);
-        String raw = new String(Base64.getUrlDecoder().decode(encoded), StandardCharsets.UTF_8);
-        if (!hmacBase64Url(raw, secret).equals(sig)) {
-            throw new InvalidCursorException("Cursor signature mismatch");
-        }
-        return raw;
-    }
+    return Response.ok(item).tag(new EntityTag(item.version())).build();
 }
 ```
 
-Register with Dagger:
+`evaluate(...)` returns `null` when the request should proceed, a 304 for a satisfied
+`If-None-Match`/`If-Modified-Since` on GET or HEAD, and a 412 otherwise. `evaluate(Response)` reads
+the `ETag` and `Last-Modified` off an already-built response.
 
-```java
-@Provides @Singleton
-CursorCodec cursorCodec(@VertxConfig JsonObject config) {
-    byte[] secret = config.getString("cursor.secret").getBytes(StandardCharsets.UTF_8);
-    return new HmacCursorCodec(secret);
-}
-```
+### `@RequestParams`
 
----
-
-## @RequestParams Annotation
-
-`@RequestParams` marks a class or record as a composite request parameter object. When a method parameter's type carries this annotation, the framework automatically populates it from the request — no `@BeanParam` on the method parameter is required.
-
-```java
-@Target(ElementType.TYPE)
-@Retention(RetentionPolicy.RUNTIME)
-@Documented
-public @interface RequestParams {}
-```
-
-This is the **class-level** equivalent of JAX-RS `@BeanParam` (which targets method parameters). Fields may carry `@QueryParam`, `@PathParam`, `@HeaderParam`, `@CookieParam`, and `@FormParam`.
-
-**Creating a custom `@RequestParams` record:**
+Class-level equivalent of JAX-RS `@BeanParam`. A method parameter whose *type* carries
+`@RequestParams` is populated from the request with no annotation on the parameter itself. Fields may
+carry `@QueryParam`, `@PathParam`, `@HeaderParam`, `@CookieParam`, `@FormParam`, and `@DefaultValue`.
 
 ```java
 @RequestParams
@@ -957,550 +290,348 @@ This is the **class-level** equivalent of JAX-RS `@BeanParam` (which targets met
 public record ItemFilter(
         @QueryParam("status") @Nullable String status,
         @QueryParam("tenantId") @Nullable String tenantId,
-        @HeaderParam("X-Request-Source") @Nullable String requestSource) {
+        @HeaderParam("X-Request-Source") @Nullable String requestSource) {}
 
-    /** Returns true when a status filter is applied. */
-    public boolean hasStatus() {
-        return status != null && !status.isBlank();
-    }
-}
-
-// Resource method — no @BeanParam needed:
 @GET
 @Path("/items")
-@Operation(operationId = "listItems")
-public Future<List<Item>> listItems(ItemFilter filter) {
-    // filter.status(), filter.tenantId(), filter.requestSource() are populated
-    return itemService.findAll(filter);
-}
+public Future<List<Item>> listItems(ItemFilter filter) { … }
 ```
 
-`@DefaultValue` on individual fields is supported (see `dev.vertique:vertique-rest-jaxrs` for the full detection order).
+### `@FilePart`
 
----
-
-## @FilePart Annotation
-
-`@FilePart` declares multipart file constraints on a resource parameter:
+Declares multipart upload constraints on a resource parameter.
 
 ```java
-@Target(ElementType.PARAMETER)
-@Retention(RetentionPolicy.RUNTIME)
-@Documented
 public @interface FilePart {
-    String[] allowedTypes() default {};
-    long maxSizeBytes() default -1;
+    String[] allowedTypes() default {};   // exact "type/subtype" or whole-subtype wildcard "image/*"
+    long maxSizeBytes() default -1;       // -1 = unconstrained; otherwise must be positive
 }
 ```
 
-The supported shapes are named `@FormParam FileUpload`, named
-`@FormParam List<FileUpload>`, and unannotated aggregate `List<FileUpload>`. `EntityPart` is
-intentionally excluded because it may represent a text field that the physical-upload gate cannot
-observe. Invalid placement, an invalid allowed-type grammar, a size other than `-1` or positive, and
-overlapping constrained declarations fail route startup.
+Supported shapes are a named `@FormParam FileUpload`, a named `@FormParam List<FileUpload>`, and an
+unannotated aggregate `List<FileUpload>`. `EntityPart` is excluded because a part may be a text field
+the upload gate cannot observe. Invalid placement, invalid allowed-type grammar, a size other than
+`-1` or positive, and overlapping constrained declarations all fail route startup.
 
-Allowed media types are exact `type/subtype` tokens with an optional whole-subtype wildcard such as
-`image/*`; they are lowercase-canonicalized in `FilePartDescriptor`. Size enforcement is post-spool:
-`HttpConfig.maxBodySize` is the ingress limit, while `maxSizeBytes` is checked after Vert.x writes the
-part under `HttpConfig.uploadsDirectory`. See `dev.vertique:vertique-rest-jaxrs`
-for runtime matching, errors, and temporary-file lifetime.
+Size enforcement is **post-spool**: `http.maxBodySize` is the ingress limit that returns 413, while
+`maxSizeBytes` is checked after Vert.x has written the part under `http.uploadsDirectory`.
 
----
+### Pagination
 
-## Server-Sent Events (SSE)
+Two response envelopes and their matching `@RequestParams` records.
 
-The `rest.core.sse` sub-package provides the public API for Server-Sent Events endpoints. The runtime implementation lives in `rest-jaxrs`.
-
-### SseEvent
-
-Immutable SSE event with a fluent builder. All fields are optional (null fields are omitted from the wire format).
+| | Offset (`OffsetPage`) | Cursor (`CursorPage`) |
+|---|---|---|
+| Navigation | random access by page number | sequential (next/previous) |
+| Total count | exposed (`totalItems`, `totalPages`) | not exposed |
+| Ordering stability | drifts when rows are inserted or deleted | stable |
+| Cost at depth | `OFFSET N` degrades | constant, via keyset pagination |
+| Best for | admin UIs, page-numbered lists | feeds, timelines, high-volume APIs |
 
 ```java
-public final class SseEvent {
-    @Nullable String id();       // event ID (sets Last-Event-ID on client)
-    @Nullable String event();    // event type name
-    @Nullable String data();     // event data payload
-    @Nullable String comment();  // SSE comment (lines starting with ":")
-    @Nullable Long   retryMs();  // client reconnect interval hint (ms)
+public record OffsetPage<T>(
+        List<T> items, long totalItems, int totalPages, int page, int pageSize,
+        boolean first, boolean last) {
 
-    public static Builder builder() { ... }
+    public static <T> OffsetPage<T> of(List<T> items, long totalItems, int page, int pageSize) { … }
+}
 
-    public static class Builder {
-        public Builder id(String id) { ... }
-        public Builder event(String event) { ... }
-        public Builder data(String data) { ... }
-        public Builder comment(String comment) { ... }
-        public Builder retryMs(long retryMs) { ... }
-        public SseEvent build() { ... }
-    }
+public record CursorPage<T>(List<T> items, @Nullable String nextCursor, @Nullable String previousCursor) {
+
+    public boolean hasMore();        // @JsonIgnore
+    public boolean hasPrevious();    // @JsonIgnore
+
+    public static <T> CursorPage<T> of(
+            List<T> items, @Nullable String nextRawCursor, @Nullable String prevRawCursor, CursorCodec codec) { … }
 }
 ```
 
-**Convenience factories:**
+`OffsetPageRequest` reads `page`, `size`, and `sort`; `CursorPageRequest` reads `cursor` and
+`pageSize`. Both clamp defensively — `page(int)` floors at `0`, `pageSize(int)` floors at `1`, and
+`pageSize(int, int)` additionally caps at the supplied maximum. `OffsetPageRequest.sortOrders()`
+parses `sort=name,desc,createdAt` into `SortOrder(field, ASC|DESC)` entries, where a bare `asc`/`desc`
+token applies to the preceding field.
 
 ```java
-// Named event
-SseEvent.builder().event("job.completed").data("{\"jobId\":\"abc\"}").build()
-
-// Data-only (unnamed event)
-SseEvent.builder().data("ping").build()
-
-// Keepalive comment
-SseEvent.builder().comment("keepalive").build()
-```
-
-### SseChannel
-
-Per-request bridge between async event producers and the SSE response stream. Obtained from `SseChannelFactory`; the resource method returns `channel.stream()` to the framework.
-
-```java
-public interface SseChannel {
-    /** Send an event to the client. Fails the stream on buffer overflow (policy FAIL). */
-    Future<Void> send(SseEvent event);
-
-    /** Complete the stream normally — client will reconnect unless connection is closed. */
-    void complete();
-
-    /** Fail the stream with the given cause. */
-    void fail(Throwable cause);
-
-    /** Returns the ReadStream<SseEvent> to return from the resource method. */
-    ReadStream<SseEvent> stream();
+@GET
+@Path("/items")
+public Future<CursorPage<Item>> listItems(CursorPageRequest request) {
+    int size = request.pageSize(20, 100);
+    String after = request.decodeCursor(cursorCodec).orElse(null);
+    return repository.findAfter(after, size)
+            .map(rows -> CursorPage.of(rows.items(), rows.nextKey(), rows.previousKey(), cursorCodec));
 }
 ```
 
-`send()` is thread-safe and may be called from any thread (Vert.x or virtual). The channel buffers events up to `defaultBufferSize` (configurable); behaviour on overflow is controlled by `BufferOverflowPolicy`.
-
-### SseChannelFactory
-
-Injectable factory for creating `SseChannel` instances. Injected into resource classes via Dagger.
+Encode cursors with `HmacCursorCodec` on any endpoint whose cursor encodes internal keys — it signs
+the token, supports key rotation by id, and enforces an optional TTL. `PlainCursorCodec.INSTANCE` is
+the pass-through default used by the codec-less `CursorPage.of`/`decodeCursor` overloads.
 
 ```java
-public interface SseChannelFactory {
-    /** Create a channel with default config from JaxRsConfig.sse. */
-    SseChannel create();
-
-    /** Create a channel with per-request config overrides. */
-    SseChannel create(SseChannelOptions options);
-}
+CursorCodec codec = new HmacCursorCodec("2026-01", secret, Duration.ofHours(1));
 ```
 
-### SseChannelOptions
+Each `HmacCursorCodec.Key` id must match `[A-Za-z0-9_-]+`, and each secret must be at least 32 bytes
+UTF-8 encoded. The first key in the list signs; every key can verify. A tampered, unknown-key, or
+expired token raises `InvalidCursorException`.
 
-Per-channel buffer configuration overrides. All fields are optional — absent fields fall back to the global `SseConfig` defaults.
+### Server-Sent Events
 
-```java
-public record SseChannelOptions(
-    @Nullable Integer bufferSize,
-    @Nullable BufferOverflowPolicy overflowPolicy
-) {
-    public static SseChannelOptions withBufferSize(int size) { ... }
-    public static SseChannelOptions withPolicy(BufferOverflowPolicy policy) { ... }
-}
-```
-
-### BufferOverflowPolicy
-
-Controls the channel's behaviour when the internal event buffer is full:
-
-```java
-public enum BufferOverflowPolicy {
-    /** Fail the send() future with an exception. The stream is NOT terminated. */
-    FAIL,
-    /** Silently drop the oldest buffered event to make room for the new one. */
-    DROP_OLDEST
-}
-```
-
-### SseConfig
-
-Configuration for SSE channels. Read from the `sse` sub-key of `JaxRsConfig` (i.e., `jaxrs.sse.*` in the application config file).
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `keepAliveEnabled` | `boolean` | `true` | Emit periodic `:keepalive` comments |
-| `keepAliveIntervalMs` | `long` | `15000` | Interval between keepalive comments (ms) |
-| `defaultBufferSize` | `int` | `256` | Default per-channel event buffer capacity |
-| `defaultOverflowPolicy` | `BufferOverflowPolicy` | `FAIL` | Default overflow behaviour |
-
-**Example resource:**
+`SseChannelFactory` is injectable; the resource method returns `channel.stream()`. The framework
+detects a `ReadStream<SseEvent>` return type at startup and installs the SSE encoder — no extra
+configuration.
 
 ```java
 @Path("/jobs")
 public class JobResource {
 
-    private final JobService jobService;
-    @Inject SseChannelFactory sseChannels;
+    private final JobService jobs;
+    private final SseChannelFactory channels;
 
     @Inject
-    public JobResource(JobService jobService) {
-        this.jobService = jobService;
+    public JobResource(JobService jobs, SseChannelFactory channels) {
+        this.jobs = jobs;
+        this.channels = channels;
     }
 
     @GET
     @Path("/{jobId}/events")
     @Produces("text/event-stream")
-    @Operation(operationId = "streamJobEvents")
-    public ReadStream<SseEvent> streamJobEvents(
-            @PathParam("jobId") String jobId,
-            @HeaderParam("Last-Event-ID") @Nullable String lastEventId) {
-
-        SseChannel channel = sseChannels.create();
-
-        jobService.subscribe(jobId, event -> {
-            channel.send(SseEvent.builder()
-                .id(event.sequenceId())
-                .event(event.type())
-                .data(Json.encode(event.payload()))
-                .build());
-            if (event.isFinal()) {
+    public ReadStream<SseEvent> streamJobEvents(@PathParam("jobId") String jobId) {
+        SseChannel channel = channels.create();
+        channel.onClose(() -> jobs.unsubscribe(jobId));
+        jobs.subscribe(jobId, update -> {
+            channel.send(SseEvent.builder().id(update.sequence()).event(update.type()).data(update).build());
+            if (update.isFinal()) {
                 channel.complete();
             }
         });
-
         return channel.stream();
     }
 }
 ```
 
-The framework detects `ReadStream<SseEvent>` return types at startup and registers the `SseBodyEncoder` automatically. No additional configuration is required.
-
----
-
-## Param Conversion (`rest.core.convert`)
-
-Framework-native, symmetric parameter-conversion stack shared by the JAX-RS inbound dispatch path (`rest-jaxrs`) and the REST-client outbound serialization path (`rest-client`). One mechanism converts `@PathParam`/`@QueryParam`/`@HeaderParam`/`@CookieParam`/`@FormParam` values both directions — `String` parsed into a typed value on the way in, and a typed value serialized back to `String` on the way out.
-
-### ParamConverter\<T\>
-
-Per-type SPI. Implementations must be stateless and thread-safe — a single instance is shared across all requests for its target type.
-
 ```java
-public interface ParamConverter<T> {
-    T fromString(String value);
-    String toString(T value);
+public interface SseChannel {
+    ReadStream<SseEvent> stream();
+    Future<Void> send(SseEvent event);
+    Future<Void> send(Object data);
+    Future<Void> send(String event, Object data);
+    void complete();
+    void fail(Throwable cause);
+    boolean isClosed();
+    SseChannel onClose(Runnable handler);
 }
 ```
 
-On a parse failure, an implementation throws any raw `RuntimeException` (e.g. `NumberFormatException`, `DateTimeParseException`, `IllegalArgumentException`). Implementations must **not** construct a `ParamConversionException` themselves — `ParamConversionResolver` is the sole place that wraps a raw failure with parameter context.
+`SseEvent` has five optional properties — `id`, `event`, `data`, `comment`, `retryMs` — built with
+`SseEvent.builder()`, or `SseEvent.of(Object data)` / `SseEvent.comment(String text)`. `data` is an
+arbitrary object serialized by the SSE encoder, not a pre-rendered string.
 
-### ParamConverterBinding\<T\>
+`create(SseChannelOptions)` overrides the buffer for one channel;
+`new SseChannelOptions(int bufferSize, BufferOverflowPolicy overflowPolicy)` requires
+`bufferSize >= 1` and a non-null policy, and `SseChannelOptions.defaults()` returns `(256, FAIL)`.
+`BufferOverflowPolicy.FAIL` fails the `send(...)` future when the buffer is full;
+`DROP_OLDEST` evicts the oldest buffered event instead.
 
-Keyed contribution wiring a `ParamConverter` to the exact target type it handles, contributed via Dagger `@IntoSet`.
+### `MediaType` and `AcceptNegotiator`
+
+`MediaType` is an immutable RFC 9110 media type — type, subtype, parameters (excluding `q`), and
+quality factor, all lowercased. `MediaType.parse(String)` (aliased as `valueOf`) returns `null` for
+`null`, blank, or malformed input rather than throwing. `isCompatible(MediaType)` is wildcard-aware
+and ignores parameters; `specificity()` returns 0 for `*/*`, 1 for `type/*`, 2 for `type/subtype`, and
+3 when parameters are present. Equality ignores the quality factor.
+
+`AcceptNegotiator.negotiate(String acceptHeader, List<String> serverTypes)` returns the best matching
+server type as `"type/subtype"`, or `null` when nothing matches — the signal a caller turns into a
+406. A `null`/blank Accept header yields the first server type; an empty `serverTypes` yields `null`.
+`parseAcceptHeader(String)` returns the header sorted by q-value then specificity, both descending,
+capped at 50 entries.
+
+### `MdcKeys`
+
+Constants for the MDC keys framework middlewares emit. Use them instead of literals so log pipelines
+do not drift.
+
+| Constant | Key | Emitted by |
+|---|---|---|
+| `REQUEST_ID` | `requestId` | `CorrelationIngressMiddleware` |
+| `METHOD` | `method` | `ContextualLoggingMiddleware` |
+| `PATH` | `path` | `ContextualLoggingMiddleware` |
+| `USER_ID` | `userId` | identity resolution in `vertique-rest-security` |
+| `CLIENT_ID` | `clientId` | identity resolution in `vertique-rest-security` |
+| `AUTH_METHOD` | `authMethod` | identity resolution in `vertique-rest-security` |
+
+### `@Authorized`
+
+Scope-based authorization, complementing JAX-RS `@RolesAllowed`. Valid on a method or a type;
+method-level overrides class-level.
 
 ```java
-public record ParamConverterBinding<T>(Class<T> targetType, ParamConverter<T> converter) {}
-```
-
-An application binding for a given type overrides the framework built-in for that same type.
-
-### ParamConverterRegistry
-
-Native, type-keyed, **context-free** lookup table. Built from the framework built-ins overlaid with the application's `ParamConverterBinding` contributions.
-
-```java
-public final class ParamConverterRegistry {
-    public static ParamConverterRegistry of(Set<ParamConverterBinding<?>> appBindings) { ... }
-    public Optional<ParamConverter<?>> find(Class<?> targetType) { ... }
+public @interface Authorized {
+    String[] scopes() default {};   // empty = authentication only
+    boolean matchAll() default true;
 }
 ```
 
-**Resolution order for `find(Class<?>)`:**
+**`matchAll` defaults to `true`** — the principal must hold *every* listed scope. Set
+`matchAll = false` for any-of semantics. Combining `@Authorized` with `@RolesAllowed` is AND: both
+must pass.
 
-1. Exact-class lookup — application bindings override built-ins for the same target type.
-2. If `targetType.isEnum()` and step 1 missed, synthesize an `EnumParamConverter` on demand (via `computeIfAbsent`) and promote it into the map.
-3. Otherwise `Optional.empty()`.
+The resolved shape is a `SecurityPolicy` — a sealed interface with `None`, `PermitAll`, `DenyAll`,
+`AuthenticatedOnly`, and `Constrained(requiredRoles, requiredScopes, requireAllScopes)` — reachable
+from `OperationRegistrationContext.securityPolicy()` and
+`RestOperationDescriptor.effectiveSecurityPolicy()`.
 
-Two application bindings for the same target type throw `IllegalStateException` at registry construction (`ParamConverterRegistry.of(...)`).
+### `JaxRsResources`
 
-### ParamConversionResolver
-
-The full conversion chain plus error policy, shared by `ParameterExtractor` (inbound) and `RestClientRequestFactory` / `DefaultRestClientDispatcher` (outbound).
+Dagger qualifier for the `Set<Object>` multibinding of JAX-RS resource instances. Generated resource
+registration contributes into it; a hand-wired resource uses it directly.
 
 ```java
-public final class ParamConversionResolver {
-    public static ParamConversionResolver of(ParamConverterRegistry registry, Set<ParamConverterProvider> providers) { ... }
-    public static ParamConversionResolver builtins() { ... }
-
-    public Object fromString(String value, ConversionContext ctx) { ... }
-    public String toString(Object value, ConversionContext ctx) { ... }
-    public boolean canResolve(ConversionContext ctx) { ... }
+@Provides
+@IntoSet
+@JaxRsResources
+static Object itemResource(ItemResource resource) {
+    return resource;
 }
 ```
-
-**Resolution order:** native registry first; only when the JAX-RS `Set<ParamConverterProvider>` is non-empty are the providers consulted (in `@Priority`-ascending order — a provider with no `@Priority` sorts last via `Integer.MAX_VALUE`; the first provider returning a non-null converter wins); otherwise `ParamConverterNotFoundException`. When the provider set is empty, `ConversionContext.annotationsLazy()` is never invoked.
-
-`ParamConversionResolver` is the **sole context-attacher**: every converter — built-in, enum-synthesized, or JAX-RS-provider-backed — throws a raw `RuntimeException` on parse failure, and the resolver wraps it into a `ParamConversionException` carrying the real parameter name, source, and target type. The raw value is never included.
-
-`canResolve(ConversionContext)` walks the full chain (not just the registry) and is used for fail-fast startup/build validation, so a provider-backed type is not wrongly rejected.
-
-`ParamConversionResolver.builtins()` is a convenience factory backed solely by the built-in converters — no app `ParamConverterBinding`s, no `ParamConverterProvider`s. Used by the standalone `RestClientBuilder.create(vertx)` path as the default resolver.
-
-### ConversionContext
-
-Per-parameter context threaded through the conversion chain.
-
-```java
-public record ConversionContext(
-    String paramName,
-    ParamSource source,
-    Class<?> rawType,
-    @Nullable Type genericType,
-    @Nullable Class<?> componentType,
-    Supplier<Annotation[]> annotationsLazy
-) {}
-```
-
-`annotationsLazy` is invoked only when at least one `ParamConverterProvider` is registered — the native registry path never consults it. Callers on a hot path should cache the resulting `ConversionContext` rather than rebuild it per call.
-
-### ParamSource
-
-```java
-public enum ParamSource { PATH, QUERY, HEADER, COOKIE, FORM }
-```
-
-A deliberately narrow **conversion-source** enum covering only the string-ish transport kinds conversion applies to. It is not a replacement for the richer runtime parameter-source enums (`ResourceMethodMeta.ParamMeta.ParamSource` in `rest-jaxrs`, `ClientParamMeta`'s equivalent in `rest-client`), which also cover `BODY`, `BEAN_PARAM`, `CONTEXT`, file uploads, etc. — those non-convertible sources never produce a `ConversionContext`.
-
-### Built-in converters
-
-`BuiltinParamConverters` (package-private) registers `String`, `boolean`/`Boolean`, `byte`/`Byte`, `short`/`Short`, `int`/`Integer`, `long`/`Long`, `float`/`Float`, `double`/`Double`, `char`/`Character`, `BigInteger`, `BigDecimal`, `UUID`, `URI`, and the `java.time` family: `Instant`, `LocalDate`, `LocalTime`, `LocalDateTime`, `OffsetDateTime`, `OffsetTime`, `ZonedDateTime`, `Duration`, `Period`, `Year`, `YearMonth`, `MonthDay`, `ZoneId`, `ZoneOffset`. Both the primitive and boxed `Class` keys are registered so an exact-class lookup succeeds for either. Each parses via the type's canonical `parse`/`valueOf`/constructor and serializes via `Object#toString()` (the ISO/canonical form for every built-in type). Enum conversion is not a map entry — it is handled generically by `ParamConverterRegistry`'s `Class.isEnum()` synthesis rule.
-
-### EnumParamConverter\<E\>
-
-Generic, case-sensitive converter for an arbitrary enum type, synthesized on demand by `ParamConverterRegistry` for any `Class.isEnum()` target with no exact-class binding.
-
-```java
-final class EnumParamConverter<E extends Enum<E>> implements ParamConverter<E> {
-    public E fromString(String value) { return Enum.valueOf(enumType, value); }  // exact constant-name match
-    public String toString(E value) { return value.name(); }                    // ignores overridden toString()
-}
-```
-
-### Exception model
-
-| Exception | Root | HTTP | Thrown when |
-|---|---|---|---|
-| `ParamConversionException` | `ValidationException` | 400 | A resolved converter (native, enum-synthesized, or JAX-RS-provider) cannot parse/serialize the value |
-| `ParamConverterNotFoundException` | `TechnicalException` | 500 | No converter or provider can satisfy the declared target type — a configuration gap that startup/build validation should have rejected |
-
-Both carry `paramName()`, `source()` (`ParamSource`), and `targetType()` for diagnostics; neither captures the raw value. Both are overridable by an application `ExceptionMapper`.
-
-### Invariants & Gotchas
-
-- `ParamConversionResolver` is the **only** place that builds a `ParamConversionException` — converters must throw raw `RuntimeException`s, never construct the wrapper themselves.
-- A duplicate `ParamConverterBinding` for the same target type fails fast at `ParamConverterRegistry.of(...)` construction (`IllegalStateException`), not at first use.
-- `ConversionContext.annotationsLazy()` is zero-allocation only when the backing `ParameterMetadata` closes over an already-materialized array (codegen-emitted literal); the reflective `ReflectiveParameterMetadata` variant re-clones the array on every invocation — cache the `ConversionContext` per parameter on hot paths rather than rebuild it.
-- Use `resolver.canResolve(ctx)` — never `registry.find(...)` alone — for fail-fast validation, so a provider-backed type isn't wrongly rejected at startup/build.
-- `ParamSource` is intentionally narrow; do not extend it to cover non-convertible sources (body, bean-param, context, uploads) — those keep using the richer per-module parameter-source enums.
 
 ---
 
 ## Extension Points
 
-All extension points are contributed via Dagger multibinding (`@IntoSet`) and declared as `@Multibinds` empty sets in `RestCoreModule`.
+All sets below are declared as `@Multibinds` in `RestCoreModule`, so contributing is always
+`@Provides @IntoSet` — no set needs to be created first, and an application that contributes nothing
+still builds.
 
-### RestContextResolver
+### `RouterMount`
 
-SPI for resolving `@Context`-injectable parameters during REST dispatch. Implementations answer one question: "can I supply a value of this type for this request?" The first resolver in the OrderedExtension-sorted chain (phase → priority → orderKey) that returns a non-empty `Optional` wins.
+Provides a sub-router mounted at a path prefix.
 
 ```java
-public interface RestContextResolver extends OrderedExtension {
-    /** Returns a value of {@code type} for this request, or {@code Optional.empty()} if unhandled. */
-    <T> Optional<T> resolve(Class<T> type, RoutingContext ctx);
+public interface RouterMount extends OrderedExtension {
+    default String mountPath() { return "/*"; }
+    Future<Router> createRouter(Vertx vertx);
+    default MountMeta meta() { return new MountMeta(getClass().getName(), mountPath(), null, Set.of()); }
 }
 ```
 
-**Contract (FR-REST-172):** implementations MUST NOT create, mutate, enrich, replace, or propagate context as a side effect of `resolve`. The method is a pure read.
-
-**Registration via Dagger:**
-
-```java
-@Provides @IntoSet
-static RestContextResolver tenantContextResolver(TenantContextResolver resolver) {
-    return resolver;
-}
-```
-
-Application resolvers at the default priority `0` run before all framework built-ins (`RoutingContextResolver` at 100, `JaxRsSecurityContextResolver` at 110, `ContextHolderResolver` at 120) and may shadow them for the same type.
-
-#### Invariants & Gotchas
-
-- A resolver that returns `Optional.empty()` is skipped — it is not an error. Only `RestContextResolution.require(...)` treats absence as an error.
-- To supply a custom `ContextValue` subtype without writing a resolver, simply bind the value into `ContextHolder` before REST dispatch (via `SecurityRuntime.bindCurrent()` or `ContextHolder.bind()`). `ContextHolderResolver` finds it automatically.
-- Ordering follows the OrderedExtension contract (phase → priority → orderKey); the default `orderKey()` is the fully-qualified class name, so the chain order is deterministic across JVM restarts.
-
-### ParamConverter / ParamConverterBinding / ParamConverterProvider
-
-Two ways for an application to plug a custom parameter converter into the conversion stack described in [Param Conversion](#param-conversion-restcoreconvert):
-
-**Native converter** — implement `ParamConverter<T>` and contribute a `ParamConverterBinding<T>` keyed to the exact target type:
-
-```java
-@Provides @IntoSet
-static ParamConverterBinding<?> instantRangeConverter() {
-    return new ParamConverterBinding<>(InstantRange.class, new ParamConverter<InstantRange>() {
-        @Override public InstantRange fromString(String value) {
-            String[] parts = value.split("\\.\\.", 2);
-            return new InstantRange(Instant.parse(parts[0]), Instant.parse(parts[1]));
-        }
-        @Override public String toString(InstantRange value) {
-            return value.start() + ".." + value.end();
-        }
-    });
-}
-```
-
-**JAX-RS provider** — implement the standard `jakarta.ws.rs.ext.ParamConverterProvider` SPI and contribute it via `@IntoSet`; this path also receives `ConversionContext`'s lazily-resolved annotations:
-
-```java
-@Provides @IntoSet
-static ParamConverterProvider myProvider(MyParamConverterProvider provider) {
-    return provider;
-}
-```
-
-Both sets are declared as empty `@Multibinds` in `RestCoreModule`. The native registry is always consulted first; JAX-RS providers are consulted only when the contributed set is non-empty (see [Param Conversion](#param-conversion-restcoreconvert) for the full resolution order).
-
-`RestCoreModule` provides the `@Singleton ParamConverterRegistry` and `@Singleton ParamConversionResolver` built from these multibindings. Both `RestModule` (server, in `rest-jaxrs`) and `RestClientModule` (client, in `rest-client`) include `RestCoreModule`, so an application wiring both halves gets one shared conversion stack — a converter registered once applies identically to inbound JAX-RS parameter binding and outbound REST-client request serialization, with no duplicate-binding conflict.
-
-### RestRequestCompletionEmitter
-
-ROOT `Middleware` in `dev.vertique.rest.core.events` that emits exactly one `RestRequestCompletedEvent` per handled request from the response end handler. It publishes the routing-context keys that other modules read or write without depending on internal key names:
-
-| Constant | Key | Written by | Value |
-|----------|-----|------------|-------|
-| `KEY_OPERATION_ID` | `rest.events.operationId` | `OperationIdCaptureContributor` | the OpenAPI `operationId` of the matched operation |
-| `KEY_ROUTE_TEMPLATE` | `rest.events.routeTemplate` | `OperationIdCaptureContributor` | the OpenAPI path template of the matched operation |
-| `KEY_WIRE_FAILURE` | `vertique.rest.core.events.wireFailure` | the response pipeline in `rest-jaxrs` | the `Throwable` that failed the wire write **after** the response was handed off |
-
-`KEY_WIRE_FAILURE` marks a *post-handoff* wire failure — the status and headers (and possibly part of the body) already reached the client before the write failed, as with a truncated stream or a client abort. The marker is written at most once per request: **first writer wins**, so the first observed failure is the one preserved.
-
-Its absence means either that the write completed cleanly, or that the failure surfaced only on the **terminal `end()`** — a buffered `end(buffer)`, a null-entity `end()`, or a stream's final `end()` — and settled after the completion event had already been emitted. Vert.x runs the response end handlers inline before `end()` returns, so such a late-`end()` failure cannot be captured by the exactly-once event; the response pipeline always logs it at `WARN`, and event enrichment on that path is best-effort.
-
-### RestRequestCompletedEvent
-
-Immutable completion event for a terminal HTTP request outcome, emitted exactly once per handled
-request by `RestRequestCompletionEmitter`.
-
-| Field | Type | Description |
-|-------|------|--------------|
-| `startTime` / `endTime` | `Instant` | Request registration / completion observation instants |
-| `method` / `path` | `String` | HTTP method name and raw request path |
-| `routeTemplate` / `operationId` | `String` (nullable) | OpenAPI path template / operationId; `null` when the request did not reach operation dispatch |
-| `statusCode` | `int` | HTTP status code actually sent |
-| `failureCode` | `String` (nullable) | Low-cardinality pipeline-mapped failure classification (e.g. the exception's simple class name) |
-| `safeFailureMessage` | `String` (nullable) | Curated, bounded human-readable message — NEVER raw exception text or a stack trace |
-| `wireFailureCode` | `String` (nullable) | Low-cardinality **post-handoff** wire-failure classification (the failure cause's class simple name, or `ConnectionClosed` per the close-normalization predicate documented above); `null` when no wire failure was *observed* (see the late-`end()` carve-out below); orthogonal to `failureCode` — **a 200-status event carrying a non-null `wireFailureCode` is the truncated-response signature** |
-| `securityContextSnapshot` / `correlationContext` | snapshot types (nullable) | Immutable point-in-time snapshots, isolated from later rebind/mutation of the live holder-bound context |
-| `origin` | `Optional<RequestOrigin>` | Network-envelope origin; never `null` as an `Optional` |
-| `safeAttributes` | `Map<String, Object>` | Additional attributes contributed by the emitter or enrichment hooks; normalized to an unmodifiable copy, never `null` |
-
-`wireFailureCode` is populated by `RestRequestCompletionEmitter.emit()` from two inputs — the
-`KEY_WIRE_FAILURE` marker (streaming failures, wins when present) and a failed end-handler
-`AsyncResult` (client aborts) — normalized per the close-normalization predicate documented above.
-`vertique-micrometer-rest`'s `error.type` tag falls back to it when `failureCode` is absent.
-
-**Late-`end()` carve-out.** Neither input covers a write failure that surfaces *only* on the
-terminal `end()` — a buffered `end(buffer)`, a null-entity `end()`, or a stream's final `end()`.
-Vert.x runs the response end handlers inline before `end()` returns, so such a failure can settle
-after this event was emitted and is therefore not captured by `wireFailureCode`. It is always
-logged at `WARN` by the response pipeline in `vertique-rest-jaxrs`; only event enrichment is
-best-effort on that path.
-
-### RequestCompletionScope
-
-`Set<RequestCompletionScope>` multibinding (`@Multibinds` in `RestCoreModule`) for establishing one or more ambient scopes around the synchronous completion-listener dispatch loop inside `RestRequestCompletionEmitter`. Multiple integrations may contribute simultaneously.
-
-Integrations implement this interface to re-establish a thread- or context-local at completion time — the canonical use case is re-making the request's traced span current so that Micrometer exemplar samplers can attach a `trace_id` to timer samples recorded in `RestRequestCompletedListener` implementations.
-
-```java
-public interface RequestCompletionScope {
-    /**
-     * Opens a scope for the duration of completion-listener dispatch.
-     * Must be cheap, non-blocking, and should not throw.
-     * Return {@code () -> {}} when nothing to scope or on any internal error.
-     */
-    AutoCloseable open(RoutingContext rc);
-}
-```
-
-**Contract:**
-- `open(RoutingContext)` is called once before the first listener dispatches, in iteration order over the set. It must be cheap, non-blocking, and should not throw — if an `Exception` is thrown the emitter logs a WARN (class name only), skips that scope's bracket, and continues with the remaining scopes.
-- The returned `AutoCloseable`s are closed in **reverse open order** (last-opened closes first) in a `try/finally` after all listeners and capture coordinators have run. `close()` should also not throw — the emitter guards with its own `try/catch` (WARN + swallow) but good implementations do not rely on that guard.
-- Both `open` and `close` run on the Vert.x event loop — do not block.
-- `Error`s (e.g. `OutOfMemoryError`) from either `open` or `close` are not caught and propagate as fatal, consistent with standard event-loop practice.
-
-When the set is empty (no contributors installed), `RestRequestCompletionEmitter` behavior is identical to the pre-SPI baseline — no bracket overhead.
-
-**Registration (contribute via `@IntoSet`):**
+`mountPath()` must start with `/` and end with `/*`. `meta()` supplies the identity
+`MountCustomizer`s match on: `MountMeta(String mountId, String mountPath, @Nullable String openapiPath,
+Set<Class<?>> resourceTypes)`. Override it to publish a stable `mountId`.
 
 ```java
 @Provides
 @IntoSet
-static RequestCompletionScope myCompletionScope(MyCompletionScope scope) {
-    return scope;
-}
-```
-
-The built-in contributor is `ServerSpanCompletionScope` in `vertique-opentelemetry-rest`, contributed by `OpenTelemetryRestModule` via `@IntoSet`.
-
-#### Invariants & Gotchas
-
-- Failure isolation is per-scope: a throwing `open()` is caught by `RestRequestCompletionEmitter.openScopesQuietly()` (logs at WARN, skips that scope's bracket); remaining scopes are still opened. A throwing `close()` is caught by `closeScopesQuietly()` (WARN + swallow). Listeners always run regardless of scope failures.
-- Scopes are opened in iteration order and closed in **reverse** open order, so they bracket correctly (LIFO). Only successfully-opened closeables are tracked for close.
-- The entire set is opened once per request completion, not once per listener — the brackets wrap the full fan-out loop including capture coordinators.
-- `RoutingContext` is passed to `open()` so the implementation can retrieve previously stashed request-scoped values (e.g. a captured span stored under a routing-context key).
-
-### OperationHandlerContributor
-
-Per-operation handler contributor extension point. Allows modules to inject handlers into the Vert.x OpenAPI route handler chain for each operation, at a specific priority level.
-
-```java
-public interface OperationHandlerContributor extends OrderedExtension {
-    int priority();
-    void contribute(OperationRegistrationContext context);
-}
-```
-
-**Priority ranges:**
-- `0-99`: Pre-authentication handlers
-- `100-199`: Authorization handlers
-- `200-299`: Context bridging (e.g., SecurityContext)
-- `300+`: Post-context handlers
-
-```java
-public record OperationRegistrationContext(
-    String operationId,
-    SecurityPolicy securityPolicy,
-    Optional<ActionRef> requiredAction,
-    RestOperationDescriptor operation,
-    RouteRegistration route
-) {}
-```
-
-`RestOperationDescriptor` is the transport-neutral operation descriptor (identity, route template, security requirements). `RouteRegistration` is the per-operation handler registration surface — contributors call `route().addHandler(...)` to inject handlers. The context no longer exposes `OpenAPIRoute` or `RouterBuilder`.
-
-**Registration pattern:**
-
-```java
-@Provides @IntoSet
-OperationHandlerContributor myContributor() {
-    return new OperationHandlerContributor() {
-        @Override public int priority() { return 250; }
-
-        @Override public void contribute(OperationRegistrationContext ctx) {
-            ctx.route().addHandler(rc -> {
-                // custom per-operation logic
-                rc.next();
-            });
+static RouterMount staticAssets() {
+    return new RouterMount() {
+        @Override public String mountPath() { return "/assets/*"; }
+        @Override public int priority() { return 100; }
+        @Override public Future<Router> createRouter(Vertx vertx) {
+            Router router = Router.router(vertx);
+            router.route().handler(StaticHandler.create("webroot"));
+            return Future.succeededFuture(router);
         }
     };
 }
 ```
 
-### RouterLifecycleHook
+### `MountCustomizer`
 
-Router creation phase hooks, invoked during `JaxRsRouterMount.createRouter()`. The `beforeAuthSetup` and `afterAuthSetup` hooks receive a transport-neutral `RouterSetup` rather than the Vert.x OpenAPI `RouterBuilder`, so hooks remain decoupled from the validation strategy in use.
+Runs after a mount's router is created and before it is attached.
+
+```java
+public interface MountCustomizer extends OrderedExtension {
+    default boolean matches(MountMeta meta) { return true; }
+    void customize(Router mountRouter, MountMeta meta);
+}
+```
+
+```java
+@Provides
+@IntoSet
+static MountCustomizer apiRateLimit(RateLimitHandler handler) {
+    return new MountCustomizer() {
+        @Override public boolean matches(MountMeta meta) { return meta.mountId().startsWith("jaxrs:"); }
+        @Override public void customize(Router router, MountMeta meta) { router.route().handler(handler); }
+    };
+}
+```
+
+### `RouterCustomizer`
+
+Customizes the **main** router. `mountPhase()` partitions customizers into two groups run before and
+after all sub-routers are attached; within a group, ordering is the standard comparator.
+
+```java
+public interface RouterCustomizer extends OrderedExtension {
+    void customize(Router router);
+    default MountPhase mountPhase() { return MountPhase.BEFORE_MOUNTS; }
+
+    enum MountPhase { BEFORE_MOUNTS, AFTER_MOUNTS }
+}
+```
+
+```java
+@Provides
+@IntoSet
+static RouterCustomizer spaFallback() {
+    return new RouterCustomizer() {
+        @Override public MountPhase mountPhase() { return MountPhase.AFTER_MOUNTS; }
+        @Override public void customize(Router router) {
+            router.get("/*").handler(StaticHandler.create("webroot").setIndexPage("index.html"));
+        }
+    };
+}
+```
+
+Framework CORS is already contributed as a `BEFORE_MOUNTS` customizer driven by the `cors` config
+section — configure it rather than adding a second CORS handler.
+
+### `Middleware`
+
+```java
+public interface Middleware extends Handler<RoutingContext>, OrderedExtension {
+    @Override int priority();                                   // abstract: must be declared
+    default MiddlewareScope scope() { return MiddlewareScope.ROOT; }
+    default String path() { return "/*"; }
+}
+```
+
+```java
+@Singleton
+public final class TenantMiddleware implements Middleware {
+
+    @Inject
+    public TenantMiddleware() {}
+
+    @Override
+    public int priority() {
+        return 50;   // after identity resolution
+    }
+
+    @Override
+    public void handle(RoutingContext ctx) {
+        RequestContextLifecycle.Handle lifecycle = RequestContextLifecycle.fromRoutingContext(ctx);
+        lifecycle.bindMdc(Map.of("tenantId", ctx.request().getHeader("X-Tenant-Id")));
+        ctx.next();
+    }
+}
+```
+
+```java
+@Provides
+@IntoSet
+@Singleton
+static Middleware tenantMiddleware(TenantMiddleware middleware) {
+    return middleware;
+}
+```
+
+### `RouterLifecycleHook`
+
+Phase hooks around router construction. Every method has a no-op default.
 
 ```java
 public interface RouterLifecycleHook extends OrderedExtension {
@@ -1510,138 +641,178 @@ public interface RouterLifecycleHook extends OrderedExtension {
 }
 ```
 
-`RouterSetup` is a transport-neutral facade over the underlying router that exposes configuration operations without coupling the hook to a specific validation or routing backend. Injected via `Set<RouterLifecycleHook>` multibinding, sorted in OrderedExtension order (phase → priority → orderKey).
+`RouterSetup` exposes `router()` and `security()` (a `SecuritySchemeRegistry`).
 
-### OperationInterceptor
+### `OperationHandlerContributor`
 
-Per-request phase interceptors, chained via Future composition:
+Appends a handler to one operation's chain during route registration.
 
 ```java
-public interface OperationInterceptor extends OrderedExtension {
-    default Future<Void> beforeOperation(OperationContext ctx) {
-        return Future.succeededFuture();
-    }
-    default <T> Future<T> afterOperation(OperationContext ctx, T result) {
-        return Future.succeededFuture(result);
-    }
-    default <T> Future<T> recoverOperation(OperationContext ctx, Throwable cause) {
-        return Future.failedFuture(cause);
-    }
+public interface OperationHandlerContributor extends OrderedExtension {
+    @Override int priority();                       // abstract: must be declared
+    void contribute(OperationRegistrationContext context);
 }
 ```
 
-`OperationContext` carries `operationId`, `RoutingContext`, and `ResourceMethodMeta`. Contributed via `Set<OperationInterceptor>` Dagger multibinding.
-
-### ErrorInterceptor
-
-Error mapping phase interceptors, sorted in OrderedExtension order (phase → priority → orderKey):
-
 ```java
-public interface ErrorInterceptor extends OrderedExtension {
-    default Throwable beforeMapping(RoutingContext rc, Throwable throwable) { return throwable; }
-    default Response afterMapping(RoutingContext rc, Response response) { return response; }
+@Provides
+@IntoSet
+static OperationHandlerContributor quotaGate(QuotaService quotas) {
+    return new OperationHandlerContributor() {
+        @Override public int priority() { return 200; }
+        @Override public void contribute(OperationRegistrationContext context) {
+            String operationId = context.operationId();
+            context.route().addHandler(rc -> {
+                if (quotas.allows(operationId)) {
+                    rc.next();
+                } else {
+                    rc.fail(429);
+                }
+            });
+        }
+    };
 }
 ```
 
-`afterMapping` takes and returns `jakarta.ws.rs.core.Response`. Contributed via `Set<ErrorInterceptor>` Dagger multibinding.
+Framework contributors occupy these priorities; choose a band that does not collide, and place any
+contributor that reads an authenticated identity above 100:
 
-### RequestInterceptor
+| Priority | Contributor | Module |
+|---:|---|---|
+| 40 | action-gate authentication | `vertique-rest-security` |
+| 50 | JWT claims validation | `vertique-rest-auth-jwt` |
+| 80 | identity resolution | `vertique-rest-security` |
+| 100 | authorization | `vertique-rest-security` |
+| 350 | operation-id capture | `vertique-rest-core` |
+| 360 | server-span enrichment | `vertique-opentelemetry-rest` |
 
-Interceptor for HTTP request/response filtering. Four hook points, all with default no-op implementations. Sorted in OrderedExtension order (phase → priority → orderKey). Contributed via `Set<RequestInterceptor>` Dagger multibinding.
+The terminal operation invoker is appended after every contributor, so a contributor always runs
+before the resource method.
+
+`OperationRegistrationContext` carries `operationId()`, `securityPolicy()`,
+`requiredAction()` (`Optional<ActionRef>`), `operation()` (`RestOperationDescriptor`), and `route()`
+(`RouteRegistration`, whose `addHandler(...)` returns itself for chaining).
+
+### `RequestInterceptor`, `OperationInterceptor`, `ErrorInterceptor`
+
+Three pipelines with distinct scopes. Every callback has a default, so implement only what you need.
 
 ```java
 public interface RequestInterceptor extends OrderedExtension {
+    String ORIGINAL_ERROR_KEY = "dev.vertique.rest.originalError";
+    String VERTX_STATUS_CODE_KEY = "dev.vertique.rest.vertxStatusCode";
 
-    // Runs at router level before processing. Failed future short-circuits with error response.
-    default Future<Void> beforeRequest(RoutingContext rc) { return Future.succeededFuture(); }
-
-    // Runs after ResponseProducer creates the Response. Async transform — each interceptor
-    // receives the previous interceptor's output as a Future.
-    default Future<Response> transformResponse(RoutingContext rc, Response response) {
-        return Future.succeededFuture(response);
-    }
-
-    // Sync observer — fires for both success and error responses after transformResponse chain.
-    // Read-only, for metrics/audit. Called on same thread as serialization.
+    default void onRequest(RoutingContext rc) {}
+    default void onError(RoutingContext rc, Throwable error) {}
+    default void onSerialize(RoutingContext rc, Response response, SerializedBody body) {}
     default void afterResponse(RoutingContext rc, Response response) {}
+    default Future<Void> beforeRequest(RoutingContext rc) { return Future.succeededFuture(); }
+    default Future<Response> transformResponse(RoutingContext rc, Response response) { … }
+}
 
-    // Called by ResponseSerializer before writing to wire. Read-only, for observability.
-    default void onSerialize(RoutingContext rc, Response response) {}
+public interface OperationInterceptor extends OrderedExtension {
+    default void onOperation(OperationContext ctx) {}
+    default void onSuccess(OperationContext ctx, Object result) {}
+    default void onError(OperationContext ctx, Throwable cause) {}
+    default Future<OperationContext> beforeOperation(OperationContext ctx) { … }
+    default Future<Object> afterOperation(OperationContext ctx, Object result) { … }
+    default Future<Object> recoverOperation(OperationContext ctx, Throwable cause) { … }
+}
+
+public interface ErrorInterceptor extends OrderedExtension {
+    default Future<Throwable> beforeMapping(RoutingContext rc, Throwable throwable) { … }
+    default Future<Response> afterMapping(RoutingContext rc, Response response) { … }
 }
 ```
 
-| Hook | Runs at | Semantics |
-|------|---------|-----------|
-| `beforeRequest` | Router level, before OpenAPI validation | Async, chained — failed future short-circuits the request |
-| `transformResponse` | After `ResponseProducer.produce()` | Async, chained — each interceptor transforms the Response |
-| `afterResponse` | After `transformResponse` chain — every terminal outcome: success, error, and the bare-metal fallback-500 when `transformResponse` fails catastrophically | Sync observer — for logging, metrics, audit; on the fallback-500 path the `response` argument is a synthetic `500` with no entity |
-| `onSerialize` | Inside `ResponseSerializer`, before writing to wire | Read-only — for logging, metrics, audit |
+`OperationContext` is immutable — `operationId()`, `routingContext()`, `methodAnnotations()`,
+`classAnnotations()`, `attributes()`, the typed lookups `methodAnnotation(Class)` /
+`classAnnotation(Class)`, and `withAttribute(String, Object)`, which returns a **new** context.
+Return that new instance from `beforeOperation` or the attribute is lost.
 
-**Well-known context keys** (available on `RoutingContext.data()` during request processing):
+`recoverOperation` defaults to re-failing; returning a succeeded future turns a failure into a
+result. `ORIGINAL_ERROR_KEY` and `VERTX_STATUS_CODE_KEY` name the routing-context entries that carry
+a pre-mapping throwable and a Vert.x-originated status code.
 
-| Key constant | Type | When set | Purpose |
-|---|---|---|---|
-| `RequestInterceptor.ORIGINAL_ERROR_KEY` | `Throwable` | Error pipeline entry | Original cause before any `ErrorInterceptor.beforeMapping` transformation; available in `afterResponse` and `OperationInterceptor` callbacks |
-| `RequestInterceptor.VERTX_STATUS_CODE_KEY` | `Integer` | Failure handler, for `HttpException` non-validation errors | HTTP status code from a Vert.x `HttpException` whose cause was unwrapped for `ExceptionMapper` lookup; used by `ErrorPipeline` as fallback when no specific mapper matches |
+### `RequestBodyDecoder` and `ResponseBodyEncoder`
 
-**Note:** `beforeRequest` is installed at router order `Integer.MIN_VALUE + 1` (after BodyHandler at `Integer.MIN_VALUE`). A failed future is routed through the error pipeline rather than propagated as an uncaught exception.
-
-**Example — request validation + response enrichment in a single interceptor:**
+Content-type-driven body handling. The framework walks each set in `OrderedExtension` order and uses
+the first implementation whose `canDecode` / `canEncode` returns `true`.
 
 ```java
-public class DigestFilter implements RequestInterceptor {
-    @Inject public DigestFilter() {}
+public interface RequestBodyDecoder extends OrderedExtension {
+    boolean canDecode(Class<?> targetType, String contentType);
+    default Object decode(RoutingContext ctx, RequestValue body, Class<?> targetType, Type genericType) { … }
+    default Object decode(RoutingContext ctx, RequestValue body, Class<?> targetType) { … }
+}
 
-    @Override
-    public Future<Void> beforeRequest(RoutingContext rc) {
-        String digestHeader = rc.request().getHeader("Digest");
-        if (digestHeader == null) {
-            return Future.succeededFuture();
-        }
-        String expected = digestHeader.substring("sha-256=".length());
-        String actual = sha256Base64(rc.body().asString());
-        if (!expected.equals(actual)) {
-            return Future.failedFuture(new IllegalArgumentException("Request body digest mismatch"));
-        }
-        return Future.succeededFuture();
-    }
-
-    @Override
-    public Future<Response> transformResponse(RoutingContext rc, Response response) {
-        Object entity = response.getEntity();
-        if (entity == null || entity instanceof Buffer) {
-            return Future.succeededFuture(response);
-        }
-        byte[] bytes = Json.encode(entity).getBytes(StandardCharsets.UTF_8);
-        return Future.succeededFuture(Response.fromResponse(response)
-                .header("Digest", "sha-256=" + sha256Base64(bytes))
-                .entity(Buffer.buffer(bytes))
-                .build());
-    }
+public interface ResponseBodyEncoder extends OrderedExtension {
+    boolean canEncode(Class<?> entityType, String contentType);
+    SerializedBody encode(RoutingContext ctx, Response response, Object entity);
 }
 ```
 
-Dagger registration:
+Both `decode` overloads have defaults that delegate to each other — **override exactly one**, or
+every call throws `UnsupportedOperationException`. Override the four-argument form when the target is
+generic (`List<Item>`); the three-argument form otherwise.
+
+Framework implementations sit at priorities 999–1100 (`SseBodyEncoder` 999, binary/text/form/stream
+1000, JSON 1100). Application implementations default to priority `0` and therefore win by default —
+give one a priority above 1100 to act as a fallback instead.
+
+`RequestValue` is the neutral accessor for the bound value (`getString()`, `getJsonObject()`,
+`getBuffer()`, `get()`, typed defaults, and `isX()` predicates). `SerializedBody` is sealed over
+`BufferedBody(Buffer, String contentType, Long contentLength)` and
+`StreamingBody(ReadStream<Buffer>, String contentType, Long contentLength)`.
 
 ```java
-@Provides @IntoSet
-RequestInterceptor digestFilter(DigestFilter filter) { return filter; }
+@Provides
+@IntoSet
+static RequestBodyDecoder csvDecoder() {
+    return new RequestBodyDecoder() {
+        @Override public boolean canDecode(Class<?> targetType, String contentType) {
+            return contentType != null && contentType.startsWith("text/csv");
+        }
+        @Override public Object decode(RoutingContext ctx, RequestValue body, Class<?> targetType) {
+            return CsvReader.read(body.getBuffer(), targetType);
+        }
+    };
+}
 ```
 
-### ResponseProducer
+A decoder that materializes a DTO from a structured intermediate can route it through the
+framework's canonicalization/sanitization traversal by injecting the optional
+`InputObjectProcessor` and calling
+`processStructuredBody(Object intermediateBody, Type targetType, EffectiveInputPolicies policies,
+InputLocation location)` before final binding. The binding is `@BindsOptionalOf`; it resolves only
+when `dev.vertique:vertique-sanitization` is on the graph.
 
-Builds a `jakarta.ws.rs.core.Response` from a result value. Producers return a Response object without writing to the wire — serialization is handled by `ResponseSerializer`.
+### `ResponseProducer` and `ResponseProducerBinding`
+
+Maps a domain return type to a `jakarta.ws.rs.core.Response` before serialization.
 
 ```java
 @FunctionalInterface
 public interface ResponseProducer<T> {
     Response produce(RoutingContext ctx, T result);
 }
+
+public record ResponseProducerBinding<T>(Class<T> type, ResponseProducer<T> producer) {}
 ```
 
-### ResponseSerializer
+```java
+@Provides
+@IntoSet
+static ResponseProducerBinding<?> createdProducer() {
+    return new ResponseProducerBinding<>(
+            Created.class,
+            (ctx, created) -> Response.created(URI.create(created.location())).entity(created.body()).build());
+}
+```
 
-Serializes a `jakarta.ws.rs.core.Response` body to the HTTP wire and reports **wire completion** to the caller. Injectable/replaceable via Dagger to support custom serialization formats (CBOR, XML, etc.).
+The produced `Response` still passes through `transformResponse` interceptors.
+
+### `ResponseSerializer`
 
 ```java
 public interface ResponseSerializer {
@@ -1649,311 +820,435 @@ public interface ResponseSerializer {
 }
 ```
 
-**Invocation context.** Called by the response pipeline for responses requiring serializer-owned body handling, on the request's event-loop context, after the status code and headers have been written to the routing context's response and after `transformResponse` hooks have run. Normal empty-body and bare fallback paths bypass the serializer entirely; the error fail-open path may retry it exactly once after a synchronous pre-initiation failure (FR-JSON-058A). Implementations must not block the calling thread.
+The terminal wire-completion contract. The implementation ships in `vertique-rest-jaxrs`; replace it
+only to take over serialization orchestration entirely. It is called on the request's event-loop
+context after the status and headers are written and after `transformResponse` hooks have run —
+empty-body and bare fallback paths bypass it. An implementation must not block the calling thread.
 
-**Completion contract (dual-channel):**
+Completion is dual-channel, and the two channels mean different things:
 
-| Channel | Meaning | Caller obligation |
-|---------|---------|-------------------|
-| Synchronous throw | No write or end was initiated (encode-time failure) | May retry against the same response head (fail-open, FR-JSON-058A) |
-| Returned future — success | The response has been fully written and ended | None |
-| Returned future — failure | The wire write failed after handoff; zero or more bytes may have been written | Never retry; the caller owns terminal cleanup (the response may still need ending) |
+| Signal | Meaning | Caller behavior |
+|---|---|---|
+| synchronous throw | nothing was written or ended — an encode-time failure | may retry once against the same response head (fail-open, FR-JSON-058A) |
+| returned future succeeds | the response was fully written and ended | done |
+| returned future fails | the wire write failed after handoff; zero or more bytes may already be on the wire | never retried; the caller owns terminal cleanup |
 
-The returned future is never `null` and **may complete on any thread** — callers must not assume context affinity; the framework pipeline redispatches handling onto the request context.
+The returned future may complete on any thread — do not assume context affinity; the framework
+pipeline redispatches handling back onto the request context. A `StreamingBody` must be piped, never
+buffered (FR-RESTSER-013 / NFR-003), and the response must not be ended on pipe failure.
 
-The default implementation (`DefaultResponseSerializer` in `rest-jaxrs`) selects a `ResponseBodyEncoder` for the entity and returns, per branch:
-- `null` entity → the future of `response.end()` (no body)
-- no matching encoder → the future of `response.end(problemJson)` after switching the response to `500` / `application/problem+json`
-- `BufferedBody` → the future of `response.end(buffer)`
-- `StreamingBody` → the future of `stream.pipe().endOnFailure(false).to(httpResponse)` — the stream is never buffered (FR-RESTSER-013 / NFR-003) and the serializer never ends the response on pipe failure
+### `RestContextResolver`
 
-All `RequestInterceptor.onSerialize()` hooks are invoked before the body is handed to the wire.
-
-### ResponseProducerBinding
-
-Pairs a `Class<T>` with a `ResponseProducer<T>` for Dagger multibinding contribution. Defined in `rest-core`.
+The single resolution path for `@Context`-injectable resource parameters. Register one to make a new
+type injectable.
 
 ```java
-public record ResponseProducerBinding<T>(Class<T> type, ResponseProducer<T> producer) {}
-```
+public interface RestContextResolver extends OrderedExtension {
+    int PRIORITY_ROUTING_CONTEXT = 100;
+    int PRIORITY_JAXRS_SECURITY_CONTEXT = 110;
+    int PRIORITY_CONTEXT_HOLDER = 120;
 
-Contribute custom producers via `@Provides @IntoSet ResponseProducerBinding<?>` — the same pattern as `ExceptionMapper<?>`:
-
-```java
-@Provides @IntoSet
-ResponseProducerBinding<?> myProducer() {
-    return new ResponseProducerBinding<>(
-        MySpecialType.class,
-        (ctx, result) -> Response.ok(result.serialize())
-                .header("X-Custom", "true")
-                .type("application/octet-stream")
-                .build()
-    );
+    <T> Optional<T> resolve(Class<T> type, RoutingContext ctx);
 }
 ```
 
-`RestModule.responsePipeline()` collects all contributed bindings and registers them with `ResponsePipeline` at startup. Custom producers override the JSON fallback for their registered type. The returned `Response` is passed through `transformResponse` interceptors before serialization.
+Built-in resolvers occupy those three priorities: `RoutingContext` and subtypes at 100,
+`jakarta.ws.rs.core.SecurityContext` at 110 (empty when no security module is installed), and any
+`ContextValue` subtype at 120. A resolver must return `Optional.empty()` for types it does not own —
+the first non-empty result wins.
 
----
+An application resolver takes the default phase and priority `0`, so it already runs **ahead of
+every built-in** and may shadow a framework-provided value for the same type. Give it a priority
+above 120 to act as a fallback instead.
 
-## RequestContextLifecycle
+**Contract (FR-REST-172):** `resolve` is a pure read. An implementation must not create, mutate,
+enrich, replace, or propagate context as a side effect — it observes request state and reports back.
 
-`RequestContextLifecycle` is a ROOT-scoped `Middleware` (priority = `Integer.MIN_VALUE`) that owns all
-per-request `ContextHolder.Scope` cleanup. It is the single lifecycle owner for every scope
-registered during an HTTP request.
+`RestContextResolution` is the injectable coordinator: `resolve(Class, RoutingContext)` returns an
+`Optional`, and `require(Class, RoutingContext, String resourceClass, String methodName)` throws
+`RestContextUnavailableException` when nothing matches. The chain is sorted once at construction.
 
-**How it works:**
+### `ParamConverter` and `ParamConverterBinding`
 
-- Registered first in the middleware chain → under Vert.x Web 5.1.2's **reverse** end-handler
-  order, its registered end handler fires **last**, after audit emission, log finalization, and
-  every other downstream end handler. Holder-bound values (`SecurityContext`, MDC keys) therefore
-  remain accessible to all downstream end handlers until the very end of the request.
-- Each middleware that binds a per-request resource hands the returned `ContextHolder.Scope` or
-  cleanup `Runnable` to the lifecycle via `Handle.onClose(...)`. No middleware registers its own
-  `ctx.addEndHandler(...)` for context cleanup.
-
-**`Handle` API:**
-
-| Method | Semantics |
-|--------|-----------|
-| `onClose(ContextHolder.Scope)` | Register a scope for LIFO close during cleanup |
-| `onClose(Runnable)` | Register a cleanup runnable in LIFO order |
-| `afterClose(Runnable)` | Register a task to run after all `onClose` callbacks complete, in FIFO order |
-| `completeNow()` | Idempotent explicit completion — required by the WebSocket upgrade path |
-| `bindMdc(Map<String,String>)` | Convenience: calls `MDCContexts.bindAll(entries)` and registers the returned scope with `onClose` |
-
-Late registration (calling `onClose` or `afterClose` after `completeNow()` or the end handler fires)
-throws `IllegalStateException` immediately — leaks are loud, not silent.
-
-Each `onClose` / `afterClose` entry runs in its own `try/catch`; a failing scope logs at WARN and
-does not block the rest of the cleanup sequence.
-
-**Why `completeNow()` exists:** On a successful WebSocket upgrade, Vert.x's
-`Http1xServerResponse.completeHandshake()` writes the 101 and marks the response complete *without*
-firing the response end handler. The WebSocket upgrade path therefore calls `lifecycle.completeNow()`
-to drive the lifecycle synchronously. `completeNow()` is idempotent so a defensive error path
-that also triggers an end handler does not re-run any scope or task.
-
-**Typical middleware usage:**
+Symmetric string conversion for `@PathParam`, `@QueryParam`, `@HeaderParam`, `@CookieParam`, and
+`@FormParam` — the same converter parses inbound values and serializes outbound ones for the REST
+client.
 
 ```java
-RequestContextLifecycle.Handle lifecycle = RequestContextLifecycle.fromRoutingContext(ctx);
-lifecycle.onClose(securityRuntime.bindCurrent(sc));             // LIFO; restored at end of request
-lifecycle.bindMdc(Map.of("userId", userId, "clientId", cid));  // MDC keys restored at end of request
-ctx.next();
+public interface ParamConverter<T> {
+    T fromString(String value);
+    String toString(T value);
+}
+
+public record ParamConverterBinding<T>(Class<T> targetType, ParamConverter<T> converter) {}
 ```
 
-`RequestContextLifecycle` is contributed to the framework's `Set<Middleware>` multibinding by
-`RestCoreModule`.
-
-### MdcKeys
-
-Constants class in `dev.vertique.rest.core.middleware` naming all MDC keys emitted by
-framework-owned middlewares. Using these constants prevents key-name drift between
-`ContextualLoggingMiddleware`, `IdentityResolutionMiddleware`, and log-aggregation pipelines.
-
-| Constant | Key | Emitter |
-|----------|-----|---------|
-| `MdcKeys.REQUEST_ID` | `requestId` | `CorrelationIngressMiddleware` (+ `X-Request-Id` response header when configured) |
-| `MdcKeys.METHOD` | `method` | `ContextualLoggingMiddleware` |
-| `MdcKeys.PATH` | `path` | `ContextualLoggingMiddleware` |
-| `MdcKeys.USER_ID` | `userId` | `IdentityResolutionMiddleware` (when userId is present) |
-| `MdcKeys.CLIENT_ID` | `clientId` | `IdentityResolutionMiddleware` (when clientId is present) |
-| `MdcKeys.AUTH_METHOD` | `authMethod` | `IdentityResolutionMiddleware` (non-anonymous requests only) |
-
----
-
-## Standard Middlewares
-
-Built-in `Middleware` implementations in `dev.vertique.rest.core.middleware`:
-
-| Class | Scope | Priority | Purpose |
-|-------|-------|----------|---------|
-| `RequestContextLifecycle` | ROOT | `Integer.MIN_VALUE` | Per-request scope owner; end-handler fires last |
-| `CorrelationIngressMiddleware` | ROOT | `RequestContextLifecycle.ORDER + 10` | Builds & binds live `CorrelationContext`; emits configured response headers; applies `REJECT` / `REPLACE_WITH_GENERATED` invalid-value policy |
-| `ContextualLoggingMiddleware` | ROOT | 0 | MDC setup for `method` + `path` (request-id is owned by `CorrelationIngressMiddleware`) |
-| `DefaultHeadersMiddleware` | ROOT | 10 | Default response headers (Cache-Control, security headers) |
-| `ContentTypeValidationMiddleware` | API | 20 | 415 enforcement for POST/PUT/PATCH requests |
-| `ContentLengthValidationMiddleware` | API | 30 | 413 enforcement for oversized request bodies |
-
-`ContentTypeValidationMiddleware` accepts: `application/*` (all application subtypes), `multipart/form-data`, `text/*`. Acts as a broad safety net; fine-grained per-route `@Consumes` validation is handled by the OpenAPI router. Skips validation when the request has no body.
-
-`ContextualLoggingMiddleware` binds `method` and `path` into MDC via
-`RequestContextLifecycle.Handle.bindMdc(...)` — no direct `addEndHandler` call. Request-id
-resolution, the `X-Request-Id` response header, and the `requestId` MDC entry have moved to
-`CorrelationIngressMiddleware` (see *Correlation Ingress* below); this middleware no longer reads
-or writes any of those values.
-
-### Correlation Ingress
-
-`CorrelationIngressMiddleware` (ROOT, priority `RequestContextLifecycle.ORDER + 10`) builds the live
-`CorrelationContext` for the request, binds it on the substrate holder via
-`ContextHolder.bind(CorrelationContext.class, ...)`, mirrors the safe-by-default MDC keys
-(`requestId`, `correlationId`, `causationId`, `traceId`, `spanId`), and emits configured response
-headers before the response is committed. Configured via the `correlation.ingress` section of
-the application config (deserialised into `CorrelationIngressConfig`); apps can change header
-names, echo flags, causation parsing, and the invalid-value policy (`REPLACE_WITH_GENERATED`
-default; `REJECT` returns 400 BadRequest when an inbound header value fails the
-`CorrelationHeaderValidator` checks). Protocol headers (e.g. `X-FAPI-Interaction-ID`) plug in via
-the `ProtocolCorrelationSpec` (declarative default) / `ProtocolCorrelationContributor` (escape
-hatch) multibinds in `CorrelationIngressModule`.
-
-After binding the context and taking the MDC snapshot, the middleware consults an optional
-`TraceReferenceResolver` (from `vertique-correlation`): if a resolver is bound and returns a
-non-empty `TraceReference`, `CorrelationContextMutator#setTrace` is called to mirror the trace
-and span ids into the live context and the `traceId`/`spanId` MDC keys. This step runs *before*
-the invalid-header rejection check, so rejection log entries carry trace ids when a resolver is
-present. The consult is failure-isolated — a throwing resolver emits one `WARN` log entry and
-never affects the request pipeline. When no resolver is on the graph (the default for
-applications that do not wire a tracing module), this step is a no-op.
-
----
-
-## RestCoreModule
-
-`RestCoreModule` is the Dagger `@Module` for `rest-core`. It declares all `@Multibinds` empty sets and default bindings. `RestModule` (in `rest-jaxrs`) includes `RestCoreModule` automatically — applications include `RestModule.class` in their `@Component`.
-
-| Binding | Default |
-|---------|---------|
-| `@Multibinds Set<RouterCustomizer>` | empty set |
-| `@Multibinds Set<RouterLifecycleHook>` | empty set |
-| `@Multibinds Set<OperationInterceptor>` | empty set |
-| `@Multibinds Set<ErrorInterceptor>` | empty set |
-| `@Multibinds Set<RequestInterceptor>` | empty set |
-| `@Multibinds Set<Middleware>` | empty set |
-| `@Multibinds Set<RouterMount>` | empty set |
-| `@Multibinds Set<MountCustomizer>` | empty set |
-| `@Multibinds Set<SecuritySchemeHandler>` | empty set |
-| `@Multibinds @JaxRsResources Set<Object>` | empty set |
-| `@Multibinds Set<RestExceptionMapperCustomizer>` | empty set |
-| `@Multibinds Set<ExceptionMapper<?>>` | empty set |
-| `@Multibinds Set<RequestCompletionScope>` | empty set (no-op baseline when empty) |
-| `@Multibinds Set<OperationHandlerContributor>` | empty set |
-| `@Multibinds Set<ResponseProducerBinding<?>>` | empty set |
-| `@Multibinds Set<RequestBodyDecoder>` | empty set |
-| `@Multibinds Set<ParamConverterBinding<?>>` | empty set |
-| `@Multibinds Set<ParamConverterProvider>` | empty set |
-| `ParamConverterRegistry` (`@Singleton`) | built-ins + `Set<ParamConverterBinding<?>>` |
-| `ParamConversionResolver` (`@Singleton`) | `ParamConverterRegistry` + `Set<ParamConverterProvider>` |
-| `JaxRsConfig` | parsed from `"jaxrs"` section; fields: `openapiPath()` (`"openapi.json"`), `basePath()` (`"/*"`), `validationStrategy()` (`"web-validation"`), `validationMode()` (`"aggregate"`) — see `JaxRsConfig`; only `"aggregate"` and `"failFast"` are accepted, any other value fails startup |
-| `HttpConfig` | parsed from `"http"` section; includes `maxBodySize()` (`2097152`) and non-blank `uploadsDirectory()` (`"file-uploads"`) used by multipart `BodyHandler`, plus server options such as `port()`, `host()`, and `idleTimeoutSeconds()` |
-| `HttpServerOptions` | derived from `HttpConfig.toHttpServerOptions()` |
-| `@Multibinds Set<RouteAuthHandler>` | empty set (declared by `AuthModule`) |
-
----
-
-## Input Processing Types (`rest.core.request`)
-
-These types power the canonicalization and sanitization pipeline for structured request bodies. They are wired by `SanitizationModule` (in `vertique-sanitization`) and invoked by `ParameterExtractor` in `rest-jaxrs`.
-
-### InputObjectProcessor
-
-Interface for applying canonicalization and sanitization to an intermediate map/list body before final DTO materialization. Transform-only — does not invoke Bean Validation.
-
 ```java
-public interface InputObjectProcessor {
-    Object processStructuredBody(
-        Object intermediateBody,
-        Type targetType,
-        EffectiveInputPolicies policies,
-        InputLocation location);
+@Provides
+@IntoSet
+static ParamConverterBinding<?> isbnConverter() {
+    return new ParamConverterBinding<>(Isbn.class, new ParamConverter<Isbn>() {
+        @Override public Isbn fromString(String value) { return Isbn.parse(value); }
+        @Override public String toString(Isbn value) { return value.normalized(); }
+    });
 }
 ```
 
-`RestModule` declares `@BindsOptionalOf InputObjectProcessor`. When `SanitizationModule` is included in the Dagger component, this binding resolves to `DefaultInputObjectProcessor`; otherwise no structured body processing occurs.
+Implementations must be stateless and thread-safe — one instance serves every request. Built-in
+converters cover `String`, every primitive and its box, `BigInteger`, `BigDecimal`, `UUID`, `URI`,
+and the `java.time` types `Instant`, `LocalDate`, `LocalTime`, `LocalDateTime`, `OffsetDateTime`,
+`OffsetTime`, `ZonedDateTime`, `Duration`, `Period`, `Year`, `YearMonth`, `MonthDay`, `ZoneId`, and
+`ZoneOffset`. Any `enum` is converted by name automatically with no registration.
 
-Custom `RequestBodyDecoder` implementations can invoke `InputObjectProcessor` directly to participate in the same pipeline:
+A binding for a built-in type replaces it. Two bindings for the same target type fail component
+construction with `IllegalStateException`.
+
+`ParamConversionResolver` tries the native registry first, then any contributed
+`jakarta.ws.rs.ext.ParamConverterProvider` (also a `@Multibinds` set), ordered by `@Priority`
+ascending. Its `ConversionContext(String paramName, ParamSource source, Class<?> rawType,
+@Nullable Type genericType, @Nullable Class<?> componentType, Supplier<Annotation[]> annotationsLazy)`
+carries `dev.vertique.rest.core.convert.ParamSource`, whose five constants are `PATH`, `QUERY`,
+`HEADER`, `COOKIE`, and `FORM` — the string-ish transport kinds. Do not confuse it with the
+same-named but unrelated parameter-source enums in the JAX-RS and REST-client modules.
+
+### `RestRequestCompletedListener` and `RequestCompletionScope`
+
+Observe every completed request from an immutable snapshot, with no routing context in hand.
 
 ```java
-Object intermediate = jsonObject.getMap();
-Object processed = processor.processStructuredBody(
-        intermediate, MyDto.class, policies, InputLocation.BODY);
-MyDto dto = objectMapper.convertValue(processed, MyDto.class);
-```
+public interface RestRequestCompletedListener {
+    void onCompleted(RestRequestCompletedEvent event);
+}
 
-### EffectiveInputPolicies
-
-Immutable record capturing the route-level canonicalizer and sanitizer chains resolved from `@Canonicalize` / `@Sanitize` on the JAX-RS resource class and method.
-
-```java
-public record EffectiveInputPolicies(
-    List<Class<? extends Canonicalizer>> routeCanonicalizers,
-    List<Class<? extends Sanitizer>> routeSanitizers
-) {
-    /** Empty policies — no route-level processing. */
-    public static final EffectiveInputPolicies NONE = ...;
-
-    /** Returns true if both route-level chains are empty. */
-    public boolean hasNoRouteChains() { ... }
+public interface RequestCompletionScope {
+    AutoCloseable open(RoutingContext rc);
 }
 ```
 
-Object-level and field-level processors are resolved separately by `InputPolicyMetadataResolver` from the target DTO type. `EffectiveInputPolicies` carries only the route-level chains.
+```java
+@Provides
+@IntoSet
+static RestRequestCompletedListener requestMetrics(MeterRegistry registry) {
+    return event -> registry.counter(
+                    "http.server.requests",
+                    "method", event.method(),
+                    "route", event.routeTemplate() == null ? "unmatched" : event.routeTemplate(),
+                    "status", Integer.toString(event.statusCode()))
+            .increment();
+}
+```
 
-### InputPolicyMetadata
+```java
+public record RestRequestCompletedEvent(
+        Instant startTime, Instant endTime,
+        String method, String path,
+        @Nullable String routeTemplate, @Nullable String operationId,
+        int statusCode,
+        @Nullable String failureCode, @Nullable String safeFailureMessage, @Nullable String wireFailureCode,
+        @Nullable SecurityContextSnapshot securityContextSnapshot,
+        @Nullable CorrelationContextSnapshot correlationContext,
+        Optional<RequestOrigin> origin,
+        Map<String, Object> safeAttributes) {}
+```
 
-Cached per-type annotation metadata pre-computed from `@Canonicalize`, `@Sanitize`, and skip annotations on the target type and its fields. Used by `DefaultInputObjectProcessor` to avoid per-request reflection.
+A `RequestCompletionScope` wraps listener dispatch — scopes open in iteration order and close in
+reverse, which is how tracing modules re-establish a span around emission. A listener that throws an
+`Exception` is logged at WARN and does not stop the remaining listeners; an `Error` propagates.
 
-| Field | Description |
-|-------|-------------|
-| `objectCanonicalizerChain` | Canonicalizers declared on the DTO type |
-| `objectSanitizerChain` | Sanitizers declared on the DTO type |
-| `skipCanonicalization` | Whether type has `@SkipCanonicalization` |
-| `skipSanitization` | Whether type has `@SkipSanitization` |
-| `fields` | Per-field `FieldPolicyMetadata` keyed by JSON property name |
+The `dev.vertique.rest.core.capture` SPIs (`RestServerRequestEvidenceCapturer`,
+`RestRequestCaptureCoordinator`) are the boundary-evidence hooks the audit adapter implements. If you
+implement one, keep evidence in an implementation-private, identity-keyed side table — never in
+`RoutingContext.data()`, which is keyed by public string constants and is readable and writable by
+every component sharing the context.
 
-`FieldPolicyMetadata` is a nested record with per-field chains, skip flags, field type, optional nested `InputPolicyMetadata` for recursive traversal, and flags for `isStringType` and `isCollectionOfStrings`.
+### `SecuritySchemeHandler` and `RouteAuthHandler`
 
-### InputPolicyMetadataResolver
+```java
+public interface SecuritySchemeHandler {
+    String schemeName();
+    void configure(SecuritySchemeRegistry registry);
+}
 
-Resolves and caches `InputPolicyMetadata` per type. Provided as a `@Singleton` by `SanitizationModule`. Supports meta-annotation resolution — annotations composed from `@Canonicalize` / `@Sanitize` are unwrapped automatically.
+public interface SecuritySchemeRegistry {
+    void authenticationHandler(AuthenticationHandler handler);
+}
+```
 
-**Field classification sees through `Optional` and bounded type arguments.** The intermediate wire
-value of an `Optional<T>` field is the unwrapped `T`, and a wildcard / type-variable type argument
-is erased to its bound before Jackson binds it. The resolver therefore normalizes both away before
-deciding a field's shape:
+The framework applies the registered handler to every operation whose security requirements name
+`schemeName()`. The registry takes a Vert.x `AuthenticationHandler` rather than a bare
+`Handler<RoutingContext>` so multiple alternative requirements can be composed into a
+`ChainAuthHandler.any()` — the OR semantics of an OpenAPI `security` array.
 
-| Declared field type | Nested metadata resolved from |
-|---------------------|-------------------------------|
-| `Optional<String>` | classified as a `String` field |
-| `Optional<NestedDto>` | `NestedDto` |
-| `Optional<? extends NestedDto>` | `NestedDto` (wildcard upper bound) |
-| `Optional<T>` where `T extends NestedDto` | `NestedDto` (type-variable bound) |
-| `Collection<? extends NestedDto>` | `NestedDto` (collection element bound) |
-| `Collection<Optional<? extends NestedDto>>` | `NestedDto` |
-| `Collection<Optional<String>>` | classified as a collection of strings |
-| `Optional<T>` where `T extends A & B` | `A` — javac erases an intersection bound to its leftmost member |
-| raw `Optional`, `Optional<?>`, `Optional<? super NestedDto>` | no nested schema — the field falls back to inherited chains only |
-| raw `Collection`, `Collection<Object>`, `Collection<?>`, `Collection<? super NestedDto>` | no element schema — inherited chains still reach string elements |
+```java
+@Provides
+@IntoSet
+static SecuritySchemeHandler apiKeyScheme(ApiKeyAuthProvider provider) {
+    return new SecuritySchemeHandler() {
+        @Override public String schemeName() { return "apiKey"; }
+        @Override public void configure(SecuritySchemeRegistry registry) {
+            registry.authenticationHandler(APIKeyHandler.create(provider));
+        }
+    };
+}
+```
 
-Without this normalization the resolver recurses into `Optional`'s own fields, produces empty
-metadata, and returns `null` for the field; `DefaultInputObjectProcessor` then walks the nested map
-with `InputPolicyMetadata.EMPTY`, so the nested DTO's own `@Canonicalize` / `@Sanitize` chains never
-run. `AnnotationCollector` in `vertique-codegen-sanitization` applies the same rules at APT time, so
-the generated and reflective paths classify every row above identically.
+`RouteAuthHandler` (`String schemeName()`, `Handler<RoutingContext> createHandler()`) is the
+route-level variant; its multibinding is declared by `AuthModule` in `vertique-rest-security`.
+
+`SecurityRuntime`, `SecurityPolicyResolver`, and `SecurityPolicyValidator` are declared here and
+implemented in `vertique-rest-security`. Bind your own only to replace framework behavior wholesale.
+`SecurityRuntime.bindCurrent(SecurityContext)` returns a `ContextHolder.Scope` that **must** be
+registered with `RequestContextLifecycle.Handle.onClose(...)`.
+
+### `ProtocolCorrelationSpec` and `ProtocolCorrelationContributor`
+
+Teach correlation ingress about a protocol-specific header (for example
+`X-FAPI-Interaction-ID`). `ProtocolCorrelationSpec` is the declarative route: name the header, the
+response and propagation modes, whether the value is durable-safe, and how an inbound value is
+accepted. `ProtocolCorrelationContributor` is the imperative escape hatch, resolving a
+`ProtocolCorrelationRef` straight from the `HttpServerRequest`. Both are `@Multibinds` sets on
+`CorrelationIngressModule`, which `RestCoreModule` includes.
+
+### `CursorCodec`
+
+```java
+public interface CursorCodec {
+    String encode(String rawCursor);
+    String decode(String opaqueToken) throws InvalidCursorException;
+}
+```
+
+Bind `HmacCursorCodec` (or your own) as a `@Singleton` and pass it to `CursorPage.of(...)` and
+`CursorPageRequest.decodeCursor(...)`. It is an ordinary binding, not a multibinding.
+
+---
+
+## Configuration
+
+Three top-level sections are parsed by `RestCoreModule` — `http`, `cors`, and `jaxrs` — plus
+`correlation.ingress` by `CorrelationIngressModule`. Every key is optional; omitted keys take the
+default below. Unknown keys are ignored except under `jaxrs.defaultHeaders`, where they become
+custom response headers.
+
+### `http`
+
+| Key | Default | Constraint / notes |
+|---|---:|---|
+| `http.port` | `8080` | |
+| `http.host` | `"0.0.0.0"` | |
+| `http.maxBodySize` | `2097152` | bytes; the sole request-body size limit — exceeding it returns 413 |
+| `http.uploadsDirectory` | `"file-uploads"` | must be non-blank; multipart spool directory |
+| `http.compressionSupported` | `false` | gzip/deflate responses |
+| `http.compressionLevel` | `6` | 1–9 |
+| `http.decompressionSupported` | `false` | gzip/deflate request bodies |
+| `http.maxHeaderSize` | `8192` | bytes, all headers combined |
+| `http.maxInitialLineLength` | `4096` | bytes |
+| `http.handle100ContinueAutomatically` | `false` | |
+| `http.idleTimeoutSeconds` | `0` | `0` disables |
+| `http.readIdleTimeoutSeconds` | `0` | `0` disables |
+| `http.writeIdleTimeoutSeconds` | `0` | `0` disables |
+| `http.tcpKeepAlive` | `false` | |
+| `http.acceptBacklog` | `-1` | `-1` uses the OS default |
+| `http.useProxyProtocol` | `false` | read the real client IP from an upstream proxy |
+| `http.maxFormAttributeSize` | `8192` | bytes, per URL-encoded form value |
+| `http.maxFormFields` | `256` | URL-encoded form fields per request |
+
+### `http.ssl`
+
+When `enabled` is `false`, every other key in this section is ignored.
+
+| Key | Default | Constraint / notes |
+|---|---:|---|
+| `http.ssl.enabled` | `false` | |
+| `http.ssl.keyStorePath` | *(none)* | keystore file, or the PEM private key |
+| `http.ssl.keyStorePassword` | *(none)* | |
+| `http.ssl.keyStoreType` | `"JKS"` | `JKS`, `PKCS12`, or `PEM`; any other value falls back to JKS handling |
+| `http.ssl.certPath` | *(none)* | PEM certificate; defaults to `keyStorePath` for a combined file |
+| `http.ssl.trustStorePath` | *(none)* | client-certificate validation (mTLS) |
+| `http.ssl.trustStorePassword` | *(none)* | |
+| `http.ssl.trustStoreType` | `"JKS"` | `JKS`, `PKCS12`, or `PEM` |
+| `http.ssl.clientAuth` | `"NONE"` | `NONE`, `REQUEST`, or `REQUIRED`; anything else fails startup |
+| `http.ssl.enabledProtocols` | `["TLSv1.2","TLSv1.3"]` | |
+| `http.ssl.useAlpn` | `false` | required for HTTP/2 |
+| `http.ssl.sni` | `false` | |
+
+### `cors`
+
+When `enabled` is `false` (the default) no CORS handler is installed and every other key is ignored.
+
+| Key | Default | Constraint / notes |
+|---|---:|---|
+| `cors.enabled` | `false` | |
+| `cors.origins` | `["*"]` | exact origins or `"*"` |
+| `cors.allowedMethods` | `["GET","POST","PUT","DELETE","PATCH","OPTIONS"]` | must be valid HTTP method names |
+| `cors.allowedHeaders` | `["*"]` | |
+| `cors.exposedHeaders` | `[]` | |
+| `cors.allowCredentials` | `false` | |
+| `cors.maxAge` | `3600` | seconds a browser may cache a preflight |
+
+### `jaxrs`
+
+| Key | Default | Constraint / notes |
+|---|---:|---|
+| `jaxrs.basePath` | `"/*"` | mount path of the JAX-RS sub-router |
+| `jaxrs.openapiPath` | `"openapi.json"` | classpath spec; only used by the opt-in `openapi-contract` strategy |
+| `jaxrs.mediaTypeValidation` | `"WARN"` | `WARN`, `STRICT` (fails startup on the first mismatch), or `OFF` |
+| `jaxrs.validationStrategy` | `"web-validation"` | must match a registered strategy id — built-ins are `web-validation`, `none`, `openapi-contract`; an unknown id fails startup |
+| `jaxrs.validationMode` | `"aggregate"` | `aggregate` or `failFast` |
+| `jaxrs.autoEtag` | `false` | attach a weak ETag derived from the serialized body when none is set |
+| `jaxrs.jsonProfile` | *(none)* | must name a registered JSON mapper profile; resolution is method `@JsonProfile` → class `@JsonProfile` → this key → `json.jsonProfile` → the reserved `vertx` profile |
+
+### `jaxrs.defaultHeaders`
+
+Applied to every response. Setting a known key to `null` or an empty string suppresses that header.
+Any key that is not one of the five below is emitted verbatim as a custom header, and a custom entry
+whose name collides with a known header wins.
+
+| Key | Header | Default |
+|---|---|---|
+| `cacheControl` | `Cache-Control` | `"no-store"` |
+| `contentTypeOptions` | `X-Content-Type-Options` | `"nosniff"` |
+| `frameOptions` | `X-Frame-Options` | `"DENY"` |
+| `strictTransportSecurity` | `Strict-Transport-Security` | *(not emitted)* |
+| `referrerPolicy` | `Referrer-Policy` | *(not emitted)* |
+
+### `jaxrs.sse`
+
+| Key | Default | Constraint / notes |
+|---|---:|---|
+| `jaxrs.sse.keepAliveEnabled` | `true` | emit a periodic keep-alive comment on idle connections |
+| `jaxrs.sse.keepAliveIntervalMs` | `15000` | |
+| `jaxrs.sse.defaultBufferSize` | `256` | per-channel buffer when no `SseChannelOptions` are supplied |
+| `jaxrs.sse.defaultOverflowPolicy` | `"FAIL"` | `FAIL` or `DROP_OLDEST` |
+
+### `correlation.ingress`
+
+| Key | Default | Constraint / notes |
+|---|---:|---|
+| `correlation.ingress.requestIdHeader` | `"X-Request-Id"` | must be a valid HTTP header token |
+| `correlation.ingress.correlationIdHeader` | `"X-Correlation-Id"` | must be a valid HTTP header token |
+| `correlation.ingress.causationIdHeader` | `"X-Causation-Id"` | must be a valid HTTP header token |
+| `correlation.ingress.echoRequestId` | `true` | emit the request id as a response header |
+| `correlation.ingress.echoCorrelationId` | `false` | emit the correlation id as a response header |
+| `correlation.ingress.parseCausationId` | `false` | accept an inbound causation id |
+| `correlation.ingress.invalidValuePolicy` | `"REPLACE_WITH_GENERATED"` | `REPLACE_WITH_GENERATED` or `REJECT` (returns 400) |
+
+### Example
+
+```json
+{
+  "http": {
+    "port": 8443,
+    "maxBodySize": 4194304,
+    "idleTimeoutSeconds": 30,
+    "ssl": {
+      "enabled": true,
+      "keyStorePath": "/etc/certs/server.p12",
+      "keyStorePassword": "changeit",
+      "keyStoreType": "PKCS12",
+      "useAlpn": true
+    }
+  },
+  "cors": {
+    "enabled": true,
+    "origins": ["https://app.example.com"],
+    "allowCredentials": true,
+    "allowedHeaders": ["Authorization", "Content-Type"]
+  },
+  "jaxrs": {
+    "basePath": "/api/*",
+    "validationMode": "failFast",
+    "defaultHeaders": {
+      "strictTransportSecurity": "max-age=31536000; includeSubDomains",
+      "X-Service-Name": "orders"
+    },
+    "sse": { "defaultBufferSize": 512, "defaultOverflowPolicy": "DROP_OLDEST" }
+  },
+  "correlation": {
+    "ingress": { "echoCorrelationId": true, "invalidValuePolicy": "REJECT" }
+  }
+}
+```
+
+---
+
+## Failures, Constraints, and Common Mistakes
+
+### Startup failures
+
+`RestConfigurationException` extends `dev.vertique.core.exception.ConfigurationException` and is the
+root of this module's wiring failures.
+
+| Failure | Cause |
+|---|---|
+| `IllegalStateException` failing the start promise | one or more invalid mount paths, reported as a single aggregated message |
+| `RestConfigurationException` | invalid `ssl.clientAuth`, blank `http.uploadsDirectory`, an unsupported security declaration shape, an unknown `jaxrs.validationStrategy` |
+| `SecurityPolicyViolationException` | security-policy validation found violations; `violations()` lists each with its `operationId` and `ViolationType` |
+| `IllegalStateException` at component construction | two `ParamConverterBinding`s claim the same target type |
+| `RestContextUnavailableException` | a declared `@Context` parameter has no resolver; carries `type()`, `resourceClass()`, `methodName()` |
+
+Mount paths must be non-blank, start with `/`, end with `/*`, and contain no `//`, `?`, or `#`.
+Overlapping or duplicate mount paths only **warn** — the first-mounted router wins and the shadowed
+one is silently unreachable, so check startup logs when a route 404s unexpectedly.
+
+Unsupported security shapes are rejected by `EffectiveSecurityPolicy.enforceSupportedShape`: a
+multi-scheme AND requirement, scopes declared on an OR alternative, and scopes declared through both
+`@Authorized` and `@SecurityRequirement`.
+
+### Request-time failures
+
+| Exception | Extends | Typical mapping |
+|---|---|---|
+| `RestValidationException` | `ValidationException` | 400 with a `ValidationProblemDetail` body |
+| `ParamConversionException` | `ValidationException` | 400; carries `paramName()`, `source()`, `targetType()` |
+| `InvalidCursorException` | `ValidationException` | 400 — always the same opaque `"Invalid cursor"` message, whether tampered, unknown-key, or expired |
+| `ParamConverterNotFoundException` | `TechnicalException` | 500 — a wiring gap, not a client error |
+
+### Common mistakes
+
+- **Registering your own end handler for cleanup.** `ctx.addEndHandler(...)` for scope teardown
+  breaks the reverse-order guarantee that keeps bound values readable. Use
+  `RequestContextLifecycle.Handle.onClose(...)` / `afterClose(...)`.
+- **Registering on the `Handle` after completion.** `onClose`, `afterClose`, and `bindMdc` throw
+  `IllegalStateException` once the lifecycle has closed. Leaks are loud, not silent.
+- **Giving a middleware `API` scope on a non-JAX-RS mount.** It is dropped without warning. Only the
+  JAX-RS mount honors `MiddlewareScope.API`.
+- **Forgetting `priority()`.** `Middleware` and `OperationHandlerContributor` re-declare it as
+  abstract; there is no default to inherit.
+- **Assuming `@Authorized(scopes = {"a", "b"})` means any-of.** `matchAll` defaults to `true`; that
+  declaration requires *both* scopes.
+- **Overriding both `RequestBodyDecoder.decode` overloads' defaults with neither.** Implement exactly
+  one or every call throws `UnsupportedOperationException`.
+- **Expecting an application decoder or encoder to be a fallback.** Application implementations
+  default to priority `0` and therefore precede the framework's 999–1100 band. Raise the priority
+  above 1100 to sit behind them.
+- **Mutating `OperationContext` in place.** `withAttribute(...)` returns a new instance; the original
+  is unchanged.
+- **Putting sensitive evidence in `RoutingContext.data()`.** That map is keyed by public constants
+  and is enumerable and writable by every component sharing the context.
+- **Expecting a completion event for a successful protocol upgrade.** There is none; a *failed*
+  upgrade does emit one.
+- **Persisting a `MediaType.parse(...)` result unchecked.** It returns `null` for malformed input
+  instead of throwing, as does `AcceptNegotiator.negotiate(...)` when nothing matches.
 
 ---
 
 ## Dependencies
 
-- `dev.vertique:core`
-- `io.vertx:vertx-core`
-- `io.vertx:vertx-web`
-- `com.google.dagger:dagger`
-- `jakarta.ws.rs:jakarta.ws.rs-api`
-- `com.fasterxml.jackson.core:jackson-databind`
-- `org.projectlombok:lombok` (provided scope)
+| Dependency | Why |
+|---|---|
+| `dev.vertique:vertique-core` | `OrderedExtension` ordering contract, exception hierarchy, `ConfigParser`, `ContextHolder`, JSON mapper profiles, sanitization SPIs |
+| `dev.vertique:vertique-context` | `ContextValues` — the substrate the built-in `@Context` resolver reads |
+| `dev.vertique:vertique-correlation` | correlation context, header validation, and the MDC key vocabulary used by ingress |
+| `dev.vertique:vertique-logging` | `MDCContexts` scopes bound through `RequestContextLifecycle.Handle.bindMdc` |
+| `dev.vertique:vertique-security-core` | `SecurityContext`, its snapshot, `RequestOrigin`, and `ActionRef` authorization references |
+| `io.vertx:vertx-web` | `Router`, `RoutingContext`, `AuthenticationHandler`, `CorsHandler` — and, transitively, Vert.x core |
+| `com.google.dagger:dagger` | `@Module` / `@Multibinds` declarations for every extension set |
+| `jakarta.inject:jakarta.inject-api` | `@Inject` / `@Singleton` on framework components |
+| `jakarta.ws.rs:jakarta.ws.rs-api` | `Response`, `EntityTag`, `ExceptionMapper`, `ParamConverterProvider`, parameter annotations |
+| `jakarta.annotation:jakarta.annotation-api` | `@Nullable` on API signatures |
+| `org.projectlombok:lombok` | `provided` scope — builders and accessors on the config and problem-detail types; not a runtime dependency |
 
----
-
-## Related ADRs
-
-- ADR-0069: REST Context Resolver Chain and Single Context Source — establishes the `RestContextResolver` SPI as the single resolution path for all `@Context`-injectable types; removes the per-type special cases for `RoutingContext`, JAX-RS `SecurityContext`, and framework `SecurityContext` that previously lived in the dispatch layer.
-- ADR-0085: OrderedExtension Rolled Out Across Sorted Behavioral SPIs — brings `RouterCustomizer`, `Middleware`, the interceptors/contributors, decoders/encoders, and `RestContextResolver` under the `OrderedExtension` contract (phase → priority → orderKey comparator).
-- ADR-0119: Security-Scheme Handler Decoupling from RouterBuilder — establishes `RouteRegistration`, `SecuritySchemeRegistry`, and `RouterSetup` as transport-neutral replacements for `RouterBuilder`/`OpenAPIRoute`, decoupling the extension SPIs from the Vert.x OpenAPI router.
-- ADR-0122: BoundRequest as the Neutral Per-Request Binding Model — replaces `ValidatedRequest`/`RequestParameter` with the neutral `BoundRequest` / `RequestValue` surface, decoupling parameter extraction from the validation strategy.
-- ADR-0142: Param-Conversion SPI — Registry, Resolver, and ConversionContext — establishes the native `ParamConverterRegistry` / `ParamConversionResolver` / `ConversionContext` stack in `rest.core.convert`, shared symmetrically by the JAX-RS inbound path and the REST-client outbound path.
-- ADR-0143: REST Metadata-Record Unification onto `core.codegen` — unifies `ResourceMethodMeta.ParamMeta` and `ClientParamMeta` onto the `core.codegen` `ParameterMetadata` SPI, supplying the literal-backed `annotationsLazy()` bridge that `ConversionContext` consumes for the JAX-RS provider path.
-- ADR-0179: File-Part Validation and Content Verifier — governs the `@FilePart` public annotation, post-spool size semantics, and request-owned upload lifetime.
-
----
+No OpenAPI artifact is declared, by design: route registration is expressed through `RouterSetup`,
+`RouteRegistration`, `SecuritySchemeRegistry`, and `RestOperationDescriptor` so extensions compiled
+against this module stay independent of any contract-validation implementation.

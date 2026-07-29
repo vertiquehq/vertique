@@ -10,6 +10,7 @@ import java.util.ArrayList;
 import java.util.List;
 import javax.lang.model.element.ExecutableElement;
 import javax.lang.model.element.VariableElement;
+import javax.lang.model.type.ExecutableType;
 import javax.lang.model.type.TypeMirror;
 
 /**
@@ -116,11 +117,53 @@ final class AptParamClassifier {
      * @return ordered list of {@link ParamModel} records; never {@code null}
      */
     List<ParamModel> classifyContractParams(ExecutableElement method, boolean[] errorSink) {
+        return classifyContractParams(method, declaredParamTypes(method), errorSink);
+    }
+
+    /**
+     * Classifies parameters of a contract interface method using <em>resolved</em> parameter types.
+     *
+     * <p>Identical to {@link #classifyContractParams(ExecutableElement, boolean[])} except that the
+     * parameter <em>types</em> are read from {@code resolved} — the {@link ExecutableType} produced
+     * by
+     * {@link javax.lang.model.util.Types#asMemberOf(javax.lang.model.type.DeclaredType, javax.lang.model.element.Element)}
+     * — while parameter <em>names</em> and annotations still come from
+     * {@link ExecutableElement#getParameters()} at the same index. This substitutes type variables
+     * inherited from a generic super-interface (e.g. {@code T} declared on {@code Parent<T>} reads
+     * as {@code String} when viewed as a member of {@code Child extends Parent<String>}).
+     *
+     * @param method    the contract method to classify; must not be {@code null}
+     * @param resolved  the method's type as a member of the viewing type; must not be {@code null}
+     * @param errorSink a mutable one-element {@code boolean[]} used as an out-parameter;
+     *                  {@code errorSink[0]} is set to {@code true} when an error is emitted
+     * @return ordered list of {@link ParamModel} records; never {@code null}
+     */
+    List<ParamModel> classifyContractParams(ExecutableElement method, ExecutableType resolved, boolean[] errorSink) {
+        return classifyContractParams(method, resolved.getParameterTypes(), errorSink);
+    }
+
+    /**
+     * Shared implementation of the two contract-param classification overloads.
+     *
+     * <p>Parameter names and annotations come from {@code method}; the type at index {@code i} comes
+     * from {@code paramTypes}. The two lists always have the same arity; the element-declared type
+     * is used as a defensive fallback if they ever diverge.
+     *
+     * @param method     the contract method to classify; must not be {@code null}
+     * @param paramTypes the parameter types in declaration order; must not be {@code null}
+     * @param errorSink  a mutable one-element {@code boolean[]} used as an out-parameter;
+     *                   {@code errorSink[0]} is set to {@code true} when an error is emitted
+     * @return ordered list of {@link ParamModel} records; never {@code null}
+     */
+    private List<ParamModel> classifyContractParams(
+            ExecutableElement method, List<? extends TypeMirror> paramTypes, boolean[] errorSink) {
         List<ParamModel> result = new ArrayList<>();
         int payloadCount = 0;
 
-        for (VariableElement param : method.getParameters()) {
-            TypeMirror paramType = param.asType();
+        List<? extends VariableElement> params = method.getParameters();
+        for (int i = 0; i < params.size(); i++) {
+            VariableElement param = params.get(i);
+            TypeMirror paramType = i < paramTypes.size() ? paramTypes.get(i) : param.asType();
             String name = param.getSimpleName().toString();
 
             if (isDispatchEnvelopeType(paramType)) {
@@ -216,6 +259,16 @@ final class AptParamClassifier {
     }
 
     // --- Internal helpers ---
+
+    /**
+     * Returns the element-declared parameter types of the given method, in declaration order.
+     *
+     * @param method the method whose parameter types to collect; must not be {@code null}
+     * @return the declared parameter types; never {@code null}
+     */
+    private static List<TypeMirror> declaredParamTypes(ExecutableElement method) {
+        return method.getParameters().stream().map(VariableElement::asType).toList();
+    }
 
     /**
      * Returns {@code true} if the type is assignable to {@code DispatchEnvelope<?>}.

@@ -51,6 +51,13 @@ public final class DirectImplExtractor {
     /**
      * Result of an extraction attempt.
      *
+     * <p>Every failure this extractor can report is rooted in the <em>contract</em> — it only ever
+     * inspects contract methods (return-type unwrapping and contract-parameter classification), the
+     * impl type being aliased to them. {@code valid} is therefore also the contract-shape signal the
+     * {@code ServiceContractProcessor} uses to decide whether the contract-only client-proxy path
+     * would re-report the same diagnostics. Contrast
+     * {@link HandlerImplExtractor.ExtractionResult}, which mixes both roots.
+     *
      * @param model the extracted model; {@code null} when {@code valid} is {@code false}
      * @param valid {@code false} if any error diagnostic was emitted during extraction
      */

@@ -14,14 +14,6 @@ PostgreSQL implementation of the `JobRepository` SPI defined in `job-core`. Pers
 
 ---
 
-## Package Layout
-
-| Package | Contents |
-|---------|----------|
-| `dev.vertique.job.postgresql` | `PgJobRepository`, `NotifyingJobRepository`, `JobExecutionMapper`, `JobPostgresqlModule`, `RawJobRepository` |
-
----
-
 ## Key Classes
 
 ### `PgJobRepository`
@@ -129,7 +121,7 @@ The framework is pre-release: every new column or table folds back into `V1` rat
 | `locked_by` | `VARCHAR(255)` | Node identity of the worker; null when not PROCESSING |
 | `last_error` | `TEXT` | Human-readable error message on failure |
 | `error_type` | `VARCHAR(500)` | Exception class name on failure |
-| `metadata` | `JSONB` | Durable context `DurableMetadata` document persisted as a `{"context": {namespace: {...}}}` carrier (see ADR 0065); written at enqueue time by `DelayedJobService`; read at dispatch time by `DelayedJobPoller` |
+| `metadata` | `JSONB` | Durable context `DurableMetadata` document persisted as a `{"context": {namespace: {...}}}` carrier; written at enqueue time by `DelayedJobService`; read at dispatch time by `DelayedJobPoller` |
 | `created_at` | `TIMESTAMPTZ` | Row creation time |
 | `updated_at` | `TIMESTAMPTZ` | Last update time (also serves as heartbeat timestamp) |
 
@@ -242,9 +234,3 @@ public interface AppComponent { ... }
 - **job-core** — `JobRepository` SPI, `JobExecution`, `JobExecutionStateTransitionListener`, `JobState`, `JobType`, `ProgressSnapshot`, `Checkpoint`, `LogEntry`, `CronJobSchedule`
 - **db-postgresql** — `PgSqlRepository`, `PgDbExceptionMapper`, `Pool`
 - **db-flyway** — `FlywayMigrationRunner` (required to apply the bundled migration)
-
----
-
-## Related ADRs
-
-- ADR-0080: Job State-Transition Audit Notification via a Repository Decorator — establishes `NotifyingJobRepository` as the firing point for `JobExecutionStateTransitionListener`s; the `@RawJobRepository` qualifier breaks the decorator self-reference; `completeExecution` uses `RETURNING *` + `returningOptional()` to distinguish real transitions from idempotent no-ops; `failAndScheduleRetry` records the `FAILED` attempt and re-enqueues atomically in one transaction; `scheduleRetry` now fails on zero-row updates.

@@ -6,8 +6,10 @@ package dev.vertique.codegen.services.processor.validate;
 import dev.vertique.codegen.CodegenContext;
 import dev.vertique.codegen.Diagnostics;
 import dev.vertique.codegen.services.processor.ServiceAnnotations;
-import dev.vertique.codegen.services.processor.scan.ContractModel;
+import dev.vertique.codegen.services.processor.scan.OperationModel;
+import java.util.List;
 import javax.lang.model.element.ExecutableElement;
+import javax.lang.model.element.TypeElement;
 import javax.lang.model.type.DeclaredType;
 import javax.lang.model.type.TypeKind;
 import javax.lang.model.type.TypeMirror;
@@ -38,12 +40,14 @@ public final class ReturnTypeValidator {
     }
 
     /**
-     * Validates all contract methods in the given model.
+     * Validates all contract methods of the given contract.
      *
-     * @param model the contract model to validate; must not be {@code null}
+     * @param contractType the {@code @ServiceContract} interface the operations belong to; used for
+     *                     diagnostic messages; must not be {@code null}
+     * @param operations   the extracted operations to validate; must not be {@code null}
      * @return {@code true} if all methods pass; {@code false} if at least one error was emitted
      */
-    public boolean validate(ContractModel model) {
+    public boolean validate(TypeElement contractType, List<OperationModel> operations) {
         var futureElement = ctx.elements().getTypeElement(ServiceAnnotations.FUTURE);
         if (futureElement == null) {
             // io.vertx.core.Future not on classpath — skip
@@ -52,7 +56,7 @@ public final class ReturnTypeValidator {
         TypeMirror futureErasure = ctx.types().erasure(futureElement.asType());
 
         boolean valid = true;
-        for (var op : model.operations()) {
+        for (var op : operations) {
             ExecutableElement method = op.contractMethod();
             TypeMirror returnType = method.getReturnType();
 
@@ -62,7 +66,7 @@ public final class ReturnTypeValidator {
                                 method,
                                 "%s",
                                 Diagnostics.mustReturnFuture(
-                                        model.contractType().getSimpleName() + "." + method.getSimpleName() + "()"));
+                                        contractType.getSimpleName() + "." + method.getSimpleName() + "()"));
                 valid = false;
                 continue;
             }
@@ -75,7 +79,7 @@ public final class ReturnTypeValidator {
                                 method,
                                 "%s",
                                 Diagnostics.mustReturnFuture(
-                                        model.contractType().getSimpleName() + "." + method.getSimpleName() + "()"));
+                                        contractType.getSimpleName() + "." + method.getSimpleName() + "()"));
                 valid = false;
                 continue;
             }
@@ -86,7 +90,7 @@ public final class ReturnTypeValidator {
                                 method,
                                 "Return type Future on %s.%s() must be parameterized (e.g. Future<MyResponse>),"
                                         + " raw Future is not allowed",
-                                model.contractType().getSimpleName(),
+                                contractType.getSimpleName(),
                                 method.getSimpleName());
                 valid = false;
             }
