@@ -11,6 +11,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.anyLong;
+import static org.mockito.Mockito.atLeast;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -61,6 +62,7 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 
 /**
  * Tests for {@link CronScheduler} — timer registration, basic fire behaviour, overlap policies,
@@ -1119,6 +1121,442 @@ class CronSchedulerTest {
             scheduler.register(job);
             // Should not throw — misfire check failure is best-effort
             scheduler.start().onSuccess(v -> ctx.completeNow()).onFailure(ctx::failNow);
+        }
+    }
+
+    // --- Service-target execution handler tests (GH-41) ---
+
+    /**
+     * Regression coverage for GH-41: {@link CronJobRegistrar} resolves every {@code @CronJob}
+     * annotated with a service target to a {@link CronTargetReference.ServiceTarget} with
+     * {@code handlerAddress = null} (by design — the runtime address is resolved late via
+     * {@link ServiceTargetResolver}). {@link CronScheduler#buildExecution} currently copies
+     * {@code job.handlerAddress()} straight into {@link JobExecution#handler()}, so a tracked
+     * {@link ExecutionMode#SINGLE_INSTANCE} service-target job persists a {@code null} handler —
+     * fatal against a {@code NOT NULL} column in {@code vertique-job-postgresql}.
+     * {@link CronJobDispatcher#dispatch} resolves the target correctly, but only at send time —
+     * too late for the already-persisted record.
+     */
+    @Nested
+    @DisplayName("service-target execution handler")
+    class ServiceTargetExecutionHandler {
+
+        /** Stable target id used by every test in this nested class. */
+        private static final String STABLE_TARGET_ID = "svc.op";
+
+        /**
+         * The address {@link #STABLE_TARGET_ID} resolves to — deliberately different from the
+         * target id itself so an assertion on the resolved address cannot pass by accident (e.g.
+         * if the code under test echoed the target id back as the address).
+         */
+        private static final String RESOLVED_ADDRESS = "ns/svc/op";
+
+        /**
+         * Returns a {@link ServiceTargetResolver} mock that maps the given {@code targetId} to the
+         * given {@code address}, unlike {@link #stubTargetResolver()} which echoes the target id
+         * back as the address.
+         *
+         * @param targetId the stable target id to stub
+         * @param address  the resolved event bus address to return for {@code targetId}
+         * @return a resolver mock mapping {@code targetId} to {@code address}
+         */
+        private ServiceTargetResolver resolverMapping(String targetId, String address) {
+            ServiceTargetResolver resolver = mock(ServiceTargetResolver.class);
+            when(resolver.resolve(targetId))
+                    .thenReturn(new ResolvedServiceTarget(targetId, null, "ns", "svc", "op", null, address));
+            return resolver;
+        }
+
+        @Test
+        @DisplayName("SINGLE_INSTANCE service-target job persists the resolved handler address, not null")
+        void singleInstanceServiceTargetPersistsResolvedHandler(Vertx vertx, VertxTestContext ctx) {
+            JobRepository repo = mock(JobRepository.class);
+            when(repo.tryInsert(any(JobExecution.class)))
+                    .thenReturn(Future.succeededFuture(Optional.of(UUID.randomUUID())));
+
+            scheduler = new CronScheduler(
+                    vertx,
+                    Set.of(),
+                    repo,
+                    resolverMapping(STABLE_TARGET_ID, RESOLVED_ADDRESS),
+                    testEventBusClient(vertx),
+                    DispatchEnvelopeBuilder.forTesting());
+
+            CronJobDefinition job = new CronJobDefinition(
+                    "single-instance-service-job",
+                    new CronExpression("* * * * * *"),
+                    new CronTargetReference.ServiceTarget(STABLE_TARGET_ID),
+                    null,
+                    ExecutionMode.SINGLE_INSTANCE,
+                    ZoneId.of("UTC"),
+                    3,
+                    null,
+                    OverlapPolicy.SKIP,
+                    true,
+                    Map.of(),
+                    MisfirePolicy.SKIP);
+
+            scheduler.register(job);
+            scheduler.start();
+
+            ArgumentCaptor<JobExecution> captor = ArgumentCaptor.forClass(JobExecution.class);
+            verify(repo, timeout(5000)).tryInsert(captor.capture());
+            ctx.verify(() -> assertEquals(RESOLVED_ADDRESS, captor.getValue().handler()));
+            ctx.completeNow();
+        }
+
+        @Test
+        @DisplayName("EVERY_INSTANCE service-target job persists the resolved handler address, not null")
+        void everyInstanceServiceTargetPersistsResolvedHandler(Vertx vertx, VertxTestContext ctx) {
+            JobRepository repo = mock(JobRepository.class);
+            when(repo.save(any(JobExecution.class))).thenAnswer(inv -> Future.succeededFuture(UUID.randomUUID()));
+
+            scheduler = new CronScheduler(
+                    vertx,
+                    Set.of(),
+                    repo,
+                    resolverMapping(STABLE_TARGET_ID, RESOLVED_ADDRESS),
+                    testEventBusClient(vertx),
+                    DispatchEnvelopeBuilder.forTesting());
+
+            CronJobDefinition job = new CronJobDefinition(
+                    "every-instance-service-job",
+                    new CronExpression("* * * * * *"),
+                    new CronTargetReference.ServiceTarget(STABLE_TARGET_ID),
+                    null,
+                    ExecutionMode.EVERY_INSTANCE,
+                    ZoneId.of("UTC"),
+                    3,
+                    null,
+                    OverlapPolicy.SKIP,
+                    true,
+                    Map.of(),
+                    MisfirePolicy.SKIP);
+
+            scheduler.register(job);
+            scheduler.start();
+
+            ArgumentCaptor<JobExecution> captor = ArgumentCaptor.forClass(JobExecution.class);
+            verify(repo, timeout(5000)).save(captor.capture());
+            ctx.verify(() -> assertEquals(RESOLVED_ADDRESS, captor.getValue().handler()));
+            ctx.completeNow();
+        }
+
+        @Test
+        @DisplayName("QUEUE_ONE re-dispatched fire also persists the resolved handler address")
+        void queuedFireServiceTargetPersistsResolvedHandler(Vertx vertx, VertxTestContext ctx) {
+            // Hold-then-reply idiom copied from the queue-one-job test above.
+            vertx.eventBus()
+                    .consumer(
+                            RESOLVED_ADDRESS,
+                            msg -> vertx.setTimer(1500, id -> {
+                                var body = (DispatchEnvelope<?>) msg.body();
+                                if (body.replyAddress().isPresent()) {
+                                    vertx.eventBus()
+                                            .send(
+                                                    body.replyAddress().orElseThrow(),
+                                                    DispatchEnvelope.of("done"),
+                                                    new DeliveryOptions().setCodecName("dispatch.envelope"));
+                                }
+                            }));
+
+            JobRepository repo = mock(JobRepository.class);
+            when(repo.save(any(JobExecution.class))).thenAnswer(inv -> Future.succeededFuture(UUID.randomUUID()));
+            when(repo.completeExecution(any(UUID.class), any(JobState.class), any(), any(), any()))
+                    .thenAnswer(inv -> Future.succeededFuture(Optional.empty()));
+            when(repo.updateScheduleFireTimes(anyString(), any(Instant.class), any(Instant.class)))
+                    .thenAnswer(inv -> Future.succeededFuture());
+
+            scheduler = new CronScheduler(
+                    vertx,
+                    Set.of(),
+                    repo,
+                    resolverMapping(STABLE_TARGET_ID, RESOLVED_ADDRESS),
+                    testEventBusClient(vertx),
+                    DispatchEnvelopeBuilder.forTesting());
+
+            CronJobDefinition job = new CronJobDefinition(
+                    "queue-one-service-job",
+                    new CronExpression("* * * * * *"),
+                    new CronTargetReference.ServiceTarget(STABLE_TARGET_ID),
+                    null,
+                    ExecutionMode.EVERY_INSTANCE,
+                    ZoneId.of("UTC"),
+                    3,
+                    null,
+                    OverlapPolicy.QUEUE_ONE,
+                    true,
+                    Map.of(),
+                    MisfirePolicy.SKIP);
+
+            scheduler.register(job);
+            scheduler.start();
+
+            vertx.setTimer(
+                    4000,
+                    id -> ctx.verify(() -> {
+                        ArgumentCaptor<JobExecution> captor = ArgumentCaptor.forClass(JobExecution.class);
+                        verify(repo, atLeast(2)).save(captor.capture());
+                        List<JobExecution> captured = captor.getAllValues();
+                        assertTrue(
+                                captured.size() >= 2, "expected at least 2 saved executions, got " + captured.size());
+                        for (JobExecution execution : captured) {
+                            assertEquals(RESOLVED_ADDRESS, execution.handler());
+                        }
+                        ctx.completeNow();
+                    }));
+        }
+
+        @Test
+        @DisplayName("unresolvable service target skips the fire without ever touching the repository")
+        void unresolvableServiceTargetSkipsFireWithoutTouchingRepository(Vertx vertx, VertxTestContext ctx) {
+            AtomicInteger hitCount = new AtomicInteger();
+            vertx.eventBus().consumer(RESOLVED_ADDRESS, msg -> hitCount.incrementAndGet());
+
+            JobRepository repo = mock(JobRepository.class);
+            when(repo.tryInsert(any(JobExecution.class)))
+                    .thenReturn(Future.succeededFuture(Optional.of(UUID.randomUUID())));
+
+            ServiceTargetResolver resolver = mock(ServiceTargetResolver.class);
+            when(resolver.resolve(STABLE_TARGET_ID)).thenThrow(new IllegalArgumentException("no such target"));
+
+            scheduler = new CronScheduler(
+                    vertx, Set.of(), repo, resolver, testEventBusClient(vertx), DispatchEnvelopeBuilder.forTesting());
+
+            CronJobDefinition job = new CronJobDefinition(
+                    "unresolvable-single-instance-job",
+                    new CronExpression("* * * * * *"),
+                    new CronTargetReference.ServiceTarget(STABLE_TARGET_ID),
+                    null,
+                    ExecutionMode.SINGLE_INSTANCE,
+                    ZoneId.of("UTC"),
+                    3,
+                    null,
+                    OverlapPolicy.SKIP,
+                    true,
+                    Map.of(),
+                    MisfirePolicy.SKIP);
+
+            scheduler.register(job);
+            scheduler.start();
+
+            vertx.setTimer(
+                    2500,
+                    id -> ctx.verify(() -> {
+                        verify(repo, never()).tryInsert(any());
+                        assertEquals(
+                                0,
+                                hitCount.get(),
+                                "consumer at " + RESOLVED_ADDRESS + " must never receive an unresolvable dispatch");
+                        ctx.completeNow();
+                    }));
+        }
+
+        @Test
+        @DisplayName("a fire that fails during target resolution still releases the in-flight guard and "
+                + "concurrency slot so a later tick can dispatch")
+        void unresolvableServiceTargetLeavesJobFirableOnNextTick(Vertx vertx, VertxTestContext ctx) {
+            AtomicInteger hitCount = new AtomicInteger();
+            vertx.eventBus().consumer(RESOLVED_ADDRESS, msg -> hitCount.incrementAndGet());
+
+            JobRepository repo = mock(JobRepository.class);
+            when(repo.tryInsert(any(JobExecution.class)))
+                    .thenReturn(Future.succeededFuture(Optional.of(UUID.randomUUID())));
+
+            ResolvedServiceTarget resolved =
+                    new ResolvedServiceTarget(STABLE_TARGET_ID, null, "ns", "svc", "op", null, RESOLVED_ADDRESS);
+            ServiceTargetResolver resolver = mock(ServiceTargetResolver.class);
+            when(resolver.resolve(STABLE_TARGET_ID))
+                    .thenThrow(new IllegalArgumentException("no such target"))
+                    .thenReturn(resolved);
+
+            // 6-arg constructor: executionTimeoutMs defaults to 0, so nothing can mask a stranded guard.
+            scheduler = new CronScheduler(
+                    vertx, Set.of(), repo, resolver, testEventBusClient(vertx), DispatchEnvelopeBuilder.forTesting());
+
+            CronJobDefinition job = new CronJobDefinition(
+                    "leaks-guard-single-instance-job",
+                    new CronExpression("* * * * * *"),
+                    new CronTargetReference.ServiceTarget(STABLE_TARGET_ID),
+                    null,
+                    ExecutionMode.SINGLE_INSTANCE,
+                    ZoneId.of("UTC"),
+                    3,
+                    null,
+                    OverlapPolicy.SKIP,
+                    true,
+                    Map.of(),
+                    MisfirePolicy.SKIP);
+
+            scheduler.register(job);
+            scheduler.start();
+
+            vertx.setTimer(
+                    4000,
+                    id -> ctx.verify(() -> {
+                        assertTrue(
+                                hitCount.get() >= 1,
+                                "expected the in-flight guard/slot to release so a later tick can dispatch, got 0"
+                                        + " hits");
+                        ctx.completeNow();
+                    }));
+        }
+
+        /**
+         * GREEN regression guard: unlike tests 1-3, this uses a mock {@link JobRepository} that
+         * tolerates a {@code null} handler — it only goes red against a real {@code NOT NULL}
+         * handler column (e.g. {@code vertique-job-postgresql}), which this unit test doesn't
+         * exercise. {@link CronJobDispatcher#dispatch} already resolves the {@link
+         * CronTargetReference.ServiceTarget} correctly at send time, so the message lands at
+         * {@link #RESOLVED_ADDRESS} today regardless of the persisted-handler bug. Its lasting
+         * value is pinning that the address a persisted execution records equals the address
+         * actually dispatched to — an invariant the later fix makes true by construction.
+         */
+        @Test
+        @DisplayName("GREEN regression guard: SINGLE_INSTANCE service-target dispatch lands at the resolved address")
+        void serviceTargetDispatchLandsAtTheResolvedAddress(Vertx vertx, VertxTestContext ctx) {
+            vertx.eventBus().consumer(RESOLVED_ADDRESS, msg -> ctx.completeNow());
+
+            JobRepository repo = mock(JobRepository.class);
+            when(repo.tryInsert(any(JobExecution.class)))
+                    .thenReturn(Future.succeededFuture(Optional.of(UUID.randomUUID())));
+
+            scheduler = new CronScheduler(
+                    vertx,
+                    Set.of(),
+                    repo,
+                    resolverMapping(STABLE_TARGET_ID, RESOLVED_ADDRESS),
+                    testEventBusClient(vertx),
+                    DispatchEnvelopeBuilder.forTesting());
+
+            CronJobDefinition job = new CronJobDefinition(
+                    "resolved-address-single-instance-job",
+                    new CronExpression("* * * * * *"),
+                    new CronTargetReference.ServiceTarget(STABLE_TARGET_ID),
+                    null,
+                    ExecutionMode.SINGLE_INSTANCE,
+                    ZoneId.of("UTC"),
+                    3,
+                    null,
+                    OverlapPolicy.SKIP,
+                    true,
+                    Map.of(),
+                    MisfirePolicy.SKIP);
+
+            scheduler.register(job);
+            scheduler.start();
+        }
+
+        /**
+         * GREEN regression guard against a rejected design that would resolve the service target
+         * at the top of {@code fire()}, before {@code tryAcquireInFlight}. Under that rejected
+         * design, a resolver failure during the overlapping tick would return early and skip
+         * {@code handleOverlap}, silently dropping a {@code QUEUE_ONE} tick. Under both the
+         * current code and the planned fix, an overlapping tick is refused at
+         * {@code tryAcquireInFlight} and routed to {@code handleOverlap} <em>without ever
+         * consulting the resolver</em> — so this guard must be green in both. The resolver
+         * failure is keyed on a time window (armed while the first execution is held, disarmed
+         * just before it replies) rather than an invocation count, because invocation ordinals
+         * shift once the fix adds a resolution call at admission time.
+         */
+        @Test
+        @DisplayName("GREEN regression guard: overlap admission never calls the resolver, so a queued tick "
+                + "still runs even if the resolver fails during the overlap window")
+        void unresolvableTargetDuringOverlapStillQueuesTheTick(Vertx vertx, VertxTestContext ctx) {
+            AtomicInteger hitCount = new AtomicInteger();
+            AtomicBoolean failResolution = new AtomicBoolean(false);
+            vertx.eventBus().consumer(RESOLVED_ADDRESS, msg -> {
+                hitCount.incrementAndGet();
+                failResolution.set(true);
+                vertx.setTimer(1500, id -> {
+                    failResolution.set(false);
+                    var body = (DispatchEnvelope<?>) msg.body();
+                    if (body.replyAddress().isPresent()) {
+                        vertx.eventBus()
+                                .send(
+                                        body.replyAddress().orElseThrow(),
+                                        DispatchEnvelope.of("done"),
+                                        new DeliveryOptions().setCodecName("dispatch.envelope"));
+                    }
+                });
+            });
+
+            JobRepository repo = mock(JobRepository.class);
+            when(repo.save(any(JobExecution.class))).thenAnswer(inv -> Future.succeededFuture(UUID.randomUUID()));
+            when(repo.completeExecution(any(UUID.class), any(JobState.class), any(), any(), any()))
+                    .thenAnswer(inv -> Future.succeededFuture(Optional.empty()));
+            when(repo.updateScheduleFireTimes(anyString(), any(Instant.class), any(Instant.class)))
+                    .thenAnswer(inv -> Future.succeededFuture());
+
+            ServiceTargetResolver resolver = mock(ServiceTargetResolver.class);
+            when(resolver.resolve(STABLE_TARGET_ID)).thenAnswer(inv -> {
+                if (failResolution.get()) {
+                    throw new IllegalArgumentException("transient");
+                }
+                return new ResolvedServiceTarget(STABLE_TARGET_ID, null, "ns", "svc", "op", null, RESOLVED_ADDRESS);
+            });
+
+            scheduler = new CronScheduler(
+                    vertx, Set.of(), repo, resolver, testEventBusClient(vertx), DispatchEnvelopeBuilder.forTesting());
+
+            CronJobDefinition job = new CronJobDefinition(
+                    "queued-overlap-service-job",
+                    new CronExpression("* * * * * *"),
+                    new CronTargetReference.ServiceTarget(STABLE_TARGET_ID),
+                    null,
+                    ExecutionMode.EVERY_INSTANCE,
+                    ZoneId.of("UTC"),
+                    3,
+                    null,
+                    OverlapPolicy.QUEUE_ONE,
+                    true,
+                    Map.of(),
+                    MisfirePolicy.SKIP);
+
+            scheduler.register(job);
+            scheduler.start();
+
+            vertx.setTimer(
+                    4000,
+                    id -> ctx.verify(() -> {
+                        assertTrue(
+                                hitCount.get() >= 2,
+                                "queued fire must still run even though the resolver fails transiently, got "
+                                        + hitCount.get() + " hits");
+                        ctx.completeNow();
+                    }));
+        }
+
+        @Test
+        @DisplayName(
+                "GREEN regression guard: plain EventBusTarget dispatch is untouched by service-target" + " resolution")
+        void eventBusTargetStillDispatchesToItsAddress(Vertx vertx, VertxTestContext ctx) {
+            vertx.eventBus().consumer("plain.address", msg -> ctx.completeNow());
+
+            scheduler = new CronScheduler(
+                    vertx,
+                    Set.of(),
+                    null,
+                    resolverMapping(STABLE_TARGET_ID, RESOLVED_ADDRESS),
+                    testEventBusClient(vertx),
+                    DispatchEnvelopeBuilder.forTesting());
+
+            CronJobDefinition job = new CronJobDefinition(
+                    "plain-event-bus-job",
+                    new CronExpression("* * * * * *"),
+                    new CronTargetReference.EventBusTarget("plain.address"),
+                    "plain.address",
+                    ExecutionMode.EVERY_INSTANCE,
+                    ZoneId.of("UTC"),
+                    3,
+                    null,
+                    OverlapPolicy.SKIP,
+                    false,
+                    Map.of(),
+                    MisfirePolicy.SKIP);
+
+            scheduler.register(job);
+            scheduler.start();
         }
     }
 
