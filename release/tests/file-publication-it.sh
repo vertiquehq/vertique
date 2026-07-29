@@ -54,9 +54,13 @@ BASELINE_STATUS="$(git status --porcelain)"
 # Tests are PUB-BUILD's job; this stage proves artifact SHAPE, so it skips them
 # but must still produce sources and Javadoc payloads.
 if [[ -z "${VERTIQUE_IT_REUSE_REPO:-}" ]]; then
-  echo "file-publication-it: installing reactor into isolated repository (this takes a while)..."
+  echo "file-publication-it: installing reactor at $FINAL_VERSION into isolated repository (this takes a while)..."
+  # -Drevision is the whole point of FR-REL-003: the final version is supplied
+  # at build time, so the selected source commit is never edited. Both public
+  # parents declare their own <revision>, and a CLI property overrides both.
   ./mvnw -ntp -q -B \
     -Dmaven.repo.local="$LOCAL_REPO" \
+    -Drevision="$FINAL_VERSION" \
     -DskipTests -Dspotless.check.skip=true -Djacoco.skip=true \
     -Prelease \
     clean install \
