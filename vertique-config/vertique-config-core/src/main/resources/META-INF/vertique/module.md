@@ -405,30 +405,15 @@ the retriever through its constructor. It exists for the legacy path only; omit 
 
 ---
 
-## Legacy Path (Non-Launcher Mode)
+## Bridging an async retriever before component construction
 
-An application that uses `MainVerticle` without `VertiqueApplication` can still bridge the async
-retriever load before building its Dagger component.
+`ConfigBootstrap.load(vertx, config())` resolves the configuration tree and hands back both the resolved
+config and the retriever, so a component that needs the retriever can be built once the load completes.
 
-```java
-// Legacy wiring inside MainVerticle.start() — still functional, deprecated
-@Override
-public void start(Promise<Void> startPromise) {
-    ConfigBootstrap.load(vertx, config())
-        .compose(result -> {
-            AppComponent app = DaggerAppComponent.builder()
-                .vertxModule(new VertxModule(vertx, result.config()))
-                .configModule(new ConfigModule(result.retriever()))
-                .build();
-            return vertx.deployVerticle(app.httpVerticle());
-        })
-        .onSuccess(id -> startPromise.complete())
-        .onFailure(startPromise::fail);
-}
-```
-
-**Migration.** Under `VertiqueApplication` the resolved tree is already in `config()`, so drop both
-`ConfigBootstrap.load` and `ConfigModule` and construct the component directly from `config()`.
+Under `VertiqueApplication` the resolved tree is already in `config()`, so neither
+`ConfigBootstrap.load` nor `ConfigModule` is needed — construct the component directly from `config()`.
+Application startup is delegated to the lifecycle runner in `dev.vertique:vertique-application`; a host
+that deploys verticles itself bypasses the startup phases and the steps that run in them.
 
 If a legacy `MainVerticle` is deployed under `VertiqueApplication`, the bootstrap runs twice. The
 second load merges the already-resolved tree against itself — a benign no-op with no correctness

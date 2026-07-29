@@ -84,11 +84,15 @@ public final class JwtAuthFactory {
      * <pre>{@code
      * JwtAuthFactory.fromJwksAsync(vertx, jwksUri)
      *     .compose(jwtAuth -> VertiqueApplicationBootstrap.start(
-     *         VertiqueRuntime.of(vertx, config()),
-     *         rt -> DaggerAppComponent.builder()
-     *                 .appModule(new AppModule(jwtAuth))
-     *                 .build()));
+     *             VertiqueRuntime.of(vertx, config()),
+     *             rt -> DaggerAppComponent.builder()
+     *                     .vertxModule(new VertxModule(rt.vertx(), rt.config()))
+     *                     .appModule(new AppModule(jwtAuth))
+     *                     .build()));
      * }</pre>
+     * <p>That call resolves to a {@code Future<VertiqueApplicationHandle<C>>}; a custom host must
+     * retain the handle and delegate shutdown to it — see {@code dev.vertique:vertique-application}
+     * for the full startup/shutdown contract.
      *
      * @param vertx    the Vert.x instance
      * @param location the JWKS document location
@@ -202,11 +206,15 @@ public final class JwtAuthFactory {
      * JwtAuthFactory.fromJwksRefreshing(vertx, "https://auth.example.com/.well-known/jwks.json",
      *         Duration.ofMinutes(5))
      *     .compose(jwtAuth -> VertiqueApplicationBootstrap.start(
-     *         VertiqueRuntime.of(vertx, config()),
-     *         rt -> DaggerAppComponent.builder()
-     *                 .appModule(new AppModule(jwtAuth))
-     *                 .build()));
+     *             VertiqueRuntime.of(vertx, config()),
+     *             rt -> DaggerAppComponent.builder()
+     *                     .vertxModule(new VertxModule(rt.vertx(), rt.config()))
+     *                     .appModule(new AppModule(jwtAuth))
+     *                     .build()));
      * }</pre>
+     * <p>That call resolves to a {@code Future<VertiqueApplicationHandle<C>>}; a custom host must
+     * retain the handle and delegate shutdown to it — see {@code dev.vertique:vertique-application}
+     * for the full startup/shutdown contract.
      *
      * @param vertx           the Vert.x instance
      * @param location        the JWKS document location (classpath, filesystem, or HTTP URL)

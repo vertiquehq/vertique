@@ -96,11 +96,15 @@ public final class RefreshableJwtAuth implements JWTAuth {
      * <pre>{@code
      * RefreshableJwtAuth.create(vertx, "https://auth.example.com/.well-known/jwks.json", Duration.ofMinutes(5))
      *     .compose(jwtAuth -> VertiqueApplicationBootstrap.start(
-     *         VertiqueRuntime.of(vertx, config()),
-     *         rt -> DaggerAppComponent.builder()
-     *                 .appModule(new AppModule(jwtAuth))
-     *                 .build()));
+     *             VertiqueRuntime.of(vertx, config()),
+     *             rt -> DaggerAppComponent.builder()
+     *                     .vertxModule(new VertxModule(rt.vertx(), rt.config()))
+     *                     .appModule(new AppModule(jwtAuth))
+     *                     .build()));
      * }</pre>
+     * <p>That call resolves to a {@code Future<VertiqueApplicationHandle<C>>}; a custom host must
+     * retain the handle and delegate shutdown to it — see {@code dev.vertique:vertique-application}
+     * for the full startup/shutdown contract.
      *
      * @param vertx           the Vert.x instance, must not be {@code null}
      * @param jwksLocation    the JWKS document location (classpath, filesystem, or HTTP URL),

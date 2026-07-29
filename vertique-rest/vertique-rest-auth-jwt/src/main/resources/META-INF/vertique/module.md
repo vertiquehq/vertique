@@ -272,16 +272,36 @@ Location handling for the JWKS methods:
 `fromJwks` performs synchronous I/O. That is fine for `classpath:` and filesystem locations. For an
 HTTP location on an event-loop thread, use `fromJwksAsync` — it dispatches the fetch through
 `executeBlocking` — and compose application startup onto it, since the `JWTAuth` must exist before
-the Dagger component that consumes it is built:
+the Dagger component that consumes it is built. `VertiqueApplicationBootstrap.start(...)` resolves
+to a `Future<VertiqueApplicationHandle<AppComponent>>`; a custom host retains the handle and
+delegates shutdown to it, per `dev.vertique:vertique-application`:
 
 ```java
-String jwksUri = config().getJsonObject("auth").getString("jwksUri");
-JwtAuthFactory.fromJwksAsync(vertx, jwksUri)
-    .compose(jwtAuth -> VertiqueApplicationBootstrap.start(
-        VertiqueRuntime.of(vertx, config()),
-        rt -> DaggerAppComponent.builder()
-                .appModule(new AppModule(jwtAuth))
-                .build()));
+public class MainVerticle extends AbstractVerticle {
+    private VertiqueApplicationHandle<AppComponent> handle;
+
+    @Override
+    public void start(Promise<Void> startPromise) {
+        String jwksUri = config().getJsonObject("auth").getString("jwksUri");
+        JwtAuthFactory.fromJwksAsync(vertx, jwksUri)
+            .compose(jwtAuth -> VertiqueApplicationBootstrap.start(
+                    VertiqueRuntime.of(vertx, config()),
+                    rt -> DaggerAppComponent.builder()
+                            .vertxModule(new VertxModule(rt.vertx(), rt.config()))
+                            .appModule(new AppModule(jwtAuth))
+                            .build()))
+            .onSuccess(h -> {
+                handle = h;
+                startPromise.complete();
+            })
+            .onFailure(startPromise::fail);
+    }
+
+    @Override
+    public void stop(Promise<Void> stopPromise) {
+        handle.shutdown().onComplete(v -> stopPromise.complete());
+    }
+}
 ```
 
 **Failures:**

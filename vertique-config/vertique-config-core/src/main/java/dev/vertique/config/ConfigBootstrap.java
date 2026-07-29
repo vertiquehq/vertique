@@ -23,19 +23,22 @@ import org.slf4j.LoggerFactory;
  * (for passing to {@link dev.vertique.core.VertxModule}) and the {@link ConfigRetriever}
  * (for passing to {@link ConfigModule}).
  *
- * <p>Usage in a MainVerticle:
+ * <p>Usage — resolve the tree, then build the component from the result:
  * <pre>{@code
  * ConfigBootstrap.load(vertx, config())
- *     .compose(result -> {
- *         AppComponent app = DaggerAppComponent.builder()
- *             .vertxModule(new VertxModule(vertx, result.config()))
- *             .configModule(new ConfigModule(result.retriever()))
- *             .build();
- *         return vertx.deployVerticle(app.httpVerticle());
- *     })
- *     .onSuccess(id -> startPromise.complete())
- *     .onFailure(startPromise::fail);
+ *     .compose(result -> VertiqueApplicationBootstrap.start(
+ *             VertiqueRuntime.of(vertx, result.config()),
+ *             rt -> DaggerAppComponent.builder()
+ *                     .vertxModule(new VertxModule(rt.vertx(), rt.config()))
+ *                     .configModule(new ConfigModule(result.retriever()))
+ *                     .build()));
  * }</pre>
+ *
+ * <p>Under {@code VertiqueApplication} the resolved tree is already in {@code config()}, so neither
+ * this class nor {@link ConfigModule} is needed — construct the component directly. Application
+ * startup is delegated to the lifecycle runner in {@code dev.vertique:vertique-application}, which
+ * deploys every startup phase; deploying a verticle directly bypasses those phases and the steps that
+ * run in them.
  *
  * <p>Configuration source precedence (lowest to highest):
  * <ol>

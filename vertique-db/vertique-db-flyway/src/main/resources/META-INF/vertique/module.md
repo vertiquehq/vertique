@@ -149,7 +149,7 @@ applications must:
 1. Set `flyway.mode=DISABLED` to disable the automatic step.
 2. Run each migration location manually, with separate `Flyway` instances configured for each
    history table, by contributing their own `MIGRATE`-phase `ApplicationStartupStep` instances so
-   the runner still sequences them before `INFRA`, `SERVICES`, and `EDGE` deploy.
+   the runner still sequences them before any verticle phase deploys.
 
 The single-run limitation is by design — multi-schema migration with separate history tables
 requires application-level coordination that a generic framework step cannot safely abstract.
