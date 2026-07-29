@@ -8,81 +8,72 @@ SPDX-License-Identifier: EUPL-1.2
 > **Status:** Implemented
 > **Package:** `dev.vertique.job`
 > **Artifact:** `vertique-job-core`
-> **Depends on:** core, services
+> **Depends on:** core
 
-Shared infrastructure for all job scheduling workloads (cron, delayed, batch). Defines the job state machine, `JobContext` API for handler-side progress reporting, structured logging, metadata, step deduplication, and cooperative cancellation. Declares the `JobInterceptor` SPI for cross-cutting concerns and the `JobRepository` SPI for persistence. `JobCompletionHandler` provides shared completion logic used by cron and delayed-job triggers. `JobCoordinator` manages node heartbeats, dead-node detection, orphan recovery, and cooperative cancellation across a cluster.
+`vertique-job-core` defines the vocabulary every Vertique scheduling module shares: the job execution
+record and its state machine, the `JobContext` handler-side API for progress, structured logging,
+step deduplication and cooperative cancellation, the `JobRepository` persistence SPI, and the two
+observation SPIs. It also ships `JobCompletionHandler`, which turns a handler reply into a persisted
+outcome, and `JobCoordinator`, which runs node heartbeats, dead-node detection, orphan recovery and
+cooperative cancellation across a cluster.
+
+This module schedules nothing by itself — it owns no trigger and no queue. Install
+`dev.vertique:vertique-job-cron` for recurring work or `dev.vertique:vertique-job-delayed` for
+durable one-shot work, plus `dev.vertique:vertique-job-postgresql` for the persistence that makes
+retries, heartbeats and dead-lettering durable.
 
 ---
 
-## Package Layout
+## When To Use It
 
-| Package | Contents |
-|---------|----------|
-| `dev.vertique.job` | `JobContext`, `DefaultJobContext`, `JobDispatchContext`, `JobInterceptor`, `JobInterceptors`, `JobState`, `JobType`, `JobRepository`, `JobExecution`, `JobExecutionStateTransitionEvent`, `JobExecutionStateTransitionListener`, `JobCompletionHandler`, `JobCoordinator`, `JobCoordinatorConfig`, `CronJobSchedule`, `JobLogger`, `DefaultJobLogger`, `ProgressReporter`, `DefaultProgressReporter`, `ProgressSnapshot`, `Checkpoint`, `LogEntry` |
-| `dev.vertique.job.dagger` | `JobModule`, `JobCoordinatorModule` |
+You rarely install this module directly — both scheduling modules depend on it. Reach for its types
+when you write code that must be *aware* of jobs: a handler that reports progress or honours
+cancellation (`JobContext`), an interceptor that traces or measures dispatch (`JobInterceptor`), an
+audit or notification consumer that must see durable outcomes
+(`JobExecutionStateTransitionListener`), or a persistence adapter for a store other than PostgreSQL
+(`JobRepository`).
 
 ---
 
-## Key Classes
+## Core Concepts
 
-### `JobExecution`
+### One logical job, one or many executions
 
-Immutable record representing a job execution. A delayed job reuses one `JobExecution` row across its retry attempts (the `id` is stable; `attemptNumber` increments), while each cron fire creates a distinct execution.
+`jobId` is the **logical** identifier and is stable across retries; `JobExecution.id()` is the
+**execution** identifier. A delayed job reuses one execution row across all its attempts — `id` stays
+put and `attemptNumber` increments, so a specific attempt is `(id, attemptNumber)`. A cron fire
+creates a distinct row each time. `attemptNumber` is zero-based and `maxAttempts` is inclusive, so
+attempts remain while `attemptNumber + 1 < maxAttempts`.
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `id` | `UUID` | Unique execution identifier; stable across retries for a delayed job (`attemptNumber` distinguishes attempts), distinct per cron fire |
-| `jobId` | `String` | Logical job identifier (stable across retries) |
-| `jobType` | `JobType` | Scheduling mechanism (`CRON`, `DELAYED`, `BATCH`) |
-| `handler` | `String` | Event bus address of the handler |
-| `queue` | `String` | Logical queue this execution belongs to |
-| `state` | `JobState` | Current lifecycle state |
-| `attemptNumber` | `int` | Zero-based attempt counter (0 = first attempt) |
-| `maxAttempts` | `int` | Maximum allowed attempts (inclusive) |
-| `payload` | `Object` | Typed job data passed to the handler; stored as JSONB in DB |
-| `priority` | `int` | Claiming order — higher values claimed first; default 0 |
-| `lockedBy` | `String` | Node identity of the worker currently processing, or `null` |
-| `scheduledAt` | `Instant` | When this execution is eligible for claiming |
-| `enqueuedAt` | `Instant` | When placed on the work queue, or `null` |
-| `startedAt` | `Instant` | When processing began, or `null` |
-| `completedAt` | `Instant` | When processing finished, or `null` |
-| `errorMessage` | `String` | Human-readable error message on failure, or `null` |
-| `errorType` | `String` | Exception class name on failure, or `null` |
-| `progress` | `ProgressSnapshot` | Latest progress snapshot (never null; defaults to `EMPTY`) |
-| `parameters` | `Map<String,Object>` | Static parameters at scheduling time (immutable) |
-| `attributes` | `Map<String,Object>` | Runtime attributes set by interceptors or handlers (immutable) |
+### The state machine
 
-Copy-on-write methods: `withState()`, `withProgress()`, `withPayload()`, `withLockedBy()`, `withError()`, `withStarted()`, `withCompleted()`.
+There is no `SCHEDULED` state. Future-dated work is `ENQUEUED` with a future `scheduledAt`, and claim
+queries filter by `scheduled_at <= NOW()`, so a job becomes claimable exactly when its time arrives
+without a transition timer.
 
-### `JobState`
+| State | Meaning | Allowed next states |
+|---|---|---|
+| `ENQUEUED` | On the queue, awaiting a worker; may be future-dated | `PROCESSING` |
+| `PROCESSING` | Claimed and running | `SUCCEEDED`, `FAILED`, `CANCELLED`, `ABANDONED`, `DEAD_LETTER` |
+| `SUCCEEDED` | Completed successfully | *(terminal)* |
+| `FAILED` | Attempt failed; may retry | `ENQUEUED`, `DEAD_LETTER` |
+| `CANCELLED` | Cancelled through the coordinator | *(terminal)* |
+| `ABANDONED` | Interrupted — timeout or dead-node reclaim | `ENQUEUED`, `DEAD_LETTER`, `SUCCEEDED`, `FAILED` |
+| `DEAD_LETTER` | Attempts exhausted; parked | *(terminal)* |
 
-State machine for job executions. There is no separate `SCHEDULED` state — future-scheduled executions use `ENQUEUED` with a future `scheduled_at` value, and claim queries filter by `scheduled_at <= NOW()`.
+`JobState.canTransitionTo(JobState)` validates a proposed transition. `ABANDONED` is deliberately
+**not** terminal and deliberately allows `SUCCEEDED`/`FAILED`: a handler can reply after the
+coordinator has reclaimed its execution, and that late reply must win.
 
-| State | Description | Valid transitions |
-|-------|-------------|-------------------|
-| `ENQUEUED` | On the work queue, awaiting a worker. May have future `scheduled_at`. | → `PROCESSING` |
-| `PROCESSING` | Actively being executed | → `SUCCEEDED`, `FAILED`, `CANCELLED`, `ABANDONED`, `DEAD_LETTER` (exhausted failure / timeout) |
-| `SUCCEEDED` | Completed successfully | (terminal) |
-| `FAILED` | Error; may retry if attempts remain | → `ENQUEUED`, `DEAD_LETTER` |
-| `CANCELLED` | Cancelled by coordinator | (terminal) |
-| `ABANDONED` | Heartbeat expired; reclaimed by coordinator | → `ENQUEUED`, `DEAD_LETTER`, `SUCCEEDED`, `FAILED` |
-| `DEAD_LETTER` | All retry attempts exhausted | (terminal) |
+### What a handler receives
 
-`JobState.canTransitionTo(target)` validates transitions at runtime.
-
-### `JobType`
-
-Identifies the scheduling mechanism:
-
-| Constant | Description |
-|----------|-------------|
-| `CRON` | Timer-based recurring execution |
-| `DELAYED` | DB-backed deferred execution |
-| `BATCH` | Chunk-oriented batch processing |
-
-### `JobContext`
-
-Runtime context for a single job execution. Annotated with `@DispatchContextValue` (and a `ContextValue`) so `ServiceMethodInvoker` automatically injects it into handler methods that declare it as a parameter.
+`JobContext` and `JobDispatchContext` are annotated `@DispatchContextValue` and implement
+`ContextValue`, so declaring either as a handler-method parameter is enough — the dispatch layer
+injects them. `JobContext` is mutable per-execution state; `JobDispatchContext` is an immutable
+snapshot of the scheduling metadata (`jobId`, `executionId`, `jobType`, `attemptNumber`,
+`maxAttempts`, `queue`, `scheduledAt`, `startedAt`, `parameters`, `attributes`), with
+`withAttribute(String, Object)` returning a copy and `toMdcContext()` rendering the standard logging
+keys `job.id`, `job.type`, `job.executionId`, `job.queue`, `job.attempt`.
 
 ```java
 @CronJob(id = "daily-report", cron = "0 0 8 * * *")
@@ -90,282 +81,195 @@ public Future<Void> generateDailyReport(ReportRequest request, JobContext ctx) {
     ctx.logger().info("Starting report generation");
     ctx.progress().setTotal(100);
     return ctx.runStepOnce("export-csv", () -> reportService.exportCsv(request))
-        .compose(file -> {
-            ctx.progress().incrementSucceeded(50);
-            return ctx.runStepOnce("send-email", () -> emailService.send(file));
-        })
-        .map(v -> {
-            ctx.progress().incrementSucceeded(50);
-            if (ctx.isCancelled()) log.info("Cancellation requested");
-            return null;
-        });
+            .compose(file -> {
+                ctx.progress().incrementSucceeded(50);
+                return ctx.runStepOnce("send-email", () -> emailService.send(file));
+            })
+            .map(v -> {
+                ctx.progress().incrementSucceeded(50);
+                if (ctx.isCancelled()) {
+                    log.info("Cancellation requested");
+                }
+                return null;
+            });
 }
 ```
+
+---
+
+## Key Classes
+
+### JobContext
+
+Per-execution runtime API; thread-safe.
 
 | Method | Description |
-|--------|-------------|
-| `jobId()` | Logical job identifier (stable across retries) |
-| `executionId()` | Unique execution identifier (stable across retries for a delayed job; distinct per cron fire) |
-| `attemptNumber()` | Zero-based attempt counter (0 = first attempt) |
-| `jobType()` | Scheduling mechanism (`CRON`, `DELAYED`, `BATCH`) |
-| `progress()` | Returns the `ProgressReporter` for this execution |
-| `logger()` | Returns the buffered `JobLogger` for this execution |
-| `isCancelled()` | Returns `true` if cancellation has been signalled |
-| `setCancelled(boolean)` | Sets the cancellation flag |
-| `saveMetadata(key, value)` | Stores arbitrary named metadata; `null` value removes the key |
-| `getMetadata(key, type)` | Retrieves stored metadata cast to the given type |
-| `hasCompletedStep(name)` | Returns `true` if the named step already completed |
-| `runStepOnce(name, task)` | Executes a task exactly once; skips and returns cached result if already completed |
-| `checkpoint(key, value)` | Saves a named checkpoint value (survives restarts when backed by `JobRepository`) |
-| `lastCheckpoint(key, type)` | Retrieves the last saved checkpoint |
+|---|---|
+| `jobId()` / `executionId()` / `attemptNumber()` / `jobType()` | Execution identity |
+| `progress()` / `logger()` | The execution's `ProgressReporter` and buffered `JobLogger` (never `null`) |
+| `isCancelled()` / `setCancelled(boolean)` | Cooperative cancellation flag |
+| `saveMetadata(String, Object)` / `getMetadata(String, Class<T>)` | Named values; a `null` value removes the key |
+| `hasCompletedStep(String)` / `runStepOnce(String, Supplier<Future<T>>)` | Step deduplication |
+| `checkpoint(String, Object)` / `lastCheckpoint(String, Class<T>)` | Named checkpoint values |
 
-### `DefaultJobContext`
+`runStepOnce` gives lightweight idempotency inside one execution without a transaction:
 
-In-memory implementation of `JobContext`. All state is held in `ConcurrentHashMap` structures for thread safety. Cancellation uses a `volatile boolean` flag.
+- A completed step replays its recorded result on later calls; a step whose result was `null` replays
+  as `null`.
+- A **concurrent** second call for the same step returns a succeeded future of `null` immediately —
+  it neither waits for nor receives the first call's result. Do not fan out concurrent calls to one
+  step name.
+- A failed task — failed future *or* a supplier that throws synchronously — clears the marker, so the
+  step runs again on the next call.
 
-`runStepOnce()` uses private sentinels to distinguish three states:
-- `IN_PROGRESS` — a concurrent call returns `null` immediately without waiting
-- `COMPLETED_NULL` — step completed with null result
-- Stored value — step completed with a non-null result
+### Progress, logging and checkpoints
 
-Failed tasks remove the sentinel so the step can be retried on the next call. The `checkpointMap()` package-visible accessor returns an immutable copy for flushing to persistent storage.
+`ProgressReporter` (`setTotal`, `incrementSucceeded()`/`(long)`, `incrementFailed()`/`(long)`,
+`setStatus`, `percentage`, `snapshot`) is thread-safe and always optional. `snapshot()` returns the
+immutable `ProgressSnapshot(total, succeeded, failed, status)`, whose `percentage()` is
+`(succeeded + failed) * 100 / total` and `0` when `total` is `0`; `ProgressSnapshot.EMPTY` is the
+initial value. `JobLogger` buffers `LogEntry(level, message, loggedAt)` records with `level` one of
+`"INFO"`, `"WARN"`, `"ERROR"`; call it as `ctx.logger().warn("Skipping row: missing field 'email'")`.
+`Checkpoint(key, value, updatedAt)` records what `ctx.checkpoint(...)` stored; `value` is any object
+and its serialization is repository-specific.
 
-### `JobDispatchContext`
+### JobCompletionHandler
 
-Immutable record carrying scheduling metadata known at dispatch time: `jobId`, `executionId`, `jobType`, `attemptNumber`, `maxAttempts`, `queue`, `scheduledAt`, `startedAt`, `parameters`, `attributes`. Annotated with `@DispatchContextValue` (and a `ContextValue`) for automatic injection alongside `JobContext`.
-
-Supports copy-on-write via `withAttribute(String, Object)`. Factory method `fromExecution(execution, executionId, startedAt)` builds a dispatch context from a `JobExecution` record.
-
-```java
-public Future<Void> process(MyPayload payload, JobDispatchContext dispatchCtx) {
-    if (dispatchCtx.attemptNumber() > 0) {
-        log.warn("Retrying attempt {}", dispatchCtx.attemptNumber());
-    }
-    return doWork(payload);
-}
-```
-
-`toMdcContext()` returns a map of MDC keys:
-
-| Key | Value |
-|-----|-------|
-| `job.id` | Logical job identifier |
-| `job.type` | `JobType` name (e.g., `"CRON"`) |
-| `job.executionId` | Execution UUID (correlation ID) |
-| `job.queue` | Queue name |
-| `job.attempt` | Zero-based attempt number |
-
-### `JobCompletionHandler`
-
-Reusable utility that handles job completion outcomes: persists terminal state, schedules retries with backoff, and transitions exhausted executions to dead-letter. Used by job triggers (cron, delayed-job) in their per-execution reply handlers.
-
-If no `JobRepository` is provided (`null`), all operations are no-ops — supports in-memory-only mode.
+Turns a handler reply into a persisted outcome. Scheduling modules call it from their reply
+consumers; applications rarely construct one. `handleCompletion(JobExecution, Result<?>,
+BackoffStrategy)` returns `Future<Void>` and persists `SUCCEEDED` on success or on a `null` result;
+on failure it calls `failAndScheduleRetry` at `now + backoff.delay(nextAttempt)` while attempts
+remain, and `DEAD_LETTER` once they are exhausted, carrying the error message and exception class
+name. Constructed with a `null` repository, every path is a no-op — the in-memory-only mode cron uses
+without persistence.
 
 ```java
-// In a reply consumer:
 handler.handleCompletion(execution, result, BackoffStrategy.linear(30_000, 3_600_000))
-       .onFailure(err -> log.warn("Completion handling failed", err));
+        .onFailure(err -> log.warn("Completion handling failed", err));
 ```
 
-| Method | Description |
-|--------|-------------|
-| `handleCompletion(execution, result, backoffStrategy)` | On success: persists `SUCCEEDED`. On retryable failure: atomically records the `FAILED` attempt and re-enqueues via `failAndScheduleRetry` (one transaction). On exhausted: persists `DEAD_LETTER`. |
+### JobCoordinator
 
-**Retry-persistence invariant:** A retryable failure records the `FAILED` attempt (durable and observable to `JobExecutionStateTransitionListener`s) and re-enqueues the row in a **single transaction** via `failAndScheduleRetry` — either both writes commit or neither does, so a crash can never strand a retryable execution in an intermediate `FAILED` state. A no-op (already-terminal execution) returns `Optional.empty()` and schedules nothing.
-
-### `JobCoordinator`
-
-Coordinates job lifecycle across a cluster: node heartbeat emission, dead-node detection, orphaned execution recovery, and cooperative cancellation.
-
-**Three detection layers:**
-
-1. **Node heartbeat** — writes to `job_server_heartbeats` every `nodeHeartbeatIntervalMs` (default 10 s). First write is issued immediately on `start()`.
-2. **Dead-node scan** — every `scanIntervalMs` (default 30 s) queries for servers with an expired heartbeat (`> nodeHeartbeatTimeoutMs`, default 60 s) and recovers their orphaned executions.
-3. **Cooperative cancellation** — publishes on `job.cancel.<executionId>` event bus address to signal in-process handlers; marks the execution as `CANCELLED` in the repository.
-
-**Recovery behaviour for dead nodes:**
-- `DELAYED` jobs with remaining attempts are recovered via `abandonAndScheduleRetry` — one transaction that records the `ABANDONED` interruption and re-enqueues (no crash-strand window).
-- `DELAYED` jobs with exhausted attempts are dead-lettered (`completeExecution(DEAD_LETTER)`).
-- `CRON` jobs are marked `ABANDONED` (`completeExecution`) — the next scheduled fire creates a fresh execution.
-- The dead server's heartbeat row is removed **only after every per-execution recovery write commits**; if any fails, removal is skipped so the next scan re-discovers the server and retries (removing it would orphan a still-`PROCESSING` execution permanently).
-
-**Late completion race:** A handler may reply after the coordinator marks the execution `ABANDONED`. `completeExecution` accepts both `PROCESSING` and `ABANDONED` as current state, and `ABANDONED` allows `SUCCEEDED`/`FAILED` as targets, so late completions correctly overwrite the coordinator's mark.
+Cluster-level lifecycle owner, constructed as `new JobCoordinator(vertx, repository, config)`.
 
 | Method | Description |
-|--------|-------------|
-| `start()` | Issues initial heartbeat and starts periodic timers |
-| `stop()` | Cancels timers and removes this server's heartbeat row (clean shutdown) |
-| `cancelExecution(UUID)` | Publishes cancel signal and marks execution `CANCELLED` in repository |
-| `serverId()` | Returns this coordinator's node identity (`hostname-<8-char-suffix>`) |
+|---|---|
+| `start()` | Writes an immediate heartbeat, then starts the heartbeat and scan timers; a no-op when `enabled()` is `false` |
+| `stop()` | Cancels both timers and removes this node's heartbeat row; succeeds even if the delete fails |
+| `cancelExecution(UUID)` | Publishes on `job.cancel.<executionId>` and marks the execution `CANCELLED` |
+| `serverId()` | This node's identity, `<hostname>-<8-char suffix>` |
 
-### `JobCoordinatorConfig`
+It heartbeats every `nodeHeartbeatIntervalMs`, scans every `scanIntervalMs` for nodes whose heartbeat
+is older than `nodeHeartbeatTimeoutMs`, and recovers each orphan it finds: a `DELAYED` execution with
+attempts remaining is atomically abandoned and re-enqueued, an exhausted one is dead-lettered, and
+any other type (`CRON`) is marked `ABANDONED` so its schedule re-fires normally. Cancellation is
+cooperative — the published signal sets the in-process flag, and the repository write makes the
+decision durable even if the handler ignores it. The dead node's heartbeat row is deleted **only
+after every per-execution recovery write has committed**; if any fails, the row stays so the next
+scan rediscovers the node, because deleting it early would strand a still-`PROCESSING` orphan
+permanently.
 
-Deserialized from `job.coordinator` in the application config. All fields have `@Builder.Default` values for unit test construction without config.
+### JobCoordinatorConfig
+
+Parsed from `job.coordinator`. Every field has a default, so the section may be omitted entirely.
 
 | Field | Default | Description |
-|-------|---------|-------------|
-| `enabled` | `true` | If `false`, no timers are started |
-| `nodeHeartbeatIntervalMs` | `10000` | How often this node writes a heartbeat (ms) |
-| `nodeHeartbeatTimeoutMs` | `60000` | How long before a heartbeat is considered expired (ms) |
-| `scanIntervalMs` | `30000` | How often to scan for dead nodes (ms) |
-| `executionTimeoutMs` | `120000` | Per-execution consumer timeout (ms); 0 = disabled |
-| `progressFlushIntervalMs` | `10000` | How often to flush progress snapshots to DB (ms); 0 = disabled |
+|---|---|---|
+| `enabled` | `true` | When `false`, no timers start and no background work runs |
+| `nodeHeartbeatIntervalMs` | `10000` | How often this node writes its heartbeat |
+| `nodeHeartbeatTimeoutMs` | `60000` | Age at which a heartbeat is treated as expired |
+| `scanIntervalMs` | `30000` | Interval between dead-node scans |
+| `executionTimeoutMs` | `120000` | Per-execution reply timeout; `0` disables |
+| `progressFlushIntervalMs` | `10000` | Interval for flushing changed progress snapshots; `0` disables |
 
 ```yaml
 job:
   coordinator:
-    enabled: true
-    nodeHeartbeatIntervalMs: 10000
-    nodeHeartbeatTimeoutMs: 60000
-    scanIntervalMs: 30000
     executionTimeoutMs: 120000
     progressFlushIntervalMs: 10000
 ```
 
-### `JobRepository`
+The last two are read here and applied by the scheduling modules' dispatchers, so every queue shares
+one timeout policy.
 
-SPI for persisting job execution state. Bind a concrete implementation (`JobPostgresqlModule`) to enable persistent tracking, heartbeat-based crash detection, and retry coordination. The cron module operates without it (in-memory only when using `CronModule`).
+### Invariants & Gotchas
 
-**Execution lifecycle methods:**
-
-| Method | Description |
-|--------|-------------|
-| `save(execution)` | Persists a new execution record; returns the saved ID |
-| `updateState(id, fromState, toState)` | Atomic optimistic-concurrency state transition |
-| `claimNextJob(queue, batchSize)` | Claims up to `batchSize` executions atomically (`ENQUEUED` → `PROCESSING`); filters `scheduled_at <= NOW()` |
-| `heartbeat(id, progress)` | Updates heartbeat timestamp and progress snapshot |
-| `findStale(timeout)` | Finds `PROCESSING` executions with expired heartbeat |
-| `findById(id)` | Looks up an execution by ID |
-| `saveLogs(id, entries)` | Appends log entries to the persistent job log |
-| `saveCheckpoint(id, key, value)` | Upserts a named checkpoint value |
-| `loadCheckpoint(id, key)` | Loads the latest checkpoint for a key |
-| `completeExecution(id, newState, errorMessage, errorType, progress)` | Atomically transitions to `newState` (SUCCEEDED, FAILED, DEAD_LETTER, CANCELLED, or ABANDONED) with final error/progress; accepts `PROCESSING` or `ABANDONED` as current state. Returns `Future<Optional<JobExecution>>` — the persisted execution on a real transition, or `Optional.empty()` when no row changed (idempotent no-op — execution already terminal). |
-| `scheduleRetry(id, nextScheduledAt, newAttempt)` | Transitions `FAILED`/`ABANDONED` → `ENQUEUED` with new schedule time and incremented attempt |
-| `failAndScheduleRetry(id, errorMessage, errorType, progress, nextScheduledAt, nextAttempt)` | Atomically (one transaction) records the `FAILED` attempt and re-enqueues; returns the `FAILED` snapshot for audit (committed row is `ENQUEUED`), or `Optional.empty()` on a no-op |
-| `abandonAndScheduleRetry(id, errorMessage, errorType, progress, nextScheduledAt, nextAttempt)` | The `ABANDONED` counterpart (timeout / dead-node recovery): atomically records the `ABANDONED` interruption and re-enqueues; returns the `ABANDONED` snapshot, or `Optional.empty()` on a no-op |
-| `tryInsert(execution)` | INSERT ON CONFLICT DO NOTHING for SINGLE_INSTANCE leader election; returns `Optional.empty()` on conflict |
-| `saveSchedule(schedule)` | Upserts a cron job schedule definition for dashboard visibility |
-| `updateScheduleFireTimes(jobId, lastFiredAt, nextFireAt)` | Updates `last_fired_at` / `next_fire_at` after each cron fire |
-| `findSchedule(jobId)` | Loads a cron schedule by job ID (for misfire detection) |
-
-**Node heartbeat methods:**
-
-| Method | Description |
-|--------|-------------|
-| `serverHeartbeat(serverId)` | UPSERT this node's heartbeat row |
-| `findDeadServers(timeout)` | Returns server IDs with an expired heartbeat |
-| `removeServer(serverId)` | Deletes a dead server's heartbeat row after recovery |
-| `findByLockedBy(serverId)` | Finds `PROCESSING` executions owned by the given server |
-
-### `CronJobSchedule`
-
-Immutable record persisted in `job_schedules` for dashboard visibility. Written by `JobRepository.saveSchedule()` at startup using an UPSERT.
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `jobId` | `String` | Unique job identifier |
-| `cronExpression` | `String` | Cron expression string |
-| `handler` | `String` | Event bus address of the handler |
-| `executionMode` | `String` | `"EVERY_INSTANCE"` or `"SINGLE_INSTANCE"` |
-| `timezone` | `String` | IANA zone ID |
-| `enabled` | `boolean` | Whether the schedule is active |
-| `overlapPolicy` | `String` | `"SKIP"` or `"QUEUE_ONE"` |
-| `maxAttempts` | `int` | Max attempts per execution |
-| `tracked` | `boolean` | Whether executions are persisted |
-| `lastFiredAt` | `Instant` | Last fire instant, or `null` |
-| `nextFireAt` | `Instant` | Next computed fire instant, or `null` |
-
-### `ProgressReporter`
-
-Progress tracking for a single execution. Thread-safe.
-
-| Method | Description |
-|--------|-------------|
-| `setTotal(long)` | Total units of work |
-| `incrementSucceeded()` / `incrementSucceeded(long)` | Mark units succeeded |
-| `incrementFailed()` / `incrementFailed(long)` | Mark units failed |
-| `setStatus(String)` | Free-text status message |
-| `percentage()` | Computed 0–100 (0 when total is zero) |
-| `snapshot()` | Returns an immutable `ProgressSnapshot` |
-
-### `ProgressSnapshot`
-
-Immutable record: `total`, `succeeded`, `failed`, `status`. `ProgressSnapshot.EMPTY` is the initial state. `percentage()` returns `(succeeded + failed) * 100 / total`.
-
-### `JobLogger`
-
-Buffered in-memory logger for structured per-execution log entries. Thread-safe (uses `CopyOnWriteArrayList` internally). Entries are flushed to the repository after job completion.
-
-```java
-ctx.logger().info("Processing batch chunk 3/10");
-ctx.logger().warn("Skipping row: missing field 'email'");
-ctx.logger().error("Failed to connect to external API");
-```
-
-### `LogEntry`
-
-Record: `level` (string: `"INFO"`, `"WARN"`, `"ERROR"`), `message`, `loggedAt` (Instant).
-
-### `Checkpoint`
-
-Record: `key`, `value` (any object; serialization is repository-specific), `updatedAt` (Instant).
-
-### `JobExecutionStateTransitionEvent`
-
-Curated, safe-by-type record delivered to `JobExecutionStateTransitionListener`s after a persisted state transition.
-
-This event carries only low-cardinality identifiers, the new state, attempt counts, timing, the exception class name, and the persisted `DurableMetadata` context document. It deliberately omits the job payload, the raw error message, and the `parameters` / `attributes` maps (safe-by-type rule from PRD-AUD-002 §10.3). `metadata` is the durable context carrier (correlation/localization namespaces only — no payload or credentials).
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `executionId` | `UUID` | Unique execution identifier |
-| `jobId` | `String` | Logical job identifier |
-| `jobType` | `JobType` | Scheduling mechanism |
-| `queue` | `String` | Queue the execution ran on |
-| `newState` | `JobState` | State the execution transitioned to (`ABANDONED` is non-terminal) |
-| `attemptNumber` | `int` | Zero-based attempt number |
-| `maxAttempts` | `int` | Configured maximum attempts |
-| `errorType` | `String` | Fully-qualified exception class name, or `null` on success |
-| `scheduledAt` | `Instant` | When the execution was scheduled |
-| `enqueuedAt` | `Instant` | When the execution was enqueued |
-| `startedAt` | `Instant` | When processing began, or `null` if the job never ran |
-| `completedAt` | `Instant` | When the execution reached `newState` |
-| `metadata` | `DurableMetadata` | Persisted durable context document (never `null`) |
+- **Retry persistence is all-or-nothing.** A retryable failure records the `FAILED` attempt and
+  re-enqueues in one transaction; an interruption does the same for `ABANDONED`. A crash between the
+  two writes cannot strand an execution in an intermediate state.
+- **Terminal writes are idempotent.** `completeExecution`, `failAndScheduleRetry` and
+  `abandonAndScheduleRetry` return `Optional.empty()` when no row transitioned — an already-terminal
+  execution — and no listener fires for that no-op.
+- **`checkpoint()` and `logger()` are execution-scoped memory.** The default `JobContext` holds both
+  in memory for the life of the execution. The framework's dispatch paths do not call
+  `JobRepository.saveCheckpoint`, `loadCheckpoint` or `saveLogs`, so neither survives a restart
+  today; those SPI methods exist for adapters and callers that flush explicitly.
+- **`getMetadata` and `lastCheckpoint` do not type-check.** The `Class<T>` argument documents intent
+  only; the value is cast unchecked, so a wrong type surfaces as `ClassCastException` at the call
+  site.
+- **`JobExecution.payload` is not copied.** The compact constructor copies `parameters` and
+  `attributes` but keeps `payload` as an opaque reference — do not mutate it after construction.
+- **Interceptor and listener callbacks are synchronous and must not block.** They run on the
+  job-completion thread, which may be an event loop, a timer, or an event-bus callback.
 
 ---
 
 ## Extension Points
 
-### `JobExecutionStateTransitionListener`
+### JobRepository
 
-SPI for observing **persisted** job state transitions across all completion paths. Fired by `NotifyingJobRepository` (in `vertique-job-postgresql`) after a confirmed persisted transition — `completeExecution`, `failAndScheduleRetry`, or `abandonAndScheduleRetry` — i.e. after the database row has actually transitioned, on every path including failure-retry, timeout, dead-node recovery, and cooperative cancellation.
+The persistence SPI. Bind `dev.vertique:vertique-job-postgresql`'s `JobPostgresqlModule` for the
+supported implementation, or implement this interface to back jobs with another store. Cron runs
+without it (in-memory only); delayed jobs require it. Every method returns a `Future`:
 
-Unlike `JobInterceptor.onComplete` (which fires pre-persistence on the handler-reply path only), this observer sees the durable outcome on all paths, including `CANCELLED` and `ABANDONED`.
+| Concern | Methods |
+|---|---|
+| Lifecycle | `save`, `updateState`, `claimNextJob`, `heartbeat`, `findStale`, `findById` |
+| Terminal + retry | `completeExecution`, `scheduleRetry`, `failAndScheduleRetry`, `abandonAndScheduleRetry` |
+| Leader election | `tryInsert` |
+| Auxiliary records | `saveLogs`, `saveCheckpoint`, `loadCheckpoint` |
+| Cron schedules | `saveSchedule`, `updateScheduleFireTimes`, `findSchedule` |
+| Node heartbeats | `serverHeartbeat`, `findDeadServers`, `removeServer`, `findByLockedBy` |
 
-**Implementations must be non-blocking.** The call runs synchronously on the job-completion thread, which may be a Vert.x event-loop, timer, or event-bus callback thread. Submit any async work fire-and-forget; do not chain on it. Exceptions thrown by one listener are caught and logged; subsequent listeners still run.
+Obligations an implementation must honour:
 
-Register via Dagger multibinding (`@IntoSet`) against `Set<JobExecutionStateTransitionListener>`. `JobModule` declares the `@Multibinds` empty-set binding so the set resolves (empty) in standalone setups with no listeners contributed.
+- `claimNextJob(queue, batchSize)` transitions `ENQUEUED` → `PROCESSING` atomically, filters
+  `scheduled_at <= NOW()`, and claims in descending `priority` order (the PostgreSQL implementation
+  breaks ties by ascending `scheduledAt`). Two workers must never claim the same row.
+- `completeExecution(id, newState, errorMessage, errorType, progress)` accepts **both** `PROCESSING`
+  and `ABANDONED` as the current state, so a late handler reply overwrites a coordinator-injected
+  `ABANDONED` mark. It returns the persisted execution, or `Optional.empty()` when the
+  `(current → newState)` pair is not a valid transition.
+- `failAndScheduleRetry` and `abandonAndScheduleRetry` apply both writes in one transaction and
+  return the **pre-re-enqueue** snapshot (`FAILED` and `ABANDONED` respectively) even though the
+  committed row is `ENQUEUED`, so an audit consumer sees the attempt that failed. `Optional.empty()`
+  signals a no-op.
+- `tryInsert(execution)` is an insert-if-absent used for cron `SINGLE_INSTANCE` leader election: all
+  nodes race on the same `(jobId, scheduledAt)` and only the winner receives the generated id.
+- `saveSchedule` is an upsert — code is the source of truth and overwrites the stored row on every
+  deploy. `removeServer` must tolerate a missing row.
 
-```java
-public interface JobExecutionStateTransitionListener {
-    void onStateTransition(JobExecutionStateTransitionEvent event);
-}
-```
+The two records an implementation reads and writes are constructed **positionally**, so their
+component order is part of this contract:
 
-**Dagger wiring:**
+- `JobExecution(id, jobId, jobType, handler, queue, state, attemptNumber, maxAttempts, payload,
+  priority, lockedBy, scheduledAt, enqueuedAt, startedAt, completedAt, errorMessage, errorType,
+  progress, parameters, attributes, metadata)` — 21 components. The compact constructor copies
+  `parameters`/`attributes` and defaults `progress` to `ProgressSnapshot.EMPTY` and `metadata` to
+  `DurableMetadata.empty()`. Copy-on-write helpers: `withState`, `withProgress`, `withPayload`,
+  `withLockedBy`, `withError`, `withStarted(Instant, String)`, `withCompleted(Instant)`.
+- `CronJobSchedule(jobId, cronExpression, handler, target, executionMode, timezone, enabled,
+  overlapPolicy, maxAttempts, tracked, lastFiredAt, nextFireAt)` — 12 components, persisted for
+  dashboard visibility. `executionMode` is `"EVERY_INSTANCE"` or `"SINGLE_INSTANCE"`;
+  `overlapPolicy` is `"SKIP"` or `"QUEUE_ONE"`. `handler` may be `null` for `service:` targets, and
+  `target` is `null` on rows written before that component existed — derive it as
+  `"eventbus:" + handler` in that case.
 
-```java
-@Provides @IntoSet
-static JobExecutionStateTransitionListener auditJobsListener(AuditJobsStateTransitionListener l) {
-    return l;
-}
-```
+### JobInterceptor
 
-### `JobInterceptor`
-
-SPI for cross-cutting logic applied around job dispatch. Register via Dagger multibinding.
-
-`JobInterceptor extends OrderedExtension`. Interceptors are sorted by `OrderedExtension.comparator()` — phase ascending, then priority ascending, then `orderKey` (default FQCN) as a stable tie-break. Lower priority values run first.
+Cross-cutting observation around dispatch. `JobInterceptor extends OrderedExtension`, so instances
+sort by extension phase ascending, then `priority()` ascending, then `orderKey()` (the fully
+qualified class name by default). Both methods default to no-ops.
 
 ```java
 public interface JobInterceptor extends OrderedExtension {
@@ -375,13 +279,13 @@ public interface JobInterceptor extends OrderedExtension {
 }
 ```
 
-`onDispatch` fires before the event bus send. `onComplete` fires after the reply is received. Both are synchronous observers — exceptions are swallowed by `JobInterceptors` utility.
-
-Common use cases: distributed tracing, metrics, audit logging.
-
-**Example — metrics interceptor:**
+`onDispatch` fires before the handler send; `onComplete` fires when the reply arrives, **before**
+persistence, and only on the handler-reply path. Both are synchronous observers, and an exception
+thrown by one interceptor is logged and swallowed so the rest still run. `result` is `null` when the
+reply body was not a `Result`.
 
 ```java
+@Singleton
 public class MetricsJobInterceptor implements JobInterceptor {
 
     private final MeterRegistry registry;
@@ -394,41 +298,68 @@ public class MetricsJobInterceptor implements JobInterceptor {
     @Override
     public void onComplete(JobDispatchContext ctx, Result<?> result,
                            Instant startTime, Instant endTime) {
-        Duration duration = Duration.between(startTime, endTime);
         registry.timer("job.duration", "job", ctx.jobId(), "type", ctx.jobType().name())
-                .record(duration);
+                .record(Duration.between(startTime, endTime));
     }
 }
-```
 
-**Dagger wiring:**
-
-```java
+// In an application Dagger module:
 @Provides @IntoSet
 static JobInterceptor metricsInterceptor(MetricsJobInterceptor interceptor) {
     return interceptor;
 }
 ```
 
----
+### JobExecutionStateTransitionListener
 
-## Dagger Wiring
-
-### `JobModule`
-
-Declares the empty `Set<JobInterceptor>` and `Set<JobExecutionStateTransitionListener>` multibindings. Include whenever any job scheduling module is used.
+Observation of **persisted** transitions. Where `JobInterceptor.onComplete` sees only the
+handler-reply path before persistence, this listener fires after the database row has actually
+transitioned — on every path, including retry, timeout, dead-node recovery, cancellation and
+dead-lettering. Delivery requires a repository that emits these events;
+`dev.vertique:vertique-job-postgresql` decorates its `JobRepository` binding to do so.
 
 ```java
-@Component(modules = {VertxModule.class, DispatchModule.class, JobModule.class})
-public interface AppComponent { ... }
+public interface JobExecutionStateTransitionListener {
+    void onStateTransition(JobExecutionStateTransitionEvent event);
+}
 ```
 
-### `JobCoordinatorModule`
+The event is a curated, safe-by-type record with components, in order: `executionId`, `jobId`,
+`jobType`, `queue`, `newState`, `attemptNumber`, `maxAttempts`, `errorType`, `scheduledAt`,
+`enqueuedAt`, `startedAt`, `completedAt`, `metadata`. `errorType` is the fully qualified exception
+class name, or `null` on success; `newState` may be the non-terminal `ABANDONED`; `startedAt` is
+`null` when the job never ran; `metadata` is the persisted `DurableMetadata` document and is never
+`null`. The record deliberately omits the payload, the raw error message, and the
+`parameters`/`attributes` maps.
 
-Provides `JobCoordinatorConfig` (from `job.coordinator` config) and `JobCoordinator` (singleton). Requires a `JobRepository` binding. Automatically included by `CronPersistenceModule` and `DelayedJobModule`.
+Implementations **must not block** — the call is synchronous on the completion thread. Submit async
+work fire-and-forget rather than chaining on it. An exception from one listener is logged and
+swallowed; later listeners still run.
 
 ```java
-@Component(modules = {VertxModule.class, JobPostgresqlModule.class, JobCoordinatorModule.class, ...})
+@Provides @IntoSet
+static JobExecutionStateTransitionListener auditJobsListener(AuditJobsStateTransitionListener l) {
+    return l;
+}
+```
+
+---
+
+## Module Dagger Bindings
+
+`JobModule` declares the empty `Set<JobInterceptor>` and
+`Set<JobExecutionStateTransitionListener>` multibindings so both resolve even when nothing is
+contributed. Include it whenever any job scheduling module is used — the scheduling modules already
+include it transitively.
+
+`JobCoordinatorModule` provides `JobCoordinatorConfig` (parsed from `job.coordinator`) and the
+singleton `JobCoordinator`, and requires a bound `JobRepository`. `CronPersistenceModule` and
+`DelayedJobModule` include it, so an application lists it explicitly only when wiring the coordinator
+without either of those. It does not call `start()`/`stop()` — the scheduling module that owns the
+lifecycle drives them.
+
+```java
+@Component(modules = {VertxModule.class, JobPostgresqlModule.class, JobCoordinatorModule.class})
 public interface AppComponent { ... }
 ```
 
@@ -436,13 +367,7 @@ public interface AppComponent { ... }
 
 ## Dependencies
 
-- **core** — `DispatchContextValue`, `DispatchEnvelope`, `Result`, `VertiqueException` hierarchy, `BackoffStrategy`
-- **services** — `ServiceMethodInvoker` (injects `JobContext` and `JobDispatchContext` into handler methods via `@DispatchContextValue` scanning)
-
----
-
-## Related ADRs
-
-- ADR-0080: Job State-Transition Audit Notification via a Repository Decorator — establishes `JobExecutionStateTransitionListener` as the post-persistence producer SPI, changes `completeExecution` to `Future<Optional<JobExecution>>`, and adds the atomic `failAndScheduleRetry` operation so a retryable failure records the `FAILED` attempt and re-enqueues in one transaction.
-- ADR-0084: Framework Extension-Ordering Contract — establishes `OrderedExtension` and `ExtensionPhase` as the canonical ordering contract for framework extensions.
-- ADR-0085: OrderedExtension Rolled Out Across Sorted Behavioral SPIs — `JobInterceptor` now follows the framework OrderedExtension ordering contract (phase → priority → orderKey).
+- **core** — `ContextValue` and `@DispatchContextValue` (handler-parameter injection), `Result`
+  (dispatch outcomes), `DurableMetadata` (durable propagation context on `JobExecution` and the
+  transition event), `BackoffStrategy` (retry delays), `OrderedExtension` (interceptor ordering), and
+  `ConfigParser` / `JsonConfigPaths` (the `job.coordinator` parse boundary).
