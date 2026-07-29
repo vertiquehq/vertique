@@ -58,10 +58,16 @@ if [[ -z "${VERTIQUE_IT_REUSE_REPO:-}" ]]; then
   # -Drevision is the whole point of FR-REL-003: the final version is supplied
   # at build time, so the selected source commit is never edited. Both public
   # parents declare their own <revision>, and a CLI property overrides both.
+  # Archetype integration tests generate a project pinned to the development
+  # line and build it, so they cannot also run against a final-version staging
+  # build. They are functional proof of the archetypes and belong to PUB-BUILD
+  # (`clean verify` at the development version); this stage proves artifact
+  # SHAPE, so it skips them rather than pinning a version that breaks one mode.
   ./mvnw -ntp -q -B \
     -Dmaven.repo.local="$LOCAL_REPO" \
     -Drevision="$FINAL_VERSION" \
     -DskipTests -Dspotless.check.skip=true -Djacoco.skip=true \
+    -Darchetype.test.skip=true \
     -Prelease \
     clean install \
     || fail "isolated install failed"
