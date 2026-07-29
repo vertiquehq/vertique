@@ -100,7 +100,7 @@ module reference or [module index](docs/modules.md) row.
 
 ## Documentation
 
-- [Developer documentation](developer-docs/content/index.md)
+- [Developer documentation](https://vertique.dev/docs)
 - [Module index](docs/modules.md)
 - [Architecture](docs/architecture.md)
 - [Coding conventions](docs/coding-conventions.md)
