@@ -1,0 +1,76 @@
+# SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
+# SPDX-License-Identifier: EUPL-1.2
+#
+# RELEASE-001 mutable SNAPSHOT publication
+# (FR-REL-020, FR-REL-021, FR-REL-022, FR-REL-023; ADR 0006).
+#
+# This is the only product-owned workflow that holds a write credential, so the
+# conditions under which it runs are the security boundary — and they live in
+# release/snapshot-guard.mjs, not in this YAML.
+#
+# It is bound to the completion of the named required-CI workflow rather than to
+# push, so it can only publish bytes that were verified. It is deliberately NOT
+# a required check and cannot write a CI status: a failed publication must not
+# erase the required-CI result that was already established (FR-REL-023).
+#
+# The token is the repository's own GITHUB_TOKEN with packages:write. There is
+# no cross-repository App credential here, and no caller-supplied repository or
+# ref — the checkout is pinned to the exact SHA the required-CI run verified.
+
+name: Publish SNAPSHOT
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+  packages: write
+
+# Serialized per repository, and an in-flight deployment is never cancelled:
+# a half-written snapshot is worse than a delayed one (FR-REL-022).
+concurrency:
+  group: snapshot-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish main SNAPSHOT
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          # The exact commit required CI verified — never a moving ref.
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: "22"
+
+      - uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      # The guard collects its own context and decides. A denial exits 0: it is
+      # a normal outcome, and a red run here would be indistinguishable from a
+      # real fault.
+      - name: Evaluate publication guard
+        id: guard
+        run: node release/snapshot-guard.mjs --github-output >> "$GITHUB_OUTPUT"
+
+      - name: Install reactor into an isolated repository
+        if: steps.guard.outputs.allowed == 'true'
+        run: ./mvnw -ntp -B -Dmaven.repo.local=${{ runner.temp }}/m2 -DskipTests -Prelease clean install
+
+      - name: Publish the derived allowlist
+        if: steps.guard.outputs.allowed == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash release/publish-artifacts.sh --local-repository ${{ runner.temp }}/m2 --repository-id github --target-url https://maven.pkg.github.com/${{ github.repository }} --mode snapshot --version ${{ steps.guard.outputs.version }}
