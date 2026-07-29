@@ -997,7 +997,12 @@ public final class EffectiveJaxRsContractResolver {
      * <ul>
      *   <li>a parameterized collection — {@code List<T>}, {@code Set<T>}, {@code SortedSet<T>},
      *       {@code NavigableSet<T>}, or {@code Collection<T>} (see
-     *       {@link #isSupportedCollectionFqn(String)}) — yields {@code T};
+     *       {@link #isSupportedCollectionFqn(String)}) — yields {@code T}, but <em>only</em> when
+     *       {@code T} is an argument the reflective side would see as a plain {@link Class} (see
+     *       {@link #isReflectivelyClassTypeArgument(TypeMirror)}), mirroring that side's
+     *       {@code typeArg instanceof Class<?>} gate. A wildcard ({@code List<? extends CharSequence>},
+     *       {@code List<?>}), a type variable ({@code List<T>}), and a nested parameterized type
+     *       ({@code List<List<String>>}) therefore resolve {@code null} on both paths;
      *   <li>an array {@code T[]} whose element type is a scalar array component (see
      *       {@link #isScalarArrayComponent(TypeMirror)}) — yields {@code T}.
      * </ul>
@@ -1042,11 +1047,58 @@ public final class EffectiveJaxRsContractResolver {
         if (erasedEl instanceof TypeElement te
                 && isSupportedCollectionFqn(te.getQualifiedName().toString())) {
             var args = declared.getTypeArguments();
-            if (!args.isEmpty()) {
+            // Mirror ResourceScanner.resolveComponentType's `typeArg instanceof Class<?>` gate — see
+            // isReflectivelyClassTypeArgument. Returning the argument unconditionally erased a wildcard
+            // or type variable to its bound, yielding a non-null componentType where the reflective twin
+            // yields null; componentType is the framework's single multiplicity trigger, so that is a
+            // codegen-on/codegen-off classification divergence.
+            if (!args.isEmpty() && isReflectivelyClassTypeArgument(args.get(0))) {
                 return args.get(0);
             }
         }
         return null;
+    }
+
+    /**
+     * Returns whether {@code argument} — a collection's first type argument — is one that the reflective
+     * scanner would see as a plain {@link Class}, which is the exact condition its
+     * {@code typeArg instanceof Class<?>} gate tests ({@code ResourceScanner.resolveComponentType}).
+     * This side must agree with it in <em>both</em> directions, because {@code componentType} is the
+     * framework's single multiplicity trigger: a non-null value here where the reflective path resolves
+     * {@code null} (or vice versa) classifies the same declaration differently depending on whether
+     * codegen ran.
+     *
+     * <p>Core reflection reifies a generic signature's type argument as a {@link Class} only when it
+     * carries no generic information of its own — {@code sun.reflect.generics}' factory returns a
+     * {@code Class} for an array whose component is itself a {@code Class}, and a
+     * {@code ParameterizedType} / {@code GenericArrayType} / {@code TypeVariable} / {@code WildcardType}
+     * otherwise. The mirror-side equivalents:
+     *
+     * <ul>
+     *   <li>a {@link javax.lang.model.type.DeclaredType} with <b>no</b> type arguments &rarr; accepted
+     *       ({@code List<String>}, {@code List<Season>}, a raw {@code List<Map>});</li>
+     *   <li>an {@link javax.lang.model.type.ArrayType} whose component type recursively satisfies this
+     *       predicate &rarr; accepted ({@code List<Inner[]>}, {@code List<int[]>}), matching the
+     *       reflective {@code Inner[].class};</li>
+     *   <li>a primitive &rarr; accepted; it can only be reached as an array component;</li>
+     *   <li>a parameterized {@code DeclaredType} ({@code List<List<String>>}), a wildcard
+     *       ({@code List<? extends CharSequence>}, {@code List<?>}), a type variable
+     *       ({@code List<T>}), or a generic array ({@code List<T[]>}) &rarr; rejected, exactly as the
+     *       reflective gate rejects the {@code ParameterizedType}/{@code WildcardType}/
+     *       {@code TypeVariable}/{@code GenericArrayType} it sees for each.</li>
+     * </ul>
+     *
+     * @param argument the collection's first type argument
+     * @return {@code true} when the reflective side would report this argument as a {@link Class}
+     */
+    private static boolean isReflectivelyClassTypeArgument(TypeMirror argument) {
+        if (argument instanceof javax.lang.model.type.DeclaredType declared) {
+            return declared.getTypeArguments().isEmpty();
+        }
+        if (argument instanceof javax.lang.model.type.ArrayType array) {
+            return isReflectivelyClassTypeArgument(array.getComponentType());
+        }
+        return argument.getKind().isPrimitive();
     }
 
     /**

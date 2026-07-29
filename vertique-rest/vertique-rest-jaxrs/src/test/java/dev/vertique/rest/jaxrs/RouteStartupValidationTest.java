@@ -495,6 +495,176 @@ public class RouteStartupValidationTest {
         }
     }
 
+    /**
+     * An element type that is {@link Comparable} to a <em>different</em> type. Raw assignability to
+     * {@link Comparable} holds, but {@code new TreeSet<>(elements)} invokes the synthetic
+     * {@code compareTo(Object)} bridge, which casts to {@link String} and throws
+     * {@code ClassCastException} — so this shape must be rejected at startup just like a type that does
+     * not implement {@link Comparable} at all.
+     */
+    public static final class ForeignComparable implements Comparable<String> {
+        @Override
+        public int compareTo(String other) {
+            return 0;
+        }
+    }
+
+    /** Supplies the {@link Comparable} implementation to {@link InheritedComparable} from a superclass. */
+    public abstract static class ComparableBase implements Comparable<ComparableBase> {
+        @Override
+        public int compareTo(ComparableBase other) {
+            return 0;
+        }
+    }
+
+    /**
+     * An element type whose {@code Comparable<T>} declaration lives on a <em>superclass</em>, so the
+     * guard must walk the superclass hierarchy — not just the type's own direct interfaces — to see it.
+     * The type argument ({@link ComparableBase}) is assignable FROM this element type, so a
+     * {@code TreeSet} compares its instances safely and the shape stays legal.
+     */
+    public static final class InheritedComparable extends ComparableBase {}
+
+    /**
+     * An element type implementing the <em>raw</em> {@link Comparable}, i.e. comparing against
+     * {@link Object}. A raw declaration carries no type argument, so it is accepted.
+     */
+    @SuppressWarnings("rawtypes")
+    public static final class RawComparable implements Comparable {
+        @Override
+        public int compareTo(Object other) {
+            return 0;
+        }
+    }
+
+    /**
+     * Resolves a no-op converter for the sorted-shape element fixtures above (and only for the element
+     * shape, {@code genericType == rawType}), so the only possible startup rejection for a parameter
+     * declared over them is the sorted-shape guard itself.
+     */
+    public static final class SortedElementFixtureProvider implements ParamConverterProvider {
+        @Override
+        @SuppressWarnings("unchecked")
+        public <T> ParamConverter<T> getConverter(Class<T> rawType, Type genericType, Annotation[] annotations) {
+            if (genericType != rawType) {
+                return null;
+            }
+            if (rawType == ForeignComparable.class) {
+                return (ParamConverter<T>) noOp(new ForeignComparable());
+            }
+            if (rawType == InheritedComparable.class) {
+                return (ParamConverter<T>) noOp(new InheritedComparable());
+            }
+            if (rawType == RawComparable.class) {
+                return (ParamConverter<T>) noOp(new RawComparable());
+            }
+            return null;
+        }
+
+        /**
+         * Builds a converter that always yields {@code instance}.
+         *
+         * @param instance the fixed value every {@code fromString} call returns
+         * @param <T>      the converted type
+         * @return the no-op converter
+         */
+        private static <T> ParamConverter<T> noOp(T instance) {
+            return new ParamConverter<T>() {
+                @Override
+                public T fromString(String value) {
+                    return instance;
+                }
+
+                @Override
+                public String toString(T value) {
+                    return String.valueOf(value);
+                }
+            };
+        }
+    }
+
+    /** Resource declaring a {@code SortedSet} whose element type is {@link Comparable} to another type. */
+    @Path("/foreign-comparable-sorted-set")
+    public static class ForeignComparableSortedSetResource {
+
+        /**
+         * Declares a {@code @QueryParam SortedSet<ForeignComparable>}, whose {@code TreeSet}
+         * materialization throws {@code ClassCastException} on the bridge {@code compareTo(Object)}.
+         *
+         * @param values the repeated foreign-{@link Comparable} query values
+         * @return never reached (the router build fails first)
+         */
+        @GET
+        @Produces(MediaType.TEXT_PLAIN)
+        @Operation(operationId = "foreignComparableSortedSet")
+        public String get(@QueryParam("v") SortedSet<ForeignComparable> values) {
+            return "unreachable";
+        }
+    }
+
+    /** Resource declaring sorted shapes whose element types are self-comparable, one via a superclass. */
+    @Path("/inherited-comparable-sorted-sets")
+    public static class InheritedComparableSortedSetResource {
+
+        /**
+         * Declares a sorted shape over an element type whose {@code Comparable<ComparableBase>} comes
+         * from a superclass, and one over a raw {@code Comparable} element type. Both compare safely, so
+         * both must pass validation.
+         *
+         * @param inherited a {@code NavigableSet} whose element inherits its {@code Comparable}
+         * @param raw       a {@code SortedSet} of a raw-{@link Comparable} element type
+         * @return never reached in this test (only the router build is exercised)
+         */
+        @GET
+        @Produces(MediaType.TEXT_PLAIN)
+        @Operation(operationId = "inheritedComparableSortedSets")
+        public String get(
+                @QueryParam("i") NavigableSet<InheritedComparable> inherited,
+                @QueryParam("r") SortedSet<RawComparable> raw) {
+            return "unreachable";
+        }
+    }
+
+    @Test
+    @DisplayName("A SortedSet whose element is Comparable to a DIFFERENT type fails router build")
+    void foreignComparableSortedSetElementFailsRouterBuild(Vertx vertx, VertxTestContext ctx) {
+        ParamConversionResolver resolver = ParamConversionResolver.of(
+                ParamConverterRegistry.of(Set.of()), Set.of(new SortedElementFixtureProvider()));
+        JaxRsRouterMount.Factory factory =
+                TestFactories.builder().paramConversionResolver(resolver).build();
+        JaxRsRouterMount mount = factory.create("/*", "openapi.json", Set.of(new ForeignComparableSortedSetResource()));
+
+        RouteRegistrationException thrown = assertThrows(
+                RouteRegistrationException.class,
+                () -> mount.createRouter(vertx),
+                "Comparable<String> does not make the element comparable to ITSELF, so the TreeSet bridge "
+                        + "compareTo(Object) casts to String and throws — startup must reject it");
+        String message = String.valueOf(thrown.getMessage());
+        assertTrue(
+                message.contains("NON_COMPARABLE_SORTED_SET_ELEMENT"),
+                "the violation must be the sorted-element one (was: " + message + ")");
+        assertTrue(
+                message.contains("'v'") && message.contains("SortedSet<ForeignComparable>"),
+                "the diagnostic must name the parameter and its declared shape (was: " + message + ")");
+        ctx.completeNow();
+    }
+
+    @Test
+    @DisplayName("Sorted shapes whose element inherits Comparable from a superclass, or is raw, pass validation")
+    void inheritedAndRawComparableSortedSetElementsPassValidation(Vertx vertx, VertxTestContext ctx) {
+        ParamConversionResolver resolver = ParamConversionResolver.of(
+                ParamConverterRegistry.of(Set.of()), Set.of(new SortedElementFixtureProvider()));
+        JaxRsRouterMount.Factory factory =
+                TestFactories.builder().paramConversionResolver(resolver).build();
+        JaxRsRouterMount mount =
+                factory.create("/*", "openapi.json", Set.of(new InheritedComparableSortedSetResource()));
+
+        assertDoesNotThrow(
+                () -> mount.createRouter(vertx),
+                "the guard must walk the superclass hierarchy for Comparable, and accept a raw declaration");
+        ctx.completeNow();
+    }
+
     @Test
     @DisplayName("A SortedSet of a non-Comparable element type fails router build, naming the param and shape")
     void nonComparableSortedSetElementFailsRouterBuild(Vertx vertx, VertxTestContext ctx) {

@@ -374,6 +374,11 @@ final class ParameterExtractor {
      * present value to the declared scalar type, and runs the input processor for String values when
      * a route chain is active.
      *
+     * <p>A parameter whose {@code componentType()} is non-{@code null} is <em>always</em> handled by one
+     * of the two collection branches — {@link #absentCollectionValue} when the request supplied nothing,
+     * {@link #coerceCollection} otherwise — so the scalar coercion below can never be reached for a
+     * collection-declared parameter, whatever shape the binder produced for it.
+     *
      * @param paramMeta the parameter metadata describing the source and declared type
      * @param policies  the effective input policies for this parameter
      * @param rv        the request value to extract from (never {@code null}; wraps {@code null} when
@@ -399,8 +404,20 @@ final class ParameterExtractor {
         // BoundRequest binds repeated values as a JsonArray of raw strings, so coerce each element to
         // the declared component type and materialise the collection. Without this the raw JsonArray
         // would reach the resource method and fail the invocation.
-        if (paramMeta.componentType() != null && rv.get() instanceof io.vertx.core.json.JsonArray jsonArray) {
-            return coerceCollection(jsonArray.getList(), paramMeta, policies);
+        //
+        // The gate is componentType() alone, NOT "componentType() && is a JsonArray": a collection-valued
+        // parameter must never fall through to the scalar branch below, which would ask the resolver for
+        // a converter targeting the *collection* type (there is none, so it 500s — the same failure mode
+        // the absence branch above exists to prevent). Any non-JsonArray bound value is therefore treated
+        // as the collection's single element, so a binder that hands over a scalar shape — e.g. because a
+        // descriptor lookup missed and left the value scalar-wrapped — degrades to a one-element
+        // collection instead of failing the request.
+        if (paramMeta.componentType() != null) {
+            Object bound = rv.get();
+            List<?> rawValues = bound instanceof io.vertx.core.json.JsonArray jsonArray
+                    ? jsonArray.getList()
+                    : Collections.singletonList(bound);
+            return coerceCollection(rawValues, paramMeta, policies);
         }
 
         Object value = coerce(rv, paramMeta);
@@ -435,7 +452,8 @@ final class ParameterExtractor {
      * {@link #materializeCollection}.
      *
      * @param rawValues the parameter's raw request values, in the order the transport reported them:
-     *                  the bound {@code JsonArray}'s elements for QUERY/HEADER/COOKIE, or
+     *                  the bound {@code JsonArray}'s elements for QUERY/HEADER/COOKIE (or a singleton
+     *                  list holding the bound value when it is not a {@code JsonArray}), or
      *                  {@code formAttributes().getAll(name)} for FORM
      * @param paramMeta the parameter metadata supplying the collection type and component type
      * @param policies  the effective input policies applied to each {@link String} element
@@ -578,8 +596,10 @@ final class ParameterExtractor {
      * collection shapes are unrestricted: {@code ResourceScanner.isSupportedCollectionRawType} gates
      * only the raw type, and the type-argument read accepts <em>any</em> concrete class as the element
      * type, including a non-{@code Comparable} one. What makes the {@code TreeSet} branches safe is the
-     * startup guard: a {@code SortedSet}/{@code NavigableSet} parameter whose element type does not
-     * implement {@code Comparable} is rejected at registration with
+     * startup guard: a {@code SortedSet}/{@code NavigableSet} parameter whose element type is not
+     * comparable to <em>itself</em> — it does not implement {@code Comparable}, or implements it against
+     * an unrelated type, whose {@code compareTo(Object)} bridge would cast and throw — is rejected at
+     * registration with
      * {@link RouteRegistrationViolation.ViolationType#NON_COMPARABLE_SORTED_SET_ELEMENT}
      * ({@code RouteValidator.addSortedSetElementViolations}), so no such parameter ever reaches this
      * method.

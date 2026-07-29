@@ -125,15 +125,23 @@ public record RouteRegistrationViolation(String operationId, ViolationType type,
 
         /**
          * A parameter declared as {@code SortedSet<T>} or {@code NavigableSet<T>} has an element type
-         * that does not implement {@link Comparable}. Both shapes are materialized as a
-         * {@link java.util.TreeSet}, which orders elements by their natural ordering, so the first
-         * request supplying a value would throw {@code ClassCastException} inside the constructor. A
-         * JAX-RS parameter declaration cannot supply a {@link java.util.Comparator}, so the shape has
-         * no valid materialization at all and is rejected at registration instead of failing
-         * per-request.
+         * that is not comparable to <em>itself</em> — either it does not implement {@link Comparable} at
+         * all, or it implements {@code Comparable<X>} for a type {@code X} that is not {@code T} or a
+         * supertype of it. Both shapes are materialized as a {@link java.util.TreeSet}, which orders
+         * elements by their natural ordering, so the first request supplying a value would throw
+         * {@code ClassCastException} — from the comparison itself when the type is not
+         * {@link Comparable}, or from the compiler-synthesized {@code compareTo(Object)} bridge's cast
+         * when it compares against an unrelated type. A JAX-RS parameter declaration cannot supply a
+         * {@link java.util.Comparator}, so the shape has no valid materialization at all and is rejected
+         * at registration instead of failing per-request.
          *
          * <p>Declare the parameter as {@code Set<T>}, {@code List<T>}, or {@code Collection<T>} — none
-         * of which imposes an ordering — or make the element type implement {@link Comparable}.
+         * of which imposes an ordering — or make the element type implement {@code Comparable<T>}.
+         *
+         * <p>A {@code Comparable} declaration whose type argument cannot be resolved to a concrete class
+         * is <em>accepted</em>: that covers a raw {@code implements Comparable} (which compares against
+         * {@link Object}) and every self-referential generic declaration, notably an {@code enum}
+         * ({@code Enum<E extends Enum<E>> implements Comparable<E>}).
          *
          * <p>Only collection-shaped parameters are inspected (those for which
          * {@code ResourceScanner.resolveComponentType} resolved an element type), so array shapes are

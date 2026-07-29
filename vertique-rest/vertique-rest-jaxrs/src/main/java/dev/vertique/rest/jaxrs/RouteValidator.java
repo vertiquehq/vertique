@@ -3,6 +3,7 @@
 
 package dev.vertique.rest.jaxrs;
 
+import dev.vertique.core.util.TypeResolver;
 import dev.vertique.rest.core.context.RestContextMessages;
 import dev.vertique.rest.core.context.RestContextTypes;
 import dev.vertique.rest.core.request.FilePart;
@@ -79,16 +80,18 @@ class RouteValidator {
 
     /**
      * Rejects a parameter declared as {@code SortedSet<T>} / {@code NavigableSet<T>} whose element type
-     * does not implement {@link Comparable}. {@code ParameterExtractor.materializeCollection} builds
-     * both shapes with {@code new TreeSet<>(elements)}, which orders elements by their natural
-     * ordering, so such a parameter has no valid materialization: every request supplying a value would
-     * throw {@code ClassCastException} (a 500), and a JAX-RS declaration cannot supply a
+     * is not comparable to itself (see {@link #isSelfComparable} — which covers both an element type
+     * that does not implement {@link Comparable} at all and one that implements it against an unrelated
+     * type). {@code ParameterExtractor.materializeCollection} builds both shapes with
+     * {@code new TreeSet<>(elements)}, which orders elements by their natural ordering, so such a
+     * parameter has no valid materialization: every request supplying a value would throw
+     * {@code ClassCastException} (a 500), and a JAX-RS declaration cannot supply a
      * {@link java.util.Comparator}. Startup therefore fails fast, exactly as it does for an
      * unsupported native multipart shape (see {@link #addMultipartCollectionShapeViolations}).
      *
      * <p>Running from {@link #validateMethodParams} places this check <em>before</em> the
      * {@code UNRESOLVABLE_PARAM_CONVERTER} probe in {@code JaxRsRouteRegistrar} (which skips the rest
-     * of the operation as soon as method-param validation reports anything), so a non-{@link Comparable}
+     * of the operation as soon as method-param validation reports anything), so a non-self-comparable
      * element type that also lacks a converter is reported once, with the shape-specific diagnostic.
      *
      * <p>Native multipart element types ({@link FileUpload} / {@link EntityPart}) are skipped: they are
@@ -100,7 +103,7 @@ class RouteValidator {
      * component type here — never reach the check.
      *
      * @param meta       the resource method metadata to inspect
-     * @param violations mutable list to which any non-{@code Comparable} sorted-element violations are
+     * @param violations mutable list to which any non-self-comparable sorted-element violations are
      *                   appended
      */
     private static void addSortedSetElementViolations(
@@ -109,7 +112,7 @@ class RouteValidator {
             if (pm.componentType() == null || !SortedSet.class.isAssignableFrom(pm.type())) {
                 continue;
             }
-            if (Comparable.class.isAssignableFrom(pm.componentType()) || isNativeMultipartCollection(pm)) {
+            if (isSelfComparable(pm.componentType()) || isNativeMultipartCollection(pm)) {
                 continue;
             }
             String shape = pm.type().getSimpleName();
@@ -118,10 +121,10 @@ class RouteValidator {
                     meta.operationId(),
                     RouteRegistrationViolation.ViolationType.NON_COMPARABLE_SORTED_SET_ELEMENT,
                     String.format(
-                            "Parameter '%s' of %s.%s() declares %s<%s>, but %s does not implement Comparable; "
+                            "Parameter '%s' of %s.%s() declares %s<%s>, but %s is not comparable to itself; "
                                     + "a %s is materialized as a TreeSet, so every request carrying a value would "
                                     + "fail — declare it as Set<%s>, List<%s>, or Collection<%s>, or make %s "
-                                    + "implement Comparable.",
+                                    + "implement Comparable<%s>.",
                             pm.name(),
                             meta.method().getDeclaringClass().getSimpleName(),
                             meta.method().getName(),
@@ -132,8 +135,51 @@ class RouteValidator {
                             element,
                             element,
                             element,
+                            element,
                             element)));
         }
+    }
+
+    /**
+     * Returns whether {@code elementType} is comparable to <em>itself</em>, i.e. whether
+     * {@code new TreeSet<>(elements)} can order instances of it without a
+     * {@link ClassCastException}.
+     *
+     * <p>Raw assignability to {@link Comparable} is <em>not</em> sufficient: a
+     * {@code class Money implements Comparable<BigDecimal>} is assignable to {@link Comparable}, but
+     * {@code TreeSet} invokes the compiler-synthesized {@code compareTo(Object)} bridge, which casts its
+     * argument to {@code BigDecimal} and throws. The type <em>argument</em> of the element type's
+     * {@code Comparable} implementation therefore decides, and it is resolved with
+     * {@link TypeResolver#resolveTypeArgument(Class, Class)}, whose BFS walks the full generic
+     * hierarchy — direct interfaces, super-interfaces, and superclasses — so an element type that
+     * inherits its {@code Comparable} declaration from a parent is recognized.
+     *
+     * <p>The verdict:
+     *
+     * <ul>
+     *   <li>not {@link Comparable} at all &rarr; <b>rejected</b>;
+     *   <li>a resolved type argument &rarr; accepted only when that argument is assignable
+     *       <em>from</em> {@code elementType} (so {@code Comparable<Self>} and
+     *       {@code Comparable<Supertype>} pass, {@code Comparable<Unrelated>} does not);
+     *   <li>no resolvable type argument &rarr; <b>accepted</b>. This covers a raw
+     *       {@code implements Comparable} (which compares against {@link Object}, so it is genuinely
+     *       safe) and every self-referential generic declaration whose argument is a type variable —
+     *       notably <em>every enum</em>, since {@code Enum<E extends Enum<E>> implements Comparable<E>}
+     *       forwards a type variable that {@link TypeResolver} does not substitute. Failing open here is
+     *       deliberate: rejecting an unresolvable argument would reject enums, the single most common
+     *       legitimate sorted element type, and the residual risk of a missed exotic declaration is the
+     *       same per-request 500 that existed before this guard.
+     * </ul>
+     *
+     * @param elementType the declared element type of a {@code SortedSet}/{@code NavigableSet} shape
+     * @return {@code true} when a {@code TreeSet} of {@code elementType} can order its own elements
+     */
+    private static boolean isSelfComparable(Class<?> elementType) {
+        if (!Comparable.class.isAssignableFrom(elementType)) {
+            return false;
+        }
+        Class<?> comparedTo = TypeResolver.resolveTypeArgument(elementType, Comparable.class);
+        return comparedTo == null || comparedTo.isAssignableFrom(elementType);
     }
 
     /**

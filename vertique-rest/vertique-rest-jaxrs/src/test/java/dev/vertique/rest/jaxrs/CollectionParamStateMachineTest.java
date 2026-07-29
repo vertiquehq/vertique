@@ -437,6 +437,33 @@ class CollectionParamStateMachineTest {
         assertFalse(list.contains("x"), "the default must be ignored once real values are present");
     }
 
+    // --- 3b. A present non-JsonArray value for a collection param (binder defence in depth) ---
+
+    @ParameterizedTest(name = "source={0}")
+    @MethodSource("collectionSources")
+    @DisplayName("A present scalar-shaped value for a collection param materializes a single-entry collection")
+    void presentScalarShapedValue_forCollectionParam_materializesSingleEntry(ResourceMethodMeta.ParamSource source)
+            throws Exception {
+        Method method = CollectionResource.class.getMethod("list", List.class);
+        ResourceMethodMeta.ParamMeta param = paramMeta("tags", source, List.class, String.class, null);
+        ResourceMethodMeta meta = metaFor(method, List.of(param));
+        ParameterExtractor extractor = extractorFor(meta);
+
+        // Deliberately NOT a JsonArray: the state machine must never be able to ask for a converter
+        // targeting the COLLECTION type, whatever shape a binder hands it. The declared type is List,
+        // for which no converter exists, so a fall-through to the scalar branch is a guaranteed 500.
+        BoundRequest req = boundRequest(source, Map.of("tags", RequestValue.of("a")));
+
+        Object[] args = extractor.extractArguments(null, req);
+
+        List<?> list = assertInstanceOf(
+                List.class,
+                args[0],
+                "componentType() != null must route through coerceCollection unconditionally, wrapping a "
+                        + "single non-JsonArray value as a one-element collection");
+        assertEquals(List.of("a"), list);
+    }
+
     // --- 4. Absent array, no default (spec-conformant today; pinned against regression) ---
 
     @ParameterizedTest(name = "source={0}")
@@ -702,6 +729,63 @@ class CollectionParamStateMachineTest {
             List<?> list = assertInstanceOf(List.class, args[0]);
             assertEquals(2, list.size(), "both repeated header values must be bound");
             assertTrue(list.containsAll(List.of("a", "b")));
+        }
+
+        @Test
+        @DisplayName("HEADER: a declared name whose casing differs from the wire name binds every value")
+        void realBinder_presentHeaderCollection_caseMismatchedName_bindsAllValues() throws Exception {
+            Method method = CollectionResource.class.getMethod("list", List.class);
+            ResourceMethodMeta meta =
+                    metaFor(method, List.of(paramMeta("X-Tags", HEADER, List.class, String.class, null)));
+
+            // RFC 9113 §8.2.1 requires HTTP/2 to transmit header field names in lower case, so with ALPN
+            // enabled the wire name differs from the declared one for EVERY HTTP/2 client. The
+            // descriptor lookup in DefaultBoundRequest.findDescriptor must therefore match HEADER names
+            // case-insensitively, exactly as ParameterExtractor.lookup already does.
+            BoundRequest req = realBoundRequest(meta, null, multiMap("x-tags", "a", "b"), null);
+            Object[] args = extractorFor(meta).extractArguments(null, req);
+
+            List<?> list = assertInstanceOf(
+                    List.class,
+                    args[0],
+                    "a case-mismatched header must still reach coerceCollection; a scalar wrap asks for a "
+                            + "converter targeting List and 500s");
+            assertEquals(2, list.size(), "both repeated header values must bind despite the casing difference");
+            assertTrue(list.containsAll(List.of("a", "b")));
+        }
+
+        @Test
+        @DisplayName("COOKIE: a declared name whose casing differs from the wire name still binds")
+        void realBinder_presentCookieCollection_caseMismatchedName_binds() throws Exception {
+            Method method = CollectionResource.class.getMethod("list", List.class);
+            ResourceMethodMeta meta =
+                    metaFor(method, List.of(paramMeta("Session-Tags", COOKIE, List.class, String.class, null)));
+
+            BoundRequest req = realBoundRequest(meta, null, null, Set.of(cookie("session-tags", "a")));
+            Object[] args = extractorFor(meta).extractArguments(null, req);
+
+            List<?> list = assertInstanceOf(
+                    List.class,
+                    args[0],
+                    "cookie names are bound case-insensitively, so findDescriptor must match them the same way");
+            assertEquals(List.of("a"), list, "a cookie is single-valued, so the collection has exactly one entry");
+        }
+
+        @Test
+        @DisplayName("QUERY: a declared name whose casing differs stays unmatched (query is case-sensitive)")
+        void realBinder_presentQueryCollection_caseMismatchedName_staysAbsent() throws Exception {
+            Method method = CollectionResource.class.getMethod("list", List.class);
+            ResourceMethodMeta meta =
+                    metaFor(method, List.of(paramMeta("Tags", QUERY, List.class, String.class, null)));
+
+            BoundRequest req = realBoundRequest(meta, multiMap("tags", "a", "b"), null, null);
+            Object[] args = extractorFor(meta).extractArguments(null, req);
+
+            List<?> list = assertInstanceOf(List.class, args[0], "absence must yield the empty collection, not null");
+            assertTrue(
+                    list.isEmpty(),
+                    "query parameter names are case-SENSITIVE on both halves of the lookup, so relaxing the "
+                            + "header/cookie match must not leak into QUERY");
         }
 
         @Test

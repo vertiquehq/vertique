@@ -87,9 +87,16 @@ import org.junit.jupiter.params.provider.MethodSource;
  *       {@code Boolean}, {@code Character}), plus an {@code enum} and a bounded type variable whose
  *       erasure is an {@code enum};</li>
  *   <li><b>shapes that must stay non-multi-value</b> — primitive-array bodies
- *       ({@code int[]}/{@code char[]}/{@code byte[]}/{@code short[]}, decision 8's carve-out) and a
+ *       ({@code int[]}/{@code char[]}/{@code byte[]}/{@code short[]}, decision 8's carve-out), a
  *       nested array ({@code String[][]}), whose element type is itself an array and therefore not a
- *       scalar component on either path.</li>
+ *       scalar component on either path, and the collection shapes whose type argument core reflection
+ *       does not reify as a {@link Class} — a wildcard ({@code List<? extends CharSequence>}), a type
+ *       variable ({@code List<T>}), and a nested parameterized type
+ *       ({@code List<List<String>>}). Those three are the load-bearing rows for the element-type gate
+ *       ({@code EffectiveJaxRsContractResolver.isReflectivelyClassTypeArgument}), which must mirror the
+ *       reflective {@code typeArg instanceof Class<?>} test rather than erase the argument to its
+ *       bound; {@code List<String[]>} pins the same gate's <em>accepting</em> direction, since an
+ *       array of a non-generic type <em>is</em> reified as a {@code Class}.</li>
  * </ul>
  *
  * <p>{@code ParameterExtractor} and its {@code GeneratedJaxRsSupport} adapter
@@ -317,6 +324,42 @@ class GeneratedArrayParamParityTest {
         }
     }
 
+    @Path("/matrix-wildcard-collection")
+    @PermitAll
+    static class WildcardCollectionReflective {
+        @GET
+        public String handle(@QueryParam("t") List<? extends CharSequence> t) {
+            return "";
+        }
+    }
+
+    @Path("/matrix-typevar-collection")
+    @PermitAll
+    static class TypeVariableCollectionReflective {
+        @GET
+        public <T> String handle(@QueryParam("t") List<T> t) {
+            return "";
+        }
+    }
+
+    @Path("/matrix-nested-generic-collection")
+    @PermitAll
+    static class NestedGenericCollectionReflective {
+        @GET
+        public String handle(@QueryParam("t") List<List<String>> t) {
+            return "";
+        }
+    }
+
+    @Path("/matrix-array-element-collection")
+    @PermitAll
+    static class ArrayElementCollectionReflective {
+        @GET
+        public String handle(@QueryParam("t") List<String[]> t) {
+            return "";
+        }
+    }
+
     @Path("/matrix-int-body")
     @PermitAll
     static class IntArrayBodyReflective {
@@ -374,8 +417,13 @@ class GeneratedArrayParamParityTest {
      *       {@code isScalarArrayComponent}/{@code TypeMirrorFqn.erasedFqn} erase the mirror);</li>
      *   <li><b>non-multi-value shapes</b> — {@code int[]}/{@code char[]}/{@code byte[]}/
      *       {@code short[]} unannotated bodies (expected BODY + null componentType, decision 8's
-     *       carve-out) and a {@code @QueryParam String[][]} (QUERY + null componentType: the element
-     *       type is itself an array, not a scalar component).</li>
+     *       carve-out), a {@code @QueryParam String[][]} (QUERY + null componentType: the element
+     *       type is itself an array, not a scalar component), and {@code @QueryParam} declarations of
+     *       {@code List<? extends CharSequence>}, {@code List<T>}, and {@code List<List<String>>}
+     *       (QUERY + null componentType: core reflection reifies none of those type arguments as a
+     *       {@link Class}, so neither path may classify the parameter as multi-valued). The
+     *       {@code List<String[]>} row is the counterpart, pinning the argument shape that IS reified
+     *       as a {@code Class} and must stay non-null on both paths.</li>
      * </ul>
      *
      * @return the matrix rows as JUnit 5 {@link Arguments}, named by their label
@@ -702,6 +750,98 @@ class GeneratedArrayParamParityTest {
                         ResourceMethodMeta.ParamSource.QUERY,
                         null,
                         null),
+                new MatrixCase(
+                        "List<? extends CharSequence> (wildcard element)",
+                        new WildcardCollectionReflective(),
+                        SourceFiles.inline("dev.vertique.test.matrix.WildcardCollectionGenerated", """
+                                package dev.vertique.test.matrix;
+
+                                import jakarta.ws.rs.GET;
+                                import jakarta.ws.rs.Path;
+                                import jakarta.ws.rs.QueryParam;
+                                import java.util.List;
+
+                                @Path("/matrix-wildcard-collection")
+                                public class WildcardCollectionGenerated {
+                                    public WildcardCollectionGenerated() {}
+
+                                    @GET
+                                    public String handle(@QueryParam("t") List<? extends CharSequence> t) { return ""; }
+                                }
+                                """),
+                        "dev.vertique.test.matrix.WildcardCollectionGenerated",
+                        ResourceMethodMeta.ParamSource.QUERY,
+                        null,
+                        null),
+                new MatrixCase(
+                        "List<T> (type-variable element)",
+                        new TypeVariableCollectionReflective(),
+                        SourceFiles.inline("dev.vertique.test.matrix.TypeVariableCollectionGenerated", """
+                                package dev.vertique.test.matrix;
+
+                                import jakarta.ws.rs.GET;
+                                import jakarta.ws.rs.Path;
+                                import jakarta.ws.rs.QueryParam;
+                                import java.util.List;
+
+                                @Path("/matrix-typevar-collection")
+                                public class TypeVariableCollectionGenerated {
+                                    public TypeVariableCollectionGenerated() {}
+
+                                    @GET
+                                    public <T> String handle(@QueryParam("t") List<T> t) { return ""; }
+                                }
+                                """),
+                        "dev.vertique.test.matrix.TypeVariableCollectionGenerated",
+                        ResourceMethodMeta.ParamSource.QUERY,
+                        null,
+                        null),
+                new MatrixCase(
+                        "List<List<String>> (nested parameterized element)",
+                        new NestedGenericCollectionReflective(),
+                        SourceFiles.inline("dev.vertique.test.matrix.NestedGenericCollectionGenerated", """
+                                package dev.vertique.test.matrix;
+
+                                import jakarta.ws.rs.GET;
+                                import jakarta.ws.rs.Path;
+                                import jakarta.ws.rs.QueryParam;
+                                import java.util.List;
+
+                                @Path("/matrix-nested-generic-collection")
+                                public class NestedGenericCollectionGenerated {
+                                    public NestedGenericCollectionGenerated() {}
+
+                                    @GET
+                                    public String handle(@QueryParam("t") List<List<String>> t) { return ""; }
+                                }
+                                """),
+                        "dev.vertique.test.matrix.NestedGenericCollectionGenerated",
+                        ResourceMethodMeta.ParamSource.QUERY,
+                        null,
+                        null),
+                new MatrixCase(
+                        "List<String[]> (array element)",
+                        new ArrayElementCollectionReflective(),
+                        SourceFiles.inline("dev.vertique.test.matrix.ArrayElementCollectionGenerated", """
+                                package dev.vertique.test.matrix;
+
+                                import jakarta.ws.rs.GET;
+                                import jakarta.ws.rs.Path;
+                                import jakarta.ws.rs.QueryParam;
+                                import java.util.List;
+
+                                @Path("/matrix-array-element-collection")
+                                public class ArrayElementCollectionGenerated {
+                                    public ArrayElementCollectionGenerated() {}
+
+                                    @GET
+                                    public String handle(@QueryParam("t") List<String[]> t) { return ""; }
+                                }
+                                """),
+                        "dev.vertique.test.matrix.ArrayElementCollectionGenerated",
+                        ResourceMethodMeta.ParamSource.QUERY,
+                        String[].class,
+                        String[].class),
                 new MatrixCase(
                         "int[] (unannotated body)",
                         new IntArrayBodyReflective(),

@@ -48,7 +48,9 @@ import java.util.concurrent.ConcurrentHashMap;
  *   <li><b>Undeclared keys</b> (no matching descriptor) bind as their raw first-value
  *       {@link String}.
  *   <li><b>Headers and cookies are case-insensitive</b>: their maps are keyed by lower-cased name,
- *       so {@code get("content-type")} finds a {@code Content-Type} header.
+ *       so {@code get("content-type")} finds a {@code Content-Type} header, and the declared-parameter
+ *       match that decides multiplicity is equally case-insensitive for those two locations (see
+ *       {@link #findDescriptor}). Path and query names stay case-sensitive.
  *   <li><b>The body is bound in its actual wire shape, content-type-aware</b>: a JSON content type
  *       yields a {@link JsonObject}/{@link JsonArray}/scalar; a {@code text/*} content type yields a
  *       {@link String}; otherwise the raw {@code Buffer} (see {@link #bindBody}).
@@ -574,14 +576,41 @@ public final class DefaultBoundRequest implements BoundRequest {
      * Finds the declared parameter matching the given name and location, or {@code null} when none
      * is declared (an undeclared key).
      *
+     * <p>Name matching is <b>per location</b>, and deliberately agrees with the extraction-side lookup
+     * ({@code ParameterExtractor.lookup}) so the two halves of the same name resolution cannot disagree:
+     *
+     * <ul>
+     *   <li><b>{@link ParamLocation#HEADER} and {@link ParamLocation#COOKIE}</b> match
+     *       <em>case-insensitively</em>. Both maps are keyed by lower-cased name and extraction
+     *       lower-cases the declared name before its lookup, so the descriptor half must be equally
+     *       tolerant. It is load-bearing rather than cosmetic: RFC 9113 §8.2.1 requires HTTP/2 to
+     *       transmit header field names in lower case, so with ALPN enabled the wire name of a
+     *       {@code @HeaderParam("X-Tags")} declaration is {@code x-tags} for <em>every</em> HTTP/2
+     *       client. A case-sensitive match there would leave a collection-declared parameter
+     *       scalar-wrapped — dropping every value past the first — while passing HTTP/1.1 tests.</li>
+     *   <li><b>{@link ParamLocation#PATH} and {@link ParamLocation#QUERY}</b> match
+     *       <em>case-sensitively</em>: their maps are keyed verbatim and extraction looks the declared
+     *       name up unchanged, so both halves already agree.</li>
+     * </ul>
+     *
+     * <p>{@link String#equalsIgnoreCase(String)} keeps the case-insensitive branch allocation-free — no
+     * per-comparison lower-casing on this per-request hot path.
+     *
      * @param params   the operation's declared parameters
-     * @param name     the parameter name to match
+     * @param name     the parameter name to match, as reported by the request
      * @param location the parameter source to match
      * @return the matching descriptor, or {@code null}
      */
     private static ParamDescriptor findDescriptor(List<ParamDescriptor> params, String name, ParamLocation location) {
+        boolean caseInsensitive = location == ParamLocation.HEADER || location == ParamLocation.COOKIE;
         for (ParamDescriptor descriptor : params) {
-            if (descriptor.location() == location && descriptor.name().equals(name)) {
+            if (descriptor.location() != location) {
+                continue;
+            }
+            boolean matches = caseInsensitive
+                    ? descriptor.name().equalsIgnoreCase(name)
+                    : descriptor.name().equals(name);
+            if (matches) {
                 return descriptor;
             }
         }
