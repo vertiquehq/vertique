@@ -701,6 +701,36 @@ class CollectionParamStateMachineTest {
             return map;
         }
 
+        /**
+         * Asserts that the real binder bound the cookie {@code name} as a {@link JsonArray}, and returns
+         * it.
+         *
+         * <p>This assertion — on the <em>binder's</em> output, before extraction — is what makes the
+         * cookie rows below able to fail. A cookie is single-valued, so reverting {@code bindCookies} to
+         * {@code wrapScalar}, or reverting {@code findDescriptor}'s {@code COOKIE} match to
+         * case-sensitive (which leaves no descriptor, hence a scalar wrap), both leave a bare
+         * {@link String} here — and the singleton fallback in
+         * {@code ParameterExtractor.extractScalarValue} then turns that bare {@code String} into the very
+         * same one-element collection the extracted-value assertions expect. Asserting only the extracted
+         * value therefore cannot distinguish "bound as a collection" from "bound as a scalar and rescued
+         * by the fallback".
+         *
+         * @param req  the bound request produced by the real {@link DefaultBoundRequest}
+         * @param name the cookie name as bound, i.e. lower-cased
+         * @return the bound {@link JsonArray}
+         */
+        private JsonArray assertBoundAsJsonArray(BoundRequest req, String name) {
+            RequestValue bound = req.cookies().get(name);
+            assertNotNull(bound, "the cookie must be bound under its lower-cased name '" + name + "'");
+            return assertInstanceOf(
+                    JsonArray.class,
+                    bound.get(),
+                    "bindCookies must wrap a collection-declared cookie's value in a JsonArray so it reaches "
+                            + "coerceCollection as a collection; a bare String means the binder regressed to "
+                            + "wrapScalar (or the COOKIE descriptor match regressed to case-sensitive) and only the "
+                            + "extractScalarValue singleton fallback is masking it");
+        }
+
         @Test
         @DisplayName("QUERY: repeated values bound by the real binder reach coerceCollection")
         void realBinder_presentQueryCollection_materializes() throws Exception {
@@ -762,6 +792,12 @@ class CollectionParamStateMachineTest {
                     metaFor(method, List.of(paramMeta("Session-Tags", COOKIE, List.class, String.class, null)));
 
             BoundRequest req = realBoundRequest(meta, null, null, Set.of(cookie("session-tags", "a")));
+
+            assertEquals(
+                    new JsonArray().add("a"),
+                    assertBoundAsJsonArray(req, "session-tags"),
+                    "cookie names are bound case-insensitively, so findDescriptor must match them the same way");
+
             Object[] args = extractorFor(meta).extractArguments(null, req);
 
             List<?> list = assertInstanceOf(
@@ -796,6 +832,12 @@ class CollectionParamStateMachineTest {
                     metaFor(method, List.of(paramMeta("tags", COOKIE, List.class, String.class, null)));
 
             BoundRequest req = realBoundRequest(meta, null, null, Set.of(cookie("tags", "a")));
+
+            assertEquals(
+                    new JsonArray().add("a"),
+                    assertBoundAsJsonArray(req, "tags"),
+                    "the single cookie value must be bound as a one-element JsonArray");
+
             Object[] args = extractorFor(meta).extractArguments(null, req);
 
             List<?> list = assertInstanceOf(
@@ -814,6 +856,12 @@ class CollectionParamStateMachineTest {
                     metaFor(method, List.of(paramMeta("tags", COOKIE, Set.class, String.class, null)));
 
             BoundRequest req = realBoundRequest(meta, null, null, Set.of(cookie("tags", "a")));
+
+            assertEquals(
+                    new JsonArray().add("a"),
+                    assertBoundAsJsonArray(req, "tags"),
+                    "the single cookie value must be bound as a one-element JsonArray");
+
             Object[] args = extractorFor(meta).extractArguments(null, req);
 
             Set<?> set = assertInstanceOf(Set.class, args[0]);
@@ -828,6 +876,12 @@ class CollectionParamStateMachineTest {
                     metaFor(method, List.of(paramMeta("tags", COOKIE, String[].class, String.class, null)));
 
             BoundRequest req = realBoundRequest(meta, null, null, Set.of(cookie("tags", "a")));
+
+            assertEquals(
+                    new JsonArray().add("a"),
+                    assertBoundAsJsonArray(req, "tags"),
+                    "the single cookie value must be bound as a one-element JsonArray");
+
             Object[] args = extractorFor(meta).extractArguments(null, req);
 
             String[] array = assertInstanceOf(String[].class, args[0]);
@@ -847,6 +901,50 @@ class CollectionParamStateMachineTest {
 
             List<?> list = assertInstanceOf(List.class, args[0], "absence must not regress to null");
             assertTrue(list.isEmpty());
+        }
+
+        @Test
+        @DisplayName("COOKIE: a null-valued cookie yields the absence contract, not a one-entry collection")
+        void realBinder_nullValuedCookie_forCollectionParam_yieldsAbsenceContract() throws Exception {
+            Method method = CollectionResource.class.getMethod("list", List.class);
+            ResourceMethodMeta meta =
+                    metaFor(method, List.of(paramMeta("tags", COOKIE, List.class, String.class, null)));
+
+            // bindCookies routes a null cookie value to RequestValue.of(null) instead of wrapValues, so
+            // the collection parameter applies its ABSENCE contract rather than binding [null].
+            BoundRequest req = realBoundRequest(meta, null, null, Set.of(cookie("tags", null)));
+
+            assertTrue(
+                    req.cookies().get("tags").isNull(),
+                    "a null cookie value must bind as a null RequestValue, not as a one-element JsonArray "
+                            + "holding null");
+
+            Object[] args = extractorFor(meta).extractArguments(null, req);
+
+            List<?> list = assertInstanceOf(List.class, args[0], "the absence contract yields an empty collection");
+            assertTrue(
+                    list.isEmpty(),
+                    "a null-valued cookie carries no value, so the collection must be EMPTY — not a "
+                            + "single-entry collection holding null, which would make the resource method see a "
+                            + "value the client never sent");
+        }
+
+        @Test
+        @DisplayName("COOKIE: a null-valued cookie applies @DefaultValue, like any other absence")
+        void realBinder_nullValuedCookie_withDefault_yieldsSingleEntry() throws Exception {
+            Method method = CollectionResource.class.getMethod("list", List.class);
+            ResourceMethodMeta meta =
+                    metaFor(method, List.of(paramMeta("tags", COOKIE, List.class, String.class, "x")));
+
+            BoundRequest req = realBoundRequest(meta, null, null, Set.of(cookie("tags", null)));
+            Object[] args = extractorFor(meta).extractArguments(null, req);
+
+            List<?> list = assertInstanceOf(List.class, args[0]);
+            assertEquals(
+                    List.of("x"),
+                    list,
+                    "the null-value branch must reach the absence contract, so @DefaultValue applies — binding "
+                            + "[null] instead would silently shadow the declared default");
         }
 
         @Test

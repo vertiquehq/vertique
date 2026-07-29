@@ -414,9 +414,24 @@ final class ParameterExtractor {
         // collection instead of failing the request.
         if (paramMeta.componentType() != null) {
             Object bound = rv.get();
-            List<?> rawValues = bound instanceof io.vertx.core.json.JsonArray jsonArray
-                    ? jsonArray.getList()
-                    : Collections.singletonList(bound);
+            List<?> rawValues;
+            if (bound instanceof io.vertx.core.json.JsonArray jsonArray) {
+                rawValues = jsonArray.getList();
+            } else {
+                // Degrading is the right production behavior, but it must not be silent: the binder and
+                // the parameter metadata disagreed about multiplicity, and only the resulting 500 made
+                // the last such disagreement (a case-sensitivity split on header/cookie names)
+                // discoverable at all. Log so the class of defect stays observable instead of surfacing
+                // as quietly dropped values.
+                log.warn(
+                        "Collection-valued parameter '{}' ({}) received a non-JsonArray bound value of type {};"
+                                + " binding it as a single element. The bound request and the parameter"
+                                + " metadata disagree about multiplicity for this parameter.",
+                        paramMeta.name(),
+                        paramMeta.source(),
+                        bound == null ? "null" : bound.getClass().getName());
+                rawValues = Collections.singletonList(bound);
+            }
             return coerceCollection(rawValues, paramMeta, policies);
         }
 

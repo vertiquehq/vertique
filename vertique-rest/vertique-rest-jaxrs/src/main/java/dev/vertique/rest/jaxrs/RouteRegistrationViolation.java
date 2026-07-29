@@ -125,29 +125,42 @@ public record RouteRegistrationViolation(String operationId, ViolationType type,
 
         /**
          * A parameter declared as {@code SortedSet<T>} or {@code NavigableSet<T>} has an element type
-         * that is not comparable to <em>itself</em> — either it does not implement {@link Comparable} at
-         * all, or it implements {@code Comparable<X>} for a type {@code X} that is not {@code T} or a
-         * supertype of it. Both shapes are materialized as a {@link java.util.TreeSet}, which orders
-         * elements by their natural ordering, so the first request supplying a value would throw
-         * {@code ClassCastException} — from the comparison itself when the type is not
-         * {@link Comparable}, or from the compiler-synthesized {@code compareTo(Object)} bridge's cast
-         * when it compares against an unrelated type. A JAX-RS parameter declaration cannot supply a
-         * {@link java.util.Comparator}, so the shape has no valid materialization at all and is rejected
-         * at registration instead of failing per-request.
+         * that is not comparable to <em>itself</em> — it does not implement {@link Comparable} at all,
+         * it implements {@code Comparable<X>} for a type {@code X} that is not {@code T} or a supertype
+         * of it, or its {@code Comparable} declaration names no concrete type at all (see below). Both
+         * shapes are materialized as a {@link java.util.TreeSet}, which orders elements by their natural
+         * ordering, so the first request supplying a value would throw {@code ClassCastException} — from
+         * the comparison itself when the type is not {@link Comparable}, or from the
+         * compiler-synthesized {@code compareTo(Object)} bridge's cast when it compares against an
+         * unrelated type. A JAX-RS parameter declaration cannot supply a {@link java.util.Comparator},
+         * so the shape has no valid materialization at all and is rejected at registration instead of
+         * failing per-request.
          *
          * <p>Declare the parameter as {@code Set<T>}, {@code List<T>}, or {@code Collection<T>} — none
          * of which imposes an ordering — or make the element type implement {@code Comparable<T>}.
          *
-         * <p>A {@code Comparable} declaration whose type argument cannot be resolved to a concrete class
-         * is <em>accepted</em>: that covers a raw {@code implements Comparable} (which compares against
-         * {@link Object}) and every self-referential generic declaration, notably an {@code enum}
-         * ({@code Enum<E extends Enum<E>> implements Comparable<E>}).
+         * <p>What decides is the <em>erasure of the type argument at the {@code Comparable} declaration
+         * site</em>, because that is exactly what the bridge casts to. Two declarations carry no such
+         * argument yet are known safe and are therefore accepted: an {@code enum} (whose
+         * {@code compareTo} lives in {@link Enum} itself, so the bridge casts to {@link Enum}) and a raw
+         * {@code implements Comparable} (which implements {@code compareTo(Object)} directly, so no cast
+         * is generated). Any other unresolvable argument is <b>rejected</b>: with
+         * {@code interface Fwd<T> extends Comparable<T>} and {@code class Bad implements Fwd<String>} the
+         * concrete argument is bound below the declaration, so the bridge in {@code Bad} casts to
+         * {@code String} and a {@code TreeSet} of {@code Bad} throws.
          *
-         * <p>Only collection-shaped parameters are inspected (those for which
-         * {@code ResourceScanner.resolveComponentType} resolved an element type), so array shapes are
-         * unaffected: an array is never a {@code SortedSet}, and its component type is restricted to
-         * {@code Comparable} scalars anyway. Bean-param fields carry no component type and are
-         * likewise invisible here. A native multipart element type
+         * <p>Scoped to the sources whose values are materialized element-wise — {@code QUERY},
+         * {@code HEADER}, {@code COOKIE}, and {@code FORM}. A {@code BODY} parameter is
+         * <em>deserialized</em> by the body decoders and never materialized as a {@code TreeSet}, so a
+         * {@code SortedSet<T>} body is legal whatever its element type; the scoping matters because the
+         * generated dispatch path resolves a {@code componentType} for BODY while the reflective scanner
+         * does not. {@code FILE_UPLOADS}/{@code ENTITY_PARTS} are excluded for the same reason: they are
+         * always {@code List<T>} and are materialized natively.
+         *
+         * <p>Only collection-shaped parameters are inspected (those for which a component type was
+         * resolved), so array shapes are unaffected: an array is never a {@code SortedSet}, and its
+         * component type is restricted to {@code Comparable} scalars anyway. Bean-param fields carry no
+         * component type and are likewise invisible here. A native multipart element type
          * ({@code FileUpload}/{@code EntityPart}) is also excluded so it keeps its more accurate
          * diagnostic — {@link #UNSUPPORTED_MULTIPART_COLLECTION_SHAPE} on {@code FORM},
          * {@link #UNRESOLVABLE_PARAM_CONVERTER} on any other source.
