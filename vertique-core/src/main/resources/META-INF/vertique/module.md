@@ -5,203 +5,721 @@ SPDX-License-Identifier: EUPL-1.2
 
 # Core Module
 
-> **Status:** Implemented
+> **Status:** Stable
 > **Package:** `dev.vertique.core`
-> **Artifact:** `core`
+> **Artifact:** `vertique-core`
+> **Depends on:** nothing — this is the framework root
+
+`vertique-core` is the vocabulary every other Vertique module is written against. It supplies the
+Vert.x dependency-injection seam, the framework exception hierarchy, the typed-configuration
+contract, the extension-ordering and lifecycle contracts, the event-bus dispatch types, and the
+shared annotation vocabularies for resilience, validation, sanitization, and JSON profiles.
+
+Core is almost entirely *declaration*. Most of what it defines is implemented elsewhere: the
+context holder ships in `dev.vertique:vertique-context`, the config parser in
+`dev.vertique:vertique-config-core`, bean validation in `dev.vertique:vertique-validation`, health
+aggregation in `dev.vertique:vertique-management`. Depending on core gives an application the
+contracts and the annotations, not the runtime behind them.
 
 ---
 
-## Overview
+## When To Use It
 
-The core module is the foundation of the framework. All other modules depend on it. It provides:
+Every Vertique application already depends on `vertique-core` transitively — it arrives with any
+starter or feature module. Depend on it **directly** when:
 
-- Dagger module for Vert.x instance and configuration wiring
-- Qualifier annotation for typed configuration access
-- `FailureMapper` — concrete, hierarchy-aware, context-aware `Throwable → Throwable` translator registry; usable directly by application code and extended by layer-specific mappers
+- you are writing a Dagger module that binds `Vertx`, `@VertxConfig JsonObject`, or `EventBus`;
+- you throw or catch framework exceptions and want the semantic roots that drive HTTP mapping;
+- you parse a configuration section into a typed record through `ConfigParser`;
+- you implement a framework extension point declared here — a health check, a lifecycle step, an
+  `ObjectMapper` customizer, a canonicalizer, a backoff strategy;
+- you annotate an operation with `@Retry`, `@Timeout`, `@CircuitBreaker`, `@ValidateWith`,
+  `@Canonicalize`, `@Sanitize`, or `@JsonProfile`.
 
-### Package Layout
-
-Security types (`SecurityContext`, `SecurityIdentity`, `AuthMethod`, the authz SPIs, `SecurityEventObserver`, etc.) live in the `vertique-security` family (`dev.vertique.security.*`). See Maven coordinates `dev.vertique:vertique-security-core` and `dev.vertique:vertique-security-runtime`.
-
-| Package | Contents |
-|---------|----------|
-| `dev.vertique.core` | `VertxModule`, `VertxConfig`, `VertiqueRuntime`, `VertiqueComponentFactory` |
-| `dev.vertique.core.failure` | `FailureMapper`, `FailureTranslator`, `ContextAwareFailureTranslator` |
-| `dev.vertique.core.exception` | `VertiqueException`, `ValidationException`, `BusinessRuleException`, `ConflictException`, `NotFoundException`, `ConfigurationException`, `TechnicalException`, `UnavailableException` |
-| `dev.vertique.core.eventbus` | `DispatchEnvelope<T>`, `DispatchMetadata`, `Result<T>`, `LocalMessageCodec`, `EventBusClient`, `DispatchContextValue`, `EventBusExceptionMapper`, `EventBusTimeoutException`, `EventBusAddressUnavailableException`, `EventBusDispatchException` |
-| `dev.vertique.core.context` | API/SPI only — no runtime, no impl, no Dagger module: `ContextValue` (behavior-free marker interface; gates `ContextHolder` write path and the five context-producing SPIs), `ContextHolder` (SPI interface + `Scope`), `ContextScopes` (`noop()` factory), `ContextDecodeResult` + `ContextDecodeWarning`, `ContextValueAdapter` SPI, `DispatchBoundary` (boundary identifier constants), `DurableContextMetadataEncoder`/`Decoder` SPI, `DurableDecodeContext`/`DurableEncodeContext`, `DurablePropagationMetadata` (always-available namespaced `DurableMetadata` view), `DeferredExecutionOrigin` (concrete `ContextValue` record — deferred-execution provenance (`kind` + `reference`) bound by durable job/cron/outbox boundaries so the receive-side identity path can prove deferred execution before minting a service context), `InboundContextInitializer` SPI + `InboundContextInitializationContext`, `ServiceDispatchContextEncoder`/`Decoder` SPI, `ServiceDispatchDecodeContext`/`ServiceDispatchEncodeContext`; runtime impl lives in `vertique-context` |
-| `dev.vertique.core.config` | `JsonConfigPaths`, `PropertyCondition`, `ConfigParser` (interface), `@ConfigMapper` (qualifier), `ConfigTreeBuilder`, `ConfigSecretRenderer` |
-| `dev.vertique.core.util` | `TypeResolver`, `AnnotationResolver`, `GeneratedNames` |
-| `dev.vertique.core.health` | `HealthCheck`, `HealthCheckModule` |
-| `dev.vertique.core.json` | `JacksonConfigurer`, `ObjectMapperCustomizer`, `JsonModule`; **profile contracts** (runtime impl is in `vertique-json`): `JsonProfileId` (record value type; reserved `VERTX` constant; non-blank normalized value), `JsonMapperProfile` (SPI interface: `id()` + `mapper()`), `JsonMapperProfileRegistry` (interface: `mapper(JsonProfileId)`, `profile(JsonProfileId)`, `profileIds()`), `@JsonProfile` (`@Target({TYPE, METHOD})` — selects a named profile at a JAX-RS or other framework boundary), `JsonProfileConfigurationException` (extends `ConfigurationException`); **keyed-collection contract**: `@KeyedBy` (moved here from `core.config`; field annotation on `List<T>` record components — see below) |
-| `dev.vertique.core.validation` | `BeanValidator`, `ViolationDetail`, `BeanValidationException`, `ParameterViolation`, `ValidateWith`; `CharacterPolicy`, `CharacterPolicyResult`, `CharacterPolicyBinding`, `@SkipAllowedCharacters` |
-| `dev.vertique.core.sanitization` | `Canonicalizer`, `Sanitizer`, `@Canonicalize`, `@Sanitize`, `@SkipCanonicalization`, `@SkipSanitization`, `CanonicalizerBinding`, `SanitizerBinding`, `InputValueContext`, `InputLocation` |
-| `dev.vertique.core.async` | `Futures` (future-channel utilities: `toFuture`, `reflect`, `settle`, `mapFailure`), `Combinators` (control-flow combinators over pre-ordered lists: `foldSequential`, `recoverFirstWins`, `joinAllSwallow`, `forEachSwallowSync`, `dispatchNoJoin`) |
-| `dev.vertique.core.codegen` | `MethodMetadata`, `ParameterMetadata` — neutral, reflection-free metadata SPI for method-AOP and other codegen consumers (see below) |
-| `dev.vertique.core.resilience` | `@CircuitBreaker`, `@Retry`, `@Timeout`, `BackoffStrategy`, `RetryPolicy`, `ResilienceAnnotations`, `BackoffStrategyResolver` |
-| `dev.vertique.core.extension` | `OrderedExtension` (mix-in interface for deterministic extension ordering), `ExtensionPhase` (`SYSTEM_FIRST`, `APPLICATION`, `SYSTEM_LAST`) |
-| `dev.vertique.core.lifecycle` | `LifecyclePhase` (8-value enum: `CONFIGURE`, `VALIDATE`, `MIGRATE`, `BOOTSTRAP`, `INFRA`, `SERVICES`, `EDGE`, `AFTER_START`; `isVerticlePhase()` true for the four-value verticle subset), `LifecycleOrdered` (shared ordering contract: `phase()`, `priority()`, `orderKey()`, `comparator()`), `ApplicationStartupStep` (extends `LifecycleOrdered`; `start() → Future<Void>`), `ApplicationShutdownStep` (extends `LifecycleOrdered`; `stop() → Future<Void>`), `ComposeValidator` (behavior-free marker; modules join the `Set<ComposeValidator>` multibinding to participate in VALIDATE-phase fail-fast wiring checks), `JacksonConfigureStep` (CONFIGURE-phase `ApplicationStartupStep`; delegates to `JacksonConfigurer.configure()`; contributed by `CoreLifecycleStepsModule`), `ComposeValidationStep` (VALIDATE-phase `ApplicationStartupStep`; materializes `Set<ComposeValidator>` at construction, running all constructor-time checks; contributed by `CoreLifecycleStepsModule`), `CoreLifecycleStepsModule` (abstract Dagger `@Module(includes = JsonModule.class)`; declares `@Multibinds Set<ComposeValidator>`; contributes `JacksonConfigureStep` and `ComposeValidationStep` `@IntoSet`; self-contained — the `JsonModule` include satisfies `JacksonConfigureStep`'s `JacksonConfigurer`/`Set<ObjectMapperCustomizer>` dependencies) |
+Pair core with the module that implements the contract you are using: `vertique-config-core` for
+`ConfigParser`, `vertique-validation` for `BeanValidator`, `vertique-json` for the JSON profile
+registry, `vertique-context` and `vertique-correlation` for context propagation,
+`vertique-management` for health-check aggregation, `vertique-services` for typed event-bus service
+calls.
 
 ---
 
-## Components
+## Core Concepts
 
-### VertxModule
+### The graph-input seam
 
-Dagger `@Module` that provides the core Vert.x objects as injectable singletons.
+Every bootstrap path funnels two values into the application's Dagger graph: the `Vertx` instance
+and the root configuration `JsonObject`. `VertiqueRuntime` carries exactly those two, and
+`VertiqueComponentFactory<C>` turns them into the built component. Nothing host-specific crosses
+this seam — no `ApplicationContext`, no service locator. A host that embeds Vertique adapts its own
+beans through ordinary typed Dagger modules, so a missing adapter is a compile-time missing-binding
+error rather than a runtime lookup failure.
 
-```java
-@Module
-public class VertxModule {
+`VertxModule` is the Dagger module on the other side of the seam: constructed with the runtime's two
+values, it publishes them plus the event bus and the low-level event-bus client.
 
-    public VertxModule(Vertx vertx, @VertxConfig JsonObject jsonConfig) { ... }
+### Configuration is parsed at the boundary
 
-    @Provides @Singleton
-    public Vertx vertx() { ... }
+Configuration is read only in `@Provides` methods, which parse a section into a typed record whose
+compact constructor validates it — so a bad value fails Dagger component construction rather than
+first use. Module internals depend on the typed record, never on the raw `JsonObject`. See
+[Configuration](#configuration).
 
-    @Provides @Singleton
-    public @VertxConfig JsonObject config() { ... }
+### Two ordering contracts, deliberately unrelated
 
-    @Provides @Singleton
-    public EventBus eventBus(Vertx vertx) { ... }
-}
-```
+`OrderedExtension` orders behavioral extensions (interceptors, customizers, observers).
+`LifecycleOrdered` orders lifecycle participants (startup and shutdown steps, verticle
+deployments). Both sort **phase ascending → priority ascending → `orderKey` ascending**, and both
+expose a static `comparator()`. They are separate interfaces because their `phase()` methods return
+different enums — `ExtensionPhase` and `LifecyclePhase`.
 
-**Bindings provided:**
+The rules an extension author must know:
+
+- **Phase dominates priority absolutely.** An `APPLICATION` extension with
+  `priority = Integer.MIN_VALUE` still runs after every `SYSTEM_FIRST` extension. Do not try to
+  emulate cross-phase ordering with priority.
+- **Lower `priority()` runs first**; the default is `0`.
+- **`orderKey()` defaults to `getClass().getName()`.** It is the final tie-break, so ordering is
+  deterministic across JVM restarts only when the key is unique per registered instance. Two
+  instances of the same class tie; a lambda or method-reference registration gets a synthetic
+  class name that is not stable across compilations. Give such participants distinct `priority()`
+  values or override `orderKey()`.
+- **`ExtensionPhase` is not a security boundary.** Any module on the classpath can declare
+  `SYSTEM_FIRST`. The phase confers ordering, not privilege.
+
+### Lifecycle phases
+
+`LifecyclePhase` is the single phase vocabulary, in declaration (ordinal) order:
+
+| Phase | Kind | Purpose |
+|---|---|---|
+| `CONFIGURE` | Non-verticle | Build runtime configuration (e.g. install Jackson modules) before any deployment |
+| `VALIDATE` | Non-verticle | Validate assembled configuration and wiring before any deployment |
+| `MIGRATE` | Non-verticle | Run data/schema migrations before any deployment |
+| `BOOTSTRAP` | Verticle | Framework bootstrapping (codec registration, config watchers) |
+| `INFRA` | Verticle | Infrastructure verticles (management, health endpoints) |
+| `SERVICES` | Verticle | Service-layer verticles (event-bus dispatch) |
+| `EDGE` | Verticle | Edge verticles (HTTP, WebSocket) |
+| `AFTER_START` | Non-verticle | Post-start work, after all verticles are deployed |
+
+`isVerticlePhase()` is `true` only for `BOOTSTRAP`, `INFRA`, `SERVICES`, and `EDGE`.
+
+Startup **interleaves per phase**: for each phase in order, that phase's startup steps run
+sequentially in comparator order and fail-fast, and only then are that phase's verticles deployed.
+A step declared in `SERVICES` therefore runs *before* the `SERVICES` verticles, not after them.
+Shutdown runs the shutdown steps of the phases whose startup completed, in reversed comparator
+order, best-effort.
+
+### Exception semantics
+
+Framework and application exceptions extend a **semantic root** from `dev.vertique.core.exception`
+rather than raw `RuntimeException`. The root chosen is what determines the HTTP status a REST
+boundary produces, so picking the most specific applicable root is the whole mechanism — see
+[Failures, Constraints, and Common Mistakes](#failures-constraints-and-common-mistakes).
+
+### Context values
+
+A value that must ride along with a request or a durable dispatch implements the marker interface
+`ContextValue`. That marker gates the write path: `ContextHolder.bind` is
+`<T extends ContextValue>`, while `current(Class<T>)` is deliberately unbounded so anything stored
+can be read back. The five context-producing SPIs carry the same bound on their context-type
+parameter. The holder implementation and the encoder/decoder registries ship in
+`dev.vertique:vertique-context`.
+
+---
+
+## Key Classes
+
+### `VertxModule`
+
+Dagger `@Module` constructed with the Vert.x instance and the root configuration; list it on the
+application `@Component` and supply it through the generated builder. Bindings provided:
 
 | Type | Qualifier | Description |
-|------|-----------|-------------|
-| `Vertx` | -- | The Vert.x instance |
-| `JsonObject` | `@VertxConfig` | Application configuration (from `-conf` argument or deployment options) |
-| `EventBus` | -- | The Vert.x event bus |
+|---|---|---|
+| `Vertx` | — | The Vert.x instance passed at construction |
+| `JsonObject` | `@VertxConfig` | The root application configuration |
+| `EventBus` | — | `vertx.eventBus()` |
+| `EventBusExceptionMapper` | — | Translates Vert.x `ReplyException`s into typed exceptions |
+| `EventBusClient` | — | Low-level dispatch transport |
 
-**Usage:**
-
-```java
-@Singleton
-@Component(modules = { VertxModule.class, AppModule.class })
-interface AppComponent {
-    Vertx vertx();
-    HttpVerticle httpVerticle();
-}
-
-// Building the component:
-AppComponent component = DaggerAppComponent.builder()
-    .vertxModule(new VertxModule(vertx, config()))
-    .build();
-```
-
-### VertxConfig
-
-Dagger qualifier annotation used to distinguish the application `JsonObject` configuration from other `JsonObject` instances.
-
-```java
-@Qualifier
-@Retention(RUNTIME)
-public @interface VertxConfig {}
-```
-
-Usage in Dagger modules — inject `ConfigParser` and parse a section into a typed config record:
-
-```java
-@Provides
-HelloConfig helloConfig(@VertxConfig JsonObject config, ConfigParser parser) {
-    return parser.parse(JsonConfigPaths.navigateObject(config, "hello"), HelloConfig.class);
-}
-```
-
-The injected `ConfigParser` uses an isolated, coercion-lenient `ObjectMapper` (see `ConfigParser` below). Never use `JsonObject.mapTo` or raw `@Named` scalar reads at the Dagger boundary. The `ConfigParser` binding is provided by `ConfigParsingModule` (in `vertique-config-core`) — include it once in the application `@Component`.
-
-### VertiqueRuntime
-
-Container-neutral, immutable record carrying the two inputs every bootstrap path must provide to build the application's dependency-injection graph: the `Vertx` instance and the root application configuration `JsonObject`.
+### `VertiqueRuntime` and `VertiqueComponentFactory<C>`
 
 ```java
 public record VertiqueRuntime(Vertx vertx, JsonObject config) {
-    // compact constructor rejects null
-    public static VertiqueRuntime of(Vertx vertx, JsonObject config) { ... }
+    public static VertiqueRuntime of(Vertx vertx, JsonObject config);
 }
-```
 
-`VertiqueRuntime` is the single seam every bootstrap path — standalone launcher or an embedding host bridge — funnels through. It deliberately exposes no Dagger types, no host concept (Spring `ApplicationContext`, Quarkus `Arc`), and no service locator. On the standalone path the values flow straight into `new VertxModule(rt.vertx(), rt.config())`. An embedding host assembles a `VertiqueRuntime` from host-native equivalents and passes it to a `VertiqueComponentFactory`.
-
-#### Invariants & Gotchas
-
-- Both components are required. The compact constructor calls `Objects.requireNonNull` on both; passing `null` for either throws `NullPointerException` immediately.
-- `of(vertx, config)` is a static factory delegating to the canonical constructor — it is the preferred construction path so call sites read fluently.
-
-### VertiqueComponentFactory\<C\>
-
-`@FunctionalInterface` supplied by the application or a host bridge. Receives a `VertiqueRuntime` and returns the built Dagger `@Component` of type `C`.
-
-```java
 @FunctionalInterface
 public interface VertiqueComponentFactory<C> {
     C build(VertiqueRuntime runtime);
 }
-```
 
-The factory owns the knowledge of which modules to wire. On the standalone path a typical factory constructs `new VertxModule(rt.vertx(), rt.config())` alongside application modules and returns the generated `DaggerXxx` component. An embedding host (Spring, Quarkus) provides a factory that additionally wires typed Dagger adapter modules `@Provides`-ing host beans — there is no host-bean service locator; a missing adapter is a compile-time missing-binding error (see ADR-0127).
-
-**Standalone example:**
-
-```java
-VertiqueComponentFactory<AppComponent> factory = rt ->
-    DaggerAppComponent.builder()
+VertiqueComponentFactory<AppComponent> factory = rt -> DaggerAppComponent.builder()
         .vertxModule(new VertxModule(rt.vertx(), rt.config()))
         .build();
-AppComponent component = factory.build(VertiqueRuntime.of(vertx, config()));
+
+AppComponent component = factory.build(VertiqueRuntime.of(vertx, config));
 ```
 
-### FailureMapper
+Both record components are required: the compact constructor calls `Objects.requireNonNull` on
+each, so a `null` throws at construction rather than surfacing later as a missing binding. Prefer
+the static `of` factory, which delegates to the canonical constructor.
 
-Concrete, hierarchy-aware, context-aware translator registry. Usable directly by application code for ad-hoc contextual translation, **extended** by the REST/services/DB layer mappers (`RestExceptionMapper`, `ServiceExceptionMapper`, `DbExceptionMapper`) — which pre-register translators and may override `fallback` — and **composed** by `DefaultRestClientExceptionMapper` (the REST client owns its mapper per-client rather than subclassing).
+### `FailureMapper`
+
+Concrete, hierarchy-aware, context-aware `Throwable → Throwable` translator registry. Usable
+directly for ad-hoc translation, and the base class the layer mappers in `dev.vertique:vertique-rest-jaxrs`,
+`dev.vertique:vertique-services`, and `dev.vertique:vertique-db-core` extend.
 
 ```java
 public class FailureMapper {
-    public FailureMapper() { ... }
+    public FailureMapper();
 
-    // Register translators
-    public <T extends Throwable> FailureMapper on(Class<T> type, FailureTranslator<T> translator) { ... }
-    public <T extends Throwable> FailureMapper on(Class<T> type, ContextAwareFailureTranslator<T> translator) { ... }
+    public <T extends Throwable> FailureMapper on(Class<T> type, FailureTranslator<T> translator);
+    public <T extends Throwable> FailureMapper on(Class<T> type, ContextAwareFailureTranslator<T> translator);
 
-    // Translate — context is passed to ContextAwareFailureTranslator; plain translators ignore it
-    public Throwable translate(Throwable throwable, String context) { ... }
-    public Throwable translate(Throwable throwable) { ... }   // context defaults to getMessage()
+    public Throwable translate(Throwable throwable, String context);
+    public Throwable translate(Throwable throwable);   // context defaults to throwable.getMessage()
 
-    // Lookup — public so subclasses and tests can inspect registered translators
-    public FailureTranslator<?> findTranslator(Class<? extends Throwable> exceptionClass) { ... }
+    public FailureTranslator<?> findTranslator(Class<? extends Throwable> exceptionClass);
 
-    // Override point for subclasses — default returns the throwable unchanged
-    protected Throwable fallback(Throwable throwable, String context) { ... }
+    protected Throwable fallback(Throwable throwable, String context);
 }
 ```
 
-- Walks the superclass chain to find the most specific registered translator; caches lookups in a `ConcurrentHashMap` for performance.
-- At translate time, checks `instanceof ContextAwareFailureTranslator` and passes the context string only to context-aware translators; plain translators simply receive the throwable.
-- The two `on(...)` overloads accept both translator flavors without ambiguity — a 2-arg lambda binds to the context-aware overload, a 1-arg lambda to the plain one.
-- `fallback` is the result when no translator matches. Default returns the throwable unchanged; `DbExceptionMapper` overrides it to wrap in `DataAccessException`.
+```java
+var mapper = new FailureMapper();
+mapper.on(DatabaseException.class, (e, ctx) -> new DataAccessException(ctx, e));
+
+Throwable translated = mapper.translate(sqlFailure, "save user");
+```
 
 #### Invariants & Gotchas
 
-- Registering a translator for a type that already has one is **last-wins** and clears the lookup cache — higher-priority customizers can override framework defaults.
-- `translate(Throwable)` dispatches on the runtime type, so behaviour is correct regardless of which `on(...)` overload was used for registration.
-- `findTranslator` returns `null` (not a no-op translator) when no translator is found anywhere in the hierarchy up to (but not including) `Object`.
+- Lookup walks the **superclass** chain and stops below `Object`, so the most specific registered
+  translator wins. Interfaces are not consulted.
+- Registration is **last-wins** and clears the whole lookup cache, which is what lets a later, more
+  specific registration override an already-resolved broader one.
+- `findTranslator` returns `null` — not a no-op translator — when nothing in the hierarchy matches.
+  `fallback` is what `translate` returns instead; the default returns the throwable unchanged.
+- `translate` dispatches on the runtime type, so behavior is identical regardless of which `on(...)`
+  overload registered the translator. A two-argument lambda binds to the context-aware overload; a
+  one-argument lambda binds to the plain one.
 
-### FailureTranslator
+### `Result<T>`
+
+Sealed success/failure monad used for event-bus replies. Implementations are the records
+`Result.Success<T>` and `Result.Failure<T>`.
+
+```java
+public sealed interface Result<T> {
+    static <T> Result<T> success(T value);
+    static <T> Result<T> failure(Throwable cause);
+
+    boolean isSuccess();
+    boolean isFailure();
+    T get();                       // throws NoSuchElementException on a failure
+    Optional<T> toOptional();
+    Throwable cause();             // null on a success
+    <U> Result<U> map(Function<T, U> mapper);
+    <U> Result<U> flatMap(Function<T, Result<U>> mapper);
+    Result<T> recover(Function<Throwable, T> recoveryFn);
+    <U> U fold(Function<T, U> onSuccess, Function<Throwable, U> onFailure);
+}
+```
+
+`map`, `flatMap`, and `recover` catch an `Exception` thrown by the supplied function and return it
+as a `Failure`. `Result.failure(null)` is rejected.
+
+### `DispatchEnvelope<T>` and `DispatchMetadata`
+
+The event-bus carrier for framework dispatch and its typed context map.
+
+```java
+public final class DispatchEnvelope<T> {
+    public static <T> DispatchEnvelope<T> of(T payload, DispatchMetadata metadata);
+    public static <T> DispatchEnvelope<T> of(T payload, DispatchMetadata metadata, String replyAddress);
+    public static <T> DispatchEnvelope<T> of(T payload);        // empty metadata
+    public static DispatchEnvelope<Void> empty();
+
+    public T payload();
+    public DispatchMetadata metadata();
+    public Optional<String> replyAddress();
+}
+
+public final class DispatchMetadata {
+    public static DispatchMetadata of(Map<String, Object> dispatchContext);
+    public static DispatchMetadata empty();
+
+    public Map<String, Object> dispatchContext();
+    public <C> Optional<C> context(Class<C> type);
+}
+```
+
+The dispatch context is keyed by fully-qualified type name; `context(Class)` is the typed read.
+`DispatchMetadata.of` copies the caller map, so later caller mutations cannot change what the
+receiver observes across the local hop. Annotating a type `@DispatchContextValue` (in
+`dev.vertique.core.eventbus`) makes it injectable as a service-handler method parameter.
+
+Application code should not build envelopes by hand — use the typed client in
+`dev.vertique:vertique-services`, which captures currently-bound context values automatically.
+
+### `EventBusClient`
+
+`@Singleton` low-level transport over the framework's dispatch codecs, exposing
+`Future<Result<?>> request(String address, DispatchEnvelope<?> envelope, long sendTimeoutMs)` and
+`void send(String address, DispatchEnvelope<?> envelope)`. Failed requests are translated through
+`EventBusExceptionMapper` before the future fails.
+
+This is a transport primitive, not an application API. Prefer the typed service client in
+`dev.vertique:vertique-services`, which adds supervisor checks, effective-timeout computation, and
+service-specific failure enrichment.
+
+### `BeanValidator` and validation result types
+
+HTTP-agnostic validation contract; the implementation ships in `dev.vertique:vertique-validation`.
+
+```java
+public interface BeanValidator {
+    <T> void validate(T object);
+    <T> void validate(T object, Class<?>... groups);
+
+    <T> List<ViolationDetail> check(T object);
+    <T> List<ViolationDetail> check(T object, Class<?>... groups);
+
+    List<ParameterViolation> checkParameters(Object instance, Method method, Object[] args, Class<?>... groups);
+    void validateParameters(Object instance, Method method, Object[] args, Class<?>... groups);
+}
+```
+
+`validate` and `validateParameters` throw `BeanValidationException` on violation; `check` and
+`checkParameters` return the violations instead, empty meaning valid.
+
+| Type | Shape |
+|---|---|
+| `ViolationDetail` | `record (String path, String message, @Nullable String type, @Nullable Map<String, Object> args)`, plus `of(path, message)` |
+| `ParameterViolation` | `record (int parameterIndex, ViolationDetail detail)` |
+| `BeanValidationException` | extends `ValidationException`; `violations()` is defensively copied and unmodifiable |
+
+`ViolationDetail` deliberately excludes the invalid value so a violation can be serialized without
+leaking input. `type` and `args` are populated by the validation module and are `null` when it is
+not configured to resolve them.
+
+`@ValidateWith(Class<?>[] value)` selects Bean Validation groups for a single method; the default
+group applies when it is absent.
+
+### `MethodMetadata` and `ParameterMetadata`
+
+Reflection-free metadata contracts shared by codegen consumers and runtime scanners. An aspect or
+interceptor author consumes them; application code does not implement them — generated code and the
+framework's own scanners provide the implementations.
+
+`MethodMetadata`:
+
+| Method | Returns | Group |
+|---|---|---|
+| `name()` | `String` | reflection-free |
+| `declaringType()` | `Class<?>` | reflection-free |
+| `returnType()` | `Class<?>` | reflection-free |
+| `parameterTypes()` | `Class<?>[]` | reflection-free |
+| `parameters()` | `List<ParameterMetadata>` | reflection-free |
+| `findAnnotation(Class<A>)` | `Optional<A>` | reflection-free |
+| `hasAnnotation(Class<? extends Annotation>)` | `boolean` | reflection-free |
+| `genericReturnType()` | `Type` | reflective |
+| `asMethod()` | `Method` | reflective |
+
+`ParameterMetadata`:
+
+| Method | Returns | Group |
+|---|---|---|
+| `index()` | `int` | reflection-free |
+| `name()` | `String` | reflection-free |
+| `type()` | `Class<?>` | reflection-free |
+| `findAnnotation(Class<A>)` | `Optional<A>` | reflection-free |
+| `hasAnnotation(Class<? extends Annotation>)` | `boolean` | reflection-free |
+| `genericType()` | `Type` | reflective |
+| `annotationsLazy()` | `Supplier<Annotation[]>` | reflective; `default` returns an empty array |
+
+#### Invariants & Gotchas
+
+- The reflection-free group — including both annotation lookups — is safe on the critical path and
+  needs no GraalVM `reflect-config.json` entry. The reflective group does: calling
+  `asMethod()`, `genericReturnType()`, `ParameterMetadata.genericType()`, or `annotationsLazy()` in
+  a native image requires a reflection entry for the declaring class.
+- On the codegen path, annotation lookups query compile-time-captured annotation literals, not live
+  runtime annotations. An annotation added after compilation — by a dynamic proxy or a bytecode
+  agent — is invisible. Only `@Retention(RUNTIME)` annotations are ever visible.
+- `findAnnotation` returns `Optional`, never `null`. Both `findAnnotation` and `hasAnnotation` take
+  an annotation-typed `Class` (`Class<A extends Annotation>` and `Class<? extends Annotation>`).
+- `parameterTypes()` gives the erased signature without materializing `ParameterMetadata` objects;
+  `parameters()` gives the full per-parameter view.
+
+### `ResilienceAnnotations`
+
+Resolved `@Timeout`, `@CircuitBreaker`, and `@Retry` values for one method, with method-level
+annotations replacing type-level ones outright — there is no per-attribute merging.
+
+```java
+public record ResilienceAnnotations(Timeout timeout, CircuitBreaker circuitBreaker, Retry retry) {
+
+    /** No policies configured. */
+    public static final ResilienceAnnotations NONE;
+
+    public static ResilienceAnnotations resolve(Class<?> type, Method method);
+    public static ResilienceAnnotations resolve(Method method);   // uses method.getDeclaringClass()
+
+    public boolean hasAny();
+}
+```
+
+#### Invariants & Gotchas
+
+- **Component order is `(timeout, circuitBreaker, retry)`.** All three are `Timeout`,
+  `CircuitBreaker`, and `Retry` annotation instances, and any of them may be `null`.
+- Resolution walks the full supertype hierarchy on both sides — the method plus every overridden
+  same-signature method, then the type plus its superclasses and transitively reachable interfaces.
+  This is necessary because neither `Class.getAnnotation` nor `Method.getAnnotation` traverses
+  super-interfaces, and `@Inherited` does not apply to interface annotations.
+- `resolve` returns the shared `NONE` instance when no resilience annotation is present anywhere,
+  so `hasAny()` is the correct emptiness test rather than a `null` check on the result.
+
+### `CorrelationContext`
+
+Read-only view of the correlation identifiers bound to the current execution. It is a
+`ContextValue` and is marked `@DispatchContextValue`, so it propagates across service dispatch.
+
+```java
+public interface CorrelationContext extends ContextValue {
+    CorrelationIdentifier requestId();
+    CorrelationIdentifier correlationId();
+    @Nullable CorrelationIdentifier causationId();
+    @Nullable TraceReference trace();
+    List<ProtocolCorrelationRef> protocolCorrelations();
+    @Nullable CorrelationSessionRef session();
+    Map<String, String> attributes();
+    CorrelationContextSnapshot snapshot();
+
+    static CorrelationContext unbound();
+}
+```
+
+`CorrelationIdentifier` is a `record (String value, String source)`; both components must be
+non-blank. `CorrelationContext.unbound()` is the sentinel returned outside a correlated execution —
+its `requestId()`/`correlationId()` carry the value `"unavailable"` from source `"unbound"`, so
+reading correlation off the request path never throws.
+
+The runtime that binds this context, and the `CorrelationIdGenerator` SPI it uses, ship in
+`dev.vertique:vertique-correlation`. An application overrides ID generation by binding its own
+`CorrelationIdGenerator` — that module declares the binding as optional.
+
+### `PayloadSource` and `PayloadSources`
+
+Transport-agnostic description of a request or response body, used where a module must inspect a
+payload without depending on REST or audit types.
+
+```java
+public interface PayloadSource {
+    PayloadKind kind();                    // ABSENT | BUFFERED | STREAMING
+    Optional<String> contentType();
+    OptionalLong declaredLength();
+    Optional<Buffer> bufferedView();
+    Optional<InputStream> bufferedStream();
+    byte[] copyPrefix(int maxBytes);
+}
+
+PayloadSource absent    = PayloadSources.absent();
+PayloadSource buffered  = PayloadSources.buffered(bytes, "application/json");
+PayloadSource streaming = PayloadSources.streaming("application/octet-stream", declaredLength);
+```
+
+#### Invariants & Gotchas
+
+- **No defensive copy anywhere.** `buffered(byte[], …)` captures the array reference; a caller that
+  needs immutability must copy before calling the factory. Mutating the array afterwards changes
+  what readers observe.
+- `bufferedView()` is zero-copy only for a `Buffer`-backed source. For `byte[]` and `ByteBuffer`
+  backings it lazily materializes and copies, so a hot path that only reads bytes should prefer
+  `bufferedStream()`.
+- `copyPrefix` is the one accessor that always copies; it exists for diagnostics, not for the data
+  path.
+
+### JSON profiles
+
+A named `ObjectMapper` selected at a framework boundary, so one application can serialize different
+surfaces under different Jackson policies.
+
+```java
+public record JsonProfileId(String value) {
+    public static final JsonProfileId VERTX;     // "vertx"
+    public static JsonProfileId of(String value);
+}
+
+public interface JsonMapperProfileRegistry {
+    ObjectMapper mapper(JsonProfileId id);
+    JsonMapperProfile profile(JsonProfileId id);
+    Set<JsonProfileId> profileIds();
+    default void validateConfigured(@Nullable String profileId);
+}
+```
+
+`@JsonProfile("name")` is `@Target({TYPE, METHOD})` and selects a profile at a boundary that
+supports it. `JsonProfileId` trims its value and rejects `null` or blank. Looking up an unknown id
+throws `JsonProfileConfigurationException`, which extends `ConfigurationException`. The registry
+implementation ships in `dev.vertique:vertique-json`.
+
+---
+
+## Extension Points
+
+Every extension below is contributed through Dagger multibinding unless stated otherwise.
+
+### `ObjectMapperCustomizer`
+
+Customizes the Vert.x shared `ObjectMapper` at startup. Extends `OrderedExtension`, so customizers
+apply in comparator order.
+
+```java
+@FunctionalInterface
+public interface ObjectMapperCustomizer extends OrderedExtension {
+    void customize(ObjectMapper mapper);
+}
+```
+
+```java
+@Provides @IntoSet
+static ObjectMapperCustomizer javaTimeSupport() {
+    return mapper -> mapper.registerModule(new JavaTimeModule());
+}
+```
+
+A lambda takes the defaults (`APPLICATION` phase, priority `0`); implement the interface explicitly
+to override `phase()`, `priority()`, or `orderKey()`.
+
+The empty-by-default `Set<ObjectMapperCustomizer>` is declared by `JsonModule`, which
+`CoreLifecycleStepsModule` already includes. `JacksonConfigurer` applies the set exactly once; a
+second `configure()` call logs a warning and returns.
+
+### `HealthCheck`
+
+Reports the health of one component. Classify each check with the `@Liveness` or `@Readiness`
+qualifier; `HealthCheckModule` declares both empty-by-default sets so a module can contribute
+without depending on `dev.vertique:vertique-management`, which is what reads them.
+
+```java
+public interface HealthCheck {
+    String name();
+    Future<HealthCheckResult> check();
+}
+```
+
+```java
+public final class DatabaseHealthCheck implements HealthCheck {
+    @Inject public DatabaseHealthCheck() {}
+
+    @Override public String name() { return "database"; }
+
+    @Override public Future<HealthCheckResult> check() {
+        return Future.succeededFuture(HealthCheckResult.up(Map.of("pool", "ready")));
+    }
+}
+
+@Provides @IntoSet @Readiness
+static HealthCheck databaseHealth(DatabaseHealthCheck check) {
+    return check;
+}
+```
+
+`HealthCheckResult` is a `record (HealthStatus status, Map<String, Object> data)` with the factories
+`up()`, `up(Map)`, `down()`, `down(String error)`, and `down(Map)`; `data` is copied and never
+`null`. Return a completed future carrying a `DOWN` result rather than a failed future — a failed
+future or a thrown exception is still reported as `DOWN`, but with the error text instead of your
+diagnostic data. `name()` must be unique within its qualifier set.
+
+### `ApplicationStartupStep` and `ApplicationShutdownStep`
+
+Non-verticle units of startup and teardown work.
+
+```java
+public interface ApplicationStartupStep extends LifecycleOrdered {
+    Future<Void> start();
+}
+
+public interface ApplicationShutdownStep extends LifecycleOrdered {
+    Future<Void> stop();
+}
+```
+
+```java
+@Singleton
+public final class SchemaMigrationStep implements ApplicationStartupStep {
+    private final Migrator migrator;
+
+    @Inject public SchemaMigrationStep(Migrator migrator) { this.migrator = migrator; }
+
+    @Override public LifecyclePhase phase() { return LifecyclePhase.MIGRATE; }
+
+    @Override public Future<Void> start() { return migrator.migrate(); }
+}
+
+@Provides @Singleton @IntoSet
+static ApplicationStartupStep schemaMigration(SchemaMigrationStep step) {
+    return step;
+}
+```
+
+A step normally declares one of the non-verticle phases — `CONFIGURE`, `VALIDATE`, `MIGRATE`, or
+`AFTER_START`. The multibinding sets are declared by `dev.vertique:vertique-deploy` and driven by
+`dev.vertique:vertique-application`; core contributes into them without depending on either.
+
+### `ComposeValidator`
+
+Behavior-free marker for the constructible-as-validation pattern: a class that declares its
+module's required bindings as `@Inject` constructor parameters proves those bindings exist the
+moment it is constructed.
+
+```java
+public interface ComposeValidator {}
+```
+
+```java
+@Singleton
+public final class MyModuleComposeValidator implements ComposeValidator {
+    @Inject public MyModuleComposeValidator(MyRequiredService service) {
+        if (service.mode() != Mode.READY) {
+            throw new IllegalStateException("MyRequiredService must be configured in READY mode");
+        }
+    }
+}
+
+@Provides @Singleton @IntoSet
+static ComposeValidator myModuleValidator(MyModuleComposeValidator v) {
+    return v;
+}
+```
+
+`ComposeValidationStep` materializes the whole set during the `VALIDATE` phase, which constructs
+every contributed validator. A missing binding is a Dagger compile error; a violated invariant is
+whatever the constructor throws, reported as a failed `VALIDATE`-phase startup. For validators to
+run, the application component must include `CoreLifecycleStepsModule` and be driven by the standard
+lifecycle runner in `dev.vertique:vertique-application`.
+
+### `Canonicalizer` and `Sanitizer`
+
+String normalization (semantics-preserving) and content removal (not semantics-preserving) applied
+to inbound values. Implementations must be stateless and thread-safe; a `Canonicalizer` must also be
+deterministic and idempotent.
+
+```java
+@FunctionalInterface
+public interface Canonicalizer {
+    String canonicalize(String value, InputValueContext context);
+}
+
+@FunctionalInterface
+public interface Sanitizer {
+    String sanitize(String value, InputValueContext context);
+}
+```
+
+Register each implementation as a binding record keyed by its own type — the `type()` component is
+the lookup key used to resolve the classes named in `@Canonicalize` / `@Sanitize`. Declare the chain
+with those annotations, both `@Target({TYPE, FIELD, RECORD_COMPONENT, PARAMETER, METHOD,
+ANNOTATION_TYPE})`, so they also compose into custom annotations:
+
+```java
+@Provides @IntoSet
+static CanonicalizerBinding trimCanonicalizer(TrimCanonicalizer c) {
+    return new CanonicalizerBinding(TrimCanonicalizer.class, c);
+}
+
+@Path("/users")                                            // type-level: applies to the whole resource
+@Canonicalize({TrimCanonicalizer.class, NfkcCanonicalizer.class})
+public class UserResource { }
+
+public record CreateUserRequest(                           // component-level
+        @Canonicalize(TrimCanonicalizer.class)
+        @Sanitize(BasicHtmlSanitizer.class)
+        String bio) {}
+```
+
+A `Sanitizer` is registered the same way, through `SanitizerBinding`.
+
+`@SkipCanonicalization` and `@SkipSanitization` opt an element out of processing inherited from an
+enclosing type. `InputValueContext` is a `record (InputLocation location, String path, String
+logicalName, Class<?> ownerType)`; `InputLocation` is `PATH`, `QUERY`, `HEADER`, `COOKIE`, `FORM`,
+`BODY`, `BEAN_PARAM`.
+
+### `CharacterPolicy`
+
+Validates that a string contains only permitted characters.
+
+```java
+public interface CharacterPolicy {
+    CharacterPolicyResult validate(String value, InputValueContext context);
+}
+```
+
+```java
+@Provides @IntoSet
+static CharacterPolicyBinding asciiPolicy(AsciiCharacterPolicy p) {
+    return new CharacterPolicyBinding(AsciiCharacterPolicy.class, p);
+}
+```
+
+Return `CharacterPolicyResult.passed()` or
+`CharacterPolicyResult.failed(index, codePoint, reason)` naming the first offending character.
+`@SkipAllowedCharacters` opts an element out of character validation inherited from its type.
+
+### `BackoffStrategy`
+
+Computes the delay before each retry attempt, given the zero-based retry count.
+
+```java
+@FunctionalInterface
+public interface BackoffStrategy {
+    long delay(int retryCount);
+
+    static BackoffStrategy exponential(long delayMs, double multiplier, long maxDelayMs);
+    static BackoffStrategy fixed(long delayMs);
+    static BackoffStrategy none();
+
+    /** Sentinel used as the @Retry#backoff default — never instantiated or executed. */
+    final class Default implements BackoffStrategy { }
+}
+```
+
+A custom strategy is selected by class, not by Dagger binding:
+
+```java
+public final class DecorrelatedJitterBackoff implements BackoffStrategy {
+    public DecorrelatedJitterBackoff() {}
+
+    @Override public long delay(int retryCount) { return Math.min(30_000L, 100L << retryCount); }
+}
+
+@Retry(maxRetries = 4, backoff = DecorrelatedJitterBackoff.class)
+Future<String> lookup(String id);
+```
+
+`BackoffStrategyResolver.resolve(Retry, BackoffStrategy fallback)` performs the selection. A custom
+class is instantiated reflectively through an accessible no-arg constructor on each resolution — the
+result is not cached — and a failure to instantiate throws `IllegalStateException`. When `backoff()`
+is left at the `Default` sentinel the resolver uses the caller-supplied fallback, or builds
+`exponential(delayMs, backoffMultiplier, maxDelayMs)` from the annotation when the fallback is
+`null`. `BackoffStrategy.Default` is a sentinel only — it cannot be instantiated or executed.
+
+`RetryPolicy` (`boolean shouldRetry(Throwable error, int retryCount)`) is the complementary
+predicate consulted by consumer modules when `@Retry#retryOn` is empty.
+
+### `FailureTranslator` and `ContextAwareFailureTranslator`
 
 ```java
 @FunctionalInterface
 public interface FailureTranslator<T extends Throwable> {
     Throwable translate(T throwable);
 }
-```
 
-### ContextAwareFailureTranslator
-
-Context-carrying variant of `FailureTranslator`. The SAM is `translate(T, String context)`, where `context` is a string describing the failed operation (e.g., `"save user"`). Extends `FailureTranslator` so both types share one registry; the inherited no-context `translate(T)` defaults the context to `throwable.getMessage()`.
-
-```java
 @FunctionalInterface
 public interface ContextAwareFailureTranslator<T extends Throwable> extends FailureTranslator<T> {
     Throwable translate(T throwable, String context);
@@ -213,1280 +731,360 @@ public interface ContextAwareFailureTranslator<T extends Throwable> extends Fail
 }
 ```
 
-Register with a `FailureMapper` via the context-aware `on(...)` overload:
+Both register on a `FailureMapper` through `on(...)`. Layer-specific customizer SPIs — which
+contribute translators into the framework's REST, service, and database mappers through Dagger — are
+declared by those modules; see `dev.vertique:vertique-rest-jaxrs`, `dev.vertique:vertique-services`,
+and `dev.vertique:vertique-db-core`.
+
+### `JsonMapperProfile`
+
+Contributes one named `ObjectMapper` profile.
 
 ```java
-var mapper = new FailureMapper();
-mapper.on(DatabaseException.class, (e, ctx) -> new DataAccessException(ctx, e));
-```
-
----
-
-## Codegen Metadata SPI (`dev.vertique.core.codegen`)
-
-`MethodMetadata` and `ParameterMetadata` are the neutral, reflection-free metadata contracts shared across codegen consumers and reflective runtime scanners — `vertique-aop` (via `vertique-codegen-aop`), `rest-client`, and `rest-jaxrs`. Placing them in `vertique-core` rather than in a codegen or AOP module ensures that any runtime module can declare a dependency on the metadata types without taking an AOP or annotation-processor compile dependency. See ADR-0141 and ADR-0143.
-
-### `MethodMetadata`
-
-Read-only descriptor of an intercepted or scanned method. Backed by either a codegen-generated literal implementation (e.g. a concrete inner class of `Bean$AopProxy`, constructed at compile time) or, for the runtime scanner path, `ReflectiveMethodMetadata` (below).
-
-| Method | Description |
-|--------|-------------|
-| `name()` | Simple method name |
-| `declaringClass()` | The class that declares the method |
-| `returnType()` | Erased return type |
-| `parameters()` | Ordered list of `ParameterMetadata` |
-| `findAnnotation(Class<A>)` | Returns the named annotation literal from the generated literal set, or `null` |
-| `hasAnnotation(Class<?>)` | Returns `true` if the annotation type is present on the method |
-
-The reflection-free group (`name()`, `declaringClass()`, `returnType()`, `parameters()`) is guaranteed safe on the critical path with no `reflect-config.json` requirement. The reflective-accessor group (`asMethod()`, `genericReturnType()`, `ParameterMetadata.genericType()`) is present for aspect authors who need full generic-type information; callers that use these methods require a GraalVM `reflect-config.json` entry for the declaring class.
-
-### `ParameterMetadata`
-
-Read-only descriptor of a single method parameter.
-
-| Method | Description |
-|--------|-------------|
-| `index()` | Zero-based parameter index |
-| `name()` | Parameter name (from source; may be synthetic if compiled without `-parameters`) |
-| `type()` | Erased parameter type |
-| `findAnnotation(Class<A>)` | Returns the named annotation literal, or `null` |
-| `hasAnnotation(Class<?>)` | Returns `true` if the annotation type is present |
-| `genericType()` | Reflective-accessor group: generic parameter type |
-| `annotationsLazy()` | Reflective-accessor group: `Supplier<Annotation[]>` of the parameter's full declared annotation array; `default` returns an empty array |
-
-Parameter-level `findAnnotation`/`hasAnnotation` are literal-first: `MetadataEmitter` (`vertique-codegen-core`) can emit a processor-owned parameter-level `<Ann>$<Namespace>Literal` constant for each renderable `@Retention(RUNTIME)` parameter annotation and resolve the lookup by `annotationType()` match, performing no reflective read. AOP owns the `Aop` namespace (`<Ann>$AopLiteral`); JAX-RS owns `JaxRs` (`<Ann>$JaxRsLiteral`). The explicit namespace prevents two processors from trying to write the same annotation-literal type. The same bounded-attribute-kind gate applies to every consumer of `MetadataEmitter`. For the core/AOP consumer path (`vertique-codegen-aop`'s `AopProxyEmitter`, curated author-controlled aspect-trigger annotations), an unsupported attribute kind (`char`/`float`/`double`, a nested-annotation member, or an array of either) is a **compile-time error** — this remains fail-fast and is not softened. The JAX-RS codegen emitters instead fall back to reflection per-parameter for annotations `AnnotationLiteralEmitter` cannot render, rather than failing the build — see ADR-0146. `annotationsLazy()` is the opt-in reflective bridge: it is never called by generated AOP proxy code, and exists so the JAX-RS `ParamConverterProvider` bridge in `ParamConversionResolver` (rest-jaxrs) can materialize the full `Annotation[]` only when a provider set is actually non-empty.
-
-### `ReflectiveMethodMetadata` / `ReflectiveParameterMetadata`
-
-Reflection-backed implementations of `MethodMetadata`/`ParameterMetadata` for the runtime (non-codegen) scanner path — e.g. `rest-client`'s `ClientInterfaceScanner`. `ReflectiveMethodMetadata` wraps a live `Method` and a pre-resolved `List<ParameterMetadata>`; all accessors delegate to `Method` reflection. `ReflectiveParameterMetadata` is built from the parameter position, name, erased/generic type, and a `@Nullable AnnotatedElement` annotation source (a `Parameter` for top-level parameters, or a bean-field `Field`/`RecordComponent`/accessor `Method` for `@BeanParam` sub-fields); a `null` source makes every lookup behave as if no annotations are present.
-
-Both classes are `public` so the JAX-RS and REST-client scan paths can construct them, but they are otherwise an internal implementation detail of those scanners — application code should not implement `MethodMetadata`/`ParameterMetadata` directly. `vertique-rest-jaxrs`'s reflective scan path (`ResourceScanner`) also constructs `ReflectiveParameterMetadata` directly — via a small internal `AnnotatedElement` adapter on `ResourceMethodMeta.ParamMeta`'s `Annotation[]`-based convenience constructor — rather than keeping a separate jaxrs-local copy; the earlier duplicate class (with a different, pre-captured-`Annotation[]` constructor contract) was deleted in favor of this shared core implementation (ADR-0146). This is a distinct reflective path from the jaxrs *codegen* emitters' own per-parameter reflective fallback (`dev.vertique.rest.jaxrs.runtime.GeneratedJaxRsReflectiveAnnotations`, used only when an annotation's members cannot be literal-backed) — `ResourceScanner` is the fully-reflective scan path with no compile-time literals at all, while the codegen emitters are literal-first with reflection reserved for the unliteralizable minority of annotations.
-
-#### Invariants & Gotchas
-
-- Codegen-generated `MethodMetadata`/`ParameterMetadata` implementations (e.g. inner classes of `Bean$AopProxy`) are not hand-authored and must not be implemented by application code.
-- Codegen-path `findAnnotation` / `hasAnnotation` query the compile-time-captured annotation literals, not live runtime annotations. An annotation added to a method after compilation (e.g., via a dynamic proxy or bytecode agent) is invisible. The reflective scanner path (`ReflectiveMethodMetadata`/`ReflectiveParameterMetadata`) queries live annotations instead, since it has no compile-time literal set to bake.
-- `asMethod()` and `ParameterMetadata.genericType()` use reflection. Calling them on a GraalVM native image requires a `reflect-config.json` entry for the declaring class. The framework's built-in `@Timed` aspect never calls these methods — they exist for advanced user-authored aspects only.
-- `annotationsLazy()` defaults to an empty-array supplier so existing `ParameterMetadata` implementations keep compiling without overriding it; only consumers that need the full annotation array (the JAX-RS provider bridge) call it, and only when a provider set is non-empty.
-
----
-
-## Async Utilities (`dev.vertique.core.async`)
-
-Framework-internal utilities for asynchronous control flow over pre-ordered lists. Both types are
-`public final` with private constructors — all methods are static. They are public for cross-module
-use; they are **not** part of the extension SPI and are not meant to be called from application
-code.
-
-The core principle shared by all combinators and utilities: **the list is accepted pre-ordered and
-never reordered**. The caller is responsible for ordering; the utilities preserve that order.
-Per-item failure handling (log, metric, continue-vs-propagate) lives in the caller's lambda, not
-in the utility — each utility provides a uniform failure channel and routes every failure through
-it, but the response to that failure is the caller's.
-
-The interceptor/observer runtime across services, rest (operation, response, and error pipelines),
-rest-client, kafka, job, security-event, and audit-sink all delegate to these utilities.
-
-### Futures
-
-Utilities for transforming the Vert.x `Future` failure channel.
-
-| Method | Signature | Contract |
-|--------|-----------|----------|
-| `toFuture` | `Result<T> → Future<T>` | Converts a `Result` into a Vert.x future: success → `succeededFuture`, failure → `failedFuture`. |
-| `reflect` | `Future<T> → Future<Result<T>>` | Folds a failure into the value channel as `Result.failure`; the returned future always succeeds. |
-| `settle` | `Collection<Future<T>> → Future<List<Result<T>>>` | Waits for every future to settle, materializing each outcome as a `Result` in input order. Never short-circuits on failure — analogous to `Promise.allSettled`. |
-| `mapFailure` | `(Future<T>, Throwable → Throwable) → Future<T>` | Translates the failure of a future without affecting successful values. |
-
-`settle` is the foundation of `Combinators.joinAllSwallow`: it provides the all-settled join
-guarantee.
-
-### Combinators
-
-Reusable asynchronous control-flow combinators over pre-ordered lists. Every combinator converts a
-synchronous throw from a caller-supplied callback into the same failure channel as an asynchronous
-failure, so a raw exception never escapes.
-
-#### `foldSequential`
-
-```java
-public static <I, T> Future<T> foldSequential(
-        List<I> items, T seed, BiFunction<I, T, Future<T>> step)
-```
-
-Sequential value/context fold over a pre-ordered list. `seed` is threaded into the first step;
-each step's resulting value is passed to the next. The first failing step short-circuits the fold —
-no remaining step is invoked. The continue-vs-propagate policy on failure lives in the caller's
-`step` lambda (e.g. calling `.recover(...)` to substitute the prior value); it is not a combinator
-concern. An empty list yields a succeeded future carrying `seed`.
-
-Used by: the sequential interceptor folds in rest-jaxrs (operation/response/error pipelines),
-rest-client, kafka, and services dispatch.
-
-#### `recoverFirstWins`
-
-```java
-public static <I, R> Future<R> recoverFirstWins(
-        List<I> items, Throwable error,
-        BiFunction<I, Throwable, Future<R>> step,
-        Predicate<Throwable> nonRecoverable)
-```
-
-Ordered first-wins recovery chain. The current failure is threaded to each recoverer in turn; the
-first step that succeeds wins, and all later items are skipped. Before every step — including the
-very first — the current failure is tested against `nonRecoverable`; a `true` result short-circuits
-the chain immediately. A recoverer that itself fails replaces the current failure with its new
-failure, which is then offered to the next recoverer. When no recoverer succeeds the returned
-future fails with the latest (last-produced) failure, not the original `error`.
-
-Used by: the first-wins recovery chains in services, rest-jaxrs (error/operation pipelines),
-kafka, and rest-client.
-
-#### `joinAllSwallow`
-
-```java
-public static <I> Future<Void> joinAllSwallow(
-        List<I> items, Function<I, Future<?>> hook, BiConsumer<I, Throwable> onFailure)
-```
-
-Launches all hooks and completes only after every one has settled (built on `Futures.settle`).
-The returned future always succeeds. Every per-item failure — asynchronous failure, synchronous
-throw, or a `null` future returned by `hook` (treated as `NullPointerException`) — is routed to
-`onFailure` and never aborts the fan-out or fails the join.
-
-Used by: the wait-for-all fan-outs shared across the interceptor/observer line — `ServiceMethodInvoker`
-`afterDispatch` and security-event notification (`SecurityEventEmitter`).
-
-#### `forEachSwallowSync`
-
-```java
-public static <I> void forEachSwallowSync(
-        List<I> items, Consumer<I> hook, BiConsumer<I, Throwable> onFailure)
-```
-
-Synchronous loop over a pre-ordered list. A per-item `Exception` is routed to `onFailure`
-(an `Error` propagates) and iteration continues with the next item. Never throws an `Exception`.
-
-Used by: synchronous observer callbacks (e.g. `onComplete`/`onError` fire-and-observe hooks).
-
-#### `dispatchNoJoin`
-
-```java
-public static <I> void dispatchNoJoin(
-        List<I> items, Function<I, Future<?>> hook, BiConsumer<I, Throwable> onFailure)
-```
-
-Fire-and-forget async dispatch. All hooks are launched in list order; this method returns
-immediately without joining on their completion. Every per-item failure — asynchronous failure,
-synchronous throw, or a `null` future returned by `hook` (treated as `NullPointerException`) — is
-routed to `onFailure`. Because there is no join, the caller receives no aggregate completion
-signal. This is the no-wait variant of `joinAllSwallow`.
-
-Used by: the audit sink fan-out (`DefaultAuditPipeline`), which must not block the pipeline result.
-
-Used by: fire-and-forget observer hooks (e.g. dispatching async audit events with no back-pressure
-requirement).
-
-#### Invariants & Gotchas
-
-- All combinators accept a **pre-ordered `List` and never sort**. The iteration order of the
-  supplied list is the execution order. If ordering matters (e.g. `SYSTEM_FIRST` before
-  `APPLICATION`), the caller must sort before calling.
-- Per-site failure policy — what to log, which metric to increment, whether to continue or
-  propagate — lives in the caller's `onFailure` / `step` lambda, not in the combinator. The
-  combinators provide uniform failure routing, not failure handling.
-- These are framework-internal utilities: `public` for cross-module access, but not part of the
-  extension SPI. Application code should use Vert.x `Future` composition directly.
-
-### JsonModule
-
-Abstract Dagger `@Module` that declares the `ObjectMapperCustomizer` multibinding set. Included automatically by `RestCoreModule` and by `CoreLifecycleStepsModule` (which needs it for `JacksonConfigureStep`), so most applications get it transitively. An application that uses neither can include it directly in its `@Component`.
-
-```java
-@Module
-public abstract class JsonModule {
-    @Multibinds
-    abstract Set<ObjectMapperCustomizer> objectMapperCustomizers();
+public interface JsonMapperProfile {
+    JsonProfileId id();
+    ObjectMapper mapper();
 }
 ```
 
-### ObjectMapperCustomizer
+The registry that collects profiles ships in `dev.vertique:vertique-json`; contribute a profile
+through that module's multibinding. `JsonProfileId.VERTX` (`"vertx"`) is reserved for the Vert.x
+shared mapper.
 
-`@FunctionalInterface` extension point for customizing Jackson's `ObjectMapper`. Implementations are collected via Dagger `Set<ObjectMapperCustomizer>` multibinding and applied by `JacksonConfigurer` at startup.
+### Context-propagation SPIs
 
-`ObjectMapperCustomizer extends OrderedExtension`. Customizers are sorted by `OrderedExtension.comparator()` (phase → priority → orderKey) before application. Lower `priority()` values execute first (default `0`).
+Implement these to make a typed value travel across a dispatch or durable boundary. Every one is
+bounded `<T extends ContextValue>` on its context type; the registries that collect them live in
+`dev.vertique:vertique-context`.
 
-```java
-@FunctionalInterface
-public interface ObjectMapperCustomizer extends OrderedExtension {
-    void customize(ObjectMapper mapper);
-}
-```
-
-**Contributing a customizer:**
-
-```java
-// Register Java Time support (priority 0, runs before any higher-priority customizers)
-@Provides @IntoSet
-static ObjectMapperCustomizer javaTimeSupport() {
-    return mapper -> {
-        mapper.registerModule(new JavaTimeModule());
-        mapper.disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
-    };
-}
-
-// Disable unknown property failures (priority 100 = runs after priority-0 customizers)
-@Provides @IntoSet
-static ObjectMapperCustomizer lenientDeserialization() {
-    return new ObjectMapperCustomizer() {
-        @Override public void customize(ObjectMapper mapper) {
-            mapper.disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES);
-        }
-        @Override public int priority() { return 100; }
-    };
-}
-```
-
-### JacksonConfigurer
-
-`@Singleton` that applies all registered `ObjectMapperCustomizer` instances to `DatabindCodec.mapper()` (the Vert.x shared `ObjectMapper`). Customizers are sorted by `OrderedExtension.comparator()` before application. Idempotent — subsequent calls log a WARN and return immediately.
-
-```java
-@Singleton
-public class JacksonConfigurer {
-    @Inject JacksonConfigurer(Set<ObjectMapperCustomizer> customizers) { ... }
-    public void configure() { ... }   // applies customizers to DatabindCodec.mapper()
-}
-```
-
-**Lifecycle:** Call `configure()` once after the Dagger component is created, before deploying any verticles. This ensures the `ObjectMapper` is fully configured before any JSON serialization or deserialization occurs.
-
-```java
-// config() is pre-resolved by VertiqueApplication before the application verticle starts
-AppComponent c = DaggerAppComponent.builder()
-    .vertxModule(new VertxModule(vertx, config()))
-    .build();
-
-c.jacksonConfigurer().configure();           // configure ObjectMapper first
-return c.verticleDeploymentManager().deployAll();  // then deploy verticles
-```
-
-The `AppComponent` must expose `JacksonConfigurer jacksonConfigurer()` for this call to compile.
-
-> **Note:** When using `@VertiqueApp` on a `@Component extends VertiqueApplicationComponent` with `CoreLifecycleStepsModule`, the `JacksonConfigureStep` runs automatically during the `CONFIGURE` phase — no manual `c.jacksonConfigurer().configure()` call is needed. The manual call above applies to the legacy `MainVerticle` pattern.
-
----
-
-### Exception Hierarchy (`dev.vertique.core.exception`)
-
-Base exception classes for the unified framework exception hierarchy. All framework modules extend from these roots.
-
-```
-VertiqueException (RuntimeException)
-├── ValidationException              — invalid input or data; maps to HTTP 400
-│   ├── BusinessRuleException        — business-rule / domain-rule violations; maps to HTTP 400
-│   │   (extended by WorkflowException in workflow-core)
-│   ├── MalformedDurableMetadataException — durable context carrier/namespace body present but not
-│   │   a JSON object; thrown by DurableMetadata.fromCarrier / fromJson at decode time
-│   └── (extended by DbValidationException in db.exception)
-├── ConflictException                — resource state conflict; maps to HTTP 409
-│   (extended by WorkflowConflictException in workflow-core)
-├── NotFoundException                — resource absent; maps to HTTP 404
-│   (extended by WorkflowNotFoundException in workflow-core)
-├── ConfigurationException           — startup/wiring/contract errors
-│   (extended by RestConfigurationException in rest.core,
-│                ServiceConfigurationException in services,
-│                WorkflowConfigurationException in workflow-core)
-├── TechnicalException               — runtime/infrastructure failures; maps to HTTP 500
-│   ├── UnavailableException         — runtime capability currently unavailable; maps to HTTP 503
-│   │   (extended by WorkflowUnavailableException in workflow-core,
-│   │                ServiceUnavailableException in services)
-│   └── (extended by DataAccessException in db.exception)
-└── VertiqueSecurityException        — concrete grouping root for security-domain exceptions;
-    │                                  not thrown directly; no default REST mapping (falls to 500)
-    ├── UnauthorizedException        — authentication required or credential invalid; maps to HTTP 401
-    └── ForbiddenException           — authenticated but not authorized; maps to HTTP 403
-```
-
-All named roots are **concrete** — they may be thrown directly or subclassed. `VertiqueSecurityException`
-is the grouping root for the security family; callers may catch it to handle any security denial, but
-application and module code must throw `UnauthorizedException` or `ForbiddenException` rather than
-the grouping root directly. Leaf exceptions in application and module code should extend the most
-specific applicable semantic root rather than throwing a root type directly when a more precise
-subtype exists.
-
-`DefaultExceptionMapper` in `rest-jaxrs` maps core types to HTTP status codes automatically:
-- `ValidationException` (and `BusinessRuleException`) → 400
-- `ConflictException` → 409
-- `NotFoundException` → 404
-- `UnauthorizedException` → 401 (registered fully-qualified as `dev.vertique.core.exception.UnauthorizedException`)
-- `ForbiddenException` → 403 (registered fully-qualified as `dev.vertique.core.exception.ForbiddenException`, to avoid clash with `jakarta.ws.rs.ForbiddenException`)
-- `UnavailableException` → 503
-- `Throwable` (fallback) → 500
-- `VertiqueSecurityException` itself is **not** mapped — a bare instance yields 500
-
-REST default mappings reference only core, JAX-RS, and REST-owned types — no DB module types.
-See ADR-0112 for the full layered
-mapping rule, API-semantic-root pattern, and message-sanitization invariant.
-
----
-
-## Context Propagation (`dev.vertique.core.context`)
-
-This package contains only the **public API and SPI contracts** for context propagation. The runtime
-implementation (holder, registries, propagator, lifecycle helpers, encoder/decoder factories) lives
-in `vertique-context`. MDC types (`MDCContext`, `MDCContexts`, `DiagnosticContextSnapshot`,
-`MDCContextValueAdapter`, `LoggingContextModule`) live in `vertique-logging`.
-
-See Maven coordinate `dev.vertique:vertique-context` for the full substrate reference.
-
-### SPI contracts
-
-| Type | Role |
+| SPI | Contract |
 |---|---|
-| `ContextValue` | Behavior-free marker interface that gates the `ContextHolder` write path. All nine framework context types implement it. Every typed write entry point (`ContextHolder.bind`, `ContextValues.bind`/`mutate`/`mutateIfPresent`, `ContextScopeBinder.bindAll`) is bounded `<T extends ContextValue>` at compile time; erased reinstatement paths carry a runtime `requireContextValue` pre-pass. The five context-producing SPIs (`ServiceDispatchContextEncoder/Decoder`, `DurableContextMetadataEncoder/Decoder`, `ContextValueAdapter`) are also bounded `<T extends ContextValue>` on their context-type parameter. |
-| `ContextHolder` + `ContextHolder.Scope` | Request-scoped holder SPI. `current(Class)` reads (unbounded — no `ContextValue` required); `bind(Class<T extends ContextValue>, T)` returns an `AutoCloseable` `Scope`. |
-| `ContextScopes` | Factory for no-op scopes (`ContextScopes.noop()`). |
-| `ContextValueAdapter` | SPI for deep-copy semantics on `duplicate(true)`. Bounded `<T extends ContextValue>` on context-type parameter. Discovered via `ServiceLoader`. |
-| `ContextDecodeResult` + `ContextDecodeWarning` | Decode return type carrying `Optional<T>` value plus a list of warnings instead of throwing. |
-| `DispatchBoundary` | Constants (`SERVICE_DISPATCH`, `KAFKA`, `OUTBOX`, `OUTBOX_SERVICE`) used as boundary identifiers in encode/decode contexts. |
-| `DurableContextMetadataEncoder<T extends ContextValue>` / `Decoder<T extends ContextValue>` | SPI for encoding/decoding typed values to/from a `DurableMetadata` namespaced JSON document. Context-type parameter is bounded `<T extends ContextValue>`; `DurableMetadata` wire type is unbounded. Each encoder declares a `String namespace()` and exchanges `DurableMetadata` via `encode(T, DurableEncodeContext)` / `ContextDecodeResult<T> decode(DurableMetadata, DurableDecodeContext)`. See ADR 0065. |
-| `DurableDecodeContext` / `DurableEncodeContext` | Context objects passed to durable encoder/decoder calls. |
-| `DurablePropagationMetadata` | Always-available namespaced `DurableMetadata` document view of the durable context for a consumer. Has a built-in service-dispatch encoder/decoder pair (registered in `ContextRuntimeModule`) so it travels across in-process hops. |
-| `InboundContextInitializer` SPI + `InboundContextInitializationContext` | SPI called by `InboundExecutionContextScope` at every inbound dispatch and durable receive boundary. |
-| `ServiceDispatchContextEncoder<T extends ContextValue>` / `Decoder<T extends ContextValue>` | SPI for encoding/decoding typed values to/from the `DispatchEnvelope.metadata().dispatchContext()` carrier. Context-type parameter is bounded `<T extends ContextValue>`; the wire-envelope type parameter is unbounded. |
-| `ServiceDispatchDecodeContext` / `ServiceDispatchEncodeContext` | Context objects passed to service-dispatch encoder/decoder calls. |
-
-### Read-lenient / write-fail-fast invariant
-
-`DefaultContextHolder.requireDuplicatedContextForWrite()` (in `vertique-context`) is the single
-enforcement point. All static write helpers in `ContextValues` and `MDCContexts` route through it.
-Read helpers (`current`, `snapshot`, `get`, `copy`) tolerate a missing or non-duplicated context.
-
-### Decode-time carrier validation (`DurableMetadata`)
-
-`DurableMetadata` (in `core.context`) rejects a structurally malformed carrier or namespaces
-document at decode time rather than deferring the failure to a later, unclassified crash when a
-specific decoder or `merge` reads the malformed namespace:
-
-- `fromCarrier(JsonObject)` rejects a carrier whose `context` key is present but whose value is not
-  a JSON object.
-- `fromJson(JsonObject)` rejects a namespaces document containing any namespace body that is present
-  but is not a JSON object.
-
-Both throw `MalformedDurableMetadataException`. Validation is **namespace-body-level only** — it
-confirms each namespace's top-level value is a JSON object, not that the object's nested fields
-match a particular shape. Validating a namespace body's internal structure is the concern of that
-namespace's own `DurableContextMetadataDecoder`, not of `DurableMetadata`.
-
----
-
-## Bean Validation Types (`dev.vertique.core.validation`)
-
-HTTP-agnostic validation API and result types. Implemented by the `validation` module; consumed by `rest-jaxrs` (REST layer) and can be used directly in service or event-bus handler code.
-
-### BeanValidator
-
-Interface for validating objects and method parameters against Jakarta Bean Validation constraints. Implementations are provided by the `validation` module.
+| `ServiceDispatchContextEncoder<T>` | `Class<T> type()`, `String key()` (defaults to the FQCN), `Object encode(T, ServiceDispatchEncodeContext)` |
+| `ServiceDispatchContextDecoder<T>` | `Class<T> type()`, `String key()`, `ContextDecodeResult<T> decode(Object, ServiceDispatchDecodeContext)` |
+| `DurableContextMetadataEncoder<T>` | `Class<T> type()`, `String namespace()`, `DurableMetadata encode(T, DurableEncodeContext)` |
+| `DurableContextMetadataDecoder<T>` | `Class<T> type()`, `String namespace()`, `ContextDecodeResult<T> decode(DurableMetadata, DurableDecodeContext)`, `default boolean acceptsExplicitCarrier()` |
+| `ContextValueAdapter<T>` | `Class<T> type()`, `Object snapshot(T)`, `T restoreFromSnapshot(Object)`, `default T duplicate(T)` |
+| `InboundContextInitializer` | `ContextHolder.Scope initialize(InboundContextInitializationContext)` |
 
 ```java
-public interface BeanValidator {
-    // Validates object against default group; throws BeanValidationException on violation
-    <T> void validate(T object);
-    <T> void validate(T object, Class<?>... groups);
+public record TenantContext(String tenantId) implements ContextValue {}
 
-    // Non-throwing: returns list of violations (empty = valid)
-    <T> List<ViolationDetail> check(T object);
-    <T> List<ViolationDetail> check(T object, Class<?>... groups);
+public final class TenantDispatchEncoder implements ServiceDispatchContextEncoder<TenantContext> {
+    @Inject public TenantDispatchEncoder() {}
 
-    // Method-level parameter validation — returns per-parameter violations
-    List<ParameterViolation> checkParameters(Object instance, Method method, Object[] args, Class<?>... groups);
+    @Override public Class<TenantContext> type() { return TenantContext.class; }
 
-    // Throws BeanValidationException if any parameter constraints are violated
-    void validateParameters(Object instance, Method method, Object[] args, Class<?>... groups);
-}
-```
-
-**Service-layer usage:**
-
-```java
-@Inject BeanValidator validator;
-
-public void processOrder(OrderRequest request) {
-    validator.validate(request); // throws BeanValidationException if invalid
-    // ... business logic
-}
-```
-
-### ViolationDetail
-
-Immutable record describing a single constraint violation. The invalid value is intentionally excluded to prevent leakage of sensitive data.
-
-```java
-@JsonInclude(JsonInclude.Include.NON_NULL)
-public record ViolationDetail(
-    String path,                   // property path (e.g. "name", "address.city")
-    String message,                // interpolated constraint message
-    @Nullable String type,         // classified type: "required", "size", "min", "pattern", etc.
-    @Nullable Map<String, Object> args  // constraint arguments (e.g. {min: 1, max: 100} for @Size)
-) {
-    public static ViolationDetail of(String path, String message) { ... }
-}
-```
-
-`type` is derived from the constraint annotation by the `validation` module's `ViolationTypeMapping` SPI. `args` is populated by `ViolationArgsInspector`. Both are `null` when the `validation` module is not configured with type/args resolution.
-
-### BeanValidationException
-
-Thrown when Bean Validation constraints are violated. Extends `ValidationException` and maps to HTTP 400 by default.
-
-```java
-public class BeanValidationException extends ValidationException {
-    public BeanValidationException(String message, List<ViolationDetail> violations) { ... }
-    public BeanValidationException(String message, List<ViolationDetail> violations, Throwable cause) { ... }
-    public List<ViolationDetail> violations() { ... }  // unmodifiable; defensively copied
-}
-```
-
-### ParameterViolation
-
-Record pairing a zero-based parameter index with a `ViolationDetail`. Used by `BeanValidator.checkParameters()` so callers (e.g. the REST framework) can map violations to HTTP locations (body, query, header, etc.).
-
-```java
-public record ParameterViolation(
-    int parameterIndex,   // zero-based; -1 if index could not be determined
-    ViolationDetail detail
-) {}
-```
-
-### @ValidateWith
-
-Method-level annotation specifying which Jakarta Bean Validation groups to apply for that operation. When absent, the default validation group is used. Supported on JAX-RS resource methods and event-bus service methods.
-
-```java
-@Documented
-@Target(ElementType.METHOD)
-@Retention(RetentionPolicy.RUNTIME)
-public @interface ValidateWith {
-    Class<?>[] value();  // validation groups; empty array = default group
-}
-```
-
-**Example:**
-
-```java
-interface Create {}
-interface Update {}
-
-@POST @Path("/users")
-@ValidateWith(Create.class)
-public Future<User> createUser(@Valid CreateUserRequest request) { ... }
-
-@PUT @Path("/users/{id}")
-@ValidateWith(Update.class)
-public Future<User> updateUser(@PathParam("id") String id, @Valid UpdateUserRequest request) { ... }
-```
-
----
-
-## Sanitization Contract Types (`dev.vertique.core.sanitization`)
-
-Annotation model and SPI contracts for input canonicalization and sanitization. These types define the API; implementations live in the `vertique-sanitization` module.
-
-### Canonicalizer
-
-Functional interface for semantics-preserving string normalization. Implementations must be deterministic, idempotent, semantics-preserving, stateless, and thread-safe.
-
-```java
-@FunctionalInterface
-public interface Canonicalizer {
-    String canonicalize(String value, InputValueContext context);
-}
-```
-
-### Sanitizer
-
-Functional interface for content-removing string transformation (not semantics-preserving). Implementations must be stateless and thread-safe.
-
-```java
-@FunctionalInterface
-public interface Sanitizer {
-    String sanitize(String value, InputValueContext context);
-}
-```
-
-### @Canonicalize / @Sanitize
-
-Declare an ordered chain of `Canonicalizer` or `Sanitizer` implementations to apply to the annotated element. Applicable to TYPE, FIELD, RECORD_COMPONENT, PARAMETER, METHOD, and ANNOTATION_TYPE (for composed annotations).
-
-```java
-// Route-level: applied to all string values in all requests to this resource
-@Path("/users")
-@Canonicalize({TrimCanonicalizer.class, NfkcCanonicalizer.class})
-public class UserResource { ... }
-
-// Field-level
-public record CreateUserRequest(
-    @Canonicalize(TrimCanonicalizer.class)
-    @Sanitize(BasicHtmlSanitizer.class)
-    String bio
-) {}
-```
-
-### @SkipCanonicalization / @SkipSanitization
-
-Marker annotations for opting a field or record component out of inherited processing. Mutually exclusive with `@Canonicalize` / `@Sanitize` on the same element.
-
-### CanonicalizerBinding / SanitizerBinding
-
-Dagger multibinding wrapper records. The `type()` field acts as the lookup key when the runtime resolves processors declared in `@Canonicalize` / `@Sanitize`.
-
-```java
-@Provides @IntoSet
-static CanonicalizerBinding myCanonicalizer(MyCanonicalizer c) {
-    return new CanonicalizerBinding(MyCanonicalizer.class, c);
-}
-
-@Provides @IntoSet
-static SanitizerBinding mySanitizer(MySanitizer s) {
-    return new SanitizerBinding(MySanitizer.class, s);
-}
-```
-
-### InputValueContext
-
-Immutable record carrying contextual metadata passed to every `Canonicalizer` and `Sanitizer` invocation.
-
-```java
-public record InputValueContext(
-    InputLocation location,   // HTTP request origin (BODY, QUERY, HEADER, PATH, COOKIE, FORM, BEAN_PARAM)
-    String path,              // dot-separated property path (e.g., "address.city")
-    String logicalName,       // parameter or field name
-    Class<?> ownerType        // declaring class of the field or parameter
-) {}
-```
-
-### InputLocation
-
-Enum identifying where in the HTTP request a string value originated.
-
-| Constant | Description |
-|----------|-------------|
-| `BODY` | JSON or structured request body |
-| `QUERY` | Query parameter |
-| `HEADER` | Request header |
-| `PATH` | Path parameter |
-| `COOKIE` | Cookie value |
-| `FORM` | Form field (form-urlencoded or multipart) |
-| `BEAN_PARAM` | Value aggregated via JAX-RS `@BeanParam` container |
-
----
-
-## Character Policy Types (`dev.vertique.core.validation`)
-
-Character-set validation contracts used by `@AllowedCharacters` (defined in the `validation` module).
-
-### CharacterPolicy
-
-Interface for validating that a string contains only permitted characters. Implementations must be stateless and thread-safe.
-
-```java
-public interface CharacterPolicy {
-    CharacterPolicyResult validate(String value, InputValueContext context);
-}
-```
-
-### CharacterPolicyResult
-
-Immutable result record returned by `CharacterPolicy.validate()`. Use static factories:
-
-```java
-CharacterPolicyResult.passed()                          // all characters permitted
-CharacterPolicyResult.failed(index, codePoint, reason)  // first offending character
-```
-
-### CharacterPolicyBinding
-
-Dagger multibinding wrapper for contributing `CharacterPolicy` instances to `ValidationModule`'s resolution chain.
-
-```java
-@Provides @IntoSet
-static CharacterPolicyBinding myPolicy(MyCharacterPolicy p) {
-    return new CharacterPolicyBinding(MyCharacterPolicy.class, p);
-}
-```
-
-### @SkipAllowedCharacters
-
-Marker annotation for opting a field out of `@AllowedCharacters` validation inherited from the class level.
-
----
-
-## Resilience Types (`dev.vertique.core.resilience`)
-
-Shared resilience primitives consumed by `rest-client` and `services`. Centralizing these types in `core` avoids duplication and lets other modules reference them without taking a dependency on either consumer module.
-
-### `@CircuitBreaker`
-
-Enables circuit breaker protection on an interface or individual method. Applicable to TYPE and METHOD.
-
-```java
-@Target({ElementType.TYPE, ElementType.METHOD})
-@Retention(RetentionPolicy.RUNTIME)
-public @interface CircuitBreaker {
-    int maxFailures() default 5;
-    long timeoutMs() default -1;       // -1 = inherit consumer module default
-    long resetTimeoutMs() default 10_000;
-}
-```
-
-### `@Retry`
-
-Configures retry behavior on an interface or method. Applicable to TYPE and METHOD.
-
-```java
-@Target({ElementType.TYPE, ElementType.METHOD})
-@Retention(RetentionPolicy.RUNTIME)
-public @interface Retry {
-    int maxRetries() default 3;
-    long delayMs() default 500;
-    double backoffMultiplier() default 2.0;
-    long maxDelayMs() default 30_000;
-    Class<? extends BackoffStrategy> backoff() default BackoffStrategy.Default.class;
-    Class<? extends Throwable>[] retryOn() default {};
-    Class<? extends Throwable>[] abortOn() default {};
-}
-```
-
-### `@Timeout`
-
-Per-method (or type-level default) timeout override. Applicable to TYPE and METHOD.
-
-```java
-@Target({ElementType.TYPE, ElementType.METHOD})
-@Retention(RetentionPolicy.RUNTIME)
-public @interface Timeout {
-    long value();                          // required; must be positive
-    TimeUnit unit() default TimeUnit.MILLISECONDS;
-}
-```
-
-### `BackoffStrategy`
-
-Functional interface that computes the delay in milliseconds before each retry attempt. `delay(int retryCount)` receives the 0-based retry count.
-
-```java
-@FunctionalInterface
-public interface BackoffStrategy {
-    long delay(int retryCount);
-
-    static BackoffStrategy exponential(long delayMs, double multiplier, long maxDelayMs) { ... }
-    static BackoffStrategy fixed(long delayMs) { ... }
-    static BackoffStrategy none() { ... }
-
-    /** Sentinel used in @Retry#backoff — signals "use the consumer's default strategy". */
-    final class Default implements BackoffStrategy {
-        @Override public long delay(int retryCount) {
-            throw new UnsupportedOperationException("Default is a sentinel, not an executable strategy");
-        }
+    @Override public Object encode(TenantContext value, ServiceDispatchEncodeContext context) {
+        return value.tenantId();
     }
 }
 ```
 
-### `RetryPolicy`
+Decoders report problems by returning `ContextDecodeResult.failure(warnings)` rather than throwing;
+the record is `(Optional<T> value, List<ContextDecodeWarning> warnings)` with the factories
+`empty()`, `of(value)`, and `failure(warnings)`. `ContextDecodeWarning` is a
+`record (String key, String value, String reason)`.
 
-Functional interface that determines whether a failed operation should be retried. Consulted when `@Retry#retryOn` is empty.
-
-```java
-@FunctionalInterface
-public interface RetryPolicy {
-    boolean shouldRetry(Throwable error, int retryCount);
-}
-```
-
-### `ResilienceAnnotations`
-
-Immutable record that holds the resolved `@CircuitBreaker`, `@Retry`, and `@Timeout` annotation values for a single method. Method-level annotations take precedence over type-level defaults. Used by both `rest-client` (`RestClientBuilder` proxy generation) and `services` (`ServiceRegistrar` contract scanning).
-
-```java
-public record ResilienceAnnotations(
-    @Nullable CircuitBreaker circuitBreaker,
-    @Nullable Retry retry,
-    @Nullable Timeout timeout
-) {
-    /** Resolves annotations for the given method, falling back to the declaring class. */
-    public static ResilienceAnnotations resolve(Class<?> type, Method method) { ... }
-
-    public boolean hasAny() { ... }
-}
-```
-
-### `BackoffStrategyResolver`
-
-Utility for instantiating a `BackoffStrategy` from a `@Retry` annotation. Handles the `Default` sentinel by returning a caller-supplied fallback, and instantiates custom strategies via public no-arg constructor (cached).
+`DispatchBoundary` supplies the boundary identifiers an encoder or decoder can branch on:
+`SERVICE_DISPATCH`, `KAFKA`, `OUTBOX`, `OUTBOX_SERVICE`, `DELAYED_JOB`, `WORKFLOW`, `CAMEL`.
 
 ---
 
-## Extension Ordering (`dev.vertique.core.extension`)
+## Configuration
 
-### `OrderedExtension`
+`vertique-core` reads no configuration section of its own. It defines the contract every other
+module's configuration is parsed through.
 
-Mix-in interface that any framework extension (interceptor, capturer, observer, contributor) can implement to participate in a deterministic ordering contract. The `RestClientInterceptor` and `RestClientContextCapturer` SPIs in `rest-client` are the first consumers; the contract is designed for framework-wide rollout to other extension sets.
+### The boundary
 
-```java
-public interface OrderedExtension {
-
-    /** Coarse ordering phase; defaults to {@code APPLICATION}. */
-    default ExtensionPhase phase() { return ExtensionPhase.APPLICATION; }
-
-    /** Fine priority within a phase; lower runs first; defaults to 0. */
-    default int priority() { return 0; }
-
-    /** Stable tie-break key; defaults to the implementation's fully-qualified class name. */
-    default String orderKey() { return getClass().getName(); }
-
-    /** Canonical comparator: phase asc → priority asc → orderKey asc. */
-    static Comparator<OrderedExtension> comparator() { ... }
-}
-```
-
-**Ordering:** phase (declaration order) dominates priority. Within the same phase, lower priority values run first. When phase and priority are equal, `orderKey` (default: FQCN) provides a stable tie-break so sorting is fully deterministic.
-
-### `ExtensionPhase`
+The root configuration object is bound once, qualified `@VertxConfig`, by `VertxModule`. Read it
+only in a `@Provides` method, navigate to your section, and parse it through an injected
+`ConfigParser`:
 
 ```java
-public enum ExtensionPhase {
-    SYSTEM_FIRST,   // system/platform-owned; runs before all APPLICATION extensions (e.g. context capture)
-    APPLICATION,    // application-provided (default)
-    SYSTEM_LAST     // system/platform-owned; runs after all APPLICATION extensions (e.g. final observation)
-}
-```
-
-Application extensions should always default to `APPLICATION` (the interface default). Only system/platform-owned extensions — Vertique modules or trusted application-platform modules — should set `SYSTEM_FIRST` or `SYSTEM_LAST`. The phase is a trusted ordering hint, not a security boundary.
-
-#### Invariants & Gotchas
-
-- Phase dominates priority entirely: an `APPLICATION` extension with `priority = Integer.MIN_VALUE` still runs after every `SYSTEM_FIRST` extension. Do not use priority to emulate cross-phase ordering.
-- `orderKey()` defaults to `getClass().getName()`. When two extensions share the same phase and priority, the alphabetically earlier class name runs first — this is stable across JVM restarts.
-- Framework-wide rollout is complete: every sorted behavioral extension SPI now implements `OrderedExtension`. See ADR-0085 for the full list of migrated surfaces.
-
----
-
-## Application Lifecycle Types (`dev.vertique.core.lifecycle`)
-
-### `LifecyclePhase`
-
-Single public lifecycle phase vocabulary for the framework. All lifecycle participants — both
-non-verticle startup/shutdown steps and verticle deployments — are ordered by this enum.
-
-The eight values in declaration (ordinal) order:
-
-| Phase | Kind | Purpose |
-|-------|------|---------|
-| `CONFIGURE` | Non-verticle | Build host/runtime configuration (e.g. install Jackson modules) before any deployment |
-| `VALIDATE` | Non-verticle | Validate the assembled configuration and wiring before any deployment |
-| `MIGRATE` | Non-verticle | Run data/schema migrations before any deployment |
-| `BOOTSTRAP` | Verticle | Framework bootstrapping (codec registration, config watchers) |
-| `INFRA` | Verticle | Infrastructure verticles (management, health checks) |
-| `SERVICES` | Verticle | Service-layer verticles (event bus dispatch) |
-| `EDGE` | Verticle | Edge verticles (HTTP, WebSocket) |
-| `AFTER_START` | Non-verticle | Post-start work that runs after all verticles are deployed |
-
-`isVerticlePhase()` returns `true` only for `BOOTSTRAP`, `INFRA`, `SERVICES`, and `EDGE`. A
-`VerticleDeployment` constructed with a non-verticle phase is rejected at construction time.
-
-#### Invariants & Gotchas
-
-- Ordinal order is the ordering used by `LifecycleOrdered.comparator()` — do not rely on enum
-  names for ordering; rely on the documented declaration order above.
-- `LifecyclePhase` is unrelated to `ExtensionPhase`. `ExtensionPhase` (`SYSTEM_FIRST`,
-  `APPLICATION`, `SYSTEM_LAST`) is the coarse ordering for framework extension SPIs
-  (`OrderedExtension`). The two enums serve different purposes and are used by different
-  ordering contracts.
-
-### `LifecycleOrdered`
-
-Shared ordering contract for application-lifecycle participants. Both non-verticle steps
-(`ApplicationStartupStep`, `ApplicationShutdownStep`) and the verticle-deployment infrastructure
-use this contract.
-
-```java
-public interface LifecycleOrdered {
-    LifecyclePhase phase();
-    default int priority() { return 0; }
-    default String orderKey() { return getClass().getName(); }
-    static Comparator<LifecycleOrdered> comparator();  // phase → priority → orderKey
-}
-```
-
-**Ordering:** `phase()` (enum ordinal) dominates `priority()` (lower runs first), then `orderKey()`
-provides a stable tie-break. When a participant is registered as a lambda or method reference the
-default `orderKey()` returns a synthetic JVM-generated class name that is not stable across
-compilations; give such participants distinct `priority()` values or override `orderKey()`.
-
-`LifecycleOrdered` is deliberately **not** related to `OrderedExtension`. Extending
-`OrderedExtension` here would produce a return-type clash on `phase()` (`ExtensionPhase` vs
-`LifecyclePhase`). See ADR-0129.
-
-### `ApplicationStartupStep`
-
-Non-verticle unit of startup work contributed via Dagger `@IntoSet` multibinding into
-`DeployerModule`'s `Set<ApplicationStartupStep>`. Steps are ordered by `LifecycleOrdered.comparator()`
-and consumed by the Phase 2 lifecycle runner (`vertique-application`).
-
-```java
-public interface ApplicationStartupStep extends LifecycleOrdered {
-    Future<Void> start();
-}
-```
-
-A step typically belongs to one of the non-verticle phases (`CONFIGURE`, `VALIDATE`, `MIGRATE`,
-`AFTER_START`). Verticle deployment is handled separately for the verticle-subset phases.
-
-### `ApplicationShutdownStep`
-
-Mirror of `ApplicationStartupStep` for teardown work.
-
-```java
-public interface ApplicationShutdownStep extends LifecycleOrdered {
-    Future<Void> stop();
-}
-```
-
-### `ComposeValidator`
-
-Behavior-free marker interface for the constructible-as-validation pattern. A class that
-implements `ComposeValidator` and declares its module's required bindings as `@Inject` constructor
-parameters proves those bindings are present at construction time.
-
-```java
-public interface ComposeValidator {}
-```
-
-`ComposeValidationStep` materializes the `Set<ComposeValidator>` multibinding during the
-`VALIDATE` phase, forcing Dagger to construct every contributed validator. A missing binding is a
-compile error; a violated invariant is an `IllegalStateException` thrown from the constructor.
-
-**Contributing a compose validator:**
-
-```java
+@Provides
 @Singleton
-public final class MyModuleComposeValidator implements ComposeValidator {
-    @Inject
-    public MyModuleComposeValidator(MyRequiredService service) {
-        Objects.requireNonNull(service, "MyRequiredService must be bound");
-    }
-}
-
-// In the module:
-@Provides @Singleton @IntoSet
-static ComposeValidator myModuleValidator(MyModuleComposeValidator v) { return v; }
-```
-
-For validators to run, the application `@Component` must include `CoreLifecycleStepsModule` and
-the component must be driven by `VertiqueApplicationBootstrap` (in `vertique-application`) or
-another lifecycle runner that invokes the VALIDATE-phase steps.
-
-Existing compose validators in the framework:
-- `WorkflowReminderComposeValidator` (`vertique-workflow-engine`)
-- `WorkflowOutboxComposeValidator` (`vertique-workflow-services`)
-- `WorkflowDelayedComposeValidator` (`vertique-workflow-delayed`)
-- `WorkflowTasksComposeValidator` (`vertique-workflow-tasks`)
-- `WorkflowEventsComposeValidator` (`vertique-workflow-events`)
-- `InboxOutboxPostgresqlComposeValidator` (`vertique-inbox-outbox-postgresql`)
-
-### `JacksonConfigureStep`
-
-`@Singleton` `ApplicationStartupStep` for the `CONFIGURE` phase. Calls
-`JacksonConfigurer.configure()` to apply all registered `ObjectMapperCustomizer` instances to the
-Vert.x shared `ObjectMapper`. Idempotent — subsequent runs are no-ops.
-
-```java
-@Override public LifecyclePhase phase() { return LifecyclePhase.CONFIGURE; }
-@Override public Future<Void> start() {
-    jacksonConfigurer.configure();
-    return Future.succeededFuture();
+static HelloConfig helloConfig(@VertxConfig JsonObject config, ConfigParser parser) {
+    return parser.parse(JsonConfigPaths.navigateObject(config, "hello"), HelloConfig.class);
 }
 ```
 
-This step replaces the manual `c.jacksonConfigurer().configure()` call that applications
-previously made in `MainVerticle.start()`. It is contributed automatically by
-`CoreLifecycleStepsModule`.
+The `ConfigParser` binding is provided by `ConfigParsingModule` in
+`dev.vertique:vertique-config-core`; include it once in the application component. Never use
+`JsonObject.mapTo` or a hand-rolled `ObjectMapper` at this boundary — the config mapper is isolated
+from the Vert.x and REST mappers and is deliberately coercion-lenient, so `"port": "9090"` binds
+whether or not another mapper in the process has been tuned strict.
 
-### `ComposeValidationStep`
+### `ConfigParser`
 
-`@Singleton` `ApplicationStartupStep` for the `VALIDATE` phase. Receives `Set<ComposeValidator>`
-as a required constructor parameter, which forces Dagger to materialize and construct every
-contributed validator — running all constructor-time composition checks — at the time this step
-is built (i.e., when the Dagger component is constructed). `start()` is a no-op.
-
-```java
-@Override public LifecyclePhase phase() { return LifecyclePhase.VALIDATE; }
-@Override public Future<Void> start() { return Future.succeededFuture(); }
-```
-
-This step replaces the manual per-app `c.workflowComposeValidator()` accessor pattern.
-Contributed automatically by `CoreLifecycleStepsModule`.
-
-### `CoreLifecycleStepsModule`
-
-Abstract Dagger `@Module` that an application `@Component` includes to get the framework's
-built-in CONFIGURE and VALIDATE steps automatically.
+| Method | Behavior |
+|---|---|
+| `<T> T parse(JsonObject section, Class<T> type)` | Parses one section into a typed record. A `null`/empty section yields the type's default shape. Throws `ConfigurationException` on failure. |
+| `<T> List<T> parseKeyedObject(JsonObject section, String identityProp, Class<T> elementType)` | Parses a section that *is* a keyed object `{key:{…}}`, injecting each entry key into the named identity property. |
+| `<T> List<T> parseKeyedObject(JsonObject section, String identityProp, Class<T> elementType, Map<String, Object> fixedProps)` | Same, plus constant properties injected into every element before deserialization — needed when a record's compact constructor requires fields beyond the key. |
 
 ```java
-@Module(includes = JsonModule.class)
-public abstract class CoreLifecycleStepsModule {
-    @Multibinds abstract Set<ComposeValidator> composeValidators(); // empty-by-default
-    // contributes JacksonConfigureStep @IntoSet ApplicationStartupStep
-    // contributes ComposeValidationStep @IntoSet ApplicationStartupStep
-}
-```
+// Field-keyed: @KeyedBy on the List<T> component of the parsed record
+KafkaConfig kafka = parser.parse(JsonConfigPaths.navigateObject(config, "kafka"), KafkaConfig.class);
 
-- Declares `@Multibinds Set<ComposeValidator>` so a component with no contributed validators
-  compiles without error.
-- **Self-contained.** It includes `JsonModule`, which declares the empty-by-default
-  `Set<ObjectMapperCustomizer>` multibinding that `JacksonConfigurer` — and therefore
-  `JacksonConfigureStep` — requires. A component listing `CoreLifecycleStepsModule` alone resolves
-  `Set<ApplicationStartupStep>`; co-listing `JsonModule` is never required (listing it anyway is
-  harmless — Dagger de-duplicates module includes).
-- Takes no dependency on `vertique-deploy` or `vertique-application` — the `@IntoSet` contributions
-  join whatever `Set<ApplicationStartupStep>` the application's component declares (typically the
-  one from `DeployerModule`).
-
----
-
-## Config Utility Types (`dev.vertique.core.config`)
-
-### JsonConfigPaths
-
-Shared hierarchical-config helper with two methods:
-
-| Method | Semantics |
-|--------|-----------|
-| `navigateObject(JsonObject root, String... segments)` | Tolerant subtree traversal — returns an empty `JsonObject` when any segment is missing; skips blank/null segments |
-| `resolve(JsonObject root, String dottedPath)` | Strict dotted-path lookup; returns a `LookupResult` with `status` (`PRESENT`, `MISSING`, `INVALID_SHAPE`), `value`, and `failingSegment` |
-
-`LookupStatus.INVALID_SHAPE` is returned when traversal crosses a non-`JsonObject` intermediate segment. `PRESENT` is returned for any leaf value including `JsonObject` or `JsonArray` (callers must check for non-scalar leaves when expecting scalar config values).
-
-### ConfigParser
-
-`ConfigParser` is the injectable SPI interface for parsing `JsonObject` configuration sections into typed records. It is the framework's single config-parsing seam: boundary `@Provides` providers **inject** a `ConfigParser` and parse each module's config section through it, so config binds reliably regardless of how any other `ObjectMapper` in the process is configured.
-
-The binding is provided by `ConfigParsingModule` (in `vertique-config-core`). The implementation carries a dedicated, isolated `ObjectMapper` — coercion-lenient and tolerant of unknown properties — that never shares state with Vert.x's `DatabindCodec.mapper()` or any global/REST mapper.
-
-```java
-public interface ConfigParser {
-    <T> T parse(JsonObject section, Class<T> type);
-    <T> List<T> parseKeyedObject(JsonObject section, String identityProp, Class<T> elementType);
-    <T> List<T> parseKeyedObject(JsonObject section, String identityProp, Class<T> elementType,
-                                  Map<String, Object> fixedProps);
-}
-```
-
-| Method | Description |
-|--------|-------------|
-| `parse(JsonObject section, Class<T> type)` | Parses a config section into a typed record. A `null`/empty section deserializes as the type's default shape. Throws `ConfigurationException` on failure. |
-| `parseKeyedObject(JsonObject section, String identityProp, Class<T> elementType)` | Parses a section that is itself a keyed object `{key:{...}}` into a `List<T>`, injecting each entry key into the named identity property of every element. |
-| `parseKeyedObject(JsonObject section, String identityProp, Class<T> elementType, Map<String,Object> fixedProps)` | Same, but additionally injects constant `fixedProps` into each element before deserialization — used when a record's compact constructor requires fields beyond the key (e.g. `(type, name)` pair). |
-
-**Usage:**
-
-```java
-// Field-keyed collection: @KeyedBy on the List<T> component
-// (KafkaConfig declares @KeyedBy("name") List<KafkaConsumerConfig> consumers)
-KafkaConfig cfg = parser.parse(
-    JsonConfigPaths.navigateObject(config, "kafka"), KafkaConfig.class);
-
-// Section-root-keyed collection: keys are at the section root
+// Section-root-keyed: the keys are the section itself
 List<RestClientConfig> clients = parser.parseKeyedObject(
-    JsonConfigPaths.navigateObject(config, "restClient"), "name", RestClientConfig.class);
+        JsonConfigPaths.navigateObject(config, "restClient"), "name", RestClientConfig.class);
 
-// With fixed props for a record requiring (type, name) identity
-List<ServiceConfig> svcs = parser.parseKeyedObject(
-    typeGroup, "name", ServiceConfig.class, Map.of("type", typeKey));
+// With fixed props for a record whose identity is a (type, name) pair
+List<ServiceConfig> services =
+        parser.parseKeyedObject(typeGroup, "name", ServiceConfig.class, Map.of("type", typeKey));
 ```
 
-#### Invariants & Gotchas
+`parse(null, T)` is safe and returns the type's Jackson default shape; `parseKeyedObject(null, …)`
+returns `List.of()`. Open property bags whose schema the framework does not own must be read
+directly from the source `JsonObject` and attached afterwards.
 
-- `ConfigParser` is an **injectable interface** — never call it as a static facade. Inject it from Dagger; the implementation and its mapper live in `vertique-config-core`.
-- `parse(null, T)` is safe and returns the type's Jackson default shape. `parseKeyedObject(null, …)` returns `List.of()`.
-- Open property bags (Kafka `properties`, Camel endpoint `properties`, `webClient`) must be read directly from the source `JsonObject` and attached afterwards — they cannot be parsed through `ConfigParser` because their schema is not owned by the framework.
+### `@KeyedBy`
 
-### @ConfigMapper
-
-`@ConfigMapper` is a Dagger `@Qualifier` annotation used when an application wants to customize the `ObjectMapper` that backs config parsing. Bind an `@ConfigMapper ObjectMapper` anywhere in the application component; `ConfigParsingModule` reads it via `@BindsOptionalOf` and re-layers the framework's mandatory modules and lenient policy over the override before first use.
-
-```java
-@Qualifier
-@Retention(RUNTIME)
-public @interface ConfigMapper {}
-```
-
-The override seam is entirely optional. An application that does not bind `@ConfigMapper ObjectMapper` gets the framework's lenient default mapper automatically. The `@ConfigMapper` mapper is dedicated to and owned by config parsing — the framework finalizes it in place before first use, so an application must not share the same instance concurrently for other purposes.
-
----
-
-### @KeyedBy
-
-Field annotation (`@Target(ElementType.FIELD)`) in `dev.vertique.core.json` on a `List<T>` record component whose external JSON is a keyed object `{key:{...}}`. The object key is injected into the named identity property of each `T` element during deserialization by `KeyedCollectionDeserializer` (in `vertique-json`). The annotation lives in `core.json` — not `core.config` — so that `vertique-json` can reference it without creating a dependency on `core.config`.
+Field annotation (`@Target(FIELD)`, in `dev.vertique.core.json`) on a `List<T>` record component
+whose external JSON is a keyed object. The object key is injected into the named identity property
+of each element.
 
 ```java
 // External JSON: { "consumers": { "orders": {...}, "refunds": {...} } }
-// The "orders" / "refunds" keys are injected into KafkaConsumerConfig.name().
 record KafkaConfig(@KeyedBy("name") List<KafkaConsumerConfig> consumers) {}
 ```
 
-The element type `T` must declare a settable property matching `@KeyedBy#value()`. A conflict between an explicit JSON value and the injected key is a `ConfigurationException`; equal values are accepted.
+The element type must declare a settable property matching the annotation value. A conflict between
+an explicit JSON value and the injected key is a `ConfigurationException`; equal values are
+accepted. The deserializer backing it ships in `dev.vertique:vertique-json`.
 
----
+### `JsonConfigPaths`
 
-### KeyedCollectionDeserializer / KeyedCollectionModule
+| Method | Semantics |
+|---|---|
+| `navigateObject(JsonObject root, String... segments)` | Tolerant subtree traversal: returns an empty `JsonObject` when a segment key is absent, and skips blank/`null` segments. **Throws `ConfigurationException`** when a segment key is present but bound to a non-object — a scalar, an array, or explicit JSON `null`. |
+| `resolve(JsonObject root, String dottedPath)` | Strict dotted-path lookup returning a `LookupResult(status, value, path, failingSegment)`. |
 
-> **Moved to `vertique-json`** (`dev.vertique.json.keyed`). These types no longer live in `vertique-core`. See Maven coordinate `dev.vertique:vertique-json` for the current reference.
+`LookupStatus` is `PRESENT`, `MISSING`, or `INVALID_SHAPE`. `INVALID_SHAPE` means traversal crossed
+a non-object intermediate segment. `PRESENT` covers any leaf, including a `JsonObject` or
+`JsonArray` — a caller expecting a scalar must check.
 
-The Jackson mechanism backing `@KeyedBy`. `KeyedCollectionModule` is a `SimpleModule` registered on the config mapper by `DefaultConfigMapper` (in `vertique-config-core`); it installs a `BeanDeserializerModifier` that swaps in a `KeyedCollectionDeserializer` for every bean property annotated with `@KeyedBy`. `KeyedCollectionDeserializer` is a contextual `JsonDeserializer<List<?>>` that reads the keyed JSON object and produces the typed list with each key injected into the configured identity property.
+### `@ConfigMapper`
 
-The shared key-injection logic (`KeyedCollectionDeserializer.injectKey`) is also used by `DefaultConfigParser.parseKeyedObject` (in `vertique-config-core`) so both paths enforce identical rules: non-blank keys, object-valued entries, and conflict detection.
+Dagger `@Qualifier` for overriding the `ObjectMapper` that backs config parsing. Bind an
+`@ConfigMapper ObjectMapper` anywhere in the application component; the config module reads it
+optionally and re-layers the framework's mandatory modules and lenient policy over it before first
+use.
 
----
+The seam is entirely optional — an application that binds nothing gets the framework's lenient
+default. Because the framework finalizes the supplied mapper in place, do not share that instance
+concurrently for any other purpose.
 
-### ConfigSecretRenderer
+### `ConfigSecretRenderer`
 
-Shared, array-aware redactor for log-safe rendering of config that may carry secrets. Used by every config record's `toString()` (Camel `CamelEndpointConfig`, `CamelMessageKeyHashConfig`; REST client `RestClientConfig`) so masking stays in lockstep across modules.
+Shared redactor so every module's config `toString()` masks the same things. `MASK` is `"***"`, and
+the input is never mutated — masking is applied to a copy used only for the returned string.
 
-Two entry points:
+| Method | Behavior |
+|---|---|
+| `isSensitivePath(String dottedPath)` | `true` when the lower-cased path contains `password`, `secret`, `token`, `passphrase`, `credential`, `jaas.config`, `user.info`, `private.key`, `keystore`, or `truststore`; or when its separator-stripped, lower-cased form contains `apikey`, `accesskey`, or `secretkey`. |
+| `redactBag(JsonObject bag)` | Renders a bag as a log-safe `String`, descending through nested objects *and* arrays and masking every leaf whose full dotted path is sensitive. |
+| `redactUri(String uri)` | Masks authority userinfo (`user:pass` between `//` and `@`) and the value of any credential-bearing query parameter. Best-effort; never throws. |
 
-| Method | Description |
-|--------|-------------|
-| `ConfigSecretRenderer.redactBag(JsonObject bag)` | Recurses into both `JsonObject` and `JsonArray` at any depth, masking each leaf whose full dotted path contains a secret token (case-insensitive substring match). |
-| `ConfigSecretRenderer.redactUri(String uri)` | Masks the authority userinfo (`user:pass` between `//` and `@`) and the value of any credential-bearing query parameter. Best-effort string redaction that never throws. |
-| `ConfigSecretRenderer.isSensitivePath(String dottedPath)` | Returns `true` when the lower-cased path contains any of: `password`, `secret`, `token`, `passphrase`, `credential`, `jaas.config`, `user.info`, `private.key`, `keystore`, `truststore`. |
+Matching is substring-based in both forms, so `ssl.trustStoreOptions.password` and `aws.access-key`
+are recognized at any depth.
 
-`MASK = "***"` is the substituted value. The input bag is never mutated — masking is applied to a deep copy used only for the returned string.
+### `ConfigTreeBuilder`
 
----
+Builds the nested `JsonObject` the framework consumes from the flat dotted/bracketed keys an
+embedding host exposes. `build(Map<String, String> flatKeys)` is purely syntactic — every leaf is
+stored as a `String`, and type coercion is `ConfigParser`'s job downstream.
 
-### TypedConfigParser / DefaultConfigMapper
+| Segment form | Interpretation |
+|---|---|
+| Bare segment, including all-digit (`2026`) | Object key |
+| `[N]`, N a non-negative integer | Array index |
+| `[content]`, quoted or containing a dot | Literal map key (dots preserved, surrounding quotes stripped) |
 
-> **Moved to `vertique-config-core`** (`dev.vertique.config.parser`). These types no longer live in `vertique-core`. See Maven coordinate `dev.vertique:vertique-config-core` for the current reference.
+```
+a.b=1, a.c=2                           → {"a":{"b":"1","c":"2"}}
+years.2026.total=5                     → {"years":{"2026":{"total":"5"}}}
+servers[0].host=h, servers[1].host=k   → {"servers":[{"host":"h"},{"host":"k"}]}
+audit.bindings[http.server].dim[0]=x   → {"audit":{"bindings":{"http.server":{"dim":["x"]}}}}
+```
 
-`DefaultConfigParser` is the `ConfigParser` implementation in `vertique-config-core`. It uses `DefaultConfigMapper.lenient()` by default, or a finalized application-supplied `@ConfigMapper ObjectMapper` override when one is bound. `DefaultConfigMapper` (also in `vertique-config-core`) is the factory for the isolated config `ObjectMapper` — it registers `Jdk8Module`, `JavaTimeModule`, `KeyedCollectionModule` (from `vertique-json`), and Vert.x's `VertxModule`. Both types are internal implementation details of `vertique-config-core`; application code injects `ConfigParser` only.
+Fail-fast rules, all raising `ConfigurationException`: array indices must be contiguous from `0`
+with no gap, duplicate, or mixing of `[N]` with object keys at the same node; a path used as both a
+leaf and a parent collides; a `null` input map is rejected. Every message names offending
+keys/paths only, never values. Input order is irrelevant — keys are processed in a stable sorted
+order, so collision detection does not depend on map iteration order. A `null` value for a key is
+stored as JSON `null`.
 
-### ConfigTreeBuilder
+### `PropertyCondition`
 
-Builds a nested `JsonObject` configuration tree from a flat map of dotted/bracketed keys. This is the inverse of `JsonConfigPaths.navigateObject`: it converts the flat key/value pairs that Spring/Quarkus host bridges expose (`Environment` property names, SmallRye/MicroProfile config keys) into the nested `JsonObject` the framework's `ConfigParser` and `JsonConfigPaths` consume.
+Immutable record evaluated at runtime by code generated from `@ConditionalOnProperty`. It is public
+and stable, but it is not for hand-written Dagger bindings — the annotation is codegen-only.
 
 ```java
-public final class ConfigTreeBuilder {
-    // Static utility — no instances
-    public static JsonObject build(Map<String, String> flatKeys) { ... }
+public record PropertyCondition(String name, String havingValue, boolean matchIfMissing) {
+    public static boolean matchesAll(JsonObject config, PropertyCondition[] conditions);
 }
 ```
 
-**The builder is purely syntactic — it does not know target types.** All leaf values are stored as `String`; type coercion is `ConfigParser`'s job downstream.
+| Component | Annotation default | Meaning |
+|---|---|---|
+| `name` | — (required) | Dotted config property path, e.g. `feature.adminApi.enabled` |
+| `havingValue` | `"true"` | Expected scalar; compared with `String.valueOf(value).equals(havingValue)` |
+| `matchIfMissing` | `false` | When `true`, a missing path counts as a match |
 
-#### Key Grammar (frozen)
+`matchesAll` ANDs the array and returns `true` for an empty or `null` array. A `MISSING` path
+returns `false` unless `matchIfMissing` is set, in which case evaluation continues. An
+`INVALID_SHAPE` path, or a present leaf that is a `JsonObject`/`JsonArray`, throws
+`ConfigurationException`.
 
-Segments are separated by `.` except inside brackets. Each segment is classified as:
+---
 
-| Form | Interpretation |
-|------|---------------|
-| Bare segment (including all-digit, e.g. `2026`) | Object key |
-| `[N]` where N is a non-negative integer | Array index |
-| `[content]` where content is quoted or contains a dot | Literal map key (dots preserved, surrounding quotes stripped) |
+## Failures, Constraints, and Common Mistakes
 
-**Examples:**
+### Exception hierarchy
 
 ```
-a.b=1, a.c=2                            → {"a":{"b":"1","c":"2"}}
-years.2026.total=5                      → {"years":{"2026":{"total":"5"}}}
-servers[0].host=h, servers[1].host=k   → {"servers":[{"host":"h"},{"host":"k"}]}
-audit.bindings[http.server].dim[0]=x   → {"audit":{"bindings":{"http.server":{"dim":["x"]}}}}
-tags[0]=a, tags[1]=b                   → {"tags":["a","b"]}
+VertiqueException (RuntimeException)
+├── ValidationException                     — invalid input or data
+│   ├── BusinessRuleException               — business/domain-rule violation
+│   │   └── DurableEncodeRejectedException  — a durable-context encoder rejected the whole
+│   │                                         capture/merge operation
+│   └── MalformedDurableMetadataException   — durable carrier or namespace body present but not a
+│                                             JSON object
+├── ConflictException                       — resource state conflict
+├── NotFoundException                       — resource absent
+├── ConfigurationException                  — startup/wiring/contract error
+├── TechnicalException                      — runtime/infrastructure failure
+│   └── UnavailableException                — capability currently unavailable
+└── VertiqueSecurityException               — grouping root for the security family
+    ├── UnauthorizedException               — authentication required or credential invalid
+    └── ForbiddenException                  — authenticated but not authorized
 ```
 
-#### Fail-Fast Rules (frozen)
+Every root is **concrete** — it may be thrown directly or subclassed. The one exception is
+`VertiqueSecurityException`: catch it to handle any security denial, but throw
+`UnauthorizedException` or `ForbiddenException` instead of the grouping root. Prefer the most
+specific applicable root; a new module exception should never extend raw `RuntimeException`.
 
-- **Array indices** must be contiguous from `0`. A gap, duplicate index, or mixing `[N]` with object keys at the same node throws `ConfigurationException`.
-- **Leaf/parent collision** — a path used as both a leaf (`a.b=1`) and a parent (`a.b.c=2`) throws `ConfigurationException`.
-- Every error message names the offending **keys/paths only, never values** (secret non-leakage).
+### HTTP mapping at a REST boundary
 
-#### Invariants & Gotchas
+The default mapper in `dev.vertique:vertique-rest-jaxrs` registers these core types:
 
-- Input order is irrelevant: keys are processed in a stable sorted order so collision detection is independent of the input map's iteration order.
-- Bare numerics (e.g. `2026`) are always object keys. Use `[2026]` (brackets without quotes) only when an array index equal to 2026 is genuinely intended — which is almost never valid.
-- A `null` input map throws `ConfigurationException`; a `null` value for a key is stored as JSON `null`.
+| Exception | Status |
+|---|---:|
+| `ValidationException` (and `BusinessRuleException`, `BeanValidationException`) | 400 |
+| `UnauthorizedException` | 401 |
+| `ForbiddenException` | 403 |
+| `NotFoundException` | 404 |
+| `ConflictException` | 409 |
+| `UnavailableException` | 503 |
+| `Throwable` (fallback) | 500 |
 
-### PropertyCondition
+Mapping is hierarchy-aware, so a subclass inherits its nearest registered ancestor's status.
+`TechnicalException`, `ConfigurationException`, and a bare `VertiqueSecurityException` have **no**
+explicit registration and therefore reach the `Throwable` fallback as 500. `ForbiddenException` is
+registered by fully-qualified name to avoid clashing with `jakarta.ws.rs.ForbiddenException`. The
+REST defaults reference only core, JAX-RS, and REST-owned types — a database exception that escapes
+a repository surfaces as 500, so translate it to a core semantic type at your service boundary.
 
-**Public, stable API.** Immutable record used at runtime by code generated from `vertique-codegen-services` and `vertique-codegen-jaxrs`. Do not use in hand-written Dagger bindings — `@ConditionalOnProperty` is a codegen-only annotation.
+### Event-bus transport failures
 
-```java
-public record PropertyCondition(String name, String havingValue, boolean matchIfMissing) {}
-```
+`EventBusExceptionMapper` translates Vert.x `ReplyException`s; the set of reply failures is a fixed
+enum, so this mapper is not extensible. Non-`ReplyException` throwables pass through unchanged.
 
-| Field | Default | Description |
-|-------|---------|-------------|
-| `name` | — (required) | Dot-delimited config property path (e.g., `"sandboxEnabled"`, `"feature.adminApi.enabled"`) |
-| `havingValue` | `"true"` | Expected scalar string value; comparison uses `String.valueOf(value).equals(havingValue)` |
-| `matchIfMissing` | `false` | When `true`, a `MISSING` path is treated as a match and evaluation continues |
+| Reply failure | Translated to | Root |
+|---|---|---|
+| `TIMEOUT` | `EventBusTimeoutException` | `TechnicalException` |
+| `NO_HANDLERS` | `EventBusAddressUnavailableException` | `UnavailableException` |
+| `RECIPIENT_FAILURE`, `ERROR` | `EventBusDispatchException` | `TechnicalException` |
 
-**`PropertyCondition.matchesAll(JsonObject config, PropertyCondition[] conditions)`** static helper:
+Each carries `address()`. Service-layer callers receive enriched subclasses from
+`dev.vertique:vertique-services` that add the failing contract.
 
-- ANDs all conditions in the array
-- `MISSING` → returns `false` when `matchIfMissing=false`; otherwise treats that condition as satisfied and continues evaluating the remaining array
-- `INVALID_SHAPE` → throws `ConfigurationException`
-- Present `JsonObject`/`JsonArray` leaf → throws `ConfigurationException` (non-scalar)
-- Empty array → always returns `true`
+### Resilience annotation semantics
 
-Generated code references this method by FQN: `dev.vertique.core.config.PropertyCondition.matchesAll(config, X_CONDITIONS)`.
+`@Timeout`, `@Retry`, and `@CircuitBreaker` are declarations only — core defines the vocabulary and
+its resolution, and the consumer module enforces it. `dev.vertique:vertique-services` applies them
+server-side; `dev.vertique:vertique-rest-client` applies them per client. All three are
+`@Target({TYPE, METHOD})` and `@Retention(RUNTIME)`; a method-level annotation **replaces** the
+type-level one outright, with no per-attribute merging.
+
+| Annotation | Attribute | Default | Constraint |
+|---|---|---:|---|
+| `@Timeout` | `value` | — (required) | must be positive |
+| | `unit` | `TimeUnit.MILLISECONDS` | any `TimeUnit` |
+| `@Retry` | `maxRetries` | `3` | at least 0 |
+| | `delayMs` | `500` | at least 0 |
+| | `backoffMultiplier` | `2.0` | at least 1.0 |
+| | `maxDelayMs` | `30000` | at least 0 |
+| | `backoff` | `BackoffStrategy.Default.class` | sentinel meaning "use the consumer's default" |
+| | `retryOn` | `{}` | empty means "every failure is eligible" |
+| | `abortOn` | `{}` | — |
+| `@CircuitBreaker` | `maxFailures` | `5` | at least 1 |
+| | `timeoutMs` | `-1` | `-1` inherits the consumer module's default |
+| | `resetTimeoutMs` | `10000` | must be positive |
+
+The annotations themselves carry no validator — the constraints above are enforced where the values
+are consumed, and the same bounds apply to the equivalent JSON configuration overrides, which fail
+with `ConfigurationException` during startup parsing.
+
+Retry eligibility is evaluated in a fixed order: **`abortOn` wins first** — a match stops retrying
+immediately. Then `retryOn`, when non-empty, restricts retries to matching types. When `retryOn` is
+empty, every failure not matched by `abortOn` is eligible. Both use `isInstance`, so a supertype
+entry covers its subclasses.
+
+The effective policy nests timeout and circuit breaker **around** retry, and a configured timeout
+applies **per attempt**, not to the whole retry sequence. Consumer modules let JSON configuration
+override annotation values for an environment without editing the contract.
+
+### Constraints and common mistakes
+
+- **Do not read the root `@VertxConfig JsonObject` outside a boundary provider.** Module internals
+  take typed config records. Do not disambiguate same-typed bindings with `@Named` — declare a
+  dedicated `@Qualifier`.
+- **Do not use priority to emulate cross-phase ordering.** Phase dominates priority absolutely in
+  both ordering contracts.
+- **Give lambda-registered extensions a stable identity.** The default `orderKey()` of a lambda or
+  method reference is a synthetic class name that is not stable across compilations, so ties break
+  unpredictably. Override `orderKey()` or assign distinct `priority()` values.
+- **The dispatch codecs are local-only.** `LocalMessageCodec` throws
+  `UnsupportedOperationException` from both wire methods, so a clustered event bus fails loudly
+  rather than degrading silently; `transform` returns the object reference unchanged, which means
+  no defensive copy occurs on a local hop. Registration of the `dispatch.envelope` and
+  `dispatch.result` codec names is owned by whichever deployment path an application installs —
+  `dev.vertique:vertique-services`, `dev.vertique:vertique-kafka-core`, or
+  `dev.vertique:vertique-job-delayed` — each tolerating an already-registered name. Core itself
+  registers neither, so `EventBusClient` is usable only once one of those modules has deployed.
+- **`PayloadSources` never copies.** Copy the array yourself before calling `buffered(byte[], …)`
+  if you need immutability, and prefer `bufferedStream()` over `bufferedView()` on hot paths for
+  non-`Buffer` backings.
+- **A `VerticleDeployment` requires a verticle phase.** Constructing one with `CONFIGURE`,
+  `VALIDATE`, `MIGRATE`, or `AFTER_START` is rejected at construction time.
+- **Do not call `JacksonConfigurer.configure()` yourself.** With `CoreLifecycleStepsModule` in the
+  component, `JacksonConfigureStep` already runs it during `CONFIGURE`. The configurer is
+  idempotent, so a second call logs a warning and returns without applying anything.
+- **Do not implement `MethodMetadata` or `ParameterMetadata` in application code.** They are
+  provided by generated code and by the framework's own scanners.
+- **Never log a secret-bearing config record without redaction.** Route the value through
+  `ConfigSecretRenderer` in the record's `toString()` rather than relying on `@JsonIgnore`, which on
+  a record would also block deserialization and make the value unreadable from configuration.
 
 ---
 
 ## Dependencies
 
-- `io.vertx:vertx-core`
-- `com.google.dagger:dagger`
-- `jakarta.inject:jakarta.inject-api`
-- `com.fasterxml.jackson.core:jackson-databind`
-- `org.slf4j:slf4j-api`
-- `org.projectlombok:lombok` (provided scope)
+`vertique-core` depends on no other Vertique module — it is the root of the dependency graph, and
+every compile-scope dependency it declares lands on every consumer's classpath.
 
----
-
-## Event Bus Types (`dev.vertique.core.eventbus`)
-
-### DispatchEnvelope\<T\>
-
-Event-bus carrier for service dispatch. Replaces the pre-substrate `Body<T>` wrapper.
-
-```java
-public final class DispatchEnvelope<T> {
-    public T payload();
-    public DispatchMetadata metadata();
-    public Optional<String> replyAddress();
-
-    public static <T> DispatchEnvelope<T> of(T payload, DispatchMetadata metadata);
-    public static <T> DispatchEnvelope<T> of(T payload, DispatchMetadata metadata, String replyAddress);
-    public static <T> DispatchEnvelope<T> of(T payload);   // empty metadata
-    public static DispatchEnvelope<Void> empty();
-}
-```
-
-No `SecurityContext`-specific construction path: SC is one ordinary FQCN-keyed entry inside `DispatchMetadata.dispatchContext()`. Framework dispatchers MUST construct envelopes through `DispatchEnvelopeBuilder` so registered `ServiceDispatchContextEncoder`s capture currently-bound holder values.
-
-### DispatchMetadata
-
-Typed dispatch context carried inside a `DispatchEnvelope`. The single propagation channel is the
-FQCN-keyed `dispatchContext()` map; MDC entries ride alongside `SecurityContext`,
-`DurablePropagationMetadata`, etc. under `MDCContext.class.getName()` (wire-format value:
-`DiagnosticContextSnapshot`).
-
-```java
-public final class DispatchMetadata {
-    public Map<String, Object> dispatchContext();
-    public <C> Optional<C> context(Class<C> type);
-
-    public static DispatchMetadata of(Map<String, Object> dispatchContext);
-    public static DispatchMetadata empty();
-}
-```
-
-`of(...)` copies the caller map via `Map.copyOf` so subsequent caller mutations cannot change
-metadata observed by the receiver across the local event-bus hop.
-
-### Result\<T\>
-
-Sealed success/failure monad for event bus reply handling. Implementations: `Success<T>` and `Failure<T>` records.
-
-```java
-public sealed interface Result<T> {
-    static <T> Result<T> success(T value);
-    static <T> Result<T> failure(Throwable cause);
-    <U> Result<U> map(Function<T, U>);
-    <U> Result<U> flatMap(Function<T, Result<U>>);
-    Result<T> recover(Function<Throwable, T>);
-    <U> U fold(Function<T, U> onSuccess, Function<Throwable, U> onFailure);
-    boolean isSuccess();
-    boolean isFailure();
-    Optional<T> toOptional();
-}
-```
-
-### LocalMessageCodec
-
-Local codecs for `DispatchEnvelope<T>` (registered under the name `dispatch.envelope`) and `Result<T>` (under `dispatch.result`), registered by `ServiceDeploymentManager`. Local event bus delivery avoids serialization overhead entirely.
-
-### EventBusClient
-
-`@Singleton` low-level transport abstraction for the framework's dispatch protocol. Wraps the Vert.x event bus with typed codec wiring and exception translation. Service-aware callers should use `ServiceRequestSender` (in `vertique-services`) rather than this class directly.
-
-```java
-@Singleton
-public class EventBusClient {
-
-    @Inject
-    public EventBusClient(Vertx vertx, EventBusExceptionMapper exceptionMapper) { ... }
-
-    // Request/reply — waits for a Result reply; translates ReplyException via EventBusExceptionMapper
-    public Future<Result<?>> request(String address, DispatchEnvelope<?> envelope, long sendTimeoutMs) { ... }
-
-    // Fire-and-forget — no reply expected; uses dispatch.envelope codec with no send timeout
-    public void send(String address, DispatchEnvelope<?> envelope) { ... }
-}
-```
-
-All messages use the `dispatch.envelope` codec registered by `LocalMessageCodec`. Failed `request()` calls translate raw Vert.x `ReplyException`s into typed exceptions via `EventBusExceptionMapper` before failing the future.
-
-### EventBusExceptionMapper
-
-`@Singleton` that translates raw Vert.x `ReplyException` instances into typed event bus exceptions. The set of `ReplyFailure` types is closed (a fixed enum), so this mapper is not extensible.
-
-| ReplyFailure | Translated to |
+| Dependency | Why |
 |---|---|
-| `TIMEOUT` | `EventBusTimeoutException` |
-| `NO_HANDLERS` | `EventBusAddressUnavailableException` |
-| `RECIPIENT_FAILURE` | `EventBusDispatchException` |
-| `ERROR` | `EventBusDispatchException` |
-
-Non-`ReplyException` throwables are returned unchanged.
-
-### Event Bus Exception Hierarchy
-
-Transport-level exceptions produced by `EventBusExceptionMapper`. All extend from the core exception hierarchy:
-
-```
-TechnicalException
-├── EventBusTimeoutException      — TIMEOUT reply; carries address(); subclassed by ServiceTimeoutException
-└── EventBusDispatchException     — RECIPIENT_FAILURE or ERROR reply; carries address(); subclassed by ServiceDispatchException
-
-UnavailableException
-└── EventBusAddressUnavailableException  — NO_HANDLERS reply; carries address()
-```
-
-These are transport exceptions — service-layer callers receive enriched subclasses (`ServiceTimeoutException`, `ServiceDispatchException`, `ServiceUnavailableException`) from `services` that add `contract()` for identifying which service failed.
-
----
-
-## Related ADRs
-
-- ADR-0129: Single `LifecyclePhase` Vocabulary Supersedes `DeploymentPhase` — establishes `LifecyclePhase` (8 values in `dev.vertique.core.lifecycle`) as the single lifecycle ordering vocabulary for both step and verticle-deployment participants; records the `LifecycleOrdered` contract, the verticle-subset invariant, and why `OrderedExtension` cannot be reused for lifecycle steps.
-- ADR-0130: Lifecycle Ownership — Passive Component + Separate Host-Neutral Runner — establishes the passive-component + host-neutral runner split; documents that `ComposeValidator`, `JacksonConfigureStep`, `ComposeValidationStep`, and `CoreLifecycleStepsModule` exist in `dev.vertique.core.lifecycle` so that `vertique-application` has no compile dependency on core internals.
-- ADR-0126: VertiqueRuntime — Container-Neutral Graph-Input Seam — establishes `VertiqueRuntime` as the single, host-agnostic carrier of the two framework graph inputs (`Vertx` + config `JsonObject`); records the no-host-concept, no-service-locator constraint and the `VertiqueComponentFactory<C>` contract as the application-supplied factory seam.
-- ADR-0127: No Host-Bean Locator — Bridges Use Typed Dagger Modules — establishes that embedding host bridges (Spring, Quarkus) adapt host beans through typed Dagger `@Provides` modules rather than a runtime service locator; a missing adapter is a compile-time missing-binding error, not a runtime failure (FR-APP-004 host-bean adapter convention).
-- ADR-0068: ContextValue marker + ContextHolder write-path & SPI enforcement — establishes `ContextValue` as the behavior-free marker interface that gates the `ContextHolder` write path; records the interface-over-annotation choice, the compile-time bounds on typed entry points, the two atomic runtime guard points on erased paths, and the `<T extends ContextValue>` bounds on the five context-producing SPIs in `core.context`.
-- ADR-0084: Framework Extension-Ordering Contract — establishes `OrderedExtension` and `ExtensionPhase` (in `dev.vertique.core.extension`) as the canonical ordering contract for framework extensions; defines phase-dominates-priority rule and the `SYSTEM_FIRST`/`APPLICATION`/`SYSTEM_LAST` semantics.
-- ADR-0085: OrderedExtension Rolled Out Across Sorted Behavioral SPIs — `ObjectMapperCustomizer` and `SecurityIdentityResolver` now follow the framework OrderedExtension ordering contract; `SecurityIdentityResolver` overrides `orderKey()` to return `id()` so the documented `(priority, id)` tie-break is preserved.
-- ADR-0103: Config Regression-Guard Mechanism — establishes review-only (not build-gated) enforcement of config rules, with `code-reviewer` as the mechanical backstop.
-- ADR-0104: Typed Config Architecture — establishes the boundary-parse model, `ConfigParser` as the canonical seam, `@KeyedBy` / `KeyedCollectionDeserializer` for keyed-object collections, and the no-`@Named` rule.
-- ADR-0134: Injectable ConfigParser + Keyed-Collection Module Split — establishes `ConfigParser` as an injectable interface in `core.config`, moves `@KeyedBy` to `core.json`, relocates `KeyedCollectionModule`/`KeyedCollectionDeserializer` to `vertique-json`, and places the parser impl + `ConfigParsingModule` in `vertique-config-core`; records the `@ConfigMapper` override seam and the `config-core → json → core` dependency direction.
-- ADR-0108: Unify exception mapping on a context-aware FailureMapper — establishes `FailureMapper` as the concrete, non-generic shared registry; adds `ContextAwareFailureTranslator` for context-carrying translation; layer mappers now extend rather than wrap `FailureMapper`.
-- ADR-0112: Framework Exception Hierarchy and REST Mapping — establishes the full core semantic-root set (`ConflictException`, `NotFoundException`, `BusinessRuleException` added); the API-semantic-root pattern; the three-boundary layered-mapping rule; no-REST→DB-dependency rule; per-module stage-2 mapper ownership; and the message-sanitization invariant.
-
-- ADR-0134: Interceptor/Observer Combinator Kernel — establishes `Combinators` and `Futures` in `dev.vertique.core.async` as the shared, framework-internal kernel for interceptor and observer control-flow patterns; records the pre-ordered-list contract, the caller-owns-failure-policy rule, and the delegation from services, REST, rest-client, kafka, job, security-event, and audit-sink runtimes.
-- ADR-0141: Method/Parameter Metadata SPI — establishes `MethodMetadata` and `ParameterMetadata` in `dev.vertique.core.codegen` as the neutral, reflection-free metadata contract shared by AOP proxies and future codegen consumers; explains the placement rationale (runtime types in `vertique-core`, not in codegen or AOP modules) and the reflection-free vs. reflective-accessor group split.
-- ADR-0143: REST Metadata-Record Unification onto `core.codegen` — completes ADR-0141: makes parameter-level `findAnnotation`/`hasAnnotation` literal-backed (replacing the v1 always-empty stub), adds `ParameterMetadata.annotationsLazy()`, and introduces `ReflectiveMethodMetadata`/`ReflectiveParameterMetadata` as the reflective backing for the rest-client and jaxrs runtime scanner paths.
-- ADR-0146: jaxrs codegen parity-first parameter annotations — adds `MetadataEmitter.emitParameterMetadata`, a standalone (non-nested-in-`MethodMetadata`) `ParameterMetadata` emission entry point consumed by `vertique-codegen-jaxrs`, plus a mixed-mode overload that pairs literal-backed annotations with a lazy per-parameter reflective fallback for any annotation `AnnotationLiteralEmitter` cannot render (`dev.vertique.rest.jaxrs.runtime.GeneratedJaxRsReflectiveAnnotations`), guaranteeing full runtime parity with the reflective scan path; changes the generated `annotationsLazy()` to return a defensive copy rather than a shared backing array, since `ParamConversionResolver` passes it directly to external `ParamConverterProvider`s and the backing field/reflective read is reused across requests on the same generated route; dedups the jaxrs-local `ReflectiveParameterMetadata` onto this module's implementation.
-
-Security-specific ADRs (ADR-0062, 0063, 0064, 0078, 0113, 0114) are documented by Maven coordinates `dev.vertique:vertique-security-core` and `dev.vertique:vertique-security-runtime`.
+| `io.vertx:vertx-core` | `Vertx`, `EventBus`, `Future`, `Buffer`, `JsonObject` — the substrate every contract here is expressed in |
+| `com.google.dagger:dagger` | `@Module`, `@Provides`, `@Multibinds` for `VertxModule`, `JsonModule`, `HealthCheckModule`, `CoreLifecycleStepsModule` |
+| `jakarta.inject:jakarta.inject-api` | `@Inject`, `@Singleton`, `@Qualifier`, `Provider` on the injectable types and qualifiers |
+| `jakarta.annotation:jakarta.annotation-api` | `@Nullable` on nullable record components, SPI parameters, and return values |
+| `jakarta.ws.rs:jakarta.ws.rs-api` | Declared at compile scope; core's own sources do not reference it, so every consumer receives the JAX-RS API on its classpath transitively |
+| `com.fasterxml.jackson.core:jackson-databind` | `ObjectMapper` on the JSON customization SPI, the profile contracts, and the serialization annotations on result records |
+| `org.slf4j:slf4j-api` | Logging in `JacksonConfigurer` and the other core collaborators |
+| `org.projectlombok:lombok` | `provided` scope, so it never reaches runtime; core's own sources do not use it |
