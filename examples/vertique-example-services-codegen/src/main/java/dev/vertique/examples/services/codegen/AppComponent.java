@@ -10,7 +10,9 @@ import dev.vertique.config.parser.ConfigParsingModule;
 import dev.vertique.core.VertxModule;
 import dev.vertique.core.lifecycle.CoreLifecycleStepsModule;
 import dev.vertique.examples.services.codegen.resource.GeneratedJaxRsResourcesModule;
+import dev.vertique.examples.services.codegen.service.BillingService;
 import dev.vertique.examples.services.codegen.service.GeneratedServicesModule;
+import dev.vertique.examples.services.codegen.service.ShippingService;
 import dev.vertique.management.ManagementModule;
 import dev.vertique.rest.jaxrs.RestModule;
 import dev.vertique.rest.validation.RestValidationModule;
@@ -76,4 +78,21 @@ import jakarta.inject.Singleton;
             ServiceModule.class,
             GeneratedServicesModule.class
         })
-interface AppComponent extends VertiqueApplicationComponent {}
+interface AppComponent extends VertiqueApplicationComponent {
+
+    /**
+     * Returns the singleton {@link BillingService} client proxy bound by {@link ServiceModule},
+     * exposed so tests can assert on the concrete client instance the factory selected.
+     *
+     * @return the {@link BillingService} event bus client proxy
+     */
+    BillingService billingService();
+
+    /**
+     * Returns the singleton {@link ShippingService} client proxy bound by {@link ServiceModule},
+     * exposed so tests can assert on the concrete client instance the factory selected.
+     *
+     * @return the {@link ShippingService} event bus client proxy
+     */
+    ShippingService shippingService();
+}

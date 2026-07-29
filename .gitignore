@@ -14,5 +14,7 @@ target/**
 **/src/**/*.class
 .vertique/
 
-# Agent working state — never part of a published checkout
+# Local agent tooling state: worktrees and agent memory. Never a build
+# input, and an untracked .claude/ makes this checkout fail the exact-clean
+# check that gates the cross-repository combined build.
 .claude/

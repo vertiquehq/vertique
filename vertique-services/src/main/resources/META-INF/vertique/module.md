@@ -12,8 +12,9 @@ SPDX-License-Identifier: EUPL-1.2
 
 `vertique-services` provides typed, in-process service calls over the Vert.x event bus. Applications
 define annotated Java interfaces, implement them as ordinary injectable classes, and call them
-through typed clients while Vertique owns addressing, dispatch context, lifecycle, failure
-transport, and declarative resilience.
+through typed clients — a generated `{Contract}_ServiceClientProxy` companion when
+`vertique-codegen-services` is on the build path, otherwise a JDK dynamic proxy — while Vertique owns
+addressing, dispatch context, lifecycle, failure transport, and declarative resilience.
 
 Use services as an application boundary, not as a remote-service protocol. The current transport is
 the local Vert.x event bus and therefore assumes one application process.
@@ -70,9 +71,11 @@ The services annotation processor discovers service implementations and generate
 implementation providers. Add that generated module and `DispatchModule` to the application
 component.
 
-Callers currently obtain a typed JDK proxy from `ServiceClientFactory.create(Contract.class)`. The
-proxy captures dispatch context, resolves operation metadata, and delegates transport concerns to
-the framework.
+Callers obtain a typed client from `ServiceClientFactory.create(Contract.class)`. `create()` selects
+a generated `{Contract}_ServiceClientProxy` companion when one is on the classpath — emitted by
+`vertique-codegen-services` for every source-root `@ServiceContract` interface — and falls back to a
+JDK dynamic proxy otherwise. Either way, the client captures dispatch context, resolves operation
+metadata, and delegates transport concerns to the framework.
 
 ### Delivery semantics
 
@@ -269,8 +272,38 @@ methods when a matching receive-side decoder is installed.
 
 ### `ServiceClientFactory`
 
-`create(Class<T>)` returns the current typed client implementation for a registered contract.
-Creation fails with `IllegalArgumentException` when the contract is absent from the registry.
+`create(Class<T>)` selects a generated `{Contract}_ServiceClientProxy` companion when one is present
+on the contract's classloader (emitted by `vertique-codegen-services`), preferring it over a JDK
+dynamic proxy, which is used as the fallback when no companion is present. Both paths handle
+`DispatchEnvelope`/`Result` encoding identically and delegate all transport to the framework; policy
+enforcement happens server-side.
+
+#### Invariants & Gotchas
+
+**Create-time contract completeness.** Before building the proxy, `create(Class<T>)` resolves the
+contract in the registry — an unregistered contract throws `IllegalArgumentException`, always
+checked first — then validates that every non-static, non-`Object`-declared public method of the
+contract interface has a corresponding registered operation. Each method's operation id is resolved
+the same way runtime dispatch resolves it (the `@ServiceOperation` value, or the method name when the
+annotation is absent) and looked up in the resolved entry's operations map. A registry superset —
+extra registered operations with no corresponding interface method — is allowed. A missing operation
+fails `create()` immediately with `IllegalStateException` whose message begins with the exact literal
+`"Service client contract mismatch: "`, followed by the contract's fully-qualified name, the missing
+operation id, and the method name.
+
+**Companion selection.** After the completeness check passes, `create()` looks up the generated
+`{Contract}_ServiceClientProxy` companion under the contract's own package, flattening any
+nested-type name (`Outer.Inner` → `Outer_Inner`). An absent companion is the expected fallback and
+yields the JDK dynamic proxy. A *present but broken* companion — a bad constructor, a failing static
+initializer, or a linkage error — fails loudly instead of silently falling back: the constructor's
+own contract-mismatch `IllegalStateException` (message prefixed with the same
+`"Service client contract mismatch: "` literal) is unwrapped and rethrown unchanged, so a
+baked-vs-runtime drift reports identically on both paths; any other failure is wrapped as
+`"Generated service client proxy {fqn} is present but could not be instantiated"`.
+
+**Common mistake:** a hand-built `ServiceContractContributor` entry that omits an operation the
+contract interface declares now fails at `create()` time rather than only surfacing on the first
+invocation of that method.
 
 The client automatically propagates registered dispatch-context values and MDC. When a
 `SecurityContext` is bound to the current Vert.x context and the matching security dispatch codecs
@@ -495,6 +528,9 @@ Java method name.
 - Do not bind a generated and manual implementation for the same contract.
 - Do not use interceptor recovery for authorization or identity-degradation failures; Vertique
   marks those failures non-recoverable.
+- A hand-built `ServiceContractContributor` entry that omits an operation the contract interface
+  declares now fails at `ServiceClientFactory.create()` time, not only on the first invocation of
+  that method.
 
 Transport failures are enriched as service failures:
 
