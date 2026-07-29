@@ -21,7 +21,6 @@ import dev.vertique.job.JobState;
 import dev.vertique.job.JobType;
 import dev.vertique.job.ProgressSnapshot;
 import dev.vertique.logging.MDCContexts;
-import dev.vertique.services.ServiceTargetResolver;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.core.eventbus.MessageConsumer;
@@ -110,7 +109,6 @@ final class CronJobDispatcher {
     private final Vertx vertx;
     private final EventBusClient eventBusClient;
     private final JobRepository repository;
-    private final ServiceTargetResolver serviceTargetResolver;
     private final List<JobInterceptor> interceptors;
     private final long executionTimeoutMs;
     private final long progressFlushIntervalMs;
@@ -134,8 +132,6 @@ final class CronJobDispatcher {
      * @param eventBusClient          the event bus client used for fire-and-forget dispatch
      * @param repository              optional job repository for completion persistence and progress
      *                                flushing; may be {@code null} for in-memory mode
-     * @param serviceTargetResolver   resolver for translating stable service target ids to runtime
-     *                                event bus addresses at dispatch time
      * @param interceptors            job interceptors to invoke around each dispatch, already sorted
      *                                by priority
      * @param executionTimeoutMs      per-execution timeout in milliseconds; {@code 0} disables
@@ -152,7 +148,6 @@ final class CronJobDispatcher {
             Vertx vertx,
             EventBusClient eventBusClient,
             JobRepository repository,
-            ServiceTargetResolver serviceTargetResolver,
             List<JobInterceptor> interceptors,
             long executionTimeoutMs,
             long progressFlushIntervalMs,
@@ -161,7 +156,6 @@ final class CronJobDispatcher {
         this.vertx = vertx;
         this.eventBusClient = eventBusClient;
         this.repository = repository;
-        this.serviceTargetResolver = serviceTargetResolver;
         this.interceptors = interceptors;
         this.executionTimeoutMs = executionTimeoutMs;
         this.progressFlushIntervalMs = progressFlushIntervalMs;
@@ -181,13 +175,22 @@ final class CronJobDispatcher {
      * <p>Cron does not retry: if the execution fails, it is recorded as {@link JobState#FAILED}
      * for dashboard visibility. The next scheduled fire will produce a fresh execution.
      *
+     * <p>The target address is <b>not</b> resolved here: the scheduler resolves it once per fire —
+     * at fire admission, before any execution record is written — and hands it in, so the address
+     * a tracked execution records is by construction the address dispatched to.
+     *
      * @param job                the cron job to dispatch
      * @param scheduledAt        the time this execution was scheduled for
      * @param execution          the persisted execution record, or {@code null} if not tracked
+     * @param effectiveAddress   the resolved, non-blank event bus address to send to
      * @param completionCallback callback to invoke when this execution ends
      */
     void dispatch(
-            CronJobDefinition job, Instant scheduledAt, JobExecution execution, CompletionCallback completionCallback) {
+            CronJobDefinition job,
+            Instant scheduledAt,
+            JobExecution execution,
+            String effectiveAddress,
+            CompletionCallback completionCallback) {
         UUID executionId = execution != null ? execution.id() : UUID.randomUUID();
         Instant startedAt = Instant.now();
         DefaultJobContext jobContext = new DefaultJobContext(job.id(), executionId, 0, JobType.CRON);
@@ -398,13 +401,6 @@ final class CronJobDispatcher {
         try (dev.vertique.job.SchedulerMdcScope scope = dev.vertique.job.SchedulerMdcScope.install(mdc)) {
             JobInterceptors.fireOnDispatch(interceptors, dispatchCtx, log);
             log.debug("Dispatching cron job '{}' execution {}", job.id(), executionId);
-            String effectiveAddress;
-            if (job.target() instanceof CronTargetReference.ServiceTarget st) {
-                effectiveAddress =
-                        serviceTargetResolver.resolve(st.stableTargetId()).address();
-            } else {
-                effectiveAddress = job.handlerAddress();
-            }
             eventBusClient.send(effectiveAddress, body);
         }
     }

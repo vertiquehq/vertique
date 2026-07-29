@@ -207,7 +207,6 @@ public class CronScheduler {
                 vertx,
                 eventBusClient,
                 repository,
-                serviceTargetResolver,
                 sortedInterceptors,
                 executionTimeoutMs,
                 progressFlushIntervalMs,
@@ -415,6 +414,10 @@ public class CronScheduler {
      * a concurrency slot, and dispatches. Losers (INSERT conflicted) log a debug message and
      * return without dispatching.
      *
+     * <p>The effective event bus address is resolved <em>after</em> the in-flight guard is taken
+     * and <em>before</em> any row is written, so an unresolvable target never persists an
+     * execution record. See {@link #resolveEffectiveAddress(CronJobDefinition)}.
+     *
      * @param job         the cron job to fire
      * @param scheduledAt the time this execution was scheduled for
      */
@@ -424,14 +427,22 @@ public class CronScheduler {
             log.debug("SINGLE_INSTANCE cron '{}' skipped — already in-flight on this node", job.id());
             return;
         }
-        JobExecution execution = buildExecution(job, scheduledAt, JobState.PROCESSING);
+        String effectiveAddress = resolveEffectiveAddress(job);
+        if (effectiveAddress == null) {
+            // Release what we took; no slot was acquired and no row has been written yet.
+            concurrency.removeInFlight(job.id());
+            return;
+        }
+        JobExecution execution = buildExecution(job, scheduledAt, JobState.PROCESSING, effectiveAddress);
         repository
                 .tryInsert(execution)
                 .onSuccess(optId -> {
                     if (optId.isPresent()) {
                         log.debug("SINGLE_INSTANCE cron '{}' won at {}", job.id(), scheduledAt);
                         concurrency.acquireSlotAndRun(
-                                job.id(), () -> dispatcher.dispatch(job, scheduledAt, execution, this::markCompleted));
+                                job.id(),
+                                () -> dispatcher.dispatch(
+                                        job, scheduledAt, execution, effectiveAddress, this::markCompleted));
                     } else {
                         log.debug("SINGLE_INSTANCE cron '{}' skipped — another node won", job.id());
                         concurrency.removeInFlight(job.id());
@@ -451,6 +462,11 @@ public class CronScheduler {
      * If {@code tracked=true} and a repository is available, persists the execution before
      * dispatching. On persistence failure, dispatches anyway (tracking is best-effort).
      *
+     * <p>Overlap admission is decided <em>first</em>: the effective event bus address is resolved
+     * only after {@code tryAcquireInFlight} succeeds, so a resolver failure can never convert an
+     * {@link OverlapPolicy#QUEUE_ONE} overlap into a silently dropped tick. See
+     * {@link #resolveEffectiveAddress(CronJobDefinition)}.
+     *
      * @param job         the cron job to fire
      * @param scheduledAt the time this execution was scheduled for
      */
@@ -459,23 +475,33 @@ public class CronScheduler {
             concurrency.handleOverlap(job, scheduledAt);
             return;
         }
+        String effectiveAddress = resolveEffectiveAddress(job);
+        if (effectiveAddress == null) {
+            // Release what we took; no slot was acquired and no row has been written yet.
+            concurrency.removeInFlight(job.id());
+            return;
+        }
         if (job.tracked() && repository != null) {
-            JobExecution execution = buildExecution(job, scheduledAt, JobState.PROCESSING);
+            JobExecution execution = buildExecution(job, scheduledAt, JobState.PROCESSING, effectiveAddress);
             repository
                     .save(execution)
                     .onSuccess(id -> concurrency.acquireSlotAndRun(
-                            job.id(), () -> dispatcher.dispatch(job, scheduledAt, execution, this::markCompleted)))
+                            job.id(),
+                            () -> dispatcher.dispatch(
+                                    job, scheduledAt, execution, effectiveAddress, this::markCompleted)))
                     .onFailure(err -> {
                         log.warn(
                                 "Failed to persist execution for '{}' — dispatching in-memory: {}",
                                 job.id(),
                                 err.getMessage());
                         concurrency.acquireSlotAndRun(
-                                job.id(), () -> dispatcher.dispatch(job, scheduledAt, null, this::markCompleted));
+                                job.id(),
+                                () -> dispatcher.dispatch(
+                                        job, scheduledAt, null, effectiveAddress, this::markCompleted));
                     });
         } else {
             concurrency.acquireSlotAndRun(
-                    job.id(), () -> dispatcher.dispatch(job, scheduledAt, null, this::markCompleted));
+                    job.id(), () -> dispatcher.dispatch(job, scheduledAt, null, effectiveAddress, this::markCompleted));
         }
     }
 
@@ -488,6 +514,12 @@ public class CronScheduler {
      * <p>For tracked QUEUE_ONE re-dispatches, a fresh execution record is saved before dispatching
      * the queued fire.
      *
+     * <p>A queued fire is a <em>new</em> fire, so it resolves its own effective event bus address
+     * — this path bypasses {@link #fire(CronJobDefinition, Instant)} entirely and therefore needs
+     * the resolution gate independently. When resolution fails, <b>both</b> guards are released:
+     * {@link CronConcurrencyManager#markCompleted(String)} deliberately retains the in-flight
+     * entry when a pending fire exists, and the concurrency slot is still held for reuse.
+     *
      * @param job the cron job that completed
      */
     private void markCompleted(CronJobDefinition job) {
@@ -499,20 +531,27 @@ public class CronScheduler {
             // Slot is reused — dispatch directly rather than going through fireEveryInstance()
             // which would double-count the slot.
             log.debug("Cron job '{}' running queued fire (scheduled={})", job.id(), pending);
+            String effectiveAddress = resolveEffectiveAddress(job);
+            if (effectiveAddress == null) {
+                concurrency.removeInFlight(job.id());
+                concurrency.releaseSlot();
+                return;
+            }
             if (job.tracked() && repository != null) {
-                JobExecution queuedExecution = buildExecution(job, pending, JobState.PROCESSING);
+                JobExecution queuedExecution = buildExecution(job, pending, JobState.PROCESSING, effectiveAddress);
                 repository
                         .save(queuedExecution)
-                        .onSuccess(id -> dispatcher.dispatch(job, pending, queuedExecution, this::markCompleted))
+                        .onSuccess(id -> dispatcher.dispatch(
+                                job, pending, queuedExecution, effectiveAddress, this::markCompleted))
                         .onFailure(err -> {
                             log.warn(
                                     "Failed to persist queued execution for '{}' — dispatching in-memory: {}",
                                     job.id(),
                                     err.getMessage());
-                            dispatcher.dispatch(job, pending, null, this::markCompleted);
+                            dispatcher.dispatch(job, pending, null, effectiveAddress, this::markCompleted);
                         });
             } else {
-                dispatcher.dispatch(job, pending, null, this::markCompleted);
+                dispatcher.dispatch(job, pending, null, effectiveAddress, this::markCompleted);
             }
         } else {
             concurrency.releaseSlot();
@@ -522,22 +561,86 @@ public class CronScheduler {
     // --- Helper methods ---
 
     /**
+     * Resolves the effective event bus address for one fire of {@code job}.
+     *
+     * <p>For a {@link CronTargetReference.ServiceTarget} the stable target id is resolved through
+     * {@link ServiceTargetResolver}; for a {@link CronTargetReference.EventBusTarget} the stored
+     * {@link CronJobDefinition#handlerAddress()} is used. Both variants are then subject to the
+     * same non-blank check, so no caller can produce an execution record with a {@code null} or
+     * blank {@link JobExecution#handler()}.
+     *
+     * <p>Returns {@code null} — after logging at {@code ERROR} with the job id and the target's
+     * canonical form — when the resolver throws or the effective address is null/blank, so the
+     * caller can abandon the fire and release whatever guard it already holds. The failure is
+     * never rethrown: a resolution failure skips that fire only, and the next tick retries.
+     *
+     * <p>Resolving per fire rather than immediately before the event-bus send is sound only
+     * because the built-in {@code DefaultServiceTargetResolver} snapshots its indexes with
+     * {@code Map.copyOf} at construction. "Per fire" therefore means <em>fixed at fire
+     * admission</em>. A mutable or reloadable {@link ServiceTargetResolver} implementation would
+     * invalidate that assumption; see ADR-0201.
+     *
+     * @param job the cron job whose target is being resolved
+     * @return the non-blank effective event bus address, or {@code null} when the target cannot be
+     *         resolved to one
+     */
+    private String resolveEffectiveAddress(CronJobDefinition job) {
+        // Never dereference job.target() unguarded, including in the log statements below. This
+        // method's contract is "return null, never throw": a throw would escape into
+        // fireSingleInstance/fireEveryInstance *after* they acquired the in-flight guard, leaking
+        // it permanently — the exact failure mode this gate exists to prevent. CronJobDefinition
+        // does not validate that target is non-null, so the guard cannot assume it.
+        CronTargetReference target = job.target();
+        String targetDescription = target != null ? target.toCanonical() : "<none>";
+        String address;
+        if (target instanceof CronTargetReference.ServiceTarget serviceTarget) {
+            try {
+                address = serviceTargetResolver
+                        .resolve(serviceTarget.stableTargetId())
+                        .address();
+            } catch (Exception e) {
+                log.error(
+                        "Cron job '{}' target '{}' could not be resolved — skipping this fire",
+                        job.id(),
+                        targetDescription,
+                        e);
+                return null;
+            }
+        } else {
+            address = job.handlerAddress();
+        }
+        if (address == null || address.isBlank()) {
+            log.error(
+                    "Cron job '{}' target '{}' resolved to a null or blank event bus address — skipping this fire",
+                    job.id(),
+                    targetDescription);
+            return null;
+        }
+        return address;
+    }
+
+    /**
      * Builds a {@link JobExecution} record for a cron fire. The execution ID is freshly
      * generated; the record captures the current instant as {@code startedAt} and uses the job
      * definition's parameters.
      *
-     * @param job         the cron job being executed
-     * @param scheduledAt the scheduled fire time
-     * @param state       the initial execution state (typically {@link JobState#PROCESSING})
+     * @param job              the cron job being executed
+     * @param scheduledAt      the scheduled fire time
+     * @param state            the initial execution state (typically {@link JobState#PROCESSING})
+     * @param effectiveAddress the non-blank event bus address this fire dispatches to, as returned
+     *                         by {@link #resolveEffectiveAddress(CronJobDefinition)}; recorded as
+     *                         the execution's {@code handler} so the persisted address always
+     *                         equals the dispatched one
      * @return the constructed execution record
      */
-    private JobExecution buildExecution(CronJobDefinition job, Instant scheduledAt, JobState state) {
+    private JobExecution buildExecution(
+            CronJobDefinition job, Instant scheduledAt, JobState state, String effectiveAddress) {
         UUID executionId = UUID.randomUUID();
         return new JobExecution(
                 executionId,
                 job.id(),
                 JobType.CRON,
-                job.handlerAddress(),
+                effectiveAddress,
                 "cron",
                 state,
                 0,
