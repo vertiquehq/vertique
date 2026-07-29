@@ -15,12 +15,12 @@ import java.util.Map;
 /**
  * Hand-written stand-in for the generated companion of {@link SelectableContract} (CG-015 §4.1).
  *
- * <p>Mimics what {@code ClientProxyEmitter} will emit: a {@code public final} class implementing
+ * <p>Mimics what {@code ClientProxyEmitter} emits: a {@code public final} class implementing
  * the contract, the frozen 3-arg constructor, per-operation metadata resolved eagerly at
  * construction (a missing operation fails loudly with the §4.2-pinned mismatch prefix), and
  * dispatch delegated to {@link ServiceRequestSender}. Used by
- * {@link ServiceClientFactoryCompanionTest} to prove companion selection before the real
- * emitter/seam exist.
+ * {@link ServiceClientFactoryCompanionTest} to prove companion selection, without depending on the
+ * real emitter — this module cannot run {@code ClientProxyEmitter} against its own test sources.
  *
  * <p>{@code ServiceClientProxyParityTest} (codegen-services) independently proves that the real
  * emitter's generated companion output behaves identically to this hand-written stand-in.

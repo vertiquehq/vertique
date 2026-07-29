@@ -25,7 +25,6 @@ import java.util.Optional;
 import javax.annotation.processing.Generated;
 import javax.lang.model.element.Modifier;
 import javax.lang.model.element.TypeElement;
-import javax.lang.model.element.VariableElement;
 import javax.lang.model.type.TypeMirror;
 
 /**
@@ -205,20 +204,29 @@ public final class ClientProxyEmitter {
 
     /**
      * Reports whether the given operation's contract method has exactly one parameter whose
-     * erasure is {@code ServiceMethodMeta} — the true erasure collision with the generated
-     * {@code _payloadIndex_}/{@code _securityContextIndex_} helpers, both declared as
+     * <em>resolved</em> erasure is {@code ServiceMethodMeta} — the true erasure collision with the
+     * generated {@code _payloadIndex_}/{@code _securityContextIndex_} helpers, both declared as
      * {@code private static int helper(ServiceMethodMeta)}.
+     *
+     * <p>This reads {@link OperationModel#params()} — the {@link ParamModel} list extraction
+     * already resolved via {@code Types.asMemberOf(...)} against the viewing contract type — rather
+     * than {@code op.contractMethod().getParameters()}'s element-declared types. A contract method
+     * inherited from a generic super-interface (e.g. {@code Parent<T> { ... _payloadIndex_(T) }}
+     * with {@code Child extends Parent<ServiceMethodMeta>}) has a declared parameter type of the
+     * type variable {@code T}, which erases to {@code Object} — checking the declared type would
+     * miss the collision entirely, even though the emitter emits the <em>resolved</em>
+     * {@code ServiceMethodMeta} parameter type into the generated override.
      *
      * <p>Returns {@code false} (no collision) when {@code ServiceMethodMeta} is not resolvable on
      * the annotation-processor classpath — the emitted proxy would fail to compile for an
      * unrelated reason in that case, and this check has nothing safe to compare against.
      *
-     * @param op the operation whose contract method's erasure to inspect; must not be {@code null}
-     * @return {@code true} if the contract method's erased parameter list is exactly
-     *         {@code (ServiceMethodMeta)}
+     * @param op the operation whose resolved parameter erasure to inspect; must not be {@code null}
+     * @return {@code true} if the resolved parameter list is exactly one parameter whose erasure is
+     *         {@code ServiceMethodMeta}
      */
     private boolean hasServiceMethodMetaErasure(OperationModel op) {
-        List<? extends VariableElement> params = op.contractMethod().getParameters();
+        List<ParamModel> params = op.params();
         if (params.size() != 1) {
             return false;
         }
@@ -226,7 +234,7 @@ public final class ClientProxyEmitter {
         if (serviceMethodMetaElement == null) {
             return false;
         }
-        TypeMirror paramErasure = ctx.types().erasure(params.get(0).asType());
+        TypeMirror paramErasure = ctx.types().erasure(params.getFirst().type());
         TypeMirror serviceMethodMetaErasure = ctx.types().erasure(serviceMethodMetaElement.asType());
         return ctx.types().isSameType(paramErasure, serviceMethodMetaErasure);
     }
