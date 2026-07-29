@@ -33,6 +33,7 @@ import dev.vertique.security.authz.AuthorizationClaims;
 import dev.vertique.security.origin.RequestOrigin;
 import dev.vertique.services.config.ServicesConfig;
 import dev.vertique.services.dispatch.ServiceMethodMeta;
+import dev.vertique.services.dispatch.ServiceMethodMeta.ParamSource;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.core.eventbus.DeliveryOptions;
@@ -40,6 +41,7 @@ import io.vertx.core.internal.ContextInternal;
 import io.vertx.core.json.JsonObject;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
+import java.lang.reflect.Method;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -142,6 +144,41 @@ class ServiceClientFactoryTest {
      */
     private static ConfigParser configParser() {
         return new DefaultConfigParser(DefaultConfigMapper.lenient());
+    }
+
+    /**
+     * Registers a single hand-built entry into a fresh registry via the
+     * {@link ServiceContractContributor} SPI, so the registry's operation map is exactly what the
+     * caller supplied (no {@code @ServiceContract} implementation scanning involved).
+     *
+     * <p>Package-private so {@code ServiceClientFactoryCompanionTest} can reuse it rather than
+     * duplicating an identical helper.
+     *
+     * @param entry the pre-built contract entry to register
+     * @return a registry containing only {@code entry}
+     */
+    static ServiceContractRegistry registryOf(ServiceContractRegistry.ContractEntry<?> entry) {
+        ServiceContractContributor contributor = config -> List.of(entry);
+        return ServiceContractRegistry.build(Set.of(), Set.of(contributor), new JsonObject(), configParser());
+    }
+
+    /**
+     * Builds a {@link ServiceRequestSender} backed by a real {@link EventBusClient} and a permissive
+     * mocked {@link ServiceSupervisor} that reports every address as available.
+     *
+     * <p>Package-private so {@code ServiceClientFactoryCompanionTest} can reuse it rather than
+     * duplicating an identical helper.
+     *
+     * @param vertx the Vert.x instance
+     * @return a sender usable to construct a {@link ServiceClientFactory}
+     */
+    static ServiceRequestSender availableSender(Vertx vertx) {
+        EventBusExceptionMapper exceptionMapper = new EventBusExceptionMapper();
+        EventBusClient eventBusClient = new EventBusClient(vertx, exceptionMapper);
+        ServiceSupervisor availableSupervisor = mock(ServiceSupervisor.class);
+        when(availableSupervisor.isAvailable(any())).thenReturn(true);
+        return new ServiceRequestSender(
+                eventBusClient, availableSupervisor, new ServicesConfig(null, List.of()), Map.of());
     }
 
     private static ServiceContractRegistry registry;
@@ -706,6 +743,191 @@ class ServiceClientFactoryTest {
 
             assertTrue(ctx.awaitCompletion(5, TimeUnit.SECONDS));
             if (ctx.failed()) throw ctx.causeOfFailure();
+        }
+    }
+
+    // --- create()-time Completeness Check Tests (CG-015 S2) ---
+
+    /**
+     * Tests for the §4.2 step-2 {@code create()}-time completeness check (CG-015 S2).
+     *
+     * <p>Entries are hand-built via {@link ServiceContractEntries#deployable()} and registered
+     * through the {@link ServiceContractContributor} SPI — the cleanest existing path for
+     * installing a caller-controlled {@link ServiceContractRegistry.ContractEntry} from this
+     * package, since {@link ServiceContractRegistry} exposes no direct entry-list constructor
+     * (its constructor is private; {@code build(Set, ConfigParser)} always re-derives entries by
+     * scanning {@code @ServiceContract} implementations).
+     */
+    @Nested
+    @DisplayName("CreateTimeCompletenessCheck")
+    class CreateTimeCompletenessCheck {
+
+        /** Two-operation contract used to exercise a deliberately incomplete registry entry. */
+        @ServiceContract("partial")
+        interface PartialContract {
+            /**
+             * First operation, always present on hand-built entries in this nested class.
+             *
+             * @param x the payload string
+             * @return a future of the echoed payload
+             */
+            @ServiceOperation("opA")
+            Future<String> opA(String x);
+
+            /**
+             * Second operation, deliberately omitted from the incomplete-entry fixture.
+             *
+             * @param x the payload string
+             * @return a future of the echoed payload
+             */
+            @ServiceOperation("opB")
+            Future<String> opB(String x);
+        }
+
+        /** Minimal implementation satisfying {@link PartialContract} for entry construction. */
+        static class PartialContractImpl implements PartialContract {
+            @Override
+            public Future<String> opA(String x) {
+                return Future.succeededFuture(x);
+            }
+
+            @Override
+            public Future<String> opB(String x) {
+                return Future.succeededFuture(x);
+            }
+        }
+
+        /**
+         * §4.2 step 2: an entry that omits one of the contract's client-dispatchable operations
+         * must fail {@code create()} fast with an {@link IllegalStateException} whose message
+         * begins with the §4.2-pinned literal {@link ServiceClientFactory#CONTRACT_MISMATCH_PREFIX}
+         * and names both the contract FQCN and the missing operation id ({@code opB}).
+         *
+         * <p>{@code create()} now runs {@code requireCompleteContract()} immediately after
+         * {@code registry.resolve(contract)} and before proxy construction, superseding the prior
+         * per-invocation {@code Future.failedFuture} behavior — the missing operation is caught at
+         * {@code create()} time rather than only surfacing when {@code opB} is actually called. The
+         * prefix constant equality is pinned separately by {@code prefixConstantMatchesPinnedLiteral}.
+         *
+         * @param vertx the Vert.x instance
+         * @throws NoSuchMethodException never — {@code opA} is a real declared method
+         */
+        @Test
+        @DisplayName("Should fail create() fast when a registry entry omits a contract operation")
+        void shouldFailCreateWhenEntryMissingOperation(Vertx vertx) throws NoSuchMethodException {
+            Method opAMethod = PartialContract.class.getMethod("opA", String.class);
+            ServiceContractRegistry.ContractEntry<?> entry = ServiceContractEntries.deployable()
+                    .contract(PartialContract.class)
+                    .serviceInstance(new PartialContractImpl())
+                    .name("partial")
+                    .operation("opA")
+                    .method(opAMethod)
+                    .payloadType(String.class)
+                    .returnType(String.class)
+                    .param("x", ParamSource.PAYLOAD, String.class)
+                    .done()
+                    .build();
+            ServiceContractRegistry localRegistry = registryOf(entry);
+            ServiceClientFactory factory = new ServiceClientFactory(availableSender(vertx), localRegistry);
+
+            IllegalStateException ex =
+                    assertThrows(IllegalStateException.class, () -> factory.create(PartialContract.class));
+            assertTrue(
+                    ex.getMessage().startsWith("Service client contract mismatch: "),
+                    "Message must start with the §4.2-pinned mismatch prefix, was: " + ex.getMessage());
+            assertTrue(
+                    ex.getMessage().contains(PartialContract.class.getName()),
+                    "Message must name the contract FQCN, was: " + ex.getMessage());
+            assertTrue(ex.getMessage().contains("opB"), "Message must name the missing operation id 'opB'");
+        }
+
+        /**
+         * Ordering guard (§4.2 step 1 precedes step 2): an unregistered contract must still fail
+         * with {@link IllegalArgumentException} from {@link ServiceContractRegistry#resolve}, never
+         * reaching the completeness check. This test already passes today (the registry lookup is
+         * unchanged) and must keep passing once step 2 lands.
+         */
+        @Test
+        @DisplayName(
+                "Should throw IllegalArgumentException for an unregistered contract before the completeness check runs")
+        void shouldThrowIllegalArgumentForUnregisteredContractBeforeCompletenessCheck() {
+            ServiceClientFactory factory = new ServiceClientFactory(sender, registry);
+            assertThrows(IllegalArgumentException.class, () -> factory.create(PartialContract.class));
+        }
+
+        /**
+         * Superset guard: a registry entry may declare MORE operations than the contract interface
+         * (an extra {@code extraOp} key with no corresponding interface method). {@code create()}
+         * must succeed and return a working proxy — the completeness check only requires interface
+         * methods to be present in {@code entry.operations()}, never the reverse. This test already
+         * passes today and must keep passing once step 2 lands.
+         *
+         * @param vertx the Vert.x instance
+         * @param ctx   the test context
+         * @throws Throwable if the test times out or the assertion fails
+         */
+        @Test
+        @DisplayName("Should allow a registry entry whose operations are a superset of the contract's methods")
+        void shouldAllowRegistrySupersetEntries(Vertx vertx, VertxTestContext ctx) throws Throwable {
+            Method opAMethod = PartialContract.class.getMethod("opA", String.class);
+            Method opBMethod = PartialContract.class.getMethod("opB", String.class);
+            ServiceContractRegistry.ContractEntry<?> entry = ServiceContractEntries.deployable()
+                    .contract(PartialContract.class)
+                    .serviceInstance(new PartialContractImpl())
+                    .name("partial-superset")
+                    .operation("opA")
+                    .method(opAMethod)
+                    .payloadType(String.class)
+                    .returnType(String.class)
+                    .param("x", ParamSource.PAYLOAD, String.class)
+                    .done()
+                    .operation("opB")
+                    .method(opBMethod)
+                    .payloadType(String.class)
+                    .returnType(String.class)
+                    .param("x", ParamSource.PAYLOAD, String.class)
+                    .done()
+                    .operation("extraOp")
+                    .method(opAMethod)
+                    .payloadType(String.class)
+                    .returnType(String.class)
+                    .param("x", ParamSource.PAYLOAD, String.class)
+                    .done()
+                    .build();
+            ServiceContractRegistry localRegistry = registryOf(entry);
+            ServiceRequestSender localSender = availableSender(vertx);
+
+            DeliveryOptions replyOptions = new DeliveryOptions().setCodecName("dispatch.result");
+            for (ServiceMethodMeta meta : entry.operations().values()) {
+                vertx.eventBus().<DispatchEnvelope<?>>consumer(meta.address(), msg -> {
+                    Object payload = msg.body().payload();
+                    msg.reply(Result.success("got:" + payload), replyOptions);
+                });
+            }
+
+            ServiceClientFactory factory = new ServiceClientFactory(localSender, localRegistry);
+            PartialContract proxy = factory.create(PartialContract.class);
+            assertNotNull(proxy, "create() must return a proxy when the entry is a superset of the contract");
+
+            proxy.opA("hi").onComplete(ctx.succeeding(result -> {
+                ctx.verify(() -> assertEquals("got:hi", result));
+                ctx.completeNow();
+            }));
+
+            assertTrue(ctx.awaitCompletion(5, TimeUnit.SECONDS));
+            if (ctx.failed()) throw ctx.causeOfFailure();
+        }
+
+        /**
+         * §4.2 protocol pin: {@link ServiceClientFactory#CONTRACT_MISMATCH_PREFIX} must equal the
+         * exact literal frozen by the plan. The emitter-side twin assertion lives in
+         * {@code ServiceClientProxyEmissionTest} (codegen-services) — drift in either
+         * implementation breaks a test.
+         */
+        @Test
+        @DisplayName("Prefix constant must match the §4.2-pinned literal")
+        void prefixConstantMatchesPinnedLiteral() {
+            assertEquals("Service client contract mismatch: ", ServiceClientFactory.CONTRACT_MISMATCH_PREFIX);
         }
     }
 

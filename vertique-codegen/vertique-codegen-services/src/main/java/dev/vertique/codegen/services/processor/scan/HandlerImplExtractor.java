@@ -27,7 +27,10 @@ import javax.lang.model.type.TypeMirror;
  * </ul>
  *
  * <p>Errors during extraction (missing handler method, ambiguous overload, return type mismatch)
- * are emitted as diagnostics and reflected in the returned {@code valid} flag.
+ * are emitted as diagnostics and reflected in the returned {@link ExtractionResult}. Unlike
+ * {@link DirectImplExtractor}, whose failures are all rooted in the contract, this extractor mixes
+ * roots — so its result reports {@link ExtractionResult#contractShapeValid()} and
+ * {@link ExtractionResult#implSideValid()} separately.
  */
 public final class HandlerImplExtractor {
 
@@ -47,25 +50,49 @@ public final class HandlerImplExtractor {
     }
 
     /**
-     * Result of an extraction attempt.
+     * Result of an extraction attempt, split by the <em>root</em> of any failure.
      *
-     * @param model the extracted model; {@code null} when {@code valid} is {@code false}
-     * @param valid {@code false} if any error diagnostic was emitted during extraction
+     * <p>The two flags exist because the two failure roots have different consequences for the
+     * contract-only client-proxy path: a defect rooted in the <em>contract</em> (its return types or
+     * parameter shapes) would be re-reported by that path, so it must suppress it; a defect rooted in
+     * the <em>implementation</em> (a missing, overloaded, or mis-parameterised handler method) says
+     * nothing about the contract and must <em>not</em> suppress client-proxy emission.
+     *
+     * @param model             the extracted model; {@code null} when either flag is {@code false}
+     * @param contractShapeValid {@code false} if an error diagnostic rooted in the <em>contract</em>
+     *                          method (return-type unwrapping or contract-parameter classification)
+     *                          was emitted during extraction
+     * @param implSideValid     {@code false} if an error diagnostic rooted in the <em>handler
+     *                          implementation</em> (missing handler method, handler overload, or
+     *                          handler-parameter classification) was emitted during extraction
      */
-    public record ExtractionResult(ContractModel model, boolean valid) {}
+    public record ExtractionResult(ContractModel model, boolean contractShapeValid, boolean implSideValid) {
+
+        /**
+         * Returns whether extraction succeeded outright — no diagnostic of either root was emitted.
+         *
+         * @return {@code true} when both {@link #contractShapeValid()} and {@link #implSideValid()}
+         *         hold, i.e. {@link #model()} is non-{@code null}
+         */
+        public boolean valid() {
+            return contractShapeValid && implSideValid;
+        }
+    }
 
     /**
      * Extracts the {@link ContractModel} for the given handler-pattern candidate.
      *
      * @param candidate the candidate to extract; must have {@code kind == HANDLER}
-     * @return an {@link ExtractionResult} with {@code valid = false} if any error was encountered
+     * @return an {@link ExtractionResult} whose flags report which failure root(s), if any, were
+     *         encountered
      */
     public ExtractionResult extract(ImplCandidate candidate) {
         TypeElement contractType = candidate.contractType();
         TypeElement implType = candidate.implType();
 
         List<OperationModel> operations = new ArrayList<>();
-        boolean valid = true;
+        boolean contractShapeValid = true;
+        boolean implSideValid = true;
 
         List<ExecutableElement> contractMethods = MethodExtraction.publicNonObjectMethods(contractType, ctx);
         List<ExecutableElement> handlerMethods = MethodExtraction.publicNonObjectMethods(implType, ctx);
@@ -81,6 +108,7 @@ public final class HandlerImplExtractor {
                     .toList();
 
             if (candidates.isEmpty()) {
+                // Impl-rooted: the contract itself is fine, the handler simply lacks the method.
                 ctx.diagnostics()
                         .error(
                                 implType,
@@ -88,12 +116,13 @@ public final class HandlerImplExtractor {
                                 implType.getSimpleName(),
                                 contractType.getSimpleName(),
                                 contractMethod.getSimpleName());
-                valid = false;
+                implSideValid = false;
                 continue;
             }
 
             if (candidates.size() > 1) {
-                // HandlerOverloadValidator will also catch this; report here too for early feedback
+                // Impl-rooted. HandlerOverloadValidator will also catch this; report here too for
+                // early feedback.
                 ctx.diagnostics()
                         .error(
                                 implType,
@@ -102,7 +131,7 @@ public final class HandlerImplExtractor {
                                 implType.getSimpleName(),
                                 candidates.size(),
                                 contractMethod.getSimpleName());
-                valid = false;
+                implSideValid = false;
                 continue;
             }
 
@@ -112,26 +141,29 @@ public final class HandlerImplExtractor {
             String operationName = opIdResolver.resolveOperationName(contractMethod);
             String stableOpId = opIdResolver.resolveStableOperationId(contractMethod);
 
-            // Unwrap return type from contract method
+            // Unwrap return type from contract method — contract-rooted
             boolean[] returnTypeErrorSink = {false};
             TypeMirror returnType = MethodExtraction.unwrapReturnType(contractMethod, ctx, returnTypeErrorSink);
             if (returnTypeErrorSink[0]) {
+                contractShapeValid = false;
                 hasError = true;
             }
 
-            // Classify contract params (payload only)
+            // Classify contract params (payload only) — contract-rooted
             boolean[] contractParamErrorSink = {false};
             List<ParamModel> contractParams =
                     paramClassifier.classifyContractParams(contractMethod, contractParamErrorSink);
             if (contractParamErrorSink[0]) {
+                contractShapeValid = false;
                 hasError = true;
             }
 
-            // Classify handler params (payload + context)
+            // Classify handler params (payload + context) — impl-rooted
             boolean[] handlerParamErrorSink = {false};
             List<ParamModel> handlerParams =
                     paramClassifier.classifyHandlerParams(handlerMethod, handlerParamErrorSink);
             if (handlerParamErrorSink[0]) {
+                implSideValid = false;
                 hasError = true;
             }
 
@@ -139,7 +171,6 @@ public final class HandlerImplExtractor {
             boolean oneWay = AnnotationMirrors.isPresent(contractMethod, ServiceAnnotations.ONE_WAY);
 
             if (hasError) {
-                valid = false;
                 continue;
             }
 
@@ -162,11 +193,11 @@ public final class HandlerImplExtractor {
                     oneWay));
         }
 
-        if (!valid) {
-            return new ExtractionResult(null, false);
+        if (!contractShapeValid || !implSideValid) {
+            return new ExtractionResult(null, contractShapeValid, implSideValid);
         }
 
         return new ExtractionResult(
-                new ContractModel(contractType, implType, ImplKind.HANDLER, List.copyOf(operations)), true);
+                new ContractModel(contractType, implType, ImplKind.HANDLER, List.copyOf(operations)), true, true);
     }
 }

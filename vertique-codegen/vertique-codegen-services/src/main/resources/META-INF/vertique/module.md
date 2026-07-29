@@ -125,6 +125,7 @@ error, instead of deploying with an empty service registry.
 | Generated type | Package | Cardinality |
 |---|---|---|
 | `{Contract}_ContractContributor` | The **contract interface's** package | One per contract group |
+| `{Contract}_ServiceClientProxy` | The **contract interface's** package | One per source-root `@ServiceContract` interface |
 | `GeneratedServicesModule` | Longest common prefix of the emitted contributors' packages, or the `vertique.codegen.package` option when set | One per compilation unit |
 
 Each contributor is `public final`, annotated `@Generated` and `@Singleton`, implements
@@ -154,6 +155,95 @@ Applications never edit or subclass these types. They are referenced in exactly 
 `@Component` modules list — and are otherwise consumed by `DispatchModule`'s
 `Set<ServiceContractContributor>` multibinding.
 
+### Client Contract Discovery
+
+`ServiceContractProcessor` runs a second, independent scan in the same round to emit client proxies:
+an annotation-rooted scan over every `@ServiceContract`-annotated interface compiled in the round —
+distinct from the impl-rooted scan in [Two implementation patterns](#two-implementation-patterns) —
+processed in fully-qualified-name order for deterministic output.
+
+This scan is independent of implementation presence: every source-root `@ServiceContract` interface
+is a candidate, whether or not a concrete implementation is compiled in the same unit. A contract
+with a compiled impl gets both a `{Contract}_ContractContributor` (from the impl-rooted scan above)
+and a `{Contract}_ServiceClientProxy`; a contract with no impl in this compilation unit still gets the
+client proxy.
+
+It is equally independent of implementation validity. Only a failure rooted in the contract's own
+shape — the same five contract-shape checks marked "Yes" in [Validation Failures](#validation-failures)
+below — suppresses client-proxy emission. An impl-side rejection (double-pattern, a
+missing/overloaded/mis-parameterised handler method, a missing `@Inject` constructor, or a
+contract-group conflict) leaves the client proxy emitted, because the proxy is a function of the
+contract alone. The compilation still fails on the impl-side error; the proxy is simply there once
+that error is fixed.
+
+### Service client proxy
+
+For `com.example.DemoContract` (a source-root `@ServiceContract` interface) declaring
+`Future<String> greet(SecurityContext sc, String name)`:
+
+```java
+@Generated("dev.vertique.codegen.services.processor.ServiceContractProcessor")
+public final class DemoContract_ServiceClientProxy implements DemoContract {
+
+    private final ServiceRequestSender _sender_;
+    private final DispatchEnvelopeBuilder _envelopeBuilder_;
+    private final ResolvedServiceTarget greetTarget;
+    private final int greetPayloadIndex;
+    private final int greetSecurityContextIndex;
+    private final boolean greetOneWay;
+
+    public DemoContract_ServiceClientProxy(ServiceRequestSender _sender_,
+            DispatchEnvelopeBuilder _envelopeBuilder_, ServiceContractRegistry.ContractEntry<?> _entry_) {
+        this._sender_ = _sender_;
+        this._envelopeBuilder_ = _envelopeBuilder_;
+        ServiceMethodMeta _greetMeta_ = _entry_.operations().get("greet");
+        if (_greetMeta_ == null) {
+            throw new IllegalStateException("Service client contract mismatch: com.example.DemoContract"
+                + " has no registered operation 'greet' for method greet");
+        }
+        this.greetTarget = ResolvedServiceTarget.of(DemoContract.class, _greetMeta_);
+        this.greetPayloadIndex = _payloadIndex_(_greetMeta_);
+        this.greetSecurityContextIndex = _securityContextIndex_(_greetMeta_);
+        this.greetOneWay = _greetMeta_.oneWay();
+    }
+
+    @Override
+    @SuppressWarnings("unchecked")
+    public Future<String> greet(SecurityContext sc, String name) {
+        Object[] _args_ = new Object[] {sc, name};
+        Object _payload_ = this.greetPayloadIndex >= 0 && this.greetPayloadIndex < _args_.length
+            ? _args_[this.greetPayloadIndex] : null;
+        Map<String, Object> _overrides_ = Map.of();
+        if (this.greetSecurityContextIndex >= 0 && this.greetSecurityContextIndex < _args_.length
+                && _args_[this.greetSecurityContextIndex] != null
+                && ContextValues.current(SecurityContext.class).isEmpty()) {
+            _overrides_ = Map.of(SecurityContext.class.getName(), _args_[this.greetSecurityContextIndex]);
+        }
+        DispatchEnvelope<?> _envelope_ =
+            this._envelopeBuilder_.build(_payload_, _overrides_, DispatchBoundary.SERVICE_DISPATCH);
+        Future<?> _dispatch_ = this.greetOneWay
+            ? this._sender_.sendOneWay(this.greetTarget, _envelope_)
+            : this._sender_.send(this.greetTarget, _envelope_).compose(Futures::toFuture);
+        return (Future<String>) _dispatch_;
+    }
+
+    @Override
+    public String toString() {
+        return "ServiceProxy[DemoContract]";
+    }
+
+    // _payloadIndex_(ServiceMethodMeta) / _securityContextIndex_(ServiceMethodMeta) helpers omitted
+}
+```
+
+The constructor is the one place the generated proxy can throw before any dispatch happens: every
+baked operation id (`"greet"` here) is looked up in `_entry_.operations()`, and a missing entry throws
+`IllegalStateException` whose message always starts with the literal
+`Service client contract mismatch: `. Every other per-operation field — `greetPayloadIndex`,
+`greetSecurityContextIndex`, `greetOneWay` — is derived from the resolved `ServiceMethodMeta`, not
+from the source method signature, so the proxy always tracks whatever registered the contract, even
+if that registration used a different mechanism than this emitter.
+
 ---
 
 ## Recognized Annotations and Types
@@ -165,7 +255,7 @@ Applications never edit or subclass these types. They are referenced in exactly 
 | `dev.vertique.services.OneWay` | `vertique-services` | Marks a fire-and-forget operation |
 | `dev.vertique.services.ServiceHandler` | `vertique-services` | The handler-pattern supertype |
 | `dev.vertique.security.SecurityContext` | `vertique-security-core` | Recognized as a dispatch-context parameter on handler methods |
-| `dev.vertique.core.eventbus.DispatchContextValue` | `vertique-core` | Marks any other type as a dispatch-context parameter |
+| `dev.vertique.core.eventbus.DispatchContextValue` | `vertique-core` | Marks a **handler**-method parameter as a dispatch-context value. On a contract-interface method it has no effect — the parameter is classified as an ordinary payload parameter like any other |
 | `dev.vertique.core.eventbus.DispatchEnvelope` | `vertique-core` | Rejected as a contract parameter |
 | `dev.vertique.codegen.NoAutoWire` | `vertique-codegen-core` | Excludes a type from generation |
 | `dev.vertique.codegen.ConditionalOnProperty` | `vertique-codegen-core` | Config-driven implementation selection |
@@ -194,21 +284,27 @@ Every rule below is a compile-time `ERROR` unless stated otherwise. All applicab
 before the processor gives up on a candidate, so one build surfaces the complete list rather than one
 error per cycle.
 
+The **client proxy for that contract?** column states whether a *different, otherwise-valid* contract
+in the same compilation unit still gets its `{Contract}_ServiceClientProxy` (see
+[Client Contract Discovery](#client-contract-discovery) above) — the client proxy is a function of the
+contract's shape alone, so an impl-only defect never withholds it, while a contract-shape defect does
+(both scans would otherwise report the same error twice).
+
 **Per implementation:**
 
-| Rule | Rejected because |
-|---|---|
-| A contract method must return a parameterized `Future<T>` | A raw `Future`, `void`, or any other type has no dispatchable result shape |
-| At most one payload parameter per contract method | The dispatch envelope carries a single payload |
-| `DispatchEnvelope<?>` may not appear as a contract parameter | It is the transport wrapper, not application data |
-| No overloaded method names on the contract interface | Operation names derive from method names, so overloads collide on one event-bus address |
-| No overloaded **public** method names on a handler class | The runtime resolves handler methods by name only; private and package-private helpers sharing a name are ignored and do not trigger this |
-| `@ServiceOperation` value must not be blank | A blank value produces an empty operation id and malformed addresses |
-| No two operations in a contract may resolve to the same operation name | One would silently shadow the other on the event bus |
-| Exactly one `@Inject` constructor on the implementation | Zero means Dagger cannot construct it; more than one is ambiguous |
-| `ServiceHandler<C>`: `C` must be a `@ServiceContract` interface, and the handler must not implement `C` directly or any other `@ServiceContract` interface | Ambiguous registration shape |
-| Each contract method needs exactly one matching handler method: same name, identical payload parameters in order and type, identical `Future<T>` return type | Name-based matching cannot disambiguate anything looser |
-| Extra handler parameters must be `SecurityContext` subtypes or `@DispatchContextValue`-annotated types | Anything else cannot be supplied at dispatch time; the diagnostic names the offending parameter |
+| Rule | Rejected because | Client proxy for that contract? |
+|---|---|---|
+| A contract method must return a parameterized `Future<T>` | A raw `Future`, `void`, or any other type has no dispatchable result shape | Yes |
+| At most one payload parameter per contract method | The dispatch envelope carries a single payload | Yes |
+| `DispatchEnvelope<?>` may not appear as a contract parameter | It is the transport wrapper, not application data | Yes |
+| No overloaded method names on the contract interface | Operation names derive from method names, so overloads collide on one event-bus address | Yes |
+| No overloaded **public** method names on a handler class | The runtime resolves handler methods by name only; private and package-private helpers sharing a name are ignored and do not trigger this | No — impl-only |
+| `@ServiceOperation` value must not be blank | A blank value produces an empty operation id and malformed addresses | Yes |
+| No two operations in a contract may resolve to the same operation name | One would silently shadow the other on the event bus | Yes |
+| Exactly one `@Inject` constructor on the implementation | Zero means Dagger cannot construct it; more than one is ambiguous | No — impl-only |
+| `ServiceHandler<C>`: `C` must be a `@ServiceContract` interface, and the handler must not implement `C` directly or any other `@ServiceContract` interface | Ambiguous registration shape | No — impl-only |
+| Each contract method needs exactly one matching handler method: same name, identical payload parameters in order and type, identical `Future<T>` return type | Name-based matching cannot disambiguate anything looser | No — impl-only |
+| Extra handler parameters must be `SecurityContext` subtypes or `@DispatchContextValue`-annotated types | Anything else cannot be supplied at dispatch time; the diagnostic names the offending parameter | No — impl-only |
 
 **Per contract group:**
 
@@ -217,11 +313,33 @@ error per cycle.
 | At most one unconditional implementation per group | Two defaults make selection ambiguous. The error is emitted on every unconditional implementation and names all the others, so one pass shows the whole conflict. |
 | When a group has an unconditional default, every other implementation must carry at least one `@ConditionalOnProperty` | An ungated non-default is indistinguishable from a second default |
 
-A group that fails either group rule is excluded from emission.
+A group that fails either group rule is excluded from emission. Client-proxy emission is unaffected
+by group-level validation — it has no meaning without a compiled implementation.
 
 **Warning (not an error):** a type carrying both `@NoAutoWire` and `@ConditionalOnProperty` compiles
 with a warning — the condition has no effect, because manual wiring owns selection for opted-out
 types.
+
+### Generic contracts skip client-proxy emission
+
+A `@ServiceContract` interface that declares its own type parameters, or whose method remains generic after resolving against the contract, produces no `{Contract}_ServiceClientProxy`. `ClientContractExtractor` detects the unresolved type variable and emits an informational `NOTE` rather than a compiler error — the compilation still succeeds. Callers of such a contract fall back to the reflective client proxy at runtime instead of the generated static one.
+
+### Reserved-identifier collisions skip client-proxy emission
+
+A contract that uses one of the identifiers the generated companion reserves for itself also produces no `{Contract}_ServiceClientProxy`. The same informational-`NOTE`-not-error treatment applies as for generic contracts above: the compilation still succeeds, and callers of such a contract fall back to the reflective client proxy at runtime instead of the generated static one. The `NOTE` names both the contract and the colliding identifier.
+
+Two families are reserved, and only these two can collide:
+
+| Where | Reserved names | Why |
+|-------|----------------|-----|
+| Contract **parameter** names | `_args_`, `_payload_`, `_overrides_`, `_envelope_`, `_dispatch_` | Declared as method-locals in every generated dispatch body; a same-named parameter would shadow one |
+| Contract **method** names | `_payloadIndex_`, `_securityContextIndex_` | Names of the generated private static index helpers, each declared as `private static int helper(ServiceMethodMeta)` |
+
+The method-name half checks the erasure, not just the name: a contract method only collides when its erased parameter list is exactly `(ServiceMethodMeta)` — the helper's own signature. Any other overload of the same name (different arity or parameter type, e.g. `_payloadIndex_(String)`) is a legal overload; it compiles fine alongside the generated helper and is emitted normally. Generated fields (`_sender_`, `_envelopeBuilder_`, and the per-operation `<method>Target` / `…PayloadIndex` / `…SecurityContextIndex` / `…OneWay` state) and constructor locals need no reservation: every field read in a dispatch body is `this.`-qualified, and the constructor sees no contract-declared identifier at all.
+
+### Client-proxy emission is also one-shot per round
+
+Client-proxy emission shares the same `emitted` guard as contributor emission: `ServiceContractProcessor.process()` runs both scans and emits both `{Contract}_ContractContributor` and `{Contract}_ServiceClientProxy` classes in the first non-`processingOver` round it sees, then sets `emitted = true`. A `@ServiceContract` interface that only becomes visible in a later round (for example, generated by another processor after this one has already run) does not get a client proxy in that compilation.
 
 ---
 
