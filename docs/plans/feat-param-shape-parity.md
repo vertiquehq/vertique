@@ -302,22 +302,11 @@ final class ArrayFqns {
 UNSUPPORTED_MULTIPART_COLLECTION_SHAPE
 ```
 
-Two further constants were added during the review rounds, each user-signed-off at the time
-(Amendments 11 and 13). Both are startup rejections in the same `RouteValidator` family:
+One further constant was added during the review rounds, user-signed-off at the time
+(Amendment 13). A second, `NON_COMPARABLE_SORTED_SET_ELEMENT`, was added and then removed again —
+see Amendment 14:
 
 ```java
-/**
- * A parameter declared as {@code SortedSet<T>} or {@code NavigableSet<T>} has an element type
- * that is not comparable to itself, so the {@link java.util.TreeSet} it materializes into would
- * throw {@code ClassCastException} on the first request carrying a value. Self-comparability is
- * decided from the element type's effective non-bridge {@code compareTo} method — reflection
- * exposes the erased signature the bridge casts to — not from the declaration site. Scoped to the
- * sources that can carry a non-null {@code componentType} and are materialized element-wise; a
- * body parameter's validity belongs to the selected {@code RequestBodyDecoder}, not to the route
- * validator.
- */
-NON_COMPARABLE_SORTED_SET_ELEMENT,
-
 /**
  * Two parameters of one method bind the same name at the same location but declare incompatible
  * multiplicity — one collection-shaped, one scalar. {@code DefaultBoundRequest.findDescriptor} is
@@ -744,6 +733,8 @@ Each item routes to a GitHub issue in `vertiquehq/vertique-dev` (no backing PRD)
 | **RFC 6265 cookie names are case-sensitive** while the framework now matches them case-insensitively on both halves, so `@CookieParam("session")` is satisfiable by a wire cookie named `Session`, and two cookies differing only in case collapse (last wins) | Pre-existing in the map keying; the security fix only made the descriptor half agree with it, which is what was actually broken. Changing the semantic is a separate decision | Issue: "Decide whether cookie name matching should be case-sensitive per RFC 6265" |
 | **`raw.toString()` double-conversion** in the multiplicity fallback, lossy for a converter whose round-trip is not `toString`-symmetric | Its only legal trigger was the duplicate-name declaration now rejected at startup; the remaining triggers are a custom `BoundRequest`, a codegen divergence, or path collection support | Issue: "Avoid toString round-tripping in the collection multiplicity fallback" |
 | **Top-level collection param colliding with a `@BeanParam` field of the same name** — same mis-bind shape as the rejected duplicate, but bean fields are not in `meta.params()` and hard-code a null component type, so the new guard cannot see it | Belongs with the already-routed bean-param collection-field work rather than here | Folded into: "Support collection-typed @BeanParam fields (query + form)" |
+| **Startup rejection for a non-self-comparable sorted-set element** | Removed after five review rounds (Amendment 14): every attempt either refused legitimate shapes or missed unsafe ones, and a correct version needs type-variable substitution machinery that does not exist in-tree | Issue: "Decide whether a non-self-comparable SortedSet element should be rejected at startup" |
+| **Runtime-side proof that a generated BODY descriptor registers cleanly** — the only such assertion in `vertique-rest-jaxrs` lived in a test framed around the removed guard and went with it. The codegen side of the divergence is still covered | Small coverage residual on an already-routed divergence, not a defect | Folded into: "Reconcile BODY componentType between generated and reflective paths" |
 | Legacy tracker hygiene | Post-merge per handoff ruling 2 | Close legacy #153 and #155 with pointers once merged |
 
 ## Review round 1 — outcomes
@@ -885,3 +876,16 @@ The Contract Appendix (§4) is untouched throughout.
 13. **2026-07-29 — `DUPLICATE_PARAM_NAME_MULTIPLICITY_CONFLICT` added (USER-APPROVED; consumer-visible).**
    Rejects at startup a declaration that has no correct binding. An application that mounts today
    stops booting; the repo was grepped and no in-tree declaration is newly rejected.
+14. **2026-07-29 — `NON_COMPARABLE_SORTED_SET_ELEMENT` REMOVED (USER-APPROVED; scope reduction).**
+   The guard failed five review rounds. It over-rejected four ordinary shapes that a real `TreeSet`
+   orders fine — so applications booting on `main` would have stopped booting, a new consumer-visible
+   break — while still under-rejecting two shapes that reach `ClassCastException`. Deciding every case
+   needs generic type-variable substitution machinery that does not exist in-tree, and the finding it
+   addressed was the lowest-severity item in the security review. Removed in `8b191f4`, leaving the
+   codebase exactly as safe as `main`. The surviving half is the honest documentation: a sorted shape
+   with a non-self-comparable element type throws at request time, is not checked at startup, and is
+   the application's responsibility. **Method note:** the predicate was rewritten three times and each
+   version was falsified by *execution*, never by inspection. When a check's correctness depends on
+   Java erasure subtleties, build the executed shape matrix before the check — and be willing to
+   conclude the check is not worth its cost.
+
