@@ -78,7 +78,9 @@ proven by tests that fail on today's code.
    The submodule pin (`bc9f63f`) is **behind** its `origin/main` (`9b0a6c6`); `git diff` shows
    **no** changes under `vertique-job/` or `vertique-services/` between them, so these findings
    hold. Branch from `origin/main`, not the pin.
-11. Next free ADR number is **0200** (`adr/product/` runs to 0199; README marker says 0200).
+11. ~~Next free ADR number is **0200**~~ → **0201**. A parallel session claimed 0200 for the
+    lifecycle-orchestrator record between planning and execution; see Amendments. This is exactly
+    the marker race the plan warned about.
 12. **Both maintainer docs already document this as an open defect** and each proposes the two
     candidate fixes: `docs/vertique-job-cron.md` §"`handlerAddress` is `null` for every service
     target…" and `docs/vertique-job-postgresql.md` §"`job_executions.handler` is `NOT NULL`, and
@@ -165,7 +167,7 @@ All package-private / private — no public surface changes.
  * because the built-in {@code DefaultServiceTargetResolver} snapshots its indexes with
  * {@code Map.copyOf} at construction. "Per fire" therefore means <em>fixed at fire
  * admission</em>. A mutable or reloadable {@code ServiceTargetResolver} implementation would
- * invalidate that assumption; see ADR-0200.
+ * invalidate that assumption; see ADR-0201.
  */
 // NOTE: {@code}, not {@link} — DefaultServiceTargetResolver is package-private in
 // dev.vertique.services (DefaultServiceTargetResolver.java:31), so a link would not resolve
@@ -232,7 +234,7 @@ git -C sources/vertique worktree add \
 ```
 
 Governance-repo work splits by whether it is docs-only:
-- **S1's ADR commit** (ADR-0200 + `adr/product/README.md`) is docs-only → fast-forward to
+- **S1's ADR commit** (ADR-0201 + `adr/product/README.md`) is docs-only → fast-forward to
   governance `main` per `git-workflow.md` § Exception: docs-only changes.
 - **L4's commit** advances the `sources/vertique` gitlink alongside the maintainer docs, so it
   is *not* docs-only → it needs a governance PR from a temporary worktree created at L4 time; no
@@ -280,7 +282,7 @@ tick, and notes that a tracked execution records the resolved address in
 
 Commit: `fix(job-cron): resolve service targets before persisting cron executions`
 
-**Governance companion — ADR-0200 belongs to this slice** (§7). It records the decision this
+**Governance companion — ADR-0201 belongs to this slice** (§7). It records the decision this
 slice implements, so it is authored here rather than deferred to a lifecycle step. Because it
 lives in the other repository it lands as its own commit there, together with its
 `adr/product/README.md` index row and next-number bump. **Re-check the number against `main`
@@ -341,7 +343,7 @@ that PR is merged it could only be done by opening a second source PR.
 *Verification:* `git diff main...HEAD --name-only | grep docs/plans/` returns nothing.
 
 ### L4 — merge, then publish governance docs · `routine` *(closeout)*
-The canonical `module.md` landed in S1's green commit and ADR-0200 was authored in S1 (§7). This
+The canonical `module.md` landed in S1's green commit and ADR-0201 was authored in S1 (§7). This
 step merges the source work and then publishes the **governance-repo maintainer docs plus the
 submodule gitlink advance**. All three docs currently describe this bug as an open defect
 (finding 12); leaving them would ship documentation that is materially wrong about shipped
@@ -364,7 +366,7 @@ shipped, so they must not merge before the behavior exists:
 5. After it merges, remove both worktrees (`/clean_gone`) and close issue #41 — the unit is done
    (`git-workflow.md` § Worktree lifecycle).
 
-ADR-0200 is exempt from that ordering — it records a *decision*, not shipped behavior, it is
+ADR-0201 is exempt from that ordering — it records a *decision*, not shipped behavior, it is
 docs-only, and it lands with S1.
 
 *Governance repo — maintainer references:*
@@ -414,14 +416,14 @@ the only one the earlier draft needed.
 
 **Governance repo `vertique-dev`**
 
-*New*: `adr/product/0200-resolve-cron-service-targets-before-persisting-execution.md`
+*New*: `adr/product/0201-resolve-cron-service-targets-before-persisting-execution.md`
 *Modified*: `adr/product/README.md`, `docs/vertique-job-cron.md`,
 `docs/vertique-job-postgresql.md`, `docs/vertique-inbox-outbox-postgresql.md`,
 `sources/vertique` *(gitlink — advanced to the merged source commit in L4)*
 
 **The gitlink is why L4 needs a PR.** A submodule pointer is not a prose file, so the L4 commit
 is **not** docs-only and does not qualify for `git-workflow.md`'s direct-to-`main` exception.
-S1's governance commit (ADR-0200 + its `adr/product/README.md` index row) *is* docs-only and may
+S1's governance commit (ADR-0201 + its `adr/product/README.md` index row) *is* docs-only and may
 fast-forward to `main`; L4's commit carries the gitlink and goes through a governance PR.
 
 **Module documentation decisions**
@@ -444,14 +446,14 @@ fast-forward to `main`; L4's commit carries the gitlink and goes through a gover
 
 | ADR | Title | Written by | Decision recorded |
 |---|---|---|---|
-| `adr/product/0200-resolve-cron-service-targets-before-persisting-execution.md` | Resolve cron service targets before persisting the execution record | **S1** | Why `job_executions.handler` stays `NOT NULL` (the delayed-job poller dispatches to it — `DelayedJobPoller.java:645`) rather than being relaxed to match `job_schedules.handler`; why resolution stays per-fire rather than moving to registration (`CronJobRegistrarTest.java:186` pins `handlerAddress == null`, and late resolution is deliberate so the address tracks the live registry); and the skip-and-log-not-throw policy for an unresolvable target, replacing today's throw-and-stall. The ADR must **not** claim this protects an existing dashboard — nothing in `vertique-management` reads the column (§11). |
+| `adr/product/0201-resolve-cron-service-targets-before-persisting-execution.md` | Resolve cron service targets before persisting the execution record | **S1** | Why `job_executions.handler` stays `NOT NULL` (the delayed-job poller dispatches to it — `DelayedJobPoller.java:645`) rather than being relaxed to match `job_schedules.handler`; why resolution stays per-fire rather than moving to registration (`CronJobRegistrarTest.java:186` pins `handlerAddress == null`, and late resolution is deliberate so the address tracks the live registry); and the skip-and-log-not-throw policy for an unresolvable target, replacing today's throw-and-stall. The ADR must **not** claim this protects an existing dashboard — nothing in `vertique-management` reads the column (§11). |
 
 No second ADR is warranted: S2's containment fix implements the failure policy this ADR already
 states, and the schema-side pin folded into S1 is a test-strategy call, not an architectural one.
 
-Number **0200** is the next free slot (`adr/product/` runs to 0199; README marker agrees).
-Parallel worktrees race this marker — **re-check against `main` immediately before merge** and
-renumber if taken.
+**As built: ADR-0201**, committed to governance `main` as `b423ca1`. The plan reserved 0200; a
+parallel session took it for the lifecycle-orchestrator record before this branch got there. The
+re-check-before-merge instruction did its job. Still re-check at merge time.
 
 ## 8. Risks & edge cases
 
@@ -470,7 +472,7 @@ renumber if taken.
 - **Behavior change, deliberate and consumer-visible:** an unresolvable `service:` target now
   skips that fire and logs an error, instead of throwing and stalling the job until the
   execution timeout expires (or forever under `CronModule`). Strictly better; recorded in
-  ADR-0200.
+  ADR-0201.
 - **Two-repo commit split** — the ADR cannot land in the same PR as the code. The code PR
   references it by number.
 - **Mutable-resolver risk — `risk-accepted`.** `ServiceTargetResolver` is a *public interface*;
@@ -478,7 +480,7 @@ renumber if taken.
   `DefaultServiceTargetResolver.java:47`). A third-party mutable or reloadable implementation
   could change an address between fire admission and the event-bus send, in which case this
   design dispatches to the earlier address. Persisted-equals-dispatched still holds; only
-  freshness would not. Accepted, and stated plainly in ADR-0200 and the javadoc: **"per fire"
+  freshness would not. Accepted, and stated plainly in ADR-0201 and the javadoc: **"per fire"
   means the address is fixed at fire admission.** Re-entry trigger: the framework shipping or
   sanctioning a reloadable resolver.
 
@@ -596,9 +598,9 @@ Returned **approve-with-required-changes, 0 blockers** — all four substantive 
 round 2 confirmed resolved, with five mechanical corrections. All are applied:
 
 1. **The standalone schema slice violated the red→green gate** (its only test was green from
-   the start) and, by extension, ADR-0200 was owned by a *lifecycle step* rather than a slice.
+   the start) and, by extension, ADR-0201 was owned by a *lifecycle step* rather than a slice.
    `saveRejectsExecutionWithNullHandler` is now folded into S1's red-test commit as an
-   explicitly-labelled green constraint guard, the standalone slice is gone, and **ADR-0200
+   explicitly-labelled green constraint guard, the standalone slice is gone, and **ADR-0201
    now belongs to S1** (§7). L4 is mechanical publication only.
 2. **`unresolvableTargetDuringOverlapStillQueuesTheTick` was mislabelled red.** It passes today
    — current code never touches the resolver inside `fire`, so overlap already wins. Relabelled
@@ -612,7 +614,7 @@ round 2 confirmed resolved, with five mechanical corrections. All are applied:
    not to widen its visibility for a doc link.
 5. **Cross-repository landing order made explicit** in L4 — source PR merges, submodule pin
    advances, *then* maintainer docs publish, so governance docs never describe unshipped
-   behavior as shipped. ADR-0200 is exempt: it records a decision, not behavior.
+   behavior as shipped. ADR-0201 is exempt: it records a decision, not behavior.
 
 One suggestion **not** adopted: replacing S2's two-tick timing with a deterministic trigger.
 `fire()` is private and there is no existing test seam to drive it directly; adding one purely
@@ -637,3 +639,20 @@ findings were mechanical and are applied:
 3. **The governance branch needed a home.** L4 now creates a temporary governance worktree
    (`.claude/worktrees/issue-41-governance`) rather than branching the primary worktree in place,
    per `git-workflow.md`.
+
+## Amendments
+
+Deviations from the approved plan discovered during execution. Each is a correction of a
+verified fact or an as-built note, so none required re-approval (`planning.md` § Mid-flight
+amendments).
+
+| Date | Trigger | Change |
+|---|---|---|
+| 2026-07-29 | Execution — ADR marker race | Plan reserved **ADR-0200**; a parallel session claimed it for the lifecycle-orchestrator record between approval and execution. Renumbered to **ADR-0201** (governance `b423ca1`). All plan references updated. The plan's own "re-check against `main` immediately before merge" instruction is what caught it. |
+| 2026-07-29 | Execution — S1 red-test run | `serviceTargetDispatchLandsAtTheResolvedAddress` **reclassified red → green-today guard**. The plan predicted it would fail because `tryInsert` rejects a null handler — but `CronSchedulerTest` uses a *mock* repository, which accepts one, so the dispatcher's send-time resolution still lands the message. It only goes red against real DDL. Test unchanged; its value is pinning recorded-address == dispatched-address once the fix lands. |
+| 2026-07-29 | Execution — S1 red-test run | `unresolvableTargetDuringOverlapStillQueuesTheTick` **redesigned**. The plan specified a resolver failing on its "2nd invocation", but invocation ordinals shift under the very change being made: today the resolver is called only inside `dispatch`, and after the fix it is also called at fire admission. Rewritten to key on a failure *window* (an `AtomicBoolean` flipped by the holding consumer) instead of a count. Classification unchanged — green today and after the fix; it guards against the rejected resolve-before-admission ordering. |
+
+**Finding recorded, no plan change:** the red-test run independently confirmed that a resolver
+throw inside the queued `QUEUE_ONE` re-dispatch strands the guard permanently for
+`EVERY_INSTANCE` too — the same leak class as `SINGLE_INSTANCE`. Already covered: S1 resolves in
+`markCompleted` and releases both guards on failure, and S2 wraps the dispatch tail.
