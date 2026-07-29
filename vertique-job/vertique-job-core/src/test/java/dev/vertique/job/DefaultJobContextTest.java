@@ -250,30 +250,4 @@ class DefaultJobContextTest {
             assertEquals("result", second.result());
         }
     }
-
-    @Nested
-    @DisplayName("checkpoints")
-    class Checkpoints {
-
-        @Test
-        @DisplayName("lastCheckpoint returns null before any checkpoint")
-        void lastCheckpointNullInitially() {
-            assertNull(ctx.lastCheckpoint("key", String.class));
-        }
-
-        @Test
-        @DisplayName("checkpoint then lastCheckpoint returns value")
-        void checkpointAndRetrieve() {
-            ctx.checkpoint("page", 42);
-            assertEquals(42, ctx.lastCheckpoint("page", Integer.class));
-        }
-
-        @Test
-        @DisplayName("checkpoint overwrites previous value")
-        void checkpointOverwrites() {
-            ctx.checkpoint("page", 1);
-            ctx.checkpoint("page", 5);
-            assertEquals(5, ctx.lastCheckpoint("page", Integer.class));
-        }
-    }
 }

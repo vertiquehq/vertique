@@ -15,7 +15,6 @@ import dev.vertique.db.DbPoolConfig;
 import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.db.test.DatabaseExtension;
 import dev.vertique.db.test.PostgresContainer;
-import dev.vertique.job.Checkpoint;
 import dev.vertique.job.CronJobSchedule;
 import dev.vertique.job.JobExecution;
 import dev.vertique.job.JobState;
@@ -49,9 +48,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * Integration tests for {@link PgJobRepository} against a real PostgreSQL instance.
  *
  * <p>Verifies: save, claim (no duplicates, priority order, SKIP LOCKED), state transitions,
- * completion, retry scheduling, heartbeat, stale detection, log persistence, checkpoints,
- * transactional save, tryInsert (SINGLE_INSTANCE leader election), saveSchedule (upsert), and
- * updateScheduleFireTimes.
+ * completion, retry scheduling, heartbeat, stale detection, log persistence, transactional save,
+ * tryInsert (SINGLE_INSTANCE leader election), saveSchedule (upsert), and updateScheduleFireTimes.
  */
 @ExtendWith({VertxExtension.class, DatabaseExtension.class})
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
@@ -519,45 +517,6 @@ public class PgJobRepositoryIT {
                 })
                 .onSuccess(count -> ctx.verify(() -> {
                     assertEquals(3L, count, "All three log entries should be persisted");
-                    ctx.completeNow();
-                }))
-                .onFailure(ctx::failNow);
-    }
-
-    @Test
-    @DisplayName("saveCheckpoint upserts: second save with same key overwrites value")
-    void saveCheckpointUpserts(VertxTestContext ctx) {
-        String queue = "checkpoint-test-" + UUID.randomUUID();
-        JobExecution exec = newExecution(queue, 0);
-        String key = "page";
-
-        repository
-                .save(exec)
-                .compose(id -> repository.saveCheckpoint(exec.id(), key, new JsonObject().put("page", 1)))
-                .compose(v -> repository.saveCheckpoint(exec.id(), key, new JsonObject().put("page", 2)))
-                .compose(v -> repository.loadCheckpoint(exec.id(), key))
-                .onSuccess(opt -> ctx.verify(() -> {
-                    assertTrue(opt.isPresent(), "Checkpoint should exist after upsert");
-                    Checkpoint cp = opt.get();
-                    assertEquals("page", cp.key());
-                    JsonObject value = (JsonObject) cp.value();
-                    assertEquals(2, value.getInteger("page"), "Second upsert should overwrite first");
-                    ctx.completeNow();
-                }))
-                .onFailure(ctx::failNow);
-    }
-
-    @Test
-    @DisplayName("loadCheckpoint returns empty when no checkpoint exists for given key")
-    void loadCheckpointReturnsEmptyWhenAbsent(VertxTestContext ctx) {
-        String queue = "cp-absent-test-" + UUID.randomUUID();
-        JobExecution exec = newExecution(queue, 0);
-
-        repository
-                .save(exec)
-                .compose(id -> repository.loadCheckpoint(exec.id(), "nonexistent"))
-                .onSuccess(opt -> ctx.verify(() -> {
-                    assertFalse(opt.isPresent(), "Checkpoint should be absent");
                     ctx.completeNow();
                 }))
                 .onFailure(ctx::failNow);

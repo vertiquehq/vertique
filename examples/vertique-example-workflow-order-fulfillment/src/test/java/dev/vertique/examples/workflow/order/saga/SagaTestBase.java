@@ -235,7 +235,7 @@ public abstract class SagaTestBase {
         return component
                 .pgInboxOutboxRepository()
                 .pool()
-                .query("TRUNCATE TABLE job_executions, job_logs, job_checkpoints, job_server_heartbeats,"
+                .query("TRUNCATE TABLE job_executions, job_logs, job_server_heartbeats,"
                         + " workflow_branch_tokens, workflow_join_states, workflow_timers,"
                         + " workflow_history, workflow_dedup, workflow_instances,"
                         + " outbox, inbox RESTART IDENTITY CASCADE")

@@ -4,8 +4,6 @@
 package dev.vertique.job;
 
 import io.vertx.core.Future;
-import java.time.Instant;
-import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Supplier;
@@ -14,11 +12,11 @@ import java.util.function.Supplier;
  * In-memory implementation of {@link JobContext}.
  *
  * <p>All state is held in-memory for the duration of the execution. When a {@link JobRepository}
- * is present (Phase 2+), the cron trigger or coordinator may flush checkpoints and logs to
- * persistent storage after the execution completes.
+ * is present (Phase 2+), the cron trigger or coordinator may flush logs to persistent storage
+ * after the execution completes.
  *
- * <p>Thread-safe: uses {@link ConcurrentHashMap} for metadata, steps, and checkpoints, and a
- * {@code volatile} flag for cancellation.
+ * <p>Thread-safe: uses {@link ConcurrentHashMap} for metadata and steps, and a {@code volatile}
+ * flag for cancellation.
  */
 public class DefaultJobContext implements JobContext {
 
@@ -36,7 +34,6 @@ public class DefaultJobContext implements JobContext {
     private final DefaultJobLogger jobLogger;
     private final ConcurrentHashMap<String, Object> metadata = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, Object> completedSteps = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<String, Checkpoint> checkpoints = new ConcurrentHashMap<>();
     private volatile boolean cancelled;
 
     /**
@@ -139,28 +136,5 @@ public class DefaultJobContext implements JobContext {
             completedSteps.remove(stepName);
             return Future.failedFuture(e);
         }
-    }
-
-    @Override
-    public void checkpoint(String key, Object value) {
-        checkpoints.put(key, new Checkpoint(key, value, Instant.now()));
-    }
-
-    @Override
-    @SuppressWarnings("unchecked")
-    public <T> T lastCheckpoint(String key, Class<T> type) {
-        Checkpoint cp = checkpoints.get(key);
-        return cp != null ? (T) cp.value() : null;
-    }
-
-    // --- Package-visible accessors for testing and flushing ---
-
-    /**
-     * Returns the internal checkpoint map for flushing to persistent storage.
-     *
-     * @return an unmodifiable view of the current checkpoint map
-     */
-    Map<String, Checkpoint> checkpointMap() {
-        return Map.copyOf(checkpoints);
     }
 }

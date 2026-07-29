@@ -56,15 +56,6 @@ CREATE TABLE job_logs (
 );
 CREATE INDEX idx_job_logs_execution ON job_logs (execution_id, logged_at);
 
--- Job checkpoints
-CREATE TABLE job_checkpoints (
-    execution_id    UUID NOT NULL REFERENCES job_executions(id) ON DELETE CASCADE,
-    key             VARCHAR(255) NOT NULL,
-    value           JSONB NOT NULL,
-    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    PRIMARY KEY (execution_id, key)
-);
-
 -- Recurring cron schedule definitions (dashboard visibility).
 -- handler is nullable because service: targets resolve addresses at dispatch time;
 -- target is the explicit target-reference column used by the cron scheduler.

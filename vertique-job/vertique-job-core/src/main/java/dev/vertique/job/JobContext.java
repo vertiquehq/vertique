@@ -13,7 +13,7 @@ import java.util.function.Supplier;
  * Runtime context for a single job execution.
  *
  * <p>Provides access to job identity, progress reporting, structured logging, cancellation
- * signalling, per-execution metadata storage, step deduplication (idempotency), and checkpoints.
+ * signalling, per-execution metadata storage, and step deduplication (idempotency).
  *
  * <p>Annotated with {@link DispatchContextValue} so it is automatically injected into handler
  * methods that declare it as a parameter:
@@ -142,23 +142,4 @@ public interface JobContext extends ContextValue {
      * @return a future of the task result (from cache on second call, from task on first)
      */
     <T> Future<T> runStepOnce(String stepName, Supplier<Future<T>> task);
-
-    /**
-     * Saves a named checkpoint value for this execution.
-     * Checkpoints survive execution restarts when backed by a {@link JobRepository}.
-     *
-     * @param key   the checkpoint key
-     * @param value the value to checkpoint
-     */
-    void checkpoint(String key, Object value);
-
-    /**
-     * Retrieves the last saved checkpoint value for the given key, cast to the given type.
-     *
-     * @param key  the checkpoint key
-     * @param type the expected value type
-     * @param <T>  the value type
-     * @return the checkpointed value, or {@code null} if no checkpoint exists for this key
-     */
-    <T> T lastCheckpoint(String key, Class<T> type);
 }

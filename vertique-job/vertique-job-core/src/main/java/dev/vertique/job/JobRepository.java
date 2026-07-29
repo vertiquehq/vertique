@@ -95,26 +95,6 @@ public interface JobRepository {
     Future<Void> saveLogs(UUID executionId, List<LogEntry> entries);
 
     /**
-     * Saves (or updates) a checkpoint for the given execution and key.
-     *
-     * @param executionId the execution to checkpoint
-     * @param key         the checkpoint key
-     * @param value       the checkpoint value
-     * @return a succeeded future when the checkpoint has been saved
-     */
-    Future<Void> saveCheckpoint(UUID executionId, String key, Object value);
-
-    /**
-     * Loads the latest checkpoint for the given execution and key.
-     *
-     * @param executionId the execution to query
-     * @param key         the checkpoint key
-     * @return a future of the checkpoint wrapped in {@link Optional}, or {@code Optional.empty()}
-     *         if no checkpoint exists
-     */
-    Future<Optional<Checkpoint>> loadCheckpoint(UUID executionId, String key);
-
-    /**
      * Atomically completes an execution by transitioning to a terminal or non-terminal state and
      * recording the final error information and progress snapshot.
      *
