@@ -15,23 +15,16 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * RED tests (CG-015 Slice S1) for the not-yet-implemented service client static-proxy emission.
+ * Pins the service client static-proxy emission contract (CG-015 Slice S1).
  *
  * <p>Pins the emission contract frozen by the CG-015 plan (§4.1, §4.2 mismatch-message protocol,
  * §4.4) for {@code {Contract}_ServiceClientProxy} classes that {@link ServiceContractProcessor}'s
- * planned contract-only discovery loop will generate for every source-root
- * {@code @ServiceContract} interface: minimal direct emission, all four dispatch shapes
- * (security-context parameter, {@code @OneWay}, inherited, and default methods), nested-contract
- * name flattening, emission through a substituted generic super-interface, the
- * generic-contract/generic-method skip-with-NOTE paths, static-method exclusion, selectivity
- * against unannotated interfaces, and the pinned mismatch-message prefix baked into the generated
- * constructor.
- *
- * <p><b>Every test in this class currently fails.</b> Neither the contract-only discovery loop nor
- * {@code ClientProxyEmitter} exists yet — {@link ServiceContractProcessor} presently emits only
- * {@code {Contract}_ContractContributor} sources for concrete implementations found in the
- * compilation unit, and silently ignores contract-only interfaces (they are skipped by
- * {@code ImplCandidateScanner} as neither interfaces nor abstract classes are impl candidates).
+ * contract-only discovery loop generates for every source-root {@code @ServiceContract} interface:
+ * minimal direct emission, all four dispatch shapes (security-context parameter, {@code @OneWay},
+ * inherited, and default methods), nested-contract name flattening, emission through a substituted
+ * generic super-interface, the generic-contract/generic-method skip-with-NOTE paths,
+ * static-method exclusion, selectivity against unannotated interfaces, and the pinned
+ * mismatch-message prefix baked into the generated constructor.
  */
 class ServiceClientProxyEmissionTest {
 

@@ -14,6 +14,7 @@ import com.palantir.javapoet.TypeName;
 import com.palantir.javapoet.TypeSpec;
 import com.palantir.javapoet.WildcardTypeName;
 import dev.vertique.codegen.CodegenContext;
+import dev.vertique.codegen.services.processor.ServiceAnnotations;
 import dev.vertique.codegen.services.processor.scan.ClientContractModel;
 import dev.vertique.codegen.services.processor.scan.OperationModel;
 import dev.vertique.codegen.services.processor.scan.ParamModel;
@@ -24,6 +25,8 @@ import java.util.Optional;
 import javax.annotation.processing.Generated;
 import javax.lang.model.element.Modifier;
 import javax.lang.model.element.TypeElement;
+import javax.lang.model.element.VariableElement;
+import javax.lang.model.type.TypeMirror;
 
 /**
  * Emits one {@code {Contract}_ServiceClientProxy} static client proxy per source-root
@@ -136,8 +139,11 @@ public final class ClientProxyEmitter {
 
     /**
      * Method names the generated class owns (the two private static index helpers). A same-named
-     * contract method is in fact a legal overload, so this set deliberately over-reserves: the
-     * remedy is a reflective fallback that costs nothing but a NOTE, never a rejected contract.
+     * contract method collides only when its erased parameter list is exactly the helper's own
+     * signature, {@code (ServiceMethodMeta)} — see
+     * {@link #reservedIdentifierCollision(ClientContractModel)}, which checks the erasure before
+     * flagging a name here. Any other overload of the same name (different arity or parameter
+     * type) is a legal overload and compiles fine alongside the generated helper.
      */
     private static final List<String> RESERVED_METHOD_NAMES = List.of(PAYLOAD_INDEX_HELPER, SC_INDEX_HELPER);
 
@@ -164,9 +170,12 @@ public final class ClientProxyEmitter {
      *       contract parameter of the same name would shadow one of them and silently corrupt
      *       dispatch.</li>
      *   <li><b>Method names</b> — the class declares the private static helpers
-     *       {@code _payloadIndex_} and {@code _securityContextIndex_}. A same-named contract method
-     *       is really a legal overload (different signature), so this half deliberately
-     *       over-reserves; the cost of a false positive is only a reflective fallback.</li>
+     *       {@code _payloadIndex_} and {@code _securityContextIndex_}, each taking a single
+     *       {@code ServiceMethodMeta} parameter. A same-named contract method collides only when
+     *       its erased parameter list is exactly {@code (ServiceMethodMeta)} — the helper's own
+     *       signature; any other overload (different arity or parameter type, e.g.
+     *       {@code _payloadIndex_(String)}) is a legal overload that compiles fine alongside the
+     *       generated helper and is never flagged here.</li>
      * </ul>
      *
      * <p>Fields ({@code _sender_}, {@code _envelopeBuilder_}, and the per-operation
@@ -179,10 +188,10 @@ public final class ClientProxyEmitter {
      * @return the first colliding identifier in declaration order, or {@link Optional#empty()} when
      *         the contract is safe to emit
      */
-    public static Optional<String> reservedIdentifierCollision(ClientContractModel model) {
+    public Optional<String> reservedIdentifierCollision(ClientContractModel model) {
         for (OperationModel op : model.operations()) {
             String methodName = methodName(op);
-            if (RESERVED_METHOD_NAMES.contains(methodName)) {
+            if (RESERVED_METHOD_NAMES.contains(methodName) && hasServiceMethodMetaErasure(op)) {
                 return Optional.of(methodName);
             }
             for (ParamModel param : op.params()) {
@@ -192,6 +201,34 @@ public final class ClientProxyEmitter {
             }
         }
         return Optional.empty();
+    }
+
+    /**
+     * Reports whether the given operation's contract method has exactly one parameter whose
+     * erasure is {@code ServiceMethodMeta} — the true erasure collision with the generated
+     * {@code _payloadIndex_}/{@code _securityContextIndex_} helpers, both declared as
+     * {@code private static int helper(ServiceMethodMeta)}.
+     *
+     * <p>Returns {@code false} (no collision) when {@code ServiceMethodMeta} is not resolvable on
+     * the annotation-processor classpath — the emitted proxy would fail to compile for an
+     * unrelated reason in that case, and this check has nothing safe to compare against.
+     *
+     * @param op the operation whose contract method's erasure to inspect; must not be {@code null}
+     * @return {@code true} if the contract method's erased parameter list is exactly
+     *         {@code (ServiceMethodMeta)}
+     */
+    private boolean hasServiceMethodMetaErasure(OperationModel op) {
+        List<? extends VariableElement> params = op.contractMethod().getParameters();
+        if (params.size() != 1) {
+            return false;
+        }
+        TypeElement serviceMethodMetaElement = ctx.elements().getTypeElement(ServiceAnnotations.SERVICE_METHOD_META);
+        if (serviceMethodMetaElement == null) {
+            return false;
+        }
+        TypeMirror paramErasure = ctx.types().erasure(params.get(0).asType());
+        TypeMirror serviceMethodMetaErasure = ctx.types().erasure(serviceMethodMetaElement.asType());
+        return ctx.types().isSameType(paramErasure, serviceMethodMetaErasure);
     }
 
     // --- Emission ---

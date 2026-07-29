@@ -179,9 +179,9 @@ class ServiceClientFactoryCompanionTest {
      * Fallback: a contract with no generated companion anywhere on the classpath must still be
      * served by a JDK dynamic proxy.
      *
-     * <p>Green now and later — the current unconditional behavior already is this fallback; once
-     * the seam lands, this same assertion guards that the fallback path still works when the
-     * companion is genuinely absent.
+     * <p>Guards the fallback path alongside the companion-selection tests above: {@code create()}
+     * falls back to the JDK dynamic proxy whenever the companion is genuinely absent from the
+     * classpath.
      *
      * @param vertx the Vert.x instance
      */

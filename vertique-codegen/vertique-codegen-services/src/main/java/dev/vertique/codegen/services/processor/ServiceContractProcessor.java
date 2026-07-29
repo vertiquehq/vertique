@@ -348,7 +348,7 @@ public final class ServiceContractProcessor extends AbstractProcessor {
 
             // Validation runs first so a contract that is both invalid *and* identifier-colliding
             // still gets its errors reported; only emission is skipped below.
-            Optional<String> collision = ClientProxyEmitter.reservedIdentifierCollision(model);
+            Optional<String> collision = clientProxyEmitter.reservedIdentifierCollision(model);
             if (collision.isPresent()) {
                 noteReservedIdentifier(contractType, collision.get());
                 continue;

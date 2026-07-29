@@ -31,11 +31,29 @@ import org.junit.jupiter.api.io.TempDir;
  * {@code {Contract}_ServiceClientProxy}.
  *
  * <p>The client proxy is a function of the contract interface alone. A defect in one implementation
- * of that contract — a missing {@code @Inject} constructor, a handler that lacks or overloads a
- * method, an unrecognised extra handler parameter, a double-pattern impl, or two unconditional impls
- * in one group — says nothing about the contract, and the contract-only emission path would not
+ * of that contract says nothing about the contract, and the contract-only emission path would not
  * re-report any of those diagnostics. Each such compilation therefore still fails (the impl-side
- * error stands) <em>and</em> still writes the proxy source.
+ * error stands) <em>and</em> still writes the proxy source. The impl-side failure classes exercised
+ * here, one per test:
+ * <ul>
+ *   <li>{@link #missingInjectConstructor_stillEmitsClientProxy()} — missing {@code @Inject}
+ *       constructor ({@code InjectConstructorValidator}).</li>
+ *   <li>{@link #handlerMissingMethod_stillEmitsClientProxy()} — handler lacks a contract method
+ *       ({@code HandlerMatchValidator}).</li>
+ *   <li>{@link #handlerParamMismatch_stillEmitsClientProxy()} — handler has an unrecognised extra
+ *       parameter ({@code HandlerMatchValidator}).</li>
+ *   <li>{@link #handlerOverload_stillEmitsClientProxy()} — handler overloads an operation method
+ *       ({@code HandlerOverloadValidator}).</li>
+ *   <li>{@link #doublePattern_stillEmitsClientProxy()} — an impl satisfies both the direct and
+ *       handler patterns at once ({@code HandlerContractValidator}).</li>
+ *   <li>{@link #multipleUnconditionalImpls_stillEmitsClientProxy()} — two unconditional impls in
+ *       one group ({@code MultipleUnconditionalImplValidator}).</li>
+ *   <li>{@link #conditionalRequiredOnNonDefault_stillEmitsClientProxy()} — a non-default impl
+ *       lacking {@code @ConditionalOnProperty} in a group that already has an unconditional default
+ *       ({@code ConditionalRequiredOnNonDefaultValidator}).</li>
+ * </ul>
+ * This list is not exhaustive of every group- or impl-level validator in the module — it enumerates
+ * only the failure classes this test class exercises.
  *
  * <p>The single exception is a genuine contract-shape failure: there, the contract-only path would
  * run the same five validators the impl loop already ran, so emission is suppressed to keep every
@@ -70,6 +88,31 @@ class ServiceClientProxyImplFailureEmissionTest {
                 Future<String> getUser(String userId);
             }
             """);
+
+    // Local stubs mirroring ServiceContractProcessorNoAutoWireConditionalTest's fixture shape —
+    // only ConditionalRequiredOnNonDefault_stillEmitsClientProxy needs @ConditionalOnProperty.
+    private static final JavaFileObject CONDITIONAL_ON_PROPERTY_SOURCE =
+            SourceFiles.inline("dev.vertique.codegen.ConditionalOnProperty", """
+                    package dev.vertique.codegen;
+                    import java.lang.annotation.*;
+                    @Target(ElementType.TYPE) @Retention(RetentionPolicy.SOURCE)
+                    @Repeatable(ConditionalOnProperties.class) @Documented
+                    public @interface ConditionalOnProperty {
+                        String name();
+                        String havingValue() default "true";
+                        boolean matchIfMissing() default false;
+                    }
+                    """);
+
+    private static final JavaFileObject CONDITIONAL_ON_PROPERTIES_SOURCE =
+            SourceFiles.inline("dev.vertique.codegen.ConditionalOnProperties", """
+                    package dev.vertique.codegen;
+                    import java.lang.annotation.*;
+                    @Target(ElementType.TYPE) @Retention(RetentionPolicy.SOURCE) @Documented
+                    public @interface ConditionalOnProperties {
+                        ConditionalOnProperty[] value();
+                    }
+                    """);
 
     @TempDir
     Path workDir;
@@ -220,6 +263,62 @@ class ServiceClientProxyImplFailureEmissionTest {
         Outcome outcome = compile(USER_SERVICE_CONTRACT, implA, implB);
 
         outcome.assertFailedWith("multiple unconditional implementations");
+        outcome.assertGenerated(USER_SERVICE_PROXY_FQN);
+    }
+
+    @Test
+    @DisplayName("non-default impl missing @ConditionalOnProperty still gets its contract's client proxy")
+    void conditionalRequiredOnNonDefault_stillEmitsClientProxy() throws IOException {
+        JavaFileObject implDefault = SourceFiles.inline("com.example.UserServiceDefault", """
+                package com.example;
+                import jakarta.inject.Inject;
+                import io.vertx.core.Future;
+                public class UserServiceDefault implements UserService {
+                    @Inject public UserServiceDefault() {}
+                    @Override public Future<String> getUser(String userId) {
+                        return Future.succeededFuture(userId);
+                    }
+                }
+                """);
+
+        JavaFileObject implOverride = SourceFiles.inline("com.example.UserServiceOverride", """
+                package com.example;
+                import dev.vertique.codegen.ConditionalOnProperty;
+                import jakarta.inject.Inject;
+                import io.vertx.core.Future;
+                @ConditionalOnProperty(name = "overrideEnabled")
+                public class UserServiceOverride implements UserService {
+                    @Inject public UserServiceOverride() {}
+                    @Override public Future<String> getUser(String userId) {
+                        return Future.succeededFuture("override-" + userId);
+                    }
+                }
+                """);
+
+        // No @ConditionalOnProperty even though the group already has an unconditional default
+        // (UserServiceDefault) — ConditionalRequiredOnNonDefaultValidator rejects this, independent
+        // of the contract's own shape.
+        JavaFileObject implNonDefault = SourceFiles.inline("com.example.UserServiceNonDefault", """
+                package com.example;
+                import jakarta.inject.Inject;
+                import io.vertx.core.Future;
+                public class UserServiceNonDefault implements UserService {
+                    @Inject public UserServiceNonDefault() {}
+                    @Override public Future<String> getUser(String userId) {
+                        return Future.succeededFuture("nondefault-" + userId);
+                    }
+                }
+                """);
+
+        Outcome outcome = compile(
+                USER_SERVICE_CONTRACT,
+                CONDITIONAL_ON_PROPERTY_SOURCE,
+                CONDITIONAL_ON_PROPERTIES_SOURCE,
+                implDefault,
+                implOverride,
+                implNonDefault);
+
+        outcome.assertFailedWith("must declare @ConditionalOnProperty to be selectable as an override");
         outcome.assertGenerated(USER_SERVICE_PROXY_FQN);
     }
 

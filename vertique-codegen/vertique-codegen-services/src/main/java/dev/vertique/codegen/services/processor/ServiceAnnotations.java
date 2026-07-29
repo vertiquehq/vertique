@@ -67,5 +67,10 @@ public final class ServiceAnnotations {
     /** FQN of {@code dev.vertique.codegen.ConditionalOnProperties}. */
     public static final String CONDITIONAL_ON_PROPERTIES = "dev.vertique.codegen.ConditionalOnProperties";
 
+    // --- Client-proxy reserved-identifier check ---
+
+    /** FQN of {@code dev.vertique.services.dispatch.ServiceMethodMeta}. */
+    public static final String SERVICE_METHOD_META = "dev.vertique.services.dispatch.ServiceMethodMeta";
+
     private ServiceAnnotations() {}
 }

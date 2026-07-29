@@ -1175,7 +1175,6 @@ All fields are optional — when absent the annotation value, computed resilienc
 - ADR-0108: Unified Failure Mapping on a Context-Aware `FailureMapper` — collapses four layer-specific mapper wrappers onto one concrete `core.failure.FailureMapper`; `ServiceExceptionMapper` now extends it; `map(...)` renamed to `translate(...)`.
 - ADR-0113: Federated Action and Policy Authorship for Framework Authorization — establishes `@RequiresAction` as the mechanism for declaring service operation action gates, with federated authorship in each service module.
 - ADR-0114: Enforcement-Layer Emission Ownership for Authorization Decisions — establishes that each enforcement layer (including `ServiceAuthorizationInterceptor`) emits `AuthorizationDecisionEvent` directly via `SecurityEventEmitter`, not through a shared intermediary.
-- ADR-0190: Service Client Companion Selection and Create-Time Fail-Fast — establishes the generated-companion-first, dynamic-proxy-fallback selection in `ServiceClientFactory.create()` and the narrow contract-mismatch unwrap for a present-but-broken companion.
 
 ---
 

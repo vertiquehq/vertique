@@ -4,6 +4,7 @@
 package dev.vertique.codegen.services.processor;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentCaptor.forClass;
 import static org.mockito.ArgumentMatchers.any;
@@ -24,6 +25,7 @@ import dev.vertique.services.ServiceContractEntries;
 import dev.vertique.services.ServiceContractRegistry;
 import dev.vertique.services.ServiceContractRegistry.ContractEntry;
 import dev.vertique.services.ServiceRequestSender;
+import dev.vertique.services.dispatch.ServiceMethodMeta;
 import dev.vertique.services.dispatch.ServiceMethodMeta.ParamSource;
 import io.vertx.core.Future;
 import io.vertx.core.json.JsonObject;
@@ -42,21 +44,28 @@ import org.mockito.ArgumentCaptor;
 /**
  * Proves the reserved-identifier escape hatch: a contract whose own identifiers collide with the
  * ones {@code ClientProxyEmitter} bakes into every generated proxy is skipped with an informational
- * {@code NOTE} and keeps working through the reflective client proxy.
+ * {@code NOTE} and keeps working through the reflective client proxy — and that a contract method
+ * merely sharing one of those method names, but not its erasure, is a legal overload that still
+ * gets its generated companion.
  *
  * <p>Two identifier families are reserved. The generated dispatch body declares the method-locals
  * {@code _args_}, {@code _payload_}, {@code _overrides_}, {@code _envelope_} and {@code _dispatch_},
  * any of which a same-named contract <em>parameter</em> would shadow; and the generated class
- * declares the private static helpers {@code _payloadIndex_} and {@code _securityContextIndex_},
- * whose names a contract <em>method</em> may reuse (a legal overload — the reservation deliberately
- * over-approximates, because the cost of a false positive is only the reflective fallback proven
- * here).
+ * declares the private static helpers {@code _payloadIndex_(ServiceMethodMeta)} and
+ * {@code _securityContextIndex_(ServiceMethodMeta)}, whose names a contract <em>method</em> only
+ * collides with when its erased parameter list is exactly {@code (ServiceMethodMeta)} — the
+ * helper's own signature. A same-named contract method with any other erasure (e.g.
+ * {@code _payloadIndex_(String)}) is a legal overload and is never skipped.
  *
- * <p>Each case asserts all three halves of the contract: the compilation still succeeds, no
- * companion source is written, a {@code NOTE} names both the contract and the colliding identifier,
- * and {@link ServiceClientFactory#create(Class)} returns a working JDK dynamic proxy that dispatches
- * the payload correctly. The fixtures compile against the real framework classpath (no stub sources)
- * so the factory under test is the real one, exactly as {@code ServiceClientProxyParityTest} does.
+ * <p>Each collision case asserts all three halves of the contract: the compilation still succeeds,
+ * no companion source is written, a {@code NOTE} names both the contract and the colliding
+ * identifier, and {@link ServiceClientFactory#create(Class)} returns a working JDK dynamic proxy
+ * that dispatches the payload correctly.
+ * {@link #reservedMethodNameLegalOverload_emitsCompanionAndDispatches()} proves the mirror-image
+ * fact: no {@code NOTE}, a real companion source, and {@code create()} selecting that companion
+ * rather than the dynamic-proxy fallback. The fixtures compile against the real framework classpath
+ * (no stub sources) so the factory under test is the real one, exactly as
+ * {@code ServiceClientProxyParityTest} does.
  */
 @DisplayName("Service client proxy — reserved-identifier skip and reflective fallback")
 class ServiceClientProxyReservedIdentifierTest {
@@ -91,14 +100,47 @@ class ServiceClientProxyReservedIdentifierTest {
         assertNoCompanion(result);
         assertNoteNaming(result, paramName);
 
-        assertReflectiveFallbackDispatches(result, "greet", paramName);
+        assertDispatches(result, "greet", paramName, String.class, "x", false);
     }
 
-    // --- Reserved method name ---
+    // --- Reserved method names: true erasure collisions ---
+
+    @ParameterizedTest(name = "method named {0} with (ServiceMethodMeta) erasure")
+    @ValueSource(strings = {"_payloadIndex_", "_securityContextIndex_"})
+    @DisplayName(
+            "contract method with a true (ServiceMethodMeta) erasure collision skips emission and falls back reflectively")
+    void reservedMethodNameErasureCollision_skipsEmissionAndFallsBack(String methodName) throws Exception {
+        JavaFileObject contract = SourceFiles.inline(CONTRACT_FQN, """
+                package com.example.reserved;
+                import dev.vertique.services.ServiceContract;
+                import dev.vertique.services.ServiceOperation;
+                import dev.vertique.services.dispatch.ServiceMethodMeta;
+                import io.vertx.core.Future;
+
+                @ServiceContract("reserved-greeter")
+                public interface ReservedGreeter {
+                    // Same erasure as the generated private static int %s(ServiceMethodMeta) helper
+                    // — a true collision, not merely a same-named overload.
+                    @ServiceOperation("greet")
+                    Future<String> %s(ServiceMethodMeta meta);
+                }
+                """.formatted(methodName, methodName));
+
+        ProcessorTestHarness.Result result = ProcessorTestHarness.run(new ServiceContractProcessor(), contract);
+
+        result.assertSuccess();
+        assertNoCompanion(result);
+        assertNoteNaming(result, methodName);
+
+        assertDispatches(result, methodName, "meta", ServiceMethodMeta.class, null, false);
+    }
+
+    // --- Reserved method name: legal overload (different erasure) ---
 
     @Test
-    @DisplayName("contract method named _payloadIndex_ skips emission and falls back reflectively")
-    void reservedMethodName_skipsEmissionAndFallsBack() throws Exception {
+    @DisplayName(
+            "contract method _payloadIndex_(String) is a legal overload — companion is still emitted and dispatches")
+    void reservedMethodNameLegalOverload_emitsCompanionAndDispatches() throws Exception {
         JavaFileObject contract = SourceFiles.inline(CONTRACT_FQN, """
                 package com.example.reserved;
                 import dev.vertique.services.ServiceContract;
@@ -107,8 +149,8 @@ class ServiceClientProxyReservedIdentifierTest {
 
                 @ServiceContract("reserved-greeter")
                 public interface ReservedGreeter {
-                    // Same name as the generated private static int _payloadIndex_(ServiceMethodMeta)
-                    // helper — a legal overload, but reserved all the same.
+                    // Different erasure from the generated private static int _payloadIndex_(ServiceMethodMeta)
+                    // helper — a legal overload, not a collision.
                     @ServiceOperation("greet")
                     Future<String> _payloadIndex_(String name);
                 }
@@ -117,10 +159,10 @@ class ServiceClientProxyReservedIdentifierTest {
         ProcessorTestHarness.Result result = ProcessorTestHarness.run(new ServiceContractProcessor(), contract);
 
         result.assertSuccess();
-        assertNoCompanion(result);
-        assertNoteNaming(result, "_payloadIndex_");
+        assertCompanionGenerated(result);
+        assertNoNoteNaming(result, "_payloadIndex_");
 
-        assertReflectiveFallbackDispatches(result, "_payloadIndex_", "name");
+        assertDispatches(result, "_payloadIndex_", "name", String.class, "x", true);
     }
 
     // --- Assertions ---
@@ -134,6 +176,17 @@ class ServiceClientProxyReservedIdentifierTest {
         assertTrue(
                 result.compilation().generatedSourceFile(COMPANION_FQN).isEmpty(),
                 "no companion must be emitted for a contract using a reserved identifier");
+    }
+
+    /**
+     * Asserts that a {@code _ServiceClientProxy} companion source was written for the fixture.
+     *
+     * @param result the successful harness result to inspect; must not be {@code null}
+     */
+    private static void assertCompanionGenerated(ProcessorTestHarness.Result result) {
+        assertTrue(
+                result.compilation().generatedSourceFile(COMPANION_FQN).isPresent(),
+                "a companion must be emitted for a legal overload of a reserved method name");
     }
 
     /**
@@ -153,39 +206,73 @@ class ServiceClientProxyReservedIdentifierTest {
     }
 
     /**
-     * Asserts that {@link ServiceClientFactory#create(Class)} falls back to a JDK dynamic proxy for
-     * the compiled fixture and that the proxy dispatches the caller's payload correctly.
+     * Asserts that no {@link Diagnostic.Kind#NOTE} names both the contract and the given
+     * identifier — the mirror image of {@link #assertNoteNaming}, used to prove a legal overload
+     * produces no reserved-identifier skip note.
      *
-     * <p>This is the half of the contract that makes the skip safe: the NOTE would be cold comfort
-     * if the contract stopped working.
+     * @param result     the harness result to inspect; must not be {@code null}
+     * @param identifier the identifier that must not be named by any reserved-identifier NOTE
+     */
+    private static void assertNoNoteNaming(ProcessorTestHarness.Result result, String identifier) {
+        boolean found = result.compilation().diagnostics().stream()
+                .filter(d -> d.getKind() == Diagnostic.Kind.NOTE)
+                .map(d -> d.getMessage(null))
+                .anyMatch(msg -> msg != null && msg.contains(CONTRACT_FQN) && msg.contains(identifier));
+        assertFalse(found, "expected no reserved-identifier NOTE naming '%s' but one was found".formatted(identifier));
+    }
+
+    /**
+     * Builds the factory for the compiled fixture, invokes its single operation, and asserts the
+     * dispatch outcome — shared by both the reflective-fallback scenarios (a reserved identifier
+     * was used) and the companion-emission scenario (a legal overload of a reserved method name).
      *
-     * @param result     the successful harness result carrying the compiled contract
-     * @param methodName the single operation method's name on the contract
-     * @param paramName  the operation's payload parameter name, as registered in the entry
+     * <p>This is the half of the contract that makes both outcomes safe: the {@code NOTE} (or its
+     * absence) would be cold comfort if the contract stopped dispatching correctly.
+     *
+     * @param result          the successful harness result carrying the compiled contract
+     * @param methodName      the single operation method's name on the contract
+     * @param paramName       the operation's payload parameter name, as registered in the entry
+     * @param paramType       the payload parameter's declared type
+     * @param invocationArg   the argument passed to the operation method; may be {@code null}
+     * @param expectCompanion {@code true} when {@code create()} must select the generated
+     *                        companion; {@code false} when the JDK dynamic-proxy fallback is
+     *                        expected
      * @throws Exception if the contract cannot be loaded, or the proxy built or invoked
      */
-    private static void assertReflectiveFallbackDispatches(
-            ProcessorTestHarness.Result result, String methodName, String paramName) throws Exception {
+    private static void assertDispatches(
+            ProcessorTestHarness.Result result,
+            String methodName,
+            String paramName,
+            Class<?> paramType,
+            Object invocationArg,
+            boolean expectCompanion)
+            throws Exception {
         Class<?> contractClass = result.loadGeneratedClass(CONTRACT_FQN);
-        Method operation = contractClass.getMethod(methodName, String.class);
+        Method operation = contractClass.getMethod(methodName, paramType);
 
         ServiceRequestSender sender = mock(ServiceRequestSender.class);
         when(sender.send(any(), any())).thenReturn(Future.succeededFuture(Result.success("hello, x")));
 
-        Object proxy = factoryFor(entryFor(contractClass, operation, paramName), sender)
+        Object client = factoryFor(entryFor(contractClass, operation, paramName, paramType), sender)
                 .create(contractClass);
 
-        assertTrue(
-                Proxy.isProxyClass(proxy.getClass()),
-                "create() must fall back to the JDK dynamic proxy when no companion was emitted");
+        if (expectCompanion) {
+            assertFalse(
+                    Proxy.isProxyClass(client.getClass()),
+                    "create() must select the generated companion, not the JDK dynamic proxy");
+        } else {
+            assertTrue(
+                    Proxy.isProxyClass(client.getClass()),
+                    "create() must fall back to the JDK dynamic proxy when no companion was emitted");
+        }
 
-        Future<?> dispatched = (Future<?>) operation.invoke(proxy, "x");
+        Future<?> dispatched = (Future<?>) operation.invoke(client, invocationArg);
 
         ArgumentCaptor<DispatchEnvelope<?>> envelopeCaptor = forClass(DispatchEnvelope.class);
         verify(sender).send(any(), envelopeCaptor.capture());
-        assertEquals("x", envelopeCaptor.getValue().payload(), "the fallback proxy must extract the caller's payload");
-        assertTrue(dispatched.succeeded(), "the fallback dispatch must complete successfully");
-        assertEquals("hello, x", dispatched.result(), "the fallback proxy must unwrap the stubbed Result value");
+        assertEquals(invocationArg, envelopeCaptor.getValue().payload(), "the proxy must extract the caller's payload");
+        assertTrue(dispatched.succeeded(), "the dispatch must complete successfully");
+        assertEquals("hello, x", dispatched.result(), "the proxy must unwrap the stubbed Result value");
     }
 
     // --- Registry / factory construction helpers ---
@@ -196,18 +283,20 @@ class ServiceClientProxyReservedIdentifierTest {
      * @param contractClass the loaded contract interface
      * @param operation     the contract's single operation method
      * @param paramName     the payload parameter's name
+     * @param paramType     the payload parameter's declared type
      * @return the built contract entry
      */
-    private static ContractEntry<?> entryFor(Class<?> contractClass, Method operation, String paramName) {
+    private static ContractEntry<?> entryFor(
+            Class<?> contractClass, Method operation, String paramName, Class<?> paramType) {
         return ServiceContractEntries.deployable()
                 .contract(contractClass)
                 .serviceInstance(new Object())
                 .name("reserved-greeter")
                 .operation("greet")
                 .method(operation)
-                .payloadType(String.class)
+                .payloadType(paramType)
                 .returnType(String.class)
-                .param(paramName, ParamSource.PAYLOAD, String.class)
+                .param(paramName, ParamSource.PAYLOAD, paramType)
                 .done()
                 .build();
     }

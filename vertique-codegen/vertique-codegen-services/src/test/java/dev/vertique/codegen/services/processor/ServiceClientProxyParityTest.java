@@ -720,21 +720,6 @@ class ServiceClientProxyParityTest {
             Class<?> contractA, Object proxyA, DispatchCapture capturedA, Object proxyB, DispatchCapture capturedB) {}
 
     /**
-     * Builds both dispatch paths (companion and dynamic-proxy) for the {@link #PARITY_GREETER}
-     * fixture, invokes {@code greet} on each with the given stub value and invocation argument, and
-     * captures both outcomes.
-     *
-     * <p>Shared by scenarios 1, 4, and 6, which repeat this exact build-invoke-capture shape and vary
-     * only the stubbed success value and the invocation argument. Per-scenario assertions — including
-     * scenario 1's SELECTION-ANCHOR class-identity checks — stay in the scenario methods; this helper only
-     * builds, invokes, and captures.
-     *
-     * @param stubValue     the value the mock sender's stubbed {@link Result#success} completes with
-     * @param invocationArg the single argument passed to {@code greet} (may be {@code null})
-     * @return both paths' constructed proxy instances and captured dispatch outcomes
-     * @throws Exception if either path's proxy cannot be built or invoked
-     */
-    /**
      * Both paths' constructed proxy instances and the contract method to invoke on each, for
      * scenarios whose invocation is expected to throw and therefore cannot be captured.
      *
@@ -771,6 +756,21 @@ class ServiceClientProxyParityTest {
                 contractB.getMethod("driftOp", SecurityContext.class, String.class));
     }
 
+    /**
+     * Builds both dispatch paths (companion and dynamic-proxy) for the {@link #PARITY_GREETER}
+     * fixture, invokes {@code greet} on each with the given stub value and invocation argument, and
+     * captures both outcomes.
+     *
+     * <p>Shared by scenarios 1, 4, and 6, which repeat this exact build-invoke-capture shape and vary
+     * only the stubbed success value and the invocation argument. Per-scenario assertions — including
+     * scenario 1's SELECTION-ANCHOR class-identity checks — stay in the scenario methods; this helper only
+     * builds, invokes, and captures.
+     *
+     * @param stubValue     the value the mock sender's stubbed {@link Result#success} completes with
+     * @param invocationArg the single argument passed to {@code greet} (may be {@code null})
+     * @return both paths' constructed proxy instances and captured dispatch outcomes
+     * @throws Exception if either path's proxy cannot be built or invoked
+     */
     private static DualPathCapture greeterDualPathCapture(String stubValue, Object invocationArg) throws Exception {
         Class<?> contractA = WITH_COMPANION.loadGeneratedClass(PARITY_GREETER_FQN);
         ContractEntry<?> entryA = parityGreeterEntry(contractA);
