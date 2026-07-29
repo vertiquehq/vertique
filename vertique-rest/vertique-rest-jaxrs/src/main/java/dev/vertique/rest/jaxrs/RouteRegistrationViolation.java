@@ -125,39 +125,53 @@ public record RouteRegistrationViolation(String operationId, ViolationType type,
 
         /**
          * Two parameters of the same method bind the <em>same name</em> from the same request source but
-         * declare <em>incompatible multiplicities</em>: one is collection-shaped (it carries a component
-         * type — {@code List<T>}, {@code Set<T>}, {@code SortedSet<T>}, {@code NavigableSet<T>},
-         * {@code Collection<T>}, or {@code T[]}) and the other is scalar. It is legal Java that compiles,
-         * e.g. {@code get(@QueryParam("id") String a, @QueryParam("id") List<String> b)}.
+         * cannot <em>share one declared parameter</em>. It is legal Java that compiles, e.g.
+         * {@code get(@QueryParam("id") String a, @QueryParam("id") List<String> b)}.
          *
          * <p><b>Why there is no correct binding.</b> Request binding resolves a name to a
          * <em>single</em> declared parameter: {@code DefaultBoundRequest.findDescriptor} returns the
-         * <em>first</em> descriptor matching a location and name, and that one descriptor decides the
-         * multiplicity of the bound value for <em>every</em> parameter reading that name. So exactly one
-         * of the two declarations is always mis-bound, whichever one wins:
+         * <em>first</em> descriptor matching a location and name, and that one declaration then decides —
+         * for <em>every</em> parameter reading that name — the multiplicity of the bound value, the scalar
+         * conversion applied to it, and the single parameter schema derived for the name. Two declarations
+         * that disagree about any of those cannot both be honored, so the declaration is rejected at
+         * registration rather than mounted and mis-bound per request. The reported disagreements:
+         *
          * <ul>
-         *   <li>the <b>scalar</b> descriptor wins &rarr; the collection-shaped parameter receives a
-         *       scalar-wrapped value, which {@code ParameterExtractor.extractScalarValue} degrades to a
-         *       one-element collection (with a warning) — silently dropping every repeated value;</li>
-         *   <li>the <b>collection</b> descriptor wins &rarr; the scalar parameter receives a
-         *       {@code JsonArray}, which its declared type has no converter for.</li>
+         *   <li><b>Incompatible multiplicities</b> — one is collection-shaped (it carries a component
+         *       type — {@code List<T>}, {@code Set<T>}, {@code SortedSet<T>}, {@code NavigableSet<T>},
+         *       {@code Collection<T>}, or {@code T[]}) and the other is scalar. Exactly one is then always
+         *       mis-bound, whichever descriptor wins: the <b>scalar</b> one makes the collection-shaped
+         *       parameter degrade to a one-element collection (with a warning), silently dropping every
+         *       repeated value; the <b>collection</b> one hands the scalar parameter a {@code JsonArray}
+         *       its declared type has no converter for.</li>
+         *   <li><b>Different declared types on a scalar pair</b> — e.g. {@code @QueryParam("id") Integer}
+         *       plus {@code @QueryParam("id") UUID}. {@code DefaultBoundRequest.wrapScalar} converts the
+         *       raw value <em>once</em>, with the first declaration's type, and extraction passes an
+         *       already-converted value through unchanged, so the other parameter receives the wrong type
+         *       and every request carrying the name fails opaquely in {@code Method.invoke}.</li>
+         *   <li><b>Different element types on a collection pair</b> — e.g. {@code List<String>} plus
+         *       {@code List<UUID>}. One request name cannot mean two element types: the single parameter
+         *       schema derived for the name describes only one of them, and each parameter's element
+         *       conversion is fail-closed, so a value valid for one declaration fails the other.</li>
+         *   <li><b>Different binding-affecting annotations</b> on an otherwise identical shape — including
+         *       a different {@code @DefaultValue}, and any constraint or converter-selecting annotation.
+         *       The one descriptor carries one annotation array: it is what the JAX-RS
+         *       {@code ParamConverterProvider} chain is offered when choosing a converter, and what the
+         *       per-name parameter schema is built from, so one declaration's semantics silently govern
+         *       both.</li>
          * </ul>
-         * Neither outcome is what the declaration asks for, so the shape is rejected at registration
-         * rather than mounted and mis-bound per request.
          *
          * <p><b>What to do instead:</b> give the two parameters distinct names. A collection-shaped
-         * declaration on its own already receives every submitted value, so the scalar one is rarely
-         * what was wanted.
+         * declaration on its own already receives every submitted value, so a scalar declaration of the
+         * same name is rarely what was wanted.
          *
-         * <p><b>Two declarations of the same name with the same multiplicity are NOT reported</b> — but
-         * that is a statement about this check's scope, <em>not</em> a safety guarantee. They still share
-         * one descriptor, and whatever that single descriptor decides is applied to both: two different
-         * declared types under one name (e.g. {@code Integer} plus {@code UUID}) mount and then fail in
-         * {@code Method.invoke} on every request carrying the name, and the same declared type with
-         * different conversion-affecting annotations silently applies the <em>first</em> declaration's
-         * semantics to both. Only the multiplicity conflict above is validated here.
+         * <p><b>A pair that agrees on all of the above is accepted</b>, because sharing one descriptor
+         * then costs nothing: two identical declarations, and two collection shapes over one element type
+         * ({@code List<String>} plus {@code Set<String>}), are redundant but correct. For a collection the
+         * descriptor decides multiplicity only — the values are bound unconverted and each parameter
+         * converts its elements and materializes its own declared collection type.
          *
-         * <p><b>Scoping.</b> Reported for the sources whose multiplicity {@code findDescriptor} decides:
+         * <p><b>Scoping.</b> Reported for the sources whose binding {@code findDescriptor} decides:
          * {@code PATH}, {@code QUERY}, {@code HEADER}, and {@code COOKIE}. Names are compared exactly as
          * {@code findDescriptor} matches them — <em>case-insensitively</em> for {@code HEADER} and
          * {@code COOKIE} (so {@code @HeaderParam("X-Id")} and {@code @HeaderParam("x-id")} do collide),
@@ -169,18 +183,19 @@ public record RouteRegistrationViolation(String operationId, ViolationType type,
          *
          * <p>{@code FORM} is deliberately <em>excluded</em>: {@code ParameterExtractor.extractFormParam}
          * reads {@code formAttributes()} directly per parameter and never consults
-         * {@code findDescriptor}, so a scalar {@code @FormParam} takes the first submitted value while a
-         * collection-shaped one of the same name takes all of them — both well-defined. {@code PATH} is
-         * included even though no {@code @PathParam} carries a component type today (so the conflict is
-         * currently unreachable there), which keeps the check keyed to {@code findDescriptor}'s own
-         * location set: adding {@code @PathParam} collection support cannot silently escape it.
-         * {@code BODY}, {@code CONTEXT}, {@code PRECONDITIONS}, {@code BEAN_PARAM}, and the
-         * {@code FILE_UPLOADS}/{@code ENTITY_PARTS} aggregates are not name-matched request parameters
-         * at all.
+         * {@code findDescriptor}, so every {@code @FormParam} of a repeated name converts, defaults, and
+         * materializes independently — a scalar one takes the first submitted value while a
+         * collection-shaped one takes all of them, both well-defined. {@code BODY}, {@code CONTEXT},
+         * {@code PRECONDITIONS}, {@code BEAN_PARAM}, and the {@code FILE_UPLOADS}/{@code ENTITY_PARTS}
+         * aggregates are not name-matched request parameters at all.
          *
          * <p>The check is independent of the other shape guards: a conflicting pair whose collection half
          * is <em>also</em> an unsupported shape reports both violations, because both are real and each
          * has its own fix.
+         *
+         * <p><b>Name note.</b> The constant is named for the multiplicity conflict it originally covered;
+         * it now reports every reason two same-name declarations cannot share one descriptor. It is a
+         * public enum constant, so it is kept as-is rather than renamed.
          */
         DUPLICATE_PARAM_NAME_MULTIPLICITY_CONFLICT
     }

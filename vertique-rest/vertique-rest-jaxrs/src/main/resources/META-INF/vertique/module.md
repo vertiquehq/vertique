@@ -577,16 +577,18 @@ does not — a path segment is always single-valued.
   non-comparable element type mounts cleanly and fails the first request carrying a value with a
   `ClassCastException` (500). Declare `Set<T>`, `List<T>`, or `Collection<T>` instead when the element
   type is not self-comparable.
-- **One name, one multiplicity.** A name is bound once per source and shared by every parameter
-  declaring it, so declaring the same `@PathParam`/`@QueryParam`/`@HeaderParam`/`@CookieParam` name both
-  collection-shaped and scalar in one method fails route registration with
+- **One name, one declaration.** A name is bound once per source and shared by every parameter declaring
+  it, so two `@PathParam`/`@QueryParam`/`@HeaderParam`/`@CookieParam` parameters of one name in a method
+  must be interchangeable. When they are not, route registration fails with
   `DUPLICATE_PARAM_NAME_MULTIPLICITY_CONFLICT` (see [Startup failures](#startup-failures)) instead of
-  mis-binding one of the two per request. Duplicating a name at the *same* multiplicity is outside that
-  check's scope — not a guarantee it binds correctly: the two declarations still share one descriptor, so
-  differing declared types under one name mount and then fail per request, and differing
-  conversion-affecting annotations silently apply the first declaration's semantics to both.
-  `@FormParam` is outside the rule entirely, since its values are read per parameter rather than through
-  a shared descriptor.
+  mis-binding one of the two per request. Rejected: different multiplicities (one collection-shaped, one
+  scalar); different declared types on a scalar pair (`Integer` plus `UUID`); different element types on a
+  collection pair (`List<String>` plus `List<UUID>`); and any other difference in binding-affecting
+  annotations, including a different `@DefaultValue`. Accepted, as redundant but correct: two identical
+  declarations, and two collection shapes over one element type (`List<String>` plus `Set<String>`), since
+  each parameter converts its elements and materializes its own declared collection type. `@FormParam` is
+  outside the rule entirely, since its values are read per parameter rather than through a shared
+  descriptor.
 - **Native multipart targets are `List`-restricted.** `FileUpload`/`EntityPart` materialize natively only
   as a scalar target or `List<T>`; any other collection shape of a native target fails route
   registration with `UNSUPPORTED_MULTIPART_COLLECTION_SHAPE` (see [Startup failures](#startup-failures))
@@ -871,7 +873,7 @@ the `application/problem+json` media type preserved, and logs a WARN. A profile-
 | `FORM_AND_BODY_CONFLICT` | `@FormParam` or file-upload parameters mixed with a body parameter |
 | `INVALID_FILE_PART_DECLARATION` | `@FilePart` on an unsupported type, invalid `allowedTypes`/`maxSizeBytes`, or overlapping constrained declarations |
 | `UNSUPPORTED_MULTIPART_COLLECTION_SHAPE` | a `@FormParam` collection parameter's element type is a native multipart target (`FileUpload`/`EntityPart`) declared in a shape other than `List` |
-| `DUPLICATE_PARAM_NAME_MULTIPLICITY_CONFLICT` | two parameters bind the same name from the same source with incompatible multiplicities — one collection-shaped, one scalar; scoped to `@PathParam`/`@QueryParam`/`@HeaderParam`/`@CookieParam` |
+| `DUPLICATE_PARAM_NAME_MULTIPLICITY_CONFLICT` | two parameters bind the same name from the same source but cannot share one declaration — incompatible multiplicities (one collection-shaped, one scalar), different scalar types, different collection element types, or different binding-affecting annotations (including `@DefaultValue`); scoped to `@PathParam`/`@QueryParam`/`@HeaderParam`/`@CookieParam` |
 | `SECURITY_ANNOTATIONS_WITHOUT_AUTH_MODULE` | restrictive security annotations present but `AuthModule` absent |
 | `CONTEXT_PARAM_CONFLICT` | a `@Context` parameter also carries a JAX-RS value-binding annotation — the two are mutually exclusive |
 | `UNSUPPORTED_JAXRS_CONTEXT_TYPE` | a `@Context` parameter declares a reserved JAX-RS type that is not supported (e.g. `UriInfo`, `HttpHeaders`); fails fast instead of injecting `null` |

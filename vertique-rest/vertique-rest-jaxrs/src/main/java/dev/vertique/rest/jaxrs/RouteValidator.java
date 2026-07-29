@@ -9,6 +9,7 @@ import dev.vertique.rest.core.request.FilePart;
 import dev.vertique.rest.core.security.SecurityPolicy;
 import dev.vertique.rest.jaxrs.routing.FilePartDescriptor;
 import io.vertx.ext.web.FileUpload;
+import jakarta.annotation.Nullable;
 import jakarta.ws.rs.BeanParam;
 import jakarta.ws.rs.CookieParam;
 import jakarta.ws.rs.FormParam;
@@ -18,17 +19,19 @@ import jakarta.ws.rs.QueryParam;
 import jakarta.ws.rs.core.EntityPart;
 import java.lang.annotation.Annotation;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 
 /**
  * Validates route registration constraints at startup.
  *
  * <p>Checks include: body parameter count, form/body conflicts, unsupported native multipart
- * collection shapes, same-name parameters declaring incompatible multiplicities, duplicate
- * operationIds, unmatched operationIds, and security annotations present without an auth module
- * installed. All methods are static; this class is not intended to be instantiated.
+ * collection shapes, two same-name parameters at one location that cannot share one declared
+ * parameter, duplicate operationIds, unmatched operationIds, and security annotations present without
+ * an auth module installed. All methods are static; this class is not intended to be instantiated.
  */
 class RouteValidator {
 
@@ -71,45 +74,19 @@ class RouteValidator {
         addContextParamViolations(meta, violations);
         addFilePartViolations(meta, violations);
         addMultipartCollectionShapeViolations(meta, violations);
-        addDuplicateParamMultiplicityViolations(meta, violations);
+        addDuplicateParamNameViolations(meta, violations);
         return violations;
     }
 
     /**
-     * Rejects two parameters that bind the <em>same name</em> from the same request source but declare
-     * <em>incompatible multiplicities</em> — one collection-shaped ({@code componentType() != null}), the
-     * other scalar. Such a declaration has no correct binding: {@code DefaultBoundRequest.findDescriptor}
-     * resolves a name to the <em>first</em> matching descriptor, and that single descriptor decides the
-     * multiplicity of the bound value for both parameters, so exactly one of them is always mis-bound —
-     * the collection parameter degrades to a one-element collection (dropping every repeated value), or
-     * the scalar parameter receives a {@code JsonArray} its declared type has no converter for. Startup
-     * therefore fails fast, exactly as it does for the other unbindable shapes (see
-     * {@link #addMultipartCollectionShapeViolations}).
-     *
-     * <p><b>This guard is scoped to multiplicity conflicts and nothing else.</b> Two declarations of one
-     * name with the <em>same</em> multiplicity are outside its scope — they are not validated here, and
-     * that is <em>not</em> a claim that they bind correctly. They do share one descriptor, so the
-     * multiplicity of the bound value fits both; but the shared descriptor is the <em>first</em>
-     * declaration's ({@code DefaultBoundRequest.findDescriptor} is first-match), and
-     * {@code DefaultBoundRequest.wrapScalar} eagerly coerces the raw value with it while
-     * {@code ParameterExtractor.coerce} passes an already-converted value through unchanged. So a
-     * same-multiplicity pair still mis-binds whenever the two declarations differ in a way the single
-     * descriptor decides:
-     *
-     * <ul>
-     *   <li><b>different declared types</b> — {@code @QueryParam("id") Integer} plus
-     *       {@code @QueryParam("id") UUID} mounts, then fails in {@code Method.invoke} on every request
-     *       carrying {@code id}, because the value was converted once, to the first declared type;
-     *   <li><b>different conversion-affecting annotations</b> on the same declared type — silent, not a
-     *       failure: {@code ConversionContexts.forDescriptor} builds the context from the first
-     *       declaration's annotations, so the second parameter receives a value converted under the
-     *       first's semantics.
-     * </ul>
-     *
-     * <p>Two different collection shapes of one name ({@code List<String>} plus {@code Set<String>}) are
-     * likewise unreported — multiplicity, not the concrete collection type, is what the single descriptor
-     * decides. Widening the guard to same-multiplicity mis-binding would reject declarations that mount
-     * today, so it is a separate, consumer-visible decision rather than an omission of this one.
+     * Rejects two parameters that bind the <em>same name</em> from the same request source but cannot
+     * <em>share one declared parameter</em>. {@code DefaultBoundRequest.findDescriptor} resolves a request
+     * name to the <em>first</em> matching descriptor, and that single descriptor is the only declaration
+     * consulted for everything binding decides per name, so a pair that disagrees about any of those
+     * decisions has no correct binding and startup fails fast — exactly as it does for the other
+     * unbindable shapes (see {@link #addMultipartCollectionShapeViolations}). The disagreements, all
+     * verified against the runtime paths named below, are enumerated in
+     * {@link #sharedDescriptorDisagreement}.
      *
      * <p><b>Scoped to the sources {@code findDescriptor} is consulted for</b> — see
      * {@link #isDescriptorMatchedSource}, and {@link #bindsSameName} for the per-location name-matching
@@ -118,8 +95,13 @@ class RouteValidator {
      * going through {@code findDescriptor}: a scalar {@code @FormParam} takes the first submitted value
      * while a collection-shaped one of the same name takes all of them, so both bind correctly.
      *
+     * <p>A pair that agrees on <em>every</em> shared decision is <b>accepted</b>: two identical
+     * declarations, or two collection shapes over one element type ({@code List<String>} plus
+     * {@code Set<String>}), are redundant but correct, so rejecting them would break declarations that
+     * bind correctly today.
+     *
      * <p>At most <em>one</em> violation is emitted per colliding name, against its first declaration and
-     * the first conflicting partner: a name declared three times is one defect with one fix, not two.
+     * the first disagreeing partner: a name declared three times is one defect with one fix, not two.
      * Running from {@link #validateMethodParams} places the check <em>before</em> the
      * {@code UNRESOLVABLE_PARAM_CONVERTER} probe in {@code JaxRsRouteRegistrar} (which skips the rest of
      * the operation as soon as method-param validation reports anything), so the shape-specific
@@ -128,9 +110,9 @@ class RouteValidator {
      * and each has its own fix.
      *
      * @param meta       the resource method metadata to inspect
-     * @param violations mutable list to which any multiplicity-conflict violations are appended
+     * @param violations mutable list to which any duplicate-name violations are appended
      */
-    private static void addDuplicateParamMultiplicityViolations(
+    private static void addDuplicateParamNameViolations(
             ResourceMethodMeta meta, List<RouteRegistrationViolation> violations) {
         List<ResourceMethodMeta.ParamMeta> params = meta.params();
         List<ResourceMethodMeta.ParamMeta> reported = new ArrayList<>();
@@ -144,7 +126,11 @@ class RouteValidator {
             }
             for (int j = i + 1; j < params.size(); j++) {
                 ResourceMethodMeta.ParamMeta second = params.get(j);
-                if (!bindsSameName(first, second) || !multiplicityConflicts(first, second)) {
+                if (!bindsSameName(first, second)) {
+                    continue;
+                }
+                String disagreement = sharedDescriptorDisagreement(first, second);
+                if (disagreement == null) {
                     continue;
                 }
                 reported.add(first);
@@ -152,11 +138,11 @@ class RouteValidator {
                         meta.operationId(),
                         RouteRegistrationViolation.ViolationType.DUPLICATE_PARAM_NAME_MULTIPLICITY_CONFLICT,
                         String.format(
-                                "%s parameters '%s' (%s) and '%s' (%s) of %s.%s() bind the same name%s but declare "
-                                        + "incompatible multiplicities — one collection-shaped, one scalar. Binding "
-                                        + "resolves a request name to a single declared parameter (first match wins), "
-                                        + "so exactly one of the two would always be mis-bound: give them distinct "
-                                        + "names.",
+                                "%s parameters '%s' (%s) and '%s' (%s) of %s.%s() bind the same name%s but cannot "
+                                        + "share one declared parameter: they %s. Binding resolves a request name to "
+                                        + "a single declared parameter (first match wins), and that one declaration "
+                                        + "decides what both parameters receive, so at least one of the two can never "
+                                        + "be honored: give them distinct names.",
                                 first.source(),
                                 first.name(),
                                 describeShape(first),
@@ -164,23 +150,27 @@ class RouteValidator {
                                 describeShape(second),
                                 meta.method().getDeclaringClass().getSimpleName(),
                                 meta.method().getName(),
-                                matchesNameCaseInsensitively(first.source()) ? " (matched case-insensitively)" : "")));
+                                matchesNameCaseInsensitively(first.source()) ? " (matched case-insensitively)" : "",
+                                disagreement)));
                 break;
             }
         }
     }
 
     /**
-     * Returns whether a parameter source's multiplicity is decided by
+     * Returns whether a parameter source's binding is decided by
      * {@code DefaultBoundRequest.findDescriptor}, i.e. whether two same-name declarations of that source
      * necessarily share one descriptor.
      *
      * <p>{@code FORM} is absent because {@code ParameterExtractor.extractFormParam} reads
-     * {@code formAttributes()} per parameter and never consults {@code findDescriptor}. {@code PATH} is
-     * present even though no {@code @PathParam} carries a component type today — so a conflict is
-     * currently unreachable there — because {@code findDescriptor} <em>is</em> consulted for it
-     * ({@code DefaultBoundRequest.bindPath}); keeping it in scope means adding {@code @PathParam}
-     * collection support cannot silently escape the guard.
+     * {@code formAttributes()} per parameter and never consults {@code findDescriptor}, so every
+     * {@code @FormParam} of a repeated name converts, defaults, and materializes independently.
+     * {@code PATH} is present because {@code findDescriptor} <em>is</em> consulted for it
+     * ({@code DefaultBoundRequest.bindPath}): two {@code @PathParam}s of one name share the descriptor
+     * that converts the value, so a type or annotation disagreement there is as unbindable as on
+     * {@code QUERY}. No {@code @PathParam} carries a component type today, so only the multiplicity half
+     * of the check is unreachable for it; keeping the source in scope means adding {@code @PathParam}
+     * collection support cannot silently escape that half either.
      *
      * @param source the parameter's source
      * @return {@code true} for {@code PATH}, {@code QUERY}, {@code HEADER}, and {@code COOKIE}
@@ -227,13 +217,125 @@ class RouteValidator {
     }
 
     /**
+     * Returns the way two declarations of one name disagree about something their <em>single shared
+     * descriptor</em> decides, as a clause for the diagnostic — or {@code null} when they agree on all of
+     * them and can therefore share one descriptor harmlessly.
+     *
+     * <p>The disagreements, in the order they are reported:
+     *
+     * <ol>
+     *   <li><b>Multiplicity</b> ({@link #multiplicityConflicts}) — exactly one of the two is
+     *       collection-shaped. The single descriptor decides the multiplicity of the bound value for both
+     *       parameters, so exactly one is always mis-bound: the collection parameter degrades to a
+     *       one-element collection (dropping every repeated value), or the scalar parameter receives a
+     *       {@code JsonArray} its declared type has no converter for.</li>
+     *   <li><b>The conversion target type.</b> Which type that is depends on the shape, because the
+     *       descriptor's role differs:
+     *       <ul>
+     *         <li><em>Scalar pair</em> — the descriptor performs the conversion:
+     *             {@code DefaultBoundRequest.wrapScalar} converts the raw value once through
+     *             {@code ConversionContexts.forDescriptor}, whose {@code rawType}/{@code genericType} come
+     *             from the first declaration, and {@code ParameterExtractor.coerce} passes an
+     *             already-converted value through unchanged. So {@code @QueryParam("id") Integer} plus
+     *             {@code @QueryParam("id") UUID} mounts and then fails in {@code Method.invoke} on every
+     *             request carrying {@code id}. Both {@code type()} and {@code genericType()} are compared,
+     *             since both are handed to a {@code ParamConverterProvider}.</li>
+     *         <li><em>Collection pair</em> — the descriptor decides multiplicity <em>only</em>:
+     *             {@code wrapValues} wraps the raw values into one {@code JsonArray} without converting,
+     *             and {@code ParameterExtractor.coerceCollection} converts each element and materializes
+     *             the collection from the <em>parameter's own</em> {@code componentType()}/{@code type()}.
+     *             The concrete collection type is therefore <em>not</em> compared: {@code List<String>}
+     *             plus {@code Set<String>} each materialize their own declared shape correctly. The
+     *             <em>element</em> type is compared, because one request name cannot mean two element
+     *             types at once — the single per-name schema derived from the descriptor
+     *             ({@code AnnotationSchemaSource.synthesizeParam}) can describe only one of them, and each
+     *             parameter's element conversion is fail-closed, so a value valid for one declaration
+     *             fails the other.</li>
+     *       </ul></li>
+     *   <li><b>Binding-affecting annotations</b> ({@link #bindingAnnotationsAgree}) — the descriptor
+     *       carries one annotation array for the name.</li>
+     * </ol>
+     *
+     * @param first  the earlier declaration
+     * @param second the later declaration; binds the same name from the same source
+     * @return the disagreement clause for the diagnostic, or {@code null} when the two can share one
+     *     descriptor
+     */
+    @Nullable
+    private static String sharedDescriptorDisagreement(
+            ResourceMethodMeta.ParamMeta first, ResourceMethodMeta.ParamMeta second) {
+        if (multiplicityConflicts(first, second)) {
+            return "declare incompatible multiplicities — one collection-shaped, one scalar";
+        }
+        if (first.componentType() != null) {
+            if (first.componentType() != second.componentType()) {
+                return "declare different element types";
+            }
+        } else if (first.type() != second.type() || !Objects.equals(first.genericType(), second.genericType())) {
+            return "declare different types";
+        }
+        if (!bindingAnnotationsAgree(first, second)) {
+            return "declare one shape with different binding-affecting annotations";
+        }
+        return null;
+    }
+
+    /**
+     * Returns whether two declarations of one name carry the same binding-affecting annotations, compared
+     * as an unordered set (declaration order on a parameter is irrelevant to every consumer).
+     *
+     * <p>The compared set is <em>every</em> parameter annotation except the JAX-RS source annotation
+     * itself ({@link #isBindingAnnotation}). Comparing the rest wholesale is deliberate and fails
+     * <em>closed</em>: the descriptor's annotation array is handed over whole to
+     * {@code ParamConverterProvider.getConverter(rawType, genericType, annotations)} — an application SPI
+     * that may key on any annotation — and whole to
+     * {@code AnnotationSchemaSource.applyConstraints}, which maps a growing set ({@code @Size},
+     * {@code @Pattern}, {@code @Min}, {@code @Max}, {@code @DecimalMin}, {@code @DecimalMax}, Swagger's
+     * {@code @Schema}, …) into the single per-name schema, so the second declaration's constraints
+     * silently replace the first's. An allow-list of "conversion-affecting" annotations would have to
+     * track both an open SPI and a mapper in another module, and would fail open — silently — whenever
+     * either grows. {@code @DefaultValue} is compared for the same reason, and because two different
+     * defaults are two absent-value contracts for one request name.
+     *
+     * <p>The one exclusion is the source annotation, whose {@code value()} is the parameter name that
+     * {@link #bindsSameName} already compared under {@code findDescriptor}'s own rule. Comparing it again
+     * would reject a case-differing {@code @HeaderParam("X-Id")}/{@code @HeaderParam("x-id")} pair whose
+     * declarations bind identically.
+     *
+     * @param first  the earlier declaration
+     * @param second the later declaration
+     * @return {@code true} when both declare the same binding-affecting annotations
+     */
+    private static boolean bindingAnnotationsAgree(
+            ResourceMethodMeta.ParamMeta first, ResourceMethodMeta.ParamMeta second) {
+        List<Annotation> firstAnnotations = comparedAnnotations(first);
+        List<Annotation> secondAnnotations = comparedAnnotations(second);
+        return firstAnnotations.size() == secondAnnotations.size()
+                && firstAnnotations.containsAll(secondAnnotations)
+                && secondAnnotations.containsAll(firstAnnotations);
+    }
+
+    /**
+     * Returns the parameter's annotations minus the JAX-RS source annotation, i.e. the set
+     * {@link #bindingAnnotationsAgree} compares.
+     *
+     * @param pm the parameter metadata
+     * @return the compared annotations; empty when the parameter captured none
+     */
+    private static List<Annotation> comparedAnnotations(ResourceMethodMeta.ParamMeta pm) {
+        Annotation[] declared = pm.annotationsLazy().get();
+        if (declared == null) {
+            return List.of();
+        }
+        return Arrays.stream(declared)
+                .filter(annotation -> !isBindingAnnotation(annotation.annotationType()))
+                .toList();
+    }
+
+    /**
      * Returns whether two declarations of one name disagree about <em>multiplicity</em> — exactly one of
      * them carries a component type. Two collection shapes agree on multiplicity (both bind all values),
      * as do two scalars.
-     *
-     * <p>Agreeing on multiplicity is not the same as binding correctly: a same-multiplicity pair whose
-     * declared types or conversion-affecting annotations differ is still mis-bound, and is deliberately
-     * outside this guard's scope (see {@link #addDuplicateParamMultiplicityViolations}).
      *
      * @param first  the earlier declaration
      * @param second the later declaration
@@ -512,17 +614,29 @@ class RouteValidator {
             return false;
         }
         for (Annotation ann : annotations) {
-            Class<? extends Annotation> type = ann.annotationType();
-            if (type == PathParam.class
-                    || type == QueryParam.class
-                    || type == HeaderParam.class
-                    || type == CookieParam.class
-                    || type == FormParam.class
-                    || type == BeanParam.class) {
+            if (isBindingAnnotation(ann.annotationType())) {
                 return true;
             }
         }
         return false;
+    }
+
+    /**
+     * Returns whether the given annotation type is a JAX-RS value-binding (source) annotation. Shared by
+     * {@link #hasBindingAnnotation} and {@link #comparedAnnotations}, which excludes exactly this set from
+     * its comparison, so the two never disagree about what a source annotation is.
+     *
+     * @param type the annotation type to test
+     * @return {@code true} for {@code @PathParam}, {@code @QueryParam}, {@code @HeaderParam},
+     *     {@code @CookieParam}, {@code @FormParam}, and {@code @BeanParam}
+     */
+    private static boolean isBindingAnnotation(Class<? extends Annotation> type) {
+        return type == PathParam.class
+                || type == QueryParam.class
+                || type == HeaderParam.class
+                || type == CookieParam.class
+                || type == FormParam.class
+                || type == BeanParam.class;
     }
 
     /**
