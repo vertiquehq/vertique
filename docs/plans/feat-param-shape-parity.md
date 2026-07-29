@@ -935,5 +935,13 @@ The Contract Appendix (§4) is untouched throughout.
 16. **2026-07-29 — merged `main` after 60 commits (as-built).** `main` restructured both touched
    `module.md` files and added `scripts/verify-module-docs.sh` content rules that FORBID `ADR-NNNN`
    references in a packaged module doc. The two docs were rebuilt on `main`'s baseline and the ADR-0191
-   pointers were stripped to comply. Neither module has a `DEVELOPMENT.md`, so ADR-0191 traceability
-   currently lives only in the ADR itself — routed in §11.
+   pointers were stripped to comply.
+
+17. **2026-07-29 — correction: `vertique-rest-jaxrs` DOES have a maintainer doc (correction of a wrong
+   fact I asserted).** Amendment 16 originally claimed neither touched module had one, so ADR-0191 had
+   nowhere to live. Wrong: `docs/vertique-rest-jaxrs.md` exists in the meta repo, created by `main`'s
+   `aef76dc`, and is exactly the right home — the convention is `docs/<artifactId>.md`, not
+   `DEVELOPMENT.md`. ADR-0191 is now referenced there, and the ADR itself was amended with the two
+   decisions that landed after its S6 draft (the duplicate-name gate, and the sorted-set guard recorded
+   as a rejected alternative so it is not rebuilt). Issue #76 was corrected to match: only
+   `vertique-codegen-jaxrs` still lacks a maintainer doc.
