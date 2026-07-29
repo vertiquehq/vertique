@@ -13,3 +13,6 @@ target/**
 .java-version
 **/src/**/*.class
 .vertique/
+
+# Agent working state — never part of a published checkout
+.claude/
