@@ -14,15 +14,6 @@ Timer-based cron scheduler for recurring jobs. Parses 6-field cron expressions, 
 
 ---
 
-## Package Layout
-
-| Package | Contents |
-|---------|----------|
-| `dev.vertique.job.cron` | `CronJob`, `CronJobDefinition`, `CronJobRegistrar`, `CronScheduler`, `CronExpression`, `ExecutionMode`, `OverlapPolicy`, `MisfirePolicy`, `CronConfigurationException`, `CronRegistrationException`, `CronTargetReference`, `ServiceTarget`, `EventBusTarget` |
-| `dev.vertique.job.cron.dagger` | `CronBaseModule`, `CronModule`, `CronPersistenceModule`, `CronLifecycleVerticle` (package-private) |
-
----
-
 ## Key Classes
 
 ### `@CronJob`
@@ -159,7 +150,7 @@ Manages timer registrations and job dispatches. Each registered job gets its own
 - **Consumer timeout:** When `executionTimeoutMs > 0`, a local Vert.x timer marks the execution `ABANDONED` and releases the concurrency slot if no reply arrives in time. Set to `0` to disable.
 - **Cooperative cancellation:** Each dispatched execution registers a consumer on `job.cancel.<executionId>`. When a cancel message arrives, `DefaultJobContext.setCancelled(true)` is called. Handlers should poll `ctx.isCancelled()` and exit gracefully.
 - **Progress flush:** When `progressFlushIntervalMs > 0` and a repository is available, a periodic timer writes changed `ProgressSnapshot` values to the repository.
-- **Deferred-execution provenance:** `CronJobDispatcher` binds a `DeferredExecutionOrigin` (`kind = "cron"`, `reference` = the job id) into the dispatch context, proving the dispatch is deferred execution for the opt-in identity-snapshot reconstruction initializer (ADR-0165).
+- **Deferred-execution provenance:** `CronJobDispatcher` binds a `DeferredExecutionOrigin` (`kind = "cron"`, `reference` = the job id) into the dispatch context, proving the dispatch is deferred execution for the opt-in identity-snapshot reconstruction initializer.
 
 **Tracked executions:** When `tracked=true` and a repository is available, a `JobExecution` is persisted before dispatch and updated on completion. `SINGLE_INSTANCE` jobs are always tracked.
 
@@ -191,6 +182,14 @@ Scans all entries in `ServiceContractRegistry` for implementation methods annota
 3. Mode-based default (`SINGLE_INSTANCE` → `FIRE_NOW`; `EVERY_INSTANCE` → `SKIP`)
 
 After registering all jobs, `scan()` persists schedule definitions to `job_schedules` via `JobRepository.saveSchedule()` (best-effort, fire-and-forget).
+
+### `CronRegistrationException`
+
+Thrown by `CronJobRegistrar.scan()` when validation collects one or more registration violations; the scheduler is left untouched. Extends `CronConfigurationException`, the module's configuration-failure root, which in turn extends the core `ConfigurationException`.
+
+| Method | Description |
+|--------|-------------|
+| `violations()` | Returns the unmodifiable list of individual violation messages |
 
 ### `CronJobDefinition`
 
@@ -375,11 +374,4 @@ static JobInterceptor metricsInterceptor(MetricsService metrics) {
 > `org.slf4j.MDC` directly because the framework facade (`dev.vertique.logging.MDC`) requires
 > a duplicated Vert.x context and would throw otherwise. Enrichment inside event-bus consumer
 > handlers (which run on duplicated contexts) uses the framework facade normally.
-
----
-
-## Related ADRs
-
-- ADR-0112: Framework exception hierarchy and REST mapping — roots cron registration failures under `CronConfigurationException` → core `ConfigurationException`; `CronRegistrationException` extends `CronConfigurationException`.
-- ADR-0165: Deferred-Execution Provenance and Bounded SYSTEM-Minting — establishes why `CronJobDispatcher` binds a `DeferredExecutionOrigin` into the dispatch context, letting the receive-side identity-snapshot reconstruction initializer distinguish proven deferred execution from an ordinary context-empty dispatch.
 
