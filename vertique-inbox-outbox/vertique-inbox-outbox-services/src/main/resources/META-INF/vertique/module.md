@@ -14,14 +14,6 @@ Service adapter for Transactional Messaging. Provides two components: `Transacti
 
 ---
 
-## Package Layout
-
-| Package | Contents |
-|---------|----------|
-| `dev.vertique.inboxoutbox.services` | `TransactionalServiceClientFactory`, `ServiceOutboxDestinationHandler`, `TransactionalMessagingServiceModule` |
-
----
-
 ## Key Classes
 
 ### `TransactionalServiceClientFactory`
@@ -78,7 +70,7 @@ At relay time:
 1. Reads `destination` (stable service target id) from the `OutboxEnvelope`.
 2. Resolves the current event bus address via `ServiceTargetResolver`.
 3. If the target id is not resolvable (e.g., service not deployed on this node), returns `OutboxPublishResult.unresolvable()`.
-4. Builds a `DispatchEnvelope` via `DispatchEnvelopeBuilder` with the payload and the application headers (`OutboxEnvelope.headers`, application-only). The durable propagation context is read from `OutboxEnvelope.metadata().context()` (NOT from headers) and decoded via `DurableContextPropagator.decodeToDispatchContext(metadata.context(), ...)`, then merged into the caller-override map — no holder write (the relay runs on the verticle's deployment context, not a duplicated context). Relay control in `metadata.delivery` is ignored on the service path (ADR 0065). Before building the envelope, a `DeferredExecutionOrigin` (`kind = "outbox-relay"`, `reference` = the event type) is also merged into the caller-override map, proving the dispatch is deferred execution for the opt-in identity-snapshot reconstruction initializer (ADR-0165).
+4. Builds a `DispatchEnvelope` via `DispatchEnvelopeBuilder` with the payload and the application headers (`OutboxEnvelope.headers`, application-only). The durable propagation context is read from `OutboxEnvelope.metadata().context()` (NOT from headers) and decoded via `DurableContextPropagator.decodeToDispatchContext(metadata.context(), ...)`, then merged into the caller-override map — no holder write (the relay runs on the verticle's deployment context, not a duplicated context). Relay control in `metadata.delivery` is ignored on the service path. Before building the envelope, a `DeferredExecutionOrigin` (`kind = "outbox-relay"`, `reference` = the event type) is also merged into the caller-override map, proving the dispatch is deferred execution for the opt-in identity-snapshot reconstruction initializer.
 5. Sends via event bus request/reply with the service's configured timeout.
 6. On a successful reply: returns `OutboxPublishResult.success()`.
 7. On a failed reply from the service: returns `OutboxPublishResult.retryable(error, errorType)`.
@@ -129,10 +121,3 @@ Include `TransactionalMessagingServiceModule` alongside `TransactionalMessagingP
 })
 public interface AppComponent { ... }
 ```
-
----
-
-## Related ADRs
-
-- ADR-0082: Adapter-Owned Claim Eligibility — establishes that each `OutboxDestinationHandler` declares its own `ClaimScope` instead of contributing capability sets via qualified multibindings.
-- ADR-0165: Deferred-Execution Provenance and Bounded SYSTEM-Minting — establishes why `ServiceOutboxDestinationHandler` binds a `DeferredExecutionOrigin` into the dispatch context, letting the receive-side identity-snapshot reconstruction initializer distinguish proven deferred execution from an ordinary context-empty dispatch.
