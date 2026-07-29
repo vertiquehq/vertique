@@ -140,7 +140,8 @@ Commits: `docs: add ADR 0200 …` / `docs(deploy): record the orchestrator contr
 ## 5. Artifact manifest
 
 **New — code repo**
-- `vertique-application/src/test/java/dev/vertique/application/VerticleDeploymentPhaseCoverageIT.java`
+- `vertique-application/src/test/java/dev/vertique/application/VerticleDeploymentPhaseCoverageTest.java`
+  *(named `Test`, not `IT` — see Amendment 1)*
 - `docs/plans/fix-single-lifecycle-orchestrator.md` *(removed in the final docs commit)*
 
 **New — meta repo**
@@ -150,6 +151,7 @@ Commits: `docs: add ADR 0200 …` / `docs(deploy): record the orchestrator contr
 - `vertique-deploy/src/main/resources/META-INF/vertique/module.md`
 - `vertique-application/src/main/resources/META-INF/vertique/module.md`
 - `vertique-db/vertique-db-flyway/src/main/resources/META-INF/vertique/module.md`
+- `vertique-rest/vertique-rest-auth-jwt/src/main/resources/META-INF/vertique/module.md` *(Amendment 2)*
 - `docs/packaging.md`
 - `vertique-core/src/main/java/dev/vertique/core/json/JacksonConfigurer.java` *(javadoc only)*
 - `vertique-rest/vertique-rest-auth-jwt/src/main/java/dev/vertique/rest/auth/jwt/JwtAuthFactory.java` *(javadoc only)*
@@ -160,8 +162,9 @@ Commits: `docs: add ADR 0200 …` / `docs(deploy): record the orchestrator contr
 - `adr/product/README.md` *(marker)*
 
 **Module-doc decisions:** `vertique-deploy`, `vertique-application`, `vertique-db-flyway` — canonical
-`module.md` listed above. `vertique-core`, `vertique-rest-auth-jwt` — *no documentation impact*: javadoc
-sample changes only, no application-facing API, configuration, or behavior change.
+`module.md` listed above, plus `vertique-rest-auth-jwt` (Amendment 2). `vertique-core` — *no
+documentation impact*: javadoc sample changes only, no application-facing API, configuration, or
+behavior change.
 
 ## 6. Risks & edge cases
 
@@ -199,3 +202,30 @@ sample changes only, no application-facing API, configuration, or behavior chang
 | Removing `deployPhase` from the public surface | Impossible without relocating lifecycle ownership (F5); pre-0.1.0 API freeze is the natural trigger | Issue, with the 0.1.0 freeze as re-entry trigger |
 | Deleting `deployAll()` | Retained on purpose (§6); revisit only when no recipe references it | Issue |
 | Amending or closing legacy #52 itself | Its prescribed design rests on two false premises | Close with a pointer when this merges |
+
+## Amendments
+
+Both are as-built corrections of verified facts — neither changes a contract or the scope the user
+approved, so no sign-off was required (`planning.md` § Mid-flight amendments).
+
+1. **2026-07-29 — the sentinel test is `…Test`, not `…IT` (correction of a verified fact).**
+   `vertique-application/pom.xml` declares no `<build>` section, and the parent lists
+   `maven-failsafe-plugin` only in `<pluginManagement>`, so nothing binds Failsafe in this module —
+   confirmed empirically by the absence of `target/failsafe-reports` after a full `verify`. A class named
+   `…IT` here would compile and never run. `vertique-launcher` gets its ITs executed because it declares
+   the plugin itself. The test needs nothing an IT provides (no port, no container; the sentinel `start()`
+   completes synchronously), so it is a Surefire test and the reason is recorded in its class javadoc.
+   **Adjacent finding, routed:** any future IT added to `vertique-application` would silently not run.
+
+2. **2026-07-29 — a fifth legacy-recipe site, and a module-doc decision flipped (as-built).**
+   The S4 sweep found `vertique-rest/vertique-rest-auth-jwt/src/main/resources/META-INF/vertique/module.md`
+   carrying the same hand-rolled `Verticle.start(Promise)` + `deployAll()` recipe, teaching the same
+   `fromJwksAsync` composition point as the two javadoc sites. Fixed identically. The plan had recorded
+   `vertique-rest-auth-jwt` as *no documentation impact* on the assumption its changes were javadoc-only;
+   that is now a canonical `module.md` change and the manifest says so.
+
+3. **2026-07-29 — `JacksonConfigurer`'s sample was answering a dead question (as-built).**
+   S4 expected to modernize its startup sample. Reading it in full revealed `JacksonConfigureStep`, already
+   auto-contributed by `CoreLifecycleStepsModule` at the `CONFIGURE` phase, so an application on the runner
+   never calls `configure()` directly. The scaffolding was deleted rather than rewritten, and the javadoc
+   now states that manual invocation is the non-runner exception case.
