@@ -190,10 +190,3 @@ Config-backed and programmatic contributions are merged by `SecurityAuthzModule`
 
 - `dev.vertique:vertique-security-core` — `PolicyDefinitionSource`, `RolePolicyResolver`, `ActionRegistry`, `PolicyDefinition`, `PolicyStatement`, `ActionPattern`, `Effect`
 - `dev.vertique:vertique-config-core` — `ConfigParser`, `JsonConfigPaths` (parse boundary), `@VertxConfig`
-
----
-
-## Related ADRs
-
-- ADR-0113: Federated Action and Policy Authorship for Framework Authorization — establishes the action-policy model this module populates from config; governs the `PolicyDefinitionSource` and `RolePolicyResolver` SPI contracts and the fail-fast startup validation.
-- ADR-0114: Enforcement-Layer Emission Ownership for Authorization Decisions — governs the overall security engine/PEP split; this module feeds the engine's policy catalogue and resolver, which the engine uses for decisions that the PEP then emits as events.
