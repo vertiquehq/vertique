@@ -29,8 +29,8 @@ import java.util.SortedSet;
  *
  * <p>Checks include: body parameter count, form/body conflicts, unsupported native multipart
  * collection shapes, non-{@link Comparable} elements in a {@code SortedSet}/{@code NavigableSet}
- * shape, duplicate operationIds, unmatched operationIds, and security annotations present without an
- * auth module installed.
+ * shape, same-name parameters declaring incompatible multiplicities, duplicate operationIds,
+ * unmatched operationIds, and security annotations present without an auth module installed.
  * All methods are static; this class is not intended to be instantiated.
  */
 class RouteValidator {
@@ -75,7 +75,166 @@ class RouteValidator {
         addFilePartViolations(meta, violations);
         addMultipartCollectionShapeViolations(meta, violations);
         addSortedSetElementViolations(meta, violations);
+        addDuplicateParamMultiplicityViolations(meta, violations);
         return violations;
+    }
+
+    /**
+     * Rejects two parameters that bind the <em>same name</em> from the same request source but declare
+     * <em>incompatible multiplicities</em> — one collection-shaped ({@code componentType() != null}), the
+     * other scalar. Such a declaration has no correct binding: {@code DefaultBoundRequest.findDescriptor}
+     * resolves a name to the <em>first</em> matching descriptor, and that single descriptor decides the
+     * multiplicity of the bound value for both parameters, so exactly one of them is always mis-bound —
+     * the collection parameter degrades to a one-element collection (dropping every repeated value), or
+     * the scalar parameter receives a {@code JsonArray} its declared type has no converter for. Startup
+     * therefore fails fast, exactly as it does for the other unbindable shapes (see
+     * {@link #addMultipartCollectionShapeViolations}, {@link #addSortedSetElementViolations}).
+     *
+     * <p>Two declarations of one name with the <em>same</em> multiplicity are <b>not</b> reported: both
+     * bind the identical value through the identical descriptor — redundant, but well-defined. That
+     * includes two different collection shapes of one name ({@code List<String>} plus {@code Set<String>}),
+     * because multiplicity, not the concrete collection type, is what the single descriptor decides.
+     *
+     * <p><b>Scoped to the sources {@code findDescriptor} is consulted for</b> — see
+     * {@link #isDescriptorMatchedSource}, and {@link #bindsSameName} for the per-location name-matching
+     * rule it mirrors. {@code FORM} is excluded because
+     * {@code ParameterExtractor.extractFormParam} reads {@code formAttributes()} per parameter instead of
+     * going through {@code findDescriptor}: a scalar {@code @FormParam} takes the first submitted value
+     * while a collection-shaped one of the same name takes all of them, so both bind correctly.
+     *
+     * <p>At most <em>one</em> violation is emitted per colliding name, against its first declaration and
+     * the first conflicting partner: a name declared three times is one defect with one fix, not two.
+     * Running from {@link #validateMethodParams} places the check <em>before</em> the
+     * {@code UNRESOLVABLE_PARAM_CONVERTER} probe in {@code JaxRsRouteRegistrar} (which skips the rest of
+     * the operation as soon as method-param validation reports anything), so the shape-specific
+     * diagnostic wins over a converter one. The check is independent of the other shape guards, so a
+     * conflicting pair that is <em>also</em> an unsupported shape reports both violations — both are real
+     * and each has its own fix.
+     *
+     * @param meta       the resource method metadata to inspect
+     * @param violations mutable list to which any multiplicity-conflict violations are appended
+     */
+    private static void addDuplicateParamMultiplicityViolations(
+            ResourceMethodMeta meta, List<RouteRegistrationViolation> violations) {
+        List<ResourceMethodMeta.ParamMeta> params = meta.params();
+        List<ResourceMethodMeta.ParamMeta> reported = new ArrayList<>();
+        for (int i = 0; i < params.size(); i++) {
+            ResourceMethodMeta.ParamMeta first = params.get(i);
+            if (!isDescriptorMatchedSource(first.source()) || first.name() == null) {
+                continue;
+            }
+            if (reported.stream().anyMatch(already -> bindsSameName(already, first))) {
+                continue;
+            }
+            for (int j = i + 1; j < params.size(); j++) {
+                ResourceMethodMeta.ParamMeta second = params.get(j);
+                if (!bindsSameName(first, second) || !multiplicityConflicts(first, second)) {
+                    continue;
+                }
+                reported.add(first);
+                violations.add(new RouteRegistrationViolation(
+                        meta.operationId(),
+                        RouteRegistrationViolation.ViolationType.DUPLICATE_PARAM_NAME_MULTIPLICITY_CONFLICT,
+                        String.format(
+                                "%s parameters '%s' (%s) and '%s' (%s) of %s.%s() bind the same name%s but declare "
+                                        + "incompatible multiplicities — one collection-shaped, one scalar. Binding "
+                                        + "resolves a request name to a single declared parameter (first match wins), "
+                                        + "so exactly one of the two would always be mis-bound: give them distinct "
+                                        + "names, or declare both with the same multiplicity.",
+                                first.source(),
+                                first.name(),
+                                describeShape(first),
+                                second.name(),
+                                describeShape(second),
+                                meta.method().getDeclaringClass().getSimpleName(),
+                                meta.method().getName(),
+                                matchesNameCaseInsensitively(first.source()) ? " (matched case-insensitively)" : "")));
+                break;
+            }
+        }
+    }
+
+    /**
+     * Returns whether a parameter source's multiplicity is decided by
+     * {@code DefaultBoundRequest.findDescriptor}, i.e. whether two same-name declarations of that source
+     * necessarily share one descriptor.
+     *
+     * <p>{@code FORM} is absent because {@code ParameterExtractor.extractFormParam} reads
+     * {@code formAttributes()} per parameter and never consults {@code findDescriptor}. {@code PATH} is
+     * present even though no {@code @PathParam} carries a component type today — so a conflict is
+     * currently unreachable there — because {@code findDescriptor} <em>is</em> consulted for it
+     * ({@code DefaultBoundRequest.bindPath}); keeping it in scope means adding {@code @PathParam}
+     * collection support cannot silently escape the guard.
+     *
+     * @param source the parameter's source
+     * @return {@code true} for {@code PATH}, {@code QUERY}, {@code HEADER}, and {@code COOKIE}
+     */
+    private static boolean isDescriptorMatchedSource(ResourceMethodMeta.ParamSource source) {
+        return switch (source) {
+            case PATH, QUERY, HEADER, COOKIE -> true;
+            case FORM, BODY, CONTEXT, PRECONDITIONS, FILE_UPLOADS, ENTITY_PARTS, BEAN_PARAM -> false;
+        };
+    }
+
+    /**
+     * Returns whether two parameters resolve to the <em>same</em> declared descriptor at bind time, i.e.
+     * whether they share a source and a name under that source's matching rule.
+     *
+     * <p>The name comparison mirrors {@code DefaultBoundRequest.findDescriptor} exactly, including its use
+     * of {@link String#equalsIgnoreCase(String)} rather than a lower-cased key: {@code HEADER} and
+     * {@code COOKIE} match case-insensitively (both bound maps are keyed by lower-cased name, and HTTP/2
+     * transmits header names in lower case per RFC 9113 §8.2.1), while {@code PATH} and {@code QUERY}
+     * match verbatim. Diverging from that rule would misjudge which declarations actually collide.
+     *
+     * @param first  the earlier declaration; its source is descriptor-matched and its name non-{@code null}
+     * @param second the later declaration
+     * @return {@code true} when both bind the same request name from the same source
+     */
+    private static boolean bindsSameName(ResourceMethodMeta.ParamMeta first, ResourceMethodMeta.ParamMeta second) {
+        if (first.source() != second.source() || second.name() == null) {
+            return false;
+        }
+        return matchesNameCaseInsensitively(first.source())
+                ? first.name().equalsIgnoreCase(second.name())
+                : first.name().equals(second.name());
+    }
+
+    /**
+     * Returns whether the given source's declared parameter names are matched case-insensitively by
+     * {@code DefaultBoundRequest.findDescriptor} and {@code ParameterExtractor.lookup}.
+     *
+     * @param source the parameter's source
+     * @return {@code true} for {@code HEADER} and {@code COOKIE}
+     */
+    private static boolean matchesNameCaseInsensitively(ResourceMethodMeta.ParamSource source) {
+        return source == ResourceMethodMeta.ParamSource.HEADER || source == ResourceMethodMeta.ParamSource.COOKIE;
+    }
+
+    /**
+     * Returns whether two declarations of one name disagree about multiplicity — exactly one of them
+     * carries a component type. Two collection shapes agree (both bind all values), as do two scalars.
+     *
+     * @param first  the earlier declaration
+     * @param second the later declaration
+     * @return {@code true} when one is collection-shaped and the other is scalar
+     */
+    private static boolean multiplicityConflicts(
+            ResourceMethodMeta.ParamMeta first, ResourceMethodMeta.ParamMeta second) {
+        return (first.componentType() == null) != (second.componentType() == null);
+    }
+
+    /**
+     * Renders a parameter's declared shape for a diagnostic: {@code String}, {@code List<String>}, or
+     * {@code String[]}.
+     *
+     * @param pm the parameter metadata
+     * @return the declared type's simple name, parameterized with the element type for a collection shape
+     */
+    private static String describeShape(ResourceMethodMeta.ParamMeta pm) {
+        if (pm.componentType() == null || pm.type().isArray()) {
+            return pm.type().getSimpleName();
+        }
+        return pm.type().getSimpleName() + "<" + pm.componentType().getSimpleName() + ">";
     }
 
     /**

@@ -171,6 +171,65 @@ public record RouteRegistrationViolation(String operationId, ViolationType type,
          * diagnostic — {@link #UNSUPPORTED_MULTIPART_COLLECTION_SHAPE} on {@code FORM},
          * {@link #UNRESOLVABLE_PARAM_CONVERTER} on any other source.
          */
-        NON_COMPARABLE_SORTED_SET_ELEMENT
+        NON_COMPARABLE_SORTED_SET_ELEMENT,
+
+        /**
+         * Two parameters of the same method bind the <em>same name</em> from the same request source but
+         * declare <em>incompatible multiplicities</em>: one is collection-shaped (it carries a component
+         * type — {@code List<T>}, {@code Set<T>}, {@code SortedSet<T>}, {@code NavigableSet<T>},
+         * {@code Collection<T>}, or {@code T[]}) and the other is scalar. It is legal Java that compiles,
+         * e.g. {@code get(@QueryParam("id") String a, @QueryParam("id") List<String> b)}.
+         *
+         * <p><b>Why there is no correct binding.</b> Request binding resolves a name to a
+         * <em>single</em> declared parameter: {@code DefaultBoundRequest.findDescriptor} returns the
+         * <em>first</em> descriptor matching a location and name, and that one descriptor decides the
+         * multiplicity of the bound value for <em>every</em> parameter reading that name. So exactly one
+         * of the two declarations is always mis-bound, whichever one wins:
+         * <ul>
+         *   <li>the <b>scalar</b> descriptor wins &rarr; the collection-shaped parameter receives a
+         *       scalar-wrapped value, which {@code ParameterExtractor.extractScalarValue} degrades to a
+         *       one-element collection (with a warning) — silently dropping every repeated value;</li>
+         *   <li>the <b>collection</b> descriptor wins &rarr; the scalar parameter receives a
+         *       {@code JsonArray}, which its declared type has no converter for.</li>
+         * </ul>
+         * Neither outcome is what the declaration asks for, so the shape is rejected at registration
+         * rather than mounted and mis-bound per request.
+         *
+         * <p><b>What to do instead:</b> give the two parameters distinct names, or declare both with the
+         * same multiplicity — the collection-shaped declaration alone already receives every submitted
+         * value.
+         *
+         * <p><b>Two declarations of the same name with the same multiplicity are NOT reported.</b> Both
+         * then bind the identical value through the identical descriptor: redundant, but well-defined.
+         * That includes two different collection shapes of one name (e.g. {@code List<String>} plus
+         * {@code Set<String>}), since multiplicity — not the concrete collection type — is what the
+         * single descriptor decides.
+         *
+         * <p><b>Scoping.</b> Reported for the sources whose multiplicity {@code findDescriptor} decides:
+         * {@code PATH}, {@code QUERY}, {@code HEADER}, and {@code COOKIE}. Names are compared exactly as
+         * {@code findDescriptor} matches them — <em>case-insensitively</em> for {@code HEADER} and
+         * {@code COOKIE} (so {@code @HeaderParam("X-Id")} and {@code @HeaderParam("x-id")} do collide),
+         * <em>case-sensitively</em> for {@code PATH} and {@code QUERY} (so {@code @QueryParam("id")} and
+         * {@code @QueryParam("Id")} do not). Comparing them any other way would be a defect in either
+         * direction: too loose rejects a legal declaration, too strict lets the mis-binding through.
+         * Sources are never compared across each other — a {@code @HeaderParam("token")} and a
+         * {@code @QueryParam("token")} read different maps and cannot conflict.
+         *
+         * <p>{@code FORM} is deliberately <em>excluded</em>: {@code ParameterExtractor.extractFormParam}
+         * reads {@code formAttributes()} directly per parameter and never consults
+         * {@code findDescriptor}, so a scalar {@code @FormParam} takes the first submitted value while a
+         * collection-shaped one of the same name takes all of them — both well-defined. {@code PATH} is
+         * included even though no {@code @PathParam} carries a component type today (so the conflict is
+         * currently unreachable there), which keeps the check keyed to {@code findDescriptor}'s own
+         * location set: adding {@code @PathParam} collection support cannot silently escape it.
+         * {@code BODY}, {@code CONTEXT}, {@code PRECONDITIONS}, {@code BEAN_PARAM}, and the
+         * {@code FILE_UPLOADS}/{@code ENTITY_PARTS} aggregates are not name-matched request parameters
+         * at all.
+         *
+         * <p>The check is independent of the other shape guards: a conflicting pair whose collection half
+         * is <em>also</em> e.g. a non-self-comparable {@code SortedSet} reports both violations, because
+         * both are real and each has its own fix.
+         */
+        DUPLICATE_PARAM_NAME_MULTIPLICITY_CONFLICT
     }
 }

@@ -26,6 +26,7 @@ import io.vertx.junit5.VertxTestContext;
 import jakarta.ws.rs.BeanParam;
 import jakarta.ws.rs.FormParam;
 import jakarta.ws.rs.GET;
+import jakarta.ws.rs.HeaderParam;
 import jakarta.ws.rs.POST;
 import jakarta.ws.rs.Path;
 import jakarta.ws.rs.PathParam;
@@ -1122,6 +1123,266 @@ public class RouteStartupValidationTest {
                                 ctx.completeNow();
                             }));
                 }));
+    }
+
+    // --- Duplicate parameter names with conflicting multiplicity ---
+
+    /**
+     * Resource declaring the same <em>query</em> parameter name twice with incompatible multiplicities —
+     * one scalar, one collection-shaped. Legal Java that compiles, but request binding resolves a name to
+     * a single declared parameter ({@code DefaultBoundRequest.findDescriptor} is first-match), so exactly
+     * one of the two is always mis-bound.
+     */
+    @Path("/duplicate-query-multiplicity")
+    public static class DuplicateQueryMultiplicityResource {
+
+        /**
+         * Declares {@code @QueryParam("id")} twice: once as a scalar, once as a {@code List}.
+         *
+         * @param scalar     the scalar declaration of {@code id}
+         * @param collection the collection-shaped declaration of the same name
+         * @return never reached (the router build fails first)
+         */
+        @GET
+        @Produces(MediaType.TEXT_PLAIN)
+        @Operation(operationId = "duplicateQueryMultiplicity")
+        public String get(@QueryParam("id") String scalar, @QueryParam("id") List<String> collection) {
+            return "unreachable";
+        }
+    }
+
+    /**
+     * Resource declaring the same <em>header</em> name twice with incompatible multiplicities, the two
+     * declarations differing only in case. Header (and cookie) descriptor matching is
+     * case-<em>insensitive</em> on both halves of binding, so these two collide exactly as an identical
+     * pair would.
+     */
+    @Path("/duplicate-header-multiplicity")
+    public static class DuplicateHeaderCasingMultiplicityResource {
+
+        /**
+         * Declares {@code @HeaderParam("X-Id")} as a scalar and {@code @HeaderParam("x-id")} as a
+         * {@code List}.
+         *
+         * @param scalar     the scalar declaration, in canonical header casing
+         * @param collection the collection-shaped declaration, in lower case
+         * @return never reached (the router build fails first)
+         */
+        @GET
+        @Produces(MediaType.TEXT_PLAIN)
+        @Operation(operationId = "duplicateHeaderCasingMultiplicity")
+        public String get(@HeaderParam("X-Id") String scalar, @HeaderParam("x-id") List<String> collection) {
+            return "unreachable";
+        }
+    }
+
+    /**
+     * Resource declaring two <em>query</em> parameters whose names differ only in case. Query (and path)
+     * descriptor matching is case-<em>sensitive</em> on both halves of binding, so {@code id} and
+     * {@code Id} are two independent names that never collide — this declaration is legal and must keep
+     * building.
+     */
+    @Path("/query-casing-distinct")
+    public static class QueryCasingDistinctResource {
+
+        /**
+         * Declares {@code @QueryParam("id")} as a scalar and {@code @QueryParam("Id")} as a {@code List}.
+         *
+         * @param lower the lower-case scalar parameter
+         * @param upper the capitalized collection-shaped parameter
+         * @return never reached in this test (only the router build is exercised)
+         */
+        @GET
+        @Produces(MediaType.TEXT_PLAIN)
+        @Operation(operationId = "queryCasingDistinct")
+        public String get(@QueryParam("id") String lower, @QueryParam("Id") List<String> upper) {
+            return "unreachable";
+        }
+    }
+
+    /**
+     * Resource declaring duplicated names whose multiplicities <em>agree</em>. Both declarations resolve
+     * to the same bound value, so the declaration is redundant but well-defined and must keep building.
+     */
+    @Path("/duplicate-matching-multiplicity")
+    public static class DuplicateMatchingMultiplicityResource {
+
+        /**
+         * Declares {@code id} twice as a scalar and {@code tags} twice as a collection (in two different
+         * collection shapes, which is still one multiplicity).
+         *
+         * @param first      the first scalar declaration of {@code id}
+         * @param second     the second scalar declaration of {@code id}
+         * @param tagList    the {@code List} declaration of {@code tags}
+         * @param tagSet     the {@code Set} declaration of {@code tags}
+         * @return never reached in this test (only the router build is exercised)
+         */
+        @GET
+        @Produces(MediaType.TEXT_PLAIN)
+        @Operation(operationId = "duplicateMatchingMultiplicity")
+        public String get(
+                @QueryParam("id") String first,
+                @QueryParam("id") String second,
+                @QueryParam("tags") List<String> tagList,
+                @QueryParam("tags") Set<String> tagSet) {
+            return "unreachable";
+        }
+    }
+
+    /**
+     * Regression guard: a single collection parameter, distinct names in one location, and the same name
+     * in two <em>different</em> locations must all stay accepted. The cross-location pair pins the
+     * per-location scoping — query and header are separate maps matched separately, so they cannot
+     * collide.
+     */
+    @Path("/distinct-names")
+    public static class DistinctNameMultiplicityResource {
+
+        /**
+         * Declares one collection parameter, an unrelated scalar name, and a scalar {@code @HeaderParam}
+         * sharing its name with a collection-shaped {@code @QueryParam}.
+         *
+         * @param tags        the only declaration of {@code tags}
+         * @param id          an unrelated scalar name
+         * @param headerToken the scalar header declaration of {@code token}
+         * @param queryTokens the collection-shaped query declaration of the same name, a different source
+         * @return never reached in this test (only the router build is exercised)
+         */
+        @GET
+        @Produces(MediaType.TEXT_PLAIN)
+        @Operation(operationId = "distinctNameMultiplicity")
+        public String get(
+                @QueryParam("tags") List<String> tags,
+                @QueryParam("id") String id,
+                @HeaderParam("token") String headerToken,
+                @QueryParam("token") List<String> queryTokens) {
+            return "unreachable";
+        }
+    }
+
+    /**
+     * Resource declaring the same <em>form</em> field name twice with different multiplicities. FORM is
+     * deliberately outside the guard's scope: {@code ParameterExtractor.extractFormParam} reads
+     * {@code formAttributes()} per parameter and never consults {@code findDescriptor}, so the scalar
+     * declaration takes the first submitted value and the collection declaration takes all of them —
+     * both well-defined.
+     */
+    @Path("/duplicate-form-multiplicity")
+    public static class DuplicateFormMultiplicityResource {
+
+        /**
+         * Declares {@code @FormParam("f")} as a scalar and as a {@code List}.
+         *
+         * @param scalar     the scalar declaration of the form field
+         * @param collection the collection-shaped declaration of the same field
+         * @return never reached in this test (only the router build is exercised)
+         */
+        @POST
+        @Produces(MediaType.TEXT_PLAIN)
+        @Operation(operationId = "duplicateFormMultiplicity")
+        public String post(@FormParam("f") String scalar, @FormParam("f") List<String> collection) {
+            return "unreachable";
+        }
+    }
+
+    @Test
+    @DisplayName("Two same-name query params with conflicting multiplicity fail router build, naming both shapes")
+    void duplicateQueryParamMultiplicityFailsRouterBuild(Vertx vertx, VertxTestContext ctx) {
+        JaxRsRouterMount.Factory factory = TestFactories.builder().build();
+        JaxRsRouterMount mount = factory.create("/*", "openapi.json", Set.of(new DuplicateQueryMultiplicityResource()));
+
+        RouteRegistrationException thrown = assertThrows(
+                RouteRegistrationException.class,
+                () -> mount.createRouter(vertx),
+                "findDescriptor resolves a request name to the FIRST matching declaration, so one of the two "
+                        + "parameters can never be bound correctly — the declaration must fail startup");
+        String message = String.valueOf(thrown.getMessage());
+        assertTrue(
+                message.contains("DUPLICATE_PARAM_NAME_MULTIPLICITY_CONFLICT"),
+                "the violation must be the duplicate-name multiplicity one (was: " + message + ")");
+        assertTrue(
+                message.contains("'id' (String)") && message.contains("'id' (List<String>)"),
+                "the diagnostic must name the duplicated name and BOTH declared shapes (was: " + message + ")");
+        assertTrue(
+                message.contains(DuplicateQueryMultiplicityResource.class.getSimpleName()) && message.contains("get"),
+                "the diagnostic must name the declaring class and method (was: " + message + ")");
+        ctx.completeNow();
+    }
+
+    @Test
+    @DisplayName("Same-name header params differing only in case with conflicting multiplicity fail router build")
+    void duplicateHeaderParamCasingMultiplicityFailsRouterBuild(Vertx vertx, VertxTestContext ctx) {
+        JaxRsRouterMount.Factory factory = TestFactories.builder().build();
+        JaxRsRouterMount mount =
+                factory.create("/*", "openapi.json", Set.of(new DuplicateHeaderCasingMultiplicityResource()));
+
+        RouteRegistrationException thrown = assertThrows(
+                RouteRegistrationException.class,
+                () -> mount.createRouter(vertx),
+                "header descriptor matching is case-insensitive on both halves of binding, so 'X-Id' and "
+                        + "'x-id' collide and one of the two declarations is always mis-bound");
+        String message = String.valueOf(thrown.getMessage());
+        assertTrue(
+                message.contains("DUPLICATE_PARAM_NAME_MULTIPLICITY_CONFLICT"),
+                "the violation must be the duplicate-name multiplicity one (was: " + message + ")");
+        assertTrue(
+                message.contains("'X-Id' (String)") && message.contains("'x-id' (List<String>)"),
+                "the diagnostic must name both declarations verbatim, with their shapes (was: " + message + ")");
+        ctx.completeNow();
+    }
+
+    @Test
+    @DisplayName("Query params differing only in case do not collide and pass validation")
+    void queryParamNamesDifferingOnlyInCasePassValidation(Vertx vertx, VertxTestContext ctx) {
+        JaxRsRouterMount.Factory factory = TestFactories.builder().build();
+        JaxRsRouterMount mount = factory.create("/*", "openapi.json", Set.of(new QueryCasingDistinctResource()));
+
+        assertDoesNotThrow(
+                () -> mount.createRouter(vertx),
+                "query descriptor matching is case-SENSITIVE, so 'id' and 'Id' are independent names — "
+                        + "rejecting them would break startup for a legal declaration");
+        ctx.completeNow();
+    }
+
+    @Test
+    @DisplayName("Duplicated names whose multiplicities agree are redundant but legal and pass validation")
+    void duplicateParamNamesWithMatchingMultiplicityPassValidation(Vertx vertx, VertxTestContext ctx) {
+        JaxRsRouterMount.Factory factory = TestFactories.builder().build();
+        JaxRsRouterMount mount =
+                factory.create("/*", "openapi.json", Set.of(new DuplicateMatchingMultiplicityResource()));
+
+        assertDoesNotThrow(
+                () -> mount.createRouter(vertx),
+                "both declarations bind the same value when the multiplicity agrees — redundant, but "
+                        + "well-defined, so the guard must not reject it");
+        ctx.completeNow();
+    }
+
+    @Test
+    @DisplayName("Distinct names and a same name in two different locations pass validation")
+    void distinctAndCrossLocationParamNamesPassValidation(Vertx vertx, VertxTestContext ctx) {
+        JaxRsRouterMount.Factory factory = TestFactories.builder().build();
+        JaxRsRouterMount mount = factory.create("/*", "openapi.json", Set.of(new DistinctNameMultiplicityResource()));
+
+        assertDoesNotThrow(
+                () -> mount.createRouter(vertx),
+                "descriptor matching is per location, so a header and a query parameter sharing a name are "
+                        + "never in conflict; unrelated names and single declarations are unaffected");
+        ctx.completeNow();
+    }
+
+    @Test
+    @DisplayName("Same-name form fields with different multiplicity pass validation (FORM bypasses findDescriptor)")
+    void duplicateFormParamMultiplicityPassesValidation(Vertx vertx, VertxTestContext ctx) {
+        JaxRsRouterMount.Factory factory = TestFactories.builder().build();
+        JaxRsRouterMount mount = factory.create("/*", "openapi.json", Set.of(new DuplicateFormMultiplicityResource()));
+
+        assertDoesNotThrow(
+                () -> mount.createRouter(vertx),
+                "extractFormParam reads formAttributes() per parameter and never consults findDescriptor, so "
+                        + "the scalar takes the first submitted value and the collection takes all of them — both "
+                        + "declarations bind correctly and must stay accepted");
+        ctx.completeNow();
     }
 
     // --- Sorted-element self-comparability shape matrix ---
