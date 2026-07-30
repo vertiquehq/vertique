@@ -656,3 +656,17 @@ amendments).
 throw inside the queued `QUEUE_ONE` re-dispatch strands the guard permanently for
 `EVERY_INSTANCE` too — the same leak class as `SINGLE_INSTANCE`. Already covered: S1 resolves in
 `markCompleted` and releases both guards on failure, and S2 wraps the dispatch tail.
+
+### Scope split into two PRs
+
+At the user's direction, the issue #41 fix ships on its own rather than waiting for S2:
+
+- **PR 1 — S1 only.** The `#41` chain: resolution before persistence, plus the canonical
+  `module.md` update. This is a complete, independently valuable fix; S2 is a distinct defect that
+  merely shares the execution path.
+- **PR 2 — S2.** Synchronous-dispatch-throw containment, from this same worktree.
+
+Consequence for **L3**: the plan file is **not** removed in PR 1. It is the persisted spec for S2,
+which is still in flight, so removing it here would delete an in-flight contract. L3 moves to the
+final PR of the initiative. L4 (gitlink + maintainer docs) likewise waits until both PRs have
+merged, so the governance docs describe a single settled state rather than an intermediate one.
