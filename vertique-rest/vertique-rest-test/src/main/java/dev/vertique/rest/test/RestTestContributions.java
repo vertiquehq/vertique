@@ -43,6 +43,14 @@ import java.util.Set;
  *         .build();
  * }</pre>
  *
+ * <p><b>Always construct through {@link #builder()}, never through the canonical constructor.</b>
+ * This is a {@code record}, so its component list <em>is</em> the canonical constructor's signature:
+ * adding a seam to {@link RestTestFixtureModule} adds a component, which is source-breaking for any
+ * caller of the canonical constructor (and for any record pattern that destructures this type) and
+ * binary-breaking ({@link NoSuchMethodError}) for consumers already compiled against the previous
+ * arity. The {@link Builder} absorbs that change — a new seam only adds an {@code addX} method — so
+ * builder-based call sites keep compiling and linking across seam additions.
+ *
  * @param middlewares          router-level middlewares to add to {@code Set<Middleware>}
  * @param requestInterceptors  request interceptors to add to {@code Set<RequestInterceptor>}
  * @param responseBodyEncoders response body encoders to add to {@code Set<ResponseBodyEncoder>}

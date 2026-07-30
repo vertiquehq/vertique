@@ -78,9 +78,18 @@ import java.util.Set;
  *
  * <h2>Compatibility surface</h2>
  *
- * <p>The set of seams below is a <b>compatibility surface</b>: adding a seam is a safe, additive
- * change, while removing one breaks every consumer that contributes through it. Treat the seam list
- * as published API even though the artifact itself is test support.
+ * <p>The set of seams below is a <b>compatibility surface</b>. Removing a seam breaks every consumer
+ * that contributes through it — and adding one is <em>not</em> free either: each seam reads a
+ * component of {@link RestTestContributions}, which is a {@code record}, so a new seam requires a new
+ * record component. That changes the canonical constructor's arity, which is <b>source-breaking</b>
+ * for any caller that invokes the canonical constructor directly or destructures the record in a
+ * record pattern, and <b>binary-breaking</b> ({@link NoSuchMethodError}) for consumers already
+ * compiled against the previous arity.
+ *
+ * <p>Consumers should therefore build contributions through {@link RestTestContributions#builder()},
+ * which is insulated from that change: a new seam adds an {@code addX} method to the builder and
+ * leaves every existing call site compiling and linking unchanged. Treat the seam list as published
+ * API even though the artifact itself is test support.
  *
  * @see RestTestContributions
  */
