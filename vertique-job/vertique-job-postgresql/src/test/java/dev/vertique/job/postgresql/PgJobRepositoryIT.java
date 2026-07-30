@@ -659,6 +659,67 @@ public class PgJobRepositoryIT {
                 .onFailure(ctx::failNow);
     }
 
+    /**
+     * Pins {@code job_executions.handler NOT NULL} as an asserted contract rather than an
+     * accident of the DDL.
+     *
+     * <p>This is the schema-side counterpart to the cron scheduler's producer-side invariant
+     * that every persisted cron execution carries a resolved, non-blank handler address
+     * (see ADR-0201). The scheduler unit tests use mock repositories, which happily accept a
+     * {@code null} handler — so without this test nothing in the build would notice if the
+     * constraint were dropped, and the composition defect behind issue #41 could return
+     * silently. The delayed-job poller also dispatches to this column
+     * ({@code DelayedJobPoller.dispatch}), so it must stay non-null for that path too.
+     *
+     * <p>Green from the start, and intended to stay that way: a future change that relaxes the
+     * constraint has to argue with a failing test.
+     */
+    @Test
+    @DisplayName("job_executions rejects an execution with a null handler")
+    void saveRejectsExecutionWithNullHandler(VertxTestContext ctx) {
+        String jobId = "cron-null-handler-" + UUID.randomUUID();
+        Instant scheduledAt = Instant.now().truncatedTo(ChronoUnit.MILLIS);
+        repository
+                .save(nullHandlerCronExecution(jobId, scheduledAt))
+                .onSuccess(id -> ctx.failNow("save must reject a null handler, but returned id " + id))
+                .onFailure(saveFailure -> repository
+                        .tryInsert(nullHandlerCronExecution(jobId, scheduledAt.plusSeconds(1)))
+                        .onSuccess(opt -> ctx.failNow("tryInsert must reject a null handler, but returned " + opt))
+                        .onFailure(tryInsertFailure -> ctx.completeNow()));
+    }
+
+    /**
+     * Builds a cron {@link JobExecution} whose {@code handler} is {@code null} — the exact shape
+     * {@code CronScheduler.buildExecution} produced for every {@code service:} target before
+     * ADR-0201. Deliberately a local test helper rather than a {@code withHandler} accessor on
+     * {@link JobExecution}: the production record has no reason to offer a way to null out an
+     * address, and a test must not widen a public API to reach a case.
+     */
+    private static JobExecution nullHandlerCronExecution(String jobId, Instant scheduledAt) {
+        return new JobExecution(
+                UUID.randomUUID(),
+                jobId,
+                JobType.CRON,
+                null,
+                "cron",
+                JobState.PROCESSING,
+                0,
+                3,
+                null,
+                0,
+                "node-test-" + UUID.randomUUID().toString().substring(0, 8),
+                scheduledAt,
+                null,
+                null,
+                null,
+                null,
+                null,
+                ProgressSnapshot.EMPTY,
+                null,
+                null,
+                null);
+    }
+
     @Test
     @DisplayName("tryInsert allows different scheduled_at for the same job_id")
     void tryInsertAllowsDifferentScheduledAt(VertxTestContext ctx) {

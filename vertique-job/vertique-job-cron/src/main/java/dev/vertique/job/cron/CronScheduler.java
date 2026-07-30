@@ -3,6 +3,7 @@
 
 package dev.vertique.job.cron;
 
+import dev.vertique.core.context.DeferredExecutionOrigin;
 import dev.vertique.core.eventbus.EventBusClient;
 import dev.vertique.core.extension.OrderedExtension;
 import dev.vertique.job.JobExecution;
@@ -115,6 +116,20 @@ public class CronScheduler {
     private final List<CronJobDefinition> jobs = new ArrayList<>();
     private final Map<String, Long> activeTimers = new ConcurrentHashMap<>();
 
+    /**
+     * Job ids that have already logged a target-resolution failure at {@code ERROR}; cleared on the
+     * job's next successful resolution.
+     *
+     * <p>Exists to bound log volume. A resolution failure is usually <em>permanent</em>, not
+     * transient — the built-in resolver snapshots its index at construction, so a target id that
+     * misses at startup misses for the process lifetime — and the scheduler deliberately retries
+     * every tick. Without this, one mistyped target on a one-second cron writes an ERROR plus a
+     * stack trace every second, indefinitely, on every node: enough to fill a log volume and to
+     * bury genuine security events in the same stream. First failure per job logs at {@code ERROR}
+     * with the cause; subsequent ones drop to {@code DEBUG} until the target resolves again.
+     */
+    private final Set<String> resolutionFailureLogged = ConcurrentHashMap.newKeySet();
+
     // --- Helpers ---
 
     private final CronConcurrencyManager concurrency;
@@ -135,7 +150,7 @@ public class CronScheduler {
      *                              SINGLE_INSTANCE leader election; may be {@code null} for
      *                              in-memory mode
      * @param serviceTargetResolver resolver for translating stable service target ids to runtime
-     *                              event bus addresses at dispatch time
+     *                              event bus addresses, once per admitted fire
      * @param eventBusClient        the event bus client for dispatch protocol sends
      * @param envelopeBuilder       envelope builder used to construct outgoing job-dispatch
      *                              envelopes through the context substrate (FR-CTX-015); tests
@@ -171,7 +186,7 @@ public class CronScheduler {
      *                                SINGLE_INSTANCE leader election; may be {@code null} for
      *                                in-memory mode
      * @param serviceTargetResolver   resolver for translating stable service target ids to runtime
-     *                                event bus addresses at dispatch time
+     *                                event bus addresses, once per admitted fire
      * @param eventBusClient          the event bus client for dispatch protocol sends
      * @param maxConcurrentJobs       the maximum number of jobs that can execute concurrently;
      *                                must be positive
@@ -207,7 +222,6 @@ public class CronScheduler {
                 vertx,
                 eventBusClient,
                 repository,
-                serviceTargetResolver,
                 sortedInterceptors,
                 executionTimeoutMs,
                 progressFlushIntervalMs,
@@ -342,6 +356,10 @@ public class CronScheduler {
         Future<Void> cutoffFlushes = dispatcher.shutdown();
         concurrency.reset();
         jobs.clear();
+        // Clear alongside `jobs` for the same reason: a redeploy of the lifecycle verticle
+        // re-registers from scratch, and a retained entry would demote the first resolution failure
+        // of the new cycle to DEBUG, losing the ERROR an operator needs to see.
+        resolutionFailureLogged.clear();
         return cutoffFlushes.onComplete(ar -> log.info("CronScheduler stopped"));
     }
 
@@ -415,6 +433,10 @@ public class CronScheduler {
      * a concurrency slot, and dispatches. Losers (INSERT conflicted) log a debug message and
      * return without dispatching.
      *
+     * <p>The effective event bus address is resolved <em>after</em> the in-flight guard is taken
+     * and <em>before</em> any row is written, so an unresolvable target never persists an
+     * execution record. See {@link #resolveEffectiveAddress(CronJobDefinition)}.
+     *
      * @param job         the cron job to fire
      * @param scheduledAt the time this execution was scheduled for
      */
@@ -424,14 +446,22 @@ public class CronScheduler {
             log.debug("SINGLE_INSTANCE cron '{}' skipped — already in-flight on this node", job.id());
             return;
         }
-        JobExecution execution = buildExecution(job, scheduledAt, JobState.PROCESSING);
+        String effectiveAddress = resolveEffectiveAddress(job);
+        if (effectiveAddress == null) {
+            // Release what we took; no slot was acquired and no row has been written yet.
+            concurrency.removeInFlight(job.id());
+            return;
+        }
+        JobExecution execution = buildExecution(job, scheduledAt, effectiveAddress);
         repository
                 .tryInsert(execution)
                 .onSuccess(optId -> {
                     if (optId.isPresent()) {
                         log.debug("SINGLE_INSTANCE cron '{}' won at {}", job.id(), scheduledAt);
                         concurrency.acquireSlotAndRun(
-                                job.id(), () -> dispatcher.dispatch(job, scheduledAt, execution, this::markCompleted));
+                                job.id(),
+                                () -> dispatcher.dispatch(
+                                        job, scheduledAt, execution, effectiveAddress, this::markCompleted));
                     } else {
                         log.debug("SINGLE_INSTANCE cron '{}' skipped — another node won", job.id());
                         concurrency.removeInFlight(job.id());
@@ -439,7 +469,11 @@ public class CronScheduler {
                 })
                 .onFailure(err -> {
                     concurrency.removeInFlight(job.id());
-                    log.warn("SINGLE_INSTANCE insert failed for '{}': {}", job.id(), err.getMessage());
+                    // Log the throwable, not just its message: the repository wraps the driver
+                    // failure, so the message alone names the statement but not the constraint or
+                    // SQL state that actually rejected it — which is the only thing that tells an
+                    // operator whether the leader election is failing on data or on the schema.
+                    log.warn("SINGLE_INSTANCE insert failed for '{}'", forLog(job.id()), err);
                 });
     }
 
@@ -451,6 +485,14 @@ public class CronScheduler {
      * If {@code tracked=true} and a repository is available, persists the execution before
      * dispatching. On persistence failure, dispatches anyway (tracking is best-effort).
      *
+     * <p>Overlap admission is decided <em>first</em>: the effective event bus address is resolved
+     * only after {@code tryAcquireInFlight} succeeds, so a resolver failure at <em>admission</em>
+     * cannot convert an {@link OverlapPolicy#QUEUE_ONE} overlap into a silently dropped tick — the
+     * overlapping tick is queued without the resolver being consulted at all. It is <em>not</em> an
+     * unqualified guarantee: if resolution later fails when the queued fire is taken in
+     * {@link #markCompleted(CronJobDefinition)}, {@code pendingFires} has already been drained and
+     * that one queued tick is discarded. See {@link #resolveEffectiveAddress(CronJobDefinition)}.
+     *
      * @param job         the cron job to fire
      * @param scheduledAt the time this execution was scheduled for
      */
@@ -459,23 +501,30 @@ public class CronScheduler {
             concurrency.handleOverlap(job, scheduledAt);
             return;
         }
+        String effectiveAddress = resolveEffectiveAddress(job);
+        if (effectiveAddress == null) {
+            // Release what we took; no slot was acquired and no row has been written yet.
+            concurrency.removeInFlight(job.id());
+            return;
+        }
+        // Dispatch with no execution record — used both when tracking is off and when persisting
+        // the record failed (tracking is best-effort; a dispatch still happens).
+        Runnable dispatchUntracked =
+                () -> dispatcher.dispatch(job, scheduledAt, null, effectiveAddress, this::markCompleted);
         if (job.tracked() && repository != null) {
-            JobExecution execution = buildExecution(job, scheduledAt, JobState.PROCESSING);
+            JobExecution execution = buildExecution(job, scheduledAt, effectiveAddress);
             repository
                     .save(execution)
                     .onSuccess(id -> concurrency.acquireSlotAndRun(
-                            job.id(), () -> dispatcher.dispatch(job, scheduledAt, execution, this::markCompleted)))
+                            job.id(),
+                            () -> dispatcher.dispatch(
+                                    job, scheduledAt, execution, effectiveAddress, this::markCompleted)))
                     .onFailure(err -> {
-                        log.warn(
-                                "Failed to persist execution for '{}' — dispatching in-memory: {}",
-                                job.id(),
-                                err.getMessage());
-                        concurrency.acquireSlotAndRun(
-                                job.id(), () -> dispatcher.dispatch(job, scheduledAt, null, this::markCompleted));
+                        log.warn("Failed to persist execution for '{}' — dispatching in-memory", forLog(job.id()), err);
+                        concurrency.acquireSlotAndRun(job.id(), dispatchUntracked);
                     });
         } else {
-            concurrency.acquireSlotAndRun(
-                    job.id(), () -> dispatcher.dispatch(job, scheduledAt, null, this::markCompleted));
+            concurrency.acquireSlotAndRun(job.id(), dispatchUntracked);
         }
     }
 
@@ -488,6 +537,12 @@ public class CronScheduler {
      * <p>For tracked QUEUE_ONE re-dispatches, a fresh execution record is saved before dispatching
      * the queued fire.
      *
+     * <p>A queued fire is a <em>new</em> fire, so it resolves its own effective event bus address
+     * — this path bypasses {@link #fire(CronJobDefinition, Instant)} entirely and therefore needs
+     * the resolution gate independently. When resolution fails, <b>both</b> guards are released:
+     * {@link CronConcurrencyManager#markCompleted(String)} deliberately retains the in-flight
+     * entry when a pending fire exists, and the concurrency slot is still held for reuse.
+     *
      * @param job the cron job that completed
      */
     private void markCompleted(CronJobDefinition job) {
@@ -499,20 +554,27 @@ public class CronScheduler {
             // Slot is reused — dispatch directly rather than going through fireEveryInstance()
             // which would double-count the slot.
             log.debug("Cron job '{}' running queued fire (scheduled={})", job.id(), pending);
+            String effectiveAddress = resolveEffectiveAddress(job);
+            if (effectiveAddress == null) {
+                concurrency.removeInFlight(job.id());
+                concurrency.releaseSlot();
+                return;
+            }
             if (job.tracked() && repository != null) {
-                JobExecution queuedExecution = buildExecution(job, pending, JobState.PROCESSING);
+                JobExecution queuedExecution = buildExecution(job, pending, effectiveAddress);
                 repository
                         .save(queuedExecution)
-                        .onSuccess(id -> dispatcher.dispatch(job, pending, queuedExecution, this::markCompleted))
+                        .onSuccess(id -> dispatcher.dispatch(
+                                job, pending, queuedExecution, effectiveAddress, this::markCompleted))
                         .onFailure(err -> {
                             log.warn(
                                     "Failed to persist queued execution for '{}' — dispatching in-memory: {}",
                                     job.id(),
                                     err.getMessage());
-                            dispatcher.dispatch(job, pending, null, this::markCompleted);
+                            dispatcher.dispatch(job, pending, null, effectiveAddress, this::markCompleted);
                         });
             } else {
-                dispatcher.dispatch(job, pending, null, this::markCompleted);
+                dispatcher.dispatch(job, pending, null, effectiveAddress, this::markCompleted);
             }
         } else {
             concurrency.releaseSlot();
@@ -522,24 +584,161 @@ public class CronScheduler {
     // --- Helper methods ---
 
     /**
+     * Resolves the effective event bus address for one fire of {@code job}.
+     *
+     * <p>Both variants read the address from the {@link CronTargetReference} itself — the stable
+     * target id through {@link ServiceTargetResolver} for a
+     * {@link CronTargetReference.ServiceTarget}, and
+     * {@link CronTargetReference.EventBusTarget#address()} for the other — rather than from
+     * {@link CronJobDefinition#handlerAddress()}, which is only a copy the registrar derives from
+     * the target and leaves {@code null} for service targets. Trusting the derived copy is what
+     * produced the defect ADR-0201 records; the target is the authority. Both variants are then
+     * subject to the same non-blank check, so no caller can produce an execution record with a
+     * {@code null} or blank {@link JobExecution#handler()} — including a caller that builds a
+     * definition directly rather than going through {@link CronJobRegistrar}.
+     *
+     * <p>Returns {@code null} — after logging the job id and the target's canonical form — when the
+     * resolver throws or the effective address is null/blank, so the caller can abandon the fire and
+     * release whatever guard it already holds. No {@link Exception} is rethrown: a resolution
+     * failure skips that fire only, and the next tick retries. The first failure per job logs at
+     * {@code ERROR} with the cause and subsequent ones at {@code DEBUG} (see
+     * {@link #resolutionFailureLogged}), because the failure is typically permanent while the retry
+     * is per-tick.
+     *
+     * <p>An {@link Error} is deliberately <em>not</em> caught, consistent with this module's rule
+     * that an {@code Error} leaves the JVM in an undefined state and must propagate rather than be
+     * swallowed (see {@code CronLifecycleVerticle#start}). The cost of that choice is explicit: an
+     * {@code Error} raised by a custom {@link ServiceTargetResolver} escapes with the caller's
+     * in-flight guard still held, silently stalling that one job on this node. That is an accepted
+     * trade — a JVM in an undefined state is the larger problem — but it is the reason the guard is
+     * released on the {@code null} return rather than in a {@code finally}.
+     *
+     * <p>Both interpolated identifiers are config-supplied, so they are sanitized before they reach
+     * a log record; see {@link #forLog(String)}.
+     *
+     * <p>Resolving per fire rather than immediately before the event-bus send is sound only
+     * because the built-in {@code DefaultServiceTargetResolver} snapshots its indexes with
+     * {@code Map.copyOf} at construction. "Per fire" therefore means <em>fixed at fire
+     * admission</em>. A mutable or reloadable {@link ServiceTargetResolver} implementation would
+     * invalidate that assumption; see ADR-0201.
+     *
+     * @param job the cron job whose target is being resolved
+     * @return the non-blank effective event bus address, or {@code null} when the target cannot be
+     *         resolved to one
+     */
+    private String resolveEffectiveAddress(CronJobDefinition job) {
+        // Never dereference job.target() unguarded, including in the log statements below. This
+        // method's contract is "return null, never throw": a throw would escape into
+        // fireSingleInstance/fireEveryInstance *after* they acquired the in-flight guard, leaking
+        // it permanently — the exact failure mode this gate exists to prevent. CronJobDefinition
+        // does not validate that target is non-null, so the guard cannot assume it.
+        CronTargetReference target = job.target();
+        String targetDescription = target != null ? forLog(target.toCanonical()) : "<none>";
+        String address;
+        if (target instanceof CronTargetReference.ServiceTarget serviceTarget) {
+            try {
+                address = serviceTargetResolver
+                        .resolve(serviceTarget.stableTargetId())
+                        .address();
+            } catch (Exception e) {
+                logResolutionFailure(job, targetDescription, "could not be resolved", e);
+                return null;
+            }
+        } else if (target instanceof CronTargetReference.EventBusTarget eventBusTarget) {
+            address = eventBusTarget.address();
+        } else {
+            // CronTargetReference is sealed with exactly two variants, so this is reachable only
+            // for a malformed definition whose target is null. Fall back to the derived copy so a
+            // definition built that way behaves exactly as it did before, then fail the non-blank
+            // check below.
+            address = job.handlerAddress();
+        }
+        if (address == null || address.isBlank()) {
+            logResolutionFailure(job, targetDescription, "resolved to a null or blank event bus address", null);
+            return null;
+        }
+        resolutionFailureLogged.remove(job.id());
+        return address;
+    }
+
+    /**
+     * Logs a target-resolution failure once per job at {@code ERROR}, then at {@code DEBUG} until
+     * that job resolves again. See {@link #resolutionFailureLogged} for why the volume is bounded.
+     *
+     * @param job               the job whose target failed to resolve
+     * @param targetDescription the already-sanitized target description
+     * @param reason            what went wrong, phrased to follow the target in the message
+     * @param cause             the resolver failure to attach on the first report, or {@code null}
+     */
+    private void logResolutionFailure(CronJobDefinition job, String targetDescription, String reason, Exception cause) {
+        String jobId = forLog(job.id());
+        if (resolutionFailureLogged.add(job.id())) {
+            log.error(
+                    "Cron job '{}' target '{}' {} — skipping this fire; further failures for this"
+                            + " job log at DEBUG until it resolves",
+                    jobId,
+                    targetDescription,
+                    reason,
+                    cause);
+        } else {
+            log.debug("Cron job '{}' target '{}' {} — skipping this fire", jobId, targetDescription, reason);
+        }
+    }
+
+    /**
+     * Sanitizes a config-supplied identifier for safe interpolation into a log record.
+     *
+     * <p>Cron job ids and {@code eventbus:} target addresses are accepted from configuration with
+     * only a non-blank check, and configuration can be supplied by environment variables and remote
+     * config stores. Written verbatim into a log record under the shipped pattern layouts — which
+     * end in {@code %msg%n} with no escaping conversion — an embedded newline would terminate the
+     * record and emit the remainder as an independent, fully caller-shaped line: log forging
+     * (CWE-117). Length is unbounded too, which multiplies the cost of any repeated report.
+     *
+     * <p>Delegates to {@link DeferredExecutionOrigin#of(String, String)}, whose documented job is to
+     * sanitize a "raw, possibly attacker-influenced boundary identifier" — stripping control and
+     * separator code points and bounding length without splitting a surrogate pair. Reused rather
+     * than reimplemented so cron cannot drift from the sanitizing rule the rest of the
+     * deferred-execution boundary already applies to these same strings.
+     *
+     * @param raw the raw config-supplied identifier, possibly {@code null}
+     * @return the sanitized, length-bounded form, safe to interpolate into a log record, or
+     *         {@code "<none>"} when {@code raw} is absent or sanitizes away entirely
+     */
+    private static String forLog(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return "<none>";
+        }
+        // of(kind, reference) substitutes the sanitized kind when the reference sanitizes to blank,
+        // which would silently log a control-character-only id as the literal "cron". Detect that
+        // substitution and report absence explicitly instead of a plausible-looking value.
+        String sanitized = DeferredExecutionOrigin.of("cron", raw).reference();
+        return "cron".equals(sanitized) && !"cron".equals(raw) ? "<none>" : sanitized;
+    }
+
+    /**
      * Builds a {@link JobExecution} record for a cron fire. The execution ID is freshly
      * generated; the record captures the current instant as {@code startedAt} and uses the job
-     * definition's parameters.
+     * definition's parameters. The initial state is always {@link JobState#PROCESSING} — a cron
+     * fire is dispatched immediately, never enqueued.
      *
-     * @param job         the cron job being executed
-     * @param scheduledAt the scheduled fire time
-     * @param state       the initial execution state (typically {@link JobState#PROCESSING})
+     * @param job              the cron job being executed
+     * @param scheduledAt      the scheduled fire time
+     * @param effectiveAddress the non-blank event bus address this fire dispatches to, as returned
+     *                         by {@link #resolveEffectiveAddress(CronJobDefinition)}; recorded as
+     *                         the execution's {@code handler} so the persisted address always
+     *                         equals the dispatched one
      * @return the constructed execution record
      */
-    private JobExecution buildExecution(CronJobDefinition job, Instant scheduledAt, JobState state) {
+    private JobExecution buildExecution(CronJobDefinition job, Instant scheduledAt, String effectiveAddress) {
         UUID executionId = UUID.randomUUID();
         return new JobExecution(
                 executionId,
                 job.id(),
                 JobType.CRON,
-                job.handlerAddress(),
+                effectiveAddress,
                 "cron",
-                state,
+                JobState.PROCESSING,
                 0,
                 job.maxAttempts(),
                 null,

@@ -117,8 +117,10 @@ public class CronJobRegistrar {
      * @param scheduler      the scheduler to register discovered jobs with
      * @param registry       the service contract registry to scan for {@link CronJob} annotations
      * @param targetResolver the service target resolver; accepted for API symmetry with
-     *                       {@link CronJobDispatcher} but target id derivation for annotation jobs
-     *                       uses {@link ServiceMethodMeta#stableTargetId()} directly
+     *                       {@link CronScheduler}, which resolves a target to its runtime address
+     *                       once per fire, but unused here — target id derivation for annotation
+     *                       jobs reads {@link ServiceMethodMeta#stableTargetId()} directly, and
+     *                       config-only targets are not checked for resolvability at registration
      * @param cronConfig     the typed cron configuration (parsed from the {@code cron} subtree at the
      *                       module boundary)
      * @param repository     optional job repository for schedule persistence and SINGLE_INSTANCE
