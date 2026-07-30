@@ -12,6 +12,7 @@ import dev.vertique.json.JsonConfig;
 import dev.vertique.rest.core.config.HttpConfig;
 import dev.vertique.rest.core.config.JaxRsConfig;
 import dev.vertique.rest.core.context.RestContextResolution;
+import dev.vertique.rest.core.interceptor.ErrorInterceptor;
 import dev.vertique.rest.core.interceptor.RequestInterceptor;
 import dev.vertique.rest.core.response.BufferedBody;
 import dev.vertique.rest.core.response.ResponseBodyEncoder;
@@ -87,6 +88,7 @@ public class MultipartPartCountLimitIT {
     private HttpServer server;
     private java.nio.file.Path uploadsDirectory;
     private PartCountCapture capture;
+    private FailureCapture failureCapture;
 
     @BeforeAll
     static void setUpClient(Vertx injectedVertx) {
@@ -116,7 +118,11 @@ public class MultipartPartCountLimitIT {
 
         HttpResult result = postMultipart(MultipartBodies.parts(CONFIGURED_FORM_FIELD_LIMIT + 1, 0));
 
-        assertEquals(400, result.statusCode(), "257 file parts under the byte cap must not be accepted");
+        assertEquals(
+                400,
+                result.statusCode(),
+                "257 file parts under the byte cap must not be accepted; observed failure: "
+                        + failureCapture.describe());
         assertNull(capture.observation(), "the decoder must reject before any framework handler runs");
     }
 
@@ -127,7 +133,11 @@ public class MultipartPartCountLimitIT {
 
         HttpResult result = postMultipart(MultipartBodies.parts(0, CONFIGURED_FORM_FIELD_LIMIT + 1));
 
-        assertEquals(400, result.statusCode(), "257 text form fields under the byte cap must not be accepted");
+        assertEquals(
+                400,
+                result.statusCode(),
+                "257 text form fields under the byte cap must not be accepted; observed failure: "
+                        + failureCapture.describe());
         assertNull(capture.observation(), "the decoder must reject before any framework handler runs");
     }
 
@@ -138,7 +148,10 @@ public class MultipartPartCountLimitIT {
 
         HttpResult result = postMultipart(MultipartBodies.parts(57, 200));
 
-        assertEquals(400, result.statusCode(), "a shared counter must reject 257 mixed parts");
+        assertEquals(
+                400,
+                result.statusCode(),
+                "a shared counter must reject 257 mixed parts; observed failure: " + failureCapture.describe());
         assertNull(capture.observation(), "the decoder must reject before any framework handler runs");
     }
 
@@ -179,11 +192,12 @@ public class MultipartPartCountLimitIT {
         uploadsDirectory = java.nio.file.Path.of(
                 "target", "file-uploads", "MultipartPartCountLimitIT", testName + "-" + UUID.randomUUID());
         capture = new PartCountCapture();
+        failureCapture = new FailureCapture();
 
         HttpConfig httpConfig = HttpConfig.builder()
                 .uploadsDirectory(uploadsDirectory.toString())
                 .build();
-        JaxRsRouterMount mount = buildWebValidationFactory(httpConfig, capture)
+        JaxRsRouterMount mount = buildWebValidationFactory(httpConfig, capture, failureCapture)
                 .create("/*", "openapi.json", Set.of(new PartsResource()));
 
         Router apiRouter = mount.createRouter(vertx)
@@ -283,6 +297,31 @@ public class MultipartPartCountLimitIT {
         }
     }
 
+    /**
+     * Records the shape of the failure the error pipeline received: the throwable
+     * {@code JaxRsRouterMount.handleFailure} chose to dispatch, the status Vert.x itself set on the
+     * context, and whether the {@code HttpException} unwrap branch stashed a status hint. Together
+     * these say which branch of {@code handleFailure} a decoder rejection actually takes.
+     */
+    private static final class FailureCapture implements ErrorInterceptor {
+
+        private final AtomicReference<String> described = new AtomicReference<>();
+
+        @Override
+        public Future<Throwable> beforeMapping(RoutingContext rc, Throwable throwable) {
+            described.set("cause=" + throwable.getClass().getName()
+                    + ", message=" + throwable.getMessage()
+                    + ", ctx.statusCode()=" + rc.statusCode()
+                    + ", vertxStatusHint=" + rc.data().get(RequestInterceptor.VERTX_STATUS_CODE_KEY));
+            return Future.succeededFuture(throwable);
+        }
+
+        String describe() {
+            String value = described.get();
+            return value == null ? "the error pipeline never ran" : value;
+        }
+    }
+
     /** Records the decoder's output for the request currently in flight. */
     private static final class PartCountCapture implements RequestInterceptor {
 
@@ -309,7 +348,7 @@ public class MultipartPartCountLimitIT {
     private record HttpResult(int statusCode, Buffer body) {}
 
     private static JaxRsRouterMount.Factory buildWebValidationFactory(
-            HttpConfig httpConfig, RequestInterceptor capture) {
+            HttpConfig httpConfig, RequestInterceptor capture, ErrorInterceptor failureCapture) {
         DefaultExceptionMapper defaultMapper = new DefaultExceptionMapper()
                 .on(dev.vertique.rest.core.RestValidationException.class, ex -> Response.status(400)
                         .entity(dev.vertique.rest.core.ValidationProblemDetail.of(ex.getMessage(), ex.errors()))
@@ -329,7 +368,7 @@ public class MultipartPartCountLimitIT {
         return new JaxRsRouterMount.Factory(
                 Set.of(),
                 Set.of(),
-                Set.of(),
+                Set.of(failureCapture),
                 Set.of(),
                 Set.of(),
                 Set.of(),
