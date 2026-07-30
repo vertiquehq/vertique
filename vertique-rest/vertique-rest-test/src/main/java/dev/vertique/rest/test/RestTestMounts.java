@@ -35,8 +35,10 @@ import java.util.concurrent.TimeoutException;
  *
  * <p>These helpers take the opaque {@link RestTestMount} rather than a bare
  * {@link JaxRsRouterMount.Factory}, and there is deliberately no factory-only form: a mount needs
- * both middleware tiers to behave like production, and the handle is what makes an assembly missing
- * one of them unrepresentable. See {@link RestTestMount} for the full rationale.
+ * both middleware tiers to behave like production, so the handle leaves nothing to reach for that
+ * would drop one of them by accident. That is ergonomics, not enforcement — {@link #router} still
+ * produces the API router alone on purpose, for a caller assembling its own root router. See
+ * {@link RestTestMount} for the full rationale.
  *
  * <h2>Ownership</h2>
  *
@@ -140,9 +142,20 @@ public final class RestTestMounts {
         Objects.requireNonNull(vertx, "vertx");
         Objects.requireNonNull(mount, "mount");
         Objects.requireNonNull(resources, "resources");
-        return router(vertx, mount, resources).compose(apiRouter -> {
-            Router root = Router.router(vertx);
+        // Root router first, then the API router — the order HttpVerticle uses (create main router,
+        // install ROOT middleware, then create and mount each RouterMount's router). Nothing about a
+        // successful request observes the difference, but a failure in the root install now surfaces
+        // before createRouter has run the RouterLifecycleHook.afterRouterCreated hooks, whose side
+        // effects this fixture has no path to undo. The try/catch keeps the single failure channel
+        // router(...) documents: a synchronous throw here would otherwise escape past the Future.
+        Router root;
+        try {
+            root = Router.router(vertx);
             installRootMiddlewares(root, mount.middlewares());
+        } catch (RuntimeException e) {
+            return Future.failedFuture(e);
+        }
+        return router(vertx, mount, resources).compose(apiRouter -> {
             root.route(MOUNT_PATH).subRouter(apiRouter);
             return vertx.createHttpServer().requestHandler(root).listen(0, LOOPBACK_HOST);
         });

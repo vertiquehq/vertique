@@ -187,7 +187,11 @@ class FixtureGraphTest {
      * @throws Exception when the build fails or times out
      */
     private static Router buildRouter(FixtureSelfTestComponent component) throws Exception {
-        JaxRsRouterMount mount = component.mountFactory().create("/*", "openapi.json", Set.of(new PingResource()));
+        // Through the handle's package-private accessor rather than a second component method: the
+        // synchronous RestConfigurationException asserted below is what RestTestMounts.router turns
+        // into a failed future, so this test has to call createRouter directly.
+        JaxRsRouterMount mount =
+                component.testMount().factory().create("/*", "openapi.json", Set.of(new PingResource()));
         return mount.createRouter(vertx)
                 .toCompletionStage()
                 .toCompletableFuture()

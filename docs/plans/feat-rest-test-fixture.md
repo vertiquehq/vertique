@@ -231,7 +231,10 @@ public record RestTestContributions(
 
 /**
  * Everything needed to assemble a faithful mount. Obtainable only from the graph — the
- * constructor and accessors are package-private, so an unfaithful assembly is unrepresentable.
+ * constructor and accessors are package-private, so a ROOT-less assembly is unreachable by
+ * accident — there is no factory-only overload to reach for. It is not *unenforceable*: Dagger
+ * publishes `RestTestMount_Factory.newInstance`, and `router(...)` produces the API-only router
+ * deliberately. The constructor rejects an empty middleware set, which is the part that is enforced.
  * A class, not a record: a public record forces a public canonical constructor (JLS 8.10.4),
  * which would let a consumer hand-build a partial mount and defeat the point.
  */
@@ -353,8 +356,18 @@ middlewares at the installation site therefore reproduces production rather than
 
 **Why an opaque handle rather than a fourth parameter.** A `startServer(vertx, factory, resources,
 Set<Middleware>)` overload lets a consumer pass `Set.of()` and silently rebuild the defect. The handle
-makes the unfaithful assembly unrepresentable — that is its justification today, not future
-extensibility.
+removes that reach-for-it path — that is its justification today, not future extensibility.
+
+**Correction (round-2 review).** This section originally claimed the handle makes the unfaithful
+assembly *unrepresentable*. **That was false**, on two counts: Dagger emits `RestTestMount_Factory`
+as a public class with a public static `newInstance(Factory, Set<Middleware>)` and ships it in the
+JAR, so a determined consumer can reconstruct the ROOT-less pipeline; and `RestTestMounts.router(...)`
+returns the API-only router *by design*, documented as such. The honest claim is **unreachable by
+accident**, not enforced. The one thing that *is* enforced: `RestTestMount`'s constructor rejects an
+empty middleware set (safe because every fixture graph carries at least five ROOT middlewares —
+pinned by `RestTestMountTest.fixtureGraphAlwaysCarriesTheBuiltInRootTier`, so if that premise ever
+breaks a maintainer sees the premise fail rather than an unexplained rejection at a consumer).
+This was the same defect class as round 1's "never hangs": a claim the code did not back.
 
 **Watch-items for the migration:** `UploadTempFileCleanupIT` and `FileVerifierEventLoopNonStallIT`
 are the end-handler-ordering-sensitive ITs (`RequestContextLifecycle` registers its end handler first

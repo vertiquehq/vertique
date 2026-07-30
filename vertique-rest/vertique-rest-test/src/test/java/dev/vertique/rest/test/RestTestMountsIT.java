@@ -20,7 +20,6 @@ import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.http.HttpClient;
-import io.vertx.core.http.HttpClientRequest;
 import io.vertx.core.http.HttpMethod;
 import io.vertx.core.http.HttpServer;
 import io.vertx.core.internal.ContextInternal;
@@ -67,6 +66,14 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * the framework's root pipeline never runs. {@link #requestContextLifecycleIsAvailableToInterceptors()}
  * pins the concrete consequence: {@code RequestLocaleInterceptor} and {@code WebSocketEndpointRegistrar}
  * both fail the request when {@code RequestContextLifecycle.fromRoutingContext} throws.
+ *
+ * <p>The third group asserts the <b>built-in</b> ROOT middlewares over the wire — the ones
+ * {@code RestCoreModule} contributes whether or not a test asks for them, and therefore the ones a
+ * fixture that installs only the API tier drops without any test noticing. Two of the five are not
+ * covered here and cannot be without new surface: {@code RestRequestCompletionEmitter} is observable
+ * only through a {@code RestRequestCompletedListener}, for which {@link RestTestContributions} has no
+ * seam, and {@code ContextualLoggingMiddleware} writes only to MDC, which is a no-op with no SLF4J
+ * provider on this module's test classpath.
  */
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
@@ -83,6 +90,13 @@ public class RestTestMountsIT {
 
     /** Response header stamped by the API-scoped middleware stand-in. */
     private static final String API_HEADER = "X-Api-Middleware";
+
+    /**
+     * The request-id header {@code CorrelationIngressMiddleware} reads and echoes. Spelled out rather
+     * than read from {@code CorrelationIngressConfig.defaults()} so the assertion pins the wire
+     * contract a consumer sees, not whatever the config happens to say.
+     */
+    private static final String REQUEST_ID_HEADER = "X-Request-Id";
 
     private static Vertx vertx;
     private static HttpClient client;
@@ -210,6 +224,53 @@ public class RestTestMountsIT {
         probe.awaitCleanup();
     }
 
+    // --- Built-in ROOT middlewares ---
+
+    @Test
+    @DisplayName("DefaultHeadersMiddleware stamps the framework's default security headers")
+    void defaultHeadersMiddlewareStampsSecurityHeaders() throws Exception {
+        // DefaultHeadersMiddleware is ROOT-scoped and contributed by RestCoreModule, so nothing a
+        // test does puts it there — a fixture that installs only the API tier serves this request
+        // with none of these headers.
+        startServer(RestTestContributions.none());
+
+        HttpResult result = get("/fixture/echo");
+
+        assertThat(result.statusCode()).isEqualTo(200);
+        assertThat(result.header("X-Content-Type-Options")).isEqualTo("nosniff");
+        assertThat(result.header("X-Frame-Options")).isEqualTo("DENY");
+        assertThat(result.header("Cache-Control")).isEqualTo("no-store");
+    }
+
+    @Test
+    @DisplayName("CorrelationIngressMiddleware echoes a generated request id when none is supplied")
+    void correlationIngressEchoesGeneratedRequestId() throws Exception {
+        startServer(RestTestContributions.none());
+
+        HttpResult result = get("/fixture/echo");
+
+        assertThat(result.statusCode()).isEqualTo(200);
+        assertThat(result.header(REQUEST_ID_HEADER))
+                .as("echoRequestId defaults to true and the id is generated when the header is absent")
+                .isNotBlank();
+    }
+
+    @Test
+    @DisplayName("CorrelationIngressMiddleware echoes a supplied request id verbatim")
+    void correlationIngressEchoesSuppliedRequestId() throws Exception {
+        // The generated-id assertion above would also pass if something simply stamped a constant.
+        // Echoing an inbound value back proves the middleware read the request: the default policy is
+        // REPLACE_WITH_GENERATED, which only replaces values that fail the header validator, so a
+        // valid supplied id survives.
+        startServer(RestTestContributions.none());
+        String supplied = "fixture-request-id-42";
+
+        HttpResult result = get("/fixture/echo", Map.of(REQUEST_ID_HEADER, supplied));
+
+        assertThat(result.statusCode()).isEqualTo(200);
+        assertThat(result.header(REQUEST_ID_HEADER)).isEqualTo(supplied);
+    }
+
     @Test
     @DisplayName("ROOT middlewares execute in OrderedExtension order, not set or priority order")
     void middlewaresRunInOrderedExtensionOrder() throws Exception {
@@ -247,20 +308,35 @@ public class RestTestMountsIT {
     }
 
     /**
-     * Issues a GET against the running server and awaits the full response.
+     * Issues a header-free GET against the running server and awaits the full response.
      *
      * @param path the request path
      * @return the status, headers, and body of the response
      * @throws Exception when the round trip fails or times out
      */
     private HttpResult get(String path) throws Exception {
+        return get(path, Map.of());
+    }
+
+    /**
+     * Issues a GET against the running server and awaits the full response.
+     *
+     * @param path    the request path
+     * @param headers the request headers to send
+     * @return the status, headers, and body of the response
+     * @throws Exception when the round trip fails or times out
+     */
+    private HttpResult get(String path, Map<String, String> headers) throws Exception {
         return client.request(HttpMethod.GET, server.actualPort(), "localhost", path)
-                .compose(HttpClientRequest::send)
+                .compose(request -> {
+                    headers.forEach(request::putHeader);
+                    return request.send();
+                })
                 .compose(response -> {
                     int statusCode = response.statusCode();
-                    Map<String, String> headers = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
-                    response.headers().forEach(entry -> headers.put(entry.getKey(), entry.getValue()));
-                    return response.body().map(body -> new HttpResult(statusCode, headers, body.toString()));
+                    Map<String, String> responseHeaders = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+                    response.headers().forEach(entry -> responseHeaders.put(entry.getKey(), entry.getValue()));
+                    return response.body().map(body -> new HttpResult(statusCode, responseHeaders, body.toString()));
                 })
                 .toCompletionStage()
                 .toCompletableFuture()

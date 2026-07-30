@@ -32,10 +32,19 @@ import java.util.Set;
  * widening any production visibility.
  *
  * <p>Because Dagger builds the graph, the fixture never calls the 29-argument
- * {@code JaxRsRouterMount.Factory} constructor and <b>never sorts anything</b>. Encoder and decoder
- * order is produced by {@code RestModule.sortedResponseBodyEncoders} and
- * {@code RestModule.sortedRequestBodyDecoders}, and the response serializer is built from the same
- * sorted list the factory receives — so ordering and serializer coherence hold by construction.
+ * {@code JaxRsRouterMount.Factory} constructor, and it <b>never constructs or reorders the
+ * encoder/decoder lists</b>. Encoder and decoder order is produced by
+ * {@code RestModule.sortedResponseBodyEncoders} and {@code RestModule.sortedRequestBodyDecoders},
+ * and the response serializer is built from the same sorted list the factory receives — so ordering
+ * and serializer coherence hold by construction.
+ *
+ * <p>The fixture defines no ordering policy of its own anywhere. Each middleware tier is installed
+ * with the production {@link dev.vertique.core.extension.OrderedExtension} comparator at its
+ * production-equivalent site: {@code JaxRsRouterMount} sorts and installs the API tier, and
+ * {@link RestTestMounts} reproduces {@code HttpVerticle}'s ROOT-tier sort line for line on the root
+ * router it builds. Middlewares are bound as an unordered {@code Set} with no {@code sorted…}
+ * provider to delegate to, which is why that one sort is performed at the installation site rather
+ * than inherited from a module.
  *
  * <h2>Usage</h2>
  *
@@ -59,8 +68,9 @@ import java.util.Set;
  * }</pre>
  *
  * <p>Expose {@link RestTestMount}, not {@code JaxRsRouterMount.Factory}: the helpers in
- * {@link RestTestMounts} take the handle so that the ROOT-scoped middleware tier cannot be lost on
- * the way to the server (see {@link RestTestMount}). Avoid naming any component method
+ * {@link RestTestMounts} take the handle, and offer no factory-only overload, so the ROOT-scoped
+ * middleware tier is not lost by accident on the way to the server (see {@link RestTestMount} for
+ * what that does and does not guarantee). Avoid naming any component method
  * {@code factory()} — a component declaring a {@code @Component.Factory} gets a generated static
  * {@code factory()} on its {@code Dagger…} class, and Dagger rejects a collision.
  *

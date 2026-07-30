@@ -35,13 +35,27 @@ import java.util.Set;
  *
  * <p>The type is {@code public} so a consumer can hold one in a field and pass it to
  * {@link RestTestMounts}; its constructor and accessors are deliberately <b>package-private</b> so
- * that a graph built by Dagger is the <em>only</em> way to produce one. Any public construction path
- * would let a caller pair a real factory with an arbitrary — or empty — middleware set and rebuild
- * exactly the unfaithful pipeline this type exists to make unrepresentable.
+ * the DI graph is the obvious — and only published — way to produce one. What that buys is that a
+ * ROOT-less assembly is <b>unreachable by accident</b>: {@link RestTestMounts} offers no
+ * factory-only overload, so a test wiring a server has nothing to reach for that quietly drops the
+ * root tier.
+ *
+ * <p><b>It is not an enforcement boundary, and does not claim to be.</b> Two supported paths still
+ * produce the API-only assembly. Dagger emits {@code RestTestMount_Factory} into this same package
+ * as a {@code public final} class with a {@code public static newInstance(JaxRsRouterMount.Factory,
+ * Set<Middleware>)}, and ships it in the artifact, so a caller who wants the ROOT-less pipeline can
+ * hand-assemble one. And {@link RestTestMounts#router(io.vertx.core.Vertx, RestTestMount, Set)}
+ * returns the API router alone <em>by design</em>, for a caller that assembles its own root router
+ * and takes responsibility for the ROOT tier. Neither is a defect; the opacity is ergonomic
+ * guidance, not a guarantee.
  *
  * <p>That is also why this is a {@code class} and not a {@code record}: a public record has a public
  * canonical constructor by definition (JLS 8.10.4), so recording the same two components would
- * reopen the hand-assembly path the package-private constructor closes.
+ * publish the hand-assembly path that the package-private constructor at least keeps out of the
+ * documented API.
+ *
+ * <p>The one invariant this type does <em>enforce</em> is narrow and mechanical: the middleware set
+ * must be non-empty (see the constructor).
  *
  * @see RestTestMounts
  * @see RestTestFixtureModule
@@ -56,17 +70,33 @@ public final class RestTestMount {
 
     /**
      * Creates a handle over a Dagger-assembled mount factory and the graph's complete middleware set.
-     * Package-private: see the class javadoc for why the only construction path is the DI graph.
+     * Package-private: see the class javadoc for why the DI graph is the published construction path.
+     *
+     * <p>An <b>empty</b> middleware set is rejected. It can never be what a graph over
+     * {@link RestTestFixtureModule} produces: that module includes {@code RestModule}, hence
+     * {@code RestCoreModule}, which contributes {@code RequestContextLifecycle},
+     * {@code ContextualLoggingMiddleware}, {@code DefaultHeadersMiddleware},
+     * {@code ContentTypeValidationMiddleware} and {@code RestRequestCompletionEmitter}, plus
+     * {@code CorrelationIngressMiddleware} from the {@code CorrelationIngressModule} it includes. An
+     * empty set therefore means the handle was hand-assembled around the graph, which is exactly the
+     * case where the root pipeline would go missing silently.
      *
      * @param factory     the framework-assembled mount factory; must not be {@code null}
      * @param middlewares every {@link Middleware} in the graph, of either scope; defensively copied,
      *                    so the handle is immutable regardless of what the graph retains
-     * @throws NullPointerException if either argument, or any middleware, is {@code null}
+     * @throws NullPointerException     if either argument, or any middleware, is {@code null}
+     * @throws IllegalArgumentException if {@code middlewares} is empty
      */
     @Inject
     RestTestMount(JaxRsRouterMount.Factory factory, Set<Middleware> middlewares) {
         this.factory = Objects.requireNonNull(factory, "factory must not be null");
-        this.middlewares = Set.copyOf(Objects.requireNonNull(middlewares, "middlewares must not be null"));
+        Set<Middleware> copy = Set.copyOf(Objects.requireNonNull(middlewares, "middlewares must not be null"));
+        if (copy.isEmpty()) {
+            throw new IllegalArgumentException("middlewares must not be empty: a graph over RestTestFixtureModule "
+                    + "always carries the framework's own middlewares, so an empty set means this handle was not "
+                    + "built by that graph and the root pipeline would be silently missing");
+        }
+        this.middlewares = copy;
     }
 
     /**

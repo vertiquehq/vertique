@@ -34,21 +34,16 @@ import java.util.List;
 interface FixtureSelfTestComponent {
 
     /**
-     * Returns the real JAX-RS router mount factory assembled by the framework graph.
+     * Returns the opaque mount handle {@link RestTestMounts} consumes — the framework's real
+     * {@link JaxRsRouterMount.Factory} paired with the graph's complete {@code Set<Middleware>}.
      *
-     * <p>Named {@code mountFactory} rather than {@code factory}: a component that declares a
-     * {@link Component.Factory} gets a generated static {@code factory()} on {@code Dagger…}, and
-     * Dagger rejects a component method of the same name.
+     * <p>This is the <em>only</em> mount accessor, exactly as on a consumer's component. The graph
+     * tests that need the factory itself reach it through {@code RestTestMount.factory()}, which is
+     * package-private and therefore visible to this module's own tests.
      *
-     * @return the mount factory
-     */
-    JaxRsRouterMount.Factory mountFactory();
-
-    /**
-     * Returns the opaque mount handle {@link RestTestMounts} consumes — the factory above paired with
-     * the graph's complete {@code Set<Middleware>}. This is the accessor a real consumer declares;
-     * {@link #mountFactory()} is retained alongside it only because this module's own graph tests
-     * assert at the factory level.
+     * <p>Note the name: a component declaring a {@link Component.Factory} gets a generated static
+     * {@code factory()} on its {@code Dagger…} class, and Dagger rejects a component method that
+     * collides with it.
      *
      * @return the mount handle
      */
