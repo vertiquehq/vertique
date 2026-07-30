@@ -229,27 +229,46 @@ public record RestTestContributions(
     }
 }
 
+/**
+ * Everything needed to assemble a faithful mount. Obtainable only from the graph — the
+ * constructor and accessors are package-private, so an unfaithful assembly is unrepresentable.
+ * A class, not a record: a public record forces a public canonical constructor (JLS 8.10.4),
+ * which would let a consumer hand-build a partial mount and defeat the point.
+ */
+public final class RestTestMount {
+    @Inject RestTestMount(JaxRsRouterMount.Factory factory, Set<Middleware> middlewares);
+    JaxRsRouterMount.Factory factory();      // package-private
+    Set<Middleware> middlewares();           // package-private
+}
+
 /** Mount + server helpers. Pure Vert.x — no Dagger, no JUnit. */
 public final class RestTestMounts {
-    public static Future<Router> router(
-            Vertx vertx, JaxRsRouterMount.Factory factory, Set<Object> resources);
-    public static Future<HttpServer> startServer(
-            Vertx vertx, JaxRsRouterMount.Factory factory, Set<Object> resources);
+    public static Future<Router> router(Vertx vertx, RestTestMount mount, Set<Object> resources);
+    public static Future<HttpServer> startServer(Vertx vertx, RestTestMount mount, Set<Object> resources);
     public static HttpServer startServerBlocking(
-            Vertx vertx, JaxRsRouterMount.Factory factory, Set<Object> resources, Duration timeout);
+            Vertx vertx, RestTestMount mount, Set<Object> resources, Duration timeout);
     /** Recursively deletes an uploads directory; replaces two byte-identical IT copies. */
     public static void deleteRecursively(Path directory);
 }
 ```
 
+There is **no factory-only overload**. In an unreleased artifact the easier overload would just be
+the attractive wrong path — one way to build a mount, and it is the faithful one.
+
 **Invariants (each pinned by a named test in §6):**
 - No `replace*` method exists on any type. Contributions are additive; a test overrides a framework
   default by contributing one that out-ranks it (§2.12's documented model).
-- Encoder/decoder ordering is produced by `RestModule.sortedResponseBodyEncoders` /
-  `sortedRequestBodyDecoders` — **the fixture never sorts**.
+- **The fixture never constructs or reorders encoder/decoder lists and defines no independent
+  ordering policy. Each middleware tier is installed with the production `OrderedExtension`
+  comparator at its production-equivalent installation site** — API-scoped by
+  `JaxRsRouterMount:312-315`, ROOT-scoped by `RestTestMounts.startServer` mirroring
+  `HttpVerticle:118-122`.
 - `responseSerializer` is `RestModule`'s, so it is built from the same sorted list the factory gets.
 - `RestTestMounts` never closes a caller-supplied `Vertx`.
 - `RestTestFixtureModule`'s seam set is a compatibility surface (R1) — documented in `module.md`.
+- The fixture assembles **a single JAX-RS mount with its production API and ROOT middleware
+  pipelines** — not every `HttpVerticle` customization or server-option step. That boundary is
+  stated in `module.md`, not left implied.
 
 **Consumer shape** — one per Maven module, ~13 lines. `vertique-rest-validation/src/test`:
 
@@ -305,6 +324,47 @@ middleware, so the coverage moves to a unit test rather than being deleted.
 **Generalization for the remaining migrations:** treat `Set.of()` for any multibound argument as
 *suppression*, not *default*, and check what the production set contains before assuming a pure add.
 
+| 2026-07-30 | Post-review — security review + a fourth architect round found the fixture installs no ROOT-scoped middleware | **Contract Appendix change, user-approved.** Added the opaque `RestTestMount` handle; `router`/`startServer`/`startServerBlocking` now take it instead of a bare factory, and the factory-only forms are dropped. `startServer` installs ROOT-scoped middlewares. Restated the "never sorts" invariant precisely (see R9). |
+
+### R9 — the fixture installed no ROOT-scoped middleware
+
+`JaxRsRouterMount:313` installs only `scope() == API` middlewares; in production `HttpVerticle:118-122`
+installs the ROOT-scoped ones on the main router. `RestTestMounts.startServer` built a **bare** root
+router, so four of the five middlewares `RestCoreModule` contributes never ran —
+`RequestContextLifecycle`, `DefaultHeadersMiddleware`, `ContextualLoggingMiddleware`,
+`CorrelationIngressMiddleware` — and `Middleware.scope()` **defaults to ROOT**, so a contributed
+middleware was silently discarded.
+
+**Why this was a defect rather than a documented gap.** `RequestLocaleInterceptor:99-108` calls
+`RequestContextLifecycle.fromRoutingContext(rc)` and, on throw, closes the scope and **fails the
+request** — its own comment calls that branch "a framework-wiring defect (the ROOT
+`RequestContextLifecycle` middleware did not run)". `WebSocketEndpointRegistrar:384` does the same.
+So the fixture did not merely lose fidelity: it made a documented-unreachable error branch the normal
+path, and `vertique-rest-localization` and websocket adopters could not have used it at all.
+
+**On the superseded "never sorts" invariant.** Triage initially rejected the fix as contradicting it.
+That over-applied the rule. The invariant exists because `DefaultResponseSerializer` takes the *first*
+`canEncode` match and never sorts, so encoder/decoder **list** order is the whole contract and is
+delegated to `RestModule.sortedResponseBodyEncoders` / `sortedRequestBodyDecoders`. Middleware
+bindings are **sets**, there is no `sortedMiddlewares` provider anywhere to delegate to (verified),
+and *both* production installation sites sort inline with `OrderedExtension.comparator()`. Sorting
+middlewares at the installation site therefore reproduces production rather than inventing policy.
+
+**Why an opaque handle rather than a fourth parameter.** A `startServer(vertx, factory, resources,
+Set<Middleware>)` overload lets a consumer pass `Set.of()` and silently rebuild the defect. The handle
+makes the unfaithful assembly unrepresentable — that is its justification today, not future
+extensibility.
+
+**Watch-items for the migration:** `UploadTempFileCleanupIT` and `FileVerifierEventLoopNonStallIT`
+are the end-handler-ordering-sensitive ITs (`RequestContextLifecycle` registers its end handler first
+so it fires last). Run those before the others. Header assertions are low risk — no migrated IT
+asserts a complete header set.
+
+**Deferred with re-entry triggers:** `MountCustomizer` and `RouterCustomizer` (a named adopting test
+needs one); multi-mount sorting/overlap (the fixture must host more than one `RouterMount`);
+production `HttpServerOptions` (a test asserts TLS/compression/timeout); extracting the ROOT-installer
+into `rest-core` (install logic exceeds ~5 lines or gains a second caller).
+
 ## 5. Class Inventory
 
 | Type | Module | Package | Kind | Visibility |
@@ -313,6 +373,7 @@ middleware, so the coverage moves to a unit test rather than being deleted.
 | `RestTestContributions` | vertique-rest-test | `dev.vertique.rest.test` | record | **API** |
 | `RestTestContributions.Builder` | vertique-rest-test | `dev.vertique.rest.test` | static nested class | **API** |
 | `RestTestMounts` | vertique-rest-test | `dev.vertique.rest.test` | final class | **API** |
+| `RestTestMount` | vertique-rest-test | `dev.vertique.rest.test` | final class (opaque handle) | **API** (type only; ctor + accessors package-private) |
 | `package-info` | vertique-rest-test | `dev.vertique.rest.test` | — | API doc |
 | `FixtureSelfTestComponent` | vertique-rest-test | `dev.vertique.rest.test` | `@Component` | Test-fixture |
 | `ValidationMountComponent` | vertique-rest-validation | `dev.vertique.rest.validation` | `@Component` | Test-fixture |
