@@ -15,6 +15,35 @@ SPDX-License-Identifier: EUPL-1.2
     <packaging>pom</packaging>
     <name>Vertique Application Parent</name>
     <description>Standalone Maven parent for Vertique applications</description>
+    <url>https://vertique.dev</url>
+
+    <licenses>
+        <license>
+            <name>European Union Public Licence v. 1.2</name>
+            <url>https://joinup.ec.europa.eu/collection/eupl/eupl-text-eupl-12</url>
+        </license>
+    </licenses>
+
+    <organization>
+        <name>Koivisto Capital Oy</name>
+        <url>https://vertique.dev</url>
+    </organization>
+
+    <developers>
+        <developer>
+            <id>vertique-release</id>
+            <name>Vertique Release</name>
+            <email>releases@vertique.dev</email>
+            <organization>Koivisto Capital Oy</organization>
+            <organizationUrl>https://vertique.dev</organizationUrl>
+        </developer>
+    </developers>
+
+    <scm>
+        <connection>scm:git:https://github.com/vertiquehq/vertique.git</connection>
+        <developerConnection>scm:git:git@github.com:vertiquehq/vertique.git</developerConnection>
+        <url>https://github.com/vertiquehq/vertique</url>
+    </scm>
 
     <properties>
         <revision>0.1.0-SNAPSHOT</revision>

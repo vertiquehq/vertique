@@ -434,6 +434,87 @@ describe('PublicVersionContractTest', () => {
   });
 });
 
+/** Returns a POM's direct parent artifact ID, if it declares one. */
+function declaredParentArtifactId(pomRelPath) {
+  const xml = readFileSync(path.join(REPO_ROOT, pomRelPath), 'utf8');
+  const parent = /<parent>\s*([\s\S]*?)<\/parent>/.exec(xml);
+  return parent ? /<artifactId>\s*([^<]+?)\s*<\/artifactId>/.exec(parent[1])?.[1] : undefined;
+}
+
+/** Returns every reactor module keyed by its artifact ID. */
+function reactorModulesByArtifactId() {
+  const policy = loadPolicy(POLICY_PATH);
+  return new Map(deriveInventory(REPO_ROOT, policy).modules.map((module) => [module.artifactId, module]));
+}
+
+describe('CentralPomMetadataContractTest', () => {
+  const CENTRAL_METADATA = {
+    projectUrl: 'https://vertique.dev',
+    licenseName: 'European Union Public Licence v. 1.2',
+    licenseUrl: 'https://joinup.ec.europa.eu/collection/eupl/eupl-text-eupl-12',
+    organizationName: 'Koivisto Capital Oy',
+    developerEmail: 'releases@vertique.dev',
+    scmUrl: 'https://github.com/vertiquehq/vertique',
+  };
+
+  function assertCentralMetadata(pomRelPath) {
+    const xml = readFileSync(path.join(REPO_ROOT, pomRelPath), 'utf8');
+    assert.match(xml, new RegExp(`<url>${CENTRAL_METADATA.projectUrl}</url>`), `${pomRelPath} declares the project URL`);
+    assert.match(
+      xml,
+      new RegExp(`<name>${CENTRAL_METADATA.licenseName}</name>`),
+      `${pomRelPath} declares the EUPL-1.2 license name`
+    );
+    assert.match(
+      xml,
+      new RegExp(`<url>${CENTRAL_METADATA.licenseUrl}</url>`),
+      `${pomRelPath} declares the EUPL-1.2 license URL`
+    );
+    assert.match(
+      xml,
+      new RegExp(`<organization>\\s*<name>${CENTRAL_METADATA.organizationName}</name>\\s*<url>${CENTRAL_METADATA.projectUrl}</url>`),
+      `${pomRelPath} declares the organization identity`
+    );
+    assert.match(
+      xml,
+      new RegExp(`<developer>\\s*<id>vertique-release</id>\\s*<name>Vertique Release</name>\\s*<email>${CENTRAL_METADATA.developerEmail}</email>\\s*<organization>${CENTRAL_METADATA.organizationName}</organization>`),
+      `${pomRelPath} declares the release developer identity`
+    );
+    assert.match(
+      xml,
+      new RegExp(`<email>${CENTRAL_METADATA.developerEmail}</email>`),
+      `${pomRelPath} declares the release contact`
+    );
+    assert.match(xml, new RegExp(`<url>${CENTRAL_METADATA.scmUrl}</url>`), `${pomRelPath} declares the SCM URL`);
+  }
+
+  it('everyPublishedUnitInheritsCompleteCentralMetadata', () => {
+    // These are the two independently invokable public parent POMs. All other
+    // published units inherit the root parent through their Maven parent chain.
+    assertCentralMetadata('pom.xml');
+    assertCentralMetadata('vertique-app-parent/pom.xml');
+
+    const policy = loadPolicy(POLICY_PATH);
+    const inventory = deriveInventory(REPO_ROOT, policy);
+    const modulesByArtifactId = reactorModulesByArtifactId();
+
+    for (const unit of inventory.published) {
+      if (unit.artifactId === 'vertique-parent' || unit.artifactId === 'vertique-app-parent') continue;
+
+      let current = unit;
+      const seen = new Set();
+      while (current.artifactId !== 'vertique-parent') {
+        assert.ok(!seen.has(current.artifactId), `${unit.artifactId} has a cyclic parent chain`);
+        seen.add(current.artifactId);
+        const parentArtifactId = declaredParentArtifactId(path.join(current.relPath, 'pom.xml'));
+        assert.ok(parentArtifactId, `${unit.artifactId} declares no parent POM`);
+        current = modulesByArtifactId.get(parentArtifactId);
+        assert.ok(current, `${unit.artifactId} parent ${parentArtifactId} is not in the reactor`);
+      }
+    }
+  });
+});
+
 /**
  * Splits a workflow's `run:` step bodies out of the raw YAML.
  *
