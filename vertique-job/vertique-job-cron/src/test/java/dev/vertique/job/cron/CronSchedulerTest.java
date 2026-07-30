@@ -2008,6 +2008,110 @@ class CronSchedulerTest {
                         ctx.completeNow();
                     }));
         }
+
+        @Test
+        @DisplayName("the concurrency limit still holds when one job's dispatch fails synchronously")
+        void concurrencyLimitHoldsWhenDispatchFailsSynchronously(Vertx vertx, VertxTestContext ctx) {
+            // Guards the failure mode that is *worse* than the leak the tests above pin: a double
+            // release. Containing a synchronous dispatch failure means releasing the in-flight guard
+            // and the concurrency slot from a site that is not the completion callback, so if that
+            // release and the execution-timeout timer both fired for the same execution,
+            // activeConcurrentCount would go negative and over-admit jobs for the process lifetime.
+            //
+            // The observable invariant is pinned instead of the counter: with maxConcurrentJobs = 1
+            // no two handler invocations may be live at the same time, ever.
+            //
+            // Determinism. "Live" is modelled as [message received, RELEASE_MODEL_MS later]. That
+            // window is strictly *inside* the framework's execution window — the handlers never
+            // reply, so the framework ends each execution at its 1200 ms timeout, 400 ms after this
+            // model has already decremented. The model therefore cannot over-count (which would be a
+            // flaky failure); it can only under-count a second dispatch that starts in the 400 ms
+            // shadow, and over-admission is not that: an over-admitted job is dispatched on the same
+            // tick as the one holding the slot, well inside the window.
+            final long executionTimeoutMs = 1200L;
+            final long releaseModelMs = 800L;
+            final String failAddress = "test.limit.sync-fail.address";
+            final List<String> holdAddresses = List.of("test.limit.hold-a.address", "test.limit.hold-b.address");
+
+            AtomicInteger live = new AtomicInteger();
+            AtomicInteger highWaterMark = new AtomicInteger();
+            AtomicInteger hits = new AtomicInteger();
+
+            for (String address : holdAddresses) {
+                vertx.eventBus().consumer(address, msg -> {
+                    hits.incrementAndGet();
+                    int concurrent = live.incrementAndGet();
+                    highWaterMark.updateAndGet(mark -> Math.max(mark, concurrent));
+                    // Deliberately never reply — the framework's own execution timeout ends this
+                    // execution; this timer only models that end, earlier, for the live count.
+                    vertx.setTimer(releaseModelMs, id -> live.decrementAndGet());
+                });
+            }
+
+            // Only the third job's send throws; the two holding jobs go through the real client. Its
+            // every fire therefore exercises the containment release while a timeout timer is armed —
+            // exactly the window where a double release would be introduced.
+            EventBusClient partiallyThrowingClient = spy(testEventBusClient(vertx));
+            doThrow(new IllegalStateException("send boom"))
+                    .when(partiallyThrowingClient)
+                    .send(eq(failAddress), any());
+
+            scheduler = new CronScheduler(
+                    vertx,
+                    Set.of(),
+                    null,
+                    stubTargetResolver(),
+                    partiallyThrowingClient,
+                    1,
+                    executionTimeoutMs,
+                    0L,
+                    DispatchEnvelopeBuilder.forTesting());
+
+            scheduler.register(cronJobFiringEverySecond("sync-fail-job", failAddress));
+            scheduler.register(cronJobFiringEverySecond("hold-a-job", holdAddresses.get(0)));
+            scheduler.register(cronJobFiringEverySecond("hold-b-job", holdAddresses.get(1)));
+            scheduler.start();
+
+            // ~5 s covers four ticks, two full timeout cycles, and several containment releases.
+            vertx.setTimer(
+                    5000,
+                    id -> ctx.verify(() -> {
+                        assertTrue(
+                                hits.get() >= 2,
+                                "expected the holding jobs to be dispatched at least twice — otherwise "
+                                        + "the high-water mark proves nothing, got " + hits.get());
+                        assertEquals(
+                                1,
+                                highWaterMark.get(),
+                                "maxConcurrentJobs=1 must never admit two executions at once; a "
+                                        + "high-water mark above 1 means a guard was released twice");
+                        ctx.completeNow();
+                    }));
+        }
+
+        /**
+         * Builds an untracked {@link ExecutionMode#EVERY_INSTANCE} job on a one-second cron that
+         * dispatches to {@code address}.
+         *
+         * @param id      the cron job id
+         * @param address the event bus address to dispatch to
+         * @return the job definition
+         */
+        private CronJobDefinition cronJobFiringEverySecond(String id, String address) {
+            return new CronJobDefinition(
+                    id,
+                    new CronExpression("* * * * * *"),
+                    new CronTargetReference.EventBusTarget(address),
+                    address,
+                    ExecutionMode.EVERY_INSTANCE,
+                    ZoneId.of("UTC"),
+                    3,
+                    null,
+                    OverlapPolicy.SKIP,
+                    false,
+                    Map.of(),
+                    MisfirePolicy.SKIP);
+        }
     }
 
     // --- Consumer timeout tests ---

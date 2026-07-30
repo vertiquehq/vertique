@@ -28,6 +28,13 @@ import lombok.extern.slf4j.Slf4j;
  *       all definitions to the configured {@code maxConcurrentJobs}. Excess dispatches are queued
  *       and run in FIFO order as slots are released via {@link #releaseSlot()}.
  * </ul>
+ *
+ * <p><b>Guard release is single-owner.</b> Each admitted fire holds two guards — its in-flight entry
+ * and one concurrency slot — and exactly one site releases them: normally the dispatcher's completion
+ * callback (through {@link CronScheduler}), and for a <em>synchronous</em> dispatch failure
+ * {@link #acquireSlotAndRun} itself, which contains the throw (see that method). A caller that
+ * releases a second time for the same fire drives {@link #activeConcurrentCount} negative, which
+ * permanently over-admits jobs and is a worse failure than a stranded guard.
  */
 @Slf4j
 final class CronConcurrencyManager {
@@ -118,26 +125,70 @@ final class CronConcurrencyManager {
      * are taken, queues the action to run when the next slot becomes available via
      * {@link #releaseSlot()}.
      *
+     * <p><b>A synchronous throw from {@code dispatchAction} releases both guards</b> — the job's
+     * in-flight entry and the concurrency slot this method acquired — and is then swallowed after
+     * being logged at {@code ERROR}. This is a guarantee callers previously had to provide
+     * themselves; because it is provided here, a caller must <em>not</em> release either guard again
+     * for the same failure. A second release would drive {@link #activeConcurrentCount} negative and
+     * permanently over-admit jobs, which is a worse failure than the leak it would be trying to fix.
+     * The same containment applies whether the action runs immediately or later out of the waiting
+     * queue.
+     *
+     * <p>An {@link Error} is deliberately <em>not</em> contained: it leaves the JVM in an undefined
+     * state and must propagate (the cost — a stranded guard for that one job — is accepted, and is
+     * the same trade this module makes elsewhere).
+     *
      * @param jobId          the cron job ID requesting the slot (used for logging)
      * @param dispatchAction the action to run once a slot is available
      */
     void acquireSlotAndRun(String jobId, Runnable dispatchAction) {
         int current = activeConcurrentCount.getAndIncrement();
         if (current < maxConcurrentJobs) {
-            dispatchAction.run();
+            runContained(jobId, dispatchAction);
         } else {
             activeConcurrentCount.decrementAndGet();
             log.info("Cron job '{}' waiting for concurrency slot ({}/{})", jobId, current, maxConcurrentJobs);
             waitingForSlot.add(() -> {
                 activeConcurrentCount.incrementAndGet();
-                dispatchAction.run();
+                runContained(jobId, dispatchAction);
             });
         }
     }
 
     /**
+     * Runs one dispatch action with both guards contained: a synchronous throw releases the job's
+     * in-flight entry and the concurrency slot the caller just acquired, then stops propagating.
+     *
+     * <p>Releasing from here re-enters {@link #releaseSlot()}, which drains one waiter inline, so a
+     * queued dispatch that also fails synchronously runs one stack frame deeper. The recursion is
+     * bounded by the number of <em>registered</em> jobs, not by traffic: enqueueing requires the
+     * in-flight guard, and a job holds that guard for as long as it sits in the queue, so a job can
+     * never hold more than one waiter at a time.
+     *
+     * @param jobId          the cron job ID whose dispatch is running (used for logging)
+     * @param dispatchAction the dispatch action to run
+     */
+    private void runContained(String jobId, Runnable dispatchAction) {
+        try {
+            dispatchAction.run();
+        } catch (Exception e) {
+            // Both guards are held at this point and the only path that would otherwise release them
+            // is the dispatcher's completion callback — which a synchronous throw never reaches.
+            log.error(
+                    "Cron job '{}' dispatch threw synchronously — releasing its in-flight guard and"
+                            + " concurrency slot so a later fire can run",
+                    CronScheduler.forLog(jobId),
+                    e);
+            inFlightJobs.remove(jobId);
+            releaseSlot();
+        }
+    }
+
+    /**
      * Releases one global concurrency slot and immediately drains the next waiting dispatch if one
-     * is queued.
+     * is queued. The drained dispatch runs through the same containment as
+     * {@link #acquireSlotAndRun}, so a synchronous throw releases its guards rather than escaping
+     * into this caller.
      */
     void releaseSlot() {
         activeConcurrentCount.decrementAndGet();

@@ -25,13 +25,16 @@ import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.core.eventbus.MessageConsumer;
 import java.time.Instant;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import lombok.extern.slf4j.Slf4j;
 
 /**
@@ -52,6 +55,18 @@ import lombok.extern.slf4j.Slf4j;
  * </ul>
  *
  * <p>All resources are cleaned up on handler reply, timeout, or {@link #shutdown()}.
+ *
+ * <p><b>Completion ownership:</b> exactly one of three sites ends an execution — the reply
+ * consumer, the execution-timeout timer, or the synchronous-failure containment in
+ * {@link #dispatch} — and each must claim the execution's one-shot completion latch (an
+ * {@link java.util.concurrent.atomic.AtomicBoolean} carried in {@link ExecutionResources}) before
+ * it releases anything. The latch is created <em>before</em> the first per-execution resource
+ * exists, which is what makes the containment region in {@link #dispatch} able to cover every
+ * resource registration; {@link #shutdown()} claims it too, so a callback already queued on the
+ * event loop cannot release a concurrency slot after {@link CronScheduler#stop()} has reset the
+ * counters. The completion callback releases the scheduler's per-job in-flight guard and its
+ * global concurrency slot, so a second claim would be a double release — which drives
+ * {@code CronConcurrencyManager}'s active count negative and permanently over-admits jobs.
  *
  * <p><b>Job log flush:</b> Buffered log entries are drained through a per-execution
  * {@link JobLogFlusher} on the same periodic tick as the progress snapshot (there unconditionally,
@@ -94,7 +109,8 @@ final class CronJobDispatcher {
 
     /**
      * Per-execution resource bundle: timeout timer ID, progress-flush timer ID, cancel consumer,
-     * and job-log flusher. All timer fields use {@code -1L} as the sentinel for "not set".
+     * job-log flusher, and the execution's one-shot completion latch. All timer fields use
+     * {@code -1L} as the sentinel for "not set".
      *
      * @param timeoutId       Vert.x timer ID for the execution timeout, or {@code -1}
      * @param progressFlushId Vert.x timer ID for the progress-flush periodic timer, or {@code -1}
@@ -102,9 +118,17 @@ final class CronJobDispatcher {
      * @param logFlusher      drains this execution's buffered job log entries to the repository;
      *                        retained so {@link #shutdown()} can take a cutoff snapshot of an
      *                        execution that is still in flight
+     * @param completionLatch one-shot latch naming the site that owns this execution's completion;
+     *                        {@code true} once claimed. Retained here so {@link #shutdown()} can
+     *                        claim it and neutralize a reply or timeout callback that is already
+     *                        queued on the event loop
      */
     private record ExecutionResources(
-            long timeoutId, long progressFlushId, MessageConsumer<?> cancelConsumer, JobLogFlusher logFlusher) {}
+            long timeoutId,
+            long progressFlushId,
+            MessageConsumer<?> cancelConsumer,
+            JobLogFlusher logFlusher,
+            AtomicBoolean completionLatch) {}
 
     private final Vertx vertx;
     private final EventBusClient eventBusClient;
@@ -180,6 +204,15 @@ final class CronJobDispatcher {
      * at fire admission, before any execution record is written — and hands it in, so the address
      * a tracked execution records is by construction the address dispatched to.
      *
+     * <p><b>This method does not throw.</b> Everything after the execution id — envelope
+     * construction, every per-execution resource registration, and the event-bus send — runs inside
+     * one contained region whose {@code catch} rolls the registrations back, best-effort marks a
+     * tracked execution {@link JobState#FAILED}, drains the job log buffer, and invokes
+     * {@code completionCallback} from a {@code finally}. Callers therefore never have to release the
+     * in-flight guard and concurrency slot themselves for a synchronous failure of this method, and
+     * must not: doing so on top of the release below would be a double release. Only an
+     * {@link Error} escapes — deliberately, because it leaves the JVM in an undefined state.
+     *
      * @param job                the cron job to dispatch
      * @param scheduledAt        the time this execution was scheduled for
      * @param execution          the persisted execution record, or {@code null} if not tracked
@@ -192,121 +225,186 @@ final class CronJobDispatcher {
             JobExecution execution,
             String effectiveAddress,
             CompletionCallback completionCallback) {
-        UUID executionId = execution != null ? execution.id() : UUID.randomUUID();
-        Instant startedAt = Instant.now();
-        DefaultJobContext jobContext = new DefaultJobContext(job.id(), executionId, 0, JobType.CRON);
-        JobDispatchContext dispatchCtx = new JobDispatchContext(
-                job.id(),
-                executionId,
-                JobType.CRON,
-                0,
-                job.maxAttempts(),
-                "cron",
-                scheduledAt,
-                startedAt,
-                job.parameters(),
-                Map.of());
+        final UUID executionId = execution != null ? execution.id() : UUID.randomUUID();
 
-        Map<String, String> mdc = dispatchCtx.toMdcContext();
+        // --- One contained region: latch, then every resource, then the send ---
 
-        // The cron dispatcher runs on the verticle's deployment context (not a duplicated
-        // context), so the framework MDC holder cannot be written. Compose the wire-format MDC
-        // value into callerOverrides via MDCContexts.holderKey() / holderValue() so the entries
-        // ride through the dispatch-context carrier map without touching the holder. The helper
-        // pair is the single source of truth for the carrier key + value type — using literals
-        // here would risk silent drift if either ever changes.
-        Map<String, Object> ctx = new java.util.HashMap<>();
-        ctx.put(JobContext.class.getName(), jobContext);
-        ctx.put(JobDispatchContext.class.getName(), dispatchCtx);
-        // Provenance proving this is deferred (cron) execution so the receive-side identity
-        // reconstruction initializer may mint a bounded SYSTEM context (W2/A6). Keyed by FQCN like
-        // the JobDispatchContext entry; reinstated before InboundContextInitializers run.
-        ctx.put(DeferredExecutionOrigin.class.getName(), DeferredExecutionOrigin.of("cron", job.id()));
-        if (!mdc.isEmpty()) {
-            ctx.put(dev.vertique.logging.MDCContexts.holderKey(), dev.vertique.logging.MDCContexts.holderValue(mdc));
-        }
+        // The completion latch is created before this method registers anything, and every
+        // statement from here through eventBusClient.send() sits inside the single try/catch below.
+        // That ordering is what forecloses a double release. Consider the hazard it replaces: the
+        // execution-timeout timer is armed part-way through the region, so if a throw after the arm
+        // could escape uncontained, the caller would release the guards *and* the timer would later
+        // fire and release them again — driving activeConcurrentCount negative and over-admitting
+        // jobs for the process lifetime. Here nothing between the latch and the send can escape, and
+        // the catch claims the latch before releasing, so the timer callback and the reply consumer
+        // both fail their own claim and become no-ops. The complementary half of the invariant is in
+        // CronConcurrencyManager.acquireSlotAndRun: it only ever sees an exception from *before*
+        // this latch existed (i.e. one that released nothing), because the region never rethrows.
+        final AtomicBoolean completionLatch = new AtomicBoolean();
 
-        String replyAddress = "job.completions." + executionId;
-        // FR-CTX-015: always route through DispatchEnvelopeBuilder so registered
-        // ServiceDispatchContextEncoders capture currently-bound holder values (including the
-        // built-in DurablePropagationMetadata encoder). The builder is required (non-null) per
-        // the constructor contract.
-        DispatchEnvelope<?> body = envelopeBuilder.build(
-                job.payload(), ctx, dev.vertique.core.context.DispatchBoundary.SERVICE_DISPATCH, replyAddress);
+        // Rollback ledger: one entry per resource, pushed as that resource is created, so the catch
+        // undoes exactly what exists — newest first (ArrayDeque.push + iteration order is LIFO). A
+        // ledger rather than a set of sentinel copies because a sentinel that is mirrored one line
+        // too late silently under-rolls-back, while a missing push cannot be hidden: the resource
+        // and its undo are created in the same statement pair.
+        final Deque<Runnable> rollback = new ArrayDeque<>();
 
-        // --- Per-execution resources: cancel consumer, progress-flush timer, timeout timer ---
+        // Mirrored out of the region so the catch can honour the ending-path invariant (logs flush
+        // on *every* path that ends the execution) for a synchronously failed dispatch too.
+        JobLogFlusher createdLogFlusher = null;
 
-        // Cooperative cancel: sets the cancelled flag on the JobContext
-        final MessageConsumer<?> cancelConsumer = vertx.eventBus().consumer("job.cancel." + executionId, msg -> {
-            jobContext.setCancelled(true);
-            log.info("Cancel requested for cron job '{}' execution {}", job.id(), executionId);
-        });
+        try {
+            Instant startedAt = Instant.now();
+            DefaultJobContext jobContext = new DefaultJobContext(job.id(), executionId, 0, JobType.CRON);
+            JobDispatchContext dispatchCtx = new JobDispatchContext(
+                    job.id(),
+                    executionId,
+                    JobType.CRON,
+                    0,
+                    job.maxAttempts(),
+                    "cron",
+                    scheduledAt,
+                    startedAt,
+                    job.parameters(),
+                    Map.of());
 
-        // Job log flush: drains the context's buffered log entries to job_logs. Constructed
-        // OUTSIDE the progressFlushIntervalMs guard on purpose — the ending sites below flush
-        // through it too, so building it inside the guard would mean a 0 interval (periodic flush
-        // disabled) silently made job logs non-durable rather than merely less timely.
-        //
-        // The id is execution.id(), NOT the local `executionId` above: for an untracked fire the
-        // latter is a freshly minted UUID with no job_executions row, and job_logs.execution_id
-        // references that table. Passing null instead makes the flusher a genuine no-op.
-        final JobLogFlusher logFlusher =
-                new JobLogFlusher(repository, execution != null ? execution.id() : null, jobContext);
+            Map<String, String> mdc = dispatchCtx.toMdcContext();
 
-        // Progress flush: periodically write changed snapshots to the repository
-        final ProgressSnapshot[] lastFlushed = {ProgressSnapshot.EMPTY};
-        final long progressFlushId = (execution != null && repository != null && progressFlushIntervalMs > 0)
-                ? vertx.setPeriodic(progressFlushIntervalMs, id -> {
-                    ProgressSnapshot current = jobContext.progress().snapshot();
-                    if (!current.equals(lastFlushed[0])) {
-                        lastFlushed[0] = current;
-                        repository
-                                .heartbeat(executionId, current)
-                                .onFailure(err ->
-                                        log.debug("Progress flush failed for '{}': {}", job.id(), err.getMessage()));
-                    }
-                    // Unconditional: log entries change independently of the progress snapshot, so
-                    // gating this on the snapshot-changed check would strand the logs of any job
-                    // that logs without reporting progress. The flusher is itself a no-op when
-                    // nothing is buffered.
-                    logFlusher.flush();
-                })
-                : -1L;
+            // The cron dispatcher runs on the verticle's deployment context (not a duplicated
+            // context), so the framework MDC holder cannot be written. Compose the wire-format MDC
+            // value into callerOverrides via MDCContexts.holderKey() / holderValue() so the entries
+            // ride through the dispatch-context carrier map without touching the holder. The helper
+            // pair is the single source of truth for the carrier key + value type — using literals
+            // here would risk silent drift if either ever changes.
+            Map<String, Object> ctx = new java.util.HashMap<>();
+            ctx.put(JobContext.class.getName(), jobContext);
+            ctx.put(JobDispatchContext.class.getName(), dispatchCtx);
+            // Provenance proving this is deferred (cron) execution so the receive-side identity
+            // reconstruction initializer may mint a bounded SYSTEM context (W2/A6). Keyed by FQCN
+            // like the JobDispatchContext entry; reinstated before InboundContextInitializers run.
+            ctx.put(DeferredExecutionOrigin.class.getName(), DeferredExecutionOrigin.of("cron", job.id()));
+            if (!mdc.isEmpty()) {
+                ctx.put(
+                        dev.vertique.logging.MDCContexts.holderKey(),
+                        dev.vertique.logging.MDCContexts.holderValue(mdc));
+            }
 
-        // Execution timeout: fires if handler never replies
-        MessageConsumer<?> consumer = vertx.eventBus().consumer(replyAddress);
-        activeConsumers.add(consumer);
+            String replyAddress = "job.completions." + executionId;
+            // FR-CTX-015: always route through DispatchEnvelopeBuilder so registered
+            // ServiceDispatchContextEncoders capture currently-bound holder values (including the
+            // built-in DurablePropagationMetadata encoder). The builder is required (non-null) per
+            // the constructor contract. Inside the region because a registered encoder is
+            // application code and may throw: no resource exists yet, so the catch simply releases.
+            DispatchEnvelope<?> body = envelopeBuilder.build(
+                    job.payload(), ctx, dev.vertique.core.context.DispatchBoundary.SERVICE_DISPATCH, replyAddress);
 
-        final long timeoutId = (executionTimeoutMs > 0)
-                ? vertx.setTimer(executionTimeoutMs, id -> {
-                    if (activeConsumers.remove(consumer)) {
-                        consumer.unregister();
-                        cancelConsumer.unregister();
-                        if (progressFlushId != -1L) {
-                            vertx.cancelTimer(progressFlushId);
+            // --- Per-execution resources: cancel consumer, progress-flush timer, timeout timer ---
+
+            // Cooperative cancel: sets the cancelled flag on the JobContext
+            final MessageConsumer<?> cancelConsumer = vertx.eventBus().consumer("job.cancel." + executionId, msg -> {
+                jobContext.setCancelled(true);
+                log.info("Cancel requested for cron job '{}' execution {}", job.id(), executionId);
+            });
+            rollback.push(cancelConsumer::unregister);
+
+            // Job log flush: drains the context's buffered log entries to job_logs. Constructed
+            // OUTSIDE the progressFlushIntervalMs guard on purpose — the ending sites below flush
+            // through it too, so building it inside the guard would mean a 0 interval (periodic
+            // flush disabled) silently made job logs non-durable rather than merely less timely.
+            //
+            // The id is execution.id(), NOT the local `executionId` above: for an untracked fire the
+            // latter is a freshly minted UUID with no job_executions row, and job_logs.execution_id
+            // references that table. Passing null instead makes the flusher a genuine no-op.
+            final JobLogFlusher logFlusher =
+                    new JobLogFlusher(repository, execution != null ? execution.id() : null, jobContext);
+            createdLogFlusher = logFlusher;
+
+            // Progress flush: periodically write changed snapshots to the repository
+            final ProgressSnapshot[] lastFlushed = {ProgressSnapshot.EMPTY};
+            final long progressFlushId = (execution != null && repository != null && progressFlushIntervalMs > 0)
+                    ? vertx.setPeriodic(progressFlushIntervalMs, id -> {
+                        ProgressSnapshot current = jobContext.progress().snapshot();
+                        if (!current.equals(lastFlushed[0])) {
+                            lastFlushed[0] = current;
+                            repository
+                                    .heartbeat(executionId, current)
+                                    .onFailure(err -> log.debug(
+                                            "Progress flush failed for '{}': {}", job.id(), err.getMessage()));
                         }
-                        activeExecutions.remove(executionId);
+                        // Unconditional: log entries change independently of the progress snapshot,
+                        // so gating this on the snapshot-changed check would strand the logs of any
+                        // job that logs without reporting progress. The flusher is itself a no-op
+                        // when nothing is buffered.
+                        logFlusher.flush();
+                    })
+                    : -1L;
+            if (progressFlushId != -1L) {
+                rollback.push(() -> vertx.cancelTimer(progressFlushId));
+            }
 
+            // Execution timeout: fires if handler never replies
+            final MessageConsumer<?> consumer = vertx.eventBus().consumer(replyAddress);
+            activeConsumers.add(consumer);
+            rollback.push(() -> {
+                activeConsumers.remove(consumer);
+                consumer.unregister();
+            });
+
+            final long timeoutId = (executionTimeoutMs > 0)
+                    ? vertx.setTimer(executionTimeoutMs, id -> {
+                        if (!completionLatch.compareAndSet(false, true)) {
+                            // The reply consumer, the containment below, or shutdown() already owns
+                            // this execution's completion — releasing again would double-release.
+                            return;
+                        }
                         try {
-                            log.error(
-                                    "Cron job '{}' execution {} timed out after {}ms — marking ABANDONED",
-                                    job.id(),
-                                    executionId,
-                                    executionTimeoutMs);
-                            if (execution != null && repository != null) {
-                                repository
-                                        .completeExecution(
+                            try {
+                                consumer.unregister();
+                                activeConsumers.remove(consumer);
+                                cancelConsumer.unregister();
+                                if (progressFlushId != -1L) {
+                                    vertx.cancelTimer(progressFlushId);
+                                }
+                                activeExecutions.remove(executionId);
+
+                                log.error(
+                                        "Cron job '{}' execution {} timed out after {}ms — marking ABANDONED",
+                                        job.id(),
+                                        executionId,
+                                        executionTimeoutMs);
+                                if (execution != null && repository != null) {
+                                    // Own try/catch: JobRepository is an application-implemented SPI
+                                    // and may throw synchronously instead of returning a failed
+                                    // future. The latch is claimed and both consumers are already
+                                    // unregistered by this point, so an escaping throw would leave
+                                    // nothing able to complete this execution — the in-flight guard
+                                    // and the slot would be stranded for the process lifetime.
+                                    try {
+                                        repository
+                                                .completeExecution(
+                                                        executionId,
+                                                        JobState.ABANDONED,
+                                                        "Execution timeout",
+                                                        "ExecutionTimeoutException",
+                                                        jobContext.progress().snapshot())
+                                                .onFailure(err -> log.warn(
+                                                        "Failed to mark cron execution {} ABANDONED on timeout: {}",
+                                                        executionId,
+                                                        err.getMessage()));
+                                    } catch (Exception persistFailure) {
+                                        log.warn(
+                                                "Failed to mark cron execution {} ABANDONED on timeout"
+                                                        + " — repository threw synchronously",
                                                 executionId,
-                                                JobState.ABANDONED,
-                                                "Execution timeout",
-                                                "ExecutionTimeoutException",
-                                                jobContext.progress().snapshot())
-                                        .onFailure(err -> log.warn(
-                                                "Failed to mark cron execution {} ABANDONED on timeout: {}",
-                                                executionId,
-                                                err.getMessage()));
+                                                persistFailure);
+                                    }
+                                }
+                            } finally {
+                                // The single release path for this execution: kept in a finally so
+                                // nothing above — including a repository that throws in a way the
+                                // guard above did not anticipate — can strand the guards.
+                                completionCallback.onCompleted(job);
                             }
-                            completionCallback.onCompleted(job);
                         } finally {
                             // The timeout ends this execution and the progress tick above is
                             // already cancelled, so this is the last chance to persist: drain()
@@ -319,90 +417,215 @@ final class CronJobDispatcher {
                             // cap is what stops that from holding this site open indefinitely.
                             logFlusher.drain();
                         }
-                    }
-                })
-                : -1L;
-
-        // Track resources for cleanup on shutdown() or early reply
-        activeExecutions.put(
-                executionId, new ExecutionResources(timeoutId, progressFlushId, cancelConsumer, logFlusher));
-
-        // --- Completion consumer ---
-
-        consumer.handler(msg -> {
-            // Cancel per-execution resources immediately on reply
+                    })
+                    : -1L;
             if (timeoutId != -1L) {
-                vertx.cancelTimer(timeoutId);
+                rollback.push(() -> vertx.cancelTimer(timeoutId));
             }
-            if (progressFlushId != -1L) {
-                vertx.cancelTimer(progressFlushId);
-            }
-            cancelConsumer.unregister();
-            activeExecutions.remove(executionId);
 
-            consumer.unregister();
-            activeConsumers.remove(consumer);
+            // Track resources for cleanup on shutdown() or early reply
+            activeExecutions.put(
+                    executionId,
+                    new ExecutionResources(timeoutId, progressFlushId, cancelConsumer, logFlusher, completionLatch));
+            rollback.push(() -> activeExecutions.remove(executionId));
 
-            Instant endTime = Instant.now();
+            // --- Completion consumer ---
 
-            try {
-                // Restore MDC for correlated completion logging. MDCContexts.bindAll snapshots
-                // prior per-key state at install time and restores it (including absence) on
-                // close — using it via try-with-resources gives us LIFO unwind without manual
-                // remove() bookkeeping. The event-bus consumer callback runs on a duplicated
-                // Vert.x context so the framework MDC write-guard accepts the bind.
-                try (ContextHolder.Scope mdcScope = MDCContexts.bindAll(mdc)) {
-                    // Extract result and fire interceptors
-                    Result<?> result = null;
-                    if (msg.body() instanceof DispatchEnvelope<?> replyBody
-                            && replyBody.payload() instanceof Result<?> r) {
-                        result = r;
-                    }
-
-                    JobInterceptors.fireOnComplete(interceptors, dispatchCtx, result, startedAt, endTime, log);
-
-                    // Persist completion and update fire times if tracked
-                    if (execution != null && repository != null) {
-                        persistCompletion(job, execution, result);
-                        updateFireTimes(job, scheduledAt);
-                    }
-
-                    // Log the completion result
-                    if (result != null && result.isFailure()) {
-                        log.warn(
-                                "Cron job '{}' execution {} failed: {}",
-                                job.id(),
-                                executionId,
-                                result.cause().getMessage());
-                    } else {
-                        log.debug("Cron job '{}' execution {} completed successfully", job.id(), executionId);
-                    }
+            consumer.handler(msg -> {
+                if (!completionLatch.compareAndSet(false, true)) {
+                    // The execution timeout (or shutdown()) already ended this execution and
+                    // released the guards; this reply lost the race and is dropped.
+                    log.debug(
+                            "Reply for cron job '{}' execution {} ignored — execution already completed",
+                            job.id(),
+                            executionId);
+                    return;
                 }
+                // Everything from the successful claim to the completion callback is contained: the
+                // claim has already made this the only site that can release, so a throw in the
+                // cleanup below would otherwise strand both guards with no recovery path.
+                try {
+                    try {
+                        // Cancel per-execution resources immediately on reply
+                        if (timeoutId != -1L) {
+                            vertx.cancelTimer(timeoutId);
+                        }
+                        if (progressFlushId != -1L) {
+                            vertx.cancelTimer(progressFlushId);
+                        }
+                        cancelConsumer.unregister();
+                        activeExecutions.remove(executionId);
 
-                completionCallback.onCompleted(job);
-            } finally {
-                // The handler has reported, so nothing more will be appended: this drains whatever
-                // the periodic tick had not yet claimed. drain(), not flush() — the tick timer is
-                // cancelled above, so a claim that came back empty because a tick write was still
-                // outstanding would strand those entries with nothing left to re-drain them.
-                // Fire-and-forget, and deliberately last — no work that ends the execution may sit
-                // behind it, and the finally keeps the drain reachable even when completion
-                // handling throws (JobLogFlusher itself never throws and always returns a
-                // succeeded future).
+                        consumer.unregister();
+                        activeConsumers.remove(consumer);
+
+                        Instant endTime = Instant.now();
+
+                        // Restore MDC for correlated completion logging. MDCContexts.bindAll
+                        // snapshots prior per-key state at install time and restores it (including
+                        // absence) on close — using it via try-with-resources gives us LIFO unwind
+                        // without manual remove() bookkeeping. The event-bus consumer callback runs
+                        // on a duplicated Vert.x context so the framework MDC write-guard accepts
+                        // the bind.
+                        try (ContextHolder.Scope mdcScope = MDCContexts.bindAll(mdc)) {
+                            // Extract result and fire interceptors
+                            Result<?> result = null;
+                            if (msg.body() instanceof DispatchEnvelope<?> replyBody
+                                    && replyBody.payload() instanceof Result<?> r) {
+                                result = r;
+                            }
+
+                            JobInterceptors.fireOnComplete(interceptors, dispatchCtx, result, startedAt, endTime, log);
+
+                            // Persist completion and update fire times if tracked
+                            if (execution != null && repository != null) {
+                                persistCompletion(job, execution, result);
+                                updateFireTimes(job, scheduledAt);
+                            }
+
+                            // Log the completion result
+                            if (result != null && result.isFailure()) {
+                                log.warn(
+                                        "Cron job '{}' execution {} failed: {}",
+                                        job.id(),
+                                        executionId,
+                                        result.cause().getMessage());
+                            } else {
+                                log.debug("Cron job '{}' execution {} completed successfully", job.id(), executionId);
+                            }
+                        }
+                    } finally {
+                        completionCallback.onCompleted(job);
+                    }
+                } finally {
+                    // The handler has reported, so nothing more will be appended: this drains
+                    // whatever the periodic tick had not yet claimed. drain(), not flush() — the
+                    // tick timer is cancelled above, so a claim that came back empty because a tick
+                    // write was still outstanding would strand those entries with nothing left to
+                    // re-drain them. Fire-and-forget, and deliberately last — no work that ends the
+                    // execution may sit behind it, and the finally keeps the drain reachable even
+                    // when completion handling throws (JobLogFlusher itself never throws and always
+                    // returns a succeeded future).
+                    logFlusher.drain();
+                }
+            });
+
+            // Enrich the scheduler thread's SLF4J MDC for correlated dispatch logging. The framework
+            // MDC facade requires a duplicated Vert.x context (write-side guard), which this
+            // scheduler path is not. SchedulerMdcScope captures prior MDC values per key so cleanup
+            // restores (rather than blindly removes) the caller's pre-enrichment state. The
+            // receive-side ServiceMethodInvoker installs the envelope MDC into the unified holder on
+            // its own duplicated context — this enrichment is purely for the scheduler-thread log
+            // lines below.
+            try (dev.vertique.job.SchedulerMdcScope scope = dev.vertique.job.SchedulerMdcScope.install(mdc)) {
+                JobInterceptors.fireOnDispatch(interceptors, dispatchCtx, log);
+                log.debug("Dispatching cron job '{}' execution {}", job.id(), executionId);
+                eventBusClient.send(effectiveAddress, body);
+            }
+        } catch (Exception e) {
+            // The helper releases the guards from a finally of its own, so nothing it does above the
+            // release can prevent it. Deliberately not a finally here: on the success path the
+            // execution is still running and completion belongs to the reply consumer or the
+            // timeout timer.
+            containSynchronousFailure(
+                    job, execution, executionId, completionLatch, rollback, createdLogFlusher, completionCallback, e);
+        }
+    }
+
+    /**
+     * Contains a synchronous failure of {@link #dispatch}: claims completion, rolls back exactly the
+     * per-execution resources that were created, best-effort marks a tracked execution
+     * {@link JobState#FAILED}, drains the job log buffer, and releases the scheduler's guards.
+     *
+     * <p>Never throws — except the release itself, which is the caller's single release path and is
+     * therefore invoked from a {@code finally} so no failure above it can strand the in-flight guard
+     * and concurrency slot. An {@link Error} still propagates, consistent with this module's rule
+     * that an {@code Error} leaves the JVM in an undefined state.
+     *
+     * @param job                the cron job whose dispatch failed
+     * @param execution          the persisted execution record, or {@code null} if not tracked
+     * @param executionId        the id of the execution being abandoned
+     * @param completionLatch    the execution's one-shot completion latch
+     * @param rollback           undo actions for the resources created before the failure, newest
+     *                           first
+     * @param logFlusher         the execution's log flusher, or {@code null} if the failure happened
+     *                           before it was created
+     * @param completionCallback the scheduler callback that releases the in-flight guard and the
+     *                           concurrency slot
+     * @param cause              the synchronous failure
+     */
+    private void containSynchronousFailure(
+            CronJobDefinition job,
+            JobExecution execution,
+            UUID executionId,
+            AtomicBoolean completionLatch,
+            Deque<Runnable> rollback,
+            JobLogFlusher logFlusher,
+            CompletionCallback completionCallback,
+            Exception cause) {
+        if (!completionLatch.compareAndSet(false, true)) {
+            // Another site already owns this execution's completion and will release the guards
+            // exactly once. Releasing here too is the double release this latch exists to prevent.
+            log.error(
+                    "Cron job '{}' execution {} failed synchronously after completion was already claimed"
+                            + " — guards are released by the owning site",
+                    CronScheduler.forLog(job.id()),
+                    executionId,
+                    cause);
+            return;
+        }
+        log.error(
+                "Cron job '{}' execution {} failed synchronously during dispatch — rolling back and releasing"
+                        + " the in-flight guard and concurrency slot",
+                CronScheduler.forLog(job.id()),
+                executionId,
+                cause);
+        try {
+            for (Runnable undo : rollback) {
+                // Each undo is guarded on its own so one failing cancel or unregister cannot skip
+                // the rest of the rollback.
+                try {
+                    undo.run();
+                } catch (Exception cleanupFailure) {
+                    log.warn(
+                            "Rollback step after the synchronous dispatch failure of cron job '{}' failed: {}",
+                            CronScheduler.forLog(job.id()),
+                            cleanupFailure.getMessage());
+                }
+            }
+            if (execution != null && repository != null) {
+                // Best effort, in its own try: JobRepository is an application-implemented SPI and
+                // may throw synchronously. Without this the row would stay PROCESSING forever.
+                try {
+                    repository
+                            .completeExecution(
+                                    executionId,
+                                    JobState.FAILED,
+                                    cause.getMessage(),
+                                    cause.getClass().getName(),
+                                    ProgressSnapshot.EMPTY)
+                            .onFailure(err -> log.warn(
+                                    "Failed to mark cron execution {} FAILED after a synchronous dispatch"
+                                            + " failure: {}",
+                                    executionId,
+                                    err.getMessage()));
+                } catch (Exception persistFailure) {
+                    log.warn(
+                            "Failed to mark cron execution {} FAILED after a synchronous dispatch failure"
+                                    + " — repository threw synchronously",
+                            executionId,
+                            persistFailure);
+                }
+            }
+            if (logFlusher != null) {
+                // Same ending-path invariant the reply and timeout handlers honour: this path ends
+                // the execution and the periodic tick (if one was armed) has just been cancelled by
+                // the rollback, so drain() rather than flush(). Without it a synchronously failed
+                // dispatch would silently drop whatever the handler had already buffered.
                 logFlusher.drain();
             }
-        });
-
-        // Enrich the scheduler thread's SLF4J MDC for correlated dispatch logging. The framework
-        // MDC facade requires a duplicated Vert.x context (write-side guard), which this scheduler
-        // path is not. SchedulerMdcScope captures prior MDC values per key so cleanup restores
-        // (rather than blindly removes) the caller's pre-enrichment state. The receive-side
-        // ServiceMethodInvoker installs the envelope MDC into the unified holder on its own
-        // duplicated context — this enrichment is purely for the scheduler-thread log lines below.
-        try (dev.vertique.job.SchedulerMdcScope scope = dev.vertique.job.SchedulerMdcScope.install(mdc)) {
-            JobInterceptors.fireOnDispatch(interceptors, dispatchCtx, log);
-            log.debug("Dispatching cron job '{}' execution {}", job.id(), executionId);
-            eventBusClient.send(effectiveAddress, body);
+        } finally {
+            completionCallback.onCompleted(job);
         }
     }
 
@@ -411,6 +634,10 @@ final class CronJobDispatcher {
      * timers, cancels progress-flush timers, unregisters cancel consumers, and takes a final
      * cutoff snapshot of each in-flight execution's job logs. Should be called when the scheduler
      * stops.
+     *
+     * <p>Also claims each in-flight execution's completion latch, so a reply or timeout callback
+     * that is already queued on the event loop cannot release a concurrency slot after
+     * {@link CronScheduler#stop()} has reset the counters.
      *
      * <p><b>The shutdown flush is a cutoff snapshot, not a final flush.</b> In-flight executions
      * are not interrupted, so a handler may keep logging after its buffer is drained here; those
@@ -435,6 +662,12 @@ final class CronJobDispatcher {
         // and mislabelled as a flush failure.
         List<ExecutionResources> pending = new ArrayList<>(activeExecutions.values());
         for (ExecutionResources resources : pending) {
+            // Claim completion so a reply or timeout callback already queued on the event loop
+            // cannot invoke the scheduler's completion callback after CronScheduler.stop() has reset
+            // the concurrency counters — that release would drive the active count negative. Before
+            // the dedicated latch existed this was implicit in the activeConsumers.clear() above,
+            // which the timeout handler used as its latch.
+            resources.completionLatch().set(true);
             if (resources.timeoutId() != -1L) {
                 vertx.cancelTimer(resources.timeoutId());
             }
