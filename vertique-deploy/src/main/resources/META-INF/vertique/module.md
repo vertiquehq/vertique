@@ -88,18 +88,24 @@ public VerticleDeploymentManager(VerticleDeployer deployer, Set<VerticleDeployme
 | `deployAll()` | Deploys all multibinding-registered verticles, phase by phase, priority group by priority group; uses invocation-scoped rollback (only undeploys what the current call started) |
 | `deployPhase(LifecyclePhase)` | Deploys only the verticles registered for the given phase; transactional per phase — rolls back that phase only on failure |
 
-The `deployPhase()` API is useful when services must deploy between infrastructure and edge phases:
+Both methods are **framework choreography primitives**, not application entry points. Application
+startup is delegated to `VertiqueApplicationBootstrap.start(runtime, factory)` in
+`dev.vertique:vertique-application`, which loops every `LifecyclePhase` in declaration order and calls
+`deployPhase()` for each of the four verticle phases (`BOOTSTRAP`, `INFRA`, `SERVICES`, `EDGE`) after
+running that phase's non-verticle startup steps. `deployPhase()` is public because the runner must
+interleave each phase's startup steps with that phase's verticle deployment — it is not an invitation
+to hand-sequence phases from application code.
 
-```java
-// When mixing phase-based and manager-based deployment
-manager.deployPhase(LifecyclePhase.INFRA)
-    .compose(v -> serviceDeploymentManager.deployAll())
-    .compose(v -> manager.deployPhase(LifecyclePhase.EDGE))
-    .onSuccess(v -> startPromise.complete())
-    .onFailure(startPromise::fail);
-```
+A hand-rolled chain that calls `deployPhase()` for only some of the four verticle phases silently
+drops every contribution registered to an omitted phase — there is no error and no log. The
+`SERVICES` phase alone carries the cron scheduler, the delayed-job pollers, and the
+transactional-outbox relay; omitting it from a manual chain means none of that work ever runs, while
+startup still reports success.
 
-`deployAll()` handles the simple case where all verticles are registered via multibinding and no interleaved deployment logic is needed.
+`deployAll()` is the exhaustive primitive — it loops every phase, so it never drops a contribution. It
+exists for a manual host that genuinely cannot drive its lifecycle through
+`VertiqueApplicationBootstrap`; it is not the recommended path for an ordinary application, which
+should delegate to the runner instead.
 
 ### `VerticleSupervisor`
 

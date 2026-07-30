@@ -333,17 +333,9 @@ public interface AppComponent {
 
 Both `CronModule` and `CronPersistenceModule` transitively include `CronBaseModule`, which contributes a `VerticleDeployment` named `cron-scheduler` at `LifecyclePhase.SERVICES`, priority 100. The deployment is handled by a package-private `CronLifecycleVerticle` that runs `CronJobRegistrar.scan()` then `CronScheduler.start()` on verticle start, and `CronScheduler.stop()` on stop.
 
-**No manual `scan()` / `start()` calls are needed.** Including `CronModule` (or `CronPersistenceModule`) is sufficient: `CronBaseModule` contributes the `cron-scheduler` `VerticleDeployment` at `LifecyclePhase.SERVICES`, so the lifecycle runner (or a `manager.deployAll()` / `deployPhase(SERVICES)`) deploys it automatically — there is no separate cron `ApplicationStartupStep`.
+**No manual `scan()` / `start()` calls are needed.** Including `CronModule` (or `CronPersistenceModule`) is sufficient: `CronBaseModule` contributes the `cron-scheduler` `VerticleDeployment` at `LifecyclePhase.SERVICES`, and the lifecycle runner deploys every verticle phase, so the scheduler starts automatically — there is no separate cron `ApplicationStartupStep`.
 
-If you use phased startup rather than `deployAll()`, you must explicitly include `LifecyclePhase.SERVICES` after services deploy, otherwise cron lifecycle (and delayed-job pollers) are silently skipped:
-
-```java
-serviceDeploymentManager.deployAll()
-    .compose(v -> manager.deployPhase(LifecyclePhase.SERVICES))  // includes cron-scheduler
-    .compose(v -> manager.deployPhase(LifecyclePhase.EDGE))
-    .onSuccess(v -> startPromise.complete())
-    .onFailure(startPromise::fail);
-```
+Because the scheduler is contributed at `SERVICES`, it starts only if that phase is deployed. The lifecycle runner (`VertiqueApplicationBootstrap`) always deploys all four verticle phases, so an application that delegates startup to it cannot miss the scheduler. A host that instead sequences phases by hand deploys only the phases it names, and cron never runs — with no error and no log. Delegate startup to the runner; see `dev.vertique:vertique-deploy` for why `deployPhase` is a framework primitive rather than an application entry point.
 
 `CronJobRegistrar` and `CronScheduler` remain accessible on `AppComponent` for advanced use cases (custom integrations, tests) but apps no longer need to call them directly during startup.
 

@@ -74,21 +74,7 @@ Lombok `@Builder` configuration value object. Deserialized from the `"flyway"` s
 
 `@Singleton` implementation of `MigrationRunner` backed by Flyway. Flyway is JDBC-based (blocking), so `migrate()` executes inside `Vertx.executeBlocking()` to avoid blocking the event loop.
 
-When using `@VertiqueApp` + `CoreLifecycleStepsModule` + `DbFlywayModule`, `FlywayMigrationStartupStep` calls `migrate()` automatically in the `MIGRATE` phase — no manual call is needed. For the legacy `MainVerticle` pattern, call it explicitly:
-
-```java
-// Legacy MainVerticle pattern only — not needed with @VertiqueApp + DbFlywayModule:
-AppComponent c = DaggerAppComponent.builder()
-        .vertxModule(new VertxModule(vertx, config()))
-        .build();
-
-// Migrations run before HTTP verticle deploys
-c.migrationRunner()
-        .migrate(vertx)
-        .compose(migrationResult -> c.verticleDeploymentManager().deployAll())
-        .onSuccess(v -> startPromise.complete())
-        .onFailure(startPromise::fail);
-```
+When using `@VertiqueApp` + `CoreLifecycleStepsModule` + `DbFlywayModule`, `FlywayMigrationStartupStep` calls `migrate()` automatically in the `MIGRATE` phase — no manual call is needed.
 
 **Behavior by mode:**
 
@@ -162,8 +148,8 @@ applications must:
 
 1. Set `flyway.mode=DISABLED` to disable the automatic step.
 2. Run each migration location manually, with separate `Flyway` instances configured for each
-   history table, before invoking `verticleDeploymentManager().deployAll()` (legacy pattern) or by
-   contributing their own `MIGRATE`-phase `ApplicationStartupStep` instances.
+   history table, by contributing their own `MIGRATE`-phase `ApplicationStartupStep` instances so
+   the runner still sequences them before any verticle phase deploys.
 
 The single-run limitation is by design — multi-schema migration with separate history tables
 requires application-level coordination that a generic framework step cannot safely abstract.

@@ -31,9 +31,14 @@ automatically:
 - Future embedding host bridges (Spring Boot, Quarkus) that drive the same Vertique lifecycle from
   their own startup hooks
 
-The module is not required for applications that still use a hand-written `MainVerticle` — the
-step and verticle deployment APIs exist independently. It becomes valuable when lifecycle
-choreography should be consistent across deployment contexts.
+`vertique-application` is the framework's single supported lifecycle orchestrator — there is no
+parallel, equally-supported path. A custom verticle may replace the framework-owned host verticle
+(`VertiqueBootstrapVerticle`, from `dev.vertique:vertique-launcher`) as the Vert.x entry point, but
+it must still delegate application startup and shutdown to
+`VertiqueApplicationBootstrap.start(runtime, factory)` and the returned handle's `shutdown()`. The
+step and verticle deployment APIs described in this document are the runner's primitives — they
+exist so the runner can drive phase-ordered startup and teardown, not as a parallel,
+application-facing lifecycle that a hand-rolled host can reimplement instead.
 
 ---
 

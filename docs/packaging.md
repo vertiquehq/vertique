@@ -276,11 +276,20 @@ The main class is the same as the Jib container — there is no separate "dev" e
 
 ## Opt-out for custom-verticle applications
 
-Applications that intentionally use a custom verticle instead of `@VertiqueApp` — for example, a
-CLI tool or a host bridge that manages its own startup choreography — set the system property
-`-Dvertique.bootstrap.verticle=false`. This makes `VertiqueApplication.verticleSupplier()` return
-`null`, deferring verticle resolution to the upstream Vert.x launcher's standard CLI
-positional-argument path.
+Applications that need Vert.x to deploy a different entry verticle than the framework-owned
+`VertiqueBootstrapVerticle` — for example, a CLI tool with no Vertique application component, or a
+host bridge that embeds the Vertique lifecycle inside a larger framework's own startup sequence —
+set the system property `-Dvertique.bootstrap.verticle=false`. This makes
+`VertiqueApplication.verticleSupplier()` return `null`, deferring verticle resolution to the
+upstream Vert.x launcher's standard CLI positional-argument path so the application can supply its
+own entry verticle.
+
+The opt-out replaces only the entry verticle Vert.x deploys — it does not replace the Vertique
+application lifecycle. A custom entry verticle that runs a Vertique application must still delegate
+startup to `VertiqueApplicationBootstrap.start(runtime, factory)` from its own `start()` and
+teardown to the returned handle's `shutdown()` from its own `stop()`, exactly as
+`VertiqueBootstrapVerticle` does internally (see `dev.vertique:vertique-application`). It must not
+call `VerticleDeploymentManager.deployPhase()` itself to hand-sequence phases.
 
 When using `exec-maven-plugin`, supply the property via `<systemProperties>` and pass the
 custom verticle FQN as a positional argument:
@@ -312,9 +321,11 @@ custom verticle FQN as a positional argument:
 ./mvnw -pl my-module exec:java
 ```
 
-The property is case-insensitive (`false`, `FALSE`, `False` all opt out). This opt-out is a
-framework feature for applications that have a genuine reason to manage their own verticle outside
-the `@VertiqueApp` lifecycle (for example, a host bridge that drives its own startup choreography).
+The property is case-insensitive (`false`, `FALSE`, `False` all opt out). This opt-out exists for
+applications that have a genuine reason to supply their own entry verticle instead of the
+framework-owned one (for example, a host bridge embedding the Vertique lifecycle inside a larger
+framework's own startup sequence) — it is not a way to bypass the Vertique application lifecycle for
+an application that still wants that lifecycle.
 
 ---
 

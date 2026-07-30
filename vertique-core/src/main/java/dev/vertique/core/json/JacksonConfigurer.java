@@ -17,13 +17,11 @@ import org.slf4j.LoggerFactory;
  * Applies all {@link ObjectMapperCustomizer} instances to the Vert.x
  * {@link DatabindCodec#mapper() ObjectMapper} at application startup.
  *
- * <p>Call {@link #configure()} once after creating the Dagger component,
- * before deploying verticles:
- * <pre>{@code
- * AppComponent c = DaggerAppComponent.builder()...build();
- * c.jacksonConfigurer().configure();
- * return c.verticleDeploymentManager().deployAll();
- * }</pre>
+ * <p>Applications built on the framework lifecycle runner never call {@link #configure()}
+ * directly: {@link dev.vertique.core.lifecycle.JacksonConfigureStep} contributes it as a
+ * {@code CONFIGURE}-phase startup step, so it always runs before any verticle deploys. Call
+ * {@link #configure()} directly only from a host that does not drive
+ * {@code VertiqueApplicationBootstrap.start(runtime, factory)}.
  *
  * <p>The configurer is idempotent — subsequent calls log a warning and return immediately.
  */
