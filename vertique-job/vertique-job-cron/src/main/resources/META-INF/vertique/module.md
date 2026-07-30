@@ -121,7 +121,7 @@ Sealed interface representing where a cron job dispatches. Two variants:
 
 | Variant | Scheme | Description |
 |---------|--------|-------------|
-| `ServiceTarget` | `service:{stableServiceTargetId}` | Resolved via `ServiceTargetResolver` once per fire, so the address always reflects the live service registry |
+| `ServiceTarget` | `service:{stableServiceTargetId}` | Resolved via `ServiceTargetResolver` once per fire, so the persisted reference outlives any change to the transport address |
 | `EventBusTarget` | `eventbus:{eventBusAddress}` | Dispatched directly to the supplied event bus address |
 
 ```java
@@ -155,7 +155,13 @@ Manages timer registrations and job dispatches. Each registered job gets its own
 
 **Target resolution:** The event bus address a fire dispatches to is resolved once per fire, immediately after the job is admitted past the overlap guard and before any execution record is written. A `ServiceTarget` is resolved through `ServiceTargetResolver`; an `EventBusTarget` uses its stored address. Both are then checked for a non-blank result, so a cron execution never records a blank handler.
 
-A `service:` target that cannot be resolved — the resolver rejects the stable target id, or it resolves to a blank address — **skips that one fire**: an `ERROR` is logged naming the job id and the canonical target, no execution record is written, no message is sent, and the job is retried on its next scheduled tick. The job is not stalled or unregistered; it recovers by itself as soon as the target resolves (for example once the owning service is deployed). Overlap handling is decided before resolution, so a `QUEUE_ONE` tick that arrives during a running execution is still queued even if resolution would have failed.
+A `service:` target that cannot be resolved — the resolver rejects the stable target id, or it resolves to a blank address — **skips that one fire**: no execution record is written, no message is sent, and the job is retried on its next scheduled tick. The job is not stalled, unregistered, or left holding a concurrency slot.
+
+**Whether it ever recovers depends on the resolver, and with the built-in one it does not.** `ServiceTargetResolver`'s default implementation snapshots the service registry when it is constructed, so an operation that was absent at startup stays absent for the process lifetime — an unresolvable target id (a typo, or an operation that lives in a different deployment unit) means the job retries and fails forever until the application is restarted with the target resolvable. Only a custom resolver that reloads could make it recover in place.
+
+Because that failure is effectively permanent while the retry is per-tick, the report is throttled: the **first** failure per job logs at `ERROR` with the cause and the sanitized job id and target; subsequent failures for that same job log at `DEBUG` until it resolves again (raise `dev.vertique.job.cron` to `DEBUG` to see them). Without the throttle, one mistyped target on a one-second cron would write an `ERROR` and a stack trace every second, indefinitely, on every node. Treat that single `ERROR` as a configuration alarm, not a transient blip.
+
+Overlap handling is decided before resolution, so a `QUEUE_ONE` tick that arrives while an execution is running is still queued even if resolution would have failed. One caveat: if resolution fails at the moment the *queued* fire is taken, that queued tick is discarded rather than re-queued.
 
 **Tracked executions:** When `tracked=true` and a repository is available, a `JobExecution` is persisted before dispatch and updated on completion. `SINGLE_INSTANCE` jobs are always tracked. The execution's `handler` column records the address resolved for that fire, so `job_executions.handler` always equals the address the job was actually dispatched to.
 
@@ -167,7 +173,7 @@ A `service:` target that cannot be resolved — the resolver rejects the stable 
 
 ### `CronJobRegistrar`
 
-Scans all entries in `ServiceContractRegistry` for implementation methods annotated with `@CronJob`. Also registers config-only jobs (jobs with a `target` field in `cron.jobs.*` but no matching annotation). Called once at startup via `scan()`. All violations are collected before throwing `CronRegistrationException` (extends `CronConfigurationException` → core `ConfigurationException`) so the application fails fast with a complete error list. `service:` targets are stored as a stable `CronTargetReference.ServiceTarget` with a `null` `handlerAddress` and resolved to the current event bus address once per fire via `ServiceTargetResolver` (not at startup) so the dispatched address always reflects the live service registry.
+Scans all entries in `ServiceContractRegistry` for implementation methods annotated with `@CronJob`. Also registers config-only jobs (jobs with a `target` field in `cron.jobs.*` but no matching annotation). Called once at startup via `scan()`. All violations are collected before throwing `CronRegistrationException` (extends `CronConfigurationException` → core `ConfigurationException`) so the application fails fast with a complete error list. `service:` targets are stored as a stable `CronTargetReference.ServiceTarget` with a `null` `handlerAddress` and resolved to an event bus address once per fire via `ServiceTargetResolver` (not at registration) so the durable reference never pins a transport address. Note the built-in resolver snapshots the registry at construction, so "once per fire" bounds when the address is *read*, not how fresh it is.
 
 **Validation checks:**
 

@@ -6,7 +6,7 @@ package dev.vertique.job.cron;
 /**
  * A sealed type hierarchy representing the target of a cron job dispatch.
  *
- * <p>Cron jobs can target either a registered service operation (resolved at dispatch time via
+ * <p>Cron jobs can target either a registered service operation (resolved once per fire via
  * the {@link dev.vertique.services.ServiceTargetResolver}) or a raw event bus address. The
  * sealed hierarchy makes the two cases explicit and exhaustively pattern-matchable.
  *
@@ -71,7 +71,8 @@ public sealed interface CronTargetReference {
     /**
      * A cron target that references a registered service operation by its stable target id.
      *
-     * <p>The runtime event bus address is resolved at dispatch time via
+     * <p>The runtime event bus address is resolved once per fire — by the scheduler, before the
+     * execution record is written — via
      * {@link dev.vertique.services.ServiceTargetResolver#resolve(String)}, decoupling
      * the persisted reference from the mutable transport address.
      *
@@ -94,7 +95,8 @@ public sealed interface CronTargetReference {
     /**
      * A cron target that references a raw event bus address directly.
      *
-     * <p>The address is used verbatim at dispatch time. This variant is appropriate for
+     * <p>The address is used verbatim, subject only to a non-blank check. This variant is
+     * appropriate for
      * config-only jobs that target an arbitrary address not backed by a registered service
      * contract.
      *

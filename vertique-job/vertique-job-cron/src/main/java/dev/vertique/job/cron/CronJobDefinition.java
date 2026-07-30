@@ -13,10 +13,12 @@ import java.util.Map;
  * @param id             unique job identifier (stable across retries)
  * @param cronExpression parsed cron expression used to compute fire times
  * @param target         the target reference for this job; determines how the runtime address
- *                       is resolved at dispatch time
+ *                       is resolved per fire by the scheduler
  * @param handlerAddress event bus address for {@link CronTargetReference.EventBusTarget} jobs;
  *                       {@code null} for {@link CronTargetReference.ServiceTarget} jobs (resolved
- *                       at dispatch time via {@link dev.vertique.services.ServiceTargetResolver})
+ *                       once per fire by the scheduler, via
+ *                       {@link dev.vertique.services.ServiceTargetResolver}, before the execution
+ *                       record is written)
  * @param mode           execution mode controlling every-instance vs single-instance firing
  * @param timezone       timezone for evaluating the cron expression
  * @param maxAttempts    maximum number of attempts per execution

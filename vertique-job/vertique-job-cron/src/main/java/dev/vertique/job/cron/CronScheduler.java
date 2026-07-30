@@ -356,6 +356,10 @@ public class CronScheduler {
         Future<Void> cutoffFlushes = dispatcher.shutdown();
         concurrency.reset();
         jobs.clear();
+        // Clear alongside `jobs` for the same reason: a redeploy of the lifecycle verticle
+        // re-registers from scratch, and a retained entry would demote the first resolution failure
+        // of the new cycle to DEBUG, losing the ERROR an operator needs to see.
+        resolutionFailureLogged.clear();
         return cutoffFlushes.onComplete(ar -> log.info("CronScheduler stopped"));
     }
 
@@ -465,7 +469,11 @@ public class CronScheduler {
                 })
                 .onFailure(err -> {
                     concurrency.removeInFlight(job.id());
-                    log.warn("SINGLE_INSTANCE insert failed for '{}': {}", job.id(), err.getMessage());
+                    // Log the throwable, not just its message: the repository wraps the driver
+                    // failure, so the message alone names the statement but not the constraint or
+                    // SQL state that actually rejected it — which is the only thing that tells an
+                    // operator whether the leader election is failing on data or on the schema.
+                    log.warn("SINGLE_INSTANCE insert failed for '{}'", forLog(job.id()), err);
                 });
     }
 
@@ -478,9 +486,12 @@ public class CronScheduler {
      * dispatching. On persistence failure, dispatches anyway (tracking is best-effort).
      *
      * <p>Overlap admission is decided <em>first</em>: the effective event bus address is resolved
-     * only after {@code tryAcquireInFlight} succeeds, so a resolver failure can never convert an
-     * {@link OverlapPolicy#QUEUE_ONE} overlap into a silently dropped tick. See
-     * {@link #resolveEffectiveAddress(CronJobDefinition)}.
+     * only after {@code tryAcquireInFlight} succeeds, so a resolver failure at <em>admission</em>
+     * cannot convert an {@link OverlapPolicy#QUEUE_ONE} overlap into a silently dropped tick — the
+     * overlapping tick is queued without the resolver being consulted at all. It is <em>not</em> an
+     * unqualified guarantee: if resolution later fails when the queued fire is taken in
+     * {@link #markCompleted(CronJobDefinition)}, {@code pendingFires} has already been drained and
+     * that one queued tick is discarded. See {@link #resolveEffectiveAddress(CronJobDefinition)}.
      *
      * @param job         the cron job to fire
      * @param scheduledAt the time this execution was scheduled for
@@ -509,10 +520,7 @@ public class CronScheduler {
                             () -> dispatcher.dispatch(
                                     job, scheduledAt, execution, effectiveAddress, this::markCompleted)))
                     .onFailure(err -> {
-                        log.warn(
-                                "Failed to persist execution for '{}' — dispatching in-memory: {}",
-                                job.id(),
-                                err.getMessage());
+                        log.warn("Failed to persist execution for '{}' — dispatching in-memory", forLog(job.id()), err);
                         concurrency.acquireSlotAndRun(job.id(), dispatchUntracked);
                     });
         } else {
@@ -693,11 +701,19 @@ public class CronScheduler {
      * than reimplemented so cron cannot drift from the sanitizing rule the rest of the
      * deferred-execution boundary already applies to these same strings.
      *
-     * @param raw the raw config-supplied identifier
-     * @return the sanitized, length-bounded form, safe to interpolate into a log record
+     * @param raw the raw config-supplied identifier, possibly {@code null}
+     * @return the sanitized, length-bounded form, safe to interpolate into a log record, or
+     *         {@code "<none>"} when {@code raw} is absent or sanitizes away entirely
      */
     private static String forLog(String raw) {
-        return DeferredExecutionOrigin.of("cron", raw).reference();
+        if (raw == null || raw.isBlank()) {
+            return "<none>";
+        }
+        // of(kind, reference) substitutes the sanitized kind when the reference sanitizes to blank,
+        // which would silently log a control-character-only id as the literal "cron". Detect that
+        // substitution and report absence explicitly instead of a plausible-looking value.
+        String sanitized = DeferredExecutionOrigin.of("cron", raw).reference();
+        return "cron".equals(sanitized) && !"cron".equals(raw) ? "<none>" : sanitized;
     }
 
     /**
