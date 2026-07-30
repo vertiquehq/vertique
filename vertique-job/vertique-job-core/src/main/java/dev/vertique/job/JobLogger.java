@@ -8,13 +8,13 @@ import java.util.List;
 /**
  * Buffered logger for job handler output.
  *
- * <p>Entries written through this logger are buffered in-memory during execution and can be
- * flushed to a {@link JobRepository} after the job completes, providing a per-execution audit
- * trail without requiring a live database connection during job execution.
+ * <p>Entries written through this logger are buffered in-memory during execution and flushed to a
+ * {@link JobRepository} periodically <em>while the job runs</em> as well as when it completes, so a
+ * handler produces per-execution diagnostic logs without holding a live database connection. These
+ * are diagnostics, not an audit trail — audit records are the concern of the audit module.
  *
  * <p>Implementations must be thread-safe to allow concurrent log writes from multiple threads.
- * The {@link DefaultJobLogger} uses a {@link java.util.concurrent.CopyOnWriteArrayList} for
- * thread-safe buffering.
+ * {@link DefaultJobLogger} buffers entries in a lock-guarded deque and drains them in batches.
  */
 public interface JobLogger {
 
@@ -40,10 +40,12 @@ public interface JobLogger {
     void error(String message);
 
     /**
-     * Returns a snapshot of all buffered log entries in the order they were written.
-     * The returned list is an unmodifiable view (or copy) and is safe to read from any thread.
+     * Returns a snapshot copy of the log entries <em>still buffered</em>, in the order they were
+     * written. Entries already flushed to the {@link JobRepository} are no longer included, so this
+     * is not a transcript of everything the execution logged. The returned list is an immutable
+     * copy — never a live view — and is safe to read from any thread.
      *
-     * @return an unmodifiable list of buffered entries
+     * @return an immutable list of the entries currently buffered
      */
     List<LogEntry> entries();
 }

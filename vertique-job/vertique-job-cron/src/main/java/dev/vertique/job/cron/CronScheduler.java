@@ -73,6 +73,15 @@ import lombok.extern.slf4j.Slf4j;
  * available, a periodic timer writes {@link ProgressSnapshot} updates to the repository. Only
  * changed snapshots are flushed (change detection avoids redundant DB writes).
  *
+ * <p><b>Job log flush:</b> Buffered {@link dev.vertique.job.JobLogger} entries are drained to the
+ * repository through a per-execution {@link dev.vertique.job.JobLogFlusher} — on the same periodic
+ * tick (there unconditionally, since log entries change independently of the progress snapshot)
+ * and on every path that ends the execution: completion, timeout, and {@link #stop()}. The ending
+ * sites use {@link dev.vertique.job.JobLogFlusher#drain()}, which awaits an outstanding write and
+ * re-flushes while entries remain, because they have just cancelled the tick that would otherwise
+ * have retried. Untracked fires never flush: they have no {@code job_executions} row for
+ * {@code job_logs.execution_id} to reference.
+ *
  * <p><b>Threading model:</b> This class must be used on a single Vert.x event loop context.
  * All timer callbacks, event bus handlers, and slot management operations assume single-threaded
  * execution. Concurrent data structures are used defensively but do not guarantee correctness
@@ -305,7 +314,8 @@ public class CronScheduler {
 
     /**
      * Stops the scheduler by cancelling all active timers, clearing the registered job set,
-     * and cleaning up per-execution resources.
+     * cleaning up per-execution resources, and taking a final cutoff snapshot of each in-flight
+     * execution's job logs.
      *
      * <p>Cancels all job schedule timers, drains queued dispatches, unregisters in-flight
      * completion consumers, and cancels any per-execution timeout timers, progress-flush timers,
@@ -313,7 +323,13 @@ public class CronScheduler {
      * (e.g. after the lifecycle verticle is undeployed and redeployed) starts from a clean
      * slate rather than colliding with the previous registrations.
      *
-     * @return a future that succeeds immediately after all timers are cancelled
+     * <p><b>The shutdown log flush is a cutoff snapshot, not a final flush.</b> In-flight
+     * executions are not interrupted, so a handler may keep logging after its buffer is drained;
+     * those later entries are lost. The snapshot bounds what a graceful shutdown loses — it does
+     * not eliminate loss.
+     *
+     * @return a future that succeeds once all timers are cancelled and every cutoff log flush has
+     *     settled or hit its per-execution timeout bound
      */
     public Future<Void> stop() {
         running = false;
@@ -323,11 +339,10 @@ public class CronScheduler {
         });
         activeTimers.clear();
         concurrency.drainQueue();
-        dispatcher.shutdown();
+        Future<Void> cutoffFlushes = dispatcher.shutdown();
         concurrency.reset();
         jobs.clear();
-        log.info("CronScheduler stopped");
-        return Future.succeededFuture();
+        return cutoffFlushes.onComplete(ar -> log.info("CronScheduler stopped"));
     }
 
     /**

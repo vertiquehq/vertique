@@ -4,7 +4,6 @@
 package dev.vertique.job.postgresql;
 
 import dev.vertique.core.async.Combinators;
-import dev.vertique.job.Checkpoint;
 import dev.vertique.job.CronJobSchedule;
 import dev.vertique.job.JobExecution;
 import dev.vertique.job.JobExecutionStateTransitionEvent;
@@ -108,18 +107,6 @@ final class NotifyingJobRepository implements JobRepository {
     @Override
     public Future<Void> saveLogs(UUID executionId, List<LogEntry> entries) {
         return delegate.saveLogs(executionId, entries);
-    }
-
-    /** {@inheritDoc} */
-    @Override
-    public Future<Void> saveCheckpoint(UUID executionId, String key, Object value) {
-        return delegate.saveCheckpoint(executionId, key, value);
-    }
-
-    /** {@inheritDoc} */
-    @Override
-    public Future<Optional<Checkpoint>> loadCheckpoint(UUID executionId, String key) {
-        return delegate.loadCheckpoint(executionId, key);
     }
 
     /**

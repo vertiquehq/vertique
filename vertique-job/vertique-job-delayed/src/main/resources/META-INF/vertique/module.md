@@ -173,7 +173,11 @@ message deliberately excludes the database message text; the original exception 
 - **Retry backoff is per queue.** Two jobs with different retry profiles need different queues.
 - **In-flight work is not interrupted on shutdown.** The poller stops claiming and unregisters its
   reply consumers; already-dispatched executions run to completion, and their completion callbacks
-  may land after the verticle stopped.
+  may land after the verticle stopped. Each in-flight execution's buffered job logs are drained one
+  last time before `stop()` completes, but this is a bounded cutoff snapshot, not a final flush — the
+  handler is not interrupted, so entries it logs afterward are lost. The drain awaits a write left
+  outstanding by the progress tick, so the snapshot cannot come back empty just because a tick write
+  was still running.
 
 ---
 
@@ -334,7 +338,15 @@ value rather than a config default. The contract name must be non-blank.
 
 `executionTimeoutMs` and `progressFlushIntervalMs` come from `job.coordinator` in
 `dev.vertique:vertique-job-core`, so every queue shares one timeout policy; setting either to `0`
-disables that behaviour. Total claim capacity for a queue is
+disables that behaviour. A per-execution `JobLogFlusher` drains buffered `JobLogger` entries to
+`job_logs` on the same `progressFlushIntervalMs` tick (default `10000`) — unconditionally, since log
+entries change independently of the progress snapshot — and on every path that ends the execution:
+completion, timeout, and poller `stop()`. The tick calls `flush()`; every ending site calls
+`drain()`, which awaits a write still outstanding from the tick and re-flushes while entries remain,
+bounded at 4 rounds — the ending site has just cancelled the tick that would otherwise have retried.
+Setting `progressFlushIntervalMs` to `0` disables only the *periodic* flush; the ending-site drains
+still run, so logs remain durable but are not visible until the execution ends. Total claim capacity
+for a queue is
 `delayedJob.queues.{name}.instances × maxConcurrentJobs`, while executor-side parallelism is set
 separately by `services.contracts.delayed-job.{name}.instances` — raising claim capacity without
 raising executor capacity just moves the queue.

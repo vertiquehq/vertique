@@ -10,7 +10,7 @@ SPDX-License-Identifier: EUPL-1.2
 > **Artifact:** `vertique-job-postgresql`
 > **Depends on:** job-core, db-postgresql, db-flyway
 
-PostgreSQL implementation of the `JobRepository` SPI defined in `job-core`. Persists job execution state, logs, checkpoints, cron schedule definitions, and node heartbeats. Uses `FOR UPDATE SKIP LOCKED` for concurrent-safe job claiming without external coordination. Provides a transactional `save(execution, SqlClient)` overload for outbox-pattern enqueue. Flyway migrations are bundled at `classpath:db/migration/job`.
+PostgreSQL implementation of the `JobRepository` SPI defined in `job-core`. Persists job execution state, logs, cron schedule definitions, and node heartbeats. Uses `FOR UPDATE SKIP LOCKED` for concurrent-safe job claiming without external coordination. Provides a transactional `save(execution, SqlClient)` overload for outbox-pattern enqueue. Flyway migrations are bundled at `classpath:db/migration/job`.
 
 ---
 
@@ -18,7 +18,7 @@ PostgreSQL implementation of the `JobRepository` SPI defined in `job-core`. Pers
 
 ### `PgJobRepository`
 
-Extends `PgSqlRepository` and implements `JobRepository`. All SQL operations use the Vert.x reactive PostgreSQL client. JSONB columns (`payload`, `progress`, `parameters`, checkpoint `value`) are serialized as Vert.x `JsonObject` instances, which the pg-client driver handles natively.
+Extends `PgSqlRepository` and implements `JobRepository`. All SQL operations use the Vert.x reactive PostgreSQL client. JSONB columns (`payload`, `progress`, `parameters`) are serialized as Vert.x `JsonObject` instances, which the pg-client driver handles natively.
 
 Generates a stable `nodeId` from the hostname and a random 8-character suffix, used as the `locked_by` value during job claiming and as the server identity for heartbeats.
 
@@ -58,7 +58,7 @@ This guarantees no two callers process the same execution and attributes the wor
 
 ### `JobExecutionMapper`
 
-Package-private utility that maps `Row` objects to `JobExecution` and `Checkpoint` domain objects. Handles all column extraction and null-safety for `job_executions` and `job_checkpoints`.
+Package-private utility that maps `Row` objects to `JobExecution` domain objects. Handles all column extraction and null-safety for `job_executions`.
 
 The `payload` column is returned as `JsonObject` (opaque JSONB). Callers that know the concrete type call `((JsonObject) execution.payload()).mapTo(MyType.class)`.
 
@@ -95,7 +95,7 @@ public interface AppComponent { ... }
 ## Database Schema
 
 Flyway migration:
-- `V1__create_job_tables.sql` — initial schema (`job_executions`, `job_logs`, `job_checkpoints`, `job_schedules`, `job_server_heartbeats`), including `metadata JSONB` on `job_executions` for durable context propagation and the `target` column on `job_schedules` for the explicit target-reference cron model
+- `V1__create_job_tables.sql` — initial schema (`job_executions`, `job_logs`, `job_schedules`, `job_server_heartbeats`), including `metadata JSONB` on `job_executions` for durable context propagation and the `target` column on `job_schedules` for the explicit target-reference cron model
 
 The framework is pre-release: every new column or table folds back into `V1` rather than shipping as `V2`/`V3` until the first released version is cut.
 
@@ -137,7 +137,13 @@ The framework is pre-release: every new column or table folds back into `V1` rat
 
 ### `job_logs`
 
-Per-execution log entries written by `JobLogger` and flushed via `JobRepository.saveLogs()`.
+Per-execution log entries written by `JobLogger`. The scheduling module (`vertique-job-cron`,
+`vertique-job-delayed`) drains the in-memory buffer through a per-execution `JobLogFlusher`, which
+persists batches via `JobRepository.saveLogs()`: on the periodic progress-flush tick, on every path
+that ends the execution, and once more as a bounded cutoff drain at shutdown — see each scheduling
+module's reference for the exact flush sites. The ending sites and the shutdown snapshot use the
+flusher's bounded `drain()` rather than a single `flush()`, so a `saveLogs` call left outstanding by
+the tick cannot swallow the entries appended behind it.
 
 | Column | Type | Description |
 |--------|------|-------------|
@@ -148,19 +154,6 @@ Per-execution log entries written by `JobLogger` and flushed via `JobRepository.
 | `logged_at` | `TIMESTAMPTZ` | When the entry was logged |
 
 Index: `idx_job_logs_execution` on `(execution_id, logged_at)`.
-
-### `job_checkpoints`
-
-Named key-value checkpoints for idempotent re-execution.
-
-| Column | Type | Description |
-|--------|------|-------------|
-| `execution_id` | `UUID FK → job_executions.id` | Owning execution (CASCADE DELETE) |
-| `key` | `VARCHAR(255)` | Checkpoint name |
-| `value` | `JSONB NOT NULL` | Checkpoint data |
-| `updated_at` | `TIMESTAMPTZ` | Last update time |
-
-Primary key: `(execution_id, key)`. Upsert on conflict updates `value` and `updated_at`.
 
 ### `job_schedules`
 
@@ -231,6 +224,6 @@ public interface AppComponent { ... }
 
 ## Dependencies
 
-- **job-core** — `JobRepository` SPI, `JobExecution`, `JobExecutionStateTransitionListener`, `JobState`, `JobType`, `ProgressSnapshot`, `Checkpoint`, `LogEntry`, `CronJobSchedule`
+- **job-core** — `JobRepository` SPI, `JobExecution`, `JobExecutionStateTransitionListener`, `JobState`, `JobType`, `ProgressSnapshot`, `LogEntry`, `CronJobSchedule`
 - **db-postgresql** — `PgSqlRepository`, `PgDbExceptionMapper`, `Pool`
 - **db-flyway** — `FlywayMigrationRunner` (required to apply the bundled migration)

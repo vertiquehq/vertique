@@ -4,8 +4,6 @@
 package dev.vertique.job;
 
 import io.vertx.core.Future;
-import java.time.Instant;
-import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Supplier;
@@ -13,12 +11,14 @@ import java.util.function.Supplier;
 /**
  * In-memory implementation of {@link JobContext}.
  *
- * <p>All state is held in-memory for the duration of the execution. When a {@link JobRepository}
- * is present (Phase 2+), the cron trigger or coordinator may flush checkpoints and logs to
- * persistent storage after the execution completes.
+ * <p>Metadata, completed steps, progress, and the cancellation flag live in memory for the duration
+ * of the execution and are never persisted. Log entries are the exception: the scheduling modules
+ * drain this context's {@link #logger()} buffer through a {@link JobLogFlusher} <em>during</em> the
+ * execution — on the progress tick as well as at every ending site — and a drained entry is removed
+ * from the buffer, so {@link JobLogger#entries()} is not a transcript of the whole execution.
  *
- * <p>Thread-safe: uses {@link ConcurrentHashMap} for metadata, steps, and checkpoints, and a
- * {@code volatile} flag for cancellation.
+ * <p>Thread-safe: uses {@link ConcurrentHashMap} for metadata and steps, and a {@code volatile}
+ * flag for cancellation.
  */
 public class DefaultJobContext implements JobContext {
 
@@ -36,7 +36,6 @@ public class DefaultJobContext implements JobContext {
     private final DefaultJobLogger jobLogger;
     private final ConcurrentHashMap<String, Object> metadata = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, Object> completedSteps = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<String, Checkpoint> checkpoints = new ConcurrentHashMap<>();
     private volatile boolean cancelled;
 
     /**
@@ -83,6 +82,20 @@ public class DefaultJobContext implements JobContext {
 
     @Override
     public JobLogger logger() {
+        return jobLogger;
+    }
+
+    /**
+     * Returns the concrete per-execution logger, exposing the package-private claim/ack drain
+     * protocol that {@link JobLogFlusher} needs.
+     *
+     * <p>Deliberately package-private and deliberately <em>not</em> a widening of
+     * {@link #logger()}: the drain protocol is an internal contract between this context and the
+     * flusher, not part of the public {@link JobLogger} API.
+     *
+     * @return the drainable logger backing {@link #logger()}, never {@code null}
+     */
+    DefaultJobLogger jobLogger() {
         return jobLogger;
     }
 
@@ -139,28 +152,5 @@ public class DefaultJobContext implements JobContext {
             completedSteps.remove(stepName);
             return Future.failedFuture(e);
         }
-    }
-
-    @Override
-    public void checkpoint(String key, Object value) {
-        checkpoints.put(key, new Checkpoint(key, value, Instant.now()));
-    }
-
-    @Override
-    @SuppressWarnings("unchecked")
-    public <T> T lastCheckpoint(String key, Class<T> type) {
-        Checkpoint cp = checkpoints.get(key);
-        return cp != null ? (T) cp.value() : null;
-    }
-
-    // --- Package-visible accessors for testing and flushing ---
-
-    /**
-     * Returns the internal checkpoint map for flushing to persistent storage.
-     *
-     * @return an unmodifiable view of the current checkpoint map
-     */
-    Map<String, Checkpoint> checkpointMap() {
-        return Map.copyOf(checkpoints);
     }
 }

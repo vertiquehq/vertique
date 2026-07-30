@@ -13,6 +13,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.anyLong;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.verify;
@@ -26,21 +27,25 @@ import dev.vertique.core.eventbus.EventBusExceptionMapper;
 import dev.vertique.core.eventbus.LocalMessageCodec;
 import dev.vertique.core.eventbus.Result;
 import dev.vertique.job.CronJobSchedule;
+import dev.vertique.job.DefaultJobContext;
 import dev.vertique.job.JobContext;
 import dev.vertique.job.JobDispatchContext;
 import dev.vertique.job.JobExecution;
 import dev.vertique.job.JobInterceptor;
 import dev.vertique.job.JobRepository;
 import dev.vertique.job.JobState;
+import dev.vertique.job.LogEntry;
 import dev.vertique.services.ResolvedServiceTarget;
 import dev.vertique.services.ServiceTargetResolver;
 import io.vertx.core.Future;
+import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
 import io.vertx.core.eventbus.DeliveryOptions;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
 import java.time.Instant;
 import java.time.ZoneId;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -83,6 +88,30 @@ class CronSchedulerTest {
             return new ResolvedServiceTarget(targetId, null, "", targetId, targetId, null, targetId);
         });
         return resolver;
+    }
+
+    /**
+     * Builds a minimal stub repository that allows completeExecution and tryInsert calls.
+     * The completion is captured so tests can verify the state passed to completeExecution.
+     *
+     * <p>Deliberately does <em>not</em> stub {@code saveLogs} — the job-log tests use that mock as
+     * their completion signal and stub it per test.
+     */
+    private static JobRepository stubRepoCapturingCompletion(AtomicReference<JobState> capturedState) {
+        JobRepository repo = mock(JobRepository.class);
+        // Used by EVERY_INSTANCE tracked jobs — use thenAnswer to return fresh future per call
+        when(repo.save(any(JobExecution.class))).thenAnswer(inv -> Future.succeededFuture(UUID.randomUUID()));
+        // Used by SINGLE_INSTANCE jobs
+        when(repo.tryInsert(any(JobExecution.class)))
+                .thenAnswer(inv -> Future.succeededFuture(Optional.of(UUID.randomUUID())));
+        when(repo.completeExecution(any(UUID.class), any(JobState.class), any(), any(), any()))
+                .thenAnswer(invocation -> {
+                    capturedState.set(invocation.getArgument(1));
+                    return Future.succeededFuture(Optional.empty());
+                });
+        when(repo.updateScheduleFireTimes(anyString(), any(Instant.class), any(Instant.class)))
+                .thenAnswer(inv -> Future.succeededFuture());
+        return repo;
     }
 
     @BeforeEach
@@ -1100,27 +1129,6 @@ class CronSchedulerTest {
     @Timeout(value = 15, unit = TimeUnit.SECONDS)
     class ConsumerTimeout {
 
-        /**
-         * Builds a minimal stub repository that allows completeExecution and tryInsert calls.
-         * The completion is captured so tests can verify the state passed to completeExecution.
-         */
-        private JobRepository stubRepoCapturingCompletion(AtomicReference<JobState> capturedState) {
-            JobRepository repo = mock(JobRepository.class);
-            // Used by EVERY_INSTANCE tracked jobs — use thenAnswer to return fresh future per call
-            when(repo.save(any(JobExecution.class))).thenAnswer(inv -> Future.succeededFuture(UUID.randomUUID()));
-            // Used by SINGLE_INSTANCE jobs
-            when(repo.tryInsert(any(JobExecution.class)))
-                    .thenAnswer(inv -> Future.succeededFuture(Optional.of(UUID.randomUUID())));
-            when(repo.completeExecution(any(UUID.class), any(JobState.class), any(), any(), any()))
-                    .thenAnswer(invocation -> {
-                        capturedState.set(invocation.getArgument(1));
-                        return Future.succeededFuture(Optional.empty());
-                    });
-            when(repo.updateScheduleFireTimes(anyString(), any(Instant.class), any(Instant.class)))
-                    .thenAnswer(inv -> Future.succeededFuture());
-            return repo;
-        }
-
         @Test
         @DisplayName("execution timeout marks tracked execution as ABANDONED when handler never replies")
         void executionTimeoutMarksAbandoned(Vertx vertx, VertxTestContext ctx) {
@@ -1304,6 +1312,381 @@ class CronSchedulerTest {
                         assertTrue(cancelObserved.get(), "JobContext should have isCancelled=true after cancel signal");
                         ctx.completeNow();
                     }));
+        }
+    }
+
+    // --- Job log durability tests ---
+
+    /**
+     * Proves the cron dispatcher drains the per-execution {@link dev.vertique.job.JobLogger} buffer
+     * into {@link JobRepository#saveLogs} while a tracked fire is still running and again on the
+     * path that ends it — and that an <em>untracked</em> fire never flushes at all, because
+     * {@code job_logs.execution_id} is {@code NOT NULL REFERENCES job_executions(id)} and an
+     * untracked fire has no such row.
+     *
+     * <p>Every test here is sleep-free: the {@code saveLogs} mock — or, for the negative test, the
+     * interceptor's {@code onComplete} that runs immediately after the flush site — <em>is</em> the
+     * completion signal. Each answer is guarded by a latch because a one-second cron expression
+     * keeps firing after the assertion has been made.
+     *
+     * <p>{@link #persistsEntriesAppendedDuringAnInFlightTickWrite} is the end-to-end counterpart of
+     * {@code JobLogFlusherTest.Drain}: it is the only test here whose {@code saveLogs} returns a
+     * <em>pending</em> future, and therefore the only one that can observe the in-flight window an
+     * ending-site flush used to lose.
+     *
+     * <p>{@link #shutdownDrainsBufferedLogsOfInFlightExecutions} covers
+     * {@code CronJobDispatcher.shutdown()}. That dispatcher is package-private and constructed
+     * inside {@link CronScheduler}, so the flush site is driven through {@link CronScheduler#stop()},
+     * which composes the future the dispatcher's shutdown returns.
+     */
+    @Nested
+    @DisplayName("job log flush")
+    @Timeout(value = 15, unit = TimeUnit.SECONDS)
+    class JobLogFlush {
+
+        @Test
+        @DisplayName("flushes buffered log entries to the repository on the periodic progress tick")
+        void flushesLogsOnProgressTick(Vertx vertx, VertxTestContext ctx) {
+            JobRepository repo = stubRepoCapturingCompletion(new AtomicReference<>());
+
+            AtomicBoolean asserted = new AtomicBoolean(false);
+            when(repo.saveLogs(any(UUID.class), any())).thenAnswer(invocation -> {
+                List<LogEntry> batch = invocation.getArgument(1);
+                if (asserted.compareAndSet(false, true)) {
+                    ctx.verify(() -> assertTrue(
+                            batch.stream().anyMatch(entry -> "hello from handler".equals(entry.message())),
+                            "the periodic tick must flush the handler's buffered entry"));
+                    ctx.completeNow();
+                }
+                return Future.succeededFuture();
+            });
+
+            // executionTimeoutMs = 0 disables the timeout path and the handler never replies, so
+            // the 100 ms progress tick is the only thing that can reach saveLogs.
+            scheduler = new CronScheduler(
+                    vertx,
+                    Set.of(),
+                    repo,
+                    stubTargetResolver(),
+                    testEventBusClient(vertx),
+                    10,
+                    0L,
+                    100L,
+                    DispatchEnvelopeBuilder.forTesting());
+
+            AtomicBoolean logged = new AtomicBoolean(false);
+            vertx.eventBus().consumer("test.logflush.tick.address", msg -> {
+                if (!(msg.body() instanceof DispatchEnvelope<?> body) || !logged.compareAndSet(false, true)) {
+                    return;
+                }
+                DefaultJobContext jobCtx =
+                        (DefaultJobContext) body.metadata().dispatchContext().get(JobContext.class.getName());
+                jobCtx.logger().info("hello from handler");
+            });
+
+            // SINGLE_INSTANCE + the stubbed tryInsert win makes this a tracked fire, so the
+            // dispatcher receives a non-null execution and the flusher is persistable.
+            CronJobDefinition job = new CronJobDefinition(
+                    "log-tick-job",
+                    new CronExpression("* * * * * *"),
+                    new CronTargetReference.EventBusTarget("test.logflush.tick.address"),
+                    "test.logflush.tick.address",
+                    ExecutionMode.SINGLE_INSTANCE,
+                    ZoneId.of("UTC"),
+                    3,
+                    null,
+                    OverlapPolicy.SKIP,
+                    true,
+                    Map.of(),
+                    MisfirePolicy.SKIP);
+
+            scheduler.register(job);
+            scheduler.start();
+        }
+
+        @Test
+        @DisplayName("flushes buffered log entries on the abandon-timeout path")
+        void flushesOnAbandonTimeout(Vertx vertx, VertxTestContext ctx) {
+            AtomicReference<JobState> capturedState = new AtomicReference<>();
+            JobRepository repo = stubRepoCapturingCompletion(capturedState);
+
+            AtomicBoolean asserted = new AtomicBoolean(false);
+            when(repo.saveLogs(any(UUID.class), any())).thenAnswer(invocation -> {
+                List<LogEntry> batch = invocation.getArgument(1);
+                if (asserted.compareAndSet(false, true)) {
+                    ctx.verify(() -> assertTrue(
+                            batch.stream().anyMatch(entry -> "before the timeout".equals(entry.message())),
+                            "the abandon-timeout path must flush the buffered entry"));
+                    ctx.completeNow();
+                }
+                return Future.succeededFuture();
+            });
+
+            // progressFlushIntervalMs = 0 disables the periodic tick, so only the 300 ms
+            // execution-timeout path can reach saveLogs.
+            scheduler = new CronScheduler(
+                    vertx,
+                    Set.of(),
+                    repo,
+                    stubTargetResolver(),
+                    testEventBusClient(vertx),
+                    10,
+                    300L,
+                    0L,
+                    DispatchEnvelopeBuilder.forTesting());
+
+            AtomicBoolean logged = new AtomicBoolean(false);
+            vertx.eventBus().consumer("test.logflush.timeout.address", msg -> {
+                if (!(msg.body() instanceof DispatchEnvelope<?> body) || !logged.compareAndSet(false, true)) {
+                    return;
+                }
+                DefaultJobContext jobCtx =
+                        (DefaultJobContext) body.metadata().dispatchContext().get(JobContext.class.getName());
+                jobCtx.logger().info("before the timeout");
+            });
+
+            CronJobDefinition job = new CronJobDefinition(
+                    "log-timeout-job",
+                    new CronExpression("* * * * * *"),
+                    new CronTargetReference.EventBusTarget("test.logflush.timeout.address"),
+                    "test.logflush.timeout.address",
+                    ExecutionMode.SINGLE_INSTANCE,
+                    ZoneId.of("UTC"),
+                    3,
+                    null,
+                    OverlapPolicy.SKIP,
+                    true,
+                    Map.of(),
+                    MisfirePolicy.SKIP);
+
+            scheduler.register(job);
+            scheduler.start();
+        }
+
+        @Test
+        @DisplayName("untracked fire never flushes — there is no job_executions row to reference")
+        void untrackedFireDoesNotFlush(Vertx vertx, VertxTestContext ctx) {
+            // A repository IS bound, so a flush would actually reach it. The fire is untracked
+            // because tracked=false, which makes CronScheduler dispatch with execution == null —
+            // exactly the case where job_logs.execution_id would violate its foreign key.
+            JobRepository repo = stubRepoCapturingCompletion(new AtomicReference<>());
+            when(repo.saveLogs(any(UUID.class), any())).thenReturn(Future.succeededFuture());
+
+            // onComplete runs inside the completion consumer immediately after the flush site, so
+            // by the time it fires any flush that was going to happen has already happened.
+            AtomicBoolean asserted = new AtomicBoolean(false);
+            JobInterceptor completionProbe = new JobInterceptor() {
+                @Override
+                public void onComplete(
+                        JobDispatchContext dispatchCtx, Result<?> result, Instant startTime, Instant endTime) {
+                    if (asserted.compareAndSet(false, true)) {
+                        ctx.verify(() -> verify(repo, never()).saveLogs(any(), any()));
+                        ctx.completeNow();
+                    }
+                }
+            };
+
+            scheduler = new CronScheduler(
+                    vertx,
+                    Set.of(completionProbe),
+                    repo,
+                    stubTargetResolver(),
+                    testEventBusClient(vertx),
+                    DispatchEnvelopeBuilder.forTesting());
+
+            AtomicBoolean logged = new AtomicBoolean(false);
+            vertx.eventBus().consumer("test.logflush.untracked.address", msg -> {
+                if (!(msg.body() instanceof DispatchEnvelope<?> body)) {
+                    return;
+                }
+                if (logged.compareAndSet(false, true)) {
+                    DefaultJobContext jobCtx = (DefaultJobContext)
+                            body.metadata().dispatchContext().get(JobContext.class.getName());
+                    jobCtx.logger().info("buffered but unflushable");
+                }
+                body.replyAddress().ifPresent(address -> vertx.eventBus()
+                        .send(
+                                address,
+                                DispatchEnvelope.of("done"),
+                                new DeliveryOptions().setCodecName("dispatch.envelope")));
+            });
+
+            CronJobDefinition job = new CronJobDefinition(
+                    "log-untracked-job",
+                    new CronExpression("* * * * * *"),
+                    new CronTargetReference.EventBusTarget("test.logflush.untracked.address"),
+                    "test.logflush.untracked.address",
+                    ExecutionMode.EVERY_INSTANCE,
+                    ZoneId.of("UTC"),
+                    3,
+                    null,
+                    OverlapPolicy.SKIP,
+                    false,
+                    Map.of(),
+                    MisfirePolicy.SKIP);
+
+            scheduler.register(job);
+            scheduler.start();
+        }
+
+        @Test
+        @DisplayName("persists entries appended while a tick write was still in flight when the fire ended")
+        void persistsEntriesAppendedDuringAnInFlightTickWrite(Vertx vertx, VertxTestContext ctx) {
+            JobRepository repo = stubRepoCapturingCompletion(new AtomicReference<>());
+
+            // The tick's saveLogs is held pending until the completion consumer is already inside
+            // its ending drain. Releasing it from a runOnContext scheduled inside the interceptor's
+            // onComplete is what makes that ordering deterministic without a sleep: onComplete runs
+            // inside the completion callback, and Vert.x cannot run the queued task until that
+            // callback — including the finally-block drain — has returned.
+            Promise<Void> heldWrite = Promise.promise();
+            JobInterceptor releaseOnComplete = new JobInterceptor() {
+                @Override
+                public void onComplete(
+                        JobDispatchContext dispatchCtx, Result<?> result, Instant startTime, Instant endTime) {
+                    vertx.runOnContext(v -> heldWrite.tryComplete());
+                }
+            };
+
+            AtomicReference<DefaultJobContext> contextRef = new AtomicReference<>();
+            AtomicReference<String> replyAddressRef = new AtomicReference<>();
+            AtomicInteger writes = new AtomicInteger();
+            when(repo.saveLogs(any(UUID.class), any())).thenAnswer(invocation -> {
+                List<LogEntry> batch = invocation.getArgument(1);
+                int call = writes.incrementAndGet();
+                if (call == 1) {
+                    // The tick has claimed "before the tick" and this write is now outstanding.
+                    // Append an entry that the single-flight claim cannot see, then end the fire —
+                    // the window a plain ending-site flush() drops on the floor.
+                    contextRef.get().logger().info("during the in-flight write");
+                    vertx.eventBus()
+                            .send(
+                                    replyAddressRef.get(),
+                                    DispatchEnvelope.of(Result.success(null)),
+                                    new DeliveryOptions().setCodecName("dispatch.envelope"));
+                    return heldWrite.future();
+                }
+                if (call == 2) {
+                    ctx.verify(() -> assertTrue(
+                            batch.stream().anyMatch(entry -> "during the in-flight write".equals(entry.message())),
+                            "an entry appended while a tick write was in flight must still reach the repository"));
+                    ctx.completeNow();
+                }
+                return Future.succeededFuture();
+            });
+
+            // executionTimeoutMs = 0 disables the timeout path, so the completion consumer is the
+            // only ending site in play; the 100 ms progress tick supplies the in-flight write.
+            scheduler = new CronScheduler(
+                    vertx,
+                    Set.of(releaseOnComplete),
+                    repo,
+                    stubTargetResolver(),
+                    testEventBusClient(vertx),
+                    10,
+                    0L,
+                    100L,
+                    DispatchEnvelopeBuilder.forTesting());
+
+            AtomicBoolean logged = new AtomicBoolean(false);
+            vertx.eventBus().consumer("test.logflush.inflight.address", msg -> {
+                if (!(msg.body() instanceof DispatchEnvelope<?> body) || !logged.compareAndSet(false, true)) {
+                    return;
+                }
+                DefaultJobContext jobCtx =
+                        (DefaultJobContext) body.metadata().dispatchContext().get(JobContext.class.getName());
+                contextRef.set(jobCtx);
+                replyAddressRef.set(body.replyAddress().orElseThrow());
+                jobCtx.logger().info("before the tick");
+            });
+
+            // SINGLE_INSTANCE + the stubbed tryInsert win makes this a tracked fire, so the
+            // dispatcher receives a non-null execution and the flusher is persistable.
+            CronJobDefinition job = new CronJobDefinition(
+                    "log-inflight-job",
+                    new CronExpression("* * * * * *"),
+                    new CronTargetReference.EventBusTarget("test.logflush.inflight.address"),
+                    "test.logflush.inflight.address",
+                    ExecutionMode.SINGLE_INSTANCE,
+                    ZoneId.of("UTC"),
+                    3,
+                    null,
+                    OverlapPolicy.SKIP,
+                    true,
+                    Map.of(),
+                    MisfirePolicy.SKIP);
+
+            scheduler.register(job);
+            scheduler.start();
+        }
+
+        @Test
+        @DisplayName("stop() drains the buffered logs of a fire that is still in flight")
+        void shutdownDrainsBufferedLogsOfInFlightExecutions(Vertx vertx, VertxTestContext ctx) {
+            JobRepository repo = stubRepoCapturingCompletion(new AtomicReference<>());
+
+            AtomicBoolean asserted = new AtomicBoolean(false);
+            when(repo.saveLogs(any(UUID.class), any())).thenAnswer(invocation -> {
+                List<LogEntry> batch = invocation.getArgument(1);
+                if (asserted.compareAndSet(false, true)) {
+                    ctx.verify(() -> assertTrue(
+                            batch.stream().anyMatch(entry -> "before the shutdown".equals(entry.message())),
+                            "the shutdown cutoff must drain the buffered entry of a fire still in flight"));
+                    ctx.completeNow();
+                }
+                return Future.succeededFuture();
+            });
+
+            // executionTimeoutMs = 0 disables the timeout path and progressFlushIntervalMs = 0
+            // disables the periodic tick; the handler never replies, so the completion consumer
+            // never runs either. CronJobDispatcher.shutdown() is the only site left that can
+            // reach saveLogs.
+            scheduler = new CronScheduler(
+                    vertx,
+                    Set.of(),
+                    repo,
+                    stubTargetResolver(),
+                    testEventBusClient(vertx),
+                    10,
+                    0L,
+                    0L,
+                    DispatchEnvelopeBuilder.forTesting());
+
+            AtomicBoolean logged = new AtomicBoolean(false);
+            vertx.eventBus().consumer("test.logflush.shutdown.address", msg -> {
+                if (!(msg.body() instanceof DispatchEnvelope<?> body) || !logged.compareAndSet(false, true)) {
+                    return;
+                }
+                DefaultJobContext jobCtx =
+                        (DefaultJobContext) body.metadata().dispatchContext().get(JobContext.class.getName());
+                jobCtx.logger().info("before the shutdown");
+                // Never reply: the execution stays in the dispatcher's activeExecutions, which is
+                // what makes the cutoff drain reachable. stop() is the public entry point onto
+                // CronJobDispatcher.shutdown() — the dispatcher itself is package-private and owned
+                // by the scheduler. Calling it from here rather than after a sleep is the ordering
+                // signal: the entry is buffered before the shutdown can begin.
+                scheduler.stop().onFailure(ctx::failNow);
+            });
+
+            // SINGLE_INSTANCE + the stubbed tryInsert win makes this a tracked fire, so the
+            // dispatcher receives a non-null execution and the flusher is persistable. An untracked
+            // fire gets a no-op flusher by design and would make this test vacuous.
+            CronJobDefinition job = new CronJobDefinition(
+                    "log-shutdown-job",
+                    new CronExpression("* * * * * *"),
+                    new CronTargetReference.EventBusTarget("test.logflush.shutdown.address"),
+                    "test.logflush.shutdown.address",
+                    ExecutionMode.SINGLE_INSTANCE,
+                    ZoneId.of("UTC"),
+                    3,
+                    null,
+                    OverlapPolicy.SKIP,
+                    true,
+                    Map.of(),
+                    MisfirePolicy.SKIP);
+
+            scheduler.register(job);
+            scheduler.start();
         }
     }
 }

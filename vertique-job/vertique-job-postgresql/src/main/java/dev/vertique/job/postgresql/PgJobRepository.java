@@ -8,7 +8,6 @@ import static dev.vertique.job.postgresql.JobExecutionMapper.COL_ID;
 import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.db.postgresql.PgLockMode;
 import dev.vertique.db.postgresql.PgSqlRepository;
-import dev.vertique.job.Checkpoint;
 import dev.vertique.job.CronJobSchedule;
 import dev.vertique.job.JobExecution;
 import dev.vertique.job.JobRepository;
@@ -36,8 +35,8 @@ import lombok.extern.slf4j.Slf4j;
  * PostgreSQL-backed implementation of {@link JobRepository}.
  *
  * <p>All SQL operations use the Vert.x reactive PostgreSQL client via the {@link PgSqlRepository}
- * query builder. JSONB columns ({@code payload}, {@code progress}, checkpoint {@code value}) are
- * serialized as Vert.x {@link JsonObject} instances, which the pg-client driver handles natively.
+ * query builder. JSONB columns ({@code payload}, {@code progress}) are serialized as Vert.x
+ * {@link JsonObject} instances, which the pg-client driver handles natively.
  *
  * <p>The {@link #claimNextJob(String, int)} method runs inside a single transaction: it first
  * selects eligible rows with {@code FOR UPDATE SKIP LOCKED}, then immediately updates their state
@@ -110,14 +109,6 @@ public class PgJobRepository extends PgSqlRepository implements JobRepository {
 
     private static final String SQL_INSERT_LOG =
             "INSERT INTO job_logs (execution_id, level, message, logged_at) VALUES ($1, $2, $3, $4)";
-
-    private static final String SQL_UPSERT_CHECKPOINT =
-            "INSERT INTO job_checkpoints (execution_id, key, value, updated_at) "
-                    + "VALUES ($1, $2, $3::jsonb, NOW()) "
-                    + "ON CONFLICT (execution_id, key) DO UPDATE SET value = $3::jsonb, updated_at = NOW()";
-
-    private static final String SQL_LOAD_CHECKPOINT =
-            "SELECT value, updated_at FROM job_checkpoints WHERE execution_id = $1 AND key = $2";
 
     private static final String SQL_TRY_INSERT = """
             INSERT INTO job_executions (
@@ -442,25 +433,6 @@ public class PgJobRepository extends PgSqlRepository implements JobRepository {
                 .map(e -> Tuple.of(executionId, e.level(), e.message(), toOffsetDateTime(e.loggedAt())))
                 .toList();
         return this.<Void>query(SQL_INSERT_LOG).batch(batch).execute().mapEmpty();
-    }
-
-    /** {@inheritDoc} */
-    @Override
-    public Future<Void> saveCheckpoint(UUID executionId, String key, Object value) {
-        JsonObject json = toJsonObject(value);
-        return this.<Void>query(SQL_UPSERT_CHECKPOINT)
-                .params(Tuple.of(executionId, key, json))
-                .execute()
-                .mapEmpty();
-    }
-
-    /** {@inheritDoc} */
-    @Override
-    public Future<Optional<Checkpoint>> loadCheckpoint(UUID executionId, String key) {
-        return this.<Checkpoint>query(SQL_LOAD_CHECKPOINT)
-                .params(Tuple.of(executionId, key))
-                .mapping(row -> JobExecutionMapper.checkpointFromRow(key, row))
-                .one();
     }
 
     /**

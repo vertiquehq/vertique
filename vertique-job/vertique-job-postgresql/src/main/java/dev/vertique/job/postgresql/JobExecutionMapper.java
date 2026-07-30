@@ -4,7 +4,6 @@
 package dev.vertique.job.postgresql;
 
 import dev.vertique.core.context.DurableMetadata;
-import dev.vertique.job.Checkpoint;
 import dev.vertique.job.JobExecution;
 import dev.vertique.job.JobState;
 import dev.vertique.job.JobType;
@@ -15,12 +14,11 @@ import java.time.Instant;
 import java.time.OffsetDateTime;
 
 /**
- * Maps database {@link Row} instances to {@link JobExecution} and {@link Checkpoint} domain
- * objects.
+ * Maps database {@link Row} instances to {@link JobExecution} domain objects.
  *
- * <p>This mapper handles all column extraction and null-safety for the {@code job_executions} and
- * {@code job_checkpoints} tables. JSONB columns are surfaced as {@link JsonObject}; callers that
- * need typed deserialization should further convert via {@code JsonObject.mapTo(Class)}.
+ * <p>This mapper handles all column extraction and null-safety for the {@code job_executions}
+ * table. JSONB columns are surfaced as {@link JsonObject}; callers that need typed deserialization
+ * should further convert via {@code JsonObject.mapTo(Class)}.
  */
 final class JobExecutionMapper {
 
@@ -92,21 +90,6 @@ final class JobExecutionMapper {
                 parameters,
                 null,
                 metadata);
-    }
-
-    /**
-     * Maps a {@link Row} from {@code job_checkpoints} to a {@link Checkpoint}.
-     *
-     * <p>The checkpoint {@code value} is returned as a {@link JsonObject}.
-     *
-     * @param key the checkpoint key (passed separately as it may be a filter parameter)
-     * @param row the database row to map
-     * @return the mapped {@link Checkpoint}
-     */
-    static Checkpoint checkpointFromRow(String key, Row row) {
-        JsonObject value = row.getJsonObject("value");
-        Instant updatedAt = toInstant(row.getOffsetDateTime("updated_at"));
-        return new Checkpoint(key, value, updatedAt);
     }
 
     // --- Internal helpers ---

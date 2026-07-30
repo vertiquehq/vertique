@@ -15,7 +15,6 @@ import dev.vertique.db.DbPoolConfig;
 import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.db.test.DatabaseExtension;
 import dev.vertique.db.test.PostgresContainer;
-import dev.vertique.job.Checkpoint;
 import dev.vertique.job.CronJobSchedule;
 import dev.vertique.job.JobExecution;
 import dev.vertique.job.JobState;
@@ -49,9 +48,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * Integration tests for {@link PgJobRepository} against a real PostgreSQL instance.
  *
  * <p>Verifies: save, claim (no duplicates, priority order, SKIP LOCKED), state transitions,
- * completion, retry scheduling, heartbeat, stale detection, log persistence, checkpoints,
- * transactional save, tryInsert (SINGLE_INSTANCE leader election), saveSchedule (upsert), and
- * updateScheduleFireTimes.
+ * completion, retry scheduling, heartbeat, stale detection, log persistence, transactional save,
+ * tryInsert (SINGLE_INSTANCE leader election), saveSchedule (upsert), and updateScheduleFireTimes.
  */
 @ExtendWith({VertxExtension.class, DatabaseExtension.class})
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
@@ -525,39 +523,45 @@ public class PgJobRepositoryIT {
     }
 
     @Test
-    @DisplayName("saveCheckpoint upserts: second save with same key overwrites value")
-    void saveCheckpointUpserts(VertxTestContext ctx) {
-        String queue = "checkpoint-test-" + UUID.randomUUID();
+    @DisplayName("saveLogs is all-or-nothing: a mid-batch constraint violation persists zero rows")
+    void saveLogsBatchIsAtomicOnPartialFailure(VertxTestContext ctx) {
+        // This test pins a PostgreSQL guarantee the job-log flush design depends on.
+        //
+        // job_logs has `id BIGSERIAL PRIMARY KEY` and no natural key, so there is no way to
+        // deduplicate a re-sent batch. The retry-on-failure drain in DefaultJobLogger (nack puts
+        // the whole batch back for the next flush) is only safe if a failed saveLogs batch leaves
+        // NO rows behind — otherwise the committed prefix would be duplicated on every retry.
+        //
+        // ANSWER (verified against PostgreSQL 16 via Testcontainers): the batch is ATOMIC.
+        // The failing statement aborts the implicit transaction that wraps the pipelined batch,
+        // so the count below is 0 — the valid rows before AND after the bad row are rolled back.
+        String queue = "logs-atomic-" + UUID.randomUUID();
         JobExecution exec = newExecution(queue, 0);
-        String key = "page";
+
+        // job_logs.level is VARCHAR(5): entries 1 and 3 fit, entry 2 does not and fails the INSERT.
+        List<LogEntry> entries = List.of(
+                new LogEntry("INFO", "before the bad row", Instant.now()),
+                new LogEntry("TOOLONGLEVEL", "violates VARCHAR(5)", Instant.now()),
+                new LogEntry("INFO", "after the bad row", Instant.now()));
 
         repository
                 .save(exec)
-                .compose(id -> repository.saveCheckpoint(exec.id(), key, new JsonObject().put("page", 1)))
-                .compose(v -> repository.saveCheckpoint(exec.id(), key, new JsonObject().put("page", 2)))
-                .compose(v -> repository.loadCheckpoint(exec.id(), key))
-                .onSuccess(opt -> ctx.verify(() -> {
-                    assertTrue(opt.isPresent(), "Checkpoint should exist after upsert");
-                    Checkpoint cp = opt.get();
-                    assertEquals("page", cp.key());
-                    JsonObject value = (JsonObject) cp.value();
-                    assertEquals(2, value.getInteger("page"), "Second upsert should overwrite first");
-                    ctx.completeNow();
-                }))
-                .onFailure(ctx::failNow);
-    }
-
-    @Test
-    @DisplayName("loadCheckpoint returns empty when no checkpoint exists for given key")
-    void loadCheckpointReturnsEmptyWhenAbsent(VertxTestContext ctx) {
-        String queue = "cp-absent-test-" + UUID.randomUUID();
-        JobExecution exec = newExecution(queue, 0);
-
-        repository
-                .save(exec)
-                .compose(id -> repository.loadCheckpoint(exec.id(), "nonexistent"))
-                .onSuccess(opt -> ctx.verify(() -> {
-                    assertFalse(opt.isPresent(), "Checkpoint should be absent");
+                .compose(id -> repository
+                        .saveLogs(exec.id(), entries)
+                        .map(v -> Boolean.FALSE)
+                        .otherwise(err -> Boolean.TRUE))
+                .compose(failed -> {
+                    ctx.verify(() -> assertTrue(failed, "saveLogs must fail when a row violates the level width"));
+                    return pool.preparedQuery("SELECT COUNT(*) FROM job_logs WHERE execution_id = $1")
+                            .execute(Tuple.of(exec.id()))
+                            .map(rows -> rows.iterator().next().getLong(0));
+                })
+                .onSuccess(count -> ctx.verify(() -> {
+                    assertEquals(
+                            0L,
+                            count,
+                            "a failed saveLogs batch must persist zero rows — a committed prefix would be"
+                                    + " duplicated by the nack-and-retry drain, which cannot deduplicate");
                     ctx.completeNow();
                 }))
                 .onFailure(ctx::failNow);

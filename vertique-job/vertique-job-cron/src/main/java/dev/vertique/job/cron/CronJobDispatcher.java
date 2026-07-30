@@ -3,6 +3,7 @@
 
 package dev.vertique.job.cron;
 
+import dev.vertique.core.async.Combinators;
 import dev.vertique.core.context.ContextHolder;
 import dev.vertique.core.context.DeferredExecutionOrigin;
 import dev.vertique.core.eventbus.DispatchEnvelope;
@@ -14,27 +15,31 @@ import dev.vertique.job.JobDispatchContext;
 import dev.vertique.job.JobExecution;
 import dev.vertique.job.JobInterceptor;
 import dev.vertique.job.JobInterceptors;
+import dev.vertique.job.JobLogFlusher;
 import dev.vertique.job.JobRepository;
 import dev.vertique.job.JobState;
 import dev.vertique.job.JobType;
 import dev.vertique.job.ProgressSnapshot;
 import dev.vertique.logging.MDCContexts;
 import dev.vertique.services.ServiceTargetResolver;
+import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.core.eventbus.MessageConsumer;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
 import lombok.extern.slf4j.Slf4j;
 
 /**
  * Dispatches cron job executions to handlers via the event bus, managing per-execution resources
  * (cancel consumers, progress-flush timers, timeout timers) and completion handling.
  *
- * <p>Each call to {@link #dispatch} registers three per-execution resources:
+ * <p>Each call to {@link #dispatch} registers four per-execution resources:
  *
  * <ul>
  *   <li><b>Cancel consumer</b> on {@code job.cancel.<executionId>} — sets the cancelled flag on
@@ -43,12 +48,36 @@ import lombok.extern.slf4j.Slf4j;
  *       on the configured interval when a repository is bound.
  *   <li><b>Execution-timeout timer</b> — fires after the configured timeout and marks the
  *       execution {@link JobState#ABANDONED} if the handler has not replied.
+ *   <li><b>Job log flusher</b> — drains the {@link DefaultJobContext}'s buffered
+ *       {@link dev.vertique.job.JobLogger} entries to {@code job_logs}.
  * </ul>
  *
  * <p>All resources are cleaned up on handler reply, timeout, or {@link #shutdown()}.
+ *
+ * <p><b>Job log flush:</b> Buffered log entries are drained through a per-execution
+ * {@link JobLogFlusher} on the same periodic tick as the progress snapshot (there unconditionally,
+ * since log entries change independently of the snapshot) and on every path that ends the
+ * execution: completion, timeout, and {@link #shutdown()}. The periodic tick calls
+ * {@link JobLogFlusher#flush()}; every ending site calls {@link JobLogFlusher#drain()}, which
+ * awaits an outstanding write and re-flushes while entries remain, because it has just cancelled
+ * the tick that would otherwise have retried. An <em>untracked</em> fire
+ * ({@code execution == null}, i.e. {@code tracked=false} or no repository bound) has no
+ * {@code job_executions} row, and {@code job_logs.execution_id} is
+ * {@code NOT NULL REFERENCES job_executions(id)} — so such a fire is given a flusher built with a
+ * {@code null} execution id, which is a genuine no-op rather than a foreign-key violation.
  */
 @Slf4j
 final class CronJobDispatcher {
+
+    // --- Constants ---
+
+    /**
+     * Upper bound, in seconds, on how long {@link #shutdown()} waits for one execution's shutdown
+     * log drain to settle. {@link JobLogFlusher#flush()} already bounds each individual write, so
+     * a drain settles on its own eventually; this bound collapses the drain's whole round budget
+     * into one wait so undeploy is not held for the sum of them.
+     */
+    private static final long SHUTDOWN_FLUSH_TIMEOUT_SECONDS = 5L;
 
     /**
      * Callback invoked by the dispatcher when a job execution finishes, either via a handler
@@ -65,14 +94,18 @@ final class CronJobDispatcher {
     }
 
     /**
-     * Per-execution resource bundle: timeout timer ID, progress-flush timer ID, and cancel
-     * consumer. All timer fields use {@code -1L} as the sentinel for "not set".
+     * Per-execution resource bundle: timeout timer ID, progress-flush timer ID, cancel consumer,
+     * and job-log flusher. All timer fields use {@code -1L} as the sentinel for "not set".
      *
      * @param timeoutId       Vert.x timer ID for the execution timeout, or {@code -1}
      * @param progressFlushId Vert.x timer ID for the progress-flush periodic timer, or {@code -1}
      * @param cancelConsumer  event-bus consumer for cooperative cancellation signals
+     * @param logFlusher      drains this execution's buffered job log entries to the repository;
+     *                        retained so {@link #shutdown()} can take a cutoff snapshot of an
+     *                        execution that is still in flight
      */
-    private record ExecutionResources(long timeoutId, long progressFlushId, MessageConsumer<?> cancelConsumer) {}
+    private record ExecutionResources(
+            long timeoutId, long progressFlushId, MessageConsumer<?> cancelConsumer, JobLogFlusher logFlusher) {}
 
     private final Vertx vertx;
     private final EventBusClient eventBusClient;
@@ -88,8 +121,9 @@ final class CronJobDispatcher {
     private final Set<MessageConsumer<?>> activeConsumers = ConcurrentHashMap.newKeySet();
 
     /**
-     * Tracks per-execution resources (timeout timer, progress-flush timer, cancel consumer) for
-     * cleanup when the consumer replies, the timeout fires, or the dispatcher shuts down.
+     * Tracks per-execution resources (timeout timer, progress-flush timer, cancel consumer, log
+     * flusher) for cleanup when the consumer replies, the timeout fires, or the dispatcher shuts
+     * down.
      */
     private final Map<UUID, ExecutionResources> activeExecutions = new ConcurrentHashMap<>();
 
@@ -204,6 +238,17 @@ final class CronJobDispatcher {
             log.info("Cancel requested for cron job '{}' execution {}", job.id(), executionId);
         });
 
+        // Job log flush: drains the context's buffered log entries to job_logs. Constructed
+        // OUTSIDE the progressFlushIntervalMs guard on purpose — the ending sites below flush
+        // through it too, so building it inside the guard would mean a 0 interval (periodic flush
+        // disabled) silently made job logs non-durable rather than merely less timely.
+        //
+        // The id is execution.id(), NOT the local `executionId` above: for an untracked fire the
+        // latter is a freshly minted UUID with no job_executions row, and job_logs.execution_id
+        // references that table. Passing null instead makes the flusher a genuine no-op.
+        final JobLogFlusher logFlusher =
+                new JobLogFlusher(repository, execution != null ? execution.id() : null, jobContext);
+
         // Progress flush: periodically write changed snapshots to the repository
         final ProgressSnapshot[] lastFlushed = {ProgressSnapshot.EMPTY};
         final long progressFlushId = (execution != null && repository != null && progressFlushIntervalMs > 0)
@@ -216,6 +261,11 @@ final class CronJobDispatcher {
                                 .onFailure(err ->
                                         log.debug("Progress flush failed for '{}': {}", job.id(), err.getMessage()));
                     }
+                    // Unconditional: log entries change independently of the progress snapshot, so
+                    // gating this on the snapshot-changed check would strand the logs of any job
+                    // that logs without reporting progress. The flusher is itself a no-op when
+                    // nothing is buffered.
+                    logFlusher.flush();
                 })
                 : -1L;
 
@@ -232,31 +282,46 @@ final class CronJobDispatcher {
                             vertx.cancelTimer(progressFlushId);
                         }
                         activeExecutions.remove(executionId);
-                        log.error(
-                                "Cron job '{}' execution {} timed out after {}ms — marking ABANDONED",
-                                job.id(),
-                                executionId,
-                                executionTimeoutMs);
-                        if (execution != null && repository != null) {
-                            repository
-                                    .completeExecution(
-                                            executionId,
-                                            JobState.ABANDONED,
-                                            "Execution timeout",
-                                            "ExecutionTimeoutException",
-                                            jobContext.progress().snapshot())
-                                    .onFailure(err -> log.warn(
-                                            "Failed to mark cron execution {} ABANDONED on timeout: {}",
-                                            executionId,
-                                            err.getMessage()));
+
+                        try {
+                            log.error(
+                                    "Cron job '{}' execution {} timed out after {}ms — marking ABANDONED",
+                                    job.id(),
+                                    executionId,
+                                    executionTimeoutMs);
+                            if (execution != null && repository != null) {
+                                repository
+                                        .completeExecution(
+                                                executionId,
+                                                JobState.ABANDONED,
+                                                "Execution timeout",
+                                                "ExecutionTimeoutException",
+                                                jobContext.progress().snapshot())
+                                        .onFailure(err -> log.warn(
+                                                "Failed to mark cron execution {} ABANDONED on timeout: {}",
+                                                executionId,
+                                                err.getMessage()));
+                            }
+                            completionCallback.onCompleted(job);
+                        } finally {
+                            // The timeout ends this execution and the progress tick above is
+                            // already cancelled, so this is the last chance to persist: drain()
+                            // rather than flush(), because a plain flush would claim nothing while
+                            // a tick write is still outstanding and no later tick would re-drain.
+                            // Deliberately last: nothing that ends the execution — the ABANDONED
+                            // transition or the completion callback — may sit behind the drain, and
+                            // the finally keeps the drain reachable if that work throws. The
+                            // handler is not interrupted and may keep appending; the drain's round
+                            // cap is what stops that from holding this site open indefinitely.
+                            logFlusher.drain();
                         }
-                        completionCallback.onCompleted(job);
                     }
                 })
                 : -1L;
 
         // Track resources for cleanup on shutdown() or early reply
-        activeExecutions.put(executionId, new ExecutionResources(timeoutId, progressFlushId, cancelConsumer));
+        activeExecutions.put(
+                executionId, new ExecutionResources(timeoutId, progressFlushId, cancelConsumer, logFlusher));
 
         // --- Completion consumer ---
 
@@ -273,41 +338,55 @@ final class CronJobDispatcher {
 
             consumer.unregister();
             activeConsumers.remove(consumer);
+
             Instant endTime = Instant.now();
 
-            // Restore MDC for correlated completion logging. MDCContexts.bindAll snapshots prior
-            // per-key state at install time and restores it (including absence) on close — using
-            // it via try-with-resources gives us LIFO unwind without manual remove() bookkeeping.
-            // The event-bus consumer callback runs on a duplicated Vert.x context so the
-            // framework MDC write-guard accepts the bind.
-            try (ContextHolder.Scope mdcScope = MDCContexts.bindAll(mdc)) {
-                // Extract result and fire interceptors
-                Result<?> result = null;
-                if (msg.body() instanceof DispatchEnvelope<?> replyBody && replyBody.payload() instanceof Result<?> r) {
-                    result = r;
+            try {
+                // Restore MDC for correlated completion logging. MDCContexts.bindAll snapshots
+                // prior per-key state at install time and restores it (including absence) on
+                // close — using it via try-with-resources gives us LIFO unwind without manual
+                // remove() bookkeeping. The event-bus consumer callback runs on a duplicated
+                // Vert.x context so the framework MDC write-guard accepts the bind.
+                try (ContextHolder.Scope mdcScope = MDCContexts.bindAll(mdc)) {
+                    // Extract result and fire interceptors
+                    Result<?> result = null;
+                    if (msg.body() instanceof DispatchEnvelope<?> replyBody
+                            && replyBody.payload() instanceof Result<?> r) {
+                        result = r;
+                    }
+
+                    JobInterceptors.fireOnComplete(interceptors, dispatchCtx, result, startedAt, endTime, log);
+
+                    // Persist completion and update fire times if tracked
+                    if (execution != null && repository != null) {
+                        persistCompletion(job, execution, result);
+                        updateFireTimes(job, scheduledAt);
+                    }
+
+                    // Log the completion result
+                    if (result != null && result.isFailure()) {
+                        log.warn(
+                                "Cron job '{}' execution {} failed: {}",
+                                job.id(),
+                                executionId,
+                                result.cause().getMessage());
+                    } else {
+                        log.debug("Cron job '{}' execution {} completed successfully", job.id(), executionId);
+                    }
                 }
 
-                JobInterceptors.fireOnComplete(interceptors, dispatchCtx, result, startedAt, endTime, log);
-
-                // Persist completion and update fire times if tracked
-                if (execution != null && repository != null) {
-                    persistCompletion(job, execution, result);
-                    updateFireTimes(job, scheduledAt);
-                }
-
-                // Log the completion result
-                if (result != null && result.isFailure()) {
-                    log.warn(
-                            "Cron job '{}' execution {} failed: {}",
-                            job.id(),
-                            executionId,
-                            result.cause().getMessage());
-                } else {
-                    log.debug("Cron job '{}' execution {} completed successfully", job.id(), executionId);
-                }
+                completionCallback.onCompleted(job);
+            } finally {
+                // The handler has reported, so nothing more will be appended: this drains whatever
+                // the periodic tick had not yet claimed. drain(), not flush() — the tick timer is
+                // cancelled above, so a claim that came back empty because a tick write was still
+                // outstanding would strand those entries with nothing left to re-drain them.
+                // Fire-and-forget, and deliberately last — no work that ends the execution may sit
+                // behind it, and the finally keeps the drain reachable even when completion
+                // handling throws (JobLogFlusher itself never throws and always returns a
+                // succeeded future).
+                logFlusher.drain();
             }
-
-            completionCallback.onCompleted(job);
         });
 
         // Enrich the scheduler thread's SLF4J MDC for correlated dispatch logging. The framework
@@ -332,15 +411,33 @@ final class CronJobDispatcher {
 
     /**
      * Cleans up all active execution resources: unregisters completion consumers, cancels timeout
-     * timers, cancels progress-flush timers, and unregisters cancel consumers. Should be called
-     * when the scheduler stops.
+     * timers, cancels progress-flush timers, unregisters cancel consumers, and takes a final
+     * cutoff snapshot of each in-flight execution's job logs. Should be called when the scheduler
+     * stops.
+     *
+     * <p><b>The shutdown flush is a cutoff snapshot, not a final flush.</b> In-flight executions
+     * are not interrupted, so a handler may keep logging after its buffer is drained here; those
+     * later entries are lost. The snapshot bounds what a graceful shutdown loses — it does not
+     * eliminate loss.
+     *
+     * <p>It goes through {@link dev.vertique.job.JobLogFlusher#drain()} rather than a single flush:
+     * the progress-flush timer is cancelled just above, so a claim that came back empty because a
+     * tick write was still outstanding would make the "snapshot" contain nothing at all.
+     *
+     * @return a future that succeeds once every cutoff drain has settled or hit its per-execution
+     *     timeout bound; never fails
      */
-    void shutdown() {
+    Future<Void> shutdown() {
         for (MessageConsumer<?> consumer : activeConsumers) {
             consumer.unregister();
         }
         activeConsumers.clear();
-        for (ExecutionResources resources : activeExecutions.values()) {
+        // Cancel per-execution resources (timeout timers, progress-flush timers, cancel consumers)
+        // and drain each execution's buffered log entries one last time. The cancels stay in their
+        // own loop so a cancelTimer/unregister throw still propagates rather than being swallowed
+        // and mislabelled as a flush failure.
+        List<ExecutionResources> pending = new ArrayList<>(activeExecutions.values());
+        for (ExecutionResources resources : pending) {
             if (resources.timeoutId() != -1L) {
                 vertx.cancelTimer(resources.timeoutId());
             }
@@ -350,6 +447,16 @@ final class CronJobDispatcher {
             resources.cancelConsumer().unregister();
         }
         activeExecutions.clear();
+
+        // joinAllSwallow waits for every drain to settle without short-circuiting and always
+        // succeeds — the all-settled-swallow contract this shutdown needs. The timeout bound stays
+        // inside the hook: JobLogFlusher.flush() already bounds each write, so this is not what
+        // rescues an unsettleable future. What it buys is collapsing the drain's whole round
+        // budget — and its await of an already-outstanding write — into a single bound on undeploy.
+        return Combinators.joinAllSwallow(
+                pending,
+                resources -> resources.logFlusher().drain().timeout(SHUTDOWN_FLUSH_TIMEOUT_SECONDS, TimeUnit.SECONDS),
+                (resources, err) -> log.warn("Shutdown job-log flush did not settle: {}", err.getMessage()));
     }
 
     /**

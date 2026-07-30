@@ -110,7 +110,6 @@ Per-execution runtime API; thread-safe.
 | `isCancelled()` / `setCancelled(boolean)` | Cooperative cancellation flag |
 | `saveMetadata(String, Object)` / `getMetadata(String, Class<T>)` | Named values; a `null` value removes the key |
 | `hasCompletedStep(String)` / `runStepOnce(String, Supplier<Future<T>>)` | Step deduplication |
-| `checkpoint(String, Object)` / `lastCheckpoint(String, Class<T>)` | Named checkpoint values |
 
 `runStepOnce` gives lightweight idempotency inside one execution without a transaction:
 
@@ -122,7 +121,7 @@ Per-execution runtime API; thread-safe.
 - A failed task — failed future *or* a supplier that throws synchronously — clears the marker, so the
   step runs again on the next call.
 
-### Progress, logging and checkpoints
+### Progress and logging
 
 `ProgressReporter` (`setTotal`, `incrementSucceeded()`/`(long)`, `incrementFailed()`/`(long)`,
 `setStatus`, `percentage`, `snapshot`) is thread-safe and always optional. `snapshot()` returns the
@@ -130,8 +129,52 @@ immutable `ProgressSnapshot(total, succeeded, failed, status)`, whose `percentag
 `(succeeded + failed) * 100 / total` and `0` when `total` is `0`; `ProgressSnapshot.EMPTY` is the
 initial value. `JobLogger` buffers `LogEntry(level, message, loggedAt)` records with `level` one of
 `"INFO"`, `"WARN"`, `"ERROR"`; call it as `ctx.logger().warn("Skipping row: missing field 'email'")`.
-`Checkpoint(key, value, updatedAt)` records what `ctx.checkpoint(...)` stored; `value` is any object
-and its serialization is repository-specific.
+The scheduling module periodically drains buffered entries to `job_logs` through a `JobLogFlusher`
+(below), so `logger().entries()` reflects only what is still buffered, not the whole execution's
+output.
+
+The default `JobLogger` normalizes every message as it is buffered, so no single entry can make the
+persisting write fail: a `null` message is stored as `<null>`, C0 control characters are stripped
+(`\n`, `\r` and `\t` are kept, so multi-line output survives), and a message longer than 8192
+characters is truncated with a `…[truncated N chars]` marker. Pass unvalidated job-payload text to
+the logger freely — a `NUL` inside it cannot poison the execution's log writes.
+
+### JobLogFlusher
+
+Drains one execution's buffered `JobLogger` entries into a `JobRepository`; one instance per
+execution. `flush()` claims up to 500 buffered entries as one batch and persists them via
+`JobRepository.saveLogs(UUID, List<LogEntry>)` — a successful write acknowledges the batch, a failed
+write returns it to the front of the buffer so the next `flush()` retries it ahead of newer entries.
+Anything beyond the 500-entry cap stays buffered for the following `flush()`.
+
+`flush()` always returns a succeeded future: a persistence failure is logged as a warning and never
+fails the job whose logs these are. That holds for every way a `JobRepository` implementation can
+misbehave — a synchronous throw, a `null` return, or a write that never settles; the write itself is
+bounded at 5 seconds. A write that exceeds that bound but commits afterwards leaves rows the retry
+writes again, because `job_logs` has no natural key to deduplicate on; duplicate log rows are the
+accepted cost of never stalling the flush loop.
+
+`drain()` is the variant for a site that *ends* the execution. The claim is single-flight, so a
+`flush()` issued while an earlier write is still outstanding claims nothing and returns an
+already-succeeded future — harmless on a periodic tick, because the next tick picks the work up, but
+lossy at an ending site, which has just cancelled that tick. `drain()` therefore awaits the
+outstanding write and re-flushes while entries remain, which also retries a nacked batch that no
+later tick would have retried. It is bounded at **4 rounds**, and a round whose write failed counts
+the same as one that succeeded: a repository that is down costs a fixed number of fast rounds, and a
+still-running handler that keeps appending cannot hold the ending site open. Entries left when the
+rounds are spent are lost, and the loss is logged at WARN naming the execution and the entry count.
+Like `flush()`, `drain()` always returns a succeeded future.
+
+```java
+JobLogFlusher flusher = new JobLogFlusher(repository, executionId, ctx);
+flusher.flush(); // Future<Void>, always succeeds — periodic tick
+flusher.drain(); // Future<Void>, always succeeds — execution-ending site
+```
+
+Construction with a `null` repository or a `null` execution id yields a genuine no-op flusher that
+never touches the repository — the case for an execution with no persisted row to reference. The
+scheduling modules (`vertique-job-cron`, `vertique-job-delayed`) own when `flush()` and `drain()` are
+called; application code does not construct or call a `JobLogFlusher` directly.
 
 ### JobCompletionHandler
 
@@ -200,13 +243,22 @@ one timeout policy.
 - **Terminal writes are idempotent.** `completeExecution`, `failAndScheduleRetry` and
   `abandonAndScheduleRetry` return `Optional.empty()` when no row transitioned — an already-terminal
   execution — and no listener fires for that no-op.
-- **`checkpoint()` and `logger()` are execution-scoped memory.** The default `JobContext` holds both
-  in memory for the life of the execution. The framework's dispatch paths do not call
-  `JobRepository.saveCheckpoint`, `loadCheckpoint` or `saveLogs`, so neither survives a restart
-  today; those SPI methods exist for adapters and callers that flush explicitly.
-- **`getMetadata` and `lastCheckpoint` do not type-check.** The `Class<T>` argument documents intent
-  only; the value is cast unchecked, so a wrong type surfaces as `ClassCastException` at the call
-  site.
+- **`logger()` output is durable, not a live transcript.** The default `JobContext` buffers entries
+  in memory; the scheduling module drains them through a per-execution `JobLogFlusher` on the
+  progress-flush tick and after every path that ends the execution, plus a bounded cutoff drain at
+  shutdown. Delivery is at-least-once on a known write failure — a failed batch is retried at the
+  front of the buffer, ahead of newer entries — and a flush failure never fails the job. Because
+  flushed entries are removed from the buffer, `logger().entries()` returns only what is still
+  buffered, not everything the execution has logged.
+- **The ending-site retry is bounded at 4 rounds.** A periodic tick can retry a failed write
+  indefinitely, but a site that ends the execution has cancelled that tick, so its `drain()` gets a
+  fixed budget: 4 rounds, counting failed rounds. Entries a sustained write outage leaves behind when
+  the budget is spent are lost, and reported at WARN.
+- **Log messages are normalized, not stored verbatim.** A `null` message becomes `<null>`, C0
+  control characters are dropped (tabs, newlines and carriage returns survive), and messages are
+  truncated at 8192 characters. Do not use `logger()` output as a byte-exact record of a payload.
+- **`getMetadata` does not type-check.** The `Class<T>` argument documents intent only; the value is
+  cast unchecked, so a wrong type surfaces as `ClassCastException` at the call site.
 - **`JobExecution.payload` is not copied.** The compact constructor copies `parameters` and
   `attributes` but keeps `payload` as an opaque reference — do not mutate it after construction.
 - **Interceptor and listener callbacks are synchronous and must not block.** They run on the
@@ -227,7 +279,7 @@ without it (in-memory only); delayed jobs require it. Every method returns a `Fu
 | Lifecycle | `save`, `updateState`, `claimNextJob`, `heartbeat`, `findStale`, `findById` |
 | Terminal + retry | `completeExecution`, `scheduleRetry`, `failAndScheduleRetry`, `abandonAndScheduleRetry` |
 | Leader election | `tryInsert` |
-| Auxiliary records | `saveLogs`, `saveCheckpoint`, `loadCheckpoint` |
+| Auxiliary records | `saveLogs` |
 | Cron schedules | `saveSchedule`, `updateScheduleFireTimes`, `findSchedule` |
 | Node heartbeats | `serverHeartbeat`, `findDeadServers`, `removeServer`, `findByLockedBy` |
 

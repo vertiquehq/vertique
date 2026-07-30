@@ -150,6 +150,7 @@ Manages timer registrations and job dispatches. Each registered job gets its own
 - **Consumer timeout:** When `executionTimeoutMs > 0`, a local Vert.x timer marks the execution `ABANDONED` and releases the concurrency slot if no reply arrives in time. Set to `0` to disable.
 - **Cooperative cancellation:** Each dispatched execution registers a consumer on `job.cancel.<executionId>`. When a cancel message arrives, `DefaultJobContext.setCancelled(true)` is called. Handlers should poll `ctx.isCancelled()` and exit gracefully.
 - **Progress flush:** When `progressFlushIntervalMs > 0` and a repository is available, a periodic timer writes changed `ProgressSnapshot` values to the repository.
+- **Job log flush:** A per-execution `JobLogFlusher` (`dev.vertique:vertique-job-core`) drains the execution's buffered `JobLogger` entries to `job_logs`. It flushes on the same periodic tick as progress — unconditionally, since log entries change independently of the progress snapshot — and on every path that ends the execution: completion, timeout, and `stop()`. The periodic tick calls `flush()`; every ending site calls `drain()`, which awaits a write still outstanding from the tick and re-flushes while entries remain, bounded at 4 rounds. That bound matters because the ending site has just cancelled the tick that would otherwise have retried: entries still unpersisted when the rounds are spent are lost, and reported at WARN. `job.coordinator.progressFlushIntervalMs` (default `10000`) governs only the *periodic* flush; `0` disables the tick, but the ending-site drains still run. An **untracked** fire (`tracked=false`, or no repository bound) is given a flusher built with a `null` execution id and never flushes — it has no `job_executions` row, and `job_logs.execution_id` is a foreign key onto that table. The final `stop()` drain is a bounded cutoff snapshot, not a guaranteed final flush: an in-flight execution's handler is not interrupted, so entries it logs after the snapshot are lost.
 - **Deferred-execution provenance:** `CronJobDispatcher` binds a `DeferredExecutionOrigin` (`kind = "cron"`, `reference` = the job id) into the dispatch context, proving the dispatch is deferred execution for the opt-in identity-snapshot reconstruction initializer.
 
 **Tracked executions:** When `tracked=true` and a repository is available, a `JobExecution` is persisted before dispatch and updated on completion. `SINGLE_INSTANCE` jobs are always tracked.
@@ -158,7 +159,7 @@ Manages timer registrations and job dispatches. Each registered job gets its own
 |--------|-------------|
 | `register(CronJobDefinition)` | Registers a job definition |
 | `start()` | Schedules first timers for all registered jobs; runs misfire recovery |
-| `stop()` | Cancels all timers and unregisters reply consumers |
+| `stop()` | Cancels all timers, unregisters reply consumers, and takes a bounded cutoff drain of every in-flight execution's buffered job logs |
 
 ### `CronJobRegistrar`
 
