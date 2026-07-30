@@ -1366,6 +1366,63 @@ class CronSchedulerTest {
         }
 
         /**
+         * A permanently unresolvable target must not log an {@code ERROR} on every tick.
+         *
+         * <p>Resolution failures are usually permanent (the built-in resolver snapshots its index at
+         * construction) while the retry is per-tick, so an unbounded report would write an ERROR
+         * plus a stack trace every second, indefinitely, per node — enough to fill a log volume and
+         * to bury real security events. Only the first failure per job may log at {@code ERROR}.
+         *
+         * <p>Asserted over three or more ticks so a per-tick regression cannot pass by timing luck.
+         */
+        @Test
+        @DisplayName("permanently unresolvable target logs ERROR once, not once per tick")
+        void permanentlyUnresolvableTargetLogsErrorOnce(Vertx vertx, VertxTestContext ctx) {
+            ch.qos.logback.classic.Logger schedulerLogger =
+                    (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(CronScheduler.class);
+            ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> appender =
+                    new ch.qos.logback.core.read.ListAppender<>();
+            appender.setContext(schedulerLogger.getLoggerContext());
+            appender.start();
+            schedulerLogger.addAppender(appender);
+
+            ServiceTargetResolver resolver = mock(ServiceTargetResolver.class);
+            when(resolver.resolve(STABLE_TARGET_ID)).thenThrow(new IllegalArgumentException("never resolves"));
+
+            JobRepository repo = mock(JobRepository.class);
+            scheduler = new CronScheduler(
+                    vertx, Set.of(), repo, resolver, testEventBusClient(vertx), DispatchEnvelopeBuilder.forTesting());
+            scheduler.register(
+                    serviceTargetJob("never-resolves-job", ExecutionMode.SINGLE_INSTANCE, OverlapPolicy.SKIP));
+            scheduler.start();
+
+            // ~3.5s over a one-second cron: at least three failed fires.
+            vertx.setTimer(3500, id -> {
+                schedulerLogger.detachAppender(appender);
+                appender.stop();
+                ctx.verify(() -> {
+                    long errors = appender.list.stream()
+                            .filter(event -> event.getLevel() == ch.qos.logback.classic.Level.ERROR)
+                            .count();
+                    long debugs = appender.list.stream()
+                            .filter(event -> event.getLevel() == ch.qos.logback.classic.Level.DEBUG
+                                    && event.getFormattedMessage().contains("skipping this fire"))
+                            .count();
+                    assertEquals(
+                            1,
+                            errors,
+                            "exactly one ERROR expected for a permanently unresolvable target, got " + errors
+                                    + " — an unbounded per-tick report fills log volumes");
+                    assertTrue(
+                            debugs >= 1,
+                            "subsequent failures must still be reported at DEBUG so the condition stays"
+                                    + " observable; got " + debugs);
+                    ctx.completeNow();
+                });
+            });
+        }
+
+        /**
          * GREEN regression guard: unlike tests 1-3, this uses a mock {@link JobRepository} that
          * tolerates a {@code null} handler — it only goes red against a real {@code NOT NULL}
          * handler column (e.g. {@code vertique-job-postgresql}), which this unit test doesn't

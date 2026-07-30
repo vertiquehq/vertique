@@ -3,6 +3,7 @@
 
 package dev.vertique.job.cron;
 
+import dev.vertique.core.context.DeferredExecutionOrigin;
 import dev.vertique.core.eventbus.EventBusClient;
 import dev.vertique.core.extension.OrderedExtension;
 import dev.vertique.job.JobExecution;
@@ -114,6 +115,20 @@ public class CronScheduler {
     private final ServiceTargetResolver serviceTargetResolver;
     private final List<CronJobDefinition> jobs = new ArrayList<>();
     private final Map<String, Long> activeTimers = new ConcurrentHashMap<>();
+
+    /**
+     * Job ids that have already logged a target-resolution failure at {@code ERROR}; cleared on the
+     * job's next successful resolution.
+     *
+     * <p>Exists to bound log volume. A resolution failure is usually <em>permanent</em>, not
+     * transient — the built-in resolver snapshots its index at construction, so a target id that
+     * misses at startup misses for the process lifetime — and the scheduler deliberately retries
+     * every tick. Without this, one mistyped target on a one-second cron writes an ERROR plus a
+     * stack trace every second, indefinitely, on every node: enough to fill a log volume and to
+     * bury genuine security events in the same stream. First failure per job logs at {@code ERROR}
+     * with the cause; subsequent ones drop to {@code DEBUG} until the target resolves again.
+     */
+    private final Set<String> resolutionFailureLogged = ConcurrentHashMap.newKeySet();
 
     // --- Helpers ---
 
@@ -574,10 +589,24 @@ public class CronScheduler {
      * {@code null} or blank {@link JobExecution#handler()} — including a caller that builds a
      * definition directly rather than going through {@link CronJobRegistrar}.
      *
-     * <p>Returns {@code null} — after logging at {@code ERROR} with the job id and the target's
-     * canonical form — when the resolver throws or the effective address is null/blank, so the
-     * caller can abandon the fire and release whatever guard it already holds. The failure is
-     * never rethrown: a resolution failure skips that fire only, and the next tick retries.
+     * <p>Returns {@code null} — after logging the job id and the target's canonical form — when the
+     * resolver throws or the effective address is null/blank, so the caller can abandon the fire and
+     * release whatever guard it already holds. No {@link Exception} is rethrown: a resolution
+     * failure skips that fire only, and the next tick retries. The first failure per job logs at
+     * {@code ERROR} with the cause and subsequent ones at {@code DEBUG} (see
+     * {@link #resolutionFailureLogged}), because the failure is typically permanent while the retry
+     * is per-tick.
+     *
+     * <p>An {@link Error} is deliberately <em>not</em> caught, consistent with this module's rule
+     * that an {@code Error} leaves the JVM in an undefined state and must propagate rather than be
+     * swallowed (see {@code CronLifecycleVerticle#start}). The cost of that choice is explicit: an
+     * {@code Error} raised by a custom {@link ServiceTargetResolver} escapes with the caller's
+     * in-flight guard still held, silently stalling that one job on this node. That is an accepted
+     * trade — a JVM in an undefined state is the larger problem — but it is the reason the guard is
+     * released on the {@code null} return rather than in a {@code finally}.
+     *
+     * <p>Both interpolated identifiers are config-supplied, so they are sanitized before they reach
+     * a log record; see {@link #forLog(String)}.
      *
      * <p>Resolving per fire rather than immediately before the event-bus send is sound only
      * because the built-in {@code DefaultServiceTargetResolver} snapshots its indexes with
@@ -596,7 +625,7 @@ public class CronScheduler {
         // it permanently — the exact failure mode this gate exists to prevent. CronJobDefinition
         // does not validate that target is non-null, so the guard cannot assume it.
         CronTargetReference target = job.target();
-        String targetDescription = target != null ? target.toCanonical() : "<none>";
+        String targetDescription = target != null ? forLog(target.toCanonical()) : "<none>";
         String address;
         if (target instanceof CronTargetReference.ServiceTarget serviceTarget) {
             try {
@@ -604,11 +633,7 @@ public class CronScheduler {
                         .resolve(serviceTarget.stableTargetId())
                         .address();
             } catch (Exception e) {
-                log.error(
-                        "Cron job '{}' target '{}' could not be resolved — skipping this fire",
-                        job.id(),
-                        targetDescription,
-                        e);
+                logResolutionFailure(job, targetDescription, "could not be resolved", e);
                 return null;
             }
         } else if (target instanceof CronTargetReference.EventBusTarget eventBusTarget) {
@@ -621,13 +646,58 @@ public class CronScheduler {
             address = job.handlerAddress();
         }
         if (address == null || address.isBlank()) {
-            log.error(
-                    "Cron job '{}' target '{}' resolved to a null or blank event bus address — skipping this fire",
-                    job.id(),
-                    targetDescription);
+            logResolutionFailure(job, targetDescription, "resolved to a null or blank event bus address", null);
             return null;
         }
+        resolutionFailureLogged.remove(job.id());
         return address;
+    }
+
+    /**
+     * Logs a target-resolution failure once per job at {@code ERROR}, then at {@code DEBUG} until
+     * that job resolves again. See {@link #resolutionFailureLogged} for why the volume is bounded.
+     *
+     * @param job               the job whose target failed to resolve
+     * @param targetDescription the already-sanitized target description
+     * @param reason            what went wrong, phrased to follow the target in the message
+     * @param cause             the resolver failure to attach on the first report, or {@code null}
+     */
+    private void logResolutionFailure(CronJobDefinition job, String targetDescription, String reason, Exception cause) {
+        String jobId = forLog(job.id());
+        if (resolutionFailureLogged.add(job.id())) {
+            log.error(
+                    "Cron job '{}' target '{}' {} — skipping this fire; further failures for this"
+                            + " job log at DEBUG until it resolves",
+                    jobId,
+                    targetDescription,
+                    reason,
+                    cause);
+        } else {
+            log.debug("Cron job '{}' target '{}' {} — skipping this fire", jobId, targetDescription, reason);
+        }
+    }
+
+    /**
+     * Sanitizes a config-supplied identifier for safe interpolation into a log record.
+     *
+     * <p>Cron job ids and {@code eventbus:} target addresses are accepted from configuration with
+     * only a non-blank check, and configuration can be supplied by environment variables and remote
+     * config stores. Written verbatim into a log record under the shipped pattern layouts — which
+     * end in {@code %msg%n} with no escaping conversion — an embedded newline would terminate the
+     * record and emit the remainder as an independent, fully caller-shaped line: log forging
+     * (CWE-117). Length is unbounded too, which multiplies the cost of any repeated report.
+     *
+     * <p>Delegates to {@link DeferredExecutionOrigin#of(String, String)}, whose documented job is to
+     * sanitize a "raw, possibly attacker-influenced boundary identifier" — stripping control and
+     * separator code points and bounding length without splitting a surrogate pair. Reused rather
+     * than reimplemented so cron cannot drift from the sanitizing rule the rest of the
+     * deferred-execution boundary already applies to these same strings.
+     *
+     * @param raw the raw config-supplied identifier
+     * @return the sanitized, length-bounded form, safe to interpolate into a log record
+     */
+    private static String forLog(String raw) {
+        return DeferredExecutionOrigin.of("cron", raw).reference();
     }
 
     /**
