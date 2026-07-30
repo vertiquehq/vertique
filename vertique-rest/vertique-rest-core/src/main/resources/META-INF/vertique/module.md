@@ -313,8 +313,10 @@ unannotated aggregate `List<FileUpload>`. `EntityPart` is excluded because a par
 the upload gate cannot observe. Invalid placement, invalid allowed-type grammar, a size other than
 `-1` or positive, and overlapping constrained declarations all fail route startup.
 
-Size enforcement is **post-spool**: `http.maxBodySize` is the ingress limit that returns 413, while
-`maxSizeBytes` is checked after Vert.x has written the part under `http.uploadsDirectory`.
+Size enforcement is **post-spool**: `http.maxBodySize` is the ingress size limit that returns 413,
+while `maxSizeBytes` is checked after Vert.x has written the part under `http.uploadsDirectory`.
+Part *count* is bounded separately at ingress by `http.maxFormFields`, so a request with more parts
+than that is rejected during decoding whatever their individual sizes.
 
 ### Pagination
 
@@ -1036,7 +1038,7 @@ custom response headers.
 |---|---:|---|
 | `http.port` | `8080` | |
 | `http.host` | `"0.0.0.0"` | |
-| `http.maxBodySize` | `2097152` | bytes; the sole request-body size limit — exceeding it returns 413 |
+| `http.maxBodySize` | `2097152` | total request-body bytes — exceeding it returns 413 |
 | `http.uploadsDirectory` | `"file-uploads"` | must be non-blank; multipart spool directory |
 | `http.compressionSupported` | `false` | gzip/deflate responses |
 | `http.compressionLevel` | `6` | 1–9 |
@@ -1051,7 +1053,7 @@ custom response headers.
 | `http.acceptBacklog` | `-1` | `-1` uses the OS default |
 | `http.useProxyProtocol` | `false` | read the real client IP from an upstream proxy |
 | `http.maxFormAttributeSize` | `8192` | bytes, per URL-encoded form value |
-| `http.maxFormFields` | `256` | URL-encoded form fields per request |
+| `http.maxFormFields` | `256` | form parts per request; one shared limit across multipart file parts, multipart text parts, and URL-encoded attributes |
 
 ### `http.ssl`
 
