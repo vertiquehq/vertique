@@ -15,23 +15,10 @@ import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import dev.vertique.core.json.JsonMapperProfile;
 import dev.vertique.core.json.JsonProfile;
 import dev.vertique.core.json.JsonProfileId;
-import dev.vertique.json.DefaultJsonMapperProfileRegistry;
-import dev.vertique.json.JsonConfig;
 import dev.vertique.json.JsonMapperProfiles;
 import dev.vertique.json.VertxJsonSupport;
-import dev.vertique.rest.core.config.HttpConfig;
-import dev.vertique.rest.core.config.JaxRsConfig;
-import dev.vertique.rest.core.context.RestContextResolution;
-import dev.vertique.rest.core.response.ResponseBodyEncoder;
-import dev.vertique.rest.core.response.ResponseSerializer;
-import dev.vertique.rest.jaxrs.DefaultExceptionMapper;
-import dev.vertique.rest.jaxrs.DefaultResponseSerializer;
-import dev.vertique.rest.jaxrs.ExceptionMapperRegistry;
-import dev.vertique.rest.jaxrs.JaxRsRouterMount;
-import dev.vertique.rest.jaxrs.JsonBodyEncoderTestAccess;
-import dev.vertique.rest.jaxrs.RestExceptionMapper;
-import dev.vertique.rest.jaxrs.validation.OperationSchemaSource;
-import dev.vertique.rest.jaxrs.validation.RequestValidationStrategy;
+import dev.vertique.rest.test.RestTestContributions;
+import dev.vertique.rest.test.RestTestMounts;
 import io.swagger.v3.oas.annotations.Operation;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
@@ -39,7 +26,6 @@ import io.vertx.core.http.HttpClient;
 import io.vertx.core.http.HttpMethod;
 import io.vertx.core.http.HttpServer;
 import io.vertx.core.json.Json;
-import io.vertx.ext.web.Router;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
 import jakarta.ws.rs.GET;
@@ -47,8 +33,6 @@ import jakarta.ws.rs.Path;
 import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
-import java.util.List;
-import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.AfterEach;
@@ -65,12 +49,13 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * with no profile and no configured default stays byte-for-byte on the {@code vertx} mapper
  * ({@code Json.encode}).
  *
- * <p>The encoder under test is the <strong>production</strong> {@code JsonBodyEncoder}, obtained via
- * {@link JsonBodyEncoderTestAccess} (a same-package test seam over the package-private encoder), so the
- * RED→green transition is genuinely driven by the production encoder's behavior — not a re-implemented
- * stub. Today {@code JsonBodyEncoder.encode} calls {@code Json.encode(entity)} unconditionally and
- * ignores the stash, so the <em>profiled</em> test below FAILS (the opinionated profile's observable
- * behavior never reaches the wire). Slice 3.1 makes the encoder read the stash, turning it green.
+ * <p>The encoder under test is the <strong>production</strong> {@code JsonBodyEncoder}, reached through
+ * {@link MountFixtures} over {@link ValidationMountComponent} (the {@code vertique-rest-test} fixture),
+ * so the RED→green transition (now green) is genuinely driven by the production encoder's behavior —
+ * not a re-implemented stub. Before slice 3.1, {@code JsonBodyEncoder.encode} called
+ * {@code Json.encode(entity)} unconditionally and ignored the stash, so the <em>profiled</em> test below
+ * FAILED (the opinionated profile's observable behavior never reached the wire). Slice 3.1 made the
+ * encoder read the stash, turning it green.
  *
  * <p>The opinionated {@code response-profile} test profile's observable difference from
  * {@code Json.encode} is that it omits {@code null} fields (a {@code NON_NULL} mix-in scoped to the
@@ -244,6 +229,13 @@ public class ProfiledResponseSerializationIT {
      * Deploys {@code resource}, issues a {@code GET} to {@code path}, and runs {@code assertion} on the
      * response body string.
      *
+     * <p>Built through {@link MountFixtures} over {@link ValidationMountComponent} (the {@code
+     * vertique-rest-test} fixture), which is wired with the real {@code web-validation} strategy, the
+     * victools {@code AnnotationSchemaSource}, and — crucially — the <strong>production</strong>
+     * {@code JsonBodyEncoder} as the JSON response encoder, so the response path exercises the real
+     * encoder under test. The opinionated {@code response-profile} is contributed via
+     * {@link RestTestContributions}, joining the framework's own profile set.
+     *
      * @param vertx the Vert.x instance
      * @param ctx the test context
      * @param resource the JAX-RS resource to mount
@@ -256,14 +248,10 @@ public class ProfiledResponseSerializationIT {
             Object resource,
             String path,
             java.util.function.Consumer<String> assertion) {
-        JaxRsRouterMount.Factory factory = buildProfiledResponseFactory();
-        JaxRsRouterMount mount = factory.create("/*", "openapi.json", Set.of(resource));
-        mount.createRouter(vertx)
-                .compose(apiRouter -> {
-                    Router root = Router.router(vertx);
-                    root.route("/*").subRouter(apiRouter);
-                    return vertx.createHttpServer().requestHandler(root).listen(0);
-                })
+        RestTestContributions contributions = RestTestContributions.builder()
+                .addJsonMapperProfile(opinionatedResponseProfile())
+                .build();
+        RestTestMounts.startServer(vertx, MountFixtures.factory(vertx, contributions), Set.of(resource))
                 .compose(s -> {
                     server = s;
                     client = vertx.createHttpClient();
@@ -275,93 +263,5 @@ public class ProfiledResponseSerializationIT {
                     ctx.verify(() -> assertion.accept(body));
                     ctx.completeNow();
                 }));
-    }
-
-    /**
-     * Builds a {@link JaxRsRouterMount.Factory} wired with the real {@code web-validation} strategy, the
-     * victools {@link AnnotationSchemaSource}, a {@link DefaultJsonMapperProfileRegistry} carrying the
-     * opinionated {@code response-profile}, and — crucially — the <strong>production</strong>
-     * {@code JsonBodyEncoder} (via {@link JsonBodyEncoderTestAccess}) as the JSON response encoder, so
-     * the response path exercises the real encoder under test. Mirrors
-     * {@code ProfiledBodyParseUnderGateIT}'s factory but for the response leg.
-     *
-     * @return a factory with the opinionated profile registered and the production JSON encoder wired
-     */
-    private static JaxRsRouterMount.Factory buildProfiledResponseFactory() {
-        DefaultExceptionMapper defaultMapper = new DefaultExceptionMapper()
-                .on(dev.vertique.rest.core.RestValidationException.class, ex -> Response.status(400)
-                        .entity(dev.vertique.rest.core.ValidationProblemDetail.of(ex.getMessage(), ex.errors()))
-                        .type("application/problem+json")
-                        .build())
-                .on(dev.vertique.core.exception.ValidationException.class, ex -> Response.status(400)
-                        .entity(dev.vertique.rest.core.ValidationProblemDetail.of(ex.getMessage(), java.util.List.of()))
-                        .type("application/problem+json")
-                        .build());
-        ExceptionMapperRegistry registry = new ExceptionMapperRegistry(defaultMapper, Set.of());
-        RestExceptionMapper restExceptionMapper = new RestExceptionMapper();
-        RestContextResolution restContextResolution = new RestContextResolution(Set.of());
-        // The PRODUCTION JsonBodyEncoder (priority 1100) is the encoder under test; a String encoder
-        // (priority 1000) is included for completeness even though these resources return JSON entities.
-        ResponseBodyEncoder jsonBodyEncoder = JsonBodyEncoderTestAccess.create();
-        List<ResponseBodyEncoder> encoders = List.of(new StringResponseEncoder(), jsonBodyEncoder);
-        ResponseSerializer responseSerializer = new DefaultResponseSerializer(List.of(), encoders);
-        HttpConfig httpConfig = HttpConfig.builder().build();
-        JaxRsConfig jaxRsConfig = JaxRsConfig.builder()
-                .validationStrategy(WebValidationStrategy.ID)
-                .build();
-
-        RequestValidationStrategy webValidation = new WebValidationStrategy(jaxRsConfig);
-        OperationSchemaSource schemaSource = new AnnotationSchemaSource();
-
-        return new JaxRsRouterMount.Factory(
-                Set.of(), // routerLifecycleHooks
-                Set.of(), // operationInterceptors
-                Set.of(), // errorInterceptors
-                Set.of(), // middlewares
-                Set.of(), // operationHandlerContributors
-                Set.of(), // securitySchemeHandlers
-                Set.of(), // requestInterceptors
-                restExceptionMapper,
-                registry,
-                Set.of(), // responseProducerBindings
-                responseSerializer,
-                restContextResolution,
-                dev.vertique.rest.jaxrs.convert.ConversionContexts.defaultResolver(), // paramConversionResolver
-                null, // securityPolicyValidator
-                Optional.empty(), // authEnforcementCapability
-                List.of(), // sortedDecoders (no request body on these GETs)
-                encoders, // sortedEncoders
-                httpConfig,
-                jaxRsConfig,
-                new DefaultJsonMapperProfileRegistry(Set.of(opinionatedResponseProfile())), // jsonMapperProfileRegistry
-                JsonConfig.defaults(), // jsonConfig
-                Optional.empty(), // beanValidator
-                Optional.empty(), // objectProcessor
-                Set.of(), // evidenceCapturers
-                Optional.empty(), // actionRegistry
-                Optional.empty(), // authorizer
-                Set.of(), // fileContentVerifiers
-                Set.of(webValidation),
-                Optional.of(schemaSource));
-    }
-
-    /** Minimal public-SPI String response encoder producing {@code text/plain}. */
-    static final class StringResponseEncoder implements ResponseBodyEncoder {
-        @Override
-        public boolean canEncode(Class<?> entityType, String contentType) {
-            return entityType == String.class;
-        }
-
-        @Override
-        public dev.vertique.rest.core.response.SerializedBody encode(
-                io.vertx.ext.web.RoutingContext ctx, Response response, Object entity) {
-            return new dev.vertique.rest.core.response.BufferedBody(
-                    io.vertx.core.buffer.Buffer.buffer(String.valueOf(entity)), "text/plain", null);
-        }
-
-        @Override
-        public int priority() {
-            return 1000;
-        }
     }
 }
