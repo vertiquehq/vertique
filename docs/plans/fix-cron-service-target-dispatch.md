@@ -670,3 +670,44 @@ Consequence for **L3**: the plan file is **not** removed in PR 1. It is the pers
 which is still in flight, so removing it here would delete an in-flight contract. L3 moves to the
 final PR of the initiative. L4 (gitlink + maintainer docs) likewise waits until both PRs have
 merged, so the governance docs describe a single settled state rather than an intermediate one.
+
+### Simplify + security review outcomes (S1)
+
+**Simplify stage** ran four blind lenses plus an independent verifier. Eight candidates confirmed
+safe and applied (`4635c9e`). The one that mattered: `resolveEffectiveAddress` was reading
+`job.handlerAddress()` — a copy the registrar *derives* from the target — instead of
+`EventBusTarget.address()`. The reuse and altitude lenses reached that independently. Trusting a
+derived copy is the same defect class as #41 itself, so the new invariant had been resting on the
+very source it exists to replace.
+
+Two findings were about this plan's own work rather than the code's:
+- The preceding commit had been maintaining **dead javadoc** — `CronJobDispatcher`'s constructor
+  carries two consecutive doc blocks and only the second binds.
+- `unresolvableTargetDuringOverlapStillQueuesTheTick` **did not guard what it claimed**. Its
+  `hitCount >= 2` assertion passed under both the correct and the rejected ordering. It now asserts
+  the resolver is never consulted while the failure window is armed, which is the actual
+  discriminator.
+
+Declined: the altitude lens argues the scheduler now hand-repeats an unnamed fire-admission protocol
+at three sites, and that `dispatch` receives the address twice (bare, and inside `execution`) with
+nothing enforcing they agree. Real, but a structural refactor rather than a cleanup — recorded, not
+done.
+
+**Security review**: 0 critical, 0 high, 1 medium, 2 low. All three were in code this slice
+introduced, and all three were fixed rather than deferred:
+
+| Severity | Finding | Resolution |
+|---|---|---|
+| MEDIUM | A permanently unresolvable target logged an ERROR **plus stack trace every tick** — ~85-170 MB/day/node for one config typo, and enough to bury real security events. Introduced by this fix: previously the stranded guard silenced subsequent ticks (a dead job, but a quiet one). | Log once per job at ERROR, then DEBUG until it resolves. Pinned by `permanentlyUnresolvableTargetLogsErrorOnce`. |
+| LOW | Config-supplied job ids and `eventbus:` addresses reached log records verbatim under `%msg%n` layouts — CRLF gives a log-forging primitive (CWE-117). | Sanitize at the log sink via `DeferredExecutionOrigin.of(...)`, reused rather than reimplemented. Parse-boundary rejection deferred to an issue: it changes startup behavior, which was not pre-decided. |
+| LOW | The "never throws" contract was stated unconditionally but `catch (Exception)` lets an `Error` escape and strand the guard. | Contract corrected to match the module's deliberate rule that an `Error` must propagate, with the cost of that choice named explicitly. Not silently widened to `catch (Throwable)`. |
+
+Clean verdicts worth recording: a crafted stable target id cannot synthesize an address (the
+resolver is an allowlist lookup that fails closed); a config target cannot collide with the
+`job.cancel.*` / `job.completions.*` channels (UUID-suffixed per fire); nothing was removed with
+the dispatcher's resolver — the deleted block had no validation, and the new gate adds three
+checks; and cron rows can never reach the delayed-job dispatch sink (the claim query requires
+`state = 'ENQUEUED'`, which cron never writes).
+
+**Deferrals routed:** issue #77 (parse-boundary validation), #78 (`MisfirePolicy.FIRE_ALL` runs one
+fire, not all), #79 (no live-fire cron/Postgres composition test).
