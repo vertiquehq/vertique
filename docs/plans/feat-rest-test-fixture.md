@@ -257,7 +257,7 @@ public final class RestTestMounts {
 @Singleton
 @Component(modules = {RestTestFixtureModule.class, RestValidationModule.class})
 interface ValidationMountComponent {
-    JaxRsRouterMount.Factory factory();
+    JaxRsRouterMount.Factory mountFactory();
 
     @Component.Factory
     interface Factory {
@@ -271,6 +271,16 @@ interface ValidationMountComponent {
 
 Including `RestValidationModule` directly is what supplies the real `WebValidationStrategy` and
 `AnnotationSchemaSource` — no fixture dependency on `vertique-rest-validation`, no strategy seam.
+
+> **The accessor must be named `mountFactory()`, not `factory()`.** A component declaring a
+> `@Component.Factory` gets a generated static `factory()` on its `Dagger…` class, and Dagger rejects
+> a component method that collides with it. S4/S5 must use `mountFactory()`.
+
+## Amendments
+
+| Date | Trigger | Change |
+|---|---|---|
+| 2026-07-30 | S2 execution — the frozen §4 consumer snippet did not compile | Renamed the consumer component's mount accessor `factory()` → `mountFactory()`; added the collision note above. Correction of a verified fact (Dagger rejects the original), not a design change — the `RestTestFixtureModule` / `RestTestContributions` contract is untouched, so no re-sign-off. |
 
 ## 5. Class Inventory
 
