@@ -39,14 +39,18 @@ import java.util.concurrent.ConcurrentHashMap;
  * <ul>
  *   <li><b>Multiplicity is type-driven</b> by the matching {@link ParamDescriptor}: a parameter
  *       whose declared type is a collection ({@code componentType != null}) binds <em>all</em>
- *       values as a {@link JsonArray}; a scalar parameter binds only the <em>first</em> value.
+ *       values as a {@link JsonArray}; a scalar parameter binds only the <em>first</em> value. The rule
+ *       applies uniformly to query parameters, headers, and cookies; because a cookie is single-valued,
+ *       a collection-declared {@code @CookieParam} binds a single-entry {@link JsonArray}.
  *   <li><b>Declared scalar parameters are coerced</b> to their declared type via the
  *       {@link ParamConversionResolver} before being wrapped, because {@link RequestValue} does not
  *       parse strings.
  *   <li><b>Undeclared keys</b> (no matching descriptor) bind as their raw first-value
  *       {@link String}.
  *   <li><b>Headers and cookies are case-insensitive</b>: their maps are keyed by lower-cased name,
- *       so {@code get("content-type")} finds a {@code Content-Type} header.
+ *       so {@code get("content-type")} finds a {@code Content-Type} header, and the declared-parameter
+ *       match that decides multiplicity is equally case-insensitive for those two locations (see
+ *       {@link #findDescriptor}). Path and query names stay case-sensitive.
  *   <li><b>The body is bound in its actual wire shape, content-type-aware</b>: a JSON content type
  *       yields a {@link JsonObject}/{@link JsonArray}/scalar; a {@code text/*} content type yields a
  *       {@link String}; otherwise the raw {@code Buffer} (see {@link #bindBody}).
@@ -175,8 +179,26 @@ public final class DefaultBoundRequest implements BoundRequest {
     }
 
     /**
-     * Binds request cookies, keyed case-insensitively by cookie name. Cookies are single-valued per
-     * name; a declared scalar descriptor coerces the value to its type.
+     * Binds request cookies, keyed case-insensitively by cookie name, applying the same type-driven
+     * multiplicity rule as query parameters and headers via {@link #wrapValues}.
+     *
+     * <p>A cookie is <em>single-valued</em> per name, so its value is presented to
+     * {@link #wrapValues} as a one-element list:
+     *
+     * <ul>
+     *   <li>a <b>collection-declared</b> {@code @CookieParam} ({@code componentType != null}) binds as a
+     *       single-entry {@link JsonArray}, exactly as QUERY and HEADER already do, so the downstream
+     *       collection state machine materializes a single-entry collection instead of receiving a bare
+     *       {@link String} it has no converter for (which failed the request);
+     *   <li>a <b>scalar</b> descriptor takes {@link #wrapValues}' first-value fallback to
+     *       {@link #wrapScalar}, so scalar cookie binding is unchanged.
+     * </ul>
+     *
+     * <p>A {@code null} cookie value is bound as {@code RequestValue.of(null)} directly rather than
+     * routed through {@link #wrapValues}, which keeps the previous {@link #wrapScalar} outcome for the
+     * scalar shape byte-for-byte and lets a collection-declared parameter apply its absence contract
+     * (empty collection, or the single-entry {@code @DefaultValue}) instead of binding a single-entry
+     * array holding {@code null}.
      *
      * @param cookieSet the request cookies
      * @param params    the operation's declared parameters
@@ -190,7 +212,9 @@ public final class DefaultBoundRequest implements BoundRequest {
             for (Cookie cookie : cookieSet) {
                 ParamDescriptor descriptor = findDescriptor(params, cookie.getName(), ParamLocation.COOKIE);
                 String key = cookie.getName().toLowerCase(Locale.ROOT);
-                result.put(key, wrapScalar(cookie.getValue(), descriptor, resolver));
+                String value = cookie.getValue();
+                result.put(
+                        key, value == null ? RequestValue.of(null) : wrapValues(List.of(value), descriptor, resolver));
             }
         }
         return Map.copyOf(result);
@@ -552,14 +576,41 @@ public final class DefaultBoundRequest implements BoundRequest {
      * Finds the declared parameter matching the given name and location, or {@code null} when none
      * is declared (an undeclared key).
      *
+     * <p>Name matching is <b>per location</b>, and deliberately agrees with the extraction-side lookup
+     * ({@code ParameterExtractor.lookup}) so the two halves of the same name resolution cannot disagree:
+     *
+     * <ul>
+     *   <li><b>{@link ParamLocation#HEADER} and {@link ParamLocation#COOKIE}</b> match
+     *       <em>case-insensitively</em>. Both maps are keyed by lower-cased name and extraction
+     *       lower-cases the declared name before its lookup, so the descriptor half must be equally
+     *       tolerant. It is load-bearing rather than cosmetic: RFC 9113 §8.2.1 requires HTTP/2 to
+     *       transmit header field names in lower case, so with ALPN enabled the wire name of a
+     *       {@code @HeaderParam("X-Tags")} declaration is {@code x-tags} for <em>every</em> HTTP/2
+     *       client. A case-sensitive match there would leave a collection-declared parameter
+     *       scalar-wrapped — dropping every value past the first — while passing HTTP/1.1 tests.</li>
+     *   <li><b>{@link ParamLocation#PATH} and {@link ParamLocation#QUERY}</b> match
+     *       <em>case-sensitively</em>: their maps are keyed verbatim and extraction looks the declared
+     *       name up unchanged, so both halves already agree.</li>
+     * </ul>
+     *
+     * <p>{@link String#equalsIgnoreCase(String)} keeps the case-insensitive branch allocation-free — no
+     * per-comparison lower-casing on this per-request hot path.
+     *
      * @param params   the operation's declared parameters
-     * @param name     the parameter name to match
+     * @param name     the parameter name to match, as reported by the request
      * @param location the parameter source to match
      * @return the matching descriptor, or {@code null}
      */
     private static ParamDescriptor findDescriptor(List<ParamDescriptor> params, String name, ParamLocation location) {
+        boolean caseInsensitive = location == ParamLocation.HEADER || location == ParamLocation.COOKIE;
         for (ParamDescriptor descriptor : params) {
-            if (descriptor.location() == location && descriptor.name().equals(name)) {
+            if (descriptor.location() != location) {
+                continue;
+            }
+            boolean matches = caseInsensitive
+                    ? descriptor.name().equalsIgnoreCase(name)
+                    : descriptor.name().equals(name);
+            if (matches) {
                 return descriptor;
             }
         }

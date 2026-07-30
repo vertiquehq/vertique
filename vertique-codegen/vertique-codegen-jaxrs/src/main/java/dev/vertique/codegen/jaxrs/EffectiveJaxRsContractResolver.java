@@ -589,8 +589,11 @@ public final class EffectiveJaxRsContractResolver {
 
         TypeMirror type = concreteParam.asType();
 
-        // Component type for List<T>
-        TypeMirror componentType = resolveComponentType(type);
+        // Component type for a multi-value shape (List<T>, Set<T>, T[], ...) — SOURCE-GATED, exactly
+        // like beanParamType and genericType below. Only the sources whose reflective counterpart
+        // resolves a component type may carry one; see resolveComponentType's javadoc for the scope
+        // and why PATH is excluded.
+        TypeMirror componentType = resolvesComponentType(source) ? resolveComponentType(type) : null;
 
         // Bean param type
         TypeMirror beanParamType = (source == JaxRsParamSource.BEAN_PARAM) ? type : null;
@@ -940,6 +943,52 @@ public final class EffectiveJaxRsContractResolver {
     }
 
     /**
+     * Reports whether a parameter classified as {@code source} may carry a resolved
+     * {@code componentType} at all — the source gate for {@link #resolveComponentType(TypeMirror)},
+     * mirroring which branches of the reflective {@code ResourceScanner.extractParams} call its own
+     * {@code resolveComponentType}:
+     *
+     * <ul>
+     *   <li>{@code QUERY}, {@code HEADER}, {@code COOKIE}, {@code FORM} — the bindable multi-value
+     *       sources; each of those four branches of {@code ResourceScanner.extractParams} calls its
+     *       {@code resolveComponentType(param)}.</li>
+     *   <li>{@code FILE_UPLOADS}, {@code ENTITY_PARTS} — classified from an unannotated
+     *       {@code List<FileUpload>} / {@code List<EntityPart>}, whose element type
+     *       <em>is</em> the native multipart target the runtime guards on. The reflective
+     *       {@code isFileUploadList} / {@code isEntityPartList} branches hard-code
+     *       {@code FileUpload.class} / {@code EntityPart.class}; resolving the declared {@code List}
+     *       element yields the same class, so these must stay inside the gate.</li>
+     *   <li>{@code BODY} — held exactly as it was. The two paths already disagree here (the
+     *       reflective scanner hard-codes {@code null} for BODY), a divergence audited inert and
+     *       routed as a deliberate follow-up rather than changed under this gate: source-gating BODY
+     *       would also drop the {@code componentType} of a BODY <em>collection</em>, a
+     *       consumer-visible change to the public {@code ParamMeta} record.</li>
+     *   <li>{@code PATH} — excluded. A path parameter is <em>never</em> multi-valued: it is bound
+     *       from {@code RoutingContext.pathParams()}, a {@code Map<String, String>}, and
+     *       {@code DefaultBoundRequest.bindPath} always wraps a single scalar, so no
+     *       {@code JsonArray} can reach the collection branch of extraction. The reflective
+     *       {@code @PathParam} branch therefore hard-codes {@code null} and never calls its
+     *       {@code resolveComponentType}. Emitting a component type here made the startup converter
+     *       probe substitute the <em>element</em> type, so an unbindable {@code @PathParam String[]}
+     *       passed startup validation on the generated path and failed opaquely per request, while
+     *       its reflective twin was rejected loudly at startup.</li>
+     *   <li>{@code CONTEXT}, {@code PRECONDITIONS}, {@code BEAN_PARAM} — excluded; the reflective
+     *       branches pass {@code null} for all three, and none of them binds element-wise (a
+     *       bean-param's own collection <em>fields</em> are a separate, separately-tracked concern
+     *       resolved inside the bean-param model, not by this method).</li>
+     * </ul>
+     *
+     * @param source the parameter's effective classification
+     * @return {@code true} when a component type may be resolved for this source
+     */
+    private static boolean resolvesComponentType(JaxRsParamSource source) {
+        return switch (source) {
+            case QUERY, HEADER, COOKIE, FORM, FILE_UPLOADS, ENTITY_PARTS, BODY -> true;
+            case PATH, CONTEXT, PRECONDITIONS, BEAN_PARAM -> false;
+        };
+    }
+
+    /**
      * Extracts the element type of a multi-value parameter shape, or returns {@code null} when the
      * parameter is not multi-valued. Two shapes are recognized, mirroring the reflective
      * {@code ResourceScanner.resolveComponentType} so the generated dispatch path binds and
@@ -948,7 +997,12 @@ public final class EffectiveJaxRsContractResolver {
      * <ul>
      *   <li>a parameterized collection — {@code List<T>}, {@code Set<T>}, {@code SortedSet<T>},
      *       {@code NavigableSet<T>}, or {@code Collection<T>} (see
-     *       {@link #isSupportedCollectionFqn(String)}) — yields {@code T};
+     *       {@link #isSupportedCollectionFqn(String)}) — yields {@code T}, but <em>only</em> when
+     *       {@code T} is an argument the reflective side would see as a plain {@link Class} (see
+     *       {@link #isReflectivelyClassTypeArgument(TypeMirror)}), mirroring that side's
+     *       {@code typeArg instanceof Class<?>} gate. A wildcard ({@code List<? extends CharSequence>},
+     *       {@code List<?>}), a type variable ({@code List<T>}), and a nested parameterized type
+     *       ({@code List<List<String>>}) therefore resolve {@code null} on both paths;
      *   <li>an array {@code T[]} whose element type is a scalar array component (see
      *       {@link #isScalarArrayComponent(TypeMirror)}) — yields {@code T}.
      * </ul>
@@ -965,6 +1019,14 @@ public final class EffectiveJaxRsContractResolver {
      * <p>Primitive-array element types are <em>excluded</em> so {@code byte[]} / {@code char[]} and
      * every other primitive array keep their BODY classification as binary/buffer body shapes rather
      * than being routed through the multi-value collection path.
+     *
+     * <p><strong>This method inspects the type only — it is deliberately not the whole policy.</strong>
+     * Whether a parameter may carry a component type at all is decided by its <em>source</em>, in
+     * {@link #resolvesComponentType(JaxRsParamSource)}, which is the sole caller's gate. A shape this
+     * method would happily recognize (an array, a {@code List<T>}) still resolves {@code null} when
+     * its source does not bind element-wise — notably {@code PATH}, whose values come from
+     * {@code RoutingContext.pathParams()}, a {@code Map<String, String>}, and can never be
+     * multi-valued.
      *
      * @param type the parameter type mirror
      * @return the element type for a recognized multi-value shape, or {@code null} otherwise
@@ -985,11 +1047,58 @@ public final class EffectiveJaxRsContractResolver {
         if (erasedEl instanceof TypeElement te
                 && isSupportedCollectionFqn(te.getQualifiedName().toString())) {
             var args = declared.getTypeArguments();
-            if (!args.isEmpty()) {
+            // Mirror ResourceScanner.resolveComponentType's `typeArg instanceof Class<?>` gate — see
+            // isReflectivelyClassTypeArgument. Returning the argument unconditionally erased a wildcard
+            // or type variable to its bound, yielding a non-null componentType where the reflective twin
+            // yields null; componentType is the framework's single multiplicity trigger, so that is a
+            // codegen-on/codegen-off classification divergence.
+            if (!args.isEmpty() && isReflectivelyClassTypeArgument(args.get(0))) {
                 return args.get(0);
             }
         }
         return null;
+    }
+
+    /**
+     * Returns whether {@code argument} — a collection's first type argument — is one that the reflective
+     * scanner would see as a plain {@link Class}, which is the exact condition its
+     * {@code typeArg instanceof Class<?>} gate tests ({@code ResourceScanner.resolveComponentType}).
+     * This side must agree with it in <em>both</em> directions, because {@code componentType} is the
+     * framework's single multiplicity trigger: a non-null value here where the reflective path resolves
+     * {@code null} (or vice versa) classifies the same declaration differently depending on whether
+     * codegen ran.
+     *
+     * <p>Core reflection reifies a generic signature's type argument as a {@link Class} only when it
+     * carries no generic information of its own — {@code sun.reflect.generics}' factory returns a
+     * {@code Class} for an array whose component is itself a {@code Class}, and a
+     * {@code ParameterizedType} / {@code GenericArrayType} / {@code TypeVariable} / {@code WildcardType}
+     * otherwise. The mirror-side equivalents:
+     *
+     * <ul>
+     *   <li>a {@link javax.lang.model.type.DeclaredType} with <b>no</b> type arguments &rarr; accepted
+     *       ({@code List<String>}, {@code List<Season>}, a raw {@code List<Map>});</li>
+     *   <li>an {@link javax.lang.model.type.ArrayType} whose component type recursively satisfies this
+     *       predicate &rarr; accepted ({@code List<Inner[]>}, {@code List<int[]>}), matching the
+     *       reflective {@code Inner[].class};</li>
+     *   <li>a primitive &rarr; accepted; it can only be reached as an array component;</li>
+     *   <li>a parameterized {@code DeclaredType} ({@code List<List<String>>}), a wildcard
+     *       ({@code List<? extends CharSequence>}, {@code List<?>}), a type variable
+     *       ({@code List<T>}), or a generic array ({@code List<T[]>}) &rarr; rejected, exactly as the
+     *       reflective gate rejects the {@code ParameterizedType}/{@code WildcardType}/
+     *       {@code TypeVariable}/{@code GenericArrayType} it sees for each.</li>
+     * </ul>
+     *
+     * @param argument the collection's first type argument
+     * @return {@code true} when the reflective side would report this argument as a {@link Class}
+     */
+    private static boolean isReflectivelyClassTypeArgument(TypeMirror argument) {
+        if (argument instanceof javax.lang.model.type.DeclaredType declared) {
+            return declared.getTypeArguments().isEmpty();
+        }
+        if (argument instanceof javax.lang.model.type.ArrayType array) {
+            return isReflectivelyClassTypeArgument(array.getComponentType());
+        }
+        return argument.getKind().isPrimitive();
     }
 
     /**
@@ -1016,7 +1125,10 @@ public final class EffectiveJaxRsContractResolver {
         }
         TypeMirror erased = ctx.types().erasure(componentType);
         if (!(ctx.types().asElement(erased) instanceof TypeElement te)) {
-            // Nested arrays (String[][]), type variables, wildcards — not scalar elements.
+            // Nested arrays (String[][]) and wildcards — not scalar elements. Note a *bounded* type
+            // variable does NOT land here: erasure resolves it to its bound, so <T extends Season> T[]
+            // arrives as the enum Season and is accepted below. That is deliberate parity — the
+            // reflective scanner sees the same erased Season[] from Parameter.getType().
             return false;
         }
         if (te.getKind() == ElementKind.ENUM) {

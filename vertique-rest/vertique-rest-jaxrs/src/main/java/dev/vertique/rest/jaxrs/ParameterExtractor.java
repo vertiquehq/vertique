@@ -51,7 +51,6 @@ import java.util.Set;
 import java.util.SortedSet;
 import java.util.TreeSet;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
 
 /**
@@ -141,6 +140,27 @@ final class ParameterExtractor {
      */
     private final Map<ResourceMethodMeta.ParamMeta, ConversionContext> componentContextCache =
             new ConcurrentHashMap<>();
+
+    /**
+     * Parameters for which the binder/metadata multiplicity disagreement diagnosed in
+     * {@link #extractScalarValue} has already been logged, so the warning fires <b>once per route and
+     * parameter</b> instead of once per request.
+     *
+     * <p>The disagreement is a property of static metadata (a descriptor lookup that missed, a
+     * name-casing split), so a per-request warning would be pure client-driven log amplification: every
+     * request to the affected route repeats the identical line.
+     *
+     * <p>Keyed by the {@link ResourceMethodMeta.ParamMeta} instance, following
+     * {@link #scalarContextCache}/{@link #componentContextCache}: the same instance recurs across
+     * requests (route params are built once at scan time; bean-param fields are cached in
+     * {@link #BEAN_PARAM_CACHE}), and {@code ParamMeta}'s equality bottoms out on its
+     * identity-compared {@code ParameterMetadata} component, so the set behaves as a per-parameter
+     * identity set with a cheap hash. This keeps the steady state <em>allocation-free</em>: after the
+     * single warning, {@link java.util.Set#add(Object)} finds the existing node, returns {@code false},
+     * and allocates nothing — whereas a "have I logged?" flag built from a string key would allocate on
+     * every request. Since the extractor is one per route, per-route scoping falls out for free.
+     */
+    private final Set<ResourceMethodMeta.ParamMeta> multiplicityMismatchLogged = ConcurrentHashMap.newKeySet(2);
 
     /**
      * Creates a new {@code ParameterExtractor} for the given resource method.
@@ -375,6 +395,11 @@ final class ParameterExtractor {
      * present value to the declared scalar type, and runs the input processor for String values when
      * a route chain is active.
      *
+     * <p>A parameter whose {@code componentType()} is non-{@code null} is <em>always</em> handled by one
+     * of the two collection branches — {@link #absentCollectionValue} when the request supplied nothing,
+     * {@link #coerceCollection} otherwise — so the scalar coercion below can never be reached for a
+     * collection-declared parameter, whatever shape the binder produced for it.
+     *
      * @param paramMeta the parameter metadata describing the source and declared type
      * @param policies  the effective input policies for this parameter
      * @param rv        the request value to extract from (never {@code null}; wraps {@code null} when
@@ -384,7 +409,7 @@ final class ParameterExtractor {
     private Object extractScalarValue(
             ResourceMethodMeta.ParamMeta paramMeta, EffectiveInputPolicies policies, RequestValue rv) {
         if (rv == null || rv.isNull()) {
-            // A collection-valued parameter has its own absence contract (ADR-0190 / Jakarta REST 4.0):
+            // A collection-valued parameter has its own absence contract (ADR-0191 / Jakarta REST 4.0):
             // it must never ask for a converter targeting the *collection* type, which is what
             // coerceString would do (there is none, so it would 500).
             if (paramMeta.componentType() != null) {
@@ -400,8 +425,41 @@ final class ParameterExtractor {
         // BoundRequest binds repeated values as a JsonArray of raw strings, so coerce each element to
         // the declared component type and materialise the collection. Without this the raw JsonArray
         // would reach the resource method and fail the invocation.
-        if (paramMeta.componentType() != null && rv.get() instanceof io.vertx.core.json.JsonArray jsonArray) {
-            return coerceCollection(jsonArray, paramMeta, policies);
+        //
+        // The gate is componentType() alone, NOT "componentType() && is a JsonArray": a collection-valued
+        // parameter must never fall through to the scalar branch below, which would ask the resolver for
+        // a converter targeting the *collection* type (there is none, so it 500s — the same failure mode
+        // the absence branch above exists to prevent). Any non-JsonArray bound value is therefore treated
+        // as the collection's single element, so a binder that hands over a scalar shape — e.g. because a
+        // descriptor lookup missed and left the value scalar-wrapped — degrades to a one-element
+        // collection instead of failing the request.
+        if (paramMeta.componentType() != null) {
+            Object bound = rv.get();
+            List<?> rawValues;
+            if (bound instanceof io.vertx.core.json.JsonArray jsonArray) {
+                rawValues = jsonArray.getList();
+            } else {
+                // Degrading is the right production behavior, but it must not be silent: the binder and
+                // the parameter metadata disagreed about multiplicity, and only the resulting 500 made
+                // the last such disagreement (a case-sensitivity split on header/cookie names)
+                // discoverable at all. Log so the class of defect stays observable instead of surfacing
+                // as quietly dropped values.
+                //
+                // Once per route+parameter, never per request: the disagreement is static metadata, so
+                // repeating it would let a client amplify logs by replaying the same request.
+                if (multiplicityMismatchLogged.add(paramMeta)) {
+                    log.warn(
+                            "Collection-valued parameter '{}' ({}) received a non-JsonArray bound value of type {};"
+                                    + " binding it as a single element. The bound request and the parameter"
+                                    + " metadata disagree about multiplicity for this parameter."
+                                    + " Logged once per route and parameter.",
+                            paramMeta.name(),
+                            paramMeta.source(),
+                            bound == null ? "null" : bound.getClass().getName());
+                }
+                rawValues = Collections.singletonList(bound);
+            }
+            return coerceCollection(rawValues, paramMeta, policies);
         }
 
         Object value = coerce(rv, paramMeta);
@@ -415,62 +473,113 @@ final class ParameterExtractor {
     }
 
     /**
-     * Coerces a bound multi-value {@link io.vertx.core.json.JsonArray} of raw strings into the declared
-     * collection type for a {@code List<T>}/{@code Set<T>}/{@code SortedSet<T>}/{@code NavigableSet<T>}/
+     * Coerces a multi-value parameter's raw request values into the declared collection type for a
+     * {@code List<T>}/{@code Set<T>}/{@code SortedSet<T>}/{@code NavigableSet<T>}/
      * {@code Collection<T>}/{@code T[]} parameter, coercing each element to the parameter's component
      * type via the {@link ParamConversionResolver}. Element conversion is <em>fail-closed</em>: a
      * malformed element propagates the resolver's
      * {@link dev.vertique.rest.core.convert.ParamConversionException} (mapped to 400) rather than
      * silently retaining the raw string, so a single bad element fails the whole collection cleanly.
      *
-     * <p>Each converted element that is still a {@link String} then traverses the input-policy chain
-     * exactly as a scalar parameter value does in {@link #extractScalarValue} — same guard
-     * ({@code objectProcessor != null && !policies.hasNoRouteChains()}), same
+     * <p>Every element also traverses the input-policy chain exactly as its own source's scalar value
+     * does — same guard ({@code objectProcessor != null && !policies.hasNoRouteChains()}), same
      * {@link InputObjectProcessor#processStructuredBody} call, same {@link InputLocation} derived from
-     * the parameter source. Without this a {@code @QueryParam List<String>} would bypass the
-     * canonicalization/sanitization chain that the equivalent {@code @QueryParam String} traverses.
+     * the parameter source, and the same position relative to conversion (before it for FORM, after it
+     * for QUERY/HEADER/COOKIE — see {@link #convertElements}). Without this a
+     * {@code @QueryParam List<String>} would bypass the canonicalization/sanitization chain that the
+     * equivalent {@code @QueryParam String} traverses.
      *
-     * <p>Materialization (declared-type selection and the read-only guarantee) is delegated to
+     * <p>Element conversion and policy processing are delegated to {@link #convertElements};
+     * materialization (declared-type selection and the read-only guarantee) to
      * {@link #materializeCollection}.
      *
-     * @param jsonArray the bound multi-value array (elements are raw request strings)
+     * @param rawValues the parameter's raw request values, in the order the transport reported them:
+     *                  the bound {@code JsonArray}'s elements for QUERY/HEADER/COOKIE (or a singleton
+     *                  list holding the bound value when it is not a {@code JsonArray}), or
+     *                  {@code formAttributes().getAll(name)} for FORM
      * @param paramMeta the parameter metadata supplying the collection type and component type
      * @param policies  the effective input policies applied to each {@link String} element
      * @return the materialised read-only {@link List}/{@link Set}/{@link SortedSet}/
      *     {@link NavigableSet}, or the materialised array, of coerced elements
      */
     private Object coerceCollection(
-            io.vertx.core.json.JsonArray jsonArray,
-            ResourceMethodMeta.ParamMeta paramMeta,
-            EffectiveInputPolicies policies) {
-        Class<?> componentType = paramMeta.componentType();
-        var elementContext = componentContext(paramMeta, componentType);
-        // Hoisted out of the loop: both operands are per-route constants.
+            List<?> rawValues, ResourceMethodMeta.ParamMeta paramMeta, EffectiveInputPolicies policies) {
+        return materializeCollection(
+                convertElements(rawValues, paramMeta, policies), paramMeta.type(), paramMeta.componentType());
+    }
+
+    /**
+     * Converts every raw request value of a collection-valued parameter to its declared component
+     * type and runs each converted {@link String} element through the input-policy chain.
+     *
+     * <p>Shared by every multi-value source: both the QUERY/HEADER/COOKIE path (whose values arrive as
+     * a bound {@code JsonArray}) and the FORM path (whose values arrive as
+     * {@code formAttributes().getAll(name)}) reach it through {@link #coerceCollection}. One
+     * implementation keeps the sources from diverging in either conversion or policy semantics.
+     *
+     * <p>Conversion is <em>fail-closed</em> per element: a malformed element propagates the
+     * resolver's {@link dev.vertique.rest.core.convert.ParamConversionException} (mapped to 400)
+     * rather than silently retaining the raw string. Policy processing uses the same guard the scalar
+     * path uses ({@code objectProcessor != null && !policies.hasNoRouteChains()}) and the
+     * {@link InputLocation} derived from the parameter source.
+     *
+     * <p><strong>The chain's position relative to conversion is per source</strong>, because each
+     * source's own scalar rule differs and an element must traverse exactly the chain its scalar
+     * equivalent traverses:
+     * <ul>
+     *   <li><b>FORM</b> — the <em>raw</em> form string is processed <em>before</em> conversion, and the
+     *       post-conversion pass is skipped. This mirrors {@link #extractFormParam}'s scalar text-field
+     *       branch, which processes {@code getFormAttribute(name)} and only then calls
+     *       {@code coerceString}. Without it a canonicalizer that <em>normalizes</em> a value (say,
+     *       stripping whitespace) would fix {@code @FormParam Integer} but not
+     *       {@code @FormParam List<Integer>}: the raw {@code " 5"} would reach the {@code Integer}
+     *       converter and 400 while the scalar succeeded — an asymmetry inside one source.</li>
+     *   <li><b>QUERY / HEADER / COOKIE</b> — the <em>converted</em> element is processed, and only when
+     *       it is still a {@link String}. This mirrors {@link #extractScalarValue}, which coerces the
+     *       bound value first and processes only a {@code String} result.</li>
+     * </ul>
+     *
+     * <p>Defaults are not processed on either path, mirroring the scalar rule (see
+     * {@link #absentCollectionValue}).
+     *
+     * @param rawValues the raw request values, in whatever order the transport reported them (F8 —
+     *                  ordering is not a framework guarantee); {@code null} entries are preserved
+     * @param paramMeta the collection parameter metadata (its {@code componentType()} is non-{@code null})
+     * @param policies  the effective input policies applied to each {@link String} element
+     * @return the converted, policy-processed elements, in the order given
+     */
+    private List<Object> convertElements(
+            List<?> rawValues, ResourceMethodMeta.ParamMeta paramMeta, EffectiveInputPolicies policies) {
+        ConversionContext elementContext = componentContext(paramMeta, paramMeta.componentType());
+        // Hoisted out of the loop: all of these are per-route constants.
         boolean processElements = objectProcessor != null && !policies.hasNoRouteChains();
+        boolean processBeforeConversion = paramMeta.source() == ResourceMethodMeta.ParamSource.FORM;
         InputLocation location = processElements ? toInputLocation(paramMeta.source()) : null;
-        List<Object> coerced = new ArrayList<>(jsonArray.size());
-        for (int i = 0; i < jsonArray.size(); i++) {
-            Object raw = jsonArray.getValue(i);
+        List<Object> coerced = new ArrayList<>(rawValues.size());
+        for (Object raw : rawValues) {
             if (raw == null) {
                 coerced.add(null);
                 continue;
             }
-            // Fail-closed per element: a malformed element propagates ParamConversionException (400)
-            // rather than retaining the raw string, matching the declared-type contract of the collection.
-            Object element = paramConversionResolver.fromString(raw.toString(), elementContext);
-            if (processElements && element instanceof String s) {
+            String rawValue = raw.toString();
+            if (processElements && processBeforeConversion) {
+                // Same cast as the FORM scalar branch: a String target must yield a String.
+                rawValue = (String) objectProcessor.processStructuredBody(rawValue, String.class, policies, location);
+            }
+            Object element = paramConversionResolver.fromString(rawValue, elementContext);
+            if (processElements && !processBeforeConversion && element instanceof String s) {
                 element = objectProcessor.processStructuredBody(s, String.class, policies, location);
             }
             coerced.add(element);
         }
-        return materializeCollection(coerced, paramMeta.type(), componentType);
+        return coerced;
     }
 
     /**
      * Applies the absence contract for a collection-valued parameter — a parameter whose
      * {@code componentType()} is non-{@code null} — when the request supplied no value for its name.
      *
-     * <p>Per Jakarta REST 4.0 (and ADR-0190):
+     * <p>Per Jakarta REST 4.0 (and ADR-0191):
      * <ul>
      *   <li>with a {@code @DefaultValue}, the result is a <em>single-entry</em> collection holding the
      *       default converted through the same per-element context {@link #coerceCollection} uses (the
@@ -483,7 +592,7 @@ final class ParameterExtractor {
      * </ul>
      *
      * <p>A {@code @DefaultValue} on an array is not covered by the spec; the framework materialises a
-     * single-element array by analogy with the single-entry collection rule (ADR-0190). Defaults are
+     * single-element array by analogy with the single-entry collection rule (ADR-0191). Defaults are
      * <em>not</em> submitted to the input-policy chain, mirroring the scalar rule in
      * {@link #extractScalarValue}.
      *
@@ -522,9 +631,21 @@ final class ParameterExtractor {
      *   <li>{@link List} and {@link Collection} materialise a wrapped {@link ArrayList}.</li>
      * </ol>
      *
-     * <p>The {@code TreeSet} shapes require {@link Comparable} elements — the coerced scalar element
-     * types here (String, boxed numerics, Boolean, Character, enums) are all {@code Comparable}; a
-     * non-{@code Comparable} declared component type would be an application error surfacing as a 500.
+     * <p><b>The {@code TreeSet} shapes require an element type comparable to itself, and nothing
+     * validates that.</b> A {@code SortedSet}/{@code NavigableSet} parameter whose element type does not
+     * implement {@link Comparable}, or implements it against an unrelated type (so the synthesized
+     * {@code compareTo(Object)} bridge casts and throws), makes {@code new TreeSet<>(elements)} throw
+     * {@link ClassCastException} on the first request carrying a value — surfacing as a 500. That is
+     * <em>not</em> checked at registration: the framework does not adjudicate element comparability, so
+     * declaring a sorted shape over a comparable element type is the application's responsibility.
+     *
+     * <p>The comparability holds by construction only for array shapes, whose component type
+     * {@code ResourceScanner.isScalarArrayComponent} restricts to {@link String}, a boxed numeric,
+     * {@link Boolean}, {@link Character}, or an enum — all {@code Comparable} — and which do not use the
+     * {@code TreeSet} branches anyway. The parameterized collection shapes are unrestricted:
+     * {@code ResourceScanner.isSupportedCollectionRawType} gates only the raw type, and the
+     * type-argument read accepts <em>any</em> concrete class as the element type, including a
+     * non-{@code Comparable} one.
      *
      * <p>Element ordering is whatever the underlying transport reported (Vert.x documents no ordering
      * for repeated parameters), except for the sorted shapes; it is explicitly not a framework
@@ -824,8 +945,20 @@ final class ParameterExtractor {
      * Extracts a form parameter from the routing context using a precomputed
      * {@link EffectiveInputPolicies} argument, bypassing per-call annotation re-resolution.
      *
-     * <p>Dispatches by target type: {@link FileUpload}, {@link EntityPart}, {@link List},
-     * or text form field (String/primitives).
+     * <p>Dispatches by target type, in this order:
+     * <ol>
+     *   <li>a scalar native multipart target — {@link FileUpload} or {@link EntityPart};</li>
+     *   <li>a native multipart <em>collection</em> target — {@code List<FileUpload>} or
+     *       {@code List<EntityPart>}. These guards are keyed on the native component type
+     *       <em>together with</em> {@code type() == List.class}: {@link List} is the only collection
+     *       shape with a native materialization (ADR-0191 decision 6), and any other collection shape
+     *       carrying a native component type is rejected at startup by {@link RouteValidator} rather
+     *       than silently falling through to string conversion here;</li>
+     *   <li>a text collection target — any {@code componentType() != null} shape
+     *       ({@code List}/{@code Set}/{@code SortedSet}/{@code NavigableSet}/{@code Collection}/
+     *       {@code T[]}), bound from <em>all</em> submitted values for the field;</li>
+     *   <li>a scalar text form field (String / primitives / any convertible type).</li>
+     * </ol>
      *
      * <p>This overload is used by {@link GeneratedJaxRsSupport} so that generated execution
      * plans can pass policies computed at codegen time.
@@ -856,29 +989,44 @@ final class ParameterExtractor {
             }
             return null;
         }
-        if (pm.type() == List.class) {
-            if (pm.componentType() == FileUpload.class) {
-                return ctx.fileUploads().stream()
-                        .filter(fu -> fu.name().equals(pm.name()))
-                        .collect(Collectors.toList());
-            }
-            if (pm.componentType() == EntityPart.class) {
-                List<EntityPart> parts = new ArrayList<>();
-                // File uploads first
-                ctx.fileUploads().stream()
-                        .filter(fu -> fu.name().equals(pm.name()))
-                        .map(fu -> new VertxFileUploadEntityPart(ctx.vertx(), fu))
-                        .forEach(parts::add);
-                // Then text form fields with the same name
-                for (Map.Entry<String, String> entry : ctx.request().formAttributes()) {
-                    if (entry.getKey().equals(pm.name())) {
-                        parts.add(new FormFieldEntityPart(entry.getKey(), entry.getValue()));
-                    }
-                }
-                return parts;
-            }
+        // Native multipart collections: List-only by contract, and read-only like every other
+        // injected collection (ADR-0191 decision 3).
+        if (pm.componentType() == FileUpload.class && pm.type() == List.class) {
+            // Stream.toList() is already unmodifiable.
+            return ctx.fileUploads().stream()
+                    .filter(fu -> fu.name().equals(pm.name()))
+                    .toList();
         }
-        // Text form field
+        if (pm.componentType() == EntityPart.class && pm.type() == List.class) {
+            List<EntityPart> parts = new ArrayList<>();
+            // File uploads first
+            ctx.fileUploads().stream()
+                    .filter(fu -> fu.name().equals(pm.name()))
+                    .map(fu -> new VertxFileUploadEntityPart(ctx.vertx(), fu))
+                    .forEach(parts::add);
+            // Then text form fields with the same name
+            for (Map.Entry<String, String> entry : ctx.request().formAttributes()) {
+                if (entry.getKey().equals(pm.name())) {
+                    parts.add(new FormFieldEntityPart(entry.getKey(), entry.getValue()));
+                }
+            }
+            return Collections.unmodifiableList(parts);
+        }
+        // Text collection form field: bind ALL submitted values for the name, so a repeated
+        // x-www-form-urlencoded/multipart field materialises the declared collection shape exactly as
+        // the equivalent @QueryParam would (ADR-0191 decision 2).
+        if (pm.componentType() != null) {
+            // getAll() returns an EMPTY list — never null — for an absent field, so emptiness MUST be
+            // tested before materializing: otherwise the absence contract (empty collection, or a
+            // single-entry collection for a @DefaultValue) would collapse into an empty collection and
+            // silently swallow the default.
+            List<String> values = ctx.request().formAttributes().getAll(pm.name());
+            if (values.isEmpty()) {
+                return absentCollectionValue(pm);
+            }
+            return coerceCollection(values, pm, policies);
+        }
+        // Scalar text form field
         String formValue = ctx.request().getFormAttribute(pm.name());
         if (formValue == null) {
             if (pm.defaultValue() != null) {
@@ -901,8 +1049,12 @@ final class ParameterExtractor {
      * <p>Promoted to package-private so that {@link GeneratedJaxRsSupport} can expose it to
      * generated execution plans without duplicating the logic.
      *
+     * <p>The returned list is <em>read-only</em>: an aggregate {@code List<EntityPart>} is a
+     * {@code @FormParam} collection injection target like any other, so it carries the same
+     * read-only guarantee (ADR-0191 decision 3).
+     *
      * @param ctx the current routing context
-     * @return list of all entity parts
+     * @return an unmodifiable list of all entity parts
      */
     List<EntityPart> extractAllEntityParts(RoutingContext ctx) {
         List<EntityPart> parts = new ArrayList<>();
@@ -917,7 +1069,7 @@ final class ParameterExtractor {
                 parts.add(new FormFieldEntityPart(entry.getKey(), entry.getValue()));
             }
         }
-        return parts;
+        return Collections.unmodifiableList(parts);
     }
 
     // --- Bean param extraction ---

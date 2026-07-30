@@ -99,9 +99,10 @@ Step 3 is skipped transparently when `SanitizationModule` is absent and step 4 w
 `ValidationModule` is absent; neither requires an application change.
 
 `@Canonicalize` / `@Sanitize` apply at three scopes — on the resource class or method (route level,
-covering all string values in the body plus scalar parameters), on a DTO type (object level), and on
-a field or record component (field level). `@SkipCanonicalization` / `@SkipSanitization` opt an
-individual parameter out. Scalar parameters receive route-level chains only.
+covering all string values in the body plus scalar and collection-element parameters), on a DTO type
+(object level), and on a field or record component (field level). `@SkipCanonicalization` /
+`@SkipSanitization` opt an individual parameter out. Scalar and collection-element parameters receive
+route-level chains only.
 
 ### JSON profiles are symmetric
 
@@ -519,8 +520,9 @@ Parameters are matched in this order:
 | 1 | type `RequestPreconditions` | `PRECONDITIONS` | `RequestPreconditions` | Injected by type |
 | 2 | type annotated `@RequestParams` | Composite | any annotated record/class | No annotation needed on the method parameter |
 | 3 | `@BeanParam` | Composite | any class/record | Explicit form of the above |
-| 4 | `@PathParam` / `@QueryParam` / `@HeaderParam` / `@CookieParam` | `PATH` / `QUERY` / `HEADER` / `COOKIE` | any type with a resolvable converter, and `List`/`Set`/arrays of them | `@DefaultValue` supported |
-| 5 | `@FormParam` | `FORM` | `FileUpload`, `EntityPart`, `List<FileUpload>`, `List<EntityPart>`, `String`, primitives | `@DefaultValue` supported for text fields |
+| 4 | `@PathParam` | `PATH` | any type with a resolvable converter | `@DefaultValue` supported; no collection shapes — a path segment is always single-valued |
+| 4 | `@QueryParam` / `@HeaderParam` / `@CookieParam` | `QUERY` / `HEADER` / `COOKIE` | any type with a resolvable converter, plus `List<T>`/`Set<T>`/`SortedSet<T>`/`NavigableSet<T>`/`Collection<T>`/`T[]` of one | `@DefaultValue` supported; see [Collection parameter shapes](#collection-parameter-shapes) |
+| 5 | `@FormParam` | `FORM` | `FileUpload`, `EntityPart`, `List<FileUpload>`, `List<EntityPart>`, `String`, primitives, and `List<T>`/`Set<T>`/`SortedSet<T>`/`NavigableSet<T>`/`Collection<T>`/`T[]` of a convertible text element type | `@DefaultValue` supported for text fields and collections; see [Collection parameter shapes](#collection-parameter-shapes) |
 | 6 | unannotated `List<FileUpload>` | `FILE_UPLOADS` | `List<FileUpload>` | All uploads on the request |
 | 6 | unannotated `List<EntityPart>` | `ENTITY_PARTS` | `List<EntityPart>` | All parts; files wrapped as `VertxFileUploadEntityPart`, text fields as `FormFieldEntityPart` |
 | 7 | unannotated, any other type | `BODY` | POJO, `JsonObject`, `String`, `Buffer` | Decoded by the `RequestBodyDecoder` chain |
@@ -535,12 +537,67 @@ shared `dev.vertique.rest.core.convert.ParamConversionResolver`, not a fixed sca
 - Everything else — boxed and primitive numerics, `boolean`, `UUID`, `java.time` types, `BigDecimal`,
   enums, and any application-registered `ParamConverterBinding` or JAX-RS `ParamConverterProvider` —
   is converted through the resolver.
-- A collection-valued parameter coerces each element against the declared component type; a malformed
-  element fails closed with `ParamConversionException` rather than leaving the whole collection as
-  raw strings.
+- A collection-valued parameter — `List<T>`, `Set<T>`, `SortedSet<T>`, `NavigableSet<T>`, `Collection<T>`,
+  or `T[]` on `@QueryParam`, `@HeaderParam`, `@CookieParam`, or `@FormParam` — coerces each submitted
+  value individually against the declared component type; a malformed element fails closed with
+  `ParamConversionException` rather than leaving the whole collection as raw strings. See
+  [Collection parameter shapes](#collection-parameter-shapes) for the absence/default/read-only contract.
 - A value that fails conversion raises `ParamConversionException` (400). A declared type with no
   resolvable converter raises `ParamConverterNotFoundException` (500) — a wiring gap that startup
   validation is meant to catch first.
+
+### Collection parameter shapes
+
+`@QueryParam`, `@HeaderParam`, `@CookieParam`, and `@FormParam` additionally accept `List<T>`, `Set<T>`,
+`SortedSet<T>`, `NavigableSet<T>`, `Collection<T>`, or `T[]` of a convertible element type; `@PathParam`
+does not — a path segment is always single-valued.
+
+- **Absent, no `@DefaultValue`** — an empty collection for the five collection interfaces; `null` for
+  `T[]` (an array falls outside the Jakarta REST `@DefaultValue` collection rule).
+- **Absent, `@DefaultValue` present** — a single-entry collection, or single-element array, holding the
+  converted default.
+- **Present** — every submitted value converts individually against the component type; `@DefaultValue`
+  is ignored once at least one value is present. A cookie carries one value per name, so a present
+  collection-declared `@CookieParam` always yields a single-entry collection. `@FormParam` also applies
+  its default when the request body is absent or of an unsupported media type.
+- **Read-only.** An injected collection is unmodifiable; mutation throws `UnsupportedOperationException`.
+  This includes the native `@FormParam List<FileUpload>` / `List<EntityPart>` targets and the unannotated
+  aggregates. Arrays stay mutable — no read-only array wrapper exists.
+- **Input policies** run per element at the position a scalar parameter of that source would use: for
+  `@FormParam` the raw submitted string is canonicalized/sanitized **before** conversion; for
+  `@QueryParam`, `@HeaderParam`, and `@CookieParam` the **converted** element is processed, and only
+  while it is still a `String`.
+- **Ordering** is whatever the transport reported for repeated values — neither Vert.x nor Jakarta REST
+  guarantees one, and the framework makes none.
+- **Case sensitivity follows the transport.** `@HeaderParam`/`@CookieParam` names match
+  case-insensitively; `@PathParam`/`@QueryParam` match case-sensitively.
+- **`SortedSet<T>`/`NavigableSet<T>` require an element type comparable to itself.** They materialize as
+  a `TreeSet`, which orders by natural ordering, and a parameter declaration cannot supply a
+  `Comparator`. This is the application's responsibility and is **not** checked at startup — a
+  non-comparable element type mounts cleanly and fails the first request carrying a value with a
+  `ClassCastException` (500). Declare `Set<T>`, `List<T>`, or `Collection<T>` instead when the element
+  type is not self-comparable.
+- **One name, one declaration.** A name is bound once per source and shared by every parameter declaring
+  it, so two `@PathParam`/`@QueryParam`/`@HeaderParam`/`@CookieParam` parameters of one name in a method
+  must be interchangeable. When they are not, route registration fails with
+  `DUPLICATE_PARAM_NAME_MULTIPLICITY_CONFLICT` (see [Startup failures](#startup-failures)) instead of
+  mis-binding one of the two per request. Rejected: different multiplicities (one collection-shaped, one
+  scalar); different declared types on a scalar pair (`Integer` plus `UUID`); different element types on a
+  collection pair (`List<String>` plus `List<UUID>`); and any other difference in binding-affecting
+  annotations, including a different `@DefaultValue`. Accepted, as redundant but correct: two identical
+  declarations, and two collection shapes over one element type (`List<String>` plus `Set<String>`), since
+  each parameter converts its elements and materializes its own declared collection type. `@FormParam` is
+  outside the rule entirely, since its values are read per parameter rather than through a shared
+  descriptor.
+- **Native multipart targets are `List`-restricted.** `FileUpload`/`EntityPart` materialize natively only
+  as a scalar target or `List<T>`; any other collection shape of a native target fails route
+  registration with `UNSUPPORTED_MULTIPART_COLLECTION_SHAPE` (see [Startup failures](#startup-failures))
+  rather than falling through to string conversion.
+
+Request validation (the `RequestValidationStrategy` gate) inspects values exactly as the transport
+delivered them; the canonicalization/sanitization chain runs afterwards, during parameter extraction —
+for scalars and collection elements alike. A schema `pattern` proves a property of the raw submission,
+not of the value the resource method receives.
 
 ### `@FilePart` uploads
 
@@ -815,6 +872,8 @@ the `application/problem+json` media type preserved, and logs a WARN. A profile-
 | `MULTIPLE_BODY_PARAMS` | more than one unannotated body parameter |
 | `FORM_AND_BODY_CONFLICT` | `@FormParam` or file-upload parameters mixed with a body parameter |
 | `INVALID_FILE_PART_DECLARATION` | `@FilePart` on an unsupported type, invalid `allowedTypes`/`maxSizeBytes`, or overlapping constrained declarations |
+| `UNSUPPORTED_MULTIPART_COLLECTION_SHAPE` | a `@FormParam` collection parameter's element type is a native multipart target (`FileUpload`/`EntityPart`) declared in a shape other than `List` |
+| `DUPLICATE_PARAM_NAME_MULTIPLICITY_CONFLICT` | two parameters bind the same name from the same source but cannot share one declaration — incompatible multiplicities (one collection-shaped, one scalar), different scalar types, different collection element types, or different binding-affecting annotations (including `@DefaultValue`); scoped to `@PathParam`/`@QueryParam`/`@HeaderParam`/`@CookieParam` |
 | `SECURITY_ANNOTATIONS_WITHOUT_AUTH_MODULE` | restrictive security annotations present but `AuthModule` absent |
 | `CONTEXT_PARAM_CONFLICT` | a `@Context` parameter also carries a JAX-RS value-binding annotation — the two are mutually exclusive |
 | `UNSUPPORTED_JAXRS_CONTEXT_TYPE` | a `@Context` parameter declares a reserved JAX-RS type that is not supported (e.g. `UriInfo`, `HttpHeaders`); fails fast instead of injecting `null` |
