@@ -7,11 +7,14 @@ import dagger.BindsInstance;
 import dagger.Component;
 import dev.vertique.core.VertxConfig;
 import dev.vertique.rest.jaxrs.JaxRsRouterMount;
+import dev.vertique.rest.jaxrs.runtime.MagicBytesVerifierModule;
+import dev.vertique.rest.jaxrs.validation.FileContentVerifier;
 import dev.vertique.rest.test.RestTestContributions;
 import dev.vertique.rest.test.RestTestFixtureModule;
 import io.vertx.core.Vertx;
 import io.vertx.core.json.JsonObject;
 import jakarta.inject.Singleton;
+import java.util.Set;
 
 /**
  * Test graph over {@link RestTestFixtureModule} that additionally includes {@link RestValidationModule},
@@ -56,5 +59,48 @@ interface ValidationMountComponent {
                 @BindsInstance Vertx vertx,
                 @BindsInstance @VertxConfig JsonObject config,
                 @BindsInstance RestTestContributions contributions);
+    }
+
+    /**
+     * Test graph reaching the opt-in magic-bytes {@link FileContentVerifier} through {@link
+     * MagicBytesVerifierModule} without naming its package-private implementation.
+     *
+     * <p>Deliberately <b>not</b> one of {@link ValidationMountComponent}'s own modules:
+     * {@code MagicBytesVerifierModule} is framework opt-in (its javadoc: "intentionally not included
+     * by the framework's default component"). Folding it into the always-active
+     * {@code ValidationMountComponent} graph would make the verifier a standing member of every
+     * consumer's {@code Set<FileContentVerifier>} — breaking tests such as {@link
+     * FileVerifierRejectionIT} that assert on a verifier set they control explicitly through {@link
+     * RestTestContributions}. A test that wants the real verifier resolves it here, once, then
+     * contributes the instance via {@link RestTestContributions.Builder#addFileContentVerifier}
+     * before building its mount through {@link ValidationMountComponent} — the same additive path
+     * every other opt-in extension takes. Co-located here, rather than nested in the one integration
+     * test that needs it, so the module's test tree carries a single home for Dagger test-fixture
+     * components.
+     */
+    @Singleton
+    @Component(modules = MagicBytesVerifierModule.class)
+    interface MagicBytesVerifierComponent {
+
+        /**
+         * Returns the {@code Set<FileContentVerifier>} contributed by {@link MagicBytesVerifierModule}
+         * — the real, package-private magic-bytes verifier reached through its public module.
+         *
+         * @return the magic-bytes verifier set
+         */
+        Set<FileContentVerifier> fileContentVerifiers();
+
+        /** Factory binding the one instance the magic-bytes graph needs. */
+        @Component.Factory
+        interface Factory {
+
+            /**
+             * Creates the magic-bytes verifier graph.
+             *
+             * @param vertx the Vert.x instance, used for the verifier's asynchronous file reads
+             * @return the assembled component
+             */
+            MagicBytesVerifierComponent create(@BindsInstance Vertx vertx);
+        }
     }
 }
