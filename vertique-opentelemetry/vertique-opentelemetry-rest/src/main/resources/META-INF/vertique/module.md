@@ -35,8 +35,8 @@ it is still safe in that case.
 
 ## Core Concepts
 
-**Observe-only enrichment.** The module contributes two components into their respective
-multibinding sets. Neither component creates new spans, starts new traces, or raises exceptions
+**Observe-only enrichment.** The module contributes three components into their respective
+multibinding sets. No component creates new spans, starts new traces, or raises exceptions
 toward the request pipeline — every callback body wraps span operations in a try/catch that logs at
 WARN and swallows.
 
@@ -49,7 +49,9 @@ request. This module renames that span to `"METHOD /route/template"` and adds th
 — after the auth handlers and after `OperationIdCaptureContributor` at 350. Requests rejected
 before operation dispatch (auth failure, 404 routing miss) never reach this contributor. Those
 requests keep the default Vert.x-assigned span name and do not receive the `http.route` or
-`vertique.operation.id` attributes.
+`vertique.operation.id` attributes. Their span is still captured — `ServerSpanOutcomeInterceptor`
+stashes it on the way in, at the API-router mount — so outcome recording and exemplar attachment
+still work for them.
 
 **Span-end vs. end-handler ordering.** The Vert.x OTel tracer ends the server span and detaches its
 scope synchronously inside `conn.write()` — before any `ctx.addEndHandler` callback fires. As a
@@ -112,10 +114,15 @@ interface AppComponent {
 
 #### Invariants and Gotchas
 
-- The span is stored under `RestSpanKeys.SPAN_KEY` only when `span.getSpanContext().isValid()`.
-  When stored, `ServerSpanOutcomeInterceptor` retrieves it from routing context data to avoid a
-  second `Span.current()` call. If the key is absent (no valid span or pre-auth rejection),
-  `ServerSpanOutcomeInterceptor` falls back to `Span.current()`.
+- This contributor is not the only writer of `RestSpanKeys.SPAN_KEY`:
+  `ServerSpanOutcomeInterceptor.onRequest` already stashed the span when the request entered the API
+  router. Both writers store only when `span.getSpanContext().isValid()` and both resolve
+  `Span.current()`, so the key holds the same server span either way. Rely on the key being populated
+  for any request that reaches the API router with a valid span — including one rejected before
+  dispatch, which this contributor never sees.
+- When the key is present, `ServerSpanOutcomeInterceptor` reads the span from routing context data
+  instead of making a second `Span.current()` call. If the key is absent (no valid span on the
+  request at all), it falls back to `Span.current()`.
 - `rc.next()` is called unconditionally outside the try-block. An exception from the enrichment
   code path is logged at WARN and does not prevent the next handler from running.
 - The span name update (`updateName`) rewrites whatever name Vert.x initially assigned to the span.
@@ -125,15 +132,27 @@ interface AppComponent {
 ### ServerSpanOutcomeInterceptor
 
 `@Singleton` `RequestInterceptor`. Records the span outcome (status code and error type) on the
-active server span after each HTTP response.
+active server span after each HTTP response, and captures the span early so that requests rejected
+before dispatch are still covered. It implements three of the SPI's synchronous observer hooks:
 
-**Span resolution.** The interceptor first looks for a span stored under `RestSpanKeys.SPAN_KEY`
-by `ServerSpanEnrichmentContributor`. If the key is absent it falls back to `Span.current()`. When
-neither yields a valid span context, all operations are no-ops.
+- **`onRequest`** — stashes the current span under `RestSpanKeys.SPAN_KEY` as the request enters the
+  API router, before auth and before operation dispatch. This is what gives pre-dispatch outcomes
+  (401 auth rejects, 404 route misses inside the API router) a usable span, since they never reach
+  `ServerSpanEnrichmentContributor`. Skipped when the key is already set or the current span context
+  is invalid. Nothing is recorded on the span here.
+- **`onError`** — records `error.type` when a failure enters the error pipeline.
+- **`afterResponse`** — records the span status, and `error.type`, from the final HTTP status code.
 
-**Why pre-write hooks instead of the completion listener (SP-4 rationale).** The `RequestInterceptor`
-SPI provides `onError` and `afterResponse` hooks, which fire while the routing context and span are
-still active (pre-write, synchronous). The alternative — a `RestRequestCompletedListener` completion
+The interceptor never creates or ends a span, and never modifies the request or response.
+
+**Span resolution.** For `onError` and `afterResponse`, the interceptor first looks for a span stored
+under `RestSpanKeys.SPAN_KEY` — placed there either by its own `onRequest` hook or by
+`ServerSpanEnrichmentContributor` at dispatch. If the key is absent it falls back to `Span.current()`.
+When neither yields a valid span context, all operations are no-ops.
+
+**Why pre-write hooks instead of the completion listener (SP-4 rationale).** The `onError` and
+`afterResponse` hooks fire while the routing context and span are still active (pre-write,
+synchronous). The alternative — a `RestRequestCompletedListener` completion
 listener — fires after the response is committed and after the Vert.x tracer closes the span's OTel
 scope. A completion listener has no `RoutingContext` and may run after the tracer has already ended
 the server span. Using `onError`/`afterResponse` ensures the span is still recording when the
@@ -149,10 +168,17 @@ completion listener to catch truncations would lose the span entirely.
 
 | Trigger | Span status | `error.type` attribute |
 |---------|-------------|------------------------|
-| `onError(rc, error)` | `StatusCode.ERROR` | `error.getClass().getSimpleName()` |
+| `onError(rc, error)` | `StatusCode.UNSET` (unchanged) | `error.getClass().getSimpleName()` |
 | `afterResponse` with status ≥ 500 | `StatusCode.ERROR` | Simple class name of throwable at `RequestInterceptor.ORIGINAL_ERROR_KEY`, if present |
-| `afterResponse` with status 4xx | `StatusCode.UNSET` (unchanged) | Not set |
-| `afterResponse` with status 2xx/3xx | `StatusCode.UNSET` (unchanged) | Not set |
+| `afterResponse` with status 4xx | `StatusCode.UNSET` (unchanged) | Simple class name of throwable at `RequestInterceptor.ORIGINAL_ERROR_KEY`, if present |
+| `afterResponse` with status 2xx/3xx | `StatusCode.UNSET` (unchanged) | Not set by this hook |
+
+**Span status is decided only in `afterResponse`, from the final HTTP status code.** `onError` fires
+while the failure is still travelling the error pipeline, before it has been mapped to a status, so
+it records `error.type` for attribution and deliberately leaves the status alone — the exception may
+map to a 4xx, and a client fault must not mark the server span as an error per HTTP semconv. `error.type`
+is written on 4xx as well as 5xx, so a mapped client error is still attributable without the span
+being flagged as a server failure.
 
 `Span.recordException` is never called. Exception events are not emitted — only the span status
 and `error.type` attribute are written. This is the OTel semantic conventions recommendation for
@@ -169,9 +195,11 @@ response pipeline.
 - `afterResponse` fires after all response transformations. A 500 response resulting from an
   exception that was mapped by `RestExceptionMapper` still carries the original throwable at
   `RequestInterceptor.ORIGINAL_ERROR_KEY` if the error pipeline preserved it.
-- Both hooks may run for the same request (e.g., `onError` fires and then `afterResponse` fires
-  with a 500). The second `setStatus(StatusCode.ERROR)` call is idempotent per the OTel API
-  contract.
+- Both outcome hooks may run for the same request (e.g., `onError` fires and then `afterResponse`
+  fires with a 500). They do not compete: only `afterResponse` ever calls `setStatus`, so there is no
+  second status write to reconcile. `error.type` is written by both, with the same value — `onError`
+  uses the raw throwable and `afterResponse` reads that same throwable back from
+  `RequestInterceptor.ORIGINAL_ERROR_KEY`.
 
 ### ServerSpanCompletionScope
 
@@ -179,7 +207,7 @@ response pipeline.
 
 Re-establishes the HTTP server span as the current OTel span for the duration of the completion-listener dispatch loop, so that Micrometer exemplar samplers can attach a `trace_id` to timer samples recorded in `RestRequestCompletedListener` implementations.
 
-**Mechanism.** The Vert.x OTel tracer ends the server span and detaches its scope before any end handler fires. However, the ended span's `SpanContext` remains valid — `span.makeCurrent()` re-attaches it to the OTel context thread-local. `ServerSpanEnrichmentContributor` stashes the span in the routing context under `RestSpanKeys.SPAN_KEY` (`"dev.vertique.opentelemetry.rest.serverSpan"`) before the response is sent; `ServerSpanCompletionScope.open()` retrieves it from that key.
+**Mechanism.** The Vert.x OTel tracer ends the server span and detaches its scope before any end handler fires. However, the ended span's `SpanContext` remains valid — `span.makeCurrent()` re-attaches it to the OTel context thread-local. The span is stashed in the routing context under `RestSpanKeys.SPAN_KEY` (`"dev.vertique.opentelemetry.rest.serverSpan"`) before the response is sent — by `ServerSpanOutcomeInterceptor.onRequest` when the request enters the API router, and again by `ServerSpanEnrichmentContributor` at dispatch; `ServerSpanCompletionScope.open()` retrieves it from that key.
 
 **`open(RoutingContext)` behavior:**
 - Retrieves the value at `RestSpanKeys.SPAN_KEY` from the routing context.
@@ -190,7 +218,8 @@ Re-establishes the HTTP server span as the current OTel span for the duration of
 
 #### Invariants & Gotchas
 
-- The scope is only opened when a valid stashed span is present. Requests that were not traced, or that were rejected before `ServerSpanEnrichmentContributor` ran (auth failure, 404 miss), receive a no-op scope — completion listeners still run, but no span context is re-established.
+- The scope is only opened when a valid stashed span is present. Requests rejected before dispatch (auth failure, 404 miss inside the API router) **do** get a real scope: `ServerSpanOutcomeInterceptor.onRequest` stashed the span on the way in, before either rejection could occur.
+- The remaining gap is requests short-circuited at the root router, before the API router is reached — those never reach any `RequestInterceptor`, so nothing stashes a span and the completion scope is a no-op. Untraced requests (no valid span) are a no-op for the same reason. In both cases completion listeners still run; only the span context is missing, so their samples carry no exemplar.
 - No new span is created or started. The scope merely re-attaches an already-ended span's context.
 - Both `open()` and `close()` catch all exceptions and fall back to a no-op, satisfying the `RequestCompletionScope` contract.
 - `vertique-micrometer-rest` has no OTel compile dependency; the exemplar bridge is entirely on the otel-rest side.
@@ -204,7 +233,7 @@ Re-establishes the HTTP server span as the current OTel span for the duration of
 | Span name | — | `"METHOD /route/template"`, e.g. `"GET /orders/{id}"` | Set by `ServerSpanEnrichmentContributor`; overwrites Vert.x default |
 | `http.route` | `HttpAttributes.HTTP_ROUTE` | OpenAPI path template from `AbsoluteOpenAPIPath` | Not set when template is null |
 | `vertique.operation.id` | `AttributeKey.stringKey("vertique.operation.id")` | OpenAPI operationId | Not set when operationId is null |
-| `error.type` | `ErrorAttributes.ERROR_TYPE` | Exception simple class name | Set only on 5xx or error pipeline entry |
+| `error.type` | `ErrorAttributes.ERROR_TYPE` | Exception simple class name | Set on error-pipeline entry, and on any 4xx or 5xx response carrying `RequestInterceptor.ORIGINAL_ERROR_KEY` |
 
 ---
 

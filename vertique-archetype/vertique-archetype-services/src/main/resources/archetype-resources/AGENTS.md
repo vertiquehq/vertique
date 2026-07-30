@@ -20,8 +20,7 @@ matched to this project's own build rather than to whichever documentation is ne
 
 Every consumable Vertique JAR carries a `META-INF/vertique/module.md` resource: version-matched
 reference documentation for that artifact's API, configuration, and extension points. The broader
-developer documentation corpus lives in the framework repository under `developer-docs/`, and is
-published at https://vertique.dev/docs.
+developer documentation corpus is published at https://vertique.dev/docs.
 
 ## Verification
 

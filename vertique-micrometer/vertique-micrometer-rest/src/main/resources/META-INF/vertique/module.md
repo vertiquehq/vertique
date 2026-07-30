@@ -8,14 +8,14 @@ SPDX-License-Identifier: EUPL-1.2
 > **Status:** Alpha
 > **Package:** `dev.vertique.micrometer.rest`
 > **Artifact:** `vertique-micrometer-rest`
-> **Depends on:** io.micrometer:micrometer-core (library), vertique-rest-core
+> **Depends on:** io.micrometer:micrometer-core (library), vertique-micrometer-core, vertique-rest-core
 
 Observe-only REST server metrics adapter. When installed alongside `RestCoreModule` (or `RestModule`)
 and `MicrometerModule`, it emits a per-request timer (`vertique.rest.server.requests`) and an
 in-flight-requests gauge (`vertique.rest.server.active`) for every completed HTTP server request.
 
-The module has no compile dependency on `vertique-micrometer-core` types. It does, however,
-**require a `MeterRegistry` binding on the Dagger graph** — normally supplied by `MicrometerModule`;
+The module compiles against `vertique-micrometer-core` for the `MetricsConfig` type. It also
+**requires a `MeterRegistry` binding on the Dagger graph** — normally supplied by `MicrometerModule`;
 without it (or another `MeterRegistry` provider) the component does not compile. Only the
 `metrics.enabled` *gate* is optional: the module declares `@BindsOptionalOf MetricsConfig`
 independently, so the gate defaults to enabled when `MicrometerModule` is absent. It never
@@ -83,7 +83,7 @@ Dagger `@Module`. Contributes two bindings:
   in-flight-requests gauge.
 
 Also declares `@BindsOptionalOf MetricsConfig metricsConfig()` so both
-components can inject `Optional<MetricsConfig>` without a compile dependency on `vertique-micrometer-core`.
+components can inject `Optional<MetricsConfig>` without requiring `MicrometerModule` to be installed.
 When `MicrometerModule` is also installed its `@Provides MetricsConfig` binding satisfies
 the optional; when absent the optional is empty and both components default to enabled.
 
@@ -185,9 +185,14 @@ Prometheus rendering: `vertique_rest_server_active`.
 ## Dependencies
 
 - `io.micrometer:micrometer-core` — `MeterRegistry`, `Timer`, `Gauge`, `Tags`; no Vert.x Micrometer
-  integration types. This is the only Micrometer dependency; the module has no compile dependency on
-  `vertique-micrometer-core`.
+  integration types. This is the only third-party Micrometer artifact on the compile classpath.
+- `dev.vertique:vertique-micrometer-core` — `MetricsConfig`, the `metrics.enabled` gate both
+  components inject as `Optional<MetricsConfig>`.
 - `dev.vertique:vertique-rest-core` — `RestRequestCompletedListener`, `RestRequestCompletedEvent`,
-  `RequestInterceptor`, `RestRequestCompletionEmitter` constants.
+  `RequestInterceptor`, `RestRequestCompletionEmitter` constants. `io.vertx.ext.web.RoutingContext`
+  (the `RequestInterceptor` callback parameter) arrives transitively through this dependency.
+- `dev.vertique:vertique-core` — `OrderedExtension`, the `RequestInterceptor` supertype.
+- `io.vertx:vertx-core` — `Handler`/`AsyncResult` for the `rc.addEndHandler` callback, and `Future`,
+  the return type of the async `RequestInterceptor` callbacks this module inherits as no-ops.
 - `com.google.dagger:dagger`, `jakarta.inject:jakarta.inject-api`
 - `org.slf4j:slf4j-api`, `org.projectlombok:lombok` (provided)

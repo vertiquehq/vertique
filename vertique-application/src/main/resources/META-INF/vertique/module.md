@@ -144,8 +144,12 @@ public interface VertiqueApplicationComponent {
 
 #### Invariants & Gotchas
 
-- The runner does not call `startupSteps()` once and cache the result — it streams from the set
-  per phase. The set is effectively immutable after component construction (Dagger singletons).
+- The runner calls `startupSteps()` and `shutdownSteps()` exactly once, immediately after the
+  component is built, and works from an immutable snapshot of each. An unscoped or dynamic
+  provider therefore cannot change the step sets mid-startup: every phase reads the same
+  partition, and teardown runs against the same shutdown set. A provider that throws while the
+  multibinding set is materialized fails the returned future rather than escaping as a
+  synchronous throw.
 - A component that does not include `CoreLifecycleStepsModule` will have no CONFIGURE or VALIDATE
   steps. The multibinding declared in `DeployerModule` provides an empty-by-default `Set`, so the
   build does not fail — but Jackson will not be configured and compose validators will not run.
@@ -157,7 +161,7 @@ public interface VertiqueApplicationComponent {
 Non-instantiable class with the single static entry point.
 
 ```java
-public static <C extends VertiqueApplicationComponent> Future<VertiqueApplicationHandle>
+public static <C extends VertiqueApplicationComponent> Future<VertiqueApplicationHandle<C>>
     start(VertiqueRuntime runtime, VertiqueComponentFactory<C> factory)
 ```
 
@@ -194,10 +198,11 @@ AFTER_START → (no built-in steps; apps contribute post-start notifications etc
 
 #### Invariants & Gotchas
 
-- The factory's `build()` call is wrapped in a `try/catch`; a thrown exception fails the returned
-  future without running teardown (nothing to tear down).
-- `runtime` and `factory` must not be `null`; a `null` factory causes a `NullPointerException`
-  before any lifecycle work begins.
+- The factory's `build()` call and the step-set snapshot are wrapped in a `try/catch`; a thrown
+  exception fails the returned future without running teardown (nothing to tear down).
+- `runtime` and `factory` must not be `null`. A `null` factory does not throw out of `start()`:
+  the resulting `NullPointerException` is caught alongside any other build failure and comes back
+  as a failed future, so callers always handle failure the same way.
 
 ---
 
@@ -207,23 +212,23 @@ Returned by `VertiqueApplicationBootstrap.start()` on success. Carries the built
 runtime, and an idempotent `shutdown()` method.
 
 ```java
-public final class VertiqueApplicationHandle {
-    public VertiqueApplicationComponent component();
+public final class VertiqueApplicationHandle<C extends VertiqueApplicationComponent> {
+    public C component();
     public VertiqueRuntime runtime();
-    public Future<Void> shutdown();   // idempotent; AtomicBoolean-guarded
+    public Future<Void> shutdown();   // idempotent; memoized
 }
 ```
 
-- `component()` — the Dagger component built by the factory; useful for accessing application
-  services after startup
+- `component()` — the Dagger component built by the factory, returned as the application's own
+  component type `C`; useful for accessing application services after startup without a cast
 - `runtime()` — the `VertiqueRuntime` passed to `start()`
-- `shutdown()` — the first call runs reverse-order teardown; subsequent calls return an
-  immediately succeeded future
+- `shutdown()` — the first call runs reverse-order teardown and memoizes the resulting future;
+  every later call returns that same future
 
 **Teardown order:**
 
-1. All contributed `ApplicationShutdownStep`s whose phase ordinal is at or below the highest
-   startup-reached phase, in reverse `LifecycleOrdered.comparator()` order
+1. Each contributed `ApplicationShutdownStep` whose phase is one whose startup work completed, in
+   reverse `LifecycleOrdered.comparator()` order
 2. If any verticle-subset phase was deployed: `verticleDeploymentManager().undeployAll()`
 
 Each shutdown step is best-effort: a `stop()` failure or thrown exception is logged and swallowed
@@ -233,11 +238,14 @@ so it never masks the original startup failure or aborts subsequent teardown ste
 
 - `shutdown()` never closes `Vertx`. The caller must close `Vertx` after the returned future
   completes.
-- `shutdown()` is fully idempotent: calling it from multiple threads is safe (guarded by an
-  `AtomicBoolean`).
-- The handle captures the `reachedPhase` at construction time — the furthest phase that was
-  reached during startup. Shutdown steps whose phase exceeds this ordinal are not run, which
-  bounds teardown to what was actually started.
+- `shutdown()` is fully idempotent and safe to call from multiple threads: the first call
+  memoizes the teardown future and every other caller — including a concurrent one — receives
+  that same future. A second caller therefore observes success only once teardown has actually
+  settled, never while it is still running.
+- The handle captures the set of phases whose startup steps all completed. A shutdown step runs
+  only when its phase is in that set, which bounds teardown to what was actually started. A phase
+  whose startup steps failed part-way does not get its shutdown step run; a phase whose steps all
+  succeeded but whose verticle deployment then failed does.
 
 ---
 

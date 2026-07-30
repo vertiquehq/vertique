@@ -7,8 +7,8 @@ SPDX-License-Identifier: EUPL-1.2
 
 > **Status:** Implemented
 > **Package:** `dev.vertique.db.test`
-> **Artifact:** `db-test`
-> **Depends on:** db-core, db-flyway (optional)
+> **Artifact:** `vertique-db-test`
+> **Depends on:** `dev.vertique:vertique-db-core`, `dev.vertique:vertique-db-flyway` (optional)
 
 Test utilities for database integration tests using Testcontainers. Provides a fluent container API, Flyway migration support, and a JUnit 5 extension for auto-start/stop lifecycle management. Add as a `test` scope dependency only.
 
@@ -48,13 +48,13 @@ static void stopDb() { db.close(); }
 | `runMigrations()` | Protected hook: runs Flyway against this container's *current* connection identity (`jdbcUrl()`/`username()`/`password()`) if `withMigration(...)` was configured; no-op otherwise |
 | `close()` | Stops the container |
 
-`withMigration()` requires `db-flyway` on the test classpath. It throws `IllegalStateException` at setup time if Flyway is absent.
+`withMigration()` requires `dev.vertique:vertique-db-flyway` on the test classpath. It throws `IllegalStateException` at setup time if Flyway is absent.
 
 `runMigrations()` is exposed as `protected` (rather than being called only from the base `start()`) so a subclass can establish its own connection identity first and then invoke migrations against it — e.g. `PostgresContainer`'s shared-server mode provisions a per-instance database before calling `runMigrations()`, instead of migrating against the base class's default container connection.
 
 ### `PostgresContainer`
 
-Concrete `DatabaseContainer` for PostgreSQL, wrapping `org.testcontainers.containers.PostgreSQLContainer`. Default image: `postgres:16-alpine`.
+Concrete `DatabaseContainer` for PostgreSQL, wrapping `org.testcontainers.postgresql.PostgreSQLContainer`. Default image: `postgres:16-alpine`.
 
 The no-arg constructor runs in **shared-server mode**. Instead of starting a dedicated
 `PostgreSQLContainer` per instance, it provisions its own database on one PostgreSQL server
@@ -149,13 +149,14 @@ class ItemRepositoryIT {
     @BeforeEach
     void setUp() {
         Vertx vertx = Vertx.vertx();
+        DbPoolConfig poolConfig = db.toPoolConfig();
         pool = PgBuilder.pool()
                 .connectingTo(new PgConnectOptions()
-                        .setHost(db.toPoolConfig().getHost())
-                        .setPort(db.toPoolConfig().getPort())
-                        .setDatabase(db.toPoolConfig().getDatabase())
-                        .setUser(db.toPoolConfig().getUser())
-                        .setPassword(db.toPoolConfig().getPassword()))
+                        .setHost(poolConfig.host())
+                        .setPort(poolConfig.port())
+                        .setDatabase(poolConfig.database())
+                        .setUser(poolConfig.user())
+                        .setPassword(poolConfig.password()))
                 .using(vertx)
                 .build();
     }
@@ -191,11 +192,11 @@ class ItemRepositoryIT {
         PgDbExceptionMapper exceptionMapper = new PgDbExceptionMapper();
         Pool pool = PgBuilder.pool()
                 .connectingTo(new PgConnectOptions()
-                        .setHost(poolConfig.getHost())
-                        .setPort(poolConfig.getPort())
-                        .setDatabase(poolConfig.getDatabase())
-                        .setUser(poolConfig.getUser())
-                        .setPassword(poolConfig.getPassword()))
+                        .setHost(poolConfig.host())
+                        .setPort(poolConfig.port())
+                        .setDatabase(poolConfig.database())
+                        .setUser(poolConfig.user())
+                        .setPassword(poolConfig.password()))
                 .using(vertx)
                 .build();
         repository = new ItemRepository(pool, exceptionMapper);
@@ -228,9 +229,10 @@ dedicated mode) instead.
 
 ## Dependencies
 
-- `dev.vertique:db-core` — `DbPoolConfig`, `DatabaseContainer` base type
-- `dev.vertique:db-flyway` — `FlywayContainerMigrationRunner` (optional, for `withMigration()`)
+- `dev.vertique:vertique-db-core` — `DbPoolConfig`, the type returned by `toPoolConfig()`
+- `dev.vertique:vertique-db-flyway` — brings Flyway onto the classpath for `withMigration()` (optional)
 - `org.testcontainers:testcontainers` — `JdbcDatabaseContainer`
-- `org.testcontainers:postgresql` — `PostgreSQLContainer`
+- `org.testcontainers:testcontainers-postgresql` — `PostgreSQLContainer`
+- `org.postgresql:postgresql` — JDBC driver used to provision and drop per-instance databases in shared-server mode
 - `org.junit.jupiter:junit-jupiter` — `BeforeAllCallback`, `AfterAllCallback`
 - `org.slf4j:slf4j-api`

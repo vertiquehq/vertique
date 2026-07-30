@@ -7,7 +7,7 @@ import static com.github.tomakehurst.wiremock.client.WireMock.aResponse;
 import static com.github.tomakehurst.wiremock.client.WireMock.get;
 import static com.github.tomakehurst.wiremock.client.WireMock.urlEqualTo;
 
-import com.github.tomakehurst.wiremock.WireMockServer;
+import com.github.tomakehurst.wiremock.junit.Stubbing;
 import com.github.tomakehurst.wiremock.stubbing.StubMapping;
 import dev.vertique.rest.client.exception.RestClientException;
 import dev.vertique.rest.client.exception.RestClientResponseException;
@@ -28,7 +28,7 @@ public enum KnownIntegrationFailure implements WiremockScenarioPreparer {
      */
     HTML_RESPONSE {
         @Override
-        public StubMapping prepare(WireMockServer server) {
+        public StubMapping prepare(Stubbing server) {
             return server.stubFor(get(urlEqualTo("/test"))
                     .willReturn(aResponse()
                             .withStatus(200)
@@ -48,7 +48,7 @@ public enum KnownIntegrationFailure implements WiremockScenarioPreparer {
      */
     MALFORMED_JSON {
         @Override
-        public StubMapping prepare(WireMockServer server) {
+        public StubMapping prepare(Stubbing server) {
             return server.stubFor(get(urlEqualTo("/test"))
                     .willReturn(aResponse()
                             .withStatus(200)
@@ -68,7 +68,7 @@ public enum KnownIntegrationFailure implements WiremockScenarioPreparer {
      */
     STANDARD_400 {
         @Override
-        public StubMapping prepare(WireMockServer server) {
+        public StubMapping prepare(Stubbing server) {
             return server.stubFor(get(urlEqualTo("/test"))
                     .willReturn(aResponse()
                             .withStatus(400)
@@ -88,7 +88,7 @@ public enum KnownIntegrationFailure implements WiremockScenarioPreparer {
      */
     STANDARD_401 {
         @Override
-        public StubMapping prepare(WireMockServer server) {
+        public StubMapping prepare(Stubbing server) {
             return server.stubFor(get(urlEqualTo("/test"))
                     .willReturn(aResponse()
                             .withStatus(401)
@@ -108,7 +108,7 @@ public enum KnownIntegrationFailure implements WiremockScenarioPreparer {
      */
     STANDARD_403 {
         @Override
-        public StubMapping prepare(WireMockServer server) {
+        public StubMapping prepare(Stubbing server) {
             return server.stubFor(get(urlEqualTo("/test"))
                     .willReturn(aResponse()
                             .withStatus(403)
@@ -128,7 +128,7 @@ public enum KnownIntegrationFailure implements WiremockScenarioPreparer {
      */
     STANDARD_404 {
         @Override
-        public StubMapping prepare(WireMockServer server) {
+        public StubMapping prepare(Stubbing server) {
             return server.stubFor(get(urlEqualTo("/test"))
                     .willReturn(aResponse()
                             .withStatus(404)
@@ -148,7 +148,7 @@ public enum KnownIntegrationFailure implements WiremockScenarioPreparer {
      */
     STANDARD_409 {
         @Override
-        public StubMapping prepare(WireMockServer server) {
+        public StubMapping prepare(Stubbing server) {
             return server.stubFor(get(urlEqualTo("/test"))
                     .willReturn(aResponse()
                             .withStatus(409)
@@ -168,7 +168,7 @@ public enum KnownIntegrationFailure implements WiremockScenarioPreparer {
      */
     STANDARD_429 {
         @Override
-        public StubMapping prepare(WireMockServer server) {
+        public StubMapping prepare(Stubbing server) {
             return server.stubFor(get(urlEqualTo("/test"))
                     .willReturn(aResponse()
                             .withStatus(429)
@@ -188,7 +188,7 @@ public enum KnownIntegrationFailure implements WiremockScenarioPreparer {
      */
     SERVER_ERROR_JSON {
         @Override
-        public StubMapping prepare(WireMockServer server) {
+        public StubMapping prepare(Stubbing server) {
             return server.stubFor(get(urlEqualTo("/test"))
                     .willReturn(aResponse()
                             .withStatus(500)
@@ -208,7 +208,7 @@ public enum KnownIntegrationFailure implements WiremockScenarioPreparer {
      */
     SERVER_ERROR_HTML {
         @Override
-        public StubMapping prepare(WireMockServer server) {
+        public StubMapping prepare(Stubbing server) {
             return server.stubFor(get(urlEqualTo("/test"))
                     .willReturn(aResponse()
                             .withStatus(500)
@@ -228,7 +228,7 @@ public enum KnownIntegrationFailure implements WiremockScenarioPreparer {
      */
     BAD_GATEWAY_HTML {
         @Override
-        public StubMapping prepare(WireMockServer server) {
+        public StubMapping prepare(Stubbing server) {
             return server.stubFor(get(urlEqualTo("/test"))
                     .willReturn(aResponse()
                             .withStatus(502)
@@ -248,7 +248,7 @@ public enum KnownIntegrationFailure implements WiremockScenarioPreparer {
      */
     SERVICE_UNAVAILABLE_HTML {
         @Override
-        public StubMapping prepare(WireMockServer server) {
+        public StubMapping prepare(Stubbing server) {
             return server.stubFor(get(urlEqualTo("/test"))
                     .willReturn(aResponse()
                             .withStatus(503)
@@ -268,7 +268,7 @@ public enum KnownIntegrationFailure implements WiremockScenarioPreparer {
      */
     GATEWAY_TIMEOUT {
         @Override
-        public StubMapping prepare(WireMockServer server) {
+        public StubMapping prepare(Stubbing server) {
             return server.stubFor(get(urlEqualTo("/test"))
                     .willReturn(aResponse()
                             .withStatus(504)
@@ -288,7 +288,7 @@ public enum KnownIntegrationFailure implements WiremockScenarioPreparer {
      */
     PROBLEM_JSON_400 {
         @Override
-        public StubMapping prepare(WireMockServer server) {
+        public StubMapping prepare(Stubbing server) {
             return server.stubFor(get(urlEqualTo("/test"))
                     .willReturn(aResponse()
                             .withStatus(400)
@@ -309,7 +309,7 @@ public enum KnownIntegrationFailure implements WiremockScenarioPreparer {
      */
     PROBLEM_JSON_409 {
         @Override
-        public StubMapping prepare(WireMockServer server) {
+        public StubMapping prepare(Stubbing server) {
             return server.stubFor(get(urlEqualTo("/test"))
                     .willReturn(aResponse()
                             .withStatus(409)
@@ -330,7 +330,7 @@ public enum KnownIntegrationFailure implements WiremockScenarioPreparer {
      */
     PROBLEM_JSON_500 {
         @Override
-        public StubMapping prepare(WireMockServer server) {
+        public StubMapping prepare(Stubbing server) {
             return server.stubFor(get(urlEqualTo("/test"))
                     .willReturn(aResponse()
                             .withStatus(500)
@@ -351,7 +351,7 @@ public enum KnownIntegrationFailure implements WiremockScenarioPreparer {
      */
     PROBLEM_JSON_503 {
         @Override
-        public StubMapping prepare(WireMockServer server) {
+        public StubMapping prepare(Stubbing server) {
             return server.stubFor(get(urlEqualTo("/test"))
                     .willReturn(aResponse()
                             .withStatus(503)

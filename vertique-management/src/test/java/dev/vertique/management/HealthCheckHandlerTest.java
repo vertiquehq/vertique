@@ -10,7 +10,9 @@ import dev.vertique.core.health.HealthCheckResult;
 import io.vertx.core.Future;
 import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
+import io.vertx.core.http.HttpClient;
 import io.vertx.core.http.HttpMethod;
+import io.vertx.core.http.HttpServer;
 import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.Router;
@@ -18,6 +20,9 @@ import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
 import java.util.Map;
 import java.util.Set;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -25,9 +30,10 @@ import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
  * Verifies {@link HealthCheckHandler} in isolation by mounting it on a lightweight
- * {@link Router} attached to a real HTTP server. Each test starts its own server on
- * a free port and tears it down implicitly when the Vert.x instance is closed by the
- * extension.
+ * {@link Router} attached to a real HTTP server. Each test starts its own server on a free
+ * loopback port and closes it explicitly in {@code @AfterEach}; a single {@link HttpClient}
+ * is shared across the class. testing.md requires both: relying on extension teardown to
+ * reclaim sockets is what surfaces under load as a misrouted response.
  *
  * <p>Coverage:
  *
@@ -40,6 +46,56 @@ import org.junit.jupiter.api.extension.ExtendWith;
  */
 @ExtendWith(VertxExtension.class)
 class HealthCheckHandlerTest {
+
+    // --- Class-scoped resources (shared across all @Test methods, including @Nested) ---
+
+    private static Vertx vertx;
+    private static HttpClient client;
+
+    // --- Per-test resources ---
+
+    private HttpServer server;
+
+    /**
+     * Creates the class-scoped {@link Vertx} instance and shared {@link HttpClient} once for the
+     * entire test class. A client per request accumulates netty channel pools that are never
+     * reclaimed until the JVM exits.
+     *
+     * @param v   the class-scoped Vert.x instance injected by vertx-junit5
+     * @param ctx the test context used to signal setup completion
+     */
+    @BeforeAll
+    static void setUpClass(Vertx v, VertxTestContext ctx) {
+        vertx = v;
+        client = v.createHttpClient();
+        ctx.completeNow();
+    }
+
+    /**
+     * Closes the per-test {@link HttpServer} explicitly rather than leaving it to extension
+     * teardown.
+     *
+     * @param ctx the test context used to signal teardown completion
+     */
+    @AfterEach
+    void tearDown(VertxTestContext ctx) {
+        Future<?> serverClose = server != null ? server.close() : Future.succeededFuture();
+        serverClose.onComplete(ar -> ctx.completeNow());
+    }
+
+    /**
+     * Closes the shared {@link HttpClient} after all tests in the class have run.
+     *
+     * @param ctx the test context used to signal teardown completion
+     */
+    @AfterAll
+    static void tearDownClass(VertxTestContext ctx) {
+        if (client != null) {
+            client.close().onComplete(ar -> ctx.completeNow());
+        } else {
+            ctx.completeNow();
+        }
+    }
 
     // --- Test HealthCheck implementations ---
 
@@ -148,7 +204,13 @@ class HealthCheckHandlerTest {
     private Future<Integer> startServer(Vertx vertx, HealthCheckHandler handler) {
         Router router = Router.router(vertx);
         router.get("/health").handler(handler);
-        return vertx.createHttpServer().requestHandler(router).listen(0).map(server -> server.actualPort());
+        return vertx.createHttpServer()
+                .requestHandler(router)
+                .listen(0, "127.0.0.1")
+                .map(s -> {
+                    this.server = s;
+                    return s.actualPort();
+                });
     }
 
     /**
@@ -161,8 +223,7 @@ class HealthCheckHandlerTest {
      * @return a future completing with the parsed response body
      */
     private Future<JsonObject> request(Vertx vertx, int port) {
-        return vertx.createHttpClient()
-                .request(HttpMethod.GET, port, "localhost", "/health")
+        return client.request(HttpMethod.GET, port, "127.0.0.1", "/health")
                 .compose(req -> req.send())
                 .compose(resp -> resp.body().map(body -> {
                     JsonObject json = new JsonObject(body);
@@ -178,7 +239,7 @@ class HealthCheckHandlerTest {
 
         @Test
         @DisplayName("returns 200 UP with empty checks")
-        void emptyChecks(Vertx vertx, VertxTestContext ctx) {
+        void emptyChecks(VertxTestContext ctx) {
             HealthCheckHandler handler = new HealthCheckHandler(Set.of());
             startServer(vertx, handler).compose(p -> request(vertx, p)).onComplete(ctx.succeeding(json -> {
                 ctx.verify(() -> {
@@ -192,7 +253,7 @@ class HealthCheckHandlerTest {
 
         @Test
         @DisplayName("returns 200 UP when all checks pass")
-        void allChecksPass(Vertx vertx, VertxTestContext ctx) {
+        void allChecksPass(VertxTestContext ctx) {
             HealthCheckHandler handler = new HealthCheckHandler(Set.of(new UpCheck("db"), new UpCheck("cache")));
             startServer(vertx, handler).compose(p -> request(vertx, p)).onComplete(ctx.succeeding(json -> {
                 ctx.verify(() -> {
@@ -210,7 +271,7 @@ class HealthCheckHandlerTest {
 
         @Test
         @DisplayName("returns 503 DOWN when any check fails")
-        void anyCheckFails(Vertx vertx, VertxTestContext ctx) {
+        void anyCheckFails(VertxTestContext ctx) {
             HealthCheckHandler handler = new HealthCheckHandler(Set.of(new DownCheck("db", "timeout")));
             startServer(vertx, handler).compose(p -> request(vertx, p)).onComplete(ctx.succeeding(json -> {
                 ctx.verify(() -> {
@@ -226,7 +287,7 @@ class HealthCheckHandlerTest {
 
         @Test
         @DisplayName("returns 503 DOWN with all results when mix of UP and DOWN")
-        void mixedChecks(Vertx vertx, VertxTestContext ctx) {
+        void mixedChecks(VertxTestContext ctx) {
             HealthCheckHandler handler =
                     new HealthCheckHandler(Set.of(new UpCheck("cache"), new DownCheck("database", "timeout")));
             startServer(vertx, handler).compose(p -> request(vertx, p)).onComplete(ctx.succeeding(json -> {
@@ -257,7 +318,7 @@ class HealthCheckHandlerTest {
 
         @Test
         @DisplayName("includes data field when check result has data")
-        void includesData(Vertx vertx, VertxTestContext ctx) {
+        void includesData(VertxTestContext ctx) {
             HealthCheckHandler handler = new HealthCheckHandler(Set.of(new UpCheckWithData()));
             startServer(vertx, handler).compose(p -> request(vertx, p)).onComplete(ctx.succeeding(json -> {
                 ctx.verify(() -> {
@@ -275,7 +336,7 @@ class HealthCheckHandlerTest {
 
         @Test
         @DisplayName("omits data field when check result has no data")
-        void omitsDataWhenEmpty(Vertx vertx, VertxTestContext ctx) {
+        void omitsDataWhenEmpty(VertxTestContext ctx) {
             HealthCheckHandler handler = new HealthCheckHandler(Set.of(new UpCheck("simple")));
             startServer(vertx, handler).compose(p -> request(vertx, p)).onComplete(ctx.succeeding(json -> {
                 ctx.verify(() -> {
@@ -296,7 +357,7 @@ class HealthCheckHandlerTest {
 
         @Test
         @DisplayName("check returning failed future is reported as DOWN")
-        void failedFuture(Vertx vertx, VertxTestContext ctx) {
+        void failedFuture(VertxTestContext ctx) {
             HealthCheckHandler handler = new HealthCheckHandler(Set.of(new FailingCheck()));
             startServer(vertx, handler).compose(p -> request(vertx, p)).onComplete(ctx.succeeding(json -> {
                 ctx.verify(() -> {
@@ -312,7 +373,7 @@ class HealthCheckHandlerTest {
 
         @Test
         @DisplayName("check throwing exception synchronously is reported as DOWN")
-        void throwingCheck(Vertx vertx, VertxTestContext ctx) {
+        void throwingCheck(VertxTestContext ctx) {
             HealthCheckHandler handler = new HealthCheckHandler(Set.of(new ThrowingCheck()));
             startServer(vertx, handler).compose(p -> request(vertx, p)).onComplete(ctx.succeeding(json -> {
                 ctx.verify(() -> {
@@ -334,7 +395,7 @@ class HealthCheckHandlerTest {
 
         @Test
         @DisplayName("check that exceeds custom timeout is reported as DOWN")
-        void slowCheckExceedingTimeoutIsDown(Vertx vertx, VertxTestContext ctx) {
+        void slowCheckExceedingTimeoutIsDown(VertxTestContext ctx) {
             // SlowCheck never completes; handler timeout is 1 s — check must be reported DOWN.
             HealthCheckHandler handler = new HealthCheckHandler(Set.of(new SlowCheck()), 1L);
             startServer(vertx, handler).compose(p -> request(vertx, p)).onComplete(ctx.succeeding(json -> {

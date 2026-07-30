@@ -69,11 +69,11 @@ The `tx` `SqlClient` is passed as a trailing argument. The proxy intercepts it, 
 At relay time:
 1. Reads `destination` (stable service target id) from the `OutboxEnvelope`.
 2. Resolves the current event bus address via `ServiceTargetResolver`.
-3. If the target id is not resolvable (e.g., service not deployed on this node), returns `OutboxPublishResult.unresolvable()`.
+3. If the target id is not resolvable (e.g., service not deployed on this node), returns `OutboxPublishResult.unresolvable(message)`.
 4. Builds a `DispatchEnvelope` via `DispatchEnvelopeBuilder` with the payload and the application headers (`OutboxEnvelope.headers`, application-only). The durable propagation context is read from `OutboxEnvelope.metadata().context()` (NOT from headers) and decoded via `DurableContextPropagator.decodeToDispatchContext(metadata.context(), ...)`, then merged into the caller-override map — no holder write (the relay runs on the verticle's deployment context, not a duplicated context). Relay control in `metadata.delivery` is ignored on the service path. Before building the envelope, a `DeferredExecutionOrigin` (`kind = "outbox-relay"`, `reference` = the event type) is also merged into the caller-override map, proving the dispatch is deferred execution for the opt-in identity-snapshot reconstruction initializer.
 5. Sends via event bus request/reply with the service's configured timeout.
 6. On a successful reply: returns `OutboxPublishResult.success()`.
-7. On a failed reply from the service: returns `OutboxPublishResult.retryable(error, errorType)`.
+7. On a failed reply from the service: returns `OutboxPublishResult.retryable(message, cause)`.
 8. Rejects `@OneWay` service targets — any operation resolving to a `@OneWay` method returns `OutboxPublishResult.permanent(...)`.
 
 `SERVICE` delivery guarantee: at-least-once handoff to the service. The service must be idempotent or use `InboxService` for dedup if needed.

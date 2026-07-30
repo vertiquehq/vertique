@@ -7,8 +7,8 @@ import static com.github.tomakehurst.wiremock.client.WireMock.aResponse;
 import static com.github.tomakehurst.wiremock.client.WireMock.get;
 import static com.github.tomakehurst.wiremock.client.WireMock.urlEqualTo;
 
-import com.github.tomakehurst.wiremock.WireMockServer;
 import com.github.tomakehurst.wiremock.http.Fault;
+import com.github.tomakehurst.wiremock.junit.Stubbing;
 import com.github.tomakehurst.wiremock.stubbing.StubMapping;
 import dev.vertique.rest.client.exception.RestClientConnectionException;
 import dev.vertique.rest.client.exception.RestClientTimeoutException;
@@ -28,7 +28,7 @@ public enum ConnectionFailure implements WiremockScenarioPreparer {
      */
     SOCKET_TIMEOUT {
         @Override
-        public StubMapping prepare(WireMockServer server) {
+        public StubMapping prepare(Stubbing server) {
             return server.stubFor(get(urlEqualTo("/test"))
                     .willReturn(aResponse().withStatus(200).withFixedDelay(60_000))); // 60 s delay > 1 s client timeout
         }
@@ -45,7 +45,7 @@ public enum ConnectionFailure implements WiremockScenarioPreparer {
      */
     EMPTY_RESPONSE {
         @Override
-        public StubMapping prepare(WireMockServer server) {
+        public StubMapping prepare(Stubbing server) {
             return server.stubFor(
                     get(urlEqualTo("/test")).willReturn(aResponse().withFault(Fault.EMPTY_RESPONSE)));
         }
@@ -62,7 +62,7 @@ public enum ConnectionFailure implements WiremockScenarioPreparer {
      */
     CONNECTION_RESET {
         @Override
-        public StubMapping prepare(WireMockServer server) {
+        public StubMapping prepare(Stubbing server) {
             return server.stubFor(
                     get(urlEqualTo("/test")).willReturn(aResponse().withFault(Fault.CONNECTION_RESET_BY_PEER)));
         }
@@ -83,7 +83,7 @@ public enum ConnectionFailure implements WiremockScenarioPreparer {
      */
     RANDOM_BYTES {
         @Override
-        public StubMapping prepare(WireMockServer server) {
+        public StubMapping prepare(Stubbing server) {
             return server.stubFor(
                     get(urlEqualTo("/test")).willReturn(aResponse().withFault(Fault.RANDOM_DATA_THEN_CLOSE)));
         }
