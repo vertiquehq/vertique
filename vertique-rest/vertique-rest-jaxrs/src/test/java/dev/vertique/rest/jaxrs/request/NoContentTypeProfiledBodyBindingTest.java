@@ -3,11 +3,14 @@
 
 package dev.vertique.rest.jaxrs.request;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.core.StreamReadFeature;
+import com.fasterxml.jackson.core.exc.StreamReadException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.json.JsonMapper;
 import dev.vertique.core.exception.ValidationException;
@@ -55,6 +58,11 @@ import org.junit.jupiter.api.Test;
  * reachable — from any mount assembled without API-scoped middleware — so its coverage lives here,
  * exercising {@link DefaultBoundRequest}'s constructor directly with no HTTP and no middleware in the
  * path.
+ *
+ * <p>Because this test is that IT's sanctioned replacement, its proof strength is load-bearing: it
+ * asserts the frozen rejection <em>message</em>
+ * ({@code dev.vertique.rest.jaxrs.ProfileBodyMaterialization#rejection}) and the retained Jackson
+ * cause, not merely that some {@code ValidationException} escaped the constructor.
  */
 class NoContentTypeProfiledBodyBindingTest {
 
@@ -181,9 +189,25 @@ class NoContentTypeProfiledBodyBindingTest {
 
         // when/then: binding must reject the body via the profile mapper's strict first parse (400),
         // not bind it leniently through the default Vert.x JSON path.
-        assertThrows(
+        ValidationException rejection = assertThrows(
                 ValidationException.class,
                 () -> new DefaultBoundRequest(ctx, noParamsOp()),
                 "a duplicate-key body with no Content-Type must still be rejected by the profile mapper's strict first parse");
+
+        // The message pins the rejection to the profile pre-empt site specifically: it is the frozen,
+        // value-free message ProfileBodyMaterialization.rejection produces, so any OTHER
+        // ValidationException raised inside DefaultBoundRequest (param binding, a decoder, a future
+        // guard) fails this assertion rather than silently satisfying the test.
+        assertEquals(
+                "Request body rejected by JSON profile",
+                rejection.getMessage(),
+                "the rejection must come from the profile mapper's first parse, not from any other binder path");
+
+        // And the underlying Jackson rejection is retained as the cause — proving the strict parse ran
+        // rather than the body being rejected before it reached the profile mapper.
+        assertInstanceOf(
+                StreamReadException.class,
+                rejection.getCause(),
+                "STRICT_DUPLICATE_DETECTION must be what rejected the body");
     }
 }
