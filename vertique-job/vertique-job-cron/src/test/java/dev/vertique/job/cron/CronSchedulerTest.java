@@ -1718,9 +1718,16 @@ class CronSchedulerTest {
      * synchronously instead of returning a failed {@link Future}; the existing {@code onFailure}
      * handlers only catch the latter.
      *
-     * <p>Every scheduler in this nest is built with the 6-arg {@link CronScheduler} constructor
-     * (the one {@code CronModule} uses), which defaults {@code executionTimeoutMs} to {@code 0} —
-     * the execution-timeout timer is disabled, so nothing can mask a stranded guard.
+     * <p>Most schedulers in this nest use the 6-arg {@link CronScheduler} constructor (the one
+     * {@code CronModule} uses), which defaults {@code executionTimeoutMs} to {@code 0} — the
+     * execution-timeout timer is then disabled, so nothing can mask a stranded guard.
+     *
+     * <p>The timeout timer is <em>not</em> disabled in general, and two tests here deliberately arm
+     * it with the 9-arg constructor: {@code executionTimeoutMs} defaults to {@code 120_000} in
+     * {@code JobCoordinatorConfig} and {@code CronPersistenceModule} passes it, so the timer is
+     * armed in every persistence-backed deployment — which is exactly where tracked executions
+     * exist. Guard release must therefore hold both with the timer armed and without it, and this
+     * nest covers both.
      */
     @Nested
     @DisplayName("synchronous failure containment")

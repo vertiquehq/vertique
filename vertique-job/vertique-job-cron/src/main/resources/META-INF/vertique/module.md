@@ -163,6 +163,14 @@ Because that failure is effectively permanent while the retry is per-tick, the r
 
 Overlap handling is decided before resolution, so a `QUEUE_ONE` tick that arrives while an execution is running is still queued even if resolution would have failed. One caveat: if resolution fails at the moment the *queued* fire is taken, that queued tick is discarded rather than re-queued.
 
+**Synchronous failures cannot strand a job.** A fire holds two guards: a per-job in-flight entry and one of `maxConcurrentJobs` global concurrency slots. Both are released by the execution's completion callback, so anything that threw *synchronously* before that callback could run used to hold them for the process lifetime — and because a job's own in-flight entry is what blocks its next tick, the symptom was a job that simply stopped, silently, after one error. A burned slot also permanently reduced how many jobs could run at once.
+
+Every synchronous throw is now contained and both guards are released, so the fire is skipped and the job is retried on its next tick. This covers a custom `JobRepository` that throws instead of returning a failed future, or returns `null` (it is an application-implemented SPI, and the framework's `onFailure` handling only catches a failed future); a `JobInterceptor` that throws from `onDispatch`; a failure constructing the dispatch envelope, including in an application-registered context encoder; and a failure on the event-bus send. It also covers a throw while persisting the terminal state on the completion and timeout paths, which previously ended the execution with the guards still held and nothing left able to release them. A tracked execution that failed this way is marked `FAILED` on a best-effort basis, and its buffered log entries are still drained.
+
+One behavior worth knowing: a job whose handler or repository fails on every fire now logs once per fire rather than falling permanently silent after the first. That is louder, and truthful — the previous silence was the bug.
+
+**Interceptor asymmetry.** On a synchronous dispatch failure `JobInterceptor.onDispatch` may already have run while `onComplete` never does, because there is no reply to complete. An interceptor that pairs the two — counting in-flight work, for instance — should treat a missing `onComplete` as possible rather than assume symmetry.
+
 **Tracked executions:** When `tracked=true` and a repository is available, a `JobExecution` is persisted before dispatch and updated on completion. `SINGLE_INSTANCE` jobs are always tracked. The execution's `handler` column records the address resolved for that fire, so `job_executions.handler` always equals the address the job was actually dispatched to.
 
 | Method | Description |
