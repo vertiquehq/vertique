@@ -91,6 +91,12 @@ Every review finding against the predecessor, and where it is resolved:
   equal the literal the catch-all passes as `detail`, so overriding to 400 emits
   `{"title":"Internal Server Error","status":400,"detail":"Internal Server Error"}`. Pre-existing and
   reachable today on the 401/403 path.
+> **On the Vert.x-internal citations in F13/F14.** `BodyHandlerImpl` and `RoutingContextImpl` line
+> numbers were read from the Vert.x 5.1.2 **sources jar**, not this repo, so a patch release can
+> shift them. What is load-bearing is the *behavior* — bare `fail(int)` leaves `failure` null,
+> `fail(Throwable)` synthesises 500, any `DecoderException` maps to 400 — and every one of those is
+> pinned by a test in §5, so a line shift cannot silently invalidate the design.
+
 - **F13 — the asymmetry, precisely.** `BodyHandlerImpl` fails a body-limit breach with
   `context.fail(413)` — bare status, no throwable (`:104, 244, 313`), and `RoutingContextImpl.fail(int)`
   leaves `failure` null (`:193-196`) → F3's first branch → correct 413. The part-count failure arrives
