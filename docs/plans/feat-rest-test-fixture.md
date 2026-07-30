@@ -281,6 +281,29 @@ Including `RestValidationModule` directly is what supplies the real `WebValidati
 | Date | Trigger | Change |
 |---|---|---|
 | 2026-07-30 | S2 execution — the frozen §4 consumer snippet did not compile | Renamed the consumer component's mount accessor `factory()` → `mountFactory()`; added the collision note above. Correction of a verified fact (Dagger rejects the original), not a design change — the `RestTestFixtureModule` / `RestTestContributions` contract is untouched, so no re-sign-off. |
+| 2026-07-30 | S5 execution — `ProfiledBodyParseUnderGateIT` hit the slice's STOP condition | **Scope change, user-approved.** Migrate that file's four valid tests; replace its fifth (`noContentType_profiledBody_strictParseStillRuns`) with a unit test covering the null-`Content-Type` branch of `DefaultBoundRequest.bindProfiledJsonBody` directly. See R8 below for the finding. |
+
+### R8 — the falsification check covered codecs, not middlewares
+
+§2.7 verified that adding the production **encoders/decoders** is a pure add. It did not examine
+**middlewares**, and the variance table read `middlewares = Set.of()` in eight of nine ITs as "not
+customized". That reading was wrong: `Set.of()` does not mean *no customization*, it means
+**suppressing five production middlewares** (`RequestContextLifecycle`, `ContextualLoggingMiddleware`,
+`DefaultHeadersMiddleware`, `ContentTypeValidationMiddleware`, `RestRequestCompletionEmitter`).
+
+Every migrated IT therefore gains those five. Eight of nine pass unchanged — the fidelity increase is
+the point of the fixture. The ninth did not, and the reason matters:
+`ProfiledBodyParseUnderGateIT.noContentType_profiledBody_strictParseStillRuns` asserts **400** for a
+POST carrying a body with no `Content-Type` against a resource with no `@Consumes`. Production's
+`ContentTypeValidationMiddleware` (API-scoped, priority 20, unconditional `@IntoSet` default) fails
+exactly that request with **415** before it reaches the binder. The test passed only because the
+hand-rolled harness omitted the middleware — it documented behavior no real deployment has.
+
+The defensive branch it aimed at is real and still reachable from a mount without API-scoped
+middleware, so the coverage moves to a unit test rather than being deleted.
+
+**Generalization for the remaining migrations:** treat `Set.of()` for any multibound argument as
+*suppression*, not *default*, and check what the production set contains before assuming a pure add.
 
 ## 5. Class Inventory
 
