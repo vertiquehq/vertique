@@ -170,7 +170,13 @@ public class HttpConfig {
     private final int maxFormAttributeSize = 8192;
 
     /**
-     * Maximum number of URL-encoded form fields allowed per request. Defaults to {@code 256}.
+     * Maximum number of form parts allowed per request. Defaults to {@code 256}.
+     *
+     * <p>This is not limited to URL-encoded fields: the decoder counts <em>every</em> part of a
+     * decoded body — {@code multipart/form-data} file parts and text parts as well as URL-encoded
+     * attributes — against one shared limit. A multipart request carrying more parts than this is
+     * therefore rejected even when its total size is far below {@link #maxBodySize}, which is what
+     * bounds parser and allocation churn from many small parts.
      */
     @Builder.Default
     private final int maxFormFields = 256;

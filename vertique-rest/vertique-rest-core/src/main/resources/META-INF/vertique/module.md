@@ -1051,7 +1051,7 @@ custom response headers.
 | `http.acceptBacklog` | `-1` | `-1` uses the OS default |
 | `http.useProxyProtocol` | `false` | read the real client IP from an upstream proxy |
 | `http.maxFormAttributeSize` | `8192` | bytes, per URL-encoded form value |
-| `http.maxFormFields` | `256` | URL-encoded form fields per request |
+| `http.maxFormFields` | `256` | form parts per request; counts multipart file **and** text parts, not only URL-encoded attributes — this is what bounds many-small-parts churn below `maxBodySize` |
 
 ### `http.ssl`
 
