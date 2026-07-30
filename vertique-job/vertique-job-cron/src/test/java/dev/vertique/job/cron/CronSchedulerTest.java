@@ -11,6 +11,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.anyLong;
+import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -1128,12 +1129,21 @@ class CronSchedulerTest {
      * Regression coverage for GH-41: {@link CronJobRegistrar} resolves every {@code @CronJob}
      * annotated with a service target to a {@link CronTargetReference.ServiceTarget} with
      * {@code handlerAddress = null} (by design — the runtime address is resolved late via
-     * {@link ServiceTargetResolver}). {@link CronScheduler#buildExecution} currently copies
+     * {@link ServiceTargetResolver}).
+     *
+     * <p>The defect these tests pin against: {@link CronScheduler#buildExecution} used to copy
      * {@code job.handlerAddress()} straight into {@link JobExecution#handler()}, so a tracked
-     * {@link ExecutionMode#SINGLE_INSTANCE} service-target job persists a {@code null} handler —
+     * {@link ExecutionMode#SINGLE_INSTANCE} service-target job persisted a {@code null} handler —
      * fatal against a {@code NOT NULL} column in {@code vertique-job-postgresql}.
-     * {@link CronJobDispatcher#dispatch} resolves the target correctly, but only at send time —
+     * {@link CronJobDispatcher#dispatch} resolved the target correctly, but only at send time —
      * too late for the already-persisted record.
+     *
+     * <p>That is now fixed (ADR-0201): the effective event bus address is resolved once per fire
+     * by {@link CronScheduler#resolveEffectiveAddress}, before any execution record is written and
+     * before {@link CronJobDispatcher#dispatch} is even called, so the address a tracked execution
+     * persists is by construction the address actually dispatched to. The tests below pin that
+     * invariant across SINGLE_INSTANCE, EVERY_INSTANCE, QUEUE_ONE re-dispatch, unresolvable
+     * targets, and the ordering of resolution relative to overlap admission.
      */
     @Nested
     @DisplayName("service-target execution handler")
@@ -1142,6 +1152,38 @@ class CronSchedulerTest {
 
         /** Stable target id used by every test in this nested class. */
         private static final String STABLE_TARGET_ID = "svc.op";
+
+        /**
+         * The {@link CronScheduler} logger, captured by {@link #logAppender} for the one test in
+         * this nest that asserts on log volume ({@link #permanentlyUnresolvableTargetLogsErrorOnce}).
+         */
+        private ch.qos.logback.classic.Logger schedulerLogger;
+
+        /**
+         * List appender attached to {@link #schedulerLogger} for the duration of every test in
+         * this nest. Attaching unconditionally (rather than only in the one test that reads it) is
+         * deliberate: attach/detach live in {@link #attachLogAppender()}/{@link
+         * #detachLogAppender()} so cleanup happens no matter how a test exits — a {@code @Timeout}
+         * firing or an earlier assertion throwing must not leave the appender attached to the
+         * static {@link CronScheduler} logger for the rest of the JVM fork, where it would keep
+         * accumulating events across every later test.
+         */
+        private ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> logAppender;
+
+        @BeforeEach
+        void attachLogAppender() {
+            schedulerLogger = (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(CronScheduler.class);
+            logAppender = new ch.qos.logback.core.read.ListAppender<>();
+            logAppender.setContext(schedulerLogger.getLoggerContext());
+            logAppender.start();
+            schedulerLogger.addAppender(logAppender);
+        }
+
+        @AfterEach
+        void detachLogAppender() {
+            schedulerLogger.detachAppender(logAppender);
+            logAppender.stop();
+        }
 
         /**
          * The address {@link #STABLE_TARGET_ID} resolves to — deliberately different from the
@@ -1325,6 +1367,11 @@ class CronSchedulerTest {
             vertx.setTimer(
                     2500,
                     id -> ctx.verify(() -> {
+                        // Proves a fire really was admitted and reached the gate. Without this, a
+                        // run where no cron tick ever fired at all (e.g. under CI load) would pass
+                        // the two assertions below vacuously — they cannot otherwise distinguish
+                        // "the gate correctly stopped the fire" from "nothing fired at all".
+                        verify(resolver, atLeastOnce()).resolve(STABLE_TARGET_ID);
                         verify(repo, never()).tryInsert(any());
                         assertEquals(
                                 0,
@@ -1378,14 +1425,6 @@ class CronSchedulerTest {
         @Test
         @DisplayName("permanently unresolvable target logs ERROR once, not once per tick")
         void permanentlyUnresolvableTargetLogsErrorOnce(Vertx vertx, VertxTestContext ctx) {
-            ch.qos.logback.classic.Logger schedulerLogger =
-                    (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(CronScheduler.class);
-            ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> appender =
-                    new ch.qos.logback.core.read.ListAppender<>();
-            appender.setContext(schedulerLogger.getLoggerContext());
-            appender.start();
-            schedulerLogger.addAppender(appender);
-
             ServiceTargetResolver resolver = mock(ServiceTargetResolver.class);
             when(resolver.resolve(STABLE_TARGET_ID)).thenThrow(new IllegalArgumentException("never resolves"));
 
@@ -1396,41 +1435,46 @@ class CronSchedulerTest {
                     serviceTargetJob("never-resolves-job", ExecutionMode.SINGLE_INSTANCE, OverlapPolicy.SKIP));
             scheduler.start();
 
-            // ~3.5s over a one-second cron: at least three failed fires.
-            vertx.setTimer(3500, id -> {
-                schedulerLogger.detachAppender(appender);
-                appender.stop();
-                ctx.verify(() -> {
-                    long errors = appender.list.stream()
-                            .filter(event -> event.getLevel() == ch.qos.logback.classic.Level.ERROR)
-                            .count();
-                    long debugs = appender.list.stream()
-                            .filter(event -> event.getLevel() == ch.qos.logback.classic.Level.DEBUG
-                                    && event.getFormattedMessage().contains("skipping this fire"))
-                            .count();
-                    assertEquals(
-                            1,
-                            errors,
-                            "exactly one ERROR expected for a permanently unresolvable target, got " + errors
-                                    + " — an unbounded per-tick report fills log volumes");
-                    assertTrue(
-                            debugs >= 1,
-                            "subsequent failures must still be reported at DEBUG so the condition stays"
-                                    + " observable; got " + debugs);
-                    ctx.completeNow();
-                });
-            });
+            // ~3.5s over a one-second cron: at least three failed fires. Appender attach/detach is
+            // handled unconditionally by attachLogAppender()/detachLogAppender() above, so a
+            // @Timeout or an earlier assertion throwing here still leaves the JVM fork clean.
+            vertx.setTimer(
+                    3500,
+                    id -> ctx.verify(() -> {
+                        // Filtered on the same "skipping this fire" marker as the DEBUG count below so an
+                        // unrelated CronScheduler ERROR logged elsewhere in the window cannot inflate this
+                        // count and break the assertion.
+                        long errors = logAppender.list.stream()
+                                .filter(event -> event.getLevel() == ch.qos.logback.classic.Level.ERROR
+                                        && event.getFormattedMessage().contains("skipping this fire"))
+                                .count();
+                        long debugs = logAppender.list.stream()
+                                .filter(event -> event.getLevel() == ch.qos.logback.classic.Level.DEBUG
+                                        && event.getFormattedMessage().contains("skipping this fire"))
+                                .count();
+                        assertEquals(
+                                1,
+                                errors,
+                                "exactly one ERROR expected for a permanently unresolvable target, got " + errors
+                                        + " — an unbounded per-tick report fills log volumes");
+                        assertTrue(
+                                debugs >= 1,
+                                "subsequent failures must still be reported at DEBUG so the condition stays"
+                                        + " observable; got " + debugs);
+                        ctx.completeNow();
+                    }));
         }
 
         /**
          * GREEN regression guard: unlike tests 1-3, this uses a mock {@link JobRepository} that
          * tolerates a {@code null} handler — it only goes red against a real {@code NOT NULL}
          * handler column (e.g. {@code vertique-job-postgresql}), which this unit test doesn't
-         * exercise. {@link CronJobDispatcher#dispatch} already resolves the {@link
-         * CronTargetReference.ServiceTarget} correctly at send time, so the message lands at
-         * {@link #RESOLVED_ADDRESS} today regardless of the persisted-handler bug. Its lasting
-         * value is pinning that the address a persisted execution records equals the address
-         * actually dispatched to — an invariant the later fix makes true by construction.
+         * exercise. The scheduler resolves the {@link CronTargetReference.ServiceTarget} once per
+         * fire, before {@link CronJobDispatcher#dispatch} is even called (see
+         * {@link CronScheduler#resolveEffectiveAddress}), so the message lands at
+         * {@link #RESOLVED_ADDRESS} regardless of the persisted-handler bug. Its lasting value is
+         * pinning that the address a persisted execution records equals the address actually
+         * dispatched to — an invariant the fix makes true by construction.
          */
         @Test
         @DisplayName("GREEN regression guard: SINGLE_INSTANCE service-target dispatch lands at the resolved address")
@@ -1530,6 +1574,93 @@ class CronSchedulerTest {
 
             CronJobDefinition job = serviceTargetJob(
                     "queued-overlap-service-job", ExecutionMode.EVERY_INSTANCE, OverlapPolicy.QUEUE_ONE);
+
+            scheduler.register(job);
+            scheduler.start();
+        }
+
+        /**
+         * Pins the double-release branch of {@link CronScheduler#markCompleted}: when the queued
+         * QUEUE_ONE fire's own, independent target resolution fails, {@code markCompleted} must
+         * release <b>both</b> guards — {@code inFlightJobs} (via {@code removeInFlight}) and the
+         * global concurrency slot (via {@code releaseSlot}) — because
+         * {@link CronConcurrencyManager#markCompleted(String)} deliberately keeps the in-flight
+         * entry when a pending fire exists (so the slot can be reused without a race), and that
+         * entry would otherwise never be released once the queued re-dispatch aborts. A leak here
+         * would strand one of the ten global concurrency slots ({@link
+         * CronScheduler#DEFAULT_MAX_CONCURRENT_JOBS}) permanently and leave this job unable to
+         * fire again for the lifetime of the process.
+         *
+         * <p>Sequence: the first fire is held open by the handler; the overlapping second tick is
+         * queued (QUEUE_ONE, no resolver call — see {@link
+         * #unresolvableTargetDuringOverlapStillQueuesTheTick}); the handler arms {@code
+         * failQueuedResolution} immediately before replying, so resolution fails specifically for
+         * the queued re-dispatch taken inside {@code markCompleted} rather than at admission. The
+         * discriminating assertion is that a <em>later</em>, independent tick still dispatches —
+         * the only way to observe that both guards were actually released rather than stranded.
+         */
+        @Test
+        @DisplayName("QUEUE_ONE queued-fire resolution failure in markCompleted releases both the in-flight "
+                + "guard and the concurrency slot, so a later tick can still dispatch")
+        void queuedFireResolutionFailureReleasesBothGuards(Vertx vertx, VertxTestContext ctx) {
+            AtomicInteger hitCount = new AtomicInteger();
+            AtomicBoolean failQueuedResolution = new AtomicBoolean(false);
+            vertx.eventBus().consumer(RESOLVED_ADDRESS, msg -> {
+                int hits = hitCount.incrementAndGet();
+                if (hits == 1) {
+                    // Hold the first execution long enough for the next tick to overlap and queue.
+                    vertx.setTimer(1500, id -> {
+                        // Arm the failure immediately before replying, so it hits specifically the
+                        // queued re-dispatch resolved inside markCompleted — not this admission,
+                        // which already succeeded.
+                        failQueuedResolution.set(true);
+                        var body = (DispatchEnvelope<?>) msg.body();
+                        if (body.replyAddress().isPresent()) {
+                            vertx.eventBus()
+                                    .send(
+                                            body.replyAddress().orElseThrow(),
+                                            DispatchEnvelope.of("done"),
+                                            new DeliveryOptions().setCodecName("dispatch.envelope"));
+                        }
+                        // Disarm well before the next ~1s tick so a later fire can resolve again.
+                        vertx.setTimer(200, disarmId -> failQueuedResolution.set(false));
+                    });
+                    return;
+                }
+                var body = (DispatchEnvelope<?>) msg.body();
+                if (body.replyAddress().isPresent()) {
+                    vertx.eventBus()
+                            .send(
+                                    body.replyAddress().orElseThrow(),
+                                    DispatchEnvelope.of("done"),
+                                    new DeliveryOptions().setCodecName("dispatch.envelope"));
+                }
+                if (hits >= 2) {
+                    ctx.completeNow();
+                }
+            });
+
+            JobRepository repo = mock(JobRepository.class);
+            when(repo.save(any(JobExecution.class))).thenAnswer(inv -> Future.succeededFuture(UUID.randomUUID()));
+            when(repo.completeExecution(any(UUID.class), any(JobState.class), any(), any(), any()))
+                    .thenAnswer(inv -> Future.succeededFuture(Optional.empty()));
+            when(repo.updateScheduleFireTimes(anyString(), any(Instant.class), any(Instant.class)))
+                    .thenAnswer(inv -> Future.succeededFuture());
+
+            ServiceTargetResolver resolver = mock(ServiceTargetResolver.class);
+            when(resolver.resolve(STABLE_TARGET_ID)).thenAnswer(inv -> {
+                if (failQueuedResolution.get()) {
+                    throw new IllegalArgumentException("queued re-dispatch resolution failure");
+                }
+                return new ResolvedServiceTarget(STABLE_TARGET_ID, null, "ns", "svc", "op", null, RESOLVED_ADDRESS);
+            });
+
+            // 6-arg constructor: executionTimeoutMs defaults to 0, so nothing can mask a stranded guard.
+            scheduler = new CronScheduler(
+                    vertx, Set.of(), repo, resolver, testEventBusClient(vertx), DispatchEnvelopeBuilder.forTesting());
+
+            CronJobDefinition job = serviceTargetJob(
+                    "queued-resolution-failure-job", ExecutionMode.EVERY_INSTANCE, OverlapPolicy.QUEUE_ONE);
 
             scheduler.register(job);
             scheduler.start();
