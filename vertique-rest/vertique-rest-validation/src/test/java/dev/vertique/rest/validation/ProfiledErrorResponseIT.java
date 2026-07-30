@@ -769,7 +769,7 @@ public class ProfiledErrorResponseIT {
         middlewares.forEach(contributions::addMiddleware);
         profiles.forEach(contributions::addJsonMapperProfile);
 
-        RestTestMounts.startServer(vertx, MountFixtures.factory(vertx, config, contributions.build()), resources)
+        RestTestMounts.startServer(vertx, MountFixtures.mount(vertx, config, contributions.build()), resources)
                 .onComplete(ctx.succeeding(s -> {
                     server = s;
                     client = vertx.createHttpClient();

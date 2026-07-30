@@ -9,9 +9,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vertique.rest.core.ValidationErrorDetail;
 import dev.vertique.rest.core.request.FilePart;
-import dev.vertique.rest.jaxrs.JaxRsRouterMount;
 import dev.vertique.rest.jaxrs.validation.FileContentVerifier;
 import dev.vertique.rest.test.RestTestContributions;
+import dev.vertique.rest.test.RestTestMount;
 import dev.vertique.rest.test.RestTestMounts;
 import io.swagger.v3.oas.annotations.Operation;
 import io.vertx.core.Future;
@@ -136,7 +136,7 @@ public class MagicBytesVerifierRouteIT {
     }
 
     private Future<HttpServer> startServer(UploadResource resource) {
-        return RestTestMounts.startServer(vertx, buildFactory(), Set.of(resource));
+        return RestTestMounts.startServer(vertx, buildMount(), Set.of(resource));
     }
 
     private Future<HttpResult> postMultipart(byte[] content) {
@@ -152,20 +152,20 @@ public class MagicBytesVerifierRouteIT {
     }
 
     /**
-     * Builds the mount factory for this test through {@link ValidationMountComponent}, carrying the
+     * Builds the mount handle for this test through {@link ValidationMountComponent}, carrying the
      * real magic-bytes verifier resolved in {@link #setUpClient} as a test contribution. An instance
      * method (not static) because it reads the per-test {@link #uploadsDirectory} field, which flows
      * in as the production {@code http.uploadsDirectory} config.
      *
-     * @return the real mount factory, wired with the {@code web-validation} strategy and the
+     * @return the real mount handle, wired with the {@code web-validation} strategy and the
      *     opt-in magic-bytes verifier
      */
-    private JaxRsRouterMount.Factory buildFactory() {
+    private RestTestMount buildMount() {
         RestTestContributions.Builder contributions = RestTestContributions.builder();
         verifiers.forEach(contributions::addFileContentVerifier);
         JsonObject config =
                 new JsonObject().put("http", new JsonObject().put("uploadsDirectory", uploadsDirectory.toString()));
-        return MountFixtures.factory(vertx, config, contributions.build());
+        return MountFixtures.mount(vertx, config, contributions.build());
     }
 
     private static java.nio.file.Path uniqueUploadsDirectory(String testName) {

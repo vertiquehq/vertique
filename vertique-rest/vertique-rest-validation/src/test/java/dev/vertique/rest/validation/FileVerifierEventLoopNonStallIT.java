@@ -124,7 +124,7 @@ public class FileVerifierEventLoopNonStallIT {
     private Future<HttpServer> startServer(GatedVerifier verifier, NonStallResource resource) {
         RestTestContributions contributions =
                 RestTestContributions.builder().addFileContentVerifier(verifier).build();
-        return RestTestMounts.startServer(vertx, MountFixtures.factory(vertx, contributions), Set.of(resource));
+        return RestTestMounts.startServer(vertx, MountFixtures.mount(vertx, contributions), Set.of(resource));
     }
 
     private Future<HttpResult> postMultipart() {

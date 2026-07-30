@@ -6,10 +6,16 @@ package dev.vertique.rest.test;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import dev.vertique.core.exception.NotFoundException;
+import dev.vertique.core.extension.ExtensionPhase;
+import dev.vertique.rest.core.interceptor.RequestInterceptor;
+import dev.vertique.rest.core.middleware.Middleware;
+import dev.vertique.rest.core.middleware.MiddlewareScope;
+import dev.vertique.rest.core.middleware.RequestContextLifecycle;
 import dev.vertique.rest.core.response.BufferedBody;
 import dev.vertique.rest.core.response.ResponseBodyEncoder;
 import dev.vertique.rest.core.response.SerializedBody;
 import io.swagger.v3.oas.annotations.Operation;
+import io.vertx.core.Context;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
@@ -17,6 +23,7 @@ import io.vertx.core.http.HttpClient;
 import io.vertx.core.http.HttpClientRequest;
 import io.vertx.core.http.HttpMethod;
 import io.vertx.core.http.HttpServer;
+import io.vertx.core.internal.ContextInternal;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.RoutingContext;
 import io.vertx.junit5.VertxExtension;
@@ -27,9 +34,15 @@ import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 import java.time.Duration;
+import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
@@ -39,14 +52,21 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
- * End-to-end proof that {@link RestTestMounts} turns a fixture-built {@code JaxRsRouterMount.Factory}
- * into a server that behaves like production over real HTTP.
+ * End-to-end proof that {@link RestTestMounts} turns a fixture-built {@link RestTestMount} into a
+ * server that behaves like production over real HTTP.
  *
  * <p>These are the tests that justify the whole fixture. {@link #mapsExceptionThroughRealDefaultMapper()}
  * in particular proves that a harness outside {@code dev.vertique.rest.jaxrs} gets the framework's
  * <em>real</em> {@code DefaultExceptionMapper} — the entire capability that widening
  * {@code RestModule.defaultExceptionMapper()} to {@code public} bought. With that capability supplied
  * by this module instead, restoring the method to package-private becomes possible.
+ *
+ * <p>The second group covers the <b>ROOT middleware tier</b>. {@code JaxRsRouterMount} installs only
+ * the API-scoped middlewares; the ROOT-scoped ones — the default scope — are installed above the
+ * mount by {@code HttpVerticle}, so {@link RestTestMounts#startServer} has to reproduce that step or
+ * the framework's root pipeline never runs. {@link #requestContextLifecycleIsAvailableToInterceptors()}
+ * pins the concrete consequence: {@code RequestLocaleInterceptor} and {@code WebSocketEndpointRegistrar}
+ * both fail the request when {@code RequestContextLifecycle.fromRoutingContext} throws.
  */
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
@@ -57,6 +77,12 @@ public class RestTestMountsIT {
 
     /** Generous bound for the blocking server start — this test is not probing the timeout path. */
     private static final Duration START_TIMEOUT = Duration.ofSeconds(10);
+
+    /** Response header stamped by the ROOT-scoped middleware stand-in. */
+    private static final String ROOT_HEADER = "X-Root-Middleware";
+
+    /** Response header stamped by the API-scoped middleware stand-in. */
+    private static final String API_HEADER = "X-Api-Middleware";
 
     private static Vertx vertx;
     private static HttpClient client;
@@ -129,6 +155,83 @@ public class RestTestMountsIT {
         assertThat(result.contentType()).contains("text/plain");
     }
 
+    // --- ROOT middleware installation ---
+
+    @Test
+    @DisplayName("a contributed ROOT-scoped middleware runs for a request served through startServer")
+    void rootScopedMiddlewaresAreInstalled() throws Exception {
+        // ROOT is what Middleware.scope() defaults to, so this is the scope a contributed middleware
+        // gets when its author never thinks about the question — and a fixture that installs only the
+        // API tier discards every one of them silently.
+        startServer(RestTestContributions.builder()
+                .addMiddleware(new HeaderStampingMiddleware(ROOT_HEADER, MiddlewareScope.ROOT))
+                .build());
+
+        HttpResult result = get("/fixture/echo");
+
+        assertThat(result.statusCode()).isEqualTo(200);
+        assertThat(result.header(ROOT_HEADER))
+                .as("the ROOT tier belongs on the root router above the mount, as HttpVerticle installs it")
+                .isEqualTo("ran");
+    }
+
+    @Test
+    @DisplayName("an API-scoped middleware still runs — the tier JaxRsRouterMount installs is unaffected")
+    void apiScopedMiddlewareStillRuns() throws Exception {
+        startServer(RestTestContributions.builder()
+                .addMiddleware(new HeaderStampingMiddleware(API_HEADER, MiddlewareScope.API))
+                .build());
+
+        HttpResult result = get("/fixture/echo");
+
+        assertThat(result.statusCode()).isEqualTo(200);
+        assertThat(result.header(API_HEADER)).isEqualTo("ran");
+    }
+
+    @Test
+    @DisplayName("RequestContextLifecycle resolves for a request interceptor instead of failing the request")
+    void requestContextLifecycleIsAvailableToInterceptors() throws Exception {
+        // Reproduces RequestLocaleInterceptor.beforeRequest verbatim: resolve the ROOT-installed
+        // lifecycle handle, register a cleanup on it, and fail the request if that throws.
+        LifecycleProbeInterceptor probe = new LifecycleProbeInterceptor();
+        startServer(RestTestContributions.builder().addRequestInterceptor(probe).build());
+
+        HttpResult result = get("/fixture/echo");
+
+        assertThat(probe.duplicatedContext())
+                .as("Vert.x Web duplicates the context for every request on its own; RequestContextLifecycle "
+                        + "stores a handle and adds an end handler, and never calls duplicate()")
+                .isTrue();
+        assertThat(probe.lifecycleFailure())
+                .as("fromRoutingContext must resolve — RequestLocaleInterceptor and WebSocketEndpointRegistrar "
+                        + "fail the request outright when it throws")
+                .isNull();
+        assertThat(result.statusCode()).isEqualTo(200);
+        probe.awaitCleanup();
+    }
+
+    @Test
+    @DisplayName("ROOT middlewares execute in OrderedExtension order, not set or priority order")
+    void middlewaresRunInOrderedExtensionOrder() throws Exception {
+        // Phase dominates priority in OrderedExtension.comparator(), so these three priorities are
+        // deliberately in the opposite order from the expected execution order: a priority-only sort
+        // reverses the result. Their hashCodes force the underlying HashSet's iteration order to be
+        // that same reversed sequence, so dropping the sort entirely is caught too.
+        List<String> executed = new CopyOnWriteArrayList<>();
+        startServer(RestTestContributions.builder()
+                .addMiddleware(new OrderRecordingMiddleware("first", ExtensionPhase.SYSTEM_FIRST, 1_000, 3, executed))
+                .addMiddleware(new OrderRecordingMiddleware("second", ExtensionPhase.APPLICATION, -1_000, 2, executed))
+                .addMiddleware(new OrderRecordingMiddleware("third", ExtensionPhase.SYSTEM_LAST, -5_000, 1, executed))
+                .build());
+
+        HttpResult result = get("/fixture/echo");
+
+        assertThat(result.statusCode()).isEqualTo(200);
+        assertThat(executed)
+                .as("the root install duplicates HttpVerticle's three lines; this is the drift guard on them")
+                .containsExactly("first", "second", "third");
+    }
+
     // --- Helpers ---
 
     /**
@@ -140,14 +243,14 @@ public class RestTestMountsIT {
         FixtureSelfTestComponent component =
                 DaggerFixtureSelfTestComponent.factory().create(vertx, noneStrategyConfig(), contributions);
         server = RestTestMounts.startServerBlocking(
-                vertx, component.mountFactory(), Set.of(new FixtureResource()), START_TIMEOUT);
+                vertx, component.testMount(), Set.of(new FixtureResource()), START_TIMEOUT);
     }
 
     /**
      * Issues a GET against the running server and awaits the full response.
      *
      * @param path the request path
-     * @return the status, content type, and body of the response
+     * @return the status, headers, and body of the response
      * @throws Exception when the round trip fails or times out
      */
     private HttpResult get(String path) throws Exception {
@@ -155,8 +258,9 @@ public class RestTestMountsIT {
                 .compose(HttpClientRequest::send)
                 .compose(response -> {
                     int statusCode = response.statusCode();
-                    String contentType = response.getHeader("Content-Type");
-                    return response.body().map(body -> new HttpResult(statusCode, contentType, body.toString()));
+                    Map<String, String> headers = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+                    response.headers().forEach(entry -> headers.put(entry.getKey(), entry.getValue()));
+                    return response.body().map(body -> new HttpResult(statusCode, headers, body.toString()));
                 })
                 .toCompletionStage()
                 .toCompletableFuture()
@@ -176,11 +280,31 @@ public class RestTestMountsIT {
     /**
      * The parts of an HTTP response these tests assert on.
      *
-     * @param statusCode  the response status code
-     * @param contentType the {@code Content-Type} header, or {@code null} when unset
-     * @param body        the response body decoded as a string
+     * @param statusCode the response status code
+     * @param headers    the response headers, keyed case-insensitively as HTTP requires
+     * @param body       the response body decoded as a string
      */
-    private record HttpResult(int statusCode, String contentType, String body) {}
+    private record HttpResult(int statusCode, Map<String, String> headers, String body) {
+
+        /**
+         * Returns the {@code Content-Type} header.
+         *
+         * @return the content type, or {@code null} when unset
+         */
+        String contentType() {
+            return header("Content-Type");
+        }
+
+        /**
+         * Returns a single response header.
+         *
+         * @param name the header name; matched case-insensitively
+         * @return the header value, or {@code null} when unset
+         */
+        String header(String name) {
+            return headers.get(name);
+        }
+    }
 
     /** JAX-RS resource exposing one success path and one exception path. */
     @Path("/fixture")
@@ -233,6 +357,168 @@ public class RestTestMountsIT {
         @Override
         public int priority() {
             return 900;
+        }
+    }
+
+    // --- Middleware stand-ins ---
+
+    /** Middleware that stamps a fixed response header, making its execution observable on the wire. */
+    private static final class HeaderStampingMiddleware implements Middleware {
+
+        private final String headerName;
+        private final MiddlewareScope scope;
+
+        /**
+         * Creates the stand-in.
+         *
+         * @param headerName the header to stamp
+         * @param scope      the scope to report
+         */
+        HeaderStampingMiddleware(String headerName, MiddlewareScope scope) {
+            this.headerName = headerName;
+            this.scope = scope;
+        }
+
+        @Override
+        public void handle(RoutingContext ctx) {
+            ctx.response().putHeader(headerName, "ran");
+            ctx.next();
+        }
+
+        @Override
+        public MiddlewareScope scope() {
+            return scope;
+        }
+
+        @Override
+        public int priority() {
+            return 0;
+        }
+    }
+
+    /**
+     * ROOT middleware that appends its name to a shared log when it runs, so the installation site's
+     * ordering is observable.
+     *
+     * <p>{@link #orderKey()} is overridden because the default is the class name, which ties for
+     * three instances of one class — exactly the case {@code OrderedExtension#orderKey()} tells
+     * repeat registrations to override. {@link #hashCode()} is fixed so the middleware set's own
+     * iteration order is deterministic <em>and deliberately wrong</em>, which is what lets the
+     * ordering assertion fail reliably if the installation site stops sorting.
+     */
+    private static final class OrderRecordingMiddleware implements Middleware {
+
+        private final String name;
+        private final ExtensionPhase phase;
+        private final int priority;
+        private final int hash;
+        private final List<String> executed;
+
+        /**
+         * Creates the stand-in.
+         *
+         * @param name     the name appended to {@code executed}, also used as the tie-break order key
+         * @param phase    the phase to report
+         * @param priority the priority to report
+         * @param hash     the fixed hash code pinning this instance's position in the middleware set
+         * @param executed the shared execution log
+         */
+        OrderRecordingMiddleware(String name, ExtensionPhase phase, int priority, int hash, List<String> executed) {
+            this.name = name;
+            this.phase = phase;
+            this.priority = priority;
+            this.hash = hash;
+            this.executed = executed;
+        }
+
+        @Override
+        public void handle(RoutingContext ctx) {
+            executed.add(name);
+            ctx.next();
+        }
+
+        @Override
+        public ExtensionPhase phase() {
+            return phase;
+        }
+
+        @Override
+        public int priority() {
+            return priority;
+        }
+
+        @Override
+        public String orderKey() {
+            return name;
+        }
+
+        @Override
+        public int hashCode() {
+            return hash;
+        }
+
+        @Override
+        public boolean equals(Object other) {
+            return this == other;
+        }
+    }
+
+    /**
+     * Request interceptor reproducing {@code RequestLocaleInterceptor.beforeRequest} — the seam the
+     * ROOT-installed {@code RequestContextLifecycle} exists to serve — and recording what it observed.
+     */
+    private static final class LifecycleProbeInterceptor implements RequestInterceptor {
+
+        /** Whether the interceptor ran on a duplicated Vert.x context; {@code null} until it runs. */
+        private final AtomicReference<Boolean> duplicatedContext = new AtomicReference<>();
+
+        /** The message of the failure {@code fromRoutingContext} raised, or {@code null} on success. */
+        private final AtomicReference<String> lifecycleFailure = new AtomicReference<>();
+
+        /** Completed by the cleanup this interceptor registers on the lifecycle handle. */
+        private final CompletableFuture<Void> cleanupRan = new CompletableFuture<>();
+
+        @Override
+        public Future<Void> beforeRequest(RoutingContext rc) {
+            Context current = Vertx.currentContext();
+            duplicatedContext.set(current instanceof ContextInternal internal && internal.isDuplicate());
+            try {
+                // The Runnable cast is required: Handle.onClose is overloaded on two functional
+                // interfaces (Runnable and ContextHolder.Scope), so a bare lambda is ambiguous.
+                Runnable cleanup = () -> cleanupRan.complete(null);
+                RequestContextLifecycle.fromRoutingContext(rc).onClose(cleanup);
+            } catch (RuntimeException e) {
+                lifecycleFailure.set(e.getMessage());
+                return Future.failedFuture(e);
+            }
+            return Future.succeededFuture();
+        }
+
+        /**
+         * Returns whether the interceptor observed a duplicated Vert.x context.
+         *
+         * @return the observation, or {@code null} if the interceptor never ran
+         */
+        Boolean duplicatedContext() {
+            return duplicatedContext.get();
+        }
+
+        /**
+         * Returns the lifecycle-resolution failure message.
+         *
+         * @return the message, or {@code null} when the handle resolved
+         */
+        String lifecycleFailure() {
+            return lifecycleFailure.get();
+        }
+
+        /**
+         * Awaits the registered cleanup, which the lifecycle drives from the request's end handler.
+         *
+         * @throws Exception if the cleanup does not run within the async bound
+         */
+        void awaitCleanup() throws Exception {
+            cleanupRan.get(ASYNC_TIMEOUT_SECONDS, TimeUnit.SECONDS);
         }
     }
 }

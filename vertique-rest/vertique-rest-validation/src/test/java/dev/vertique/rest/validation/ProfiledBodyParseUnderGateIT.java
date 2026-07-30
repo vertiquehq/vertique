@@ -271,7 +271,7 @@ public class ProfiledBodyParseUnderGateIT {
         RestTestContributions contributions = RestTestContributions.builder()
                 .addJsonMapperProfile(strictTestProfile())
                 .build();
-        RestTestMounts.startServer(vertx, MountFixtures.factory(vertx, contributions), resources)
+        RestTestMounts.startServer(vertx, MountFixtures.mount(vertx, contributions), resources)
                 .onComplete(ctx.succeeding(s -> {
                     server = s;
                     client = vertx.createHttpClient();

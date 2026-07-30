@@ -45,6 +45,16 @@ interface FixtureSelfTestComponent {
     JaxRsRouterMount.Factory mountFactory();
 
     /**
+     * Returns the opaque mount handle {@link RestTestMounts} consumes — the factory above paired with
+     * the graph's complete {@code Set<Middleware>}. This is the accessor a real consumer declares;
+     * {@link #mountFactory()} is retained alongside it only because this module's own graph tests
+     * assert at the factory level.
+     *
+     * @return the mount handle
+     */
+    RestTestMount testMount();
+
+    /**
      * Returns the response body encoders in the order {@code RestModule.sortedResponseBodyEncoders}
      * produced — the same list instance the factory and the response serializer receive.
      *

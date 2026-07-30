@@ -201,7 +201,7 @@ public class UploadTempFileCleanupIT {
 
         server = RestTestMounts.startServerBlocking(
                 vertx,
-                MountFixtures.factory(vertx, config, contributions),
+                MountFixtures.mount(vertx, config, contributions),
                 Set.of(new CleanupResource(capture, streamingGate)),
                 Duration.ofSeconds(ASYNC_TIMEOUT_SECONDS));
         return capture;

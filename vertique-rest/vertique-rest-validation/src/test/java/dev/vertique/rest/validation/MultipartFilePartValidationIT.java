@@ -86,7 +86,7 @@ public class MultipartFilePartValidationIT {
     @BeforeAll
     static void setUp(Vertx vertx, VertxTestContext ctx) {
         RestTestMounts.startServer(
-                        vertx, MountFixtures.factory(vertx, RestTestContributions.none()), Set.of(new FileResource()))
+                        vertx, MountFixtures.mount(vertx, RestTestContributions.none()), Set.of(new FileResource()))
                 .onComplete(ctx.succeeding(listeningServer -> {
                     server = listeningServer;
                     client = vertx.createHttpClient();

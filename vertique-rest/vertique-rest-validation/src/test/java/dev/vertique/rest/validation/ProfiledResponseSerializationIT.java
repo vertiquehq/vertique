@@ -251,7 +251,7 @@ public class ProfiledResponseSerializationIT {
         RestTestContributions contributions = RestTestContributions.builder()
                 .addJsonMapperProfile(opinionatedResponseProfile())
                 .build();
-        RestTestMounts.startServer(vertx, MountFixtures.factory(vertx, contributions), Set.of(resource))
+        RestTestMounts.startServer(vertx, MountFixtures.mount(vertx, contributions), Set.of(resource))
                 .compose(s -> {
                     server = s;
                     client = vertx.createHttpClient();

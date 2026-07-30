@@ -105,7 +105,7 @@ public class WebValidationGateIT {
         AtomicBoolean invoked = new AtomicBoolean(false);
         RestTestMounts.startServer(
                         vertx,
-                        MountFixtures.factory(vertx, RestTestContributions.none()),
+                        MountFixtures.mount(vertx, RestTestContributions.none()),
                         Set.of(new CreateResource(invoked)))
                 .onComplete(ctx.succeeding(s -> {
                     server = s;
@@ -153,7 +153,7 @@ public class WebValidationGateIT {
     @DisplayName("Repeated header values bind to a List end-to-end under the web-validation gate")
     void repeatedHeaderValuesCollectionParamUnderWebValidation(Vertx vertx, VertxTestContext ctx) {
         RestTestMounts.startServer(
-                        vertx, MountFixtures.factory(vertx, RestTestContributions.none()), Set.of(new TagsResource()))
+                        vertx, MountFixtures.mount(vertx, RestTestContributions.none()), Set.of(new TagsResource()))
                 .onComplete(ctx.succeeding(s -> {
                     server = s;
                     client = vertx.createHttpClient();

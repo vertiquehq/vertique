@@ -4,6 +4,9 @@
 package dev.vertique.rest.test;
 
 import dev.vertique.core.exception.TechnicalException;
+import dev.vertique.core.extension.OrderedExtension;
+import dev.vertique.rest.core.middleware.Middleware;
+import dev.vertique.rest.core.middleware.MiddlewareScope;
 import dev.vertique.rest.jaxrs.JaxRsRouterMount;
 import io.vertx.core.Context;
 import io.vertx.core.Future;
@@ -23,12 +26,17 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
 /**
- * Mount and server helpers for tests that drive a fixture-built {@link JaxRsRouterMount.Factory}.
+ * Mount and server helpers for tests that drive a fixture-built {@link RestTestMount}.
  *
- * <p>Pure Vert.x: no Dagger and no JUnit, so it composes with any test framework and with a factory
- * from any source. {@link RestTestFixtureModule} produces the factory; this class turns it into a
+ * <p>Pure Vert.x: no Dagger and no JUnit, so it composes with any test framework.
+ * {@link RestTestFixtureModule} produces the {@link RestTestMount}; this class turns it into a
  * {@link Router} or a listening {@link HttpServer}, absorbing the mount/subrouter/bind boilerplate
  * that REST integration tests otherwise copy verbatim.
+ *
+ * <p>These helpers take the opaque {@link RestTestMount} rather than a bare
+ * {@link JaxRsRouterMount.Factory}, and there is deliberately no factory-only form: a mount needs
+ * both middleware tiers to behave like production, and the handle is what makes an assembly missing
+ * one of them unrepresentable. See {@link RestTestMount} for the full rationale.
  *
  * <h2>Ownership</h2>
  *
@@ -76,19 +84,24 @@ public final class RestTestMounts {
      * resolved eagerly, and an unresolvable id throws. Those synchronous failures are converted to a
      * failed future so callers have a single failure channel.
      *
+     * <p>The returned router is the <em>API</em> router only. It carries the API-scoped middlewares
+     * {@code JaxRsRouterMount} installs on it, but not the ROOT-scoped ones — those belong on a root
+     * router above it, which {@link #startServer} builds. A caller that mounts this router itself is
+     * responsible for that tier.
+     *
      * @param vertx     the Vert.x instance; never closed by this method
-     * @param factory   the mount factory, typically obtained from a component over
+     * @param mount     the mount handle, obtained from a component over
      *                  {@link RestTestFixtureModule}
      * @param resources the JAX-RS resource instances to mount
      * @return a future resolving to the configured API router, or a failed future carrying the
      *         router-build failure
      */
-    public static Future<Router> router(Vertx vertx, JaxRsRouterMount.Factory factory, Set<Object> resources) {
+    public static Future<Router> router(Vertx vertx, RestTestMount mount, Set<Object> resources) {
         Objects.requireNonNull(vertx, "vertx");
-        Objects.requireNonNull(factory, "factory");
+        Objects.requireNonNull(mount, "mount");
         Objects.requireNonNull(resources, "resources");
         try {
-            return factory.create(MOUNT_PATH, OPENAPI_PATH, resources).createRouter(vertx);
+            return mount.factory().create(MOUNT_PATH, OPENAPI_PATH, resources).createRouter(vertx);
         } catch (RuntimeException e) {
             return Future.failedFuture(e);
         }
@@ -99,25 +112,37 @@ public final class RestTestMounts {
     /**
      * Builds the API router and starts an HTTP server serving it on an ephemeral port.
      *
-     * <p>The API router is mounted as a sub-router under {@code /*} of a fresh root router, matching
-     * how the framework's own HTTP verticle assembles a mount. The server binds to port {@code 0};
-     * read the assigned port from {@link HttpServer#actualPort()} <em>after</em> this future
-     * resolves — never by probing for a free port beforehand.
+     * <p>The server is assembled the way {@code HttpVerticle} assembles a single mount: a fresh root
+     * router carrying the graph's ROOT-scoped middlewares, with the API router mounted below it as a
+     * sub-router under {@code /*}. Both middleware tiers therefore run — the ROOT one installed here,
+     * the API one installed by {@code JaxRsRouterMount} — so a request traverses the same pipeline it
+     * would in a deployed application.
+     *
+     * <p><b>The boundary of that fidelity.</b> This assembles <em>one</em> JAX-RS mount with its
+     * production middleware pipelines. It is not a substitute for {@code HttpVerticle}: mount sorting
+     * and overlap detection, {@code MountCustomizer} and {@code RouterCustomizer} hooks, and the
+     * configured {@code HttpServerOptions} (TLS, compression, timeouts) are all outside it. A test
+     * asserting on any of those needs a real verticle.
+     *
+     * <p>The server binds to port {@code 0}; read the assigned port from
+     * {@link HttpServer#actualPort()} <em>after</em> this future resolves — never by probing for a
+     * free port beforehand.
      *
      * <p>The bind address is fixed to {@value #LOOPBACK_HOST}, so the mount is reachable only from
      * the machine running the test. Connect to it as {@code 127.0.0.1} or {@code localhost}.
      *
      * @param vertx     the Vert.x instance; never closed by this method
-     * @param factory   the mount factory
+     * @param mount     the mount handle
      * @param resources the JAX-RS resource instances to mount
      * @return a future resolving to the listening server, which the caller owns and must close
      */
-    public static Future<HttpServer> startServer(Vertx vertx, JaxRsRouterMount.Factory factory, Set<Object> resources) {
+    public static Future<HttpServer> startServer(Vertx vertx, RestTestMount mount, Set<Object> resources) {
         Objects.requireNonNull(vertx, "vertx");
-        Objects.requireNonNull(factory, "factory");
+        Objects.requireNonNull(mount, "mount");
         Objects.requireNonNull(resources, "resources");
-        return router(vertx, factory, resources).compose(apiRouter -> {
+        return router(vertx, mount, resources).compose(apiRouter -> {
             Router root = Router.router(vertx);
+            installRootMiddlewares(root, mount.middlewares());
             root.route(MOUNT_PATH).subRouter(apiRouter);
             return vertx.createHttpServer().requestHandler(root).listen(0, LOOPBACK_HOST);
         });
@@ -141,7 +166,7 @@ public final class RestTestMounts {
      * reporting a misleading timeout.
      *
      * @param vertx     the Vert.x instance; never closed by this method, including on timeout
-     * @param factory   the mount factory
+     * @param mount     the mount handle
      * @param resources the JAX-RS resource instances to mount
      * @param timeout   the budget for the start, charged from before the router build and bounding
      *                  the wait for the bind
@@ -151,15 +176,15 @@ public final class RestTestMounts {
      *                            the start fails with a non-runtime cause
      */
     public static HttpServer startServerBlocking(
-            Vertx vertx, JaxRsRouterMount.Factory factory, Set<Object> resources, Duration timeout) {
+            Vertx vertx, RestTestMount mount, Set<Object> resources, Duration timeout) {
         Objects.requireNonNull(vertx, "vertx");
-        Objects.requireNonNull(factory, "factory");
+        Objects.requireNonNull(mount, "mount");
         Objects.requireNonNull(resources, "resources");
         Objects.requireNonNull(timeout, "timeout");
         requireNotOnEventLoop();
 
         long deadlineNanos = System.nanoTime() + timeout.toNanos();
-        Future<HttpServer> starting = startServer(vertx, factory, resources);
+        Future<HttpServer> starting = startServer(vertx, mount, resources);
         long remainingNanos = deadlineNanos - System.nanoTime();
         try {
             if (remainingNanos <= 0) {
@@ -206,6 +231,27 @@ public final class RestTestMounts {
     }
 
     // --- Internals ---
+
+    /**
+     * Mounts the ROOT-scoped middlewares on the root router, in
+     * {@link OrderedExtension#comparator()} order (phase → priority → orderKey).
+     *
+     * <p>This mirrors {@code HttpVerticle}'s own installation step, filter for filter, and is the
+     * only place this class orders anything. Ordering is not policy invented here: middlewares are
+     * bound as a {@code Set}, there is no {@code sortedMiddlewares} provider to delegate to the way
+     * encoders and decoders delegate to {@code RestModule}, and <em>both</em> production
+     * installation sites ({@code HttpVerticle} for ROOT, {@code JaxRsRouterMount} for API) sort
+     * inline with the same comparator. Reproducing that is what makes the pipeline faithful.
+     *
+     * @param root        the root router to install on
+     * @param middlewares the graph's complete middleware set, of both scopes
+     */
+    private static void installRootMiddlewares(Router root, Set<Middleware> middlewares) {
+        middlewares.stream()
+                .filter(m -> m.scope() == MiddlewareScope.ROOT)
+                .sorted(OrderedExtension.comparator())
+                .forEach(m -> root.route(m.path()).handler(m));
+    }
 
     /**
      * Rejects a call made from a Vert.x event-loop thread, which would otherwise block the very loop

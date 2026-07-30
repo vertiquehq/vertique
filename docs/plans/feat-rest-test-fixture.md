@@ -276,7 +276,7 @@ the attractive wrong path — one way to build a mount, and it is the faithful o
 @Singleton
 @Component(modules = {RestTestFixtureModule.class, RestValidationModule.class})
 interface ValidationMountComponent {
-    JaxRsRouterMount.Factory mountFactory();
+    RestTestMount testMount();
 
     @Component.Factory
     interface Factory {
@@ -291,9 +291,10 @@ interface ValidationMountComponent {
 Including `RestValidationModule` directly is what supplies the real `WebValidationStrategy` and
 `AnnotationSchemaSource` — no fixture dependency on `vertique-rest-validation`, no strategy seam.
 
-> **The accessor must be named `mountFactory()`, not `factory()`.** A component declaring a
-> `@Component.Factory` gets a generated static `factory()` on its `Dagger…` class, and Dagger rejects
-> a component method that collides with it. S4/S5 must use `mountFactory()`.
+> **Never name a component accessor `factory()`.** A component declaring a `@Component.Factory` gets
+> a generated static `factory()` on its `Dagger…` class, and Dagger rejects a component method that
+> collides with it. Hence `testMount()` (and, where a component still exposes the raw factory for a
+> test that needs synchronous `createRouter` failures, `mountFactory()`).
 
 ## Amendments
 

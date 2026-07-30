@@ -140,7 +140,7 @@ public class FileVerifierRejectionIT {
     private Future<HttpServer> startServer(Set<FileContentVerifier> verifiers, UploadResource resource) {
         RestTestContributions.Builder contributions = RestTestContributions.builder();
         verifiers.forEach(contributions::addFileContentVerifier);
-        return RestTestMounts.startServer(vertx, MountFixtures.factory(vertx, contributions.build()), Set.of(resource));
+        return RestTestMounts.startServer(vertx, MountFixtures.mount(vertx, contributions.build()), Set.of(resource));
     }
 
     private Future<HttpResult> postMultipart(Buffer body) {

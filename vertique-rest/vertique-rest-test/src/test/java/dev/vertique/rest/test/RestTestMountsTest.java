@@ -9,7 +9,6 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import dev.vertique.core.exception.TechnicalException;
 import dev.vertique.rest.core.RestConfigurationException;
-import dev.vertique.rest.jaxrs.JaxRsRouterMount;
 import io.swagger.v3.oas.annotations.Operation;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
@@ -74,12 +73,12 @@ class RestTestMountsTest {
     void doesNotCloseCallerSuppliedVertx() throws Exception {
         // Failure path: an empty-config graph cannot resolve its configured validation strategy, so
         // the router build fails. A helper that owned the Vertx would be tempted to close it here.
-        Future<HttpServer> failed = RestTestMounts.startServer(vertx, factory(new JsonObject()), resources());
+        Future<HttpServer> failed = RestTestMounts.startServer(vertx, mount(new JsonObject()), resources());
         Throwable cause = awaitFailure(failed);
         assertThat(cause).isInstanceOf(RestConfigurationException.class);
 
         // Success path.
-        HttpServer server = await(RestTestMounts.startServer(vertx, factory(noneStrategyConfig()), resources()));
+        HttpServer server = await(RestTestMounts.startServer(vertx, mount(noneStrategyConfig()), resources()));
         assertThat(server.actualPort()).isPositive();
 
         // The caller still owns the Vertx after both paths: a fresh server binds on it.
@@ -99,9 +98,9 @@ class RestTestMountsTest {
     @Test
     @DisplayName("startServerBlocking surfaces an exhausted timeout as an exception instead of hanging")
     void startServerBlockingTimesOutCleanly() throws Exception {
-        JaxRsRouterMount.Factory factory = factory(noneStrategyConfig());
+        RestTestMount mount = mount(noneStrategyConfig());
 
-        assertThatThrownBy(() -> RestTestMounts.startServerBlocking(vertx, factory, resources(), Duration.ofNanos(1)))
+        assertThatThrownBy(() -> RestTestMounts.startServerBlocking(vertx, mount, resources(), Duration.ofNanos(1)))
                 .isInstanceOf(TechnicalException.class)
                 .hasMessageContaining("did not start within")
                 .hasCauseInstanceOf(TimeoutException.class);
@@ -121,11 +120,11 @@ class RestTestMountsTest {
         // strategy id cannot be resolved, and a budget generous enough that the pre-exhausted early
         // throw cannot fire — so the real get(remaining, NANOSECONDS) await is reached and completes
         // with an ExecutionException.
-        JaxRsRouterMount.Factory factory = factory(new JsonObject());
+        RestTestMount mount = mount(new JsonObject());
 
         // when/then: unwrap must surface the original runtime cause, not a TechnicalException wrapper,
         // so a test can assert on the framework's own exception type.
-        assertThatThrownBy(() -> RestTestMounts.startServerBlocking(vertx, factory, resources(), Duration.ofSeconds(5)))
+        assertThatThrownBy(() -> RestTestMounts.startServerBlocking(vertx, mount, resources(), Duration.ofSeconds(5)))
                 .isInstanceOf(RestConfigurationException.class)
                 .as("the router-build failure is rethrown as-is, never wrapped")
                 .isNotInstanceOf(TechnicalException.class);
@@ -136,13 +135,13 @@ class RestTestMountsTest {
     @Test
     @DisplayName("startServerBlocking refuses to run on a Vert.x event-loop thread instead of deadlocking")
     void startServerBlockingRejectsEventLoopThread() throws Exception {
-        JaxRsRouterMount.Factory factory = factory(noneStrategyConfig());
+        RestTestMount mount = mount(noneStrategyConfig());
         CompletableFuture<Throwable> thrown = new CompletableFuture<>();
 
         vertx.getOrCreateContext().runOnContext(ignored -> {
             try {
                 HttpServer unexpected =
-                        RestTestMounts.startServerBlocking(vertx, factory, resources(), Duration.ofSeconds(5));
+                        RestTestMounts.startServerBlocking(vertx, mount, resources(), Duration.ofSeconds(5));
                 unexpected.close();
                 thrown.complete(null);
             } catch (Throwable t) {
@@ -186,15 +185,15 @@ class RestTestMountsTest {
     // --- Helpers ---
 
     /**
-     * Builds a real mount factory over the fixture graph.
+     * Builds a real mount handle over the fixture graph.
      *
      * @param config the application configuration the graph is built from
-     * @return the mount factory
+     * @return the mount handle
      */
-    private static JaxRsRouterMount.Factory factory(JsonObject config) {
+    private static RestTestMount mount(JsonObject config) {
         return DaggerFixtureSelfTestComponent.factory()
                 .create(vertx, config, RestTestContributions.none())
-                .mountFactory();
+                .testMount();
     }
 
     /**

@@ -11,6 +11,8 @@ import dev.vertique.rest.jaxrs.runtime.MagicBytesVerifierModule;
 import dev.vertique.rest.jaxrs.validation.FileContentVerifier;
 import dev.vertique.rest.test.RestTestContributions;
 import dev.vertique.rest.test.RestTestFixtureModule;
+import dev.vertique.rest.test.RestTestMount;
+import dev.vertique.rest.test.RestTestMounts;
 import io.vertx.core.Vertx;
 import io.vertx.core.json.JsonObject;
 import jakarta.inject.Singleton;
@@ -31,16 +33,18 @@ import java.util.Set;
 interface ValidationMountComponent {
 
     /**
-     * Returns the real JAX-RS router mount factory assembled by the framework graph, wired with the
-     * {@code web-validation} request-validation strategy.
+     * Returns the mount handle assembled by the framework graph — the real
+     * {@link JaxRsRouterMount.Factory} wired with the {@code web-validation} request-validation
+     * strategy, paired with the graph's complete middleware set so {@link RestTestMounts} can install
+     * both the ROOT and the API middleware tier.
      *
-     * <p>Named {@code mountFactory} rather than {@code factory}: a component that declares a
+     * <p>Named {@code testMount} rather than {@code factory}: a component that declares a
      * {@link Component.Factory} gets a generated static {@code factory()} on its {@code Dagger…} class,
      * and Dagger rejects a component method that collides with it.
      *
-     * @return the mount factory
+     * @return the mount handle
      */
-    JaxRsRouterMount.Factory mountFactory();
+    RestTestMount testMount();
 
     /** Factory binding the three instances a consumer supplies to the graph. */
     @Component.Factory

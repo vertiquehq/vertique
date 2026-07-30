@@ -46,7 +46,7 @@ import java.util.Set;
  * @Singleton
  * @Component(modules = {RestTestFixtureModule.class, RestValidationModule.class})
  * interface ValidationMountComponent {
- *     JaxRsRouterMount.Factory mountFactory();
+ *     RestTestMount testMount();
  *
  *     @Component.Factory
  *     interface Factory {
@@ -58,9 +58,11 @@ import java.util.Set;
  * }
  * }</pre>
  *
- * <p>Name the mount accessor {@code mountFactory()}, not {@code factory()}: a component declaring a
- * {@code @Component.Factory} gets a generated static {@code factory()} on its {@code Dagger…} class,
- * and Dagger rejects a component method that collides with it.
+ * <p>Expose {@link RestTestMount}, not {@code JaxRsRouterMount.Factory}: the helpers in
+ * {@link RestTestMounts} take the handle so that the ROOT-scoped middleware tier cannot be lost on
+ * the way to the server (see {@link RestTestMount}). Avoid naming any component method
+ * {@code factory()} — a component declaring a {@code @Component.Factory} gets a generated static
+ * {@code factory()} on its {@code Dagger…} class, and Dagger rejects a collision.
  *
  * <p>Including the strategy's own module — rather than routing a strategy through this fixture — is
  * the only install path for request-validation strategies, so the graph never carries two strategies
