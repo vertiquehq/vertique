@@ -36,8 +36,14 @@ import org.junit.jupiter.api.io.TempDir;
 /**
  * Verifies the ownership and failure-mode contract of {@link RestTestMounts}: it never closes a
  * caller-supplied {@link Vertx} on any path, a blocking start surfaces an exhausted budget as a
- * thrown exception rather than a hang, and its recursive delete helper matches the private copies it
- * replaces in the consumer integration tests.
+ * thrown exception rather than a hang, a start that really reaches the await rethrows its runtime
+ * cause unwrapped, a call from an event-loop thread is refused rather than deadlocked, and its
+ * recursive delete helper matches the private copies it replaces in the consumer integration tests.
+ *
+ * <p>The two blocking-start failure tests cover different branches on purpose:
+ * {@code startServerBlockingTimesOutCleanly} pins the pre-exhausted budget branch that throws before
+ * awaiting at all, while {@code startServerBlockingRethrowsRouterBuildFailureUnwrapped} is the only
+ * one that reaches the real timed {@code get}.
  *
  * <p>Wire-level behaviour of the mounted router lives in {@code RestTestMountsIT}.
  */
@@ -106,6 +112,48 @@ class RestTestMountsTest {
                 .listen(0));
         assertThat(probe.actualPort()).isPositive();
         await(probe.close());
+    }
+
+    @Test
+    @DisplayName("startServerBlocking rethrows a router-build failure unwrapped after really awaiting the start")
+    void startServerBlockingRethrowsRouterBuildFailureUnwrapped() {
+        // given: an empty-config graph, whose router build fails because the configured validation
+        // strategy id cannot be resolved, and a budget generous enough that the pre-exhausted early
+        // throw cannot fire — so the real get(remaining, NANOSECONDS) await is reached and completes
+        // with an ExecutionException.
+        JaxRsRouterMount.Factory factory = factory(new JsonObject());
+
+        // when/then: unwrap must surface the original runtime cause, not a TechnicalException wrapper,
+        // so a test can assert on the framework's own exception type.
+        assertThatThrownBy(() -> RestTestMounts.startServerBlocking(vertx, factory, resources(), Duration.ofSeconds(5)))
+                .isInstanceOf(RestConfigurationException.class)
+                .as("the router-build failure is rethrown as-is, never wrapped")
+                .isNotInstanceOf(TechnicalException.class);
+    }
+
+    // --- Event-loop guard ---
+
+    @Test
+    @DisplayName("startServerBlocking refuses to run on a Vert.x event-loop thread instead of deadlocking")
+    void startServerBlockingRejectsEventLoopThread() throws Exception {
+        JaxRsRouterMount.Factory factory = factory(noneStrategyConfig());
+        CompletableFuture<Throwable> thrown = new CompletableFuture<>();
+
+        vertx.getOrCreateContext().runOnContext(ignored -> {
+            try {
+                HttpServer unexpected =
+                        RestTestMounts.startServerBlocking(vertx, factory, resources(), Duration.ofSeconds(5));
+                unexpected.close();
+                thrown.complete(null);
+            } catch (Throwable t) {
+                thrown.complete(t);
+            }
+        });
+
+        assertThat(thrown.get(AWAIT_SECONDS, TimeUnit.SECONDS))
+                .as("calling from an event-loop thread must fail fast, not time out")
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("must not be called from a Vert.x event-loop thread");
     }
 
     // --- Recursive delete ---
