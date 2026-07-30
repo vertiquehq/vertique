@@ -11,8 +11,10 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.anyLong;
+import static org.mockito.Mockito.atLeast;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.spy;
@@ -1697,6 +1699,425 @@ class CronSchedulerTest {
 
             scheduler.register(job);
             scheduler.start();
+        }
+    }
+
+    // --- Synchronous failure containment tests (GH-41 follow-up) ---
+
+    /**
+     * Regression coverage for the defect tracked alongside GH-41:
+     * {@link CronConcurrencyManager#acquireSlotAndRun} increments {@code activeConcurrentCount}
+     * and then invokes {@code dispatchAction.run()} with no {@code try/finally}, and the only path
+     * that releases the in-flight guard and the concurrency slot is
+     * {@link CronScheduler#markCompleted}, invoked solely as the dispatcher's completion callback
+     * from the reply consumer or the execution-timeout timer.
+     *
+     * <p>A <em>synchronous</em> throw between acquiring a guard and an async callback taking
+     * ownership therefore strands that guard forever — no later tick can ever fire the job again.
+     * {@link JobRepository} is an application-implementable SPI, so a custom adapter may throw
+     * synchronously instead of returning a failed {@link Future}; the existing {@code onFailure}
+     * handlers only catch the latter.
+     *
+     * <p>Most schedulers in this nest use the 6-arg {@link CronScheduler} constructor (the one
+     * {@code CronModule} uses), which defaults {@code executionTimeoutMs} to {@code 0} — the
+     * execution-timeout timer is then disabled, so nothing can mask a stranded guard.
+     *
+     * <p>The timeout timer is <em>not</em> disabled in general, and two tests here deliberately arm
+     * it with the 9-arg constructor: {@code executionTimeoutMs} defaults to {@code 120_000} in
+     * {@code JobCoordinatorConfig} and {@code CronPersistenceModule} passes it, so the timer is
+     * armed in every persistence-backed deployment — which is exactly where tracked executions
+     * exist. Guard release must therefore hold both with the timer armed and without it, and this
+     * nest covers both.
+     */
+    @Nested
+    @DisplayName("synchronous failure containment")
+    @Timeout(value = 20, unit = TimeUnit.SECONDS)
+    class SynchronousFailureContainment {
+
+        @Test
+        @DisplayName("synchronous dispatch throw leaves the job firable on the next tick")
+        void synchronousDispatchThrowLeavesJobFirableOnNextTick(Vertx vertx, VertxTestContext ctx) {
+            // dispatcher.dispatch(...) runs inside CronConcurrencyManager.acquireSlotAndRun, which
+            // holds both the in-flight guard and the concurrency slot with no try/finally around
+            // dispatchAction.run(). A synchronous throw from EventBusClient.send(...) must not
+            // strand either guard — a later tick must still be able to dispatch.
+            EventBusClient throwingClient = spy(testEventBusClient(vertx));
+            doThrow(new IllegalStateException("send boom")).when(throwingClient).send(anyString(), any());
+
+            scheduler = new CronScheduler(
+                    vertx, Set.of(), null, stubTargetResolver(), throwingClient, DispatchEnvelopeBuilder.forTesting());
+
+            CronJobDefinition job = new CronJobDefinition(
+                    "sync-dispatch-throw-job",
+                    new CronExpression("* * * * * *"),
+                    new CronTargetReference.EventBusTarget("test.sync-dispatch-throw.address"),
+                    "test.sync-dispatch-throw.address",
+                    ExecutionMode.EVERY_INSTANCE,
+                    ZoneId.of("UTC"),
+                    3,
+                    null,
+                    OverlapPolicy.SKIP,
+                    false,
+                    Map.of(),
+                    MisfirePolicy.SKIP);
+
+            scheduler.register(job);
+            scheduler.start();
+
+            // ~3.5s over a one-second cron: if the first throw released the guard, at least one
+            // later tick must also attempt a send.
+            vertx.setTimer(
+                    3500,
+                    id -> ctx.verify(() -> {
+                        verify(throwingClient, atLeast(2)).send(anyString(), any());
+                        ctx.completeNow();
+                    }));
+        }
+
+        @Test
+        @DisplayName("synchronous insert throw leaves the SINGLE_INSTANCE job firable on the next tick")
+        void synchronousInsertThrowLeavesSingleInstanceJobFirableOnNextTick(Vertx vertx, VertxTestContext ctx) {
+            // fireSingleInstance calls repository.tryInsert(...) while holding only the in-flight
+            // guard (no slot acquired yet). A synchronous throw on the first call must still leave
+            // the job firable on a later tick.
+            JobRepository repo = mock(JobRepository.class);
+            when(repo.tryInsert(any(JobExecution.class)))
+                    .thenThrow(new IllegalStateException("insert boom"))
+                    .thenReturn(Future.succeededFuture(Optional.of(UUID.randomUUID())));
+
+            vertx.eventBus().consumer("test.sync-insert-throw.address", msg -> {
+                var body = (DispatchEnvelope<?>) msg.body();
+                if (body.replyAddress().isPresent()) {
+                    vertx.eventBus()
+                            .send(
+                                    body.replyAddress().orElseThrow(),
+                                    DispatchEnvelope.of("done"),
+                                    new DeliveryOptions().setCodecName("dispatch.envelope"));
+                }
+                ctx.completeNow();
+            });
+
+            scheduler = new CronScheduler(
+                    vertx,
+                    Set.of(),
+                    repo,
+                    stubTargetResolver(),
+                    testEventBusClient(vertx),
+                    DispatchEnvelopeBuilder.forTesting());
+
+            CronJobDefinition job = new CronJobDefinition(
+                    "sync-insert-throw-job",
+                    new CronExpression("* * * * * *"),
+                    new CronTargetReference.EventBusTarget("test.sync-insert-throw.address"),
+                    "test.sync-insert-throw.address",
+                    ExecutionMode.SINGLE_INSTANCE,
+                    ZoneId.of("UTC"),
+                    3,
+                    null,
+                    OverlapPolicy.SKIP,
+                    true,
+                    Map.of(),
+                    MisfirePolicy.SKIP);
+
+            scheduler.register(job);
+            scheduler.start();
+
+            // completeNow() is called inside the consumer handler above — the test times out
+            // (@Timeout on this nest) if no tick ever reaches the handler.
+        }
+
+        @Test
+        @DisplayName("synchronous save throw leaves the EVERY_INSTANCE job firable on the next tick")
+        void synchronousSaveThrowLeavesEveryInstanceJobFirableOnNextTick(Vertx vertx, VertxTestContext ctx) {
+            // fireEveryInstance calls repository.save(...) while holding only the in-flight guard
+            // (no slot acquired yet). A synchronous throw on the first call must still leave the
+            // job firable on a later tick.
+            JobRepository repo = mock(JobRepository.class);
+            when(repo.save(any(JobExecution.class)))
+                    .thenThrow(new IllegalStateException("save boom"))
+                    .thenReturn(Future.succeededFuture(UUID.randomUUID()));
+
+            vertx.eventBus().consumer("test.sync-save-throw.address", msg -> {
+                var body = (DispatchEnvelope<?>) msg.body();
+                if (body.replyAddress().isPresent()) {
+                    vertx.eventBus()
+                            .send(
+                                    body.replyAddress().orElseThrow(),
+                                    DispatchEnvelope.of("done"),
+                                    new DeliveryOptions().setCodecName("dispatch.envelope"));
+                }
+                ctx.completeNow();
+            });
+
+            scheduler = new CronScheduler(
+                    vertx,
+                    Set.of(),
+                    repo,
+                    stubTargetResolver(),
+                    testEventBusClient(vertx),
+                    DispatchEnvelopeBuilder.forTesting());
+
+            CronJobDefinition job = new CronJobDefinition(
+                    "sync-save-throw-job",
+                    new CronExpression("* * * * * *"),
+                    new CronTargetReference.EventBusTarget("test.sync-save-throw.address"),
+                    "test.sync-save-throw.address",
+                    ExecutionMode.EVERY_INSTANCE,
+                    ZoneId.of("UTC"),
+                    3,
+                    null,
+                    OverlapPolicy.SKIP,
+                    true,
+                    Map.of(),
+                    MisfirePolicy.SKIP);
+
+            scheduler.register(job);
+            scheduler.start();
+
+            // completeNow() is called inside the consumer handler above — the test times out
+            // (@Timeout on this nest) if no tick ever reaches the handler.
+        }
+
+        @Test
+        @DisplayName("synchronous completion-persist failure still releases the in-flight guard and "
+                + "concurrency slot so a later tick can dispatch")
+        void synchronousCompletionPersistFailureStillReleases(Vertx vertx, VertxTestContext ctx) {
+            // completeExecution() is invoked from persistCompletion() inside the dispatcher's reply
+            // handler, before the trailing completionCallback.onCompleted(job) call. A synchronous
+            // throw there must not prevent that callback from running, or the guards it releases
+            // (in-flight + concurrency slot) are stranded after the very first fire.
+            AtomicInteger hitCount = new AtomicInteger();
+            JobRepository repo = mock(JobRepository.class);
+            when(repo.save(any(JobExecution.class))).thenAnswer(inv -> Future.succeededFuture(UUID.randomUUID()));
+            when(repo.completeExecution(any(), any(), any(), any(), any()))
+                    .thenThrow(new IllegalStateException("complete boom"));
+            when(repo.updateScheduleFireTimes(anyString(), any(Instant.class), any(Instant.class)))
+                    .thenReturn(Future.succeededFuture());
+
+            vertx.eventBus().consumer("test.sync-complete-throw.address", msg -> {
+                hitCount.incrementAndGet();
+                var body = (DispatchEnvelope<?>) msg.body();
+                if (body.replyAddress().isPresent()) {
+                    vertx.eventBus()
+                            .send(
+                                    body.replyAddress().orElseThrow(),
+                                    DispatchEnvelope.of("done"),
+                                    new DeliveryOptions().setCodecName("dispatch.envelope"));
+                }
+            });
+
+            scheduler = new CronScheduler(
+                    vertx,
+                    Set.of(),
+                    repo,
+                    stubTargetResolver(),
+                    testEventBusClient(vertx),
+                    DispatchEnvelopeBuilder.forTesting());
+
+            CronJobDefinition job = new CronJobDefinition(
+                    "sync-complete-throw-job",
+                    new CronExpression("* * * * * *"),
+                    new CronTargetReference.EventBusTarget("test.sync-complete-throw.address"),
+                    "test.sync-complete-throw.address",
+                    ExecutionMode.EVERY_INSTANCE,
+                    ZoneId.of("UTC"),
+                    3,
+                    null,
+                    OverlapPolicy.SKIP,
+                    true,
+                    Map.of(),
+                    MisfirePolicy.SKIP);
+
+            scheduler.register(job);
+            scheduler.start();
+
+            vertx.setTimer(
+                    4000,
+                    id -> ctx.verify(() -> {
+                        assertTrue(
+                                hitCount.get() >= 2,
+                                "expected at least 2 hits — a synchronous completeExecution throw must not "
+                                        + "prevent the completion callback from releasing the guards, got "
+                                        + hitCount.get());
+                        ctx.completeNow();
+                    }));
+        }
+
+        @Test
+        @DisplayName("synchronous completeExecution throw in the execution-timeout handler still releases "
+                + "the in-flight guard and concurrency slot so a later tick can dispatch")
+        void synchronousTimeoutPersistFailureStillReleases(Vertx vertx, VertxTestContext ctx) {
+            // The execution-timeout handler (the vertx.setTimer(executionTimeoutMs, ...) block in
+            // CronJobDispatcher.dispatch) claims the one-shot latch, unregisters both consumers,
+            // calls repository.completeExecution(..., ABANDONED, ...), then calls
+            // completionCallback.onCompleted(job) — with no finally around that pair. A
+            // synchronous throw from completeExecution() therefore skips the callback entirely,
+            // and because the latch is already claimed and the consumer already unregistered,
+            // nothing can ever complete that execution: both guards are stranded for the process
+            // lifetime, unrecoverable.
+            //
+            // This is the mainline path, not an edge case: executionTimeoutMs defaults to
+            // 120_000ms (JobCoordinatorConfig) and CronPersistenceModule always passes it, so the
+            // timer is armed in every persistence-backed deployment. A short 1000ms timeout here
+            // makes it fire quickly for the test.
+            AtomicInteger hitCount = new AtomicInteger();
+            vertx.eventBus().consumer("test.sync-timeout-throw.address", msg -> {
+                hitCount.incrementAndGet();
+                // Deliberately never reply — force the execution timeout to fire on every fire.
+            });
+
+            JobRepository repo = mock(JobRepository.class);
+            when(repo.save(any(JobExecution.class))).thenAnswer(inv -> Future.succeededFuture(UUID.randomUUID()));
+            when(repo.completeExecution(any(UUID.class), any(JobState.class), any(), any(), any()))
+                    .thenThrow(new IllegalStateException("abandon boom"));
+
+            // 9-arg constructor: executionTimeoutMs=1000 arms the timeout timer that this test
+            // targets; progressFlushIntervalMs=0 keeps the log-flush timer out of the picture.
+            scheduler = new CronScheduler(
+                    vertx,
+                    Set.of(),
+                    repo,
+                    stubTargetResolver(),
+                    testEventBusClient(vertx),
+                    CronScheduler.DEFAULT_MAX_CONCURRENT_JOBS,
+                    1000L,
+                    0L,
+                    DispatchEnvelopeBuilder.forTesting());
+
+            CronJobDefinition job = new CronJobDefinition(
+                    "sync-timeout-throw-job",
+                    new CronExpression("* * * * * *"),
+                    new CronTargetReference.EventBusTarget("test.sync-timeout-throw.address"),
+                    "test.sync-timeout-throw.address",
+                    ExecutionMode.EVERY_INSTANCE,
+                    ZoneId.of("UTC"),
+                    3,
+                    null,
+                    OverlapPolicy.SKIP,
+                    true,
+                    Map.of(),
+                    MisfirePolicy.SKIP);
+
+            scheduler.register(job);
+            scheduler.start();
+
+            // ~5s over a one-second cron with a 1s execution timeout: the first execution times
+            // out and its handler throws while persisting ABANDONED. If the guards leaked there,
+            // no later tick could ever reach the handler again.
+            vertx.setTimer(
+                    5000,
+                    id -> ctx.verify(() -> {
+                        assertTrue(
+                                hitCount.get() >= 2,
+                                "expected at least 2 hits — a synchronous completeExecution throw in the "
+                                        + "timeout handler must not strand the in-flight guard and "
+                                        + "concurrency slot forever, got " + hitCount.get());
+                        ctx.completeNow();
+                    }));
+        }
+
+        @Test
+        @DisplayName("the concurrency limit still holds when one job's dispatch fails synchronously")
+        void concurrencyLimitHoldsWhenDispatchFailsSynchronously(Vertx vertx, VertxTestContext ctx) {
+            // Guards the failure mode that is *worse* than the leak the tests above pin: a double
+            // release. Containing a synchronous dispatch failure means releasing the in-flight guard
+            // and the concurrency slot from a site that is not the completion callback, so if that
+            // release and the execution-timeout timer both fired for the same execution,
+            // activeConcurrentCount would go negative and over-admit jobs for the process lifetime.
+            //
+            // The observable invariant is pinned instead of the counter: with maxConcurrentJobs = 1
+            // no two handler invocations may be live at the same time, ever.
+            //
+            // Determinism. "Live" is modelled as [message received, RELEASE_MODEL_MS later]. That
+            // window is strictly *inside* the framework's execution window — the handlers never
+            // reply, so the framework ends each execution at its 1200 ms timeout, 400 ms after this
+            // model has already decremented. The model therefore cannot over-count (which would be a
+            // flaky failure); it can only under-count a second dispatch that starts in the 400 ms
+            // shadow, and over-admission is not that: an over-admitted job is dispatched on the same
+            // tick as the one holding the slot, well inside the window.
+            final long executionTimeoutMs = 1200L;
+            final long releaseModelMs = 800L;
+            final String failAddress = "test.limit.sync-fail.address";
+            final List<String> holdAddresses = List.of("test.limit.hold-a.address", "test.limit.hold-b.address");
+
+            AtomicInteger live = new AtomicInteger();
+            AtomicInteger highWaterMark = new AtomicInteger();
+            AtomicInteger hits = new AtomicInteger();
+
+            for (String address : holdAddresses) {
+                vertx.eventBus().consumer(address, msg -> {
+                    hits.incrementAndGet();
+                    int concurrent = live.incrementAndGet();
+                    highWaterMark.updateAndGet(mark -> Math.max(mark, concurrent));
+                    // Deliberately never reply — the framework's own execution timeout ends this
+                    // execution; this timer only models that end, earlier, for the live count.
+                    vertx.setTimer(releaseModelMs, id -> live.decrementAndGet());
+                });
+            }
+
+            // Only the third job's send throws; the two holding jobs go through the real client. Its
+            // every fire therefore exercises the containment release while a timeout timer is armed —
+            // exactly the window where a double release would be introduced.
+            EventBusClient partiallyThrowingClient = spy(testEventBusClient(vertx));
+            doThrow(new IllegalStateException("send boom"))
+                    .when(partiallyThrowingClient)
+                    .send(eq(failAddress), any());
+
+            scheduler = new CronScheduler(
+                    vertx,
+                    Set.of(),
+                    null,
+                    stubTargetResolver(),
+                    partiallyThrowingClient,
+                    1,
+                    executionTimeoutMs,
+                    0L,
+                    DispatchEnvelopeBuilder.forTesting());
+
+            scheduler.register(cronJobFiringEverySecond("sync-fail-job", failAddress));
+            scheduler.register(cronJobFiringEverySecond("hold-a-job", holdAddresses.get(0)));
+            scheduler.register(cronJobFiringEverySecond("hold-b-job", holdAddresses.get(1)));
+            scheduler.start();
+
+            // ~5 s covers four ticks, two full timeout cycles, and several containment releases.
+            vertx.setTimer(
+                    5000,
+                    id -> ctx.verify(() -> {
+                        assertTrue(
+                                hits.get() >= 2,
+                                "expected the holding jobs to be dispatched at least twice — otherwise "
+                                        + "the high-water mark proves nothing, got " + hits.get());
+                        assertEquals(
+                                1,
+                                highWaterMark.get(),
+                                "maxConcurrentJobs=1 must never admit two executions at once; a "
+                                        + "high-water mark above 1 means a guard was released twice");
+                        ctx.completeNow();
+                    }));
+        }
+
+        /**
+         * Builds an untracked {@link ExecutionMode#EVERY_INSTANCE} job on a one-second cron that
+         * dispatches to {@code address}.
+         *
+         * @param id      the cron job id
+         * @param address the event bus address to dispatch to
+         * @return the job definition
+         */
+        private CronJobDefinition cronJobFiringEverySecond(String id, String address) {
+            return new CronJobDefinition(
+                    id,
+                    new CronExpression("* * * * * *"),
+                    new CronTargetReference.EventBusTarget(address),
+                    address,
+                    ExecutionMode.EVERY_INSTANCE,
+                    ZoneId.of("UTC"),
+                    3,
+                    null,
+                    OverlapPolicy.SKIP,
+                    false,
+                    Map.of(),
+                    MisfirePolicy.SKIP);
         }
     }
 

@@ -20,6 +20,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -437,6 +438,11 @@ public class CronScheduler {
      * and <em>before</em> any row is written, so an unresolvable target never persists an
      * execution record. See {@link #resolveEffectiveAddress(CronJobDefinition)}.
      *
+     * <p>A <em>synchronous</em> failure of the leader-election insert — a {@link JobRepository}
+     * implementation that throws or returns {@code null} instead of a failed future — releases the
+     * in-flight guard and abandons this fire; the next tick retries. Only the in-flight guard is
+     * released, because no concurrency slot has been acquired yet.
+     *
      * @param job         the cron job to fire
      * @param scheduledAt the time this execution was scheduled for
      */
@@ -452,10 +458,29 @@ public class CronScheduler {
             concurrency.removeInFlight(job.id());
             return;
         }
-        JobExecution execution = buildExecution(job, scheduledAt, effectiveAddress);
-        repository
-                .tryInsert(execution)
-                .onSuccess(optId -> {
+        // JobRepository is an application-implemented SPI: tryInsert may throw synchronously or
+        // return null instead of a failed future, and the onFailure handler below catches neither.
+        // Only the in-flight guard is held here — no slot has been acquired and no row is written —
+        // so the failure path releases exactly that. Scoped to just these statements: the handlers
+        // are registered after the try, because an already-completed future runs them inline and a
+        // wider try would also catch a dispatch throw that acquireSlotAndRun has already released,
+        // producing a double release.
+        final JobExecution execution;
+        final Future<Optional<UUID>> insert;
+        try {
+            execution = buildExecution(job, scheduledAt, effectiveAddress);
+            insert = repository.tryInsert(execution);
+            java.util.Objects.requireNonNull(insert, "JobRepository.tryInsert must not return a null Future");
+        } catch (Exception e) {
+            concurrency.removeInFlight(job.id());
+            log.error(
+                    "SINGLE_INSTANCE leader election for cron job '{}' failed synchronously"
+                            + " — this fire is abandoned, the next tick retries",
+                    forLog(job.id()),
+                    e);
+            return;
+        }
+        insert.onSuccess(optId -> {
                     if (optId.isPresent()) {
                         log.debug("SINGLE_INSTANCE cron '{}' won at {}", job.id(), scheduledAt);
                         concurrency.acquireSlotAndRun(
@@ -485,6 +510,11 @@ public class CronScheduler {
      * If {@code tracked=true} and a repository is available, persists the execution before
      * dispatching. On persistence failure, dispatches anyway (tracking is best-effort).
      *
+     * <p>The best-effort fallback covers a <em>failed future</em> only. A {@link JobRepository} that
+     * throws synchronously or returns {@code null} has violated its contract in a way this fire
+     * cannot reason about, so the in-flight guard is released and the fire is abandoned rather than
+     * dispatched untracked; the next tick retries. No concurrency slot is held at that point.
+     *
      * <p>Overlap admission is decided <em>first</em>: the effective event bus address is resolved
      * only after {@code tryAcquireInFlight} succeeds, so a resolver failure at <em>admission</em>
      * cannot convert an {@link OverlapPolicy#QUEUE_ONE} overlap into a silently dropped tick — the
@@ -512,10 +542,26 @@ public class CronScheduler {
         Runnable dispatchUntracked =
                 () -> dispatcher.dispatch(job, scheduledAt, null, effectiveAddress, this::markCompleted);
         if (job.tracked() && repository != null) {
-            JobExecution execution = buildExecution(job, scheduledAt, effectiveAddress);
-            repository
-                    .save(execution)
-                    .onSuccess(id -> concurrency.acquireSlotAndRun(
+            // Same SPI hazard as fireSingleInstance: save may throw synchronously or return null,
+            // and only the in-flight guard is held here. Handlers are registered after the try so an
+            // inline-running handler's dispatch throw is contained by acquireSlotAndRun instead of
+            // being released twice.
+            final JobExecution execution;
+            final Future<UUID> saved;
+            try {
+                execution = buildExecution(job, scheduledAt, effectiveAddress);
+                saved = repository.save(execution);
+                java.util.Objects.requireNonNull(saved, "JobRepository.save must not return a null Future");
+            } catch (Exception e) {
+                concurrency.removeInFlight(job.id());
+                log.error(
+                        "Failed to persist execution for cron job '{}' — repository threw synchronously,"
+                                + " this fire is abandoned and the next tick retries",
+                        forLog(job.id()),
+                        e);
+                return;
+            }
+            saved.onSuccess(id -> concurrency.acquireSlotAndRun(
                             job.id(),
                             () -> dispatcher.dispatch(
                                     job, scheduledAt, execution, effectiveAddress, this::markCompleted)))
@@ -541,7 +587,13 @@ public class CronScheduler {
      * — this path bypasses {@link #fire(CronJobDefinition, Instant)} entirely and therefore needs
      * the resolution gate independently. When resolution fails, <b>both</b> guards are released:
      * {@link CronConcurrencyManager#markCompleted(String)} deliberately retains the in-flight
-     * entry when a pending fire exists, and the concurrency slot is still held for reuse.
+     * entry when a pending fire exists, and the concurrency slot is still held for reuse. A
+     * synchronous {@link JobRepository} failure while persisting the queued execution releases both
+     * guards for the same reason.
+     *
+     * <p>The re-dispatch itself needs no containment here: {@link CronJobDispatcher#dispatch} never
+     * throws (a synchronous failure inside it is contained there and released through this very
+     * callback), so adding a catch around it would risk releasing guards it had already released.
      *
      * @param job the cron job that completed
      */
@@ -561,10 +613,29 @@ public class CronScheduler {
                 return;
             }
             if (job.tracked() && repository != null) {
-                JobExecution queuedExecution = buildExecution(job, pending, effectiveAddress);
-                repository
-                        .save(queuedExecution)
-                        .onSuccess(id -> dispatcher.dispatch(
+                // Both guards are held on this path — CronConcurrencyManager.markCompleted retains
+                // the in-flight entry when a pending fire exists, and the slot is kept for that fire
+                // to reuse — so a synchronous save failure must release both. Handlers are
+                // registered after the try: dispatcher.dispatch() contains its own synchronous
+                // failures and releases through this same callback, so catching an inline handler's
+                // throw here would double-release.
+                final JobExecution queuedExecution;
+                final Future<UUID> saved;
+                try {
+                    queuedExecution = buildExecution(job, pending, effectiveAddress);
+                    saved = repository.save(queuedExecution);
+                    java.util.Objects.requireNonNull(saved, "JobRepository.save must not return a null Future");
+                } catch (Exception e) {
+                    concurrency.removeInFlight(job.id());
+                    concurrency.releaseSlot();
+                    log.error(
+                            "Failed to persist queued execution for cron job '{}' — repository threw"
+                                    + " synchronously, this queued fire is abandoned",
+                            forLog(job.id()),
+                            e);
+                    return;
+                }
+                saved.onSuccess(id -> dispatcher.dispatch(
                                 job, pending, queuedExecution, effectiveAddress, this::markCompleted))
                         .onFailure(err -> {
                             log.warn(
@@ -701,11 +772,15 @@ public class CronScheduler {
      * than reimplemented so cron cannot drift from the sanitizing rule the rest of the
      * deferred-execution boundary already applies to these same strings.
      *
+     * <p>Package-private rather than private so {@link CronJobDispatcher} and
+     * {@link CronConcurrencyManager} sanitize the same identifiers through the same helper on their
+     * failure paths, instead of each growing its own copy of the rule.
+     *
      * @param raw the raw config-supplied identifier, possibly {@code null}
      * @return the sanitized, length-bounded form, safe to interpolate into a log record, or
      *         {@code "<none>"} when {@code raw} is absent or sanitizes away entirely
      */
-    private static String forLog(String raw) {
+    static String forLog(String raw) {
         if (raw == null || raw.isBlank()) {
             return "<none>";
         }

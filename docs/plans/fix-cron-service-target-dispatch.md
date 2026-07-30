@@ -711,3 +711,24 @@ checks; and cron rows can never reach the delayed-job dispatch sink (the claim q
 
 **Deferrals routed:** issue #77 (parse-boundary validation), #78 (`MisfirePolicy.FIRE_ALL` runs one
 fire, not all), #79 (no live-fire cron/Postgres composition test).
+
+### S2 scope broadened (review finding, verified)
+
+The approved S2 text scoped containment to a synchronous throw from
+`CronJobDispatcher.dispatch`. Independent review pointed out — and I verified — that the same leak
+is reachable from the **repository call sites**, which S2 as written would have left open:
+
+| Site | Guards held when it throws | Consequence |
+|---|---|---|
+| `repository.tryInsert(execution)` in `fireSingleInstance` | in-flight only (no slot yet) | job never fires again |
+| `repository.save(execution)` in `fireEveryInstance` | in-flight only | job never fires again |
+| `repository.save(queuedExecution)` in `markCompleted` | in-flight **and** slot | job dead, one of ten global slots burned |
+| `dispatcher.dispatch(...)` inside `acquireSlotAndRun` | in-flight and slot | as above |
+
+`JobRepository` is an application-implementable SPI (`JobRepository.java:13`), so a custom adapter
+may throw synchronously instead of returning a failed future — the `onFailure` handlers already
+present only catch the latter. `buildExecution` is inside the same window.
+
+S2 therefore covers two places, not one: the scheduler's synchronous window around
+build-plus-repository-call, and the dispatcher's post-registration tail. Recorded as a correction of
+a verified fact, so no re-approval; the slice's intent is unchanged.
