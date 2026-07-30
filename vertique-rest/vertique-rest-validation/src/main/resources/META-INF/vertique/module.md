@@ -27,7 +27,8 @@ Validation in this module is **strategy-pluggable**: the runtime selects an impl
 **Multipart file validation** is part of the `web-validation` strategy. `@FilePart` on a named
 `FileUpload`/`List<FileUpload>` or an aggregate `List<FileUpload>` constrains the uploaded size and
 client-declared content type. Size checks are post-spool: `BodyHandler` has already written the file
-under `http.uploadsDirectory`, and `http.maxBodySize` is the only ingress body-size limit. Declared
+under `http.uploadsDirectory`, and `http.maxBodySize` is the only ingress body-size limit — part
+count is bounded separately at ingress by `http.maxFormFields`. Declared
 media types are matched directionally; the configured subtype may be a wildcard, while a missing,
 malformed, or wildcard client declaration fails closed. Text form fields are not file uploads and
 are exempt from aggregate file constraints; their ordinary form schema validation still applies.
@@ -246,6 +247,7 @@ validation; unmapped declared types are accepted without I/O.
 | `jaxrs.validationStrategy` | `"web-validation"` | ID of the `RequestValidationStrategy` to activate |
 | `jaxrs.validationMode` | `"aggregate"` | `"aggregate"` (collect all violations, default) or `"failFast"` (stop on first); any other value fails startup |
 | `http.maxBodySize` | `2097152` | Global ingress body limit; the only pre-validation upload-size limit |
+| `http.maxFormFields` | `256` | Pre-validation ingress limit on part count, shared across multipart file parts, multipart text parts, and URL-encoded attributes |
 | `http.uploadsDirectory` | `"file-uploads"` | Non-blank Vert.x multipart spool directory; temporary files are always deleted at request end |
 
 ---
