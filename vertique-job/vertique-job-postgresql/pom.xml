@@ -91,6 +91,17 @@ SPDX-License-Identifier: EUPL-1.2
             <artifactId>vertique-db-test</artifactId>
             <scope>test</scope>
         </dependency>
+        <!--
+            Test-scope only, so that CronServiceTargetDispatchIT can drive a real CronScheduler
+            against the real job schema this module owns — the composition boundary that produced
+            issue #41 and that neither side could prove alone. Acyclic: vertique-job-cron does not
+            depend on this module.
+        -->
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-job-cron</artifactId>
+            <scope>test</scope>
+        </dependency>
         <dependency>
             <groupId>dev.vertique</groupId>
             <artifactId>vertique-db-flyway</artifactId>
