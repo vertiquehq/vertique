@@ -1935,6 +1935,79 @@ class CronSchedulerTest {
                         ctx.completeNow();
                     }));
         }
+
+        @Test
+        @DisplayName("synchronous completeExecution throw in the execution-timeout handler still releases "
+                + "the in-flight guard and concurrency slot so a later tick can dispatch")
+        void synchronousTimeoutPersistFailureStillReleases(Vertx vertx, VertxTestContext ctx) {
+            // The execution-timeout handler (the vertx.setTimer(executionTimeoutMs, ...) block in
+            // CronJobDispatcher.dispatch) claims the one-shot latch, unregisters both consumers,
+            // calls repository.completeExecution(..., ABANDONED, ...), then calls
+            // completionCallback.onCompleted(job) — with no finally around that pair. A
+            // synchronous throw from completeExecution() therefore skips the callback entirely,
+            // and because the latch is already claimed and the consumer already unregistered,
+            // nothing can ever complete that execution: both guards are stranded for the process
+            // lifetime, unrecoverable.
+            //
+            // This is the mainline path, not an edge case: executionTimeoutMs defaults to
+            // 120_000ms (JobCoordinatorConfig) and CronPersistenceModule always passes it, so the
+            // timer is armed in every persistence-backed deployment. A short 1000ms timeout here
+            // makes it fire quickly for the test.
+            AtomicInteger hitCount = new AtomicInteger();
+            vertx.eventBus().consumer("test.sync-timeout-throw.address", msg -> {
+                hitCount.incrementAndGet();
+                // Deliberately never reply — force the execution timeout to fire on every fire.
+            });
+
+            JobRepository repo = mock(JobRepository.class);
+            when(repo.save(any(JobExecution.class))).thenAnswer(inv -> Future.succeededFuture(UUID.randomUUID()));
+            when(repo.completeExecution(any(UUID.class), any(JobState.class), any(), any(), any()))
+                    .thenThrow(new IllegalStateException("abandon boom"));
+
+            // 9-arg constructor: executionTimeoutMs=1000 arms the timeout timer that this test
+            // targets; progressFlushIntervalMs=0 keeps the log-flush timer out of the picture.
+            scheduler = new CronScheduler(
+                    vertx,
+                    Set.of(),
+                    repo,
+                    stubTargetResolver(),
+                    testEventBusClient(vertx),
+                    CronScheduler.DEFAULT_MAX_CONCURRENT_JOBS,
+                    1000L,
+                    0L,
+                    DispatchEnvelopeBuilder.forTesting());
+
+            CronJobDefinition job = new CronJobDefinition(
+                    "sync-timeout-throw-job",
+                    new CronExpression("* * * * * *"),
+                    new CronTargetReference.EventBusTarget("test.sync-timeout-throw.address"),
+                    "test.sync-timeout-throw.address",
+                    ExecutionMode.EVERY_INSTANCE,
+                    ZoneId.of("UTC"),
+                    3,
+                    null,
+                    OverlapPolicy.SKIP,
+                    true,
+                    Map.of(),
+                    MisfirePolicy.SKIP);
+
+            scheduler.register(job);
+            scheduler.start();
+
+            // ~5s over a one-second cron with a 1s execution timeout: the first execution times
+            // out and its handler throws while persisting ABANDONED. If the guards leaked there,
+            // no later tick could ever reach the handler again.
+            vertx.setTimer(
+                    5000,
+                    id -> ctx.verify(() -> {
+                        assertTrue(
+                                hitCount.get() >= 2,
+                                "expected at least 2 hits — a synchronous completeExecution throw in the "
+                                        + "timeout handler must not strand the in-flight guard and "
+                                        + "concurrency slot forever, got " + hitCount.get());
+                        ctx.completeNow();
+                    }));
+        }
     }
 
     // --- Consumer timeout tests ---
