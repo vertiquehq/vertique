@@ -61,6 +61,36 @@ final class MultipartBodies {
         return body;
     }
 
+    /**
+     * Builds a raw multipart body containing a fixed number of small file parts and text form
+     * fields, used to probe part-count limits well below the configured byte cap.
+     *
+     * <p>File parts are named {@code file0..fileN} with {@code application/octet-stream} content;
+     * text fields are named {@code field0..fieldN}. File parts precede text fields.
+     *
+     * @param fileParts number of small file parts to emit
+     * @param textFields number of small text form fields to emit
+     * @return a complete multipart body with CRLF framing and a closing boundary
+     */
+    static Buffer parts(int fileParts, int textFields) {
+        Buffer body = Buffer.buffer();
+        for (int i = 0; i < fileParts; i++) {
+            appendFile(
+                    body,
+                    "file" + i,
+                    "file" + i + ".bin",
+                    "application/octet-stream",
+                    ("payload-" + i).getBytes(StandardCharsets.US_ASCII));
+        }
+        for (int i = 0; i < textFields; i++) {
+            appendAscii(body, "--" + BOUNDARY + "\r\n");
+            appendAscii(body, "Content-Disposition: form-data; name=\"field" + i + "\"\r\n\r\n");
+            appendAscii(body, "value-" + i + "\r\n");
+        }
+        appendAscii(body, "--" + BOUNDARY + "--\r\n");
+        return body;
+    }
+
     private static void appendFile(Buffer body, String partName, String fileName, String declaredType, byte[] content) {
         appendAscii(body, "--" + BOUNDARY + "\r\n");
         appendAscii(
