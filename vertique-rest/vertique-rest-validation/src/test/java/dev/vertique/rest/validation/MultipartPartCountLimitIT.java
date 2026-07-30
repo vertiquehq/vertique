@@ -23,6 +23,7 @@ import dev.vertique.rest.jaxrs.DefaultResponseSerializer;
 import dev.vertique.rest.jaxrs.ExceptionMapperRegistry;
 import dev.vertique.rest.jaxrs.JaxRsRouterMount;
 import dev.vertique.rest.jaxrs.RestExceptionMapper;
+import dev.vertique.rest.jaxrs.RestModule;
 import dev.vertique.rest.jaxrs.validation.OperationSchemaSource;
 import dev.vertique.rest.jaxrs.validation.RequestValidationStrategy;
 import io.swagger.v3.oas.annotations.Operation;
@@ -74,11 +75,17 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * only ever see files this test's own request produced.
  */
 @ExtendWith(VertxExtension.class)
+// 30s rather than testing.md's 20s default, deliberately: each of the seven tests below starts and
+// stops its own server, and rejectedRequestLeavesNoSpooledFiles may hold up to the 10s cap of its
+// quiescence poll. Tightening this to 20s would buy nothing and would flake under CI load.
 @Timeout(value = 30, unit = TimeUnit.SECONDS)
 public class MultipartPartCountLimitIT {
 
     /** The framework's configured {@code maxFormFields} default. */
     private static final int CONFIGURED_FORM_FIELD_LIMIT = 256;
+
+    /** The framework's configured {@code maxFormAttributeSize} default, in bytes. */
+    private static final int CONFIGURED_FORM_ATTRIBUTE_SIZE_LIMIT = 8192;
 
     private static final long ASYNC_TIMEOUT_SECONDS = 10;
 
@@ -156,6 +163,21 @@ public class MultipartPartCountLimitIT {
     }
 
     @Test
+    @DisplayName("A single form field larger than maxFormAttributeSize is rejected as a bad request")
+    void oversizedSingleFormFieldRejectedAsBadRequest() throws Exception {
+        startServer("oversizedSingleFormField");
+
+        HttpResult result =
+                postMultipart(MultipartBodies.singleTextField("oversized", CONFIGURED_FORM_ATTRIBUTE_SIZE_LIMIT + 1));
+
+        assertEquals(
+                400,
+                result.statusCode(),
+                "a form field beyond maxFormAttributeSize is a client error, not a server fault; observed failure: "
+                        + failureCapture.describe());
+    }
+
+    @Test
     @DisplayName("Exactly the configured number of file parts is accepted and fully bound")
     void partsAtConfiguredLimitAccepted() throws Exception {
         startServer("partsAtConfiguredLimit");
@@ -168,6 +190,23 @@ public class MultipartPartCountLimitIT {
         assertNotNull(observed, "an accepted body must reach the router pipeline");
         assertEquals(CONFIGURED_FORM_FIELD_LIMIT, observed.fileUploads(), "every file part must be spooled");
         assertEquals(0, observed.formAttributes(), "a file-only body contributes no form attributes");
+    }
+
+    @Test
+    @DisplayName("Exactly the configured number of mixed parts is accepted — 56 files + 200 fields = 256")
+    void mixedTextAndFilePartsAtLimitAccepted() throws Exception {
+        startServer("mixedTextAndFilePartsAtLimit");
+
+        // The matched pair to mixedTextAndFilePartsUnderByteCapObservedLimit's 57 + 200 = 257
+        // rejection. A rejection above the line alone is consistent with several per-kind counting
+        // schemes; acceptance at exactly 256 mixed parts is what pins the counter as shared.
+        HttpResult result = postMultipart(MultipartBodies.parts(56, 200));
+
+        assertEquals(200, result.statusCode(), "256 mixed parts sit exactly on the shared limit and must be accepted");
+        assertEquals("files=56", result.body().toString());
+        Observation observed = capture.observation();
+        assertNotNull(observed, "an accepted body must reach the router pipeline");
+        assertEquals(56, observed.fileUploads(), "every file part must be bound");
     }
 
     @Test
@@ -231,21 +270,30 @@ public class MultipartPartCountLimitIT {
      * Samples the uploads directory until the file count stops changing for a full settle window,
      * so the result reflects everything the request produced rather than a premature snapshot.
      *
+     * <p>This is deliberately not a wall-clock wait for a timer, and it must not be replaced by a
+     * bare {@code count == 0} check: the server keeps draining the request body after the response
+     * has been written, so an immediate sample can read "not yet written" as "cleaned up" — a test
+     * that cannot fail. Waiting for the count to stop moving is what makes the assertion real.
+     *
+     * <p>Bounded on both ends: it gives up after a 10s cap, and returns as soon as the count has
+     * held steady for a 500ms settle window (measured settle is ~26ms), so the common path costs
+     * roughly half a second rather than the cap.
+     *
      * @return the settled number of files in this test's uploads directory
      */
     private long awaitQuiescentSpooledFileCount() throws Exception {
-        long settleWindowMillis = 500;
+        long settleWindowNanos = TimeUnit.MILLISECONDS.toNanos(500);
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
         long count = spooledFileCount();
-        long unchangedSince = System.currentTimeMillis();
+        long unchangedSince = System.nanoTime();
 
         while (System.nanoTime() < deadline) {
             Thread.sleep(50);
             long current = spooledFileCount();
             if (current != count) {
                 count = current;
-                unchangedSince = System.currentTimeMillis();
-            } else if (System.currentTimeMillis() - unchangedSince >= settleWindowMillis) {
+                unchangedSince = System.nanoTime();
+            } else if (System.nanoTime() - unchangedSince >= settleWindowNanos) {
                 return count;
             }
         }
@@ -299,9 +347,9 @@ public class MultipartPartCountLimitIT {
 
     /**
      * Records the shape of the failure the error pipeline received: the throwable
-     * {@code JaxRsRouterMount.handleFailure} chose to dispatch, the status Vert.x itself set on the
-     * context, and whether the {@code HttpException} unwrap branch stashed a status hint. Together
-     * these say which branch of {@code handleFailure} a decoder rejection actually takes.
+     * {@code JaxRsRouterMount.handleFailure} chose to dispatch, and the status Vert.x itself set on
+     * the context. Together these say which branch of {@code handleFailure} a decoder rejection
+     * actually takes.
      */
     private static final class FailureCapture implements ErrorInterceptor {
 
@@ -311,8 +359,7 @@ public class MultipartPartCountLimitIT {
         public Future<Throwable> beforeMapping(RoutingContext rc, Throwable throwable) {
             described.set("cause=" + throwable.getClass().getName()
                     + ", message=" + throwable.getMessage()
-                    + ", ctx.statusCode()=" + rc.statusCode()
-                    + ", vertxStatusHint=" + rc.data().get(RequestInterceptor.VERTX_STATUS_CODE_KEY));
+                    + ", ctx.statusCode()=" + rc.statusCode());
             return Future.succeededFuture(throwable);
         }
 
@@ -347,13 +394,23 @@ public class MultipartPartCountLimitIT {
 
     private record HttpResult(int statusCode, Buffer body) {}
 
+    /**
+     * Builds the mount factory these tests post against, wired to the framework's real exception
+     * defaults via {@link RestModule#defaultExceptionMapper()}.
+     *
+     * <p>The real defaults are load-bearing, not incidental: a fresh {@code DefaultExceptionMapper}
+     * carrying one hand-picked mapping would let every assertion here pass while the harness stayed
+     * blind to any regression that turns another mapped 4xx into a 500. What these tests observe
+     * must be the status the shipped configuration produces.
+     *
+     * @param httpConfig the HTTP config whose form limits these tests probe
+     * @param capture request interceptor recording what the decoder bound
+     * @param failureCapture error interceptor recording the shape of any failure
+     * @return a factory producing mounts backed by the framework's real exception defaults
+     */
     private static JaxRsRouterMount.Factory buildWebValidationFactory(
             HttpConfig httpConfig, RequestInterceptor capture, ErrorInterceptor failureCapture) {
-        DefaultExceptionMapper defaultMapper = new DefaultExceptionMapper()
-                .on(dev.vertique.rest.core.RestValidationException.class, ex -> Response.status(400)
-                        .entity(dev.vertique.rest.core.ValidationProblemDetail.of(ex.getMessage(), ex.errors()))
-                        .type("application/problem+json")
-                        .build());
+        DefaultExceptionMapper defaultMapper = RestModule.defaultExceptionMapper();
         ExceptionMapperRegistry registry = new ExceptionMapperRegistry(defaultMapper, Set.of());
         RestExceptionMapper restExceptionMapper = new RestExceptionMapper();
         RestContextResolution restContextResolution = new RestContextResolution(Set.of());

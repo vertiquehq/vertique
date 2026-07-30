@@ -91,6 +91,27 @@ final class MultipartBodies {
         return body;
     }
 
+    /**
+     * Builds a raw multipart body containing exactly one text form field whose value is
+     * {@code valueLength} ASCII bytes long.
+     *
+     * <p>Complements {@link #parts(int, int)}, whose deliberately short values can never reach the
+     * per-attribute size cap: this fixture exists to cross {@code maxFormAttributeSize} with a
+     * single part, leaving the part count far below {@code maxFormFields}.
+     *
+     * @param fieldName text form-field name
+     * @param valueLength number of ASCII bytes in the field value
+     * @return a complete multipart body with CRLF framing and a closing boundary
+     */
+    static Buffer singleTextField(String fieldName, int valueLength) {
+        Buffer body = Buffer.buffer();
+        appendAscii(body, "--" + BOUNDARY + "\r\n");
+        appendAscii(body, "Content-Disposition: form-data; name=\"" + fieldName + "\"\r\n\r\n");
+        appendAscii(body, "x".repeat(valueLength) + "\r\n");
+        appendAscii(body, "--" + BOUNDARY + "--\r\n");
+        return body;
+    }
+
     private static void appendFile(Buffer body, String partName, String fileName, String declaredType, byte[] content) {
         appendAscii(body, "--" + BOUNDARY + "\r\n");
         appendAscii(
