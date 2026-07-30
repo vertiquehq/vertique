@@ -44,6 +44,7 @@ deleted, so only one plan is live.
 | 2026-07-31 | `codex-architect` debate + three `plan-linter` rounds | Strict **4xx-only** guard (a `>= 400` guard would have regressed five test classes, F14); keep the raw cause unwrapped; ADR-0205; repo-attributed manifest; 50-run stress loop and draft-PR rule |
 | 2026-07-31 | Security review | **Reversed the body policy** — `detail` is now cleared unconditionally rather than "preserved when authored", which would have published arbitrary JWT-validator exception messages; **internalized** the hint key instead of broadening it; **merged** the status and sanitization slices (the split emitted the corrected status *carrying* the leaked message); added direct mount-based JWT proof |
 | 2026-07-31 | Execution-start drift check (S1) — `origin/main` advanced past the plan's base when vertiquehq/vertique#16 merged | Fact correction, no contract change: `vertique-rest-core` `module.md` key references shift `703→705` and `734→736`. All other cited line numbers re-verified unchanged (`RequestInterceptor.java:88,:91`; rest-jaxrs `module.md:370`; `JaxRsRouterMount.java:437-448`, `:384-385`; `ErrorPipeline.java:177-192`) |
+| 2026-07-31 | S2 as-built (test run) | Fact corrections, no contract change: **F22** added — the decoder branch unwraps `t.getCause()`, so an oversized form field reaches the mapper as a bare `java.io.IOException`, not a `DecoderException`. S2's "via `TooLongFormFieldException`" and §4's table label corrected. Strengthens, not weakens, the status-driven design. S3 note: assert the hint in `VertxFailureStatusPreservationIT` (same package as the internal key) so a green 400 proves *which* branch produced it |
 | 2026-07-31 | Governance-landing review | S6 becomes a **governance PR** advancing the `sources/vertique` gitlink, not a docs-only fast-forward; amendment log dated |
 
 Every review finding against the predecessor, and where it is resolved:
@@ -123,6 +124,19 @@ Every review finding against the predecessor, and where it is resolved:
 - **F16 — the whole decoder family is fixed for free.** `BodyHandlerImpl:267-278` maps *any*
   `DecoderException` to 400, so `TooLongFormFieldException` and `ErrorDataDecoderException` are covered
   **without naming a Netty type**.
+- **F22 (as-built, S2) — the decoder branch unwraps, which strengthens the design.** `BodyHandlerImpl`'s
+  nested `BHandler` request exception handler is:
+  `if (t instanceof DecoderException) { sc = 400; if (t.getCause() != null) { t = t.getCause(); } } ctx.fail(sc, t);`
+  So the 400 is set for the whole `DecoderException` family, but **what reaches `handleFailure` is the
+  unwrapped cause**. Measured: the part-count case keeps its wrapper (`TooManyFormFieldsException` has
+  a no-arg-only constructor, so `getCause()` is null — F5), while an oversized form field surfaces as a
+  bare `java.io.IOException("Size exceed allowed maximum capacity")` from Netty's
+  `AbstractHttpData.checkSize`.
+  **This kills the do-less alternative more decisively than §1 argued:** registering
+  `TooManyFormFieldsException → 400`, or even `DecoderException → 400`, would leave the oversized-field
+  case at 500, because no `DecoderException` ever reaches the mapper for it. Preserving the status
+  Vert.x already set is the only option that covers both. (F13's `BodyHandlerImpl:267-278` cite points
+  at the nested `BHandler`, not the outer class.)
 - **F17** `JaxRsRouterMount.java:384-385` javadoc wrongly claims the 413 arrives as an `HttpException`
   (F13 refutes it).
 - **F18** No test anywhere sets or exceeds `maxBodySize`; the documented 413 is unproven.
@@ -265,7 +279,7 @@ application-contributed ExceptionMapper registered for a type more specific than
 | Path | Before | After |
 |---|---|---|
 | multipart parts > `maxFormFields` | 500 | **400** |
-| malformed multipart / oversized single form field (`DecoderException`) | 500 | **400** |
+| malformed multipart / oversized single form field (reaches the mapper *unwrapped* — see F22) | 500 | **400** |
 | `ctx.fail(401, e)` from `JwtClaimsValidatorContributor` (F15) | 500 | **401** |
 | any `ctx.fail(4xx, cause)`, cause not `HttpException` | mapper's status | **the 4xx** |
 | `ctx.fail(Throwable)` / `ctx.fail(500, cause)` | mapper's status | **unchanged** |
@@ -290,9 +304,9 @@ Red-test spec — no new test methods; the existing five must behave as:
 `partsAtConfiguredLimitAccepted` and `rejectedRequestLeavesNoSpooledFiles` still **pass**.
 Plus two new tests:
 - `oversizedSingleFormFieldRejectedAsBadRequest` — GIVEN a multipart body with one text part whose value
-  exceeds `http.maxFormAttributeSize` (8192), WHEN posted, THEN 400. Today **red** (500), via
-  `TooLongFormFieldException` → the same `DecoderException` branch. This proves F16's "whole decoder
-  family" claim rather than asserting it.
+  exceeds `http.maxFormAttributeSize` (8192), WHEN posted, THEN 400. Today **red** (500).
+  **As-built correction:** it does *not* arrive as `TooLongFormFieldException`, and the mapper never
+  sees a `DecoderException` at all — see F22.
 - `mixedTextAndFilePartsAtLimitAccepted` — GIVEN 200 text + **56** file parts (= 256), WHEN posted,
   THEN 200 and 56 bound uploads. Today **green**. Paired with the existing 57+200 (= 257) rejection,
   this *demonstrates* the shared counter's exact boundary instead of inferring it from one
