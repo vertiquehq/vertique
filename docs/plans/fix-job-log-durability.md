@@ -89,6 +89,18 @@ re-entry trigger (§8) rather than paid for now.
 **Shutdown flush is a cutoff snapshot, not a final flush** — the handler may still be
 running. Documented as such.
 
+**Ending-site retry is bounded** *(amended 2026-07-30 — see §10)*. At an execution-ending
+site there is no later periodic tick, so the retry above cannot be open-ended: the drain
+awaits any in-flight write and re-flushes while work remains, capped at **4 rounds**. After
+4 failed rounds the remaining batch is lost, and that loss is reported, not silent.
+
+**Each write is bounded at 5 s** *(amended 2026-07-30 — see §10)*. The timeout is applied to
+the `saveLogs` future *inside* `flush()`, before `onSuccess`/`recover`, so the single-flight
+marker is always cleared. Consequence, accepted deliberately: a write that times out and
+**later commits** duplicates its rows on retry. This widens the ambiguous-commit duplicate
+window already accepted above; `job_logs` has no dedup key, so those duplicates are
+permanent. Chosen over leaving a hung write to strand an execution's logs entirely.
+
 ---
 
 ## 4. Slice plan
@@ -272,3 +284,12 @@ heap growth); attempt discriminator (trigger: a dashboard requirement); transact
 
 **Estimate:** 1.5–2 days through the full pipeline (5 code slices, simplify, security +
 Codex review loop, docs), assuming the batch-atomicity test comes back clean.
+
+---
+
+## 10. Amendments
+
+| Date | Trigger | Change |
+|------|---------|--------|
+| 2026-07-30 | Review round 1 (Codex + security, both verified; triage adjudicated) | §3 gains **bounded ending-site retry** (4 rounds) and a **5 s per-write timeout applied inside `flush()`**. Both narrow the ratified at-least-once decision and are consumer-visible, so they were signed off explicitly before execution resumed. Root cause: §3 froze *single-flight* and *retain-and-retry* independently and never walked their composition — single-flight makes `claim()` return empty, so an ending-site flush after teardown was a guaranteed no-op with no later tick to retry on. |
+| 2026-07-30 | Same round | §5's ADR paths were wrong: ADRs live in the **meta repo** at `adr/product/`, not `docs/adr/` in this repository. Next free number 0202. This mis-pathing is a plausible mechanical cause of slice S6 shipping module docs without the ADRs. |
