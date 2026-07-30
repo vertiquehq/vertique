@@ -575,12 +575,6 @@ public class DelayedJobPoller extends AbstractVerticle {
                         }
                         activeExecutions.remove(executionId);
 
-                        // Both timeout outcomes below (abandon-and-retry, dead-letter) end this
-                        // execution, so the single flush inside this latch covers both. The
-                        // handler is not interrupted and may still append entries afterwards;
-                        // those are lost unless a later attempt reuses the same execution id.
-                        logFlusher.flush();
-
                         // Enrich the scheduler thread's SLF4J MDC for the timeout log line. Timer
                         // callbacks run on the verticle's deployment context (not a duplicated
                         // context), so the framework MDC facade's write-side guard would reject
@@ -632,6 +626,14 @@ public class DelayedJobPoller extends AbstractVerticle {
                             }
                         } finally {
                             inFlight.decrementAndGet();
+                            // Both timeout outcomes above (abandon-and-retry, dead-letter) end this
+                            // execution, so the single flush in this finally covers both. It runs
+                            // last so nothing that ends the execution — least of all the in-flight
+                            // release — can be skipped by it, and runs in a finally so a throw from
+                            // the outcome handling above cannot strand the buffered entries. The
+                            // handler is not interrupted and may still append entries afterwards;
+                            // those are lost unless a later attempt reuses the same execution id.
+                            logFlusher.flush();
                         }
                     }
                 })
@@ -656,11 +658,6 @@ public class DelayedJobPoller extends AbstractVerticle {
 
             consumer.unregister();
             activeConsumers.remove(consumer);
-
-            // The handler has reported, so nothing more will be appended: this drains whatever the
-            // periodic tick had not yet claimed. Fire-and-forget — a failed log flush must never
-            // delay or fail completion handling (JobLogFlusher always returns a succeeded future).
-            logFlusher.flush();
 
             Instant endTime = Instant.now();
 
@@ -704,6 +701,12 @@ public class DelayedJobPoller extends AbstractVerticle {
                 }
             } finally {
                 inFlight.decrementAndGet();
+                // The handler has reported, so nothing more will be appended: this drains whatever
+                // the periodic tick had not yet claimed. Fire-and-forget, and deliberately last —
+                // no work that ends the execution may sit behind it, and the finally keeps the
+                // drain reachable even when completion handling throws (JobLogFlusher itself never
+                // throws and always returns a succeeded future).
+                logFlusher.flush();
             }
         });
 

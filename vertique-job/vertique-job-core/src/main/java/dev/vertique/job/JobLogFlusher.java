@@ -6,6 +6,7 @@ package dev.vertique.job;
 import io.vertx.core.Future;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 import lombok.extern.slf4j.Slf4j;
 
 /**
@@ -26,6 +27,15 @@ import lombok.extern.slf4j.Slf4j;
  * deliberately not written back through the {@link JobLogger} — that would feed the failure into
  * the very buffer that failed to flush.
  *
+ * <p><strong>Every write is bounded.</strong> {@link JobRepository} is public SPI, so a write may
+ * throw synchronously, return {@code null}, or return a future that never settles; each of those
+ * would otherwise skip both the ack and the nack and wedge the buffer's single-flight marker
+ * forever. All three are converted into the ordinary nack-and-retry path, the last of them by a
+ * {@value #WRITE_TIMEOUT_SECONDS}-second timeout applied to the write before the outcome handlers.
+ * The accepted cost is duplication: a write that times out here but commits later leaves rows that
+ * the retry writes again, because {@code job_logs} has a surrogate key and no natural key to
+ * deduplicate on. Duplicate log rows are preferred to a permanently stalled flush loop.
+ *
  * <p>Construction with a {@code null} repository, a {@code null} execution id, or a
  * {@link JobContext} that is not a {@link DefaultJobContext} yields a genuine no-op flusher that
  * never touches the repository. The first two are required, not merely defensive:
@@ -35,6 +45,12 @@ import lombok.extern.slf4j.Slf4j;
  */
 @Slf4j
 public final class JobLogFlusher {
+
+    /**
+     * Upper bound on a single {@link JobRepository#saveLogs(UUID, List)} call, after which the batch
+     * is nacked and retried by a later flush.
+     */
+    private static final long WRITE_TIMEOUT_SECONDS = 5L;
 
     private final JobRepository repository;
     private final UUID executionId;
@@ -100,8 +116,13 @@ public final class JobLogFlusher {
      * in flight. On a write failure the batch is returned to the buffer for the next flush and a
      * warning is logged.
      *
-     * @return a future that completes when the write finishes; always succeeded, because a log
-     *     flush failure must not fail the job whose logs these are
+     * <p>Every way a {@link JobRepository} implementation can misbehave — throwing synchronously,
+     * returning {@code null}, or returning a future that never settles — is folded into that same
+     * failure path, so the buffer's in-flight marker is always cleared and a later flush can always
+     * claim again.
+     *
+     * @return a future that completes when the write finishes, times out, or fails; always
+     *     succeeded, because a log flush failure must not fail the job whose logs these are
      */
     public Future<Void> flush() {
         if (!persistable) {
@@ -111,8 +132,20 @@ public final class JobLogFlusher {
         if (batch.isEmpty()) {
             return Future.succeededFuture();
         }
-        return repository
-                .saveLogs(executionId, batch)
+        Future<Void> written;
+        try {
+            written = repository.saveLogs(executionId, batch);
+        } catch (RuntimeException e) {
+            written = Future.failedFuture(e);
+        }
+        if (written == null) {
+            written = Future.failedFuture(new IllegalStateException("saveLogs returned null"));
+        }
+        // The timeout wraps the write itself, ahead of the outcome handlers: attaching it to the
+        // composed future instead would leave ack/nack bound to the pending inner one, which is
+        // exactly the wedge this guards against. A late inner settle lands on an already-completed
+        // wrapper and is dropped, so the batch is never both nacked and acked.
+        return written.timeout(WRITE_TIMEOUT_SECONDS, TimeUnit.SECONDS)
                 .onSuccess(v -> logger.ack())
                 .recover(cause -> {
                     logger.nack(batch);

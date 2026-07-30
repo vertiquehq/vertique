@@ -5,6 +5,7 @@ package dev.vertique.job;
 
 import java.time.Instant;
 import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.Deque;
 import java.util.List;
 
@@ -32,9 +33,31 @@ import java.util.List;
  * nothing ever claims, and during a sustained write outage {@link #nack(List)} returns every failed
  * batch to the head — so the buffer is bounded in practice, not guaranteed.
  *
+ * <p>Every message is normalized at this producer boundary (see {@link #normalize(String)}) so that
+ * nothing a handler can log makes the persisting write fail deterministically. This class is the
+ * complete producer set for anything a {@link JobLogFlusher} can claim — a foreign
+ * {@link JobContext} yields a no-op flusher — so normalizing here covers the whole reachable path
+ * without constraining the public {@link LogEntry} record.
+ *
  * <p>Instances are created per execution by {@link DefaultJobContext}.
  */
 public class DefaultJobLogger implements JobLogger {
+
+    /**
+     * Maximum number of entries one {@link #claim()} hands over. Bounding the batch keeps a single
+     * pipelined INSERT proportionate and stops a write outage from re-sending an ever-larger failing
+     * batch on every flush tick.
+     */
+    private static final int MAX_CLAIM_BATCH = 500;
+
+    /**
+     * Maximum number of characters retained from a log message before {@link #normalize(String)}
+     * truncates it.
+     */
+    private static final int MAX_MESSAGE_CHARS = 8192;
+
+    /** Stand-in stored for a {@code null} message, because {@code job_logs.message} is NOT NULL. */
+    private static final String NULL_MESSAGE = "<null>";
 
     /** Guards {@link #buffer} and {@link #flushInFlight}. */
     private final Object lock = new Object();
@@ -51,17 +74,17 @@ public class DefaultJobLogger implements JobLogger {
 
     @Override
     public void info(String message) {
-        append(new LogEntry("INFO", message, Instant.now()));
+        append(new LogEntry("INFO", normalize(message), Instant.now()));
     }
 
     @Override
     public void warn(String message) {
-        append(new LogEntry("WARN", message, Instant.now()));
+        append(new LogEntry("WARN", normalize(message), Instant.now()));
     }
 
     @Override
     public void error(String message) {
-        append(new LogEntry("ERROR", message, Instant.now()));
+        append(new LogEntry("ERROR", normalize(message), Instant.now()));
     }
 
     /**
@@ -73,6 +96,69 @@ public class DefaultJobLogger implements JobLogger {
         synchronized (lock) {
             buffer.addLast(entry);
         }
+    }
+
+    // --- Message normalization ---
+
+    /**
+     * Makes a caller-supplied message unconditionally persistable, so that no single entry can wedge
+     * the flush loop for the whole execution.
+     *
+     * <p>A message that the write rejects is not merely lost: {@link JobLogFlusher} nacks the batch,
+     * the next claim re-includes the same entry, and the write fails again — no entry for that
+     * execution ever persists and the buffer grows without bound. The three hazards handled here are
+     * therefore each load-bearing:
+     *
+     * <ul>
+     *   <li>{@code null} becomes {@value #NULL_MESSAGE}, because {@code job_logs.message} is
+     *       {@code TEXT NOT NULL};
+     *   <li>C0 control characters are stripped, because PostgreSQL rejects {@code U+0000} in a
+     *       {@code TEXT} value and a job payload field logged verbatim can carry one. {@code \n},
+     *       {@code \r} and {@code \t} are kept — multi-line output stays readable;
+     *   <li>anything beyond {@value #MAX_MESSAGE_CHARS} characters is truncated with a marker
+     *       naming how many characters were dropped, never splitting a surrogate pair.
+     * </ul>
+     *
+     * @param message the caller-supplied message; may be {@code null}
+     * @return a non-{@code null} message safe to write to {@code job_logs.message}
+     */
+    private static String normalize(String message) {
+        if (message == null) {
+            return NULL_MESSAGE;
+        }
+        String cleaned = stripControlCharacters(message);
+        if (cleaned.length() <= MAX_MESSAGE_CHARS) {
+            return cleaned;
+        }
+        // Back off one char rather than cut a surrogate pair in half: a lone surrogate is not
+        // encodable as UTF-8 and would corrupt the stored text.
+        int end = Character.isHighSurrogate(cleaned.charAt(MAX_MESSAGE_CHARS - 1))
+                ? MAX_MESSAGE_CHARS - 1
+                : MAX_MESSAGE_CHARS;
+        return cleaned.substring(0, end) + "…[truncated " + (cleaned.length() - end) + " chars]";
+    }
+
+    /**
+     * Removes C0 control characters other than tab, newline and carriage return, allocating only
+     * when the message actually contains one.
+     *
+     * @param message the message to scan; never {@code null}
+     * @return the message with strippable control characters removed
+     */
+    private static String stripControlCharacters(String message) {
+        StringBuilder stripped = null;
+        for (int i = 0; i < message.length(); i++) {
+            char c = message.charAt(i);
+            boolean strippable = c < 0x20 && c != '\n' && c != '\r' && c != '\t';
+            if (strippable) {
+                if (stripped == null) {
+                    stripped = new StringBuilder(message.length()).append(message, 0, i);
+                }
+            } else if (stripped != null) {
+                stripped.append(c);
+            }
+        }
+        return stripped == null ? message : stripped.toString();
     }
 
     /**
@@ -102,17 +188,25 @@ public class DefaultJobLogger implements JobLogger {
      * only through {@link #nack(List)}. An empty claim leaves the in-flight state untouched, so a
      * later claim can still succeed.
      *
-     * @return the claimed batch in insertion order, or an empty list when nothing can be claimed
+     * <p>At most {@value #MAX_CLAIM_BATCH} entries are drained from the head; the remainder stays
+     * buffered for the next claim. Without that cap the whole buffer becomes one pipelined batch
+     * INSERT, and during a write outage every tick re-sends an ever-larger batch that fails again.
+     *
+     * @return the claimed batch in insertion order, at most {@value #MAX_CLAIM_BATCH} entries, or an
+     *     empty list when nothing can be claimed
      */
     List<LogEntry> claim() {
         synchronized (lock) {
             if (flushInFlight || buffer.isEmpty()) {
                 return List.of();
             }
-            List<LogEntry> batch = List.copyOf(buffer);
-            buffer.clear();
+            int size = Math.min(buffer.size(), MAX_CLAIM_BATCH);
+            List<LogEntry> batch = new ArrayList<>(size);
+            for (int i = 0; i < size; i++) {
+                batch.add(buffer.pollFirst());
+            }
             flushInFlight = true;
-            return batch;
+            return List.copyOf(batch);
         }
     }
 

@@ -279,30 +279,35 @@ final class CronJobDispatcher {
                         }
                         activeExecutions.remove(executionId);
 
-                        // The timeout ends this execution, so drain whatever the periodic tick had
-                        // not yet claimed. The handler is not interrupted and may still append
-                        // entries afterwards; those are lost.
-                        logFlusher.flush();
-
-                        log.error(
-                                "Cron job '{}' execution {} timed out after {}ms — marking ABANDONED",
-                                job.id(),
-                                executionId,
-                                executionTimeoutMs);
-                        if (execution != null && repository != null) {
-                            repository
-                                    .completeExecution(
-                                            executionId,
-                                            JobState.ABANDONED,
-                                            "Execution timeout",
-                                            "ExecutionTimeoutException",
-                                            jobContext.progress().snapshot())
-                                    .onFailure(err -> log.warn(
-                                            "Failed to mark cron execution {} ABANDONED on timeout: {}",
-                                            executionId,
-                                            err.getMessage()));
+                        try {
+                            log.error(
+                                    "Cron job '{}' execution {} timed out after {}ms — marking ABANDONED",
+                                    job.id(),
+                                    executionId,
+                                    executionTimeoutMs);
+                            if (execution != null && repository != null) {
+                                repository
+                                        .completeExecution(
+                                                executionId,
+                                                JobState.ABANDONED,
+                                                "Execution timeout",
+                                                "ExecutionTimeoutException",
+                                                jobContext.progress().snapshot())
+                                        .onFailure(err -> log.warn(
+                                                "Failed to mark cron execution {} ABANDONED on timeout: {}",
+                                                executionId,
+                                                err.getMessage()));
+                            }
+                            completionCallback.onCompleted(job);
+                        } finally {
+                            // The timeout ends this execution, so drain whatever the periodic tick
+                            // had not yet claimed. Deliberately last: nothing that ends the
+                            // execution — the ABANDONED transition or the completion callback —
+                            // may sit behind the flush, and the finally keeps the drain reachable
+                            // if that work throws. The handler is not interrupted and may still
+                            // append entries afterwards; those are lost.
+                            logFlusher.flush();
                         }
-                        completionCallback.onCompleted(job);
                     }
                 })
                 : -1L;
@@ -327,46 +332,51 @@ final class CronJobDispatcher {
             consumer.unregister();
             activeConsumers.remove(consumer);
 
-            // The handler has reported, so nothing more will be appended: this drains whatever the
-            // periodic tick had not yet claimed. Fire-and-forget — a failed log flush must never
-            // delay or fail completion handling (JobLogFlusher always returns a succeeded future).
-            logFlusher.flush();
-
             Instant endTime = Instant.now();
 
-            // Restore MDC for correlated completion logging. MDCContexts.bindAll snapshots prior
-            // per-key state at install time and restores it (including absence) on close — using
-            // it via try-with-resources gives us LIFO unwind without manual remove() bookkeeping.
-            // The event-bus consumer callback runs on a duplicated Vert.x context so the
-            // framework MDC write-guard accepts the bind.
-            try (ContextHolder.Scope mdcScope = MDCContexts.bindAll(mdc)) {
-                // Extract result and fire interceptors
-                Result<?> result = null;
-                if (msg.body() instanceof DispatchEnvelope<?> replyBody && replyBody.payload() instanceof Result<?> r) {
-                    result = r;
+            try {
+                // Restore MDC for correlated completion logging. MDCContexts.bindAll snapshots
+                // prior per-key state at install time and restores it (including absence) on
+                // close — using it via try-with-resources gives us LIFO unwind without manual
+                // remove() bookkeeping. The event-bus consumer callback runs on a duplicated
+                // Vert.x context so the framework MDC write-guard accepts the bind.
+                try (ContextHolder.Scope mdcScope = MDCContexts.bindAll(mdc)) {
+                    // Extract result and fire interceptors
+                    Result<?> result = null;
+                    if (msg.body() instanceof DispatchEnvelope<?> replyBody
+                            && replyBody.payload() instanceof Result<?> r) {
+                        result = r;
+                    }
+
+                    JobInterceptors.fireOnComplete(interceptors, dispatchCtx, result, startedAt, endTime, log);
+
+                    // Persist completion and update fire times if tracked
+                    if (execution != null && repository != null) {
+                        persistCompletion(job, execution, result);
+                        updateFireTimes(job, scheduledAt);
+                    }
+
+                    // Log the completion result
+                    if (result != null && result.isFailure()) {
+                        log.warn(
+                                "Cron job '{}' execution {} failed: {}",
+                                job.id(),
+                                executionId,
+                                result.cause().getMessage());
+                    } else {
+                        log.debug("Cron job '{}' execution {} completed successfully", job.id(), executionId);
+                    }
                 }
 
-                JobInterceptors.fireOnComplete(interceptors, dispatchCtx, result, startedAt, endTime, log);
-
-                // Persist completion and update fire times if tracked
-                if (execution != null && repository != null) {
-                    persistCompletion(job, execution, result);
-                    updateFireTimes(job, scheduledAt);
-                }
-
-                // Log the completion result
-                if (result != null && result.isFailure()) {
-                    log.warn(
-                            "Cron job '{}' execution {} failed: {}",
-                            job.id(),
-                            executionId,
-                            result.cause().getMessage());
-                } else {
-                    log.debug("Cron job '{}' execution {} completed successfully", job.id(), executionId);
-                }
+                completionCallback.onCompleted(job);
+            } finally {
+                // The handler has reported, so nothing more will be appended: this drains whatever
+                // the periodic tick had not yet claimed. Fire-and-forget, and deliberately last —
+                // no work that ends the execution may sit behind it, and the finally keeps the
+                // drain reachable even when completion handling throws (JobLogFlusher itself never
+                // throws and always returns a succeeded future).
+                logFlusher.flush();
             }
-
-            completionCallback.onCompleted(job);
         });
 
         // Enrich the scheduler thread's SLF4J MDC for correlated dispatch logging. The framework

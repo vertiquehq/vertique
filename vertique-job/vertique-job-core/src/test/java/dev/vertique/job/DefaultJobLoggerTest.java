@@ -4,6 +4,7 @@
 package dev.vertique.job;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.List;
@@ -20,6 +21,15 @@ import org.junit.jupiter.api.Test;
  */
 @DisplayName("DefaultJobLogger")
 class DefaultJobLoggerTest {
+
+    /** {@code U+0000} — the character PostgreSQL rejects outright in a {@code TEXT} column. */
+    private static final char NUL = (char) 0x00;
+
+    /** {@code U+0007} — a C0 control character that is merely noise in persisted output. */
+    private static final char BELL = (char) 0x07;
+
+    /** {@code U+001B} — the ANSI escape introducer, stripped so stored logs cannot drive a terminal. */
+    private static final char ESCAPE = (char) 0x1B;
 
     private DefaultJobLogger logger;
 
@@ -76,7 +86,77 @@ class DefaultJobLoggerTest {
         assertTrue(logger.entries().get(0).loggedAt() != null);
     }
 
+    // --- Message normalization ---
+
+    @Test
+    @DisplayName("NUL and other C0 control characters are stripped from the message")
+    void stripsNulAndControlCharacters() {
+        // Remotely reachable: a job payload field logged verbatim by a handler. PostgreSQL rejects
+        // NUL in a TEXT column, so one such entry would fail every later batch write for the
+        // execution — the batch is nacked, re-claimed, and fails again forever.
+        logger.info("payload" + NUL + "injected" + BELL + "and" + ESCAPE + "escaped");
+
+        String message = logger.entries().get(0).message();
+
+        assertEquals(-1, message.indexOf(NUL), "a NUL byte makes the TEXT column write fail permanently");
+        assertEquals("payloadinjectedandescaped", message);
+    }
+
+    @Test
+    @DisplayName("a null message is replaced by a non-null placeholder")
+    void nullMessageBecomesPlaceholder() {
+        logger.warn(null);
+
+        LogEntry entry = logger.entries().get(0);
+        assertNotNull(entry.message(), "job_logs.message is NOT NULL — a null must never reach the write");
+        assertEquals("<null>", entry.message());
+    }
+
+    @Test
+    @DisplayName("an oversized message is truncated with a marker naming the dropped characters")
+    void oversizedMessageIsTruncated() {
+        String oversized = "x".repeat(20_000);
+
+        logger.error(oversized);
+
+        String message = logger.entries().get(0).message();
+        assertTrue(message.length() < oversized.length(), "an oversized message must be truncated");
+        assertTrue(message.startsWith("x".repeat(8192)), "the retained prefix must be the head of the message");
+        assertTrue(message.endsWith("…[truncated 11808 chars]"), "actual tail: " + message.substring(8100));
+    }
+
+    @Test
+    @DisplayName("newlines, carriage returns and tabs survive normalization")
+    void newlinesAndTabsSurvive() {
+        logger.info("line one\nline two\r\n\tindented");
+
+        assertEquals("line one\nline two\r\n\tindented", logger.entries().get(0).message());
+    }
+
     // --- Claim / ack drain protocol ---
+
+    @Test
+    @DisplayName("claim caps the batch and leaves the remainder buffered in order")
+    void claimCapsBatchSize() {
+        for (int i = 0; i < 1200; i++) {
+            logger.info("entry-" + i);
+        }
+
+        List<LogEntry> first = logger.claim();
+
+        assertEquals(500, first.size(), "an uncapped claim turns an outage into an ever-larger failing batch");
+        assertEquals("entry-0", first.get(0).message());
+        assertEquals("entry-499", first.get(499).message());
+        assertEquals(700, logger.entries().size(), "entries beyond the cap must stay buffered");
+
+        logger.ack();
+        List<LogEntry> second = logger.claim();
+
+        assertEquals(500, second.size());
+        assertEquals("entry-500", second.get(0).message(), "the next claim must resume where the last one stopped");
+        assertEquals("entry-999", second.get(499).message());
+        assertEquals(200, logger.entries().size());
+    }
 
     @Test
     @DisplayName("claim returns the buffered entries in insertion order")

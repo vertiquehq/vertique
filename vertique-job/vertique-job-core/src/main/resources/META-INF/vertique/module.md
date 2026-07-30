@@ -133,14 +133,26 @@ The scheduling module periodically drains buffered entries to `job_logs` through
 (below), so `logger().entries()` reflects only what is still buffered, not the whole execution's
 output.
 
+The default `JobLogger` normalizes every message as it is buffered, so no single entry can make the
+persisting write fail: a `null` message is stored as `<null>`, C0 control characters are stripped
+(`\n`, `\r` and `\t` are kept, so multi-line output survives), and a message longer than 8192
+characters is truncated with a `…[truncated N chars]` marker. Pass unvalidated job-payload text to
+the logger freely — a `NUL` inside it cannot poison the execution's log writes.
+
 ### JobLogFlusher
 
 Drains one execution's buffered `JobLogger` entries into a `JobRepository`; one instance per
-execution. `flush()` claims the currently buffered batch and persists it via
+execution. `flush()` claims up to 500 buffered entries as one batch and persists them via
 `JobRepository.saveLogs(UUID, List<LogEntry>)` — a successful write acknowledges the batch, a failed
 write returns it to the front of the buffer so the next `flush()` retries it ahead of newer entries.
+Anything beyond the 500-entry cap stays buffered for the following `flush()`.
+
 `flush()` always returns a succeeded future: a persistence failure is logged as a warning and never
-fails the job whose logs these are.
+fails the job whose logs these are. That holds for every way a `JobRepository` implementation can
+misbehave — a synchronous throw, a `null` return, or a write that never settles; the write itself is
+bounded at 5 seconds. A write that exceeds that bound but commits afterwards leaves rows the retry
+writes again, because `job_logs` has no natural key to deduplicate on; duplicate log rows are the
+accepted cost of never stalling the flush loop.
 
 ```java
 JobLogFlusher flusher = new JobLogFlusher(repository, executionId, ctx);
@@ -221,11 +233,14 @@ one timeout policy.
   execution — and no listener fires for that no-op.
 - **`logger()` output is durable, not a live transcript.** The default `JobContext` buffers entries
   in memory; the scheduling module drains them through a per-execution `JobLogFlusher` on the
-  progress-flush tick and on every path that ends the execution, plus a bounded cutoff flush at
+  progress-flush tick and after every path that ends the execution, plus a bounded cutoff flush at
   shutdown. Delivery is at-least-once on a known write failure — a failed batch is retried at the
   front of the buffer, ahead of newer entries — and a flush failure never fails the job. Because
   flushed entries are removed from the buffer, `logger().entries()` returns only what is still
   buffered, not everything the execution has logged.
+- **Log messages are normalized, not stored verbatim.** A `null` message becomes `<null>`, C0
+  control characters are dropped (tabs, newlines and carriage returns survive), and messages are
+  truncated at 8192 characters. Do not use `logger()` output as a byte-exact record of a payload.
 - **`getMetadata` does not type-check.** The `Class<T>` argument documents intent only; the value is
   cast unchecked, so a wrong type surfaces as `ClassCastException` at the call site.
 - **`JobExecution.payload` is not copied.** The compact constructor copies `parameters` and
