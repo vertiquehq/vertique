@@ -37,8 +37,9 @@ import lombok.extern.jackson.Jacksonized;
  * }</pre>
  *
  * <p>The {@code maxBodySize} and {@code uploadsDirectory} fields are consumed by {@link
- * io.vertx.ext.web.handler.BodyHandler} via {@code JaxRsRouterMount}. {@code maxBodySize} is the
- * sole enforcement mechanism for request body size limits; {@code uploadsDirectory} selects where
+ * io.vertx.ext.web.handler.BodyHandler} via {@code JaxRsRouterMount}. {@code maxBodySize} bounds
+ * the total request body; {@code maxFormAttributeSize} and {@code maxFormFields} independently bound
+ * decoded form content, by attribute size and by part count. {@code uploadsDirectory} selects where
  * multipart upload temporary files are spooled.
  */
 @Getter
@@ -175,8 +176,8 @@ public class HttpConfig {
      * <p>This is not limited to URL-encoded fields: the decoder counts <em>every</em> part of a
      * decoded body — {@code multipart/form-data} file parts and text parts as well as URL-encoded
      * attributes — against one shared limit. A multipart request carrying more parts than this is
-     * therefore rejected even when its total size is far below {@link #maxBodySize}, which is what
-     * bounds parser and allocation churn from many small parts.
+     * therefore rejected during body decoding, before the resource method runs, even when its
+     * total size is far below {@link #maxBodySize}.
      */
     @Builder.Default
     private final int maxFormFields = 256;

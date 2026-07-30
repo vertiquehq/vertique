@@ -919,7 +919,8 @@ as proof of a complete body.
 - **Mixing `@Context` with a value-binding annotation.** `CONTEXT_PARAM_CONFLICT` fails the build; the
   two are mutually exclusive by design.
 - **Expecting `@FilePart.maxSizeBytes` to prevent a disk write.** It is checked post-spool and returns
-  400. `http.maxBodySize` is the only ingress limit and returns 413.
+  400. The ingress limits are `http.maxBodySize` (total bytes, returns 413) and `http.maxFormFields`
+  (part count).
 - **Expecting `afterResponse` to mean "the client has the bytes".** It fires at handoff; a streamed
   body may still be in flight. Observe the wire-completion channel for the delivery outcome.
 - **Setting `@JsonProfile` on a resource method and expecting the response to keep the class
