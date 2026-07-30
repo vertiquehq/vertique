@@ -135,7 +135,7 @@ public class CronScheduler {
      *                              SINGLE_INSTANCE leader election; may be {@code null} for
      *                              in-memory mode
      * @param serviceTargetResolver resolver for translating stable service target ids to runtime
-     *                              event bus addresses at dispatch time
+     *                              event bus addresses, once per admitted fire
      * @param eventBusClient        the event bus client for dispatch protocol sends
      * @param envelopeBuilder       envelope builder used to construct outgoing job-dispatch
      *                              envelopes through the context substrate (FR-CTX-015); tests
@@ -171,7 +171,7 @@ public class CronScheduler {
      *                                SINGLE_INSTANCE leader election; may be {@code null} for
      *                                in-memory mode
      * @param serviceTargetResolver   resolver for translating stable service target ids to runtime
-     *                                event bus addresses at dispatch time
+     *                                event bus addresses, once per admitted fire
      * @param eventBusClient          the event bus client for dispatch protocol sends
      * @param maxConcurrentJobs       the maximum number of jobs that can execute concurrently;
      *                                must be positive
@@ -433,7 +433,7 @@ public class CronScheduler {
             concurrency.removeInFlight(job.id());
             return;
         }
-        JobExecution execution = buildExecution(job, scheduledAt, JobState.PROCESSING, effectiveAddress);
+        JobExecution execution = buildExecution(job, scheduledAt, effectiveAddress);
         repository
                 .tryInsert(execution)
                 .onSuccess(optId -> {
@@ -481,8 +481,12 @@ public class CronScheduler {
             concurrency.removeInFlight(job.id());
             return;
         }
+        // Dispatch with no execution record — used both when tracking is off and when persisting
+        // the record failed (tracking is best-effort; a dispatch still happens).
+        Runnable dispatchUntracked =
+                () -> dispatcher.dispatch(job, scheduledAt, null, effectiveAddress, this::markCompleted);
         if (job.tracked() && repository != null) {
-            JobExecution execution = buildExecution(job, scheduledAt, JobState.PROCESSING, effectiveAddress);
+            JobExecution execution = buildExecution(job, scheduledAt, effectiveAddress);
             repository
                     .save(execution)
                     .onSuccess(id -> concurrency.acquireSlotAndRun(
@@ -494,14 +498,10 @@ public class CronScheduler {
                                 "Failed to persist execution for '{}' — dispatching in-memory: {}",
                                 job.id(),
                                 err.getMessage());
-                        concurrency.acquireSlotAndRun(
-                                job.id(),
-                                () -> dispatcher.dispatch(
-                                        job, scheduledAt, null, effectiveAddress, this::markCompleted));
+                        concurrency.acquireSlotAndRun(job.id(), dispatchUntracked);
                     });
         } else {
-            concurrency.acquireSlotAndRun(
-                    job.id(), () -> dispatcher.dispatch(job, scheduledAt, null, effectiveAddress, this::markCompleted));
+            concurrency.acquireSlotAndRun(job.id(), dispatchUntracked);
         }
     }
 
@@ -538,7 +538,7 @@ public class CronScheduler {
                 return;
             }
             if (job.tracked() && repository != null) {
-                JobExecution queuedExecution = buildExecution(job, pending, JobState.PROCESSING, effectiveAddress);
+                JobExecution queuedExecution = buildExecution(job, pending, effectiveAddress);
                 repository
                         .save(queuedExecution)
                         .onSuccess(id -> dispatcher.dispatch(
@@ -563,11 +563,16 @@ public class CronScheduler {
     /**
      * Resolves the effective event bus address for one fire of {@code job}.
      *
-     * <p>For a {@link CronTargetReference.ServiceTarget} the stable target id is resolved through
-     * {@link ServiceTargetResolver}; for a {@link CronTargetReference.EventBusTarget} the stored
-     * {@link CronJobDefinition#handlerAddress()} is used. Both variants are then subject to the
-     * same non-blank check, so no caller can produce an execution record with a {@code null} or
-     * blank {@link JobExecution#handler()}.
+     * <p>Both variants read the address from the {@link CronTargetReference} itself — the stable
+     * target id through {@link ServiceTargetResolver} for a
+     * {@link CronTargetReference.ServiceTarget}, and
+     * {@link CronTargetReference.EventBusTarget#address()} for the other — rather than from
+     * {@link CronJobDefinition#handlerAddress()}, which is only a copy the registrar derives from
+     * the target and leaves {@code null} for service targets. Trusting the derived copy is what
+     * produced the defect ADR-0201 records; the target is the authority. Both variants are then
+     * subject to the same non-blank check, so no caller can produce an execution record with a
+     * {@code null} or blank {@link JobExecution#handler()} — including a caller that builds a
+     * definition directly rather than going through {@link CronJobRegistrar}.
      *
      * <p>Returns {@code null} — after logging at {@code ERROR} with the job id and the target's
      * canonical form — when the resolver throws or the effective address is null/blank, so the
@@ -606,7 +611,13 @@ public class CronScheduler {
                         e);
                 return null;
             }
+        } else if (target instanceof CronTargetReference.EventBusTarget eventBusTarget) {
+            address = eventBusTarget.address();
         } else {
+            // CronTargetReference is sealed with exactly two variants, so this is reachable only
+            // for a malformed definition whose target is null. Fall back to the derived copy so a
+            // definition built that way behaves exactly as it did before, then fail the non-blank
+            // check below.
             address = job.handlerAddress();
         }
         if (address == null || address.isBlank()) {
@@ -622,19 +633,18 @@ public class CronScheduler {
     /**
      * Builds a {@link JobExecution} record for a cron fire. The execution ID is freshly
      * generated; the record captures the current instant as {@code startedAt} and uses the job
-     * definition's parameters.
+     * definition's parameters. The initial state is always {@link JobState#PROCESSING} — a cron
+     * fire is dispatched immediately, never enqueued.
      *
      * @param job              the cron job being executed
      * @param scheduledAt      the scheduled fire time
-     * @param state            the initial execution state (typically {@link JobState#PROCESSING})
      * @param effectiveAddress the non-blank event bus address this fire dispatches to, as returned
      *                         by {@link #resolveEffectiveAddress(CronJobDefinition)}; recorded as
      *                         the execution's {@code handler} so the persisted address always
      *                         equals the dispatched one
      * @return the constructed execution record
      */
-    private JobExecution buildExecution(
-            CronJobDefinition job, Instant scheduledAt, JobState state, String effectiveAddress) {
+    private JobExecution buildExecution(CronJobDefinition job, Instant scheduledAt, String effectiveAddress) {
         UUID executionId = UUID.randomUUID();
         return new JobExecution(
                 executionId,
@@ -642,7 +652,7 @@ public class CronScheduler {
                 JobType.CRON,
                 effectiveAddress,
                 "cron",
-                state,
+                JobState.PROCESSING,
                 0,
                 job.maxAttempts(),
                 null,

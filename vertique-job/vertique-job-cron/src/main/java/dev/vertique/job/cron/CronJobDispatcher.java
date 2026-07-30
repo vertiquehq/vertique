@@ -128,6 +128,11 @@ final class CronJobDispatcher {
     /**
      * Creates a new dispatcher with the given configuration.
      *
+     * <p>Requires the {@link dev.vertique.context.DispatchEnvelopeBuilder} used to construct
+     * outgoing envelopes through the context-substrate capturer (FR-CTX-015). Currently bound
+     * {@code ContextHolder} values flow into the dispatch envelope via registered
+     * {@code ServiceDispatchContextEncoder}s.
+     *
      * @param vertx                   the Vert.x instance for timer management and event bus
      * @param eventBusClient          the event bus client used for fire-and-forget dispatch
      * @param repository              optional job repository for completion persistence and progress
@@ -137,12 +142,8 @@ final class CronJobDispatcher {
      * @param executionTimeoutMs      per-execution timeout in milliseconds; {@code 0} disables
      * @param progressFlushIntervalMs interval for flushing progress snapshots; {@code 0} disables
      * @param nodeId                  stable node identifier for attribution
-     */
-    /**
-     * Full constructor requiring the {@link dev.vertique.context.DispatchEnvelopeBuilder}
-     * used to construct outgoing envelopes through the context-substrate capturer (FR-CTX-015).
-     * Currently bound {@code ContextHolder} values flow into the dispatch envelope via
-     * registered {@code ServiceDispatchContextEncoder}s.
+     * @param envelopeBuilder         builder for outgoing dispatch envelopes; must not be
+     *                                {@code null} (FR-CTX-015)
      */
     CronJobDispatcher(
             Vertx vertx,

@@ -362,7 +362,7 @@ static JobInterceptor metricsInterceptor(MetricsService metrics) {
 ## Dependencies
 
 - **job-core** — `JobContext`, `JobDispatchContext`, `JobInterceptor`, `JobRepository`, `JobCoordinatorConfig`, `CronJobSchedule`, `JobModule`, `JobCoordinatorModule`
-- **services** — `ServiceContractRegistry` (scanned for `@CronJob` annotations), `ServiceMethodInvoker` (dispatches events and injects `JobContext`/`JobDispatchContext`), `ServiceTargetResolver` (mandatory; resolves `service:` target references at dispatch time)
+- **services** — `ServiceContractRegistry` (scanned for `@CronJob` annotations), `ServiceMethodInvoker` (dispatches events and injects `JobContext`/`JobDispatchContext`), `ServiceTargetResolver` (mandatory; resolves `service:` target references once per fire)
 - **deploy** — `VerticleDeployment`, `LifecyclePhase`, `DeployerModule` (wired via `CronBaseModule` to auto-deploy `CronLifecycleVerticle`)
 - **logging** — MDC utilities
 
