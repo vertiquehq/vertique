@@ -22,10 +22,17 @@ import lombok.extern.slf4j.Slf4j;
  * surrogate {@code BIGSERIAL} key and no natural key, a partially committed batch could not be
  * deduplicated on retry — the all-or-nothing write is what makes the retry safe.
  *
- * <p><strong>A failed flush never fails the job it belongs to.</strong> {@link #flush()} reports
- * persistence problems by logging a warning and still returns a succeeded future. The warning is
- * deliberately not written back through the {@link JobLogger} — that would feed the failure into
- * the very buffer that failed to flush.
+ * <p><strong>There are two call shapes, and the choice is load-bearing.</strong> A periodic tick
+ * calls {@link #flush()}: one claim, one write, no waiting — an outstanding write simply means the
+ * next tick picks the work up. A site that <em>ends</em> the execution calls {@link #drain()}
+ * instead, because it has cancelled that periodic timer and no later tick exists; the drain awaits
+ * any outstanding write and re-flushes while entries remain, bounded at
+ * {@value #MAX_DRAIN_ROUNDS} rounds.
+ *
+ * <p><strong>A failed flush never fails the job it belongs to.</strong> {@link #flush()} and
+ * {@link #drain()} report persistence problems by logging a warning and still return a succeeded
+ * future. The warning is deliberately not written back through the {@link JobLogger} — that would
+ * feed the failure into the very buffer that failed to flush.
  *
  * <p><strong>Every write is bounded.</strong> {@link JobRepository} is public SPI, so a write may
  * throw synchronously, return {@code null}, or return a future that never settles; each of those
@@ -51,6 +58,17 @@ public final class JobLogFlusher {
      * is nacked and retried by a later flush.
      */
     private static final long WRITE_TIMEOUT_SECONDS = 5L;
+
+    /**
+     * Maximum number of write rounds one {@link #drain()} performs before giving up and reporting
+     * the loss. A round that <em>failed</em> still counts, so a down repository costs at most this
+     * many fast rounds rather than an unbounded spin; so does a round whose write succeeded while a
+     * still-running handler appended more entries behind it.
+     *
+     * <p>Package-private so that the tests pinning this bound assert against the constant rather
+     * than a literal.
+     */
+    static final int MAX_DRAIN_ROUNDS = 4;
 
     private final JobRepository repository;
     private final UUID executionId;
@@ -157,5 +175,76 @@ public final class JobLogFlusher {
                             cause.getMessage());
                     return Future.succeededFuture();
                 });
+    }
+
+    // --- Execution-ending drain ---
+
+    /**
+     * Drains the buffer to empty, awaiting any write already in flight, for a caller that is ending
+     * the execution and therefore has no later flush to fall back on.
+     *
+     * <p>{@link #flush()} alone is not sufficient at such a site. The claim is single-flight, so a
+     * flush issued while a periodic write is still outstanding claims <em>nothing</em> and returns
+     * an already-succeeded future without touching the repository; and every ending site cancels the
+     * periodic timer before flushing, so nothing re-drains when that outstanding write acks. The
+     * entries appended between the last periodic claim and the ending would be lost, and a nacked
+     * batch would never be retried. This method closes both by repeating
+     * {@code await in-flight → flush} while any entry remains unpersisted.
+     *
+     * <p><strong>The retry is bounded at {@value #MAX_DRAIN_ROUNDS} rounds</strong>, and a round
+     * whose write failed counts the same as one that succeeded. A repository that is down therefore
+     * costs a bounded number of fast rounds instead of spinning, and a handler that keeps appending
+     * — it is not interrupted by a timeout ending — cannot hold the drain open indefinitely. When
+     * the rounds are exhausted with entries still buffered, those entries are lost and the loss is
+     * reported at WARN naming the execution and the number of entries; it is never silent.
+     *
+     * @return a future that completes when the buffer is empty or the round budget is spent; always
+     *     succeeded, exactly as {@link #flush()} is, because a log flush failure must not fail the
+     *     job whose logs these are
+     */
+    public Future<Void> drain() {
+        if (!persistable) {
+            return Future.succeededFuture();
+        }
+        return drainRound(0).recover(cause -> Future.succeededFuture());
+    }
+
+    /**
+     * Runs one round of the drain loop and recurses while work remains and rounds are left.
+     *
+     * <p>Recursion depth is bounded by {@value #MAX_DRAIN_ROUNDS}. Neither composed future can fail:
+     * {@link DefaultJobLogger#inFlightCompletion()} is only ever completed successfully and
+     * {@link #flush()} never returns a failed future — {@link #drain()} still recovers as a
+     * backstop.
+     *
+     * @param round the zero-based index of the round about to run
+     * @return a future completing when this round and all remaining rounds have settled
+     */
+    private Future<Void> drainRound(int round) {
+        if (!logger.hasBufferedOrInFlight()) {
+            return Future.succeededFuture();
+        }
+        if (round >= MAX_DRAIN_ROUNDS) {
+            reportUndrained();
+            return Future.succeededFuture();
+        }
+        return logger.inFlightCompletion().compose(settled -> flush()).compose(flushed -> drainRound(round + 1));
+    }
+
+    /**
+     * Logs the entries the exhausted round budget leaves unpersisted, so that a drop is always
+     * attributable to an execution.
+     */
+    private void reportUndrained() {
+        int remaining = logger.entries().size();
+        if (remaining == 0) {
+            return;
+        }
+        log.warn(
+                "Gave up draining job logs for execution {} after {} rounds — {} entr{} lost",
+                executionId,
+                MAX_DRAIN_ROUNDS,
+                remaining,
+                remaining == 1 ? "y" : "ies");
     }
 }

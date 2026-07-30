@@ -49,6 +49,7 @@ import dev.vertique.job.LogEntry;
 import dev.vertique.job.ProgressSnapshot;
 import dev.vertique.job.delayed.config.DelayedJobQueueConfig;
 import io.vertx.core.Future;
+import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
 import io.vertx.core.eventbus.DeliveryOptions;
 import io.vertx.junit5.VertxExtension;
@@ -861,6 +862,11 @@ class DelayedJobPollerTest {
      * <p>Every test here is sleep-free: the {@code saveLogs} mock <em>is</em> the completion
      * signal. Each answer is guarded by a latch because the periodic flush timer keeps firing
      * after the assertion has been made.
+     *
+     * <p>{@link #persistsEntriesAppendedDuringAnInFlightTickWrite} is the end-to-end counterpart of
+     * {@code JobLogFlusherTest.Drain}: it is the only test here whose {@code saveLogs} returns a
+     * <em>pending</em> future, and therefore the only one that can observe the in-flight window an
+     * ending-site flush used to lose.
      */
     @Nested
     @DisplayName("job log flush")
@@ -1033,6 +1039,82 @@ class DelayedJobPollerTest {
                     testEventBusClient(vertx),
                     300L,
                     0L,
+                    DispatchEnvelopeBuilder.forTesting(),
+                    noOpPropagator());
+
+            vertx.deployVerticle(poller).onFailure(ctx::failNow);
+        }
+
+        @Test
+        @DisplayName("persists entries appended while a tick write was still in flight when the execution ended")
+        void persistsEntriesAppendedDuringAnInFlightTickWrite(Vertx vertx, VertxTestContext ctx) {
+            String handlerAddress = "test.logflush.inflight.handler";
+            JobExecution execution = sampleExecution("log-inflight-job", handlerAddress);
+
+            when(repository.claimNextJob(anyString(), anyInt()))
+                    .thenReturn(Future.succeededFuture(List.of(execution)))
+                    .thenReturn(Future.succeededFuture(List.of()));
+
+            // The tick's saveLogs is held pending until the completion consumer is already inside
+            // its ending drain. Releasing it from a runOnContext scheduled inside handleCompletion
+            // is what makes that ordering deterministic without a sleep: handleCompletion runs
+            // inside the completion callback, and Vert.x cannot run the queued task until that
+            // callback — including the finally-block drain — has returned.
+            Promise<Void> heldWrite = Promise.promise();
+            when(completionHandler.handleCompletion(any(), any(), any())).thenAnswer(invocation -> {
+                vertx.runOnContext(v -> heldWrite.complete());
+                return Future.succeededFuture();
+            });
+
+            AtomicReference<DefaultJobContext> contextRef = new AtomicReference<>();
+            AtomicReference<String> replyAddressRef = new AtomicReference<>();
+            AtomicBoolean logged = new AtomicBoolean(false);
+            vertx.eventBus().consumer(handlerAddress, msg -> {
+                if (!(msg.body() instanceof DispatchEnvelope<?> body) || !logged.compareAndSet(false, true)) {
+                    return;
+                }
+                DefaultJobContext jobCtx =
+                        (DefaultJobContext) body.metadata().dispatchContext().get(JobContext.class.getName());
+                contextRef.set(jobCtx);
+                replyAddressRef.set(body.replyAddress().orElseThrow());
+                jobCtx.logger().info("before the tick");
+            });
+
+            AtomicInteger writes = new AtomicInteger();
+            when(repository.saveLogs(eq(execution.id()), any())).thenAnswer(invocation -> {
+                List<LogEntry> batch = invocation.getArgument(1);
+                int call = writes.incrementAndGet();
+                if (call == 1) {
+                    // The tick has claimed "before the tick" and this write is now outstanding.
+                    // Append an entry that the single-flight claim cannot see, then end the
+                    // execution — the window a plain ending-site flush() drops on the floor.
+                    contextRef.get().logger().info("during the in-flight write");
+                    vertx.eventBus()
+                            .send(
+                                    replyAddressRef.get(),
+                                    DispatchEnvelope.of(
+                                            Result.success(null), dev.vertique.core.eventbus.DispatchMetadata.empty()),
+                                    new DeliveryOptions().setCodecName("dispatch.envelope"));
+                    return heldWrite.future();
+                }
+                if (call == 2) {
+                    ctx.verify(() -> assertTrue(
+                            batch.stream().anyMatch(entry -> "during the in-flight write".equals(entry.message())),
+                            "an entry appended while a tick write was in flight must still reach the repository"));
+                    ctx.completeNow();
+                }
+                return Future.succeededFuture();
+            });
+
+            DelayedJobPoller poller = new DelayedJobPoller(
+                    "default",
+                    fastConfig(),
+                    repository,
+                    completionHandler,
+                    Set.of(),
+                    testEventBusClient(vertx),
+                    0L,
+                    100L,
                     DispatchEnvelopeBuilder.forTesting(),
                     noOpPropagator());
 

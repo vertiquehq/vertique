@@ -154,15 +154,27 @@ bounded at 5 seconds. A write that exceeds that bound but commits afterwards lea
 writes again, because `job_logs` has no natural key to deduplicate on; duplicate log rows are the
 accepted cost of never stalling the flush loop.
 
+`drain()` is the variant for a site that *ends* the execution. The claim is single-flight, so a
+`flush()` issued while an earlier write is still outstanding claims nothing and returns an
+already-succeeded future — harmless on a periodic tick, because the next tick picks the work up, but
+lossy at an ending site, which has just cancelled that tick. `drain()` therefore awaits the
+outstanding write and re-flushes while entries remain, which also retries a nacked batch that no
+later tick would have retried. It is bounded at **4 rounds**, and a round whose write failed counts
+the same as one that succeeded: a repository that is down costs a fixed number of fast rounds, and a
+still-running handler that keeps appending cannot hold the ending site open. Entries left when the
+rounds are spent are lost, and the loss is logged at WARN naming the execution and the entry count.
+Like `flush()`, `drain()` always returns a succeeded future.
+
 ```java
 JobLogFlusher flusher = new JobLogFlusher(repository, executionId, ctx);
-flusher.flush(); // Future<Void>, always succeeds
+flusher.flush(); // Future<Void>, always succeeds — periodic tick
+flusher.drain(); // Future<Void>, always succeeds — execution-ending site
 ```
 
 Construction with a `null` repository or a `null` execution id yields a genuine no-op flusher that
 never touches the repository — the case for an execution with no persisted row to reference. The
-scheduling modules (`vertique-job-cron`, `vertique-job-delayed`) own when `flush()` is called;
-application code does not construct or call a `JobLogFlusher` directly.
+scheduling modules (`vertique-job-cron`, `vertique-job-delayed`) own when `flush()` and `drain()` are
+called; application code does not construct or call a `JobLogFlusher` directly.
 
 ### JobCompletionHandler
 
@@ -233,11 +245,15 @@ one timeout policy.
   execution — and no listener fires for that no-op.
 - **`logger()` output is durable, not a live transcript.** The default `JobContext` buffers entries
   in memory; the scheduling module drains them through a per-execution `JobLogFlusher` on the
-  progress-flush tick and after every path that ends the execution, plus a bounded cutoff flush at
+  progress-flush tick and after every path that ends the execution, plus a bounded cutoff drain at
   shutdown. Delivery is at-least-once on a known write failure — a failed batch is retried at the
   front of the buffer, ahead of newer entries — and a flush failure never fails the job. Because
   flushed entries are removed from the buffer, `logger().entries()` returns only what is still
   buffered, not everything the execution has logged.
+- **The ending-site retry is bounded at 4 rounds.** A periodic tick can retry a failed write
+  indefinitely, but a site that ends the execution has cancelled that tick, so its `drain()` gets a
+  fixed budget: 4 rounds, counting failed rounds. Entries a sustained write outage leaves behind when
+  the budget is spent are lost, and reported at WARN.
 - **Log messages are normalized, not stored verbatim.** A `null` message becomes `<null>`, C0
   control characters are dropped (tabs, newlines and carriage returns survive), and messages are
   truncated at 8192 characters. Do not use `logger()` output as a byte-exact record of a payload.

@@ -57,7 +57,10 @@ import lombok.extern.slf4j.Slf4j;
  * <p><b>Job log flush:</b> Buffered log entries are drained through a per-execution
  * {@link JobLogFlusher} on the same periodic tick as the progress snapshot (there unconditionally,
  * since log entries change independently of the snapshot) and on every path that ends the
- * execution: completion, timeout, and {@link #shutdown()}. An <em>untracked</em> fire
+ * execution: completion, timeout, and {@link #shutdown()}. The periodic tick calls
+ * {@link JobLogFlusher#flush()}; every ending site calls {@link JobLogFlusher#drain()}, which
+ * awaits an outstanding write and re-flushes while entries remain, because it has just cancelled
+ * the tick that would otherwise have retried. An <em>untracked</em> fire
  * ({@code execution == null}, i.e. {@code tracked=false} or no repository bound) has no
  * {@code job_executions} row, and {@code job_logs.execution_id} is
  * {@code NOT NULL REFERENCES job_executions(id)} — so such a fire is given a flusher built with a
@@ -300,13 +303,16 @@ final class CronJobDispatcher {
                             }
                             completionCallback.onCompleted(job);
                         } finally {
-                            // The timeout ends this execution, so drain whatever the periodic tick
-                            // had not yet claimed. Deliberately last: nothing that ends the
-                            // execution — the ABANDONED transition or the completion callback —
-                            // may sit behind the flush, and the finally keeps the drain reachable
-                            // if that work throws. The handler is not interrupted and may still
-                            // append entries afterwards; those are lost.
-                            logFlusher.flush();
+                            // The timeout ends this execution and the progress tick above is
+                            // already cancelled, so this is the last chance to persist: drain()
+                            // rather than flush(), because a plain flush would claim nothing while
+                            // a tick write is still outstanding and no later tick would re-drain.
+                            // Deliberately last: nothing that ends the execution — the ABANDONED
+                            // transition or the completion callback — may sit behind the drain, and
+                            // the finally keeps the drain reachable if that work throws. The
+                            // handler is not interrupted and may keep appending; the drain's round
+                            // cap is what stops that from holding this site open indefinitely.
+                            logFlusher.drain();
                         }
                     }
                 })
@@ -371,11 +377,14 @@ final class CronJobDispatcher {
                 completionCallback.onCompleted(job);
             } finally {
                 // The handler has reported, so nothing more will be appended: this drains whatever
-                // the periodic tick had not yet claimed. Fire-and-forget, and deliberately last —
-                // no work that ends the execution may sit behind it, and the finally keeps the
-                // drain reachable even when completion handling throws (JobLogFlusher itself never
-                // throws and always returns a succeeded future).
-                logFlusher.flush();
+                // the periodic tick had not yet claimed. drain(), not flush() — the tick timer is
+                // cancelled above, so a claim that came back empty because a tick write was still
+                // outstanding would strand those entries with nothing left to re-drain them.
+                // Fire-and-forget, and deliberately last — no work that ends the execution may sit
+                // behind it, and the finally keeps the drain reachable even when completion
+                // handling throws (JobLogFlusher itself never throws and always returns a
+                // succeeded future).
+                logFlusher.drain();
             }
         });
 
@@ -410,7 +419,11 @@ final class CronJobDispatcher {
      * later entries are lost. The snapshot bounds what a graceful shutdown loses — it does not
      * eliminate loss.
      *
-     * @return a future that succeeds once every cutoff flush has settled or hit its per-execution
+     * <p>It goes through {@link dev.vertique.job.JobLogFlusher#drain()} rather than a single flush:
+     * the progress-flush timer is cancelled just above, so a claim that came back empty because a
+     * tick write was still outstanding would make the "snapshot" contain nothing at all.
+     *
+     * @return a future that succeeds once every cutoff drain has settled or hit its per-execution
      *     timeout bound; never fails
      */
     Future<Void> shutdown() {
@@ -434,13 +447,14 @@ final class CronJobDispatcher {
         }
         activeExecutions.clear();
 
-        // joinAllSwallow waits for every flush to settle without short-circuiting and always
+        // joinAllSwallow waits for every drain to settle without short-circuiting and always
         // succeeds — the all-settled-swallow contract this shutdown needs. The timeout bound stays
         // inside the hook and is load-bearing, not belt-and-braces: swallowing only handles a
-        // *failed* future, and a wedged connection pool yields one that never settles at all.
+        // *failed* future, and a wedged connection pool yields one that never settles at all. It
+        // also bounds the drain's own await of an outstanding write, which nothing else does.
         return Combinators.joinAllSwallow(
                 pending,
-                resources -> resources.logFlusher().flush().timeout(SHUTDOWN_FLUSH_TIMEOUT_SECONDS, TimeUnit.SECONDS),
+                resources -> resources.logFlusher().drain().timeout(SHUTDOWN_FLUSH_TIMEOUT_SECONDS, TimeUnit.SECONDS),
                 (resources, err) -> log.warn("Shutdown job-log flush did not settle: {}", err.getMessage()));
     }
 

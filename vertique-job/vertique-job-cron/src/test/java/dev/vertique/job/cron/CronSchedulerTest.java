@@ -38,6 +38,7 @@ import dev.vertique.job.LogEntry;
 import dev.vertique.services.ResolvedServiceTarget;
 import dev.vertique.services.ServiceTargetResolver;
 import io.vertx.core.Future;
+import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
 import io.vertx.core.eventbus.DeliveryOptions;
 import io.vertx.junit5.VertxExtension;
@@ -1327,6 +1328,11 @@ class CronSchedulerTest {
      * interceptor's {@code onComplete} that runs immediately after the flush site — <em>is</em> the
      * completion signal. Each answer is guarded by a latch because a one-second cron expression
      * keeps firing after the assertion has been made.
+     *
+     * <p>{@link #persistsEntriesAppendedDuringAnInFlightTickWrite} is the end-to-end counterpart of
+     * {@code JobLogFlusherTest.Drain}: it is the only test here whose {@code saveLogs} returns a
+     * <em>pending</em> future, and therefore the only one that can observe the in-flight window an
+     * ending-site flush used to lose.
      */
     @Nested
     @DisplayName("job log flush")
@@ -1511,6 +1517,97 @@ class CronSchedulerTest {
                     null,
                     OverlapPolicy.SKIP,
                     false,
+                    Map.of(),
+                    MisfirePolicy.SKIP);
+
+            scheduler.register(job);
+            scheduler.start();
+        }
+
+        @Test
+        @DisplayName("persists entries appended while a tick write was still in flight when the fire ended")
+        void persistsEntriesAppendedDuringAnInFlightTickWrite(Vertx vertx, VertxTestContext ctx) {
+            JobRepository repo = stubRepoCapturingCompletion(new AtomicReference<>());
+
+            // The tick's saveLogs is held pending until the completion consumer is already inside
+            // its ending drain. Releasing it from a runOnContext scheduled inside the interceptor's
+            // onComplete is what makes that ordering deterministic without a sleep: onComplete runs
+            // inside the completion callback, and Vert.x cannot run the queued task until that
+            // callback — including the finally-block drain — has returned.
+            Promise<Void> heldWrite = Promise.promise();
+            JobInterceptor releaseOnComplete = new JobInterceptor() {
+                @Override
+                public void onComplete(
+                        JobDispatchContext dispatchCtx, Result<?> result, Instant startTime, Instant endTime) {
+                    vertx.runOnContext(v -> heldWrite.tryComplete());
+                }
+            };
+
+            AtomicReference<DefaultJobContext> contextRef = new AtomicReference<>();
+            AtomicReference<String> replyAddressRef = new AtomicReference<>();
+            AtomicInteger writes = new AtomicInteger();
+            when(repo.saveLogs(any(UUID.class), any())).thenAnswer(invocation -> {
+                List<LogEntry> batch = invocation.getArgument(1);
+                int call = writes.incrementAndGet();
+                if (call == 1) {
+                    // The tick has claimed "before the tick" and this write is now outstanding.
+                    // Append an entry that the single-flight claim cannot see, then end the fire —
+                    // the window a plain ending-site flush() drops on the floor.
+                    contextRef.get().logger().info("during the in-flight write");
+                    vertx.eventBus()
+                            .send(
+                                    replyAddressRef.get(),
+                                    DispatchEnvelope.of(Result.success(null)),
+                                    new DeliveryOptions().setCodecName("dispatch.envelope"));
+                    return heldWrite.future();
+                }
+                if (call == 2) {
+                    ctx.verify(() -> assertTrue(
+                            batch.stream().anyMatch(entry -> "during the in-flight write".equals(entry.message())),
+                            "an entry appended while a tick write was in flight must still reach the repository"));
+                    ctx.completeNow();
+                }
+                return Future.succeededFuture();
+            });
+
+            // executionTimeoutMs = 0 disables the timeout path, so the completion consumer is the
+            // only ending site in play; the 100 ms progress tick supplies the in-flight write.
+            scheduler = new CronScheduler(
+                    vertx,
+                    Set.of(releaseOnComplete),
+                    repo,
+                    stubTargetResolver(),
+                    testEventBusClient(vertx),
+                    10,
+                    0L,
+                    100L,
+                    DispatchEnvelopeBuilder.forTesting());
+
+            AtomicBoolean logged = new AtomicBoolean(false);
+            vertx.eventBus().consumer("test.logflush.inflight.address", msg -> {
+                if (!(msg.body() instanceof DispatchEnvelope<?> body) || !logged.compareAndSet(false, true)) {
+                    return;
+                }
+                DefaultJobContext jobCtx =
+                        (DefaultJobContext) body.metadata().dispatchContext().get(JobContext.class.getName());
+                contextRef.set(jobCtx);
+                replyAddressRef.set(body.replyAddress().orElseThrow());
+                jobCtx.logger().info("before the tick");
+            });
+
+            // SINGLE_INSTANCE + the stubbed tryInsert win makes this a tracked fire, so the
+            // dispatcher receives a non-null execution and the flusher is persistable.
+            CronJobDefinition job = new CronJobDefinition(
+                    "log-inflight-job",
+                    new CronExpression("* * * * * *"),
+                    new CronTargetReference.EventBusTarget("test.logflush.inflight.address"),
+                    "test.logflush.inflight.address",
+                    ExecutionMode.SINGLE_INSTANCE,
+                    ZoneId.of("UTC"),
+                    3,
+                    null,
+                    OverlapPolicy.SKIP,
+                    true,
                     Map.of(),
                     MisfirePolicy.SKIP);
 

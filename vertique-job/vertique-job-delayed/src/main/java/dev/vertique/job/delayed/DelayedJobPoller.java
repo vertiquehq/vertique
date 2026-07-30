@@ -111,9 +111,11 @@ import lombok.extern.slf4j.Slf4j;
  * <p><b>Job log flush:</b> Buffered {@link dev.vertique.job.JobLogger} entries are drained to the
  * repository through a per-execution {@link JobLogFlusher} — on the same periodic tick (there
  * unconditionally, since log entries change independently of the progress snapshot) and on every
- * path that ends the execution: completion, timeout, and verticle stop. With
- * {@code progressFlushIntervalMs = 0} only the ending sites flush, so logs remain durable but are
- * not visible until the execution ends.
+ * path that ends the execution: completion, timeout, and verticle stop. The periodic tick calls
+ * {@link JobLogFlusher#flush()}; every ending site calls {@link JobLogFlusher#drain()}, which
+ * awaits an outstanding write and re-flushes while entries remain, because it has just cancelled
+ * the tick that would otherwise have retried. With {@code progressFlushIntervalMs = 0} only the
+ * ending sites drain, so logs remain durable but are not visible until the execution ends.
  */
 @Slf4j
 public class DelayedJobPoller extends AbstractVerticle {
@@ -333,7 +335,11 @@ public class DelayedJobPoller extends AbstractVerticle {
      * later entries are lost. The snapshot bounds what a graceful shutdown loses — it does not
      * eliminate loss.
      *
-     * @param stopPromise the shutdown promise, completed once every cutoff flush has settled or
+     * <p>It goes through {@link JobLogFlusher#drain()} rather than a single flush: the
+     * progress-flush timers are cancelled just above, so a claim that came back empty because a
+     * tick write was still outstanding would make the "snapshot" contain nothing at all.
+     *
+     * @param stopPromise the shutdown promise, completed once every cutoff drain has settled or
      *                    hit its per-execution timeout bound
      */
     @Override
@@ -362,15 +368,20 @@ public class DelayedJobPoller extends AbstractVerticle {
         }
         activeExecutions.clear();
 
-        // joinAllSwallow waits for every flush to settle without short-circuiting and always
+        // joinAllSwallow waits for every drain to settle without short-circuiting and always
         // succeeds — the all-settled-swallow contract this shutdown needs. The timeout bound stays
         // inside the hook and is load-bearing, not belt-and-braces: swallowing only handles a
-        // *failed* future, and a wedged connection pool yields one that never settles at all.
+        // *failed* future, and a wedged connection pool yields one that never settles at all. It
+        // also bounds the drain's own await of an outstanding write, which nothing else does.
+        //
+        // drain(), not flush(): the progress-flush timers are cancelled just above, so a claim that
+        // came back empty because a tick write was still outstanding would make this "snapshot"
+        // contain nothing at all.
         Combinators.joinAllSwallow(
                         pending,
                         resources -> resources
                                 .logFlusher()
-                                .flush()
+                                .drain()
                                 .timeout(SHUTDOWN_FLUSH_TIMEOUT_SECONDS, TimeUnit.SECONDS),
                         (resources, err) -> log.warn(
                                 "Shutdown job-log flush did not settle for queue='{}': {}", queue, err.getMessage()))
@@ -627,13 +638,16 @@ public class DelayedJobPoller extends AbstractVerticle {
                         } finally {
                             inFlight.decrementAndGet();
                             // Both timeout outcomes above (abandon-and-retry, dead-letter) end this
-                            // execution, so the single flush in this finally covers both. It runs
-                            // last so nothing that ends the execution — least of all the in-flight
+                            // execution, so the single drain in this finally covers both. drain(),
+                            // not flush(): the progress tick is cancelled above, so a claim that
+                            // came back empty because a tick write was still outstanding would
+                            // strand those entries with nothing left to re-drain them. It runs last
+                            // so nothing that ends the execution — least of all the in-flight
                             // release — can be skipped by it, and runs in a finally so a throw from
                             // the outcome handling above cannot strand the buffered entries. The
-                            // handler is not interrupted and may still append entries afterwards;
-                            // those are lost unless a later attempt reuses the same execution id.
-                            logFlusher.flush();
+                            // handler is not interrupted and may keep appending; the drain's round
+                            // cap is what stops that from holding this site open indefinitely.
+                            logFlusher.drain();
                         }
                     }
                 })
@@ -702,11 +716,14 @@ public class DelayedJobPoller extends AbstractVerticle {
             } finally {
                 inFlight.decrementAndGet();
                 // The handler has reported, so nothing more will be appended: this drains whatever
-                // the periodic tick had not yet claimed. Fire-and-forget, and deliberately last —
-                // no work that ends the execution may sit behind it, and the finally keeps the
-                // drain reachable even when completion handling throws (JobLogFlusher itself never
-                // throws and always returns a succeeded future).
-                logFlusher.flush();
+                // the periodic tick had not yet claimed. drain(), not flush() — the tick timer is
+                // cancelled above, so a claim that came back empty because a tick write was still
+                // outstanding would strand those entries with nothing left to re-drain them.
+                // Fire-and-forget, and deliberately last — no work that ends the execution may sit
+                // behind it, and the finally keeps the drain reachable even when completion
+                // handling throws (JobLogFlusher itself never throws and always returns a
+                // succeeded future).
+                logFlusher.drain();
             }
         });
 

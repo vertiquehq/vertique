@@ -140,8 +140,10 @@ The framework is pre-release: every new column or table folds back into `V1` rat
 Per-execution log entries written by `JobLogger`. The scheduling module (`vertique-job-cron`,
 `vertique-job-delayed`) drains the in-memory buffer through a per-execution `JobLogFlusher`, which
 persists batches via `JobRepository.saveLogs()`: on the periodic progress-flush tick, on every path
-that ends the execution, and once more as a bounded cutoff flush at shutdown — see each scheduling
-module's reference for the exact flush sites.
+that ends the execution, and once more as a bounded cutoff drain at shutdown — see each scheduling
+module's reference for the exact flush sites. The ending sites and the shutdown snapshot use the
+flusher's bounded `drain()` rather than a single `flush()`, so a `saveLogs` call left outstanding by
+the tick cannot swallow the entries appended behind it.
 
 | Column | Type | Description |
 |--------|------|-------------|

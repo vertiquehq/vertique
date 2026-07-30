@@ -3,6 +3,8 @@
 
 package dev.vertique.job;
 
+import io.vertx.core.Future;
+import io.vertx.core.Promise;
 import java.time.Instant;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -59,18 +61,25 @@ public class DefaultJobLogger implements JobLogger {
     /** Stand-in stored for a {@code null} message, because {@code job_logs.message} is NOT NULL. */
     private static final String NULL_MESSAGE = "<null>";
 
-    /** Guards {@link #buffer} and {@link #flushInFlight}. */
+    /** Guards {@link #buffer} and {@link #inFlight}. */
     private final Object lock = new Object();
 
     private final Deque<LogEntry> buffer = new ArrayDeque<>();
 
     /**
-     * Whether a batch handed out by {@link #claim()} is still outstanding. Set only by a claim that
-     * drained at least one entry, and cleared by {@link #ack()} or {@link #nack(List)}. The claimed
-     * entries themselves are held by the flusher, not here — retaining a second reference would pin
-     * them for the whole in-flight window without ever being read.
+     * Completion signal for the batch handed out by {@link #claim()}, or {@code null} when no write
+     * is outstanding. Created only by a claim that drained at least one entry, and completed and
+     * cleared by {@link #ack()} or {@link #nack(List)}. The claimed entries themselves are held by
+     * the flusher, not here — retaining a second reference would pin them for the whole in-flight
+     * window without ever being read.
+     *
+     * <p>Its non-{@code null}-ness <em>is</em> the single-flight marker; the promise on top of it
+     * exists so that a caller which must not miss the outstanding batch — an execution-ending drain,
+     * which has no later tick to retry on — can await it instead of being handed the empty claim
+     * single-flight would otherwise give it. It is always completed <em>successfully</em>: it
+     * reports that the write settled, not that it succeeded.
      */
-    private boolean flushInFlight;
+    private Promise<Void> inFlight;
 
     @Override
     public void info(String message) {
@@ -197,7 +206,7 @@ public class DefaultJobLogger implements JobLogger {
      */
     List<LogEntry> claim() {
         synchronized (lock) {
-            if (flushInFlight || buffer.isEmpty()) {
+            if (inFlight != null || buffer.isEmpty()) {
                 return List.of();
             }
             int size = Math.min(buffer.size(), MAX_CLAIM_BATCH);
@@ -205,7 +214,7 @@ public class DefaultJobLogger implements JobLogger {
             for (int i = 0; i < size; i++) {
                 batch.add(buffer.pollFirst());
             }
-            flushInFlight = true;
+            inFlight = Promise.promise();
             return List.copyOf(batch);
         }
     }
@@ -215,9 +224,7 @@ public class DefaultJobLogger implements JobLogger {
      * clearing the in-flight state so the next {@link #claim()} can proceed.
      */
     void ack() {
-        synchronized (lock) {
-            flushInFlight = false;
-        }
+        settle(null);
     }
 
     /**
@@ -231,6 +238,24 @@ public class DefaultJobLogger implements JobLogger {
      * @param batch the previously claimed batch that failed to persist; may be {@code null}
      */
     void nack(List<LogEntry> batch) {
+        settle(batch);
+    }
+
+    /**
+     * Clears the in-flight state, optionally returning a failed batch to the head of the buffer
+     * first, and then signals the outstanding write's completion.
+     *
+     * <p>The promise is deliberately completed <em>outside</em> the lock. A waiter released here is
+     * the drain loop, whose very next act is to call {@link #claim()} — and with a {@code null}
+     * promise context that continuation runs inline on this thread. Completing under the lock would
+     * therefore run arbitrary caller code while holding the monitor that every appending handler
+     * thread contends for.
+     *
+     * @param batch the previously claimed batch to return to the buffer, or {@code null} when the
+     *     batch was persisted successfully and must be discarded
+     */
+    private void settle(List<LogEntry> batch) {
+        Promise<Void> settled;
         synchronized (lock) {
             if (batch != null) {
                 // Push back-to-front so the batch keeps its internal order at the head of the deque.
@@ -238,7 +263,42 @@ public class DefaultJobLogger implements JobLogger {
                     buffer.addFirst(batch.get(i));
                 }
             }
-            flushInFlight = false;
+            settled = inFlight;
+            inFlight = null;
+        }
+        if (settled != null) {
+            settled.complete();
+        }
+    }
+
+    /**
+     * Returns a future that completes once the write for the currently claimed batch has settled —
+     * successfully or not.
+     *
+     * <p>Exists for the execution-ending drain: {@link #claim()} is single-flight and hands an
+     * empty batch to any caller that arrives while a write is outstanding, which is harmless for a
+     * periodic tick (another tick follows) but silently loses entries at a site that ends the
+     * execution, because the periodic timer is already cancelled by then. Awaiting this future
+     * before re-claiming turns that empty claim into a wait.
+     *
+     * @return a succeeded future when no write is outstanding, otherwise a future completing when
+     *     the outstanding write is acknowledged or returned; never fails
+     */
+    Future<Void> inFlightCompletion() {
+        synchronized (lock) {
+            return inFlight == null ? Future.succeededFuture() : inFlight.future();
+        }
+    }
+
+    /**
+     * Reports whether any entry is still unpersisted — either sitting in the buffer or held by an
+     * outstanding write that has not yet been acknowledged.
+     *
+     * @return {@code true} when a further claim or a further wait could still yield work
+     */
+    boolean hasBufferedOrInFlight() {
+        synchronized (lock) {
+            return !buffer.isEmpty() || inFlight != null;
         }
     }
 }

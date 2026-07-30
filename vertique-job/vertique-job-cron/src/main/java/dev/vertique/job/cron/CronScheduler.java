@@ -76,9 +76,11 @@ import lombok.extern.slf4j.Slf4j;
  * <p><b>Job log flush:</b> Buffered {@link dev.vertique.job.JobLogger} entries are drained to the
  * repository through a per-execution {@link dev.vertique.job.JobLogFlusher} — on the same periodic
  * tick (there unconditionally, since log entries change independently of the progress snapshot)
- * and on every path that ends the execution: completion, timeout, and {@link #stop()}. Untracked
- * fires never flush: they have no {@code job_executions} row for {@code job_logs.execution_id} to
- * reference.
+ * and on every path that ends the execution: completion, timeout, and {@link #stop()}. The ending
+ * sites use {@link dev.vertique.job.JobLogFlusher#drain()}, which awaits an outstanding write and
+ * re-flushes while entries remain, because they have just cancelled the tick that would otherwise
+ * have retried. Untracked fires never flush: they have no {@code job_executions} row for
+ * {@code job_logs.execution_id} to reference.
  *
  * <p><b>Threading model:</b> This class must be used on a single Vert.x event loop context.
  * All timer callbacks, event bus handlers, and slot management operations assume single-threaded

@@ -4,9 +4,11 @@
 package dev.vertique.job;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import io.vertx.core.Future;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -17,7 +19,9 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Unit tests for {@link DefaultJobLogger}.
+ * Unit tests for {@link DefaultJobLogger}: message normalization, the single-flight claim/ack drain
+ * protocol, and the in-flight completion signal an execution-ending
+ * {@link JobLogFlusher#drain()} awaits instead of accepting an empty claim.
  */
 @DisplayName("DefaultJobLogger")
 class DefaultJobLoggerTest {
@@ -288,5 +292,69 @@ class DefaultJobLoggerTest {
 
         assertTrue(rounds < maxRounds, "drain must terminate on an empty claim");
         assertEquals(threads * perThread, drained, "every appended entry must be drained exactly once");
+    }
+
+    // --- In-flight completion signal ---
+
+    @Test
+    @DisplayName("inFlightCompletion is already succeeded when no write is outstanding")
+    void inFlightCompletionIsSucceededWhenIdle() {
+        assertTrue(logger.inFlightCompletion().succeeded(), "an idle logger must not make a waiter block");
+
+        logger.info("buffered but unclaimed");
+
+        assertTrue(
+                logger.inFlightCompletion().succeeded(), "a buffered-but-unclaimed entry is not an outstanding write");
+    }
+
+    @Test
+    @DisplayName("inFlightCompletion stays pending until the claimed batch is acked")
+    void inFlightCompletionCompletesOnAck() {
+        logger.info("in flight");
+        logger.claim();
+
+        Future<Void> outstanding = logger.inFlightCompletion();
+        assertFalse(outstanding.isComplete(), "a claimed batch must leave the completion signal pending");
+
+        logger.ack();
+
+        assertTrue(outstanding.succeeded(), "ack must release anyone awaiting the outstanding write");
+    }
+
+    @Test
+    @DisplayName("inFlightCompletion completes on nack too — it reports settlement, not success")
+    void inFlightCompletionCompletesOnNack() {
+        logger.info("in flight");
+        List<LogEntry> batch = logger.claim();
+
+        Future<Void> outstanding = logger.inFlightCompletion();
+        assertFalse(outstanding.isComplete(), "a claimed batch must leave the completion signal pending");
+
+        logger.nack(batch);
+
+        // A failing write must not leave an ending-site drain waiting forever: it needs to be woken
+        // so it can re-claim the returned batch on its next round.
+        assertTrue(outstanding.succeeded(), "nack must release the waiter so the retry round can run");
+    }
+
+    @Test
+    @DisplayName("hasBufferedOrInFlight covers both buffered entries and an outstanding write")
+    void hasBufferedOrInFlightCoversBothStates() {
+        assertFalse(logger.hasBufferedOrInFlight(), "a fresh logger has nothing to persist");
+
+        logger.info("buffered");
+        assertTrue(logger.hasBufferedOrInFlight(), "a buffered entry is unpersisted work");
+
+        List<LogEntry> batch = logger.claim();
+        assertTrue(
+                logger.hasBufferedOrInFlight(),
+                "an emptied buffer still has work while the claimed batch is outstanding");
+
+        logger.nack(batch);
+        assertTrue(logger.hasBufferedOrInFlight(), "a nacked batch is back in the buffer");
+
+        logger.claim();
+        logger.ack();
+        assertFalse(logger.hasBufferedOrInFlight(), "an acked batch leaves nothing unpersisted");
     }
 }
