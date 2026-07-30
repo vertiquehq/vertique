@@ -1333,6 +1333,11 @@ class CronSchedulerTest {
      * {@code JobLogFlusherTest.Drain}: it is the only test here whose {@code saveLogs} returns a
      * <em>pending</em> future, and therefore the only one that can observe the in-flight window an
      * ending-site flush used to lose.
+     *
+     * <p>{@link #shutdownDrainsBufferedLogsOfInFlightExecutions} covers
+     * {@code CronJobDispatcher.shutdown()}. That dispatcher is package-private and constructed
+     * inside {@link CronScheduler}, so the flush site is driven through {@link CronScheduler#stop()},
+     * which composes the future the dispatcher's shutdown returns.
      */
     @Nested
     @DisplayName("job log flush")
@@ -1602,6 +1607,75 @@ class CronSchedulerTest {
                     new CronExpression("* * * * * *"),
                     new CronTargetReference.EventBusTarget("test.logflush.inflight.address"),
                     "test.logflush.inflight.address",
+                    ExecutionMode.SINGLE_INSTANCE,
+                    ZoneId.of("UTC"),
+                    3,
+                    null,
+                    OverlapPolicy.SKIP,
+                    true,
+                    Map.of(),
+                    MisfirePolicy.SKIP);
+
+            scheduler.register(job);
+            scheduler.start();
+        }
+
+        @Test
+        @DisplayName("stop() drains the buffered logs of a fire that is still in flight")
+        void shutdownDrainsBufferedLogsOfInFlightExecutions(Vertx vertx, VertxTestContext ctx) {
+            JobRepository repo = stubRepoCapturingCompletion(new AtomicReference<>());
+
+            AtomicBoolean asserted = new AtomicBoolean(false);
+            when(repo.saveLogs(any(UUID.class), any())).thenAnswer(invocation -> {
+                List<LogEntry> batch = invocation.getArgument(1);
+                if (asserted.compareAndSet(false, true)) {
+                    ctx.verify(() -> assertTrue(
+                            batch.stream().anyMatch(entry -> "before the shutdown".equals(entry.message())),
+                            "the shutdown cutoff must drain the buffered entry of a fire still in flight"));
+                    ctx.completeNow();
+                }
+                return Future.succeededFuture();
+            });
+
+            // executionTimeoutMs = 0 disables the timeout path and progressFlushIntervalMs = 0
+            // disables the periodic tick; the handler never replies, so the completion consumer
+            // never runs either. CronJobDispatcher.shutdown() is the only site left that can
+            // reach saveLogs.
+            scheduler = new CronScheduler(
+                    vertx,
+                    Set.of(),
+                    repo,
+                    stubTargetResolver(),
+                    testEventBusClient(vertx),
+                    10,
+                    0L,
+                    0L,
+                    DispatchEnvelopeBuilder.forTesting());
+
+            AtomicBoolean logged = new AtomicBoolean(false);
+            vertx.eventBus().consumer("test.logflush.shutdown.address", msg -> {
+                if (!(msg.body() instanceof DispatchEnvelope<?> body) || !logged.compareAndSet(false, true)) {
+                    return;
+                }
+                DefaultJobContext jobCtx =
+                        (DefaultJobContext) body.metadata().dispatchContext().get(JobContext.class.getName());
+                jobCtx.logger().info("before the shutdown");
+                // Never reply: the execution stays in the dispatcher's activeExecutions, which is
+                // what makes the cutoff drain reachable. stop() is the public entry point onto
+                // CronJobDispatcher.shutdown() — the dispatcher itself is package-private and owned
+                // by the scheduler. Calling it from here rather than after a sleep is the ordering
+                // signal: the entry is buffered before the shutdown can begin.
+                scheduler.stop().onFailure(ctx::failNow);
+            });
+
+            // SINGLE_INSTANCE + the stubbed tryInsert win makes this a tracked fire, so the
+            // dispatcher receives a non-null execution and the flusher is persistable. An untracked
+            // fire gets a no-op flusher by design and would make this test vacuous.
+            CronJobDefinition job = new CronJobDefinition(
+                    "log-shutdown-job",
+                    new CronExpression("* * * * * *"),
+                    new CronTargetReference.EventBusTarget("test.logflush.shutdown.address"),
+                    "test.logflush.shutdown.address",
                     ExecutionMode.SINGLE_INSTANCE,
                     ZoneId.of("UTC"),
                     3,

@@ -73,8 +73,9 @@ final class CronJobDispatcher {
 
     /**
      * Upper bound, in seconds, on how long {@link #shutdown()} waits for one execution's shutdown
-     * log flush to settle. A wedged connection pool can yield a future that never settles at all,
-     * so this bound — not error recovery — is what keeps undeploy from hanging.
+     * log drain to settle. {@link JobLogFlusher#flush()} already bounds each individual write, so
+     * a drain settles on its own eventually; this bound collapses the drain's whole round budget
+     * into one wait so undeploy is not held for the sum of them.
      */
     private static final long SHUTDOWN_FLUSH_TIMEOUT_SECONDS = 5L;
 
@@ -449,9 +450,9 @@ final class CronJobDispatcher {
 
         // joinAllSwallow waits for every drain to settle without short-circuiting and always
         // succeeds — the all-settled-swallow contract this shutdown needs. The timeout bound stays
-        // inside the hook and is load-bearing, not belt-and-braces: swallowing only handles a
-        // *failed* future, and a wedged connection pool yields one that never settles at all. It
-        // also bounds the drain's own await of an outstanding write, which nothing else does.
+        // inside the hook: JobLogFlusher.flush() already bounds each write, so this is not what
+        // rescues an unsettleable future. What it buys is collapsing the drain's whole round
+        // budget — and its await of an already-outstanding write — into a single bound on undeploy.
         return Combinators.joinAllSwallow(
                 pending,
                 resources -> resources.logFlusher().drain().timeout(SHUTDOWN_FLUSH_TIMEOUT_SECONDS, TimeUnit.SECONDS),

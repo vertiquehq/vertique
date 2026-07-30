@@ -867,6 +867,12 @@ class DelayedJobPollerTest {
      * {@code JobLogFlusherTest.Drain}: it is the only test here whose {@code saveLogs} returns a
      * <em>pending</em> future, and therefore the only one that can observe the in-flight window an
      * ending-site flush used to lose.
+     *
+     * <p>The two {@code stop*} tests cover the verticle-shutdown flush site, which the
+     * {@code "stops cleanly"} lifecycle test cannot reach: that test stubs {@code claimNextJob} to
+     * return an empty list, so nothing is ever dispatched and {@code activeExecutions} is empty when
+     * {@link DelayedJobPoller#stop(Promise)} runs. Both tests here hold an execution in flight by
+     * never replying from the handler.
      */
     @Nested
     @DisplayName("job log flush")
@@ -1119,6 +1125,111 @@ class DelayedJobPollerTest {
                     noOpPropagator());
 
             vertx.deployVerticle(poller).onFailure(ctx::failNow);
+        }
+
+        @Test
+        @DisplayName("stop() drains the buffered logs of an execution that is still in flight")
+        void stopDrainsBufferedLogsOfInFlightExecutions(Vertx vertx, VertxTestContext ctx) {
+            String handlerAddress = "test.logflush.stop.handler";
+            JobExecution execution = sampleExecution("log-stop-job", handlerAddress);
+
+            when(repository.claimNextJob(anyString(), anyInt()))
+                    .thenReturn(Future.succeededFuture(List.of(execution)))
+                    .thenReturn(Future.succeededFuture(List.of()));
+
+            AtomicBoolean asserted = new AtomicBoolean(false);
+            when(repository.saveLogs(eq(execution.id()), any())).thenAnswer(invocation -> {
+                List<LogEntry> batch = invocation.getArgument(1);
+                if (asserted.compareAndSet(false, true)) {
+                    ctx.verify(() -> assertTrue(
+                            batch.stream().anyMatch(entry -> "before the shutdown".equals(entry.message())),
+                            "stop() must drain the buffered entry of an execution that is still in flight"));
+                    ctx.completeNow();
+                }
+                return Future.succeededFuture();
+            });
+
+            // The handler logs and NEVER replies, so the execution is still in activeExecutions when
+            // stop() runs — the precondition the "stops cleanly" lifecycle test lacks. Completing
+            // this promise from inside the handler is the sleep-free ordering signal: the undeploy
+            // below cannot start until the entry is already buffered.
+            Promise<Void> handlerLogged = Promise.promise();
+            vertx.eventBus().consumer(handlerAddress, msg -> {
+                if (!(msg.body() instanceof DispatchEnvelope<?> body)) {
+                    return;
+                }
+                DefaultJobContext jobCtx =
+                        (DefaultJobContext) body.metadata().dispatchContext().get(JobContext.class.getName());
+                jobCtx.logger().info("before the shutdown");
+                handlerLogged.tryComplete();
+            });
+
+            // executionTimeoutMs = 0 disables the timeout path and progressFlushIntervalMs = 0
+            // disables the periodic tick; the handler never replies, so the completion consumer
+            // never runs either. stop() is the only site left that can reach saveLogs.
+            DelayedJobPoller poller = new DelayedJobPoller(
+                    "default",
+                    fastConfig(),
+                    repository,
+                    completionHandler,
+                    Set.of(),
+                    testEventBusClient(vertx),
+                    0L,
+                    0L,
+                    DispatchEnvelopeBuilder.forTesting(),
+                    noOpPropagator());
+
+            vertx.deployVerticle(poller)
+                    .compose(deploymentId -> handlerLogged.future().map(deploymentId))
+                    .compose(vertx::undeploy)
+                    .onFailure(ctx::failNow);
+        }
+
+        @Test
+        @DisplayName("stop() completes even when the cutoff flush never settles")
+        void stopCompletesEvenWhenTheCutoffFlushNeverSettles(Vertx vertx, VertxTestContext ctx) {
+            String handlerAddress = "test.logflush.stop.wedged.handler";
+            JobExecution execution = sampleExecution("log-stop-wedged-job", handlerAddress);
+
+            when(repository.claimNextJob(anyString(), anyInt()))
+                    .thenReturn(Future.succeededFuture(List.of(execution)))
+                    .thenReturn(Future.succeededFuture(List.of()));
+
+            // A wedged connection pool yields a write that never settles at all. recover() cannot
+            // rescue that — only a time bound can — so this pins the .timeout() on the shutdown
+            // hook: without it a stuck pool would hold undeploy open far past the drain's own
+            // per-write bound, which the round cap then multiplies.
+            Promise<Void> neverSettles = Promise.promise();
+            when(repository.saveLogs(eq(execution.id()), any())).thenReturn(neverSettles.future());
+
+            Promise<Void> handlerLogged = Promise.promise();
+            vertx.eventBus().consumer(handlerAddress, msg -> {
+                if (!(msg.body() instanceof DispatchEnvelope<?> body)) {
+                    return;
+                }
+                DefaultJobContext jobCtx =
+                        (DefaultJobContext) body.metadata().dispatchContext().get(JobContext.class.getName());
+                jobCtx.logger().info("never reaches the repository");
+                handlerLogged.tryComplete();
+            });
+
+            DelayedJobPoller poller = new DelayedJobPoller(
+                    "default",
+                    fastConfig(),
+                    repository,
+                    completionHandler,
+                    Set.of(),
+                    testEventBusClient(vertx),
+                    0L,
+                    0L,
+                    DispatchEnvelopeBuilder.forTesting(),
+                    noOpPropagator());
+
+            vertx.deployVerticle(poller)
+                    .compose(deploymentId -> handlerLogged.future().map(deploymentId))
+                    .compose(vertx::undeploy)
+                    .onSuccess(v -> ctx.completeNow())
+                    .onFailure(ctx::failNow);
         }
     }
 }
