@@ -12,25 +12,10 @@ import com.fasterxml.jackson.databind.json.JsonMapper;
 import dev.vertique.core.json.JsonMapperProfile;
 import dev.vertique.core.json.JsonProfile;
 import dev.vertique.core.json.JsonProfileId;
-import dev.vertique.json.DefaultJsonMapperProfileRegistry;
-import dev.vertique.json.JsonConfig;
 import dev.vertique.json.JsonMapperProfiles;
 import dev.vertique.json.VertxJsonSupport;
-import dev.vertique.rest.core.config.HttpConfig;
-import dev.vertique.rest.core.config.JaxRsConfig;
-import dev.vertique.rest.core.context.RestContextResolution;
-import dev.vertique.rest.core.request.RequestBodyDecoder;
-import dev.vertique.rest.core.response.BufferedBody;
-import dev.vertique.rest.core.response.ResponseBodyEncoder;
-import dev.vertique.rest.core.response.ResponseSerializer;
-import dev.vertique.rest.core.response.SerializedBody;
-import dev.vertique.rest.jaxrs.DefaultExceptionMapper;
-import dev.vertique.rest.jaxrs.DefaultResponseSerializer;
-import dev.vertique.rest.jaxrs.ExceptionMapperRegistry;
-import dev.vertique.rest.jaxrs.JaxRsRouterMount;
-import dev.vertique.rest.jaxrs.RestExceptionMapper;
-import dev.vertique.rest.jaxrs.validation.OperationSchemaSource;
-import dev.vertique.rest.jaxrs.validation.RequestValidationStrategy;
+import dev.vertique.rest.test.RestTestContributions;
+import dev.vertique.rest.test.RestTestMounts;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.media.Schema;
 import io.vertx.core.Future;
@@ -39,9 +24,6 @@ import io.vertx.core.buffer.Buffer;
 import io.vertx.core.http.HttpClient;
 import io.vertx.core.http.HttpMethod;
 import io.vertx.core.http.HttpServer;
-import io.vertx.core.json.JsonObject;
-import io.vertx.ext.web.Router;
-import io.vertx.ext.web.RoutingContext;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
 import jakarta.ws.rs.Consumes;
@@ -49,12 +31,10 @@ import jakarta.ws.rs.POST;
 import jakarta.ws.rs.Path;
 import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
-import jakarta.ws.rs.core.Response;
-import java.lang.reflect.Type;
-import java.util.List;
-import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
+import java.util.function.BiConsumer;
+import java.util.function.IntConsumer;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -79,6 +59,16 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * a class-level {@code @JsonProfile}, so a duplicate key / trailing token / BOM-prefixed body must be
  * rejected with a {@code 400} produced by the profile mapper's first parse, not silently accepted by
  * the default Vert.x path.
+ *
+ * <p>Built through {@link MountFixtures} over {@link ValidationMountComponent} (the {@code
+ * vertique-rest-test} fixture), so every deployed mount carries the full set of production middlewares
+ * — including {@code ContentTypeValidationMiddleware}, which 415s a POST/PUT/PATCH body whose {@code
+ * Content-Type} is missing or unsupported before the request ever reaches the router-level binder. The
+ * no-{@code Content-Type} variant of this suite's original scenario is therefore unreachable end-to-end
+ * against a production-faithful mount; the equivalent binding-level coverage now lives in {@code
+ * dev.vertique.rest.jaxrs.request.NoContentTypeProfiledBodyBindingTest} (module {@code
+ * vertique-rest-jaxrs}), which exercises {@code DefaultBoundRequest.bindBody}'s missing-content-type
+ * branch directly, with no HTTP and no middleware in the path.
  */
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
@@ -151,31 +141,6 @@ public class ProfiledBodyParseUnderGateIT {
     }
 
     /**
-     * Resource selecting the {@code strict-test} profile at the class level WITHOUT {@code @Consumes},
-     * so the per-route 415 content-type check is not installed and a body with no {@code Content-Type}
-     * header reaches the gate/binder (rather than being rejected with 415). Used by the no-content-type
-     * test to prove the profile mapper still owns the first parse on the missing-content-type branch.
-     */
-    @Path("/strict-no-consumes")
-    @JsonProfile("strict-test")
-    public static class StrictNoConsumesResource {
-
-        /**
-         * Echoes the body's {@code name}; a body the strict profile rejects must surface as 400 from the
-         * profile mapper's first parse even when the request carries no {@code Content-Type}.
-         *
-         * @param payload the request body bean, first-parsed by the strict profile mapper
-         * @return the echoed name
-         */
-        @POST
-        @Produces(MediaType.TEXT_PLAIN)
-        @Operation(operationId = "strictGatedNoConsumesEcho")
-        public String echo(Payload payload) {
-            return "name=" + payload.name;
-        }
-    }
-
-    /**
      * Resource with NO {@code @JsonProfile} but the same schema-constrained body bean, so the
      * {@code web-validation} gate is active but the effective profile is {@code vertx}. A normal body
      * must dispatch to 200, proving the gate-active path is unchanged for the vertx default.
@@ -228,27 +193,6 @@ public class ProfiledBodyParseUnderGateIT {
                 status -> assertEquals(400, status, "trailing tokens must be rejected with 400 even under the gate"));
     }
 
-    // --- Test: no Content-Type still routes through the profile mapper first parse ---
-
-    @Test
-    @DisplayName("A duplicate-key body with NO Content-Type on a profiled gated route is rejected with 400")
-    void noContentType_profiledBody_strictParseStillRuns(Vertx vertx, VertxTestContext ctx) {
-        // No Content-Type header: DefaultBoundRequest's missing-content-type branch must still route a
-        // '{'-leading body through the profile mapper's strict first parse, so the duplicate key is
-        // rejected with 400 (not bound leniently by the Vert.x probe). The resource declares no
-        // @Consumes, so the per-route 415 content-type check is not installed and the no-content-type
-        // body reaches the gate/binder.
-        deploy(vertx, ctx, Set.of(new StrictNoConsumesResource()), (port, c) -> c.request(
-                        HttpMethod.POST, port, "localhost", "/strict-no-consumes")
-                .compose(req -> req.send(Buffer.buffer("{\"name\":\"a\",\"name\":\"b\"}")))
-                .compose(resp -> resp.body().map(b -> resp.statusCode()))
-                .onComplete(ctx.succeeding(status -> {
-                    ctx.verify(() -> assertEquals(
-                            400, status, "a duplicate-key body with no Content-Type must be rejected with 400"));
-                    ctx.completeNow();
-                })));
-    }
-
     // --- Test: BOM-prefixed body is profile-parsed (BOM-tolerant shape detection) ---
 
     @Test
@@ -298,7 +242,7 @@ public class ProfiledBodyParseUnderGateIT {
      * @param body      the raw request body buffer
      * @param assertion the assertion on the response status code
      */
-    private void postStrict(Vertx vertx, VertxTestContext ctx, Buffer body, java.util.function.IntConsumer assertion) {
+    private void postStrict(Vertx vertx, VertxTestContext ctx, Buffer body, IntConsumer assertion) {
         deploy(vertx, ctx, Set.of(new StrictResource()), (port, c) -> c.request(
                         HttpMethod.POST, port, "localhost", "/strict")
                 .compose(
@@ -311,10 +255,11 @@ public class ProfiledBodyParseUnderGateIT {
     }
 
     /**
-     * Deploys the given resources under the {@code web-validation} gate (the real default strategy plus
-     * the victools schema source) with a profile registry carrying the {@code strict-test} profile,
-     * starts an HTTP server, and invokes {@code afterListen} with the bound port and a shared
-     * {@link HttpClient}.
+     * Deploys the given resources through the real {@code web-validation} gate (via {@link
+     * ValidationMountComponent}, which wires the real injected {@link WebValidationStrategy} and {@link
+     * AnnotationSchemaSource}) with a profile registry carrying the {@code strict-test} profile, starts
+     * an HTTP server, and invokes {@code afterListen} with the bound port and a shared {@link
+     * HttpClient}.
      *
      * @param vertx       the Vert.x instance
      * @param ctx         the test context
@@ -322,156 +267,15 @@ public class ProfiledBodyParseUnderGateIT {
      * @param afterListen callback invoked with the server port and the shared HTTP client
      */
     private void deploy(
-            Vertx vertx,
-            VertxTestContext ctx,
-            Set<Object> resources,
-            java.util.function.BiConsumer<Integer, HttpClient> afterListen) {
-        JaxRsRouterMount.Factory factory = buildGatedProfileFactory();
-        JaxRsRouterMount mount = factory.create("/*", "openapi.json", resources);
-        mount.createRouter(vertx)
-                .compose(apiRouter -> {
-                    Router root = Router.router(vertx);
-                    root.route("/*").subRouter(apiRouter);
-                    return vertx.createHttpServer().requestHandler(root).listen(0);
-                })
+            Vertx vertx, VertxTestContext ctx, Set<Object> resources, BiConsumer<Integer, HttpClient> afterListen) {
+        RestTestContributions contributions = RestTestContributions.builder()
+                .addJsonMapperProfile(strictTestProfile())
+                .build();
+        RestTestMounts.startServer(vertx, MountFixtures.factory(vertx, contributions), resources)
                 .onComplete(ctx.succeeding(s -> {
                     server = s;
                     client = vertx.createHttpClient();
                     afterListen.accept(s.actualPort(), client);
                 }));
-    }
-
-    /**
-     * Builds a {@link JaxRsRouterMount.Factory} wired with the real {@code web-validation} strategy, the
-     * victools {@link AnnotationSchemaSource}, and a {@link DefaultJsonMapperProfileRegistry} carrying
-     * the {@code strict-test} profile so a {@code @JsonProfile("strict-test")} resource resolves it at
-     * router-build time. Mirrors {@link WebValidationGateIT#buildWebValidationFactory()} but seeds the
-     * profile registry.
-     *
-     * @return a factory selecting the web-validation strategy with the strict profile registered
-     */
-    private static JaxRsRouterMount.Factory buildGatedProfileFactory() {
-        // Mirror the two production RestModule.defaultExceptionMapper rules the gated profile path needs:
-        // the web-validation gate raises RestValidationException -> 400, and a profile-mapper first-parse
-        // rejection raises a core ValidationException -> 400 (FR-JSON-024). Without the latter rule the
-        // ValidationException thrown during the gate's body bind would fall to the Throwable -> 500
-        // default and the 400 contract would be untestable here.
-        DefaultExceptionMapper defaultMapper = new DefaultExceptionMapper()
-                .on(dev.vertique.rest.core.RestValidationException.class, ex -> Response.status(400)
-                        .entity(dev.vertique.rest.core.ValidationProblemDetail.of(ex.getMessage(), ex.errors()))
-                        .type("application/problem+json")
-                        .build())
-                .on(dev.vertique.core.exception.ValidationException.class, ex -> Response.status(400)
-                        .entity(dev.vertique.rest.core.ValidationProblemDetail.of(ex.getMessage(), java.util.List.of()))
-                        .type("application/problem+json")
-                        .build());
-        ExceptionMapperRegistry registry = new ExceptionMapperRegistry(defaultMapper, Set.of());
-        RestExceptionMapper restExceptionMapper = new RestExceptionMapper();
-        RestContextResolution restContextResolution = new RestContextResolution(Set.of());
-        List<ResponseBodyEncoder> encoders = List.of(new StringEncoder(), new JsonEncoder());
-        ResponseSerializer responseSerializer = new DefaultResponseSerializer(List.of(), encoders);
-        HttpConfig httpConfig = HttpConfig.builder().build();
-        JaxRsConfig jaxRsConfig = JaxRsConfig.builder()
-                .validationStrategy(WebValidationStrategy.ID)
-                .build();
-
-        RequestValidationStrategy webValidation = new WebValidationStrategy(jaxRsConfig);
-        OperationSchemaSource schemaSource = new AnnotationSchemaSource();
-
-        return new JaxRsRouterMount.Factory(
-                Set.of(), // routerLifecycleHooks
-                Set.of(), // operationInterceptors
-                Set.of(), // errorInterceptors
-                Set.of(), // middlewares
-                Set.of(), // operationHandlerContributors
-                Set.of(), // securitySchemeHandlers
-                Set.of(), // requestInterceptors
-                restExceptionMapper,
-                registry,
-                Set.of(), // responseProducerBindings
-                responseSerializer,
-                restContextResolution,
-                dev.vertique.rest.jaxrs.convert.ConversionContexts.defaultResolver(), // paramConversionResolver
-                null, // securityPolicyValidator
-                Optional.empty(), // authEnforcementCapability
-                List.of(new JsonDecoder()), // sortedDecoders
-                encoders, // sortedEncoders
-                httpConfig,
-                jaxRsConfig,
-                new DefaultJsonMapperProfileRegistry(Set.of(strictTestProfile())), // jsonMapperProfileRegistry
-                JsonConfig.defaults(), // jsonConfig
-                Optional.empty(), // beanValidator
-                Optional.empty(), // objectProcessor
-                Set.of(), // evidenceCapturers
-                Optional.empty(), // actionRegistry
-                Optional.empty(), // authorizer
-                Set.of(), // fileContentVerifiers
-                Set.of(webValidation),
-                Optional.of(schemaSource));
-    }
-
-    /** Minimal public-SPI String response encoder producing {@code text/plain}. */
-    static final class StringEncoder implements ResponseBodyEncoder {
-        @Override
-        public boolean canEncode(Class<?> entityType, String contentType) {
-            return entityType == String.class;
-        }
-
-        @Override
-        public SerializedBody encode(RoutingContext ctx, Response response, Object entity) {
-            return new BufferedBody(Buffer.buffer(String.valueOf(entity)), "text/plain", null);
-        }
-
-        @Override
-        public int priority() {
-            return 1000;
-        }
-    }
-
-    /** Minimal public-SPI JSON encoder for non-String entities (e.g. the error pipeline's ProblemDetail). */
-    static final class JsonEncoder implements ResponseBodyEncoder {
-        @Override
-        public boolean canEncode(Class<?> entityType, String contentType) {
-            return contentType == null || contentType.contains("json");
-        }
-
-        @Override
-        public SerializedBody encode(RoutingContext ctx, Response response, Object entity) {
-            return new BufferedBody(Buffer.buffer(io.vertx.core.json.Json.encode(entity)), "application/json", null);
-        }
-
-        @Override
-        public int priority() {
-            return 1100;
-        }
-    }
-
-    /** Minimal public-SPI JSON request decoder materialising the body bean via Jackson. */
-    static final class JsonDecoder implements RequestBodyDecoder {
-        @Override
-        public boolean canDecode(Class<?> targetType, String contentType) {
-            return contentType != null && contentType.contains("json");
-        }
-
-        @Override
-        public Object decode(
-                RoutingContext ctx, dev.vertique.rest.core.request.RequestValue body, Class<?> targetType) {
-            JsonObject json = body.getJsonObject();
-            return json != null ? json.mapTo(targetType) : null;
-        }
-
-        @Override
-        public Object decode(
-                RoutingContext ctx,
-                dev.vertique.rest.core.request.RequestValue body,
-                Class<?> targetType,
-                Type genericType) {
-            return decode(ctx, body, targetType);
-        }
-
-        @Override
-        public int priority() {
-            return 1000;
-        }
     }
 }
