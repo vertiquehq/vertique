@@ -26,7 +26,9 @@ import org.junit.jupiter.api.Test;
  * Unit tests for {@link ErrorPipeline}.
  *
  * <p>Verifies the Vert.x status code fallback mechanism that preserves HTTP status codes
- * from unwrapped {@code HttpException} causes when no specific {@code ExceptionMapper} matches.
+ * from a Vert.x failure when no application {@code ExceptionMapper} registered for a type more
+ * specific than {@code Throwable} matches — an application catch-all is overridden like the
+ * framework's own.
  */
 class ErrorPipelineTest {
 
@@ -133,6 +135,40 @@ class ErrorPipelineTest {
 
             Response response = future.result();
             assertEquals(422, response.getStatus()); // User mapper wins, not the Vert.x fallback
+        }
+
+        @Test
+        @DisplayName("Fallback DOES activate when the user mapper is an ExceptionMapper<Throwable> catch-all")
+        void fallbackOverridesUserThrowableCatchAllMapper() {
+            // Asymmetry with noFallbackWhenUserMapperMatches: a user mapper registered for a type more
+            // specific than Throwable outranks the hint, but a user ExceptionMapper<Throwable> is a
+            // catch-all — hasSpecificMapper stops before Throwable, so the hint wins and the catch-all's
+            // body is replaced even though its own mapping produced it.
+            DefaultExceptionMapper defaults = new DefaultExceptionMapper()
+                    .on(Throwable.class, ex -> Response.status(500)
+                            .entity(ProblemDetail.of(500, "Internal Server Error"))
+                            .type("application/problem+json")
+                            .build());
+            ExceptionMapperRegistry registry = new ExceptionMapperRegistry(defaults, Set.of());
+            // User-contributed ExceptionMapper<Throwable> (simulates the Dagger multibinding); it
+            // overwrites the framework defaults registered at the same Throwable key.
+            registry.register(Throwable.class, ex -> Response.status(422)
+                    .entity(ProblemDetail.of(422, ex.getMessage()))
+                    .type("application/problem+json")
+                    .build());
+            ErrorPipeline customPipeline = new ErrorPipeline(List.of(), List.of(), new RestExceptionMapper(), registry);
+
+            ctxData.put(VertxFailureStatus.KEY, 401);
+
+            Future<Response> future = customPipeline.mapToResponse(ctx, new IllegalStateException("bad claim"));
+            assertTrue(future.succeeded());
+
+            Response response = future.result();
+            assertEquals(401, response.getStatus(), "a user catch-all does not outrank the Vert.x status hint");
+            ProblemDetail pd = assertInstanceOf(ProblemDetail.class, response.getEntity());
+            assertEquals(401, pd.status());
+            assertEquals("Unauthorized", pd.title(), "the title must be re-derived from the overriding status");
+            assertNull(pd.detail(), "the catch-all's body is replaced by the override, not carried into it");
         }
 
         @Test
@@ -289,6 +325,39 @@ class ErrorPipelineTest {
             assertInstanceOf(ProblemDetail.class, response.getEntity());
             ProblemDetail pd = (ProblemDetail) response.getEntity();
             assertEquals("/test", pd.instance());
+        }
+
+        @Test
+        @DisplayName("A rebuilt body does not inherit Content-Length from the response it replaced")
+        void rebuiltBodyDropsInheritedContentLength() {
+            // The mapper declares the length of the body it authored. Instance enrichment replaces that
+            // body, so the declared length describes bytes that will never be written — and the wire path
+            // copies JAX-RS headers verbatim while the JSON encoder supplies no length of its own, so an
+            // inherited value would ship a framing violation. Every other header still belongs to the
+            // response and must survive.
+            DefaultExceptionMapper defaults = new DefaultExceptionMapper()
+                    .on(Throwable.class, ex -> Response.status(401)
+                            .entity(ProblemDetail.of(401, "Unauthorized"))
+                            .type("application/problem+json")
+                            .header("Content-Length", 42)
+                            .header("WWW-Authenticate", "Bearer realm=\"api\"")
+                            .build());
+            ExceptionMapperRegistry registry = new ExceptionMapperRegistry(defaults, Set.of());
+            ErrorPipeline customPipeline = new ErrorPipeline(List.of(), List.of(), new RestExceptionMapper(), registry);
+
+            Future<Response> future = customPipeline.mapToResponse(ctx, new RuntimeException("no credentials"));
+            assertTrue(future.succeeded());
+
+            Response response = future.result();
+            ProblemDetail pd = assertInstanceOf(ProblemDetail.class, response.getEntity());
+            assertEquals("/test", pd.instance(), "the body must actually have been rebuilt by enrichment");
+            assertNull(
+                    response.getHeaderString("Content-Length"),
+                    "a Content-Length describing the superseded body must not survive onto the rebuilt one");
+            assertEquals(
+                    "Bearer realm=\"api\"",
+                    response.getHeaderString("WWW-Authenticate"),
+                    "headers that still describe the response must be preserved");
         }
 
         @Test

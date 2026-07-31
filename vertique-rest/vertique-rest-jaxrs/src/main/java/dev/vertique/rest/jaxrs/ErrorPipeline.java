@@ -9,6 +9,7 @@ import dev.vertique.rest.core.interceptor.ErrorInterceptor;
 import dev.vertique.rest.core.interceptor.RequestInterceptor;
 import io.vertx.core.Future;
 import io.vertx.ext.web.RoutingContext;
+import jakarta.ws.rs.core.HttpHeaders;
 import jakarta.ws.rs.core.Response;
 import java.util.List;
 import lombok.extern.slf4j.Slf4j;
@@ -149,7 +150,7 @@ public class ErrorPipeline {
             ProblemDetail enriched =
                     pd.toBuilder().instance(ctx.request().path()).build();
             Response.ResponseBuilder rb = Response.status(response.getStatus()).entity(enriched);
-            return rebuildWithHeaders(response, rb);
+            return rebuildWithHeaders(response, rb, true);
         }
         return response;
     }
@@ -224,18 +225,34 @@ public class ErrorPipeline {
             entity = ProblemDetail.of(vertxStatus, null, pd.instance());
         }
         Response.ResponseBuilder rb = Response.status(vertxStatus).entity(entity);
-        return rebuildWithHeaders(response, rb);
+        return rebuildWithHeaders(response, rb, entity != response.getEntity());
     }
 
     /**
-     * Copies all headers from the source response into the builder and returns the built response.
+     * Copies the source response's headers into the builder and returns the built response.
      *
-     * @param source  the original response whose headers should be preserved
-     * @param builder the response builder (with status and entity already set)
-     * @return the built response with all original headers
+     * <p>{@code Content-Length} is the one header dropped when the entity was replaced: it describes
+     * the body the superseded response carried, and nothing downstream recomputes it —
+     * {@code ResponsePipeline.applyToWire} copies every JAX-RS header to the wire and
+     * {@code DefaultResponseSerializer} only overwrites the length when the encoder supplies one,
+     * which the JSON encoder does not. An inherited value would therefore declare a length for a body
+     * that no longer exists, the framing violation {@link ResponsePipeline} already detects. Every
+     * other header is preserved deliberately: {@code WWW-Authenticate}, {@code Retry-After} and
+     * {@code Allow} describe the response, not its body, and remain correct — indeed a
+     * {@code WWW-Authenticate} the mapper authored is exactly what a status overridden <em>to</em> 401
+     * needs.
+     *
+     * @param source         the original response whose headers should be preserved
+     * @param builder        the response builder (with status and entity already set)
+     * @param entityReplaced whether the builder carries a different entity than {@code source} did
+     * @return the built response with the source's headers
      */
-    private static Response rebuildWithHeaders(Response source, Response.ResponseBuilder builder) {
+    private static Response rebuildWithHeaders(
+            Response source, Response.ResponseBuilder builder, boolean entityReplaced) {
         source.getStringHeaders().forEach((name, values) -> {
+            if (entityReplaced && HttpHeaders.CONTENT_LENGTH.equalsIgnoreCase(name)) {
+                return;
+            }
             for (String value : values) {
                 builder.header(name, value);
             }

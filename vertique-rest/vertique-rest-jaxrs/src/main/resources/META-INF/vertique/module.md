@@ -381,9 +381,12 @@ The status range is strict. A 5xx is never recorded, because `ctx.fail(Throwable
 indistinguishable from a deliberate `ctx.fail(500, cause)`; a status below 400 is not a client-error
 decision.
 
-When no application-contributed `ExceptionMapper` matched, that recorded status replaces the mapped
-one — preserving, for example, a 401 or 403 raised by Vert.x auth middleware, or the 400 Vert.x
-determined for a malformed request body. Precedence, highest first:
+When no application-contributed `ExceptionMapper` registered for a type **more specific than
+`Throwable`** matched, that recorded status replaces the mapped one — preserving, for example, a 401
+or 403 raised by Vert.x auth middleware, or the 400 Vert.x determined for a malformed request body.
+An application `ExceptionMapper<Throwable>` is a catch-all, not a specific mapper: it still produces
+the response, but the recorded status overrides it exactly as it overrides the framework's own
+catch-all. Register the mapper for the cause's own type when it must win. Precedence, highest first:
 
 ```
 application-contributed ExceptionMapper for a type more specific than Throwable
@@ -393,9 +396,9 @@ application-contributed ExceptionMapper for a type more specific than Throwable
 ```
 
 **What the override does to the body.** When the Vert.x status *replaces* the mapped one, the
-`ProblemDetail` is rebuilt from the new status: `title` is recomputed, `detail` is dropped, and so are
-typed subclass fields such as `ValidationProblemDetail.errors[]` and any RFC 9457 extension members —
-only `instance` carries over. Everything the superseded body held was written for a status that no
+`ProblemDetail` is rebuilt from the new status: `title` is recomputed, `type` is reset to
+`about:blank`, `detail` is dropped, and so are typed subclass fields such as
+`ValidationProblemDetail.errors[]` and any RFC 9457 extension members — only `instance` carries over. Everything the superseded body held was written for a status that no
 longer applies, and on the `ctx.fail(4xx, cause)` path the detail is an arbitrary application
 exception's message that must not reach the client. A mapped response carrying a **non-`ProblemDetail`
 entity** is left exactly as the mapper authored it, body and `Content-Type` included, so only the

@@ -81,8 +81,13 @@ import org.junit.jupiter.api.extension.ExtendWith;
  *
  * <h3>What is asserted</h3>
  * A claims rejection is an authentication outcome, so the client must observe {@code 401} with a
- * coherent RFC 9457 body, and the validator's own message — which may name a tenant, a subject, or
- * an internal policy — must not be published. A validator throwing
+ * coherent RFC 9457 body. For <em>this</em> rejection shape the validator's own message — which may
+ * name a tenant, a subject, or an internal policy — is also absent from that body, because the
+ * framework's {@code 401} overrides the {@code 400} the default mapping gives
+ * {@link IllegalArgumentException} and a body rebuilt for the overriding status carries no detail.
+ * That is the scope of the guarantee proven here, not a blanket promise that a validator message is
+ * never published: a validator whose exception already maps to {@code 401} has its status preserved
+ * rather than overridden, so the detail its mapper authored survives. A validator throwing
  * {@link IllegalArgumentException} is not an exotic choice: it is the ordinary way an application
  * signals "this claim value is not acceptable", and it is the shape whose framework default mapping
  * decides whether the message reaches the client.
@@ -96,7 +101,9 @@ public class JwtClaimsRejectionStatusIT {
 
     /**
      * The message the claims validator throws. It stands in for whatever a tenant-binding, token
-     * revocation, or custom-claim check happens to say — it must never reach the client.
+     * revocation, or custom-claim check happens to say — and because the exception carrying it maps
+     * to {@code 400}, which the framework's {@code 401} then overrides, it does not reach the client
+     * on this path.
      */
     private static final String REJECTION_MESSAGE = "tenant 4711 is not permitted";
 
