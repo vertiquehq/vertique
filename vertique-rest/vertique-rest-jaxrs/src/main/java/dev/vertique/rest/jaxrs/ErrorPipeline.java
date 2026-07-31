@@ -155,16 +155,27 @@ public class ErrorPipeline {
     }
 
     /**
-     * Applies the Vert.x status code fallback when the error pipeline produced a 500 response
-     * (indicating the {@link Throwable} catch-all handled it) but a Vert.x-intended status code
-     * is stored in context data. This preserves HTTP semantics (e.g. 401, 403) for unwrapped
-     * {@code HttpException} causes that had no specific {@link jakarta.ws.rs.ext.ExceptionMapper} match.
+     * Applies the Vert.x status code fallback: when the routing context carries an authoritative
+     * Vert.x failure status that differs from the status the exception mapper produced, the Vert.x
+     * status wins. It overrides any framework-default mapping — not only the {@link Throwable}
+     * catch-all's 500 — because the status Vert.x set is a deliberate decision about this request,
+     * whereas a framework default is a decision about the exception's type alone. This preserves HTTP
+     * semantics (e.g. 401, 403) for unwrapped {@code HttpException} causes and for a 4xx the Vert.x
+     * layer set alongside an arbitrary cause.
      *
      * <p>The fallback does not activate when:
      * <ul>
-     *   <li>No {@link RequestInterceptor#VERTX_STATUS_CODE_KEY} is present (not a Vert.x HttpException)</li>
+     *   <li>No {@link VertxFailureStatus#KEY} is present (the Vert.x layer decided no status)</li>
      *   <li>The response already has the correct status (matches the stored code)</li>
      * </ul>
+     *
+     * <p>When it does override, the {@link ProblemDetail} body is re-derived rather than patched: the
+     * title is recomputed from the overriding status and the detail is dropped. A detail was written
+     * for the status being superseded — and on the {@code ctx.fail(4xx, cause)} path it is an arbitrary
+     * application exception's message — so carrying it into the new status would both contradict the
+     * title and publish a message the framework never intended for the client. A body the mapper
+     * authored <em>for the status that survives</em> is untouched, which is what the equal-status early
+     * return above protects.
      *
      * <p>This method is only called when no specific (user-contributed) {@code ExceptionMapper}
      * matched the unwrapped cause — the caller checks
@@ -172,20 +183,25 @@ public class ErrorPipeline {
      *
      * @param ctx      the routing context containing the Vert.x status code (if any)
      * @param response the response produced by the exception mapper
-     * @return the response with the status overridden, or the original response unchanged
+     * @return the response with the status overridden and its problem body re-derived, or the original
+     *         response unchanged
      */
     private static Response applyVertxStatusCodeFallback(RoutingContext ctx, Response response) {
-        Object storedCode = ctx.data().get(RequestInterceptor.VERTX_STATUS_CODE_KEY);
+        Object storedCode = ctx.data().get(VertxFailureStatus.KEY);
         if (!(storedCode instanceof Integer vertxStatus)) {
             return response;
         }
         if (response.getStatus() == vertxStatus) {
             return response;
         }
-        // Override: the catch-all produced 500 but Vert.x intended a different status
+        // Override: the mapper's status is superseded by the status Vert.x decided.
         Object entity = response.getEntity();
         if (entity instanceof ProblemDetail pd) {
-            entity = pd.toBuilder().status(vertxStatus).build();
+            entity = pd.toBuilder()
+                    .status(vertxStatus)
+                    .title(ProblemDetail.titleForStatus(vertxStatus))
+                    .detail(null)
+                    .build();
         }
         Response.ResponseBuilder rb = Response.status(vertxStatus).entity(entity);
         return rebuildWithHeaders(response, rb);

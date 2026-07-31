@@ -75,21 +75,6 @@ public interface RequestInterceptor extends OrderedExtension {
      */
     String ORIGINAL_ERROR_KEY = "dev.vertique.rest.originalError";
 
-    /**
-     * Well-known key under which the HTTP status code from a Vert.x {@code HttpException} is
-     * stored in {@link RoutingContext#data()} during failure handler processing.
-     *
-     * <p>When the failure handler receives a Vert.x {@code HttpException} and unwraps its cause
-     * to preserve the original exception type for {@code ExceptionMapper} lookup, the intended
-     * HTTP status code is stored under this key. The error pipeline uses it as a fallback when
-     * no specific {@code ExceptionMapper} matches the unwrapped cause.
-     *
-     * <pre>{@code
-     * Integer vertxStatus = (Integer) rc.data().get(RequestInterceptor.VERTX_STATUS_CODE_KEY);
-     * }</pre>
-     */
-    String VERTX_STATUS_CODE_KEY = "dev.vertique.rest.vertxStatusCode";
-
     // --- Sync observers ---
 
     /**

@@ -16,7 +16,6 @@ import dev.vertique.rest.core.config.HttpConfig;
 import dev.vertique.rest.core.config.JaxRsConfig;
 import dev.vertique.rest.core.context.RestContextResolution;
 import dev.vertique.rest.core.interceptor.ErrorInterceptor;
-import dev.vertique.rest.core.interceptor.RequestInterceptor;
 import dev.vertique.rest.core.middleware.Middleware;
 import dev.vertique.rest.core.middleware.MiddlewareScope;
 import dev.vertique.rest.jaxrs.validation.NoneValidationStrategy;
@@ -66,10 +65,9 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * regression that turns a mapped 4xx into a 500. What these tests observe must be the status the
  * shipped configuration produces.
  *
- * <p>Two tests also assert the routing-context hint under
- * {@link RequestInterceptor#VERTX_STATUS_CODE_KEY}, observed through an {@link ErrorInterceptor}
- * before mapping. Asserting the status alone would prove only that <em>some</em> branch answered;
- * asserting the hint proves <em>which</em> branch produced it.
+ * <p>Two tests also assert the routing-context hint under {@link VertxFailureStatus#KEY}, observed
+ * through an {@link ErrorInterceptor} before mapping. Asserting the status alone would prove only that
+ * <em>some</em> branch answered; asserting the hint proves <em>which</em> branch produced it.
  */
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
@@ -346,7 +344,7 @@ public class VertxFailureStatusPreservationIT {
         public Future<Throwable> beforeMapping(RoutingContext rc, Throwable throwable) {
             String mode = rc.request().getHeader(FAIL_MODE_HEADER);
             if (mode != null) {
-                OBSERVED_HINTS.put(mode, Optional.ofNullable(rc.data().get(RequestInterceptor.VERTX_STATUS_CODE_KEY)));
+                OBSERVED_HINTS.put(mode, Optional.ofNullable(rc.data().get(VertxFailureStatus.KEY)));
             }
             return Future.succeededFuture(throwable);
         }

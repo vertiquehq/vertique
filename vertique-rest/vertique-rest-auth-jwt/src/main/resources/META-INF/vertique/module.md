@@ -445,6 +445,12 @@ Registered as a per-operation handler by `JwtClaimsValidatorContributor` at cont
 **50** — after authentication, before authorization (100). Throwing any exception emits a
 `JWT_CLAIMS_INVALID` rejection and fails the request with 401; returning normally lets it through.
 
+The 401 body carries **no `detail`** — the validator's exception message is deliberately not published,
+since it commonly names tenants, revocation state, or other internals. An application that needs a
+specific detail on a rejection registers its own `ExceptionMapper` for the exception type the validator
+throws; an application-contributed mapper outranks the framework's rejection status and owns the whole
+response body.
+
 **Invariants and gotchas:**
 
 - **Only one binding is supported.** Compose several checks inside one implementation; a second

@@ -7,7 +7,6 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
 import dev.vertique.rest.core.ProblemDetail;
-import dev.vertique.rest.core.interceptor.RequestInterceptor;
 import io.vertx.core.Future;
 import io.vertx.core.http.HttpServerRequest;
 import io.vertx.ext.web.RoutingContext;
@@ -59,9 +58,9 @@ class ErrorPipelineTest {
     class VertxStatusCodeFallback {
 
         @Test
-        @DisplayName("Fallback activates: 500 response + VERTX_STATUS_CODE_KEY=401 produces 401")
+        @DisplayName("Fallback activates: 500 response + Vert.x failure status 401 produces 401")
         void fallbackActivatesFor401() {
-            ctxData.put(RequestInterceptor.VERTX_STATUS_CODE_KEY, 401);
+            ctxData.put(VertxFailureStatus.KEY, 401);
 
             Future<Response> future = pipeline.mapToResponse(ctx, new RuntimeException("auth failed"));
             assertTrue(future.succeeded());
@@ -73,9 +72,9 @@ class ErrorPipelineTest {
         }
 
         @Test
-        @DisplayName("Fallback activates: 500 response + VERTX_STATUS_CODE_KEY=403 produces 403")
+        @DisplayName("Fallback activates: 500 response + Vert.x failure status 403 produces 403")
         void fallbackActivatesFor403() {
-            ctxData.put(RequestInterceptor.VERTX_STATUS_CODE_KEY, 403);
+            ctxData.put(VertxFailureStatus.KEY, 403);
 
             Future<Response> future = pipeline.mapToResponse(ctx, new RuntimeException("forbidden"));
             assertTrue(future.succeeded());
@@ -85,9 +84,9 @@ class ErrorPipelineTest {
         }
 
         @Test
-        @DisplayName("Fallback does NOT activate when no VERTX_STATUS_CODE_KEY is present")
+        @DisplayName("Fallback does NOT activate when no Vert.x failure status is present")
         void noFallbackWithoutKey() {
-            // No VERTX_STATUS_CODE_KEY in ctxData
+            // No Vert.x failure status in ctxData
 
             Future<Response> future = pipeline.mapToResponse(ctx, new RuntimeException("server error"));
             assertTrue(future.succeeded());
@@ -99,7 +98,7 @@ class ErrorPipelineTest {
         @Test
         @DisplayName("Fallback does NOT activate when stored status is 500")
         void noFallbackWhenStatusIs500() {
-            ctxData.put(RequestInterceptor.VERTX_STATUS_CODE_KEY, 500);
+            ctxData.put(VertxFailureStatus.KEY, 500);
 
             Future<Response> future = pipeline.mapToResponse(ctx, new RuntimeException("server error"));
             assertTrue(future.succeeded());
@@ -125,7 +124,7 @@ class ErrorPipelineTest {
             RestExceptionMapper failureMapper = new RestExceptionMapper();
             ErrorPipeline customPipeline = new ErrorPipeline(List.of(), List.of(), failureMapper, registry);
 
-            ctxData.put(RequestInterceptor.VERTX_STATUS_CODE_KEY, 401);
+            ctxData.put(VertxFailureStatus.KEY, 401);
 
             Future<Response> future = customPipeline.mapToResponse(ctx, new IllegalArgumentException("bad"));
             assertTrue(future.succeeded());
@@ -152,7 +151,7 @@ class ErrorPipelineTest {
             RestExceptionMapper failureMapper = new RestExceptionMapper();
             ErrorPipeline customPipeline = new ErrorPipeline(List.of(), List.of(), failureMapper, registry);
 
-            ctxData.put(RequestInterceptor.VERTX_STATUS_CODE_KEY, 401);
+            ctxData.put(VertxFailureStatus.KEY, 401);
 
             Future<Response> future = customPipeline.mapToResponse(ctx, new IllegalArgumentException("bad token"));
             assertTrue(future.succeeded());
@@ -164,7 +163,7 @@ class ErrorPipelineTest {
         @Test
         @DisplayName("Fallback re-derives the title when it overrides the status (500 body + key=400 → Bad Request)")
         void fallbackRewritesTitleOnStatusOverride() {
-            ctxData.put(RequestInterceptor.VERTX_STATUS_CODE_KEY, 400);
+            ctxData.put(VertxFailureStatus.KEY, 400);
 
             Future<Response> future = pipeline.mapToResponse(ctx, new RuntimeException("boom"));
             assertTrue(future.succeeded());
@@ -180,7 +179,7 @@ class ErrorPipelineTest {
         @Test
         @DisplayName("Fallback clears the detail when it overrides the status (500 body + key=400 → no detail)")
         void fallbackClearsDetailOnStatusOverride() {
-            ctxData.put(RequestInterceptor.VERTX_STATUS_CODE_KEY, 400);
+            ctxData.put(VertxFailureStatus.KEY, 400);
 
             Future<Response> future = pipeline.mapToResponse(ctx, new RuntimeException("boom"));
             assertTrue(future.succeeded());
@@ -204,7 +203,7 @@ class ErrorPipelineTest {
             RestExceptionMapper failureMapper = new RestExceptionMapper();
             ErrorPipeline customPipeline = new ErrorPipeline(List.of(), List.of(), failureMapper, registry);
 
-            ctxData.put(RequestInterceptor.VERTX_STATUS_CODE_KEY, 401);
+            ctxData.put(VertxFailureStatus.KEY, 401);
 
             Future<Response> future = customPipeline.mapToResponse(ctx, new RuntimeException("rejected"));
             assertTrue(future.succeeded());
@@ -219,7 +218,7 @@ class ErrorPipelineTest {
         @Test
         @DisplayName("ProblemDetail instance field is populated from request path")
         void problemDetailInstanceIsPopulated() {
-            ctxData.put(RequestInterceptor.VERTX_STATUS_CODE_KEY, 401);
+            ctxData.put(VertxFailureStatus.KEY, 401);
 
             Future<Response> future = pipeline.mapToResponse(ctx, new RuntimeException("auth failed"));
             assertTrue(future.succeeded());
@@ -243,7 +242,7 @@ class ErrorPipelineTest {
             RestExceptionMapper failureMapper = new RestExceptionMapper();
             ErrorPipeline customPipeline = new ErrorPipeline(List.of(), List.of(), failureMapper, registry);
 
-            ctxData.put(RequestInterceptor.VERTX_STATUS_CODE_KEY, 403);
+            ctxData.put(VertxFailureStatus.KEY, 403);
 
             Future<Response> future = customPipeline.mapToResponse(ctx, new RuntimeException("forbidden"));
             assertTrue(future.succeeded());
