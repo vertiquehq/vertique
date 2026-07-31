@@ -81,11 +81,16 @@ import org.junit.jupiter.api.extension.ExtendWith;
 @Timeout(value = 30, unit = TimeUnit.SECONDS)
 public class MultipartPartCountLimitIT {
 
-    /** The framework's configured {@code maxFormFields} default. */
-    private static final int CONFIGURED_FORM_FIELD_LIMIT = 256;
+    /**
+     * Read from {@link HttpConfig}'s own defaults rather than restated, so these tests observe the
+     * limit the framework actually configures — which is what this class's javadoc claims — instead
+     * of a literal that would silently stop tracking it.
+     */
+    private static final HttpConfig FRAMEWORK_DEFAULTS = HttpConfig.builder().build();
 
-    /** The framework's configured {@code maxFormAttributeSize} default, in bytes. */
-    private static final int CONFIGURED_FORM_ATTRIBUTE_SIZE_LIMIT = 8192;
+    private static final int CONFIGURED_FORM_FIELD_LIMIT = FRAMEWORK_DEFAULTS.maxFormFields();
+
+    private static final int CONFIGURED_FORM_ATTRIBUTE_SIZE_LIMIT = FRAMEWORK_DEFAULTS.maxFormAttributeSize();
 
     private static final long ASYNC_TIMEOUT_SECONDS = 10;
 
@@ -149,16 +154,17 @@ public class MultipartPartCountLimitIT {
     }
 
     @Test
-    @DisplayName("Text and file parts share one counter — 57 files + 200 fields crosses the same limit")
+    @DisplayName("Text and file parts share one counter — one file part past the limit, mixed, is rejected")
     void mixedTextAndFilePartsUnderByteCapObservedLimit() throws Exception {
         startServer("mixedTextAndFileParts");
 
-        HttpResult result = postMultipart(MultipartBodies.parts(57, 200));
+        HttpResult result = postMultipart(MultipartBodies.parts(CONFIGURED_FORM_FIELD_LIMIT + 1 - 200, 200));
 
         assertEquals(
                 400,
                 result.statusCode(),
-                "a shared counter must reject 257 mixed parts; observed failure: " + failureCapture.describe());
+                "a shared counter must reject one mixed part past the limit; observed failure: "
+                        + failureCapture.describe());
         assertNull(capture.observation(), "the decoder must reject before any framework handler runs");
     }
 
@@ -193,20 +199,25 @@ public class MultipartPartCountLimitIT {
     }
 
     @Test
-    @DisplayName("Exactly the configured number of mixed parts is accepted — 56 files + 200 fields = 256")
+    @DisplayName("Exactly the configured number of mixed parts is accepted")
     void mixedTextAndFilePartsAtLimitAccepted() throws Exception {
         startServer("mixedTextAndFilePartsAtLimit");
 
-        // The matched pair to mixedTextAndFilePartsUnderByteCapObservedLimit's 57 + 200 = 257
+        // The matched pair to mixedTextAndFilePartsUnderByteCapObservedLimit's one-past-the-limit
         // rejection. A rejection above the line alone is consistent with several per-kind counting
-        // schemes; acceptance at exactly 256 mixed parts is what pins the counter as shared.
-        HttpResult result = postMultipart(MultipartBodies.parts(56, 200));
+        // schemes; acceptance at exactly the limit is what pins the counter as shared.
+        HttpResult result = postMultipart(MultipartBodies.parts(CONFIGURED_FORM_FIELD_LIMIT - 200, 200));
 
-        assertEquals(200, result.statusCode(), "256 mixed parts sit exactly on the shared limit and must be accepted");
-        assertEquals("files=56", result.body().toString());
+        int filePartsAtLimit = CONFIGURED_FORM_FIELD_LIMIT - 200;
+        assertEquals(
+                200,
+                result.statusCode(),
+                "mixed parts sitting exactly on the shared limit must be accepted; observed failure: "
+                        + failureCapture.describe());
+        assertEquals("files=" + filePartsAtLimit, result.body().toString());
         Observation observed = capture.observation();
         assertNotNull(observed, "an accepted body must reach the router pipeline");
-        assertEquals(56, observed.fileUploads(), "every file part must be bound");
+        assertEquals(filePartsAtLimit, observed.fileUploads(), "every file part must be bound");
     }
 
     @Test

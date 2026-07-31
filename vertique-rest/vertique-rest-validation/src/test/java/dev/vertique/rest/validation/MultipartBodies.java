@@ -54,9 +54,7 @@ final class MultipartBodies {
             String fieldValue) {
         Buffer body = Buffer.buffer();
         appendFile(body, partName, fileName, declaredType, content);
-        appendAscii(body, "--" + BOUNDARY + "\r\n");
-        appendAscii(body, "Content-Disposition: form-data; name=\"" + fieldName + "\"\r\n\r\n");
-        appendAscii(body, fieldValue + "\r\n");
+        appendTextField(body, fieldName, fieldValue);
         appendAscii(body, "--" + BOUNDARY + "--\r\n");
         return body;
     }
@@ -83,9 +81,7 @@ final class MultipartBodies {
                     ("payload-" + i).getBytes(StandardCharsets.US_ASCII));
         }
         for (int i = 0; i < textFields; i++) {
-            appendAscii(body, "--" + BOUNDARY + "\r\n");
-            appendAscii(body, "Content-Disposition: form-data; name=\"field" + i + "\"\r\n\r\n");
-            appendAscii(body, "value-" + i + "\r\n");
+            appendTextField(body, "field" + i, "value-" + i);
         }
         appendAscii(body, "--" + BOUNDARY + "--\r\n");
         return body;
@@ -105,11 +101,23 @@ final class MultipartBodies {
      */
     static Buffer singleTextField(String fieldName, int valueLength) {
         Buffer body = Buffer.buffer();
-        appendAscii(body, "--" + BOUNDARY + "\r\n");
-        appendAscii(body, "Content-Disposition: form-data; name=\"" + fieldName + "\"\r\n\r\n");
-        appendAscii(body, "x".repeat(valueLength) + "\r\n");
+        appendTextField(body, fieldName, "x".repeat(valueLength));
         appendAscii(body, "--" + BOUNDARY + "--\r\n");
         return body;
+    }
+
+    /**
+     * Appends one text form part. Counterpart to {@link #appendFile}, so the CRLF and quoting
+     * framing of a text part is written in one place rather than at each call site.
+     *
+     * @param body the body under construction
+     * @param name text form-field name
+     * @param value text form-field value
+     */
+    private static void appendTextField(Buffer body, String name, String value) {
+        appendAscii(body, "--" + BOUNDARY + "\r\n");
+        appendAscii(body, "Content-Disposition: form-data; name=\"" + name + "\"\r\n\r\n");
+        appendAscii(body, value + "\r\n");
     }
 
     private static void appendFile(Buffer body, String partName, String fileName, String declaredType, byte[] content) {

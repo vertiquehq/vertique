@@ -46,6 +46,7 @@ deleted, so only one plan is live.
 | 2026-07-31 | Execution-start drift check (S1) — `origin/main` advanced past the plan's base when vertiquehq/vertique#16 merged | Fact correction, no contract change: `vertique-rest-core` `module.md` key references shift `703→705` and `734→736`. All other cited line numbers re-verified unchanged (`RequestInterceptor.java:88,:91`; rest-jaxrs `module.md:370`; `JaxRsRouterMount.java:437-448`, `:384-385`; `ErrorPipeline.java:177-192`) |
 | 2026-07-31 | S2 as-built (test run) | Fact corrections, no contract change: **F22** added — the decoder branch unwraps `t.getCause()`, so an oversized form field reaches the mapper as a bare `java.io.IOException`, not a `DecoderException`. S2's "via `TooLongFormFieldException`" and §4's table label corrected. Strengthens, not weakens, the status-driven design. S3 note: assert the hint in `VertxFailureStatusPreservationIT` (same package as the internal key) so a green 400 proves *which* branch produced it |
 | 2026-07-31 | S3 as-built + architect round 2 (session `019fb295-…`) | **Contract Appendix change.** §4's "clear `detail` unconditionally" is corrected to "clear when the hint **overrides** the status"; the equal-status early return stays. Falsifier: the two `ctx.fail(415, new NotSupportedException(...))` producers author their own message, so hint presence is not a foreignness discriminator. Also fact-corrected: the disclosure is **pre-existing** (measured 400 + `detail`, not 500), so S4 closes an existing leak. Residual equal-status semantic-exception case routed to §9. Two 415 proof obligations added to S4 |
+| 2026-07-31 | Simplify stage — independent verification | Fact correction of superseded prose, no contract change: deleted the "title-derivation baseline" sentences. They survived from the discarded *rewrite-derived / preserve-authored* policy, which needed to test whether a title was derived; the final contract derives `title` and `detail` from the hint alone, so no baseline exists. Verified the two candidates cannot disagree on any reachable path — `applyVertxStatusCodeFallback` runs only for framework defaults, and every one builds `Response.status(N).entity(ProblemDetail.of(N, …))`. Where they *could* differ, the code is the more correct of the two: comparing against `response.getStatus()` is what actually reaches the wire |
 | 2026-07-31 | Governance-landing review | S6 becomes a **governance PR** advancing the `sources/vertique` gitlink, not a docs-only fast-forward; amendment log dated |
 
 Every review finding against the predecessor, and where it is resolved:
@@ -271,9 +272,6 @@ policy**, applied. Reversing that policy for one subset of paths, silently, insi
 reconciliation function, would be the architectural error — not the fix. It is routed as a deferral
 in §9 instead.
 
-**Title-derivation baseline, so the executor need not choose:** the entity's own
-`ProblemDetail.status()` when non-null, else `response.getStatus()`.
-
 **Behavioral contract — the status precedence chain** (ADR-0205 records it):
 
 ```
@@ -404,9 +402,7 @@ Four things, one commit:
    155, 167, 191`) plus the three new S3 cases; delete `RequestInterceptor.VERTX_STATUS_CODE_KEY`.
 3. **Sanitized body** — in `applyVertxStatusCodeFallback`, inside the existing `instanceof
    ProblemDetail` branch (the non-`ProblemDetail` path is pinned at `ErrorPipelineTest.java:176-200`):
-   set the status to the hint, re-derive `title` from it, clear `detail` unconditionally. Baseline for
-   the original status is the entity's `ProblemDetail.status()` when non-null, else
-   `response.getStatus()`.
+   set the status to the hint, re-derive `title` from it, clear `detail` unconditionally.
 4. **Docs in the same commit** — F17's wrong 413 claim (`JaxRsRouterMount.java:384-385`); the
    `ErrorPipeline.java:158-168` drift ("produced a 500" is narrower than the tested behavior);
    `vertique-rest-jaxrs` `module.md:370-374` (both the `HttpException`-only scoping *and* what the
