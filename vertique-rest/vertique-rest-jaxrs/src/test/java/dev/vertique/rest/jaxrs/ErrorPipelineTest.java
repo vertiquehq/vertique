@@ -7,6 +7,8 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
 import dev.vertique.rest.core.ProblemDetail;
+import dev.vertique.rest.core.ValidationErrorDetail;
+import dev.vertique.rest.core.ValidationProblemDetail;
 import io.vertx.core.Future;
 import io.vertx.core.http.HttpServerRequest;
 import io.vertx.ext.web.RoutingContext;
@@ -213,6 +215,41 @@ class ErrorPipelineTest {
             ProblemDetail pd = assertInstanceOf(ProblemDetail.class, response.getEntity());
             assertNull(pd.detail(), "an authored detail must be cleared, not carried into the overridden status");
             assertEquals("Unauthorized", pd.title(), "the title must be re-derived from the overriding status");
+        }
+
+        @Test
+        @DisplayName("Fallback drops subclass fields on status override (ValidationProblemDetail errors[])")
+        void fallbackDropsSubclassFieldsOnStatusOverride() {
+            // A claims validator running bean validation produces a ValidationProblemDetail at 400 whose
+            // errors[] name claim paths and messages. The Vert.x 401 supersedes that status — the errors[]
+            // describe the superseded 400 and must not survive alongside the cleared detail.
+            DefaultExceptionMapper defaults = new DefaultExceptionMapper().on(Throwable.class, ex -> Response.status(
+                            400)
+                    .entity(ValidationProblemDetail.of(
+                            "Request validation failed",
+                            List.of(ValidationErrorDetail.of("/claims/tenant_id", "tenant 4711 is not permitted"))))
+                    .type("application/problem+json")
+                    .build());
+            ExceptionMapperRegistry registry = new ExceptionMapperRegistry(defaults, Set.of());
+            RestExceptionMapper failureMapper = new RestExceptionMapper();
+            ErrorPipeline customPipeline = new ErrorPipeline(List.of(), List.of(), failureMapper, registry);
+
+            ctxData.put(VertxFailureStatus.KEY, 401);
+
+            Future<Response> future = customPipeline.mapToResponse(ctx, new RuntimeException("rejected"));
+            assertTrue(future.succeeded());
+
+            Response response = future.result();
+            assertEquals(401, response.getStatus());
+            ProblemDetail pd = assertInstanceOf(ProblemDetail.class, response.getEntity());
+            assertEquals(401, pd.status());
+            assertEquals("Unauthorized", pd.title(), "the title must be re-derived from the overriding status");
+            assertNull(pd.detail(), "a detail written for the superseded status must not survive the override");
+            assertEquals(
+                    ProblemDetail.class,
+                    pd.getClass(),
+                    "the override must publish a plain ProblemDetail — subclass fields such as "
+                            + "ValidationProblemDetail.errors[] describe the superseded status");
         }
 
         @Test

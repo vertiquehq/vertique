@@ -169,13 +169,16 @@ public class ErrorPipeline {
      *   <li>The response already has the correct status (matches the stored code)</li>
      * </ul>
      *
-     * <p>When it does override, the {@link ProblemDetail} body is re-derived rather than patched: the
-     * title is recomputed from the overriding status and the detail is dropped. A detail was written
+     * <p>When it does override, the {@link ProblemDetail} body is rebuilt from the overriding status
+     * rather than patched: the title is recomputed and the detail is dropped. A detail was written
      * for the status being superseded — and on the {@code ctx.fail(4xx, cause)} path it is an arbitrary
      * application exception's message — so carrying it into the new status would both contradict the
-     * title and publish a message the framework never intended for the client. A body the mapper
-     * authored <em>for the status that survives</em> is untouched, which is what the equal-status early
-     * return above protects.
+     * title and publish a message the framework never intended for the client. The same reasoning
+     * applies to everything else the superseded body carried: typed subclass fields (such as
+     * {@link dev.vertique.rest.core.ValidationProblemDetail#errors()}) and RFC 9457 extension members
+     * are dropped with it, so only {@code instance} — request-scoped and status-independent — survives.
+     * A body the mapper authored <em>for the status that survives</em> is untouched, which is what the
+     * equal-status early return above protects.
      *
      * <p>This method is only called when no specific (user-contributed) {@code ExceptionMapper}
      * matched the unwrapped cause — the caller checks
@@ -183,7 +186,7 @@ public class ErrorPipeline {
      *
      * @param ctx      the routing context containing the Vert.x status code (if any)
      * @param response the response produced by the exception mapper
-     * @return the response with the status overridden and its problem body re-derived, or the original
+     * @return the response with the status overridden and its problem body rebuilt, or the original
      *         response unchanged
      */
     private static Response applyVertxStatusCodeFallback(RoutingContext ctx, Response response) {
@@ -197,11 +200,12 @@ public class ErrorPipeline {
         // Override: the mapper's status is superseded by the status Vert.x decided.
         Object entity = response.getEntity();
         if (entity instanceof ProblemDetail pd) {
-            entity = pd.toBuilder()
-                    .status(vertxStatus)
-                    .title(ProblemDetail.titleForStatus(vertxStatus))
-                    .detail(null)
-                    .build();
+            // Build a fresh body rather than deriving one from the superseded problem: pd may be a
+            // ProblemDetail subclass (e.g. ValidationProblemDetail) or carry RFC 9457 extension
+            // members, and toBuilder() would copy those fields — which describe the status being
+            // superseded — straight into the overriding status, defeating the cleared detail. Only
+            // instance carries over; it is request-scoped and status-independent.
+            entity = ProblemDetail.of(vertxStatus, null, pd.instance());
         }
         Response.ResponseBuilder rb = Response.status(vertxStatus).entity(entity);
         return rebuildWithHeaders(response, rb);
