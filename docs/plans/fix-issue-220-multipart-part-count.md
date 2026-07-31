@@ -45,6 +45,7 @@ deleted, so only one plan is live.
 | 2026-07-31 | Security review | **Reversed the body policy** — `detail` is now cleared unconditionally rather than "preserved when authored", which would have published arbitrary JWT-validator exception messages; **internalized** the hint key instead of broadening it; **merged** the status and sanitization slices (the split emitted the corrected status *carrying* the leaked message); added direct mount-based JWT proof |
 | 2026-07-31 | Execution-start drift check (S1) — `origin/main` advanced past the plan's base when vertiquehq/vertique#16 merged | Fact correction, no contract change: `vertique-rest-core` `module.md` key references shift `703→705` and `734→736`. All other cited line numbers re-verified unchanged (`RequestInterceptor.java:88,:91`; rest-jaxrs `module.md:370`; `JaxRsRouterMount.java:437-448`, `:384-385`; `ErrorPipeline.java:177-192`) |
 | 2026-07-31 | S2 as-built (test run) | Fact corrections, no contract change: **F22** added — the decoder branch unwraps `t.getCause()`, so an oversized form field reaches the mapper as a bare `java.io.IOException`, not a `DecoderException`. S2's "via `TooLongFormFieldException`" and §4's table label corrected. Strengthens, not weakens, the status-driven design. S3 note: assert the hint in `VertxFailureStatusPreservationIT` (same package as the internal key) so a green 400 proves *which* branch produced it |
+| 2026-07-31 | S3 as-built + architect round 2 (session `019fb295-…`) | **Contract Appendix change.** §4's "clear `detail` unconditionally" is corrected to "clear when the hint **overrides** the status"; the equal-status early return stays. Falsifier: the two `ctx.fail(415, new NotSupportedException(...))` producers author their own message, so hint presence is not a foreignness discriminator. Also fact-corrected: the disclosure is **pre-existing** (measured 400 + `detail`, not 500), so S4 closes an existing leak. Residual equal-status semantic-exception case routed to §9. Two 415 proof obligations added to S4 |
 | 2026-07-31 | Governance-landing review | S6 becomes a **governance PR** advancing the `sources/vertique` gitlink, not a docs-only fast-forward; amendment log dated |
 
 Every review finding against the predecessor, and where it is resolved:
@@ -191,13 +192,13 @@ artifact in my own test, disproved by per-test isolation plus an external filesy
   better than both: the key has no consumer at all (F19) and the project is unreleased, so it is
   **deleted from the public SPI** and moves wholly into rest-jaxrs as package-private
   `VertxFailureStatus.KEY` (§4). One key, zero public surface, no javadoc to broaden.
-- *Body policy.* I froze **rewrite-derived / preserve-authored**. That was wrong on security grounds,
-  not style: `JwtClaimsValidatorContributor` feeds arbitrary application exceptions into
-  `ctx.fail(401, e)` and `RestModule.java:272` maps `IllegalArgumentException` with `ex.getMessage()`,
-  so "preserving an authored detail" would have published whatever a tenant-binding or revocation check
-  threw — a disclosure this change itself would have introduced. §4 now clears `detail`
-  **unconditionally**, matching `OpenApiContractValidationStrategy`'s existing `SANITIZED_MESSAGE`
-  precedent.
+- *Body policy.* I froze **rewrite-derived / preserve-authored**; the security review replaced it with
+  "clear unconditionally"; measurement then refuted the premise **both** rested on. `ctx.fail(401, e)`
+  does not render 500 — `handleFailure` discards the 401, so the cause's own mapping decides, and
+  `RestModule.java:272` publishes `IllegalArgumentException.getMessage()` at 400 **today**. The leak is
+  therefore pre-existing, and this change *closes* its status-change subset rather than avoiding
+  introducing it. Final position (architect round 2, session `019fb295-…`): clear `detail` **when the
+  hint overrides the status**, not on hint presence — see §4.
 - *Slice boundary.* I had split "preserve the 4xx" from "sanitize the body" into two slices. That is
   unbuildable and unsafe: the intermediate commit would emit `{"title":"Bad Request","status":401,
   "detail":"bad token"}` — the corrected status carrying the leaked message — and it would delete a
@@ -243,24 +244,32 @@ final class VertxFailureStatus {
 }
 ```
 
-**Sanitized-body contract (frozen).** When the Vert.x hint changes the mapped status:
+**Sanitized-body contract (frozen).** The fallback fires **only when the hint overrides the mapped
+status**. In that case:
 
 ```
 status  := hint
-title   := ProblemDetail.titleForStatus(hint)      // always re-derived
-detail  := omitted                                 // always cleared, never carried over
+title   := ProblemDetail.titleForStatus(hint)      // re-derived
+detail  := omitted                                 // never carried into the overriding status
 ```
 
-`detail` is cleared **unconditionally** — not "when it looks derived". This is a security rule, not a
-tidiness one, and it reverses my earlier "preserve authored detail" design:
-`JwtClaimsValidatorContributor.java:111` passes *arbitrary application exceptions* into
-`ctx.fail(401, e)`, and `RestModule.java:272` maps `IllegalArgumentException` with `ex.getMessage()`.
-Preserving an authored detail would therefore publish whatever a tenant-binding, revocation, or custom
-claims check happened to throw — an information-disclosure regression introduced by this very change.
-It mirrors `OpenApiContractValidationStrategy`'s existing `SANITIZED_MESSAGE` rule (`:337, :331-353`),
-which discards the third-party message and keeps the cause for logs only.
-An application that *wants* a specific detail registers its own `ExceptionMapper`, which outranks the
-hint and never reaches this fallback.
+When the hint **agrees** with the mapped status, the representation stands untouched — the existing
+`response.getStatus() == vertxStatus` early return (`ErrorPipeline.java:182`) is deliberate and stays.
+
+**Why not "clear whenever a hint exists"** (an earlier draft said "unconditionally", which over-claimed
+and disagreed with the code): hint presence does **not** mean the message is foreign.
+`JaxRsRouteRegistrar.java:796` and `ContentTypeValidationMiddleware.java:63` both do
+`ctx.fail(415, new NotSupportedException(...))` — there the framework authored the status *and* the
+message, and `JaxRsRouteRegistrar.java:789` carries a comment declaring it expects that canonical
+detail to reach the client. Clearing on hint presence would silently delete a diagnostic the producer
+deliberately wrote.
+
+Nor is the equal-status case a hole this change opens: `DefaultExceptionMapper` already publishes
+`ex.getMessage()` for eight named semantic types (`RestModule.java:260-295`), so a
+`UnauthorizedException("…")` reaching the client with its message **is the framework's existing global
+policy**, applied. Reversing that policy for one subset of paths, silently, inside a status-
+reconciliation function, would be the architectural error — not the fix. It is routed as a deferral
+in §9 instead.
 
 **Title-derivation baseline, so the executor need not choose:** the entity's own
 `ProblemDetail.status()` when non-null, else `response.getStatus()`.
@@ -280,7 +289,7 @@ application-contributed ExceptionMapper registered for a type more specific than
 |---|---|---|
 | multipart parts > `maxFormFields` | 500 | **400** |
 | malformed multipart / oversized single form field (reaches the mapper *unwrapped* — see F22) | 500 | **400** |
-| `ctx.fail(401, e)` from `JwtClaimsValidatorContributor` (F15) | 500 | **401** |
+| `ctx.fail(401, e)` from `JwtClaimsValidatorContributor` (F15) | the **cause's** mapped status, publishing the cause's message — measured 400 + `detail` for `IllegalArgumentException`; 500 only for catch-all causes | **401**, `detail` omitted |
 | any `ctx.fail(4xx, cause)`, cause not `HttpException` | mapper's status | **the 4xx** |
 | `ctx.fail(Throwable)` / `ctx.fail(500, cause)` | mapper's status | **unchanged** |
 | existing `HttpException` 401/403 | status right, body incoherent (`title`/`detail` say "Internal Server Error") | status right, **`title` coherent and `detail` omitted** |
@@ -404,6 +413,13 @@ Four things, one commit:
    fallback replaces); `vertique-rest-core` `module.md:705, :736` (the constant is **removed** from the
    public artifact contract, not merely re-described); and one sentence in `vertique-rest-auth-jwt`
    `module.md` stating that a claims-validator rejection returns 401 with no `detail`.
+
+**Two proof obligations added by the architect round-2 ruling** — their absence is what let the
+appendix drift from the code. Both assert the equal-status case is left alone:
+- `ConsumesEnforcementIT` (or an `ErrorPipelineTest` case): mapped 415 + hint 415 → `detail` still
+  names the actual and expected content types.
+- `ContentTypeValidationMiddleware`: mapped 415 + hint 415 → `detail` still reads
+  `"Unsupported Content-Type"`.
 
 Turns **everything** green: S2's four, all of S3's reds, and `JwtClaimsRejectionStatusIT`.
 Commit: `fix(rest-jaxrs): preserve and sanitize a Vert.x 4xx set alongside a non-HttpException cause`.
@@ -647,6 +663,7 @@ Each routes to a GitHub issue in `vertiquehq/vertique-dev` (no PRD backs this wo
 | Preserving a non-`HttpException` 5xx | Vert.x gains a way to distinguish an intentional 5xx from `fail(Throwable)`'s synthesised 500 |
 | A failure-status *provenance* model replacing the 4xx range heuristic | A second legitimate case appears where the cause's mapper must outrank an explicit Vert.x 4xx |
 | Making `hasSpecificMapper` see framework built-ins | Its own ADR — reverses a pinned, consumer-visible precedence |
+| Equal-status semantic-exception message policy — a claims validator throwing `UnauthorizedException("secret")` maps to 401, the hint is 401, so the message still reaches the client | **Pre-existing and wider than this branch**: it is `DefaultExceptionMapper`'s global policy of publishing `ex.getMessage()` for eight semantic types. Re-entry: a threat-model requirement that no validator-supplied message may reach a client, or evidence validators routinely put tokens/PII in semantic exceptions. Needs its own ADR |
 | A test for the documented 413 path (F18) | Standalone gap; cheap once a body-limit harness exists |
 | `ErrorDataDecoderException` (malformed multipart framing) coverage | Shares the tested `DecoderException` branch; file if that branch ever splits per exception type |
 | `rest-core` has 7 public exception types and no `exception` package, violating the convention's three-type threshold | Pre-existing; a mechanical but wide refactor |
