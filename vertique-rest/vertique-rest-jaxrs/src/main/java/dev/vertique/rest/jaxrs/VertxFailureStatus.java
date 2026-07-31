@@ -28,6 +28,11 @@ final class VertxFailureStatus {
      * The hint therefore cannot outlive the mapping of the failure that produced it — a reroute raised
      * later on the same context finds no stale status to be steered by. It remains readable to
      * {@code ErrorInterceptor.beforeMapping}, which runs ahead of the mapping step.
+     *
+     * <p>One gap, pre-dating this key and tracked separately: a {@code RestExceptionMapper} translator
+     * that <em>throws</em> skips the mapping step altogether, so nothing is consumed. Reaching a stale
+     * read additionally requires a reroute out of the error chain, since the ordinary path terminates
+     * the request with a bare 500.
      */
     static final String KEY = "dev.vertique.rest.jaxrs.failureStatus";
 
