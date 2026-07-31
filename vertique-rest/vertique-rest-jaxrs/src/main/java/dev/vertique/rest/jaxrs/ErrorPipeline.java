@@ -167,7 +167,13 @@ public class ErrorPipeline {
      * <ul>
      *   <li>No {@link VertxFailureStatus#KEY} is present (the Vert.x layer decided no status)</li>
      *   <li>The response already has the correct status (matches the stored code)</li>
+     *   <li>The mapper produced 403 and the stored status is 401 — a hint never downgrades an
+     *       authorization outcome into an authentication challenge</li>
      * </ul>
+     *
+     * <p>The stored status is <em>consumed</em> on read: it is removed from {@link RoutingContext#data()}
+     * so it cannot steer a later mapping (a reroute raised from within the async error chain, for
+     * instance) after the failure that produced it has been answered.
      *
      * <p>When it does override, the {@link ProblemDetail} body is rebuilt from the overriding status
      * rather than patched: the title is recomputed and the detail is dropped. A detail was written
@@ -190,11 +196,21 @@ public class ErrorPipeline {
      *         response unchanged
      */
     private static Response applyVertxStatusCodeFallback(RoutingContext ctx, Response response) {
-        Object storedCode = ctx.data().get(VertxFailureStatus.KEY);
+        // Consume rather than peek: the hint describes exactly this failure, and leaving it behind would
+        // let it steer a mapping raised later on the same context (reroute() clears failure and
+        // statusCode, but not data()).
+        Object storedCode = ctx.data().remove(VertxFailureStatus.KEY);
         if (!(storedCode instanceof Integer vertxStatus)) {
             return response;
         }
         if (response.getStatus() == vertxStatus) {
+            return response;
+        }
+        if (response.getStatus() == 403 && vertxStatus == 401) {
+            // Directional guard, deliberately narrow. 403 is an authorization decision the cause itself
+            // carried; answering 401 instead tells the client "authenticate and retry", which is false for
+            // a denial no fresh credential can lift — it invites a token-refresh loop that cannot succeed,
+            // and it hides the denial from access logs and SIEM rules that count 403s to spot probing.
             return response;
         }
         // Override: the mapper's status is superseded by the status Vert.x decided.

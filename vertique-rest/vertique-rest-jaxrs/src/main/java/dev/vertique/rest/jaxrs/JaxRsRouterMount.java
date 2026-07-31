@@ -385,7 +385,9 @@ public class JaxRsRouterMount implements RouterMount {
      * {@link BodyHandler} arrives in, since it fails the context with a status and no throwable. A Vert.x
      * {@code HttpException} is unwrapped so custom {@code ExceptionMapper<T>} implementations see the
      * original cause; its status code is stored in {@link RoutingContext#data()} for fallback use when no
-     * specific {@code ExceptionMapper} matches.
+     * specific {@code ExceptionMapper} matches — but only when it is an error status (4xx or 5xx), since
+     * {@code HttpException} accepts any {@code int} and a sub-400 status would otherwise dictate both the
+     * response status and the problem body derived from it.
      * Request-validation failures from the web-validation gate are raised directly as
      * {@code RestValidationException} (not via {@code HttpException}), so they flow through the pipeline
      * unchanged.
@@ -448,7 +450,16 @@ public class JaxRsRouterMount implements RouterMount {
             if (statusCode < 400) statusCode = 500;
             cause = new jakarta.ws.rs.WebApplicationException(statusCode);
         } else if (cause instanceof io.vertx.ext.web.handler.HttpException he) {
-            ctx.data().put(VertxFailureStatus.KEY, he.getStatusCode());
+            // HttpException accepts any int, so a middleware or SecuritySchemeHandler can fail the context
+            // with a non-error status. Carry it as the authoritative failure status only when it actually
+            // denotes an error — the fallback re-derives the whole problem body from this status, so a
+            // stashed 200 would answer a failure with "200 OK" plus a problem document. Unlike the
+            // fail(4xx, cause) branch below, 5xx is legitimate here: HttpException(503, …) is a deliberate
+            // status, not a fail(Throwable) synthesis.
+            int status = he.getStatusCode();
+            if (status >= 400 && status < 600) {
+                ctx.data().put(VertxFailureStatus.KEY, status);
+            }
             if (he.getCause() != null) {
                 cause = he.getCause();
             } else {

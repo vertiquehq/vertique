@@ -253,6 +253,31 @@ class ErrorPipelineTest {
         }
 
         @Test
+        @DisplayName("Hint does NOT downgrade a mapped 403 to the stored 401")
+        void hintDoesNotDowngradeForbiddenToUnauthorized() {
+            // The shape a JwtClaimsValidator produces: it throws ForbiddenException and the contributor
+            // fails the context with ctx.fail(401, e), so the hint is 401 while the framework's own
+            // semantic mapping answers 403. The authorization decision must survive — answering 401
+            // would tell the client to refresh a token that cannot lift the denial.
+            ExceptionMapperRegistry registry =
+                    new ExceptionMapperRegistry(RestModule.defaultExceptionMapper(), Set.of());
+            ErrorPipeline customPipeline = new ErrorPipeline(List.of(), List.of(), new RestExceptionMapper(), registry);
+
+            ctxData.put(VertxFailureStatus.KEY, 401);
+
+            Future<Response> future = customPipeline.mapToResponse(
+                    ctx, new dev.vertique.core.exception.ForbiddenException("tenant mismatch"));
+            assertTrue(future.succeeded());
+
+            Response response = future.result();
+            assertEquals(403, response.getStatus(), "a 401 hint must not downgrade an authorization denial");
+            ProblemDetail pd = assertInstanceOf(ProblemDetail.class, response.getEntity());
+            assertEquals(403, pd.status());
+            assertEquals("Forbidden", pd.title(), "the body must stay the one the mapper authored for 403");
+            assertEquals("tenant mismatch", pd.detail(), "the guard returns the response untouched, body intact");
+        }
+
+        @Test
         @DisplayName("ProblemDetail instance field is populated from request path")
         void problemDetailInstanceIsPopulated() {
             ctxData.put(VertxFailureStatus.KEY, 401);

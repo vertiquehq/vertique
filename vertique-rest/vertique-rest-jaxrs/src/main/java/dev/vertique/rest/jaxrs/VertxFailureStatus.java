@@ -20,9 +20,12 @@ final class VertxFailureStatus {
      * is deliberately NOT carried — {@code RoutingContext.fail(Throwable)} synthesises a 500 that
      * cannot be distinguished from a deliberate {@code fail(500, cause)}.
      *
-     * <p>Written only in the terminal router-level failure handler, so no reroute can observe it.
+     * <p>Written only in the terminal router-level failure handler and <em>consumed</em> by
+     * {@link ErrorPipeline} when it reads it (removed from {@link io.vertx.ext.web.RoutingContext#data()}),
+     * so the hint cannot outlive the failure that produced it — a reroute raised later on the same
+     * context finds no stale status to be steered by.
      */
-    static final String KEY = "dev.vertique.rest.vertxStatusCode";
+    static final String KEY = "dev.vertique.rest.jaxrs.failureStatus";
 
     private VertxFailureStatus() {}
 }
