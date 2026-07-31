@@ -138,12 +138,46 @@ class ErrorPipelineTest {
         }
 
         @Test
+        @DisplayName("The hint is consumed even when a specific user mapper wins, so it cannot steer a later mapping")
+        void hintIsConsumedWhenUserMapperWins() {
+            // Consumption is a property of the mapping step, not of the fallback: the hint describes the
+            // failure being mapped, so it must be gone whichever mapper produces the response — including
+            // here, where a specific mapper outranks it and the fallback never runs. A hint left behind
+            // would steer a mapping raised later on the same context (reroute() clears failure and
+            // statusCode, but not data()).
+            DefaultExceptionMapper defaults = new DefaultExceptionMapper()
+                    .on(Throwable.class, ex -> Response.status(500)
+                            .entity(ProblemDetail.of(500, "Internal Server Error"))
+                            .type("application/problem+json")
+                            .build());
+            ExceptionMapperRegistry registry = new ExceptionMapperRegistry(defaults, Set.of());
+            registry.register(IllegalArgumentException.class, ex -> Response.status(422)
+                    .entity(ProblemDetail.of(422, ex.getMessage()))
+                    .type("application/problem+json")
+                    .build());
+            ErrorPipeline customPipeline = new ErrorPipeline(List.of(), List.of(), new RestExceptionMapper(), registry);
+
+            ctxData.put(VertxFailureStatus.KEY, 401);
+
+            Future<Response> future = customPipeline.mapToResponse(ctx, new IllegalArgumentException("bad"));
+            assertTrue(future.succeeded());
+
+            assertEquals(422, future.result().getStatus(), "the specific mapper still outranks the hint");
+            assertFalse(
+                    ctxData.containsKey(VertxFailureStatus.KEY),
+                    "the hint must be consumed even on the branch where the fallback never runs");
+        }
+
+        @Test
         @DisplayName("Fallback DOES activate when the user mapper is an ExceptionMapper<Throwable> catch-all")
         void fallbackOverridesUserThrowableCatchAllMapper() {
             // Asymmetry with noFallbackWhenUserMapperMatches: a user mapper registered for a type more
             // specific than Throwable outranks the hint, but a user ExceptionMapper<Throwable> is a
             // catch-all — hasSpecificMapper stops before Throwable, so the hint wins and the catch-all's
             // body is replaced even though its own mapping produced it.
+            // The catch-all deliberately picks 422 here, a status the 403←401 guard does not cover, so
+            // this test proves the general override rule in isolation. Its companion
+            // guardProtectsUserThrowableCatchAllForbidden picks 403 and proves the one exception to it.
             DefaultExceptionMapper defaults = new DefaultExceptionMapper()
                     .on(Throwable.class, ex -> Response.status(500)
                             .entity(ProblemDetail.of(500, "Internal Server Error"))
@@ -169,6 +203,44 @@ class ErrorPipelineTest {
             assertEquals(401, pd.status());
             assertEquals("Unauthorized", pd.title(), "the title must be re-derived from the overriding status");
             assertNull(pd.detail(), "the catch-all's body is replaced by the override, not carried into it");
+        }
+
+        @Test
+        @DisplayName("Hint does NOT downgrade a user ExceptionMapper<Throwable> catch-all's 403 to the stored 401")
+        void guardProtectsUserThrowableCatchAllForbidden() {
+            // Companion to fallbackOverridesUserThrowableCatchAllMapper, which picks 422 and so never
+            // collides with the 403←401 guard. The guard keys on the mapped *status*, not on the
+            // exception type or on which mapper produced it — so an application catch-all that maps its
+            // own denial (a TenantMismatchException, say) to 403 keeps it, exactly as the framework's own
+            // ForbiddenException mapping does. That is the chosen semantics: "never turn a 403 into a
+            // 401" is a property of the status. This is the sole exception to the rule that a catch-all
+            // loses to the hint.
+            DefaultExceptionMapper defaults = new DefaultExceptionMapper()
+                    .on(Throwable.class, ex -> Response.status(500)
+                            .entity(ProblemDetail.of(500, "Internal Server Error"))
+                            .type("application/problem+json")
+                            .build());
+            ExceptionMapperRegistry registry = new ExceptionMapperRegistry(defaults, Set.of());
+            // User-contributed ExceptionMapper<Throwable> answering 403 for its own authorization denial.
+            registry.register(Throwable.class, ex -> Response.status(403)
+                    .entity(ProblemDetail.of(403, ex.getMessage()))
+                    .type("application/problem+json")
+                    .build());
+            ErrorPipeline customPipeline = new ErrorPipeline(List.of(), List.of(), new RestExceptionMapper(), registry);
+
+            ctxData.put(VertxFailureStatus.KEY, 401);
+
+            Future<Response> future = customPipeline.mapToResponse(ctx, new IllegalStateException("tenant mismatch"));
+            assertTrue(future.succeeded());
+
+            Response response = future.result();
+            assertEquals(403, response.getStatus(), "a 401 hint must not downgrade an application's own 403");
+            ProblemDetail pd = assertInstanceOf(ProblemDetail.class, response.getEntity());
+            assertEquals(403, pd.status());
+            assertEquals(
+                    "tenant mismatch",
+                    pd.detail(),
+                    "the guard returns the catch-all's response untouched, body intact");
         }
 
         @Test

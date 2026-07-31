@@ -377,9 +377,11 @@ Two failure shapes are recorded:
   body handler, a `415` from content-type validation, a `401` from a JWT claims validator. The cause is
   left as-is, so an `ExceptionMapper` registered for its own type still matches.
 
-The status range is strict. A 5xx is never recorded, because `ctx.fail(Throwable)` synthesises a 500
-indistinguishable from a deliberate `ctx.fail(500, cause)`; a status below 400 is not a client-error
-decision.
+The two shapes record different ranges. An `HttpException` carries **400–599**, because its status was
+always chosen deliberately by whatever raised it — an `HttpException(503, …)` from a middleware is
+recorded as-is. The `ctx.fail(<status>, cause)` shape records **400–499** only: a 5xx there is dropped,
+because `ctx.fail(Throwable)` synthesises a 500 indistinguishable from a deliberate
+`ctx.fail(500, cause)`. Neither shape records anything below 400 — that is not an error decision.
 
 When no application-contributed `ExceptionMapper` registered for a type **more specific than
 `Throwable`** matched, that recorded status replaces the mapped one — preserving, for example, a 401
@@ -390,10 +392,21 @@ catch-all. Register the mapper for the cause's own type when it must win. Preced
 
 ```
 application-contributed ExceptionMapper for a type more specific than Throwable
-  > explicit Vert.x 4xx failure status
+  > recorded Vert.x failure status (the ranges above)
   > framework default mapping (DefaultExceptionMapper)
   > Throwable catch-all (500)
 ```
+
+**One exception: a recorded 401 never replaces a mapped 403.** Whatever produced the `403` — the
+framework's own `ForbiddenException` mapping, or an application `ExceptionMapper<Throwable>` catch-all
+that answered `403` for its own denial type — it outranks a recorded `401` and the response is returned
+untouched, body included. A `403` is an authorization decision; answering `401` instead tells the client
+to authenticate and retry, which no fresh credential can satisfy. It invites a token-refresh loop that
+cannot succeed and hides the denial from access logs and SIEM rules that count 403s. The guard keys on
+the mapped **status**, not on the exception type or on which mapper produced it, so an application
+mapping its own `TenantMismatchException` to `403` is protected exactly as the framework's mapping is.
+This is the only guarded pair: every other recorded status supersedes the mapped one per the ordering
+above.
 
 **What the override does to the body.** When the Vert.x status *replaces* the mapped one, the
 `ProblemDetail` is rebuilt from the new status: `title` is recomputed, `type` is reset to

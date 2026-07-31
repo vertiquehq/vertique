@@ -78,6 +78,14 @@ public class ErrorPipeline {
      *   <li>{@link ErrorInterceptor#afterMapping} async chain (transforms the response)</li>
      * </ol>
      *
+     * <p>The Vert.x failure-status hint ({@code VertxFailureStatus.KEY}) is <em>consumed</em> at the
+     * mapping step: read and removed from {@link RoutingContext#data()} exactly once, whichever mapper
+     * produces the response and whether or not the fallback ends up applying it. The hint describes the
+     * failure being mapped, so it must not survive it — otherwise a mapping raised later on the same
+     * context (a reroute, for instance) would be steered by a status that no longer describes anything.
+     * Consumption happens after the {@link ErrorInterceptor#beforeMapping} chain, so an error
+     * interceptor still observes the hint that produced the failure it is inspecting.
+     *
      * @param ctx   the current routing context
      * @param cause the throwable to map into an error response
      * @return a {@link Future} that completes with the mapped {@link Response}; callers should
@@ -115,9 +123,17 @@ public class ErrorPipeline {
                                 }))
                 .map(mappedCause -> restExceptionMapper.translate(mappedCause))
                 .map(translated -> {
+                    // Consume the Vert.x failure-status hint here, at the mapping step itself, rather than
+                    // inside the fallback: the hint describes exactly the failure being mapped, so it must
+                    // be gone whichever mapper produces the response — including on the branch below where a
+                    // specific application mapper outranks it and the fallback never runs. Leaving it behind
+                    // would let it steer a mapping raised later on the same context (reroute() clears failure
+                    // and statusCode, but not data()). Consuming here rather than at method entry keeps it
+                    // observable to the beforeMapping chain, which runs before this step.
+                    Object vertxFailureStatus = ctx.data().remove(VertxFailureStatus.KEY);
                     Response response = exceptionMapperRegistry.toResponse(translated);
                     if (!exceptionMapperRegistry.hasSpecificMapper(translated.getClass())) {
-                        response = applyVertxStatusCodeFallback(ctx, response);
+                        response = applyVertxStatusCodeFallback(response, vertxFailureStatus);
                     }
                     return enrichProblemDetail(ctx, response);
                 })
@@ -166,15 +182,22 @@ public class ErrorPipeline {
      *
      * <p>The fallback does not activate when:
      * <ul>
-     *   <li>No {@link VertxFailureStatus#KEY} is present (the Vert.x layer decided no status)</li>
+     *   <li>No status was recorded under {@link VertxFailureStatus#KEY} (the Vert.x layer decided none)</li>
      *   <li>The response already has the correct status (matches the stored code)</li>
      *   <li>The mapper produced 403 and the stored status is 401 — a hint never downgrades an
      *       authorization outcome into an authentication challenge</li>
      * </ul>
      *
-     * <p>The stored status is <em>consumed</em> on read: it is removed from {@link RoutingContext#data()}
-     * so it cannot steer a later mapping (a reroute raised from within the async error chain, for
-     * instance) after the failure that produced it has been answered.
+     * <p>That last guard keys on the <em>mapped status</em>, never on the exception type that produced
+     * it: any 403 survives a 401 hint, whether it came from the framework's own
+     * {@code ForbiddenException} mapping or from an application {@code ExceptionMapper<Throwable>}
+     * catch-all that chose 403 for its own denial type. Keying on a list of authorization exception
+     * types instead was considered and rejected — the list would drift the moment a new denial type
+     * appears, and it would invert the guard for the case that most deserves it (an application mapping
+     * its own {@code TenantMismatchException} to 403 would be overridden back to 401).
+     *
+     * <p>The stored status is consumed by the caller before this method runs — see
+     * {@link #mapToResponse} — so it is passed in rather than read from the context here.
      *
      * <p>When it does override, the {@link ProblemDetail} body is rebuilt from the overriding status
      * rather than patched: the title is recomputed and the detail is dropped. A detail was written
@@ -191,17 +214,15 @@ public class ErrorPipeline {
      * matched the unwrapped cause — the caller checks
      * {@link ExceptionMapperRegistry#hasSpecificMapper} before invoking.
      *
-     * @param ctx      the routing context containing the Vert.x status code (if any)
-     * @param response the response produced by the exception mapper
+     * @param response     the response produced by the exception mapper
+     * @param storedStatus the status the Vert.x layer recorded for this failure, already consumed from
+     *                     the routing context by {@link #mapToResponse}; {@code null} (or any
+     *                     non-{@link Integer}) when no status was recorded
      * @return the response with the status overridden and its problem body rebuilt, or the original
      *         response unchanged
      */
-    private static Response applyVertxStatusCodeFallback(RoutingContext ctx, Response response) {
-        // Consume rather than peek: the hint describes exactly this failure, and leaving it behind would
-        // let it steer a mapping raised later on the same context (reroute() clears failure and
-        // statusCode, but not data()).
-        Object storedCode = ctx.data().remove(VertxFailureStatus.KEY);
-        if (!(storedCode instanceof Integer vertxStatus)) {
+    private static Response applyVertxStatusCodeFallback(Response response, Object storedStatus) {
+        if (!(storedStatus instanceof Integer vertxStatus)) {
             return response;
         }
         if (response.getStatus() == vertxStatus) {
@@ -212,6 +233,11 @@ public class ErrorPipeline {
             // carried; answering 401 instead tells the client "authenticate and retry", which is false for
             // a denial no fresh credential can lift — it invites a token-refresh loop that cannot succeed,
             // and it hides the denial from access logs and SIEM rules that count 403s to spot probing.
+            // Keyed on the mapped status, not on the exception type: an application ExceptionMapper<Throwable>
+            // catch-all answering 403 is protected too, because "never turn a 403 into a 401" is a property
+            // of the status, not of which mapper decided it. See this method's javadoc for the rejected
+            // type-list alternative. This is the only guarded status pair — every other mapped status is
+            // superseded normally.
             return response;
         }
         // Override: the mapper's status is superseded by the status Vert.x decided.
