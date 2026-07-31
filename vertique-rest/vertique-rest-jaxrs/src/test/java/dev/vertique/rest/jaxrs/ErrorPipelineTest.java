@@ -162,6 +162,61 @@ class ErrorPipelineTest {
         }
 
         @Test
+        @DisplayName("Fallback re-derives the title when it overrides the status (500 body + key=400 → Bad Request)")
+        void fallbackRewritesTitleOnStatusOverride() {
+            ctxData.put(RequestInterceptor.VERTX_STATUS_CODE_KEY, 400);
+
+            Future<Response> future = pipeline.mapToResponse(ctx, new RuntimeException("boom"));
+            assertTrue(future.succeeded());
+
+            ProblemDetail pd =
+                    assertInstanceOf(ProblemDetail.class, future.result().getEntity());
+            assertEquals(
+                    "Bad Request",
+                    pd.title(),
+                    "an overridden status must not leave the catch-all's title contradicting it");
+        }
+
+        @Test
+        @DisplayName("Fallback clears the detail when it overrides the status (500 body + key=400 → no detail)")
+        void fallbackClearsDetailOnStatusOverride() {
+            ctxData.put(RequestInterceptor.VERTX_STATUS_CODE_KEY, 400);
+
+            Future<Response> future = pipeline.mapToResponse(ctx, new RuntimeException("boom"));
+            assertTrue(future.succeeded());
+
+            ProblemDetail pd =
+                    assertInstanceOf(ProblemDetail.class, future.result().getEntity());
+            assertNull(pd.detail(), "a detail written for the superseded status must not survive the override");
+        }
+
+        @Test
+        @DisplayName("Fallback clears an authored detail on status override and re-derives the title")
+        void fallbackClearsAuthoredDetailOnStatusOverride() {
+            // The mapper authors a detail from an arbitrary application exception's message — exactly
+            // what ctx.fail(401, e) feeds in from a claims validator. It must not reach the client.
+            DefaultExceptionMapper defaults = new DefaultExceptionMapper()
+                    .on(Throwable.class, ex -> Response.status(400)
+                            .entity(ProblemDetail.of(400, "tenant 4711 is not permitted"))
+                            .type("application/problem+json")
+                            .build());
+            ExceptionMapperRegistry registry = new ExceptionMapperRegistry(defaults, Set.of());
+            RestExceptionMapper failureMapper = new RestExceptionMapper();
+            ErrorPipeline customPipeline = new ErrorPipeline(List.of(), List.of(), failureMapper, registry);
+
+            ctxData.put(RequestInterceptor.VERTX_STATUS_CODE_KEY, 401);
+
+            Future<Response> future = customPipeline.mapToResponse(ctx, new RuntimeException("rejected"));
+            assertTrue(future.succeeded());
+
+            Response response = future.result();
+            assertEquals(401, response.getStatus());
+            ProblemDetail pd = assertInstanceOf(ProblemDetail.class, response.getEntity());
+            assertNull(pd.detail(), "an authored detail must be cleared, not carried into the overridden status");
+            assertEquals("Unauthorized", pd.title(), "the title must be re-derived from the overriding status");
+        }
+
+        @Test
         @DisplayName("ProblemDetail instance field is populated from request path")
         void problemDetailInstanceIsPopulated() {
             ctxData.put(RequestInterceptor.VERTX_STATUS_CODE_KEY, 401);
