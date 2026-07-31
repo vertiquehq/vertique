@@ -47,6 +47,8 @@ deleted, so only one plan is live.
 | 2026-07-31 | S2 as-built (test run) | Fact corrections, no contract change: **F22** added — the decoder branch unwraps `t.getCause()`, so an oversized form field reaches the mapper as a bare `java.io.IOException`, not a `DecoderException`. S2's "via `TooLongFormFieldException`" and §4's table label corrected. Strengthens, not weakens, the status-driven design. S3 note: assert the hint in `VertxFailureStatusPreservationIT` (same package as the internal key) so a green 400 proves *which* branch produced it |
 | 2026-07-31 | S3 as-built + architect round 2 (session `019fb295-…`) | **Contract Appendix change.** §4's "clear `detail` unconditionally" is corrected to "clear when the hint **overrides** the status"; the equal-status early return stays. Falsifier: the two `ctx.fail(415, new NotSupportedException(...))` producers author their own message, so hint presence is not a foreignness discriminator. Also fact-corrected: the disclosure is **pre-existing** (measured 400 + `detail`, not 500), so S4 closes an existing leak. Residual equal-status semantic-exception case routed to §9. Two 415 proof obligations added to S4 |
 | 2026-07-31 | Simplify stage — independent verification | Fact correction of superseded prose, no contract change: deleted the "title-derivation baseline" sentences. They survived from the discarded *rewrite-derived / preserve-authored* policy, which needed to test whether a title was derived; the final contract derives `title` and `detail` from the hint alone, so no baseline exists. Verified the two candidates cannot disagree on any reachable path — `applyVertxStatusCodeFallback` runs only for framework defaults, and every one builds `Response.status(N).entity(ProblemDetail.of(N, …))`. Where they *could* differ, the code is the more correct of the two: comparing against `response.getStatus()` is what actually reaches the wire |
+| 2026-07-31 | Security review (MEDIUM + 3 LOW) | **Contract Appendix change, user-approved for the precedence narrowing.** A 401 hint may no longer downgrade a mapped **403**: the specific-mapper lookup cannot see the framework's own semantic mappings, so an application validator throwing `ForbiddenException` had its authorization denial rendered as an authentication challenge — new on this branch, since the hint was previously stored only for `HttpException`. Narrow directional guard chosen over consulting the default mapper's table, which would invert the pre-existing tested contract that a Vert.x 401 outranks `IllegalArgumentException`'s generic 400. Appendix also updated for three LOW hardening fixes not separately gated (internal, no consumer): the key value moves off the retired public literal so app code that *wrote* it can no longer steer the override, the hint is consumed on read rather than peeked at, and the `HttpException` branch gains the range guard its sibling already had |
+| 2026-07-31 | Codex round 2 | `rebuildWithHeaders` dropped a stale `Content-Length` when the entity is replaced (fixed centrally — the dominant path is `enrichProblemDetail`, which predates this branch); module-doc sentence corrected — an application `ExceptionMapper<Throwable>` *is* matched but is still overridden, and `type` resets to `about:blank`; the widened catch-all contract is now pinned by a test |
 | 2026-07-31 | Governance-landing review | S6 becomes a **governance PR** advancing the `sources/vertique` gitlink, not a docs-only fast-forward; amendment log dated |
 
 Every review finding against the predecessor, and where it is resolved:
@@ -239,9 +241,10 @@ final class VertxFailureStatus {
      * is deliberately NOT carried — {@code RoutingContext.fail(Throwable)} synthesises a 500 that
      * cannot be distinguished from a deliberate {@code fail(500, cause)}.
      *
-     * <p>Written only in the terminal router-level failure handler, so no reroute can observe it.
+     * <p>Consumed on read, so the hint cannot outlive the failure that produced it — {@code reroute()}
+     * clears the failure and status but not the context data.
      */
-    static final String KEY = "dev.vertique.rest.vertxStatusCode";   // value unchanged
+    static final String KEY = "dev.vertique.rest.jaxrs.failureStatus";
 }
 ```
 
