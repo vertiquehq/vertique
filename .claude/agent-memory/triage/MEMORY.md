@@ -1,1 +1,0 @@
-- [Mid-initiative main merges](project_mid-initiative-main-merges.md) — earlier slices may already be on local main; verify "introduced by this branch" via the introducing commit, not the merge-base
