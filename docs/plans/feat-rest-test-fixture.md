@@ -179,11 +179,6 @@ Package `dev.vertique.rest.test`. Three public types; everything else package-pr
  */
 @Module(includes = {RestModule.class, ConfigParsingModule.class})
 public abstract class RestTestFixtureModule {
-
-    /** No binding exists in RestModule/RestCoreModule; every consumer must supply one. */
-    @Provides @Nullable
-    static SecurityPolicyValidator securityPolicyValidator() { return null; }
-
     @Provides @ElementsIntoSet
     static Set<Middleware> fixtureMiddlewares(RestTestContributions c);
     @Provides @ElementsIntoSet
@@ -191,15 +186,22 @@ public abstract class RestTestFixtureModule {
     @Provides @ElementsIntoSet
     static Set<ResponseBodyEncoder> fixtureResponseBodyEncoders(RestTestContributions c);
     @Provides @ElementsIntoSet
-    static Set<RequestBodyDecoder> fixtureRequestBodyDecoders(RestTestContributions c);
-    @Provides @ElementsIntoSet
     static Set<ExceptionMapper<?>> fixtureExceptionMappers(RestTestContributions c);
     @Provides @ElementsIntoSet
     static Set<JsonMapperProfile> fixtureJsonMapperProfiles(RestTestContributions c);
     @Provides @ElementsIntoSet
     static Set<FileContentVerifier> fixtureFileContentVerifiers(RestTestContributions c);
-    @Provides @ElementsIntoSet
-    static Set<RestContextResolver> fixtureContextResolvers(RestTestContributions c);
+}
+
+/**
+ * The null SecurityPolicyValidator, split out so it is opt-in. Neither RestModule nor
+ * RestCoreModule binds that key, so every consumer supplies exactly one of: this module, or
+ * AuthModule (real validation). Including both is a duplicate-binding error — deliberately.
+ */
+@Module
+public abstract class RestTestNoSecurityModule {
+    @Provides @Nullable
+    static SecurityPolicyValidator securityPolicyValidator() { return null; }
 }
 
 /** Immutable, additive-only test contributions. Bound via @BindsInstance. */
@@ -207,11 +209,9 @@ public record RestTestContributions(
         Set<Middleware> middlewares,
         Set<RequestInterceptor> requestInterceptors,
         Set<ResponseBodyEncoder> responseBodyEncoders,
-        Set<RequestBodyDecoder> requestBodyDecoders,
         Set<ExceptionMapper<?>> exceptionMappers,
         Set<JsonMapperProfile> jsonMapperProfiles,
-        Set<FileContentVerifier> fileContentVerifiers,
-        Set<RestContextResolver> contextResolvers) {
+        Set<FileContentVerifier> fileContentVerifiers) {
 
     public static Builder builder();
     public static RestTestContributions none();
@@ -220,11 +220,9 @@ public record RestTestContributions(
         public Builder addMiddleware(Middleware middleware);
         public Builder addRequestInterceptor(RequestInterceptor interceptor);
         public Builder addResponseBodyEncoder(ResponseBodyEncoder encoder);
-        public Builder addRequestBodyDecoder(RequestBodyDecoder decoder);
         public Builder addExceptionMapper(ExceptionMapper<?> mapper);
         public Builder addJsonMapperProfile(JsonMapperProfile profile);
         public Builder addFileContentVerifier(FileContentVerifier verifier);
-        public Builder addContextResolver(RestContextResolver resolver);
         public RestTestContributions build();
     }
 }
@@ -329,6 +327,33 @@ middleware, so the coverage moves to a unit test rather than being deleted.
 *suppression*, not *default*, and check what the production set contains before assuming a pure add.
 
 | 2026-07-30 | Post-review — security review + a fourth architect round found the fixture installs no ROOT-scoped middleware | **Contract Appendix change, user-approved.** Added the opaque `RestTestMount` handle; `router`/`startServer`/`startServerBlocking` now take it instead of a bare factory, and the factory-only forms are dropped. `startServer` installs ROOT-scoped middlewares. Restated the "never sorts" invariant precisely (see R9). |
+| 2026-08-06 | Deferred-item promotion — the user promoted eight review findings to fix-now | **Executed before this amendment was written, not after. That inverts the protocol and is recorded rather than hidden** (see R10). Contract Appendix now reflects as-built: `RestTestContributions` at six seams, the null `SecurityPolicyValidator` split into an opt-in `RestTestNoSecurityModule`, `deleteRecursively` guards. Also three adjacent production fixes and a module-scoped test-stub extraction. |
+
+### R10 — promoted findings were executed before the plan was amended
+
+The user promoted eight deferred findings to fix-now. Three were new work rather than review
+follow-ups, and each should have amended this plan *before* execution:
+
+- **Removing two `RestTestContributions` seams** changes the record's canonical-constructor arity —
+  a §4 Contract Appendix change, which `planning.md` says needs sign-off before execution continues.
+  The *decision* was the user's; the *sequence* was wrong.
+- **A `test-jar` from `vertique-rest-jaxrs`** was chosen unilaterally as the home for the extracted
+  descriptor stub and handed to the implementer as settled. That is an architectural call about what
+  the project publishes. On review the user scoped it back: the stub stays in `vertique-rest-jaxrs`'s
+  own test tree, covering 7 of 17 copies, no new published artifact. The remaining 10 are routed to
+  an issue with the home decision left open.
+- **`onCloseRun(Runnable)`** was added to `RequestContextLifecycle.Handle`, published SPI. Additive
+  and non-breaking, but still public surface.
+
+**What none of this changes:** the property #210 turns on is that the fixture needed no *visibility*
+widening, and that holds — verified per-file (§10). The three adjacent production fixes are a bug
+fix, a corrected comment, and an additive method.
+
+**Lesson for `planning.md`:** workflow step 8.5 routes a promoted finding through
+"triage → fix → re-test → re-review", which reads as authorisation to implement directly. It is the
+right path for a *finding*, but a promoted item that changes a frozen contract or adds a published
+artifact is new work and needs the amendment gate first. The two cases are worth distinguishing
+explicitly in the workflow.
 
 ### R9 — the fixture installed no ROOT-scoped middleware
 
@@ -388,6 +413,8 @@ into `rest-core` (install logic exceeds ~5 lines or gains a second caller).
 | `RestTestContributions.Builder` | vertique-rest-test | `dev.vertique.rest.test` | static nested class | **API** |
 | `RestTestMounts` | vertique-rest-test | `dev.vertique.rest.test` | final class | **API** |
 | `RestTestMount` | vertique-rest-test | `dev.vertique.rest.test` | final class (opaque handle) | **API** (type only; ctor + accessors package-private) |
+| `RestTestNoSecurityModule` | vertique-rest-test | `dev.vertique.rest.test` | `@Module` abstract | **API** (opt-in) |
+| `StubOperationDescriptor` | vertique-rest-jaxrs | `dev.vertique.rest.jaxrs.routing` | record + builder | Test-fixture (`src/test`, unpublished) |
 | `package-info` | vertique-rest-test | `dev.vertique.rest.test` | — | API doc |
 | `FixtureSelfTestComponent` | vertique-rest-test | `dev.vertique.rest.test` | `@Component` | Test-fixture |
 | `ValidationMountComponent` | vertique-rest-validation | `dev.vertique.rest.validation` | `@Component` | Test-fixture |
