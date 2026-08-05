@@ -4,10 +4,8 @@
 package dev.vertique.rest.test;
 
 import dev.vertique.core.json.JsonMapperProfile;
-import dev.vertique.rest.core.context.RestContextResolver;
 import dev.vertique.rest.core.interceptor.RequestInterceptor;
 import dev.vertique.rest.core.middleware.Middleware;
-import dev.vertique.rest.core.request.RequestBodyDecoder;
 import dev.vertique.rest.core.response.ResponseBodyEncoder;
 import dev.vertique.rest.jaxrs.validation.FileContentVerifier;
 import jakarta.ws.rs.ext.ExceptionMapper;
@@ -36,6 +34,11 @@ import java.util.Set;
  * ({@code RestModule.sortedResponseBodyEncoders} and {@code RestModule.sortedRequestBodyDecoders})
  * produce the ordered lists the runtime consumes, exactly as they do in production.
  *
+ * <p>The components below are the whole contributable set. Request body decoders and REST context
+ * resolvers are not among them: the graph carries the framework's own, but nothing has needed to add
+ * one, and {@link RestTestFixtureModule} keeps the compatibility surface to seams that are actually
+ * exercised.
+ *
  * <pre>{@code
  * RestTestContributions contributions = RestTestContributions.builder()
  *         .addMiddleware(new RejectEverythingMiddleware())
@@ -54,21 +57,17 @@ import java.util.Set;
  * @param middlewares          router-level middlewares to add to {@code Set<Middleware>}
  * @param requestInterceptors  request interceptors to add to {@code Set<RequestInterceptor>}
  * @param responseBodyEncoders response body encoders to add to {@code Set<ResponseBodyEncoder>}
- * @param requestBodyDecoders  request body decoders to add to {@code Set<RequestBodyDecoder>}
  * @param exceptionMappers     JAX-RS exception mappers to add to {@code Set<ExceptionMapper<?>>}
  * @param jsonMapperProfiles   JSON mapper profiles to add to {@code Set<JsonMapperProfile>}
  * @param fileContentVerifiers file-content verifiers to add to {@code Set<FileContentVerifier>}
- * @param contextResolvers     REST context resolvers to add to {@code Set<RestContextResolver>}
  */
 public record RestTestContributions(
         Set<Middleware> middlewares,
         Set<RequestInterceptor> requestInterceptors,
         Set<ResponseBodyEncoder> responseBodyEncoders,
-        Set<RequestBodyDecoder> requestBodyDecoders,
         Set<ExceptionMapper<?>> exceptionMappers,
         Set<JsonMapperProfile> jsonMapperProfiles,
-        Set<FileContentVerifier> fileContentVerifiers,
-        Set<RestContextResolver> contextResolvers) {
+        Set<FileContentVerifier> fileContentVerifiers) {
 
     /** The shared empty instance returned by {@link #none()}. */
     private static final RestTestContributions NONE = builder().build();
@@ -83,11 +82,9 @@ public record RestTestContributions(
         middlewares = copyOf(middlewares, "middlewares");
         requestInterceptors = copyOf(requestInterceptors, "requestInterceptors");
         responseBodyEncoders = copyOf(responseBodyEncoders, "responseBodyEncoders");
-        requestBodyDecoders = copyOf(requestBodyDecoders, "requestBodyDecoders");
         exceptionMappers = copyOf(exceptionMappers, "exceptionMappers");
         jsonMapperProfiles = copyOf(jsonMapperProfiles, "jsonMapperProfiles");
         fileContentVerifiers = copyOf(fileContentVerifiers, "fileContentVerifiers");
-        contextResolvers = copyOf(contextResolvers, "contextResolvers");
     }
 
     /**
@@ -135,11 +132,9 @@ public record RestTestContributions(
         private final Set<Middleware> middlewares = new LinkedHashSet<>();
         private final Set<RequestInterceptor> requestInterceptors = new LinkedHashSet<>();
         private final Set<ResponseBodyEncoder> responseBodyEncoders = new LinkedHashSet<>();
-        private final Set<RequestBodyDecoder> requestBodyDecoders = new LinkedHashSet<>();
         private final Set<ExceptionMapper<?>> exceptionMappers = new LinkedHashSet<>();
         private final Set<JsonMapperProfile> jsonMapperProfiles = new LinkedHashSet<>();
         private final Set<FileContentVerifier> fileContentVerifiers = new LinkedHashSet<>();
-        private final Set<RestContextResolver> contextResolvers = new LinkedHashSet<>();
 
         /** Use {@link RestTestContributions#builder()}. */
         private Builder() {}
@@ -175,18 +170,6 @@ public record RestTestContributions(
          */
         public Builder addResponseBodyEncoder(ResponseBodyEncoder encoder) {
             responseBodyEncoders.add(Objects.requireNonNull(encoder, "encoder must not be null"));
-            return this;
-        }
-
-        /**
-         * Adds a request body decoder. To take precedence over a framework default, give it a
-         * {@code priority()} below {@code 1000}.
-         *
-         * @param decoder the decoder; must not be {@code null}
-         * @return this builder
-         */
-        public Builder addRequestBodyDecoder(RequestBodyDecoder decoder) {
-            requestBodyDecoders.add(Objects.requireNonNull(decoder, "decoder must not be null"));
             return this;
         }
 
@@ -227,18 +210,6 @@ public record RestTestContributions(
         }
 
         /**
-         * Adds a REST context resolver. It joins the framework's built-in resolvers; at the default
-         * priority of {@code 0} it runs ahead of all of them.
-         *
-         * @param resolver the resolver; must not be {@code null}
-         * @return this builder
-         */
-        public Builder addContextResolver(RestContextResolver resolver) {
-            contextResolvers.add(Objects.requireNonNull(resolver, "resolver must not be null"));
-            return this;
-        }
-
-        /**
          * Builds an immutable snapshot of everything added so far. The builder stays usable
          * afterwards.
          *
@@ -249,11 +220,9 @@ public record RestTestContributions(
                     middlewares,
                     requestInterceptors,
                     responseBodyEncoders,
-                    requestBodyDecoders,
                     exceptionMappers,
                     jsonMapperProfiles,
-                    fileContentVerifiers,
-                    contextResolvers);
+                    fileContentVerifiers);
         }
     }
 }

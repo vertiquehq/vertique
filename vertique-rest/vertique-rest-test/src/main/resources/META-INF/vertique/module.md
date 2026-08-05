@@ -13,8 +13,9 @@ SPDX-License-Identifier: EUPL-1.2
 Test-support module that lets a test graph assemble a production-faithful `JaxRsRouterMount` from
 outside `dev.vertique.rest.jaxrs`. It ships a Dagger module, `RestTestFixtureModule`, that includes
 the framework's real REST wiring and unions a consumer's additional test-only collaborators into the
-same multibindings production uses, plus `RestTestMounts`, a pure Vert.x helper for turning a
-graph-built `RestTestMount` into a router or a running HTTP server.
+same multibindings production uses; `RestTestNoSecurityModule`, the opt-in null security stand-in for
+graphs with no security wiring; and `RestTestMounts`, a pure Vert.x helper for turning a graph-built
+`RestTestMount` into a router or a running HTTP server.
 
 It is not a substitute for `HttpVerticle`. A fixture server is one JAX-RS mount with both of its
 production middleware pipelines — not the whole verticle.
@@ -26,12 +27,13 @@ production middleware pipelines — not the whole verticle.
 Install this module at test scope in any REST-surface module that needs HTTP-level integration tests
 against a real, production-faithful mount instead of hand-rolled encoder, decoder, or
 exception-mapper stand-ins. Declare a package-private test `@Component` that includes
-`RestTestFixtureModule` alongside any strategy module the consumer needs (for example a
-request-validation module), bind the consumer's contributions, and build the router or server through
-the mount helpers.
+`RestTestFixtureModule`, exactly one supplier of the `SecurityPolicyValidator` key (see Core
+Concepts), and any strategy module the consumer needs (for example a request-validation module), bind
+the consumer's contributions, and build the router or server through the mount helpers.
 
-Do not use it for anything that needs real security policy validation: the fixture supplies a null
-`SecurityPolicyValidator` (see Core Concepts), which is incompatible with including `AuthModule`.
+It works for both security postures. A test with no security adds `RestTestNoSecurityModule`; a test
+that wants the framework's real startup policy validation includes `AuthModule` from
+`vertique-rest-security` instead.
 
 ---
 
@@ -79,16 +81,21 @@ explicitly, or the router build fails when it resolves the configured strategy i
 A component that includes a validation module (for example `RestValidationModule`) gets that
 module's strategy and does not need the override.
 
-### Security stand-in
+### Choosing a security posture
 
-`RestTestFixtureModule` provides a **null** `SecurityPolicyValidator`. `JaxRsRouterMount.Factory`
-consumes that type as `@Nullable` and no REST module binds it, so every graph must supply something;
-this matches what an unauthenticated application declares in its own `AppModule`, and startup policy
-validation is simply skipped.
+`JaxRsRouterMount.Factory` consumes `SecurityPolicyValidator` as `@Nullable`, and no REST module binds
+it, so every graph must supply something. `RestTestFixtureModule` deliberately supplies **nothing** —
+the key is left free, and the component picks exactly one supplier for it:
 
-The binding is unqualified, and `AuthModule` binds the same unqualified key — so a component
-**cannot include both**. A test needing real policy validation includes the security module and does
-not use this fixture's graph for that concern. Treat this stand-in as test scope only.
+| Posture | Modules to include | Effect |
+|---|---|---|
+| No security | `RestTestFixtureModule` + `RestTestNoSecurityModule` | Null stand-in; startup policy validation is skipped, matching what an unauthenticated application declares in its own `AppModule` |
+| Real security | `RestTestFixtureModule` + `AuthModule` | `DefaultSecurityPolicyValidator` runs the framework's real startup checks, including the `@PermitAll`-with-a-declared-`@SecurityRequirement` conflict check that a null validator skips |
+
+The two suppliers bind the **same unqualified** Dagger key (`@Nullable` is not a qualifier), so
+including both fails annotation processing with a duplicate binding. That is the intended signal, not
+a limitation: the split exists so the choice is made once, explicitly, per component. Treat the null
+stand-in as test scope only.
 
 ---
 
@@ -105,7 +112,8 @@ Declare one package-private test `@Component` per consuming Maven module:
 
 ```java
 @Singleton
-@Component(modules = {RestTestFixtureModule.class, RestValidationModule.class})
+@Component(modules = {
+    RestTestFixtureModule.class, RestTestNoSecurityModule.class, RestValidationModule.class})
 interface ValidationMountComponent {
     RestTestMount testMount();
 
@@ -122,6 +130,12 @@ interface ValidationMountComponent {
 **Never name a component accessor `factory()`.** A component declaring a `@Component.Factory` gets a
 generated static `factory()` on its `Dagger…` class, and Dagger rejects the collision. Name the mount
 accessor `testMount()`.
+
+### RestTestNoSecurityModule
+
+The `null` `SecurityPolicyValidator` binding for a graph with no security wiring, kept out of
+`RestTestFixtureModule` so the fixture composes with `AuthModule` too. Include exactly one of the two
+— see "Choosing a security posture" above.
 
 ### RestTestMount
 
@@ -141,7 +155,10 @@ Pure Vert.x — no Dagger, no JUnit — so it composes with any test framework:
 - `startServerBlocking(vertx, mount, resources, timeout)` — for synchronous test methods. Refuses to
   run on a Vert.x event-loop thread rather than deadlocking. The timeout bounds the wait for the
   bind, not the router build.
-- `deleteRecursively(directory)` — teardown helper for upload-oriented tests.
+- `deleteRecursively(directory)` — teardown helper for upload-oriented tests. A directory that does
+  not exist is a no-op; a path that resolves to the current working directory (an unset configured
+  path arrives as `""`) or to a filesystem root is rejected with `IllegalArgumentException` rather
+  than walked.
 
 These helpers **never close a caller-supplied `Vertx`**, on any path. The returned `HttpServer` is
 the caller's to close.
@@ -165,18 +182,22 @@ RestTestContributions contributions = RestTestContributions.builder()
 
 ## Extension Points
 
-The seams below are the module's product, and the set of them is a **compatibility surface**.
+The six seams below are the module's product, and the set of them is a **compatibility surface**.
 
 | Seam | Framework multibinding it unions into |
 |---|---|
 | `addMiddleware` | `Set<Middleware>` |
 | `addRequestInterceptor` | `Set<RequestInterceptor>` |
 | `addResponseBodyEncoder` | `Set<ResponseBodyEncoder>` |
-| `addRequestBodyDecoder` | `Set<RequestBodyDecoder>` |
 | `addExceptionMapper` | `Set<ExceptionMapper<?>>` |
 | `addJsonMapperProfile` | `Set<JsonMapperProfile>` |
 | `addFileContentVerifier` | `Set<FileContentVerifier>` |
-| `addContextResolver` | `Set<RestContextResolver>` |
+
+The set is deliberately the seams a consumer has actually needed. There is **no** seam for request
+body decoders or REST context resolvers: the graph carries the framework's own — a fixture mount
+decodes bodies and resolves context exactly as production does — but nothing has needed to add one,
+and an unexercised seam is a compatibility promise bought with nothing. Adding either is the safe
+direction if a consumer turns up.
 
 Removing a seam breaks every consumer that contributes through it — and **adding** one is not free
 either. Each seam reads a component of `RestTestContributions`, which is a `record`, so a new seam

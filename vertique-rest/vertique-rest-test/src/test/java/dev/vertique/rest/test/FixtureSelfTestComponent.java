@@ -28,9 +28,14 @@ import java.util.List;
  * <p>No validation-strategy module is included, so this graph carries only the {@code none} strategy
  * contributed by {@code RestModule} — which is what makes the {@code jaxrs.validationStrategy}
  * trap observable here.
+ *
+ * <p>{@link RestTestNoSecurityModule} supplies the {@code null} {@code SecurityPolicyValidator} this
+ * unsecured graph needs; the fixture module itself binds nothing for that key. The opposite posture —
+ * a graph whose validator comes from somewhere else entirely — is covered by
+ * {@link ExternalSecurityMountComponent}.
  */
 @Singleton
-@Component(modules = RestTestFixtureModule.class)
+@Component(modules = {RestTestFixtureModule.class, RestTestNoSecurityModule.class})
 interface FixtureSelfTestComponent {
 
     /**

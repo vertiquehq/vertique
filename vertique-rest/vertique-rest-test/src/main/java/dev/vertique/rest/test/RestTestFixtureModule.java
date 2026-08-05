@@ -8,15 +8,12 @@ import dagger.Provides;
 import dagger.multibindings.ElementsIntoSet;
 import dev.vertique.config.parser.ConfigParsingModule;
 import dev.vertique.core.json.JsonMapperProfile;
-import dev.vertique.rest.core.context.RestContextResolver;
 import dev.vertique.rest.core.interceptor.RequestInterceptor;
 import dev.vertique.rest.core.middleware.Middleware;
-import dev.vertique.rest.core.request.RequestBodyDecoder;
 import dev.vertique.rest.core.response.ResponseBodyEncoder;
 import dev.vertique.rest.core.security.SecurityPolicyValidator;
 import dev.vertique.rest.jaxrs.RestModule;
 import dev.vertique.rest.jaxrs.validation.FileContentVerifier;
-import jakarta.annotation.Nullable;
 import jakarta.ws.rs.ext.ExceptionMapper;
 import java.util.Set;
 
@@ -53,7 +50,8 @@ import java.util.Set;
  *
  * <pre>{@code
  * @Singleton
- * @Component(modules = {RestTestFixtureModule.class, RestValidationModule.class})
+ * @Component(modules = {
+ *     RestTestFixtureModule.class, RestTestNoSecurityModule.class, RestValidationModule.class})
  * interface ValidationMountComponent {
  *     RestTestMount testMount();
  *
@@ -66,6 +64,14 @@ import java.util.Set;
  *     }
  * }
  * }</pre>
+ *
+ * <p>This module deliberately does <b>not</b> bind {@link SecurityPolicyValidator}, so it composes
+ * with either security posture. A graph with no security wiring adds
+ * {@link RestTestNoSecurityModule} for the {@code null} stand-in, as above; a graph that wants the
+ * framework's real startup policy checks includes {@code AuthModule} from
+ * {@code vertique-rest-security} instead and omits {@code RestTestNoSecurityModule}. Including both
+ * of those is a duplicate-binding error at annotation-processing time — they supply the same
+ * unqualified Dagger key, and picking exactly one is the choice the split exists to force.
  *
  * <p>Expose {@link RestTestMount}, not {@code JaxRsRouterMount.Factory}: the helpers in
  * {@link RestTestMounts} take the handle, and offer no factory-only overload, so the ROOT-scoped
@@ -90,7 +96,7 @@ import java.util.Set;
  *
  * <h2>Compatibility surface</h2>
  *
- * <p>The set of seams below is a <b>compatibility surface</b>. Removing a seam breaks every consumer
+ * <p>The six seams below are a <b>compatibility surface</b>. Removing a seam breaks every consumer
  * that contributes through it — and adding one is <em>not</em> free either: each seam reads a
  * component of {@link RestTestContributions}, which is a {@code record}, so a new seam requires a new
  * record component. That changes the canonical constructor's arity, which is <b>source-breaking</b>
@@ -103,30 +109,17 @@ import java.util.Set;
  * leaves every existing call site compiling and linking unchanged. Treat the seam list as published
  * API even though the artifact itself is test support.
  *
+ * <p>The set is deliberately the seams a consumer has actually needed. Request body decoders and REST
+ * context resolvers are <em>not</em> contributable: the graph carries the framework's own — a fixture
+ * mount decodes bodies and resolves context exactly as production does — but no in-repo harness has
+ * ever needed to add one, and an unexercised seam is a compatibility promise bought with nothing.
+ * Adding either back is the safe direction if a consumer turns up.
+ *
  * @see RestTestContributions
+ * @see RestTestNoSecurityModule
  */
 @Module(includes = {RestModule.class, ConfigParsingModule.class})
 public abstract class RestTestFixtureModule {
-
-    // --- Security stand-in ---
-
-    /**
-     * Provides a {@code null} {@link SecurityPolicyValidator}.
-     *
-     * <p>Neither {@code RestModule} nor {@code RestCoreModule} binds this type, yet
-     * {@code JaxRsRouterMount.Factory} consumes it as {@code @Nullable}, so every graph must supply
-     * it. This matches the stand-in an unauthenticated application declares in its own
-     * {@code AppModule}; startup policy validation is skipped when it is absent. A consumer that
-     * needs real policy validation includes the security module and does not use this fixture's
-     * graph for that concern.
-     *
-     * @return always {@code null}
-     */
-    @Provides
-    @Nullable
-    static SecurityPolicyValidator securityPolicyValidator() {
-        return null;
-    }
 
     // --- Contribution seams ---
 
@@ -170,19 +163,6 @@ public abstract class RestTestFixtureModule {
     }
 
     /**
-     * Unions the contributed decoders into the framework {@code Set<RequestBodyDecoder>}
-     * multibinding. {@code RestModule} then sorts the union.
-     *
-     * @param contributions the test contributions
-     * @return the contributed request body decoders
-     */
-    @Provides
-    @ElementsIntoSet
-    static Set<RequestBodyDecoder> fixtureRequestBodyDecoders(RestTestContributions contributions) {
-        return contributions.requestBodyDecoders();
-    }
-
-    /**
      * Unions the contributed mappers into the framework {@code Set<ExceptionMapper<?>>} multibinding,
      * from which {@code RestModule} assembles the registry alongside its own
      * {@code DefaultExceptionMapper}.
@@ -219,18 +199,5 @@ public abstract class RestTestFixtureModule {
     @ElementsIntoSet
     static Set<FileContentVerifier> fixtureFileContentVerifiers(RestTestContributions contributions) {
         return contributions.fileContentVerifiers();
-    }
-
-    /**
-     * Unions the contributed resolvers into the framework {@code Set<RestContextResolver>}
-     * multibinding, joining the three built-in resolvers behind {@code RestContextResolution}.
-     *
-     * @param contributions the test contributions
-     * @return the contributed context resolvers
-     */
-    @Provides
-    @ElementsIntoSet
-    static Set<RestContextResolver> fixtureContextResolvers(RestTestContributions contributions) {
-        return contributions.contextResolvers();
     }
 }

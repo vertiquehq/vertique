@@ -13,6 +13,7 @@ import dev.vertique.rest.test.RestTestContributions;
 import dev.vertique.rest.test.RestTestFixtureModule;
 import dev.vertique.rest.test.RestTestMount;
 import dev.vertique.rest.test.RestTestMounts;
+import dev.vertique.rest.test.RestTestNoSecurityModule;
 import io.vertx.core.Vertx;
 import io.vertx.core.json.JsonObject;
 import jakarta.inject.Singleton;
@@ -27,9 +28,15 @@ import java.util.Set;
  * {@link RestTestFixtureModule} javadoc): one package-private test {@code @Component} per consuming
  * Maven module, including any strategy module the module needs alongside the fixture module. Consumed
  * through {@link MountFixtures} rather than directly by individual integration tests.
+ *
+ * <p>{@link RestTestNoSecurityModule} is included because these tests exercise request validation, not
+ * security: it supplies the {@code null} {@code SecurityPolicyValidator} the mount factory requires, so
+ * startup policy validation is skipped. A graph that wanted the framework's real policy checks would
+ * include {@code AuthModule} in its place — the two bind the same unqualified Dagger key and cannot
+ * both be present.
  */
 @Singleton
-@Component(modules = {RestTestFixtureModule.class, RestValidationModule.class})
+@Component(modules = {RestTestFixtureModule.class, RestTestNoSecurityModule.class, RestValidationModule.class})
 interface ValidationMountComponent {
 
     /**

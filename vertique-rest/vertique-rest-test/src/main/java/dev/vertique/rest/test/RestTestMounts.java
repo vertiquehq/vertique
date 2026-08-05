@@ -226,11 +226,27 @@ public final class RestTestMounts {
      * teardown method whose test may have failed before creating anything. This replaces the
      * byte-identical private helpers the upload-oriented REST integration tests each carried.
      *
+     * <p><b>Degenerate targets are rejected rather than deleted.</b> The realistic accident is not a
+     * malicious path but an unset one: a test that reads its uploads directory from configuration and
+     * gets back {@code ""} hands over {@link Path#of(String, String...) Path.of("")}, which resolves
+     * to the <em>current working directory</em> — for a Maven build, the module source tree. This
+     * method therefore refuses a path that resolves to the working directory and one that resolves to
+     * a filesystem root, before it walks anything. Both are checked against the
+     * {@linkplain Path#toAbsolutePath() absolute}, {@linkplain Path#normalize() normalized} form, so
+     * {@code ""}, {@code "."}, and {@code "uploads/.."} are all caught.
+     *
+     * <p>Symbolic links need no special handling: {@link Files#walk} does not follow them unless
+     * {@code FOLLOW_LINKS} is passed, so a link inside the tree is deleted as a link and its target is
+     * left alone.
+     *
      * @param directory the directory to remove; must not be {@code null}, but need not exist
+     * @throws IllegalArgumentException if {@code directory} is blank, resolves to the current working
+     *                                  directory, or resolves to a filesystem root
      * @throws UncheckedIOException if the tree cannot be walked or a path cannot be deleted
      */
     public static void deleteRecursively(Path directory) {
         Objects.requireNonNull(directory, "directory");
+        requireDeletableTarget(directory);
         if (Files.notExists(directory)) {
             return;
         }
@@ -244,6 +260,37 @@ public final class RestTestMounts {
     }
 
     // --- Internals ---
+
+    /**
+     * Rejects the two paths that {@link #deleteRecursively} must never walk: the current working
+     * directory and a filesystem root.
+     *
+     * <p>The blank check runs on the path as written, because an entirely blank string is the shape a
+     * missing configuration value arrives in and naming it in the failure message is far more useful
+     * than reporting the working directory it silently became. The remaining checks run on the
+     * absolute, normalized form so a relative path cannot slip past by spelling the same location
+     * differently ({@code "."}, {@code "uploads/.."}).
+     *
+     * <p>A filesystem root is identified by having no parent once absolute and normalized — true of
+     * {@code /} and of {@code C:\}, and false of every real upload directory.
+     *
+     * @param directory the caller-supplied path
+     * @throws IllegalArgumentException if the path is blank, is the working directory, or is a root
+     */
+    private static void requireDeletableTarget(Path directory) {
+        if (directory.toString().isBlank()) {
+            throw new IllegalArgumentException("directory must not be blank: a blank or missing configured path "
+                    + "resolves to the current working directory, which for a build is the module source tree");
+        }
+        Path resolved = directory.toAbsolutePath().normalize();
+        if (resolved.equals(Path.of("").toAbsolutePath().normalize())) {
+            throw new IllegalArgumentException(
+                    "refusing to recursively delete the current working directory: " + resolved);
+        }
+        if (resolved.getParent() == null) {
+            throw new IllegalArgumentException("refusing to recursively delete a filesystem root: " + resolved);
+        }
+    }
 
     /**
      * Mounts the ROOT-scoped middlewares on the root router, in

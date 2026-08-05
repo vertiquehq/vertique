@@ -37,7 +37,8 @@ import org.junit.jupiter.api.io.TempDir;
  * caller-supplied {@link Vertx} on any path, a blocking start surfaces an exhausted budget as a
  * thrown exception rather than a hang, a start that really reaches the await rethrows its runtime
  * cause unwrapped, a call from an event-loop thread is refused rather than deadlocked, and its
- * recursive delete helper matches the private copies it replaces in the consumer integration tests.
+ * recursive delete helper matches the private copies it replaces in the consumer integration tests
+ * while refusing the degenerate targets those copies would happily have walked.
  *
  * <p>The two blocking-start failure tests cover different branches on purpose:
  * {@code startServerBlockingTimesOutCleanly} pins the pre-exhausted budget branch that throws before
@@ -180,6 +181,43 @@ class RestTestMountsTest {
         java.nio.file.Path missing = tempDir.resolve("never-created");
 
         assertThatCode(() -> RestTestMounts.deleteRecursively(missing)).doesNotThrowAnyException();
+    }
+
+    @Test
+    @DisplayName("deleteRecursively refuses a blank or empty path instead of deleting the working directory")
+    void deleteRecursivelyRejectsAPathResolvingToTheWorkingDirectory() {
+        // The accident this guards: an unset configured uploads directory arrives as "", which
+        // Path.of resolves to the current working directory — under Maven, the module source tree.
+        assertThatThrownBy(() -> RestTestMounts.deleteRecursively(java.nio.file.Path.of("")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("must not be blank");
+
+        assertThatThrownBy(() -> RestTestMounts.deleteRecursively(java.nio.file.Path.of("   ")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("must not be blank");
+
+        // Spelling the same location a different way must not slip past the blank check.
+        assertThatThrownBy(() -> RestTestMounts.deleteRecursively(java.nio.file.Path.of(".")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("current working directory");
+
+        assertThat(Files.isDirectory(java.nio.file.Path.of("").toAbsolutePath().normalize()))
+                .as("the working directory must be untouched by the rejected calls")
+                .isTrue();
+    }
+
+    @Test
+    @DisplayName("deleteRecursively refuses a filesystem root")
+    void deleteRecursivelyRejectsAFilesystemRoot(@TempDir java.nio.file.Path tempDir) {
+        java.nio.file.Path root = tempDir.toAbsolutePath().getRoot();
+
+        assertThatThrownBy(() -> RestTestMounts.deleteRecursively(root))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("filesystem root");
+
+        assertThat(Files.isDirectory(tempDir))
+                .as("nothing below the root may have been walked")
+                .isTrue();
     }
 
     // --- Helpers ---
