@@ -11,21 +11,16 @@ import dev.vertique.rest.core.convert.ParamConversionResolver;
 import dev.vertique.rest.core.convert.ParamConverter;
 import dev.vertique.rest.core.convert.ParamConverterBinding;
 import dev.vertique.rest.core.convert.ParamConverterRegistry;
-import dev.vertique.rest.core.routing.SecurityRequirementSet;
-import dev.vertique.rest.core.security.SecurityPolicy;
-import dev.vertique.rest.jaxrs.routing.BodyDescriptor;
-import dev.vertique.rest.jaxrs.routing.FilePartDescriptor;
 import dev.vertique.rest.jaxrs.routing.JaxRsOperationDescriptor;
 import dev.vertique.rest.jaxrs.routing.ParamDescriptor;
 import dev.vertique.rest.jaxrs.routing.ParamLocation;
+import dev.vertique.rest.jaxrs.routing.StubOperationDescriptor;
 import io.vertx.core.MultiMap;
 import io.vertx.core.http.HttpServerRequest;
 import io.vertx.ext.web.RoutingContext;
 import jakarta.ws.rs.ext.ParamConverterProvider;
-import java.lang.annotation.Annotation;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
@@ -81,73 +76,12 @@ class BoundRequestResolverPropagationTest {
 
     /** Builds a single-path-param GET operation descriptor stub. */
     private static JaxRsOperationDescriptor opWithParams(ParamDescriptor... params) {
-        List<ParamDescriptor> paramList = List.of(params);
-        return new JaxRsOperationDescriptor() {
-            @Override
-            public String operationId() {
-                return "op";
-            }
-
-            @Override
-            public String httpMethod() {
-                return "GET";
-            }
-
-            @Override
-            public String routeTemplate() {
-                return "/test";
-            }
-
-            @Override
-            public List<String> consumes() {
-                return List.of();
-            }
-
-            @Override
-            public List<String> produces() {
-                return List.of();
-            }
-
-            @Override
-            public SecurityPolicy securityPolicy() {
-                return new SecurityPolicy.None();
-            }
-
-            @Override
-            public List<SecurityRequirementSet> securityRequirementSets() {
-                return List.of();
-            }
-
-            @Override
-            public List<Annotation> methodAnnotations() {
-                return List.of();
-            }
-
-            @Override
-            public List<Annotation> classAnnotations() {
-                return List.of();
-            }
-
-            @Override
-            public <A extends Annotation> Optional<A> findAnnotation(Class<A> type) {
-                return Optional.empty();
-            }
-
-            @Override
-            public List<ParamDescriptor> parameters() {
-                return paramList;
-            }
-
-            @Override
-            public List<FilePartDescriptor> fileParts() {
-                return List.of();
-            }
-
-            @Override
-            public Optional<BodyDescriptor> body() {
-                return Optional.empty();
-            }
-        };
+        return StubOperationDescriptor.builder()
+                .operationId("op")
+                .httpMethod("GET")
+                .routeTemplate("/test")
+                .parameters(List.of(params))
+                .build();
     }
 
     /** Builds a mocked {@link RoutingContext} carrying a single path param. */
