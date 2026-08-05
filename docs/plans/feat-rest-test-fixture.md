@@ -575,8 +575,25 @@ test ! -e vertique-rest/vertique-rest-validation/src/test/java/dev/vertique/rest
 - #210's premise — fixture replaces what the widening bought → `mapsExceptionThroughRealDefaultMapper`
 - production fidelity → `graphYieldsAllSixProductionEncodersInSortedOrder`,
   `contextResolutionResolvesRoutingContext`
-- no widening → `git diff main...HEAD -- '*/src/main/*'` touches no file under `vertique-rest-jaxrs`
-  or `vertique-rest-core`
+- **no visibility widening** → no *existing* member's visibility increases anywhere in production
+  source. Run per file so paths stay attached:
+  ```bash
+  for f in $(git diff --name-only main...HEAD -- '*/src/main/*' | grep -v vertique-rest-test); do
+      echo "=== $f ==="; git diff main...HEAD -- "$f" | grep -E '^[+-].*\b(public|protected|private)\b'
+  done
+  ```
+  A `+` line with no matching `-` line is a **new** member and is fine; a `-`/`+` pair on the same
+  member is a widening and must not exist. Verified 2026-08-06: the only hit outside
+  `vertique-rest-test` is the additive `public void onCloseRun(Runnable)`.
+
+  > **Superseded criterion.** This originally read "touches no file under `vertique-rest-jaxrs` or
+  > `vertique-rest-core`". That is no longer true and was always the wrong test: the property #210
+  > actually turns on is that the fixture needed no *visibility* widening, not that the branch left
+  > production source untouched. Three adjacent defects found by this work were fixed here on the
+  > user's ruling — `AsyncFileInputStream`'s inverted event-loop guard, a false attribution in a
+  > `RequestLocaleInterceptor` comment, and an ambiguous `RequestContextLifecycle.Handle.onClose`
+  > overload. None widens anything; the first two are a bug fix and a comment, and the third is
+  > purely additive.
 - consumers migrate → nine ITs green with unchanged assertions
 - PR 2 unblocked → no caller of `defaultExceptionMapper()` outside `dev.vertique.rest.jaxrs`
 
