@@ -61,7 +61,7 @@ Classify a check by the qualifier you contribute it under. `@Liveness` answers "
 - The overall status is UP only when every individual check is UP.
 - An empty check set is UP with an empty `checks` array.
 - Each check is bounded by a per-check timeout (`healthCheckTimeoutSeconds`, default 5); a timed-out check counts as DOWN.
-- A check that returns a failed future, or that throws synchronously from `check()`, is reported as DOWN carrying the throwable's message.
+- A check that returns a failed future, or that throws synchronously from `check()`, is reported as DOWN carrying the throwable's message — or its fully qualified class name when the throwable has no message.
 
 ### Response format
 
@@ -123,7 +123,7 @@ public interface HealthCheck {
 }
 ```
 
-Return a *completed* future carrying an UP or DOWN `HealthCheckResult` rather than a failed future. A failed future is still reported as DOWN, but the message it carries is the raw throwable message.
+Return a *completed* future carrying an UP or DOWN `HealthCheckResult` rather than a failed future. A failed future is still reported as DOWN, but the diagnostic it carries is only the raw throwable message — or the throwable's class name when it has no message.
 
 ```java
 @Singleton
@@ -147,7 +147,7 @@ public class CacheHealthCheck implements HealthCheck {
             return Future.succeededFuture(
                     cache.ping() ? HealthCheckResult.up() : HealthCheckResult.down("ping failed"));
         } catch (Exception e) {
-            return Future.succeededFuture(HealthCheckResult.down(String.valueOf(e.getMessage())));
+            return Future.succeededFuture(HealthCheckResult.down(e));
         }
     }
 }
@@ -166,7 +166,8 @@ The canonical constructor normalizes a `null` data map to empty and takes an unm
 | `HealthCheckResult.up()` | UP | empty |
 | `HealthCheckResult.up(Map<String,Object>)` | UP | provided map |
 | `HealthCheckResult.down()` | DOWN | empty |
-| `HealthCheckResult.down(String error)` | DOWN | `{"error": "<error>"}` |
+| `HealthCheckResult.down(String error)` | DOWN | `{"error": "<error>"}`, or empty when `error` is `null` |
+| `HealthCheckResult.down(Throwable cause)` | DOWN | `{"error": "<cause.getMessage()>"}`, falling back to the throwable's fully qualified class name when it has no message; `cause` must not be `null` |
 | `HealthCheckResult.down(Map<String,Object>)` | DOWN | provided map |
 
 `HealthStatus` is a two-constant enum, `UP` and `DOWN`.
@@ -181,7 +182,7 @@ The abstract Dagger module in `dev.vertique.core.health` that declares both `@Mu
 
 ### Invariants & Gotchas
 
-- **`HealthCheckResult.down(String)` rejects a `null` message.** The single-argument overload builds `Map.of("error", error)`, and `Map.of` throws `NullPointerException` on a `null` value. A throwable's message is frequently `null`, so wrap it (`String.valueOf(e.getMessage())`) instead of passing it straight through.
+- **Prefer `down(Throwable)` over `down(String)` when you hold the failure.** `down(String)` treats a `null` message as "no diagnostic available" and yields a DOWN result with empty data, so `down(e.getMessage())` silently loses every trace of a message-less exception. `down(e)` falls back to the throwable's class name and keeps a diagnostic in the probe response.
 - **`name()` must be unique within its qualifier set.** Names are the JSON keys in the probe response; duplicates produce two entries that operators cannot tell apart. The framework does not reject a collision.
 - **A check's work counts against the probe's latency.** All checks in a set run concurrently, but the endpoint responds only after the slowest one settles or times out, so `healthCheckTimeoutSeconds` is effectively the probe's worst-case latency.
 - **Never block the event loop inside `check()`.** Offload blocking work with `vertx.executeBlocking` and return the resulting future.
