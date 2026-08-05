@@ -22,6 +22,7 @@ import io.vertx.junit5.VertxTestContext;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Predicate;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
@@ -345,13 +346,7 @@ class HealthCheckHandlerTest {
      * @return the matching entry, or {@code null}
      */
     private static JsonObject checkNamed(JsonArray checks, String name) {
-        for (int i = 0; i < checks.size(); i++) {
-            JsonObject check = checks.getJsonObject(i);
-            if (name.equals(check.getString("name"))) {
-                return check;
-            }
-        }
-        return null;
+        return findCheck(checks, name::equals);
     }
 
     /**
@@ -363,9 +358,21 @@ class HealthCheckHandlerTest {
      * @return the first non-matching entry, or {@code null}
      */
     private static JsonObject checkNotNamed(JsonArray checks, String name) {
+        return findCheck(checks, candidate -> !name.equals(candidate));
+    }
+
+    /**
+     * Returns the first check entry whose name satisfies the given predicate, or {@code null} when
+     * none does.
+     *
+     * @param checks       the {@code checks} array from the response body
+     * @param nameMatches  predicate applied to each entry's {@code name}
+     * @return the first matching entry, or {@code null}
+     */
+    private static JsonObject findCheck(JsonArray checks, Predicate<String> nameMatches) {
         for (int i = 0; i < checks.size(); i++) {
             JsonObject check = checks.getJsonObject(i);
-            if (!name.equals(check.getString("name"))) {
+            if (nameMatches.test(check.getString("name"))) {
                 return check;
             }
         }

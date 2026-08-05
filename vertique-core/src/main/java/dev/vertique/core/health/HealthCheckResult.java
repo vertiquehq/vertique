@@ -91,10 +91,10 @@ public record HealthCheckResult(HealthStatus status, Map<String, Object> data) {
      */
     public static HealthCheckResult down(Throwable cause) {
         Objects.requireNonNull(cause, "cause");
-        return down(
-                cause.getMessage() != null
-                        ? cause.getMessage()
-                        : cause.getClass().getName());
+        // Read the message once: getMessage() is overridable, so a second call is both wasted work
+        // and a chance to observe a different value.
+        String message = cause.getMessage();
+        return down(message != null ? message : cause.getClass().getName());
     }
 
     /**

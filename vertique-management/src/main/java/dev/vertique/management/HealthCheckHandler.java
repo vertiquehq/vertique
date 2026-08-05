@@ -11,7 +11,6 @@ import io.vertx.core.Handler;
 import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.RoutingContext;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
@@ -120,18 +119,12 @@ public class HealthCheckHandler implements Handler<RoutingContext> {
             return;
         }
 
-        List<CheckExecution> executions = new ArrayList<>(checks.size());
-        List<Future<HealthCheckResult>> results = new ArrayList<>(checks.size());
-        for (HealthCheck check : checks) {
-            CheckExecution execution = start(check);
-            executions.add(execution);
-            results.add(execution.result());
-        }
+        List<CheckExecution> executions = checks.stream().map(this::start).toList();
 
         // join, not all: all is fail-fast, so a single failed check would complete the aggregation
         // while its siblings are still pending and they would render as DOWN. join waits for every
         // constituent to settle, whatever its outcome.
-        Future.join(results).onComplete(ar -> {
+        Future.join(executions.stream().map(CheckExecution::result).toList()).onComplete(ar -> {
             JsonArray checksArray = new JsonArray();
             boolean allUp = true;
             for (CheckExecution execution : executions) {
@@ -196,8 +189,8 @@ public class HealthCheckHandler implements Handler<RoutingContext> {
     }
 
     /**
-     * Builds the {@code DOWN} JSON entry describing a failure, without ever reading an untrusted
-     * message twice.
+     * Builds the {@code DOWN} JSON entry describing a failure, degrading to the failure's class
+     * name when its message cannot be read.
      *
      * @param name  the check's already-resolved name
      * @param cause the failure to describe
