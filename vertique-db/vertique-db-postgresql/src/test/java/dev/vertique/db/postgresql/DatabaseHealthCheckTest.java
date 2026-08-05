@@ -62,6 +62,21 @@ class DatabaseHealthCheckTest {
     }
 
     @Test
+    @DisplayName("returns DOWN with the exception class name when the failure has no message")
+    void downOnFailureWithNullMessage() {
+        when(pool.query(anyString())).thenReturn(query);
+        when(query.execute()).thenReturn(Future.failedFuture(new RuntimeException()));
+
+        DatabaseHealthCheck check = new DatabaseHealthCheck(pool);
+        Future<HealthCheckResult> future = check.check();
+        HealthCheckResult result = future.result();
+
+        assertTrue(future.succeeded());
+        assertEquals(HealthStatus.DOWN, result.status());
+        assertEquals("java.lang.RuntimeException", result.data().get("error"));
+    }
+
+    @Test
     @DisplayName("name returns 'database'")
     void name() {
         DatabaseHealthCheck check = new DatabaseHealthCheck(pool);
