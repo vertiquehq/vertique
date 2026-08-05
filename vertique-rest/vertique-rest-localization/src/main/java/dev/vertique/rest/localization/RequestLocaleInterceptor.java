@@ -96,8 +96,14 @@ public final class RequestLocaleInterceptor implements RequestInterceptor {
                 Optional.empty(),
                 resolved.source(),
                 DEFAULT_ZONE_SOURCE);
-        // Runs on the request's duplicated Vert.x context (guaranteed by RequestContextLifecycle, the
-        // ROOT middleware), so holder.bind() satisfies its duplicated-context precondition.
+        // Runs on the request's duplicated Vert.x context, so holder.bind() satisfies its
+        // duplicated-context write precondition. The duplication is Vert.x Web's doing — it
+        // duplicates the context per request before any handler runs. RequestContextLifecycle plays
+        // no part in it: its handle() only stores a Handle and registers an end handler, and it never
+        // calls duplicate().
+        //
+        // The genuine dependency on RequestContextLifecycle is the separate fromRoutingContext(rc)
+        // lookup below, which needs that ROOT middleware to have run for this request.
         ContextHolder.Scope scope = holder.bind(LocalizationContext.class, context);
         try {
             RequestContextLifecycle.fromRoutingContext(rc).onClose(scope);
