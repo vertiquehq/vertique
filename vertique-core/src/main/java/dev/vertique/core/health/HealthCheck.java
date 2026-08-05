@@ -44,7 +44,8 @@ public interface HealthCheck {
      * <p>Implementations should return a completed {@link Future} with an appropriate
      * {@link HealthCheckResult} rather than a failed future. If the check itself
      * throws or returns a failed future, the management endpoint will report it
-     * as {@link HealthStatus#DOWN} with the error message.
+     * as {@link HealthStatus#DOWN} with the throwable's message, or its fully
+     * qualified class name when it has no message.
      *
      * @return a future completing with the health check result
      */

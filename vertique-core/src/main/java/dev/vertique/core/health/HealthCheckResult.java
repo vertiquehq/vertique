@@ -4,6 +4,7 @@
 package dev.vertique.core.health;
 
 import java.util.Map;
+import java.util.Objects;
 
 /**
  * Result of a single {@link HealthCheck} invocation, containing the health
@@ -15,6 +16,7 @@ import java.util.Map;
  *   <li>{@link #up(Map)} — healthy, with data</li>
  *   <li>{@link #down()} — unhealthy, no data</li>
  *   <li>{@link #down(String)} — unhealthy, with error message</li>
+ *   <li>{@link #down(Throwable)} — unhealthy, described by a failure</li>
  *   <li>{@link #down(Map)} — unhealthy, with data</li>
  * </ul>
  *
@@ -64,11 +66,35 @@ public record HealthCheckResult(HealthStatus status, Map<String, Object> data) {
     /**
      * Returns an unhealthy result with an error message.
      *
-     * @param error the error description
-     * @return a new DOWN result with the error in data
+     * <p>A {@code null} error means "no diagnostic message available" and yields a result with
+     * empty data, equivalent to {@link #down()}. This keeps the factory total for the common
+     * {@code down(throwable.getMessage())} idiom, whose argument is null for any exception
+     * constructed without a message.
+     *
+     * @param error the error description; may be {@code null}
+     * @return a DOWN result carrying {@code error} in data, or with empty data when it is null
      */
     public static HealthCheckResult down(String error) {
-        return new HealthCheckResult(HealthStatus.DOWN, Map.of("error", error));
+        return new HealthCheckResult(HealthStatus.DOWN, error == null ? Map.of() : Map.of("error", error));
+    }
+
+    /**
+     * Returns an unhealthy result describing the given failure.
+     *
+     * <p>The {@code error} entry is the throwable's {@linkplain Throwable#getMessage() message}
+     * when non-null, and its {@linkplain Class#getName() fully qualified class name} otherwise.
+     * A blank message is passed through verbatim; the cause chain is not walked.
+     *
+     * @param cause the failure to describe; must not be {@code null}
+     * @return a DOWN result describing {@code cause}
+     * @throws NullPointerException if {@code cause} is {@code null}
+     */
+    public static HealthCheckResult down(Throwable cause) {
+        Objects.requireNonNull(cause, "cause");
+        return down(
+                cause.getMessage() != null
+                        ? cause.getMessage()
+                        : cause.getClass().getName());
     }
 
     /**
