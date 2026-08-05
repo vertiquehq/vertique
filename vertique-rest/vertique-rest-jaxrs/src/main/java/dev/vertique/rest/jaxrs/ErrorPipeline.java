@@ -9,9 +9,10 @@ import dev.vertique.rest.core.interceptor.ErrorInterceptor;
 import dev.vertique.rest.core.interceptor.RequestInterceptor;
 import io.vertx.core.Future;
 import io.vertx.ext.web.RoutingContext;
-import jakarta.ws.rs.core.HttpHeaders;
 import jakarta.ws.rs.core.Response;
 import java.util.List;
+import java.util.Locale;
+import java.util.Set;
 import lombok.extern.slf4j.Slf4j;
 
 /**
@@ -31,6 +32,24 @@ import lombok.extern.slf4j.Slf4j;
  */
 @Slf4j
 public class ErrorPipeline {
+
+    /**
+     * Lower-cased names of the headers dropped when this pipeline replaces a response entity — the
+     * ones whose value describes the octets of the superseded body rather than the response itself.
+     * A header describing what the body <em>means</em> ({@code Content-Type},
+     * {@code Content-Language}) is not here: the replacement is always a {@link ProblemDetail} in the
+     * same media type, so those still hold. Matched case-insensitively; see
+     * {@link #rebuildWithHeaders} for why each must not survive.
+     */
+    private static final Set<String> ENTITY_DESCRIBING_HEADERS = Set.of(
+            "content-length",
+            "content-encoding",
+            "content-range",
+            "content-md5",
+            "etag",
+            "digest",
+            "content-digest",
+            "repr-digest");
 
     private final List<ErrorInterceptor> errorInterceptors;
     private final List<RequestInterceptor> requestInterceptors;
@@ -257,16 +276,24 @@ public class ErrorPipeline {
     /**
      * Copies the source response's headers into the builder and returns the built response.
      *
-     * <p>{@code Content-Length} is the one header dropped when the entity was replaced: it describes
-     * the body the superseded response carried, and nothing downstream recomputes it —
+     * <p>The headers dropped when the entity was replaced are exactly those that describe the
+     * <em>octets</em> of the body the superseded response carried, listed in
+     * {@link #ENTITY_DESCRIBING_HEADERS}. Nothing downstream recomputes them —
      * {@code ResponsePipeline.applyToWire} copies every JAX-RS header to the wire and
      * {@code DefaultResponseSerializer} only overwrites the length when the encoder supplies one,
-     * which the JSON encoder does not. An inherited value would therefore declare a length for a body
-     * that no longer exists, the framing violation {@link ResponsePipeline} already detects. Every
-     * other header is preserved deliberately: {@code WWW-Authenticate}, {@code Retry-After} and
-     * {@code Allow} describe the response, not its body, and remain correct — indeed a
-     * {@code WWW-Authenticate} the mapper authored is exactly what a status overridden <em>to</em> 401
-     * needs.
+     * which the JSON encoder does not — so each would describe a body that no longer exists: a
+     * {@code Content-Length} declaring a length for other bytes is the framing violation
+     * {@link ResponsePipeline} already detects, a {@code Content-Encoding} makes the generated JSON
+     * undecodable, and an {@code ETag} or digest identifies a representation the client never
+     * receives.
+     *
+     * <p>Everything else is preserved deliberately, including headers that describe the body's
+     * <em>meaning</em> rather than its bytes: the rebuilt entity is a {@link ProblemDetail} in every
+     * case (either enriched with its instance or re-derived at the overriding status), so
+     * {@code Content-Type} and {@code Content-Language} still hold. {@code WWW-Authenticate},
+     * {@code Retry-After} and {@code Allow} describe the response, not its body, and remain correct —
+     * indeed a {@code WWW-Authenticate} the mapper authored is exactly what a status overridden
+     * <em>to</em> 401 needs.
      *
      * @param source         the original response whose headers should be preserved
      * @param builder        the response builder (with status and entity already set)
@@ -276,7 +303,7 @@ public class ErrorPipeline {
     private static Response rebuildWithHeaders(
             Response source, Response.ResponseBuilder builder, boolean entityReplaced) {
         source.getStringHeaders().forEach((name, values) -> {
-            if (entityReplaced && HttpHeaders.CONTENT_LENGTH.equalsIgnoreCase(name)) {
+            if (entityReplaced && ENTITY_DESCRIBING_HEADERS.contains(name.toLowerCase(Locale.ROOT))) {
                 return;
             }
             for (String value : values) {

@@ -423,6 +423,17 @@ status is reconciled. Register your own `ExceptionMapper` for the cause's type w
 is required — it outranks the Vert.x status entirely. When the recorded status *agrees* with the mapped
 one nothing changes, so a 415 whose detail names the offending content type keeps it.
 
+**Headers when the body is rebuilt.** Rebuilding the body — by this override, or by the `instance`
+enrichment every `ProblemDetail` gets — drops the headers your mapper set that describe the *octets*
+of the body it authored: `Content-Length`, `Content-Encoding`, `Content-Range`, `ETag`, and the
+digest headers (`Content-Digest`, `Repr-Digest`, `Digest`, `Content-MD5`). They would describe bytes
+the client never receives. Every other header survives, including `Content-Type`,
+`Content-Language`, and response-level headers such as `WWW-Authenticate`, `Retry-After` and
+`Allow` — a `WWW-Authenticate` is exactly what a status overridden *to* 401 needs. Set a
+representation header on an error response only if the body is one the framework will not touch
+(a non-`ProblemDetail` entity, or a `ProblemDetail` whose `instance` you set yourself and whose
+status is not overridden).
+
 ### `DefaultResponseSerializer`
 
 The `ResponseSerializer` implementation `RestModule` binds. It encodes the entity of a `Response` and
