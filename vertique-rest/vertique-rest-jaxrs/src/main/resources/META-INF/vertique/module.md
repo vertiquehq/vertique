@@ -383,6 +383,10 @@ recorded as-is. The `ctx.fail(<status>, cause)` shape records **400–499** only
 because `ctx.fail(Throwable)` synthesises a 500 indistinguishable from a deliberate
 `ctx.fail(500, cause)`. Neither shape records anything below 400 — that is not an error decision.
 
+A status outside 400–599 does not reach the client either. `ctx.fail(new HttpException(200))` and
+`ctx.fail(200)` both answer **500**: the failure has no cause to map, so its status would become the
+response's own, and a problem document under `200 OK` claims nothing went wrong.
+
 When no application-contributed `ExceptionMapper` registered for a type **more specific than
 `Throwable`** matched, that recorded status replaces the mapped one — preserving, for example, a 401
 or 403 raised by Vert.x auth middleware, or the 400 Vert.x determined for a malformed request body.

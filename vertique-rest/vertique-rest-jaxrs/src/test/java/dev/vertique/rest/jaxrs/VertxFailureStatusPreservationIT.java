@@ -29,6 +29,7 @@ import io.vertx.core.http.HttpServer;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.Router;
 import io.vertx.ext.web.RoutingContext;
+import io.vertx.ext.web.handler.HttpException;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
 import jakarta.ws.rs.GET;
@@ -82,6 +83,7 @@ public class VertxFailureStatusPreservationIT {
     private static final String MODE_BARE_THROWABLE = "bare-throwable";
     private static final String MODE_EXPLICIT_500 = "vertx-500-with-cause";
     private static final String MODE_BELOW_400 = "vertx-200-with-cause";
+    private static final String MODE_HTTP_EXCEPTION_BELOW_400 = "http-exception-200-no-cause";
 
     /**
      * The message the 401 cause carries. It stands in for whatever a claims validator, a
@@ -217,6 +219,25 @@ public class VertxFailureStatusPreservationIT {
                 "only a 4xx is an authoritative Vert.x client-error decision");
     }
 
+    @Test
+    @DisplayName("A cause-less HttpException below 400 answers 500, not the non-error status it carried")
+    void causelessHttpExceptionBelowFourHundredAnswersServerError() throws Exception {
+        HttpResult result = get(MODE_HTTP_EXCEPTION_BELOW_400);
+
+        assertEquals(
+                500,
+                result.statusCode(),
+                "refusing to record the hint is not enough — the cause synthesised from the same status "
+                        + "would answer the failure '200 OK' with a problem document, hint was "
+                        + describeHint(MODE_HTTP_EXCEPTION_BELOW_400));
+        assertEquals(
+                Optional.empty(),
+                observedHint(MODE_HTTP_EXCEPTION_BELOW_400),
+                "a sub-400 HttpException status is not an authoritative client-error decision");
+        assertEquals(
+                500, result.problem().getInteger("status"), "the problem body must describe the status actually sent");
+    }
+
     // --- Harness ---
 
     private static HttpResult get(String failMode) throws Exception {
@@ -328,6 +349,7 @@ public class VertxFailureStatusPreservationIT {
                 case MODE_BARE_THROWABLE -> ctx.fail(new UnavailableException("down"));
                 case MODE_EXPLICIT_500 -> ctx.fail(500, new IllegalArgumentException("y"));
                 case MODE_BELOW_400 -> ctx.fail(200, new RuntimeException());
+                case MODE_HTTP_EXCEPTION_BELOW_400 -> ctx.fail(new HttpException(200));
                 default -> ctx.next();
             }
         }
