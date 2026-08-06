@@ -57,11 +57,11 @@ Classify a check by the qualifier you contribute it under. `@Liveness` answers "
 
 ### Aggregation rules
 
-- Every check in the set runs concurrently; the endpoint waits for all of them.
+- Every check in the set runs concurrently; the endpoint waits for all of them to settle, whatever their outcome. The one exception is a check that throws an `Error` while starting — see the last bullet.
 - The overall status is UP only when every individual check is UP.
 - An empty check set is UP with an empty `checks` array.
 - Each check is bounded by a per-check timeout (`healthCheckTimeoutSeconds`, default 5); a timed-out check counts as DOWN.
-- A check that returns a failed future, or that throws an **exception** synchronously from `check()`, is reported as DOWN carrying the throwable's message — or its fully qualified class name when the throwable has no message. A check that throws an `Error` rather than an exception from `check()` or `name()` is not attributable to one entry and degrades the whole probe to the terse `{"status":"DOWN","checks":[]}` body.
+- A check that returns a failed future, or that throws an **exception** synchronously from `check()`, is reported as DOWN carrying the throwable's message — or its fully qualified class name when the throwable has no message. A check that throws an `Error` rather than an exception from `check()` or `name()` is not attributable to one entry and degrades the whole probe to the terse `{"status":"DOWN","checks":[]}` body. Because checks are started in sequence, such an `Error` also prevents the checks after it from starting at all and abandons those already in flight.
 
 ### Response format
 

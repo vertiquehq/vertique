@@ -191,8 +191,11 @@ public class HealthCheckHandler implements Handler<RoutingContext> {
      * handler and is never logged — the probe would simply hang. The {@code ERROR} log is still the
      * whole replacement for that rethrow, but it runs only once the write has been <em>initiated</em>
      * — {@code end} returns a future, so the response is already handed to the transport by then.
-     * That ordering keeps an application-supplied appender out of the probe's answer path: a slow
-     * appender delays the log, not the response. Sequencing the log on the write's completion future
+     * That ordering keeps an application-supplied appender off the path that builds and submits the
+     * answer. It does not make the answer independent of a blocking appender: {@code end} hands the
+     * bytes to the transport, which flushes them inline only while the socket is writable, so under
+     * backpressure a blocking appender can still delay delivery. Sequencing the log on the write's
+     * completion future
      * is deliberately avoided, because the {@code ERROR} line would then be lost whenever that
      * future never settles — and it is the only record that the failure happened at all.
      *
@@ -237,7 +240,8 @@ public class HealthCheckHandler implements Handler<RoutingContext> {
         } catch (Throwable ignored) {
             // An appender is application-supplied, so a throwing one must not fail this probe. A
             // blocking one is a different matter: it still stalls the event loop after the answer
-            // has been flushed, and nothing here bounds it — the same hazard family as the residual
+            // has been handed to the transport, which delays delivery whenever the socket is not
+            // immediately writable. Nothing here bounds it — the same hazard family as the residual
             // hazards named in the class javadoc.
         }
     }

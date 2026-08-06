@@ -15,6 +15,7 @@ import io.vertx.core.http.HttpClient;
 import io.vertx.core.http.HttpMethod;
 import io.vertx.core.http.HttpServer;
 import io.vertx.core.http.HttpServerResponse;
+import io.vertx.core.json.EncodeException;
 import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.Router;
@@ -964,6 +965,36 @@ class HealthCheckHandlerTest {
      */
     @Nested
     class ResponseBoundaryFallback {
+
+        @Test
+        @DisplayName("the deep-data fixture fails at aggregate encode, not at per-check conversion")
+        void deepDataFixtureFailsAtAggregateEncode() {
+            // Makes the fixture's precondition executable instead of prose. Both deep-data tests
+            // assert an empty checks array, which the interior StackOverflowError path also
+            // produces — so without this, a stack too small to reach the encoder's limit would let
+            // them pass through the wrong failure mode. Asserting the two steps separately names
+            // which path the fixture must take: mapFrom survives, encode rejects.
+            Map<String, Object> data = new HashMap<>();
+            data.put("leaf", "value");
+            for (int i = 0; i < ENCODER_BREAKING_DEPTH; i++) {
+                Map<String, Object> parent = new HashMap<>();
+                parent.put("nested", data);
+                data = parent;
+            }
+            Map<String, Object> nested = data;
+
+            JsonObject converted = assertDoesNotThrow(
+                    () -> JsonObject.mapFrom(nested),
+                    "the fixture must survive per-check conversion — if this overflows, the stack is"
+                            + " too small and the deep-data tests are exercising the interior guard");
+            assertThrows(
+                    EncodeException.class,
+                    () -> new JsonObject()
+                            .put("checks", new JsonArray().add(converted))
+                            .encode(),
+                    "the fixture must be rejected by the aggregate encode — that is the response"
+                            + " boundary the deep-data tests exist to reach");
+        }
 
         @Test
         @DisplayName("a write failure after the head is committed aborts the response, never completes it")
