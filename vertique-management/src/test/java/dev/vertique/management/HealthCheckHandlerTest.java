@@ -19,6 +19,7 @@ import io.vertx.ext.web.Router;
 import io.vertx.junit5.Timeout;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
@@ -44,9 +45,12 @@ import org.junit.jupiter.api.extension.ExtendWith;
  *   <li>Aggregation: all-UP, all-DOWN, mixed, empty check set
  *   <li>Data inclusion: data field present vs. absent in per-check JSON
  *   <li>Error handling: failed futures, synchronous exceptions, message-less and hostile
- *       throwables, and results whose data cannot be serialized
+ *       throwables, a check returning no future at all, and results whose data cannot be
+ *       serialized — including data too deeply nested for the encoder, which degrades to the
+ *       terse response-boundary fallback rather than a per-check entry
  *   <li>Sibling isolation: one misbehaving check must never starve the others or suppress the
- *       HTTP response entirely
+ *       HTTP response entirely, including when rendering its data overflows the stack
+ *   <li>Continuity: a probe answered by the fallback must leave the server able to answer the next
  *   <li>Configurable timeout: slow check exceeding custom timeout is reported DOWN
  * </ul>
  *
@@ -239,8 +243,11 @@ class HealthCheckHandlerTest {
     }
 
     /**
-     * A {@link HealthCheck} whose {@link #name()} throws. The handler calls {@code name()} on both
-     * the success and the recovery path, so a throwing name defeats the recovery itself.
+     * A {@link HealthCheck} whose {@link #name()} throws.
+     *
+     * <p>The handler resolves a name exactly once, when it starts the check, and falls back to the
+     * check's class name if that throws — so this fixture pins both halves of that contract: the
+     * fallback name in the entry, and the sibling entries surviving alongside it.
      */
     static class ThrowingNameCheck implements HealthCheck {
         @Override
@@ -333,6 +340,111 @@ class HealthCheckHandlerTest {
         @Override
         public Future<HealthCheckResult> check() {
             return Future.failedFuture(new HostileMessageException());
+        }
+    }
+
+    /**
+     * A healthy {@link HealthCheck} whose diagnostic data refers to itself.
+     *
+     * <p>A cycle among {@code Map}/{@code Collection} values makes {@link JsonObject#mapFrom(Object)}
+     * recurse until the thread's stack is exhausted, raising a raw {@link StackOverflowError} rather
+     * than an {@link Exception} (verified empirically; a cycle between POJOs is wrapped by Jackson as
+     * an {@link IllegalArgumentException} and was already caught). A cycle is used rather than a fixed
+     * nesting depth because the depth at which the stack overflows varies with the thread's stack size
+     * and would flake across machines.
+     */
+    static class SelfReferentialDataCheck implements HealthCheck {
+        @Override
+        public String name() {
+            return "self-referential";
+        }
+
+        @Override
+        public Future<HealthCheckResult> check() {
+            Map<String, Object> data = new HashMap<>();
+            data.put("self", data);
+            return Future.succeededFuture(HealthCheckResult.up(data));
+        }
+    }
+
+    /**
+     * A healthy {@link HealthCheck} whose diagnostic data is an acyclic map nested deeper than the
+     * 1000-level write limit Jackson enforces.
+     *
+     * <p>{@link JsonObject#mapFrom(Object)} does <em>not</em> enforce that limit but
+     * {@link JsonObject#encode()} does, so the failure surfaces while the aggregated body is being
+     * encoded — after per-check rendering has already succeeded. Unlike a stack overflow, 1000 is a
+     * library constant rather than a machine-dependent threshold, so a depth-based fixture is
+     * deterministic here.
+     */
+    static class DeeplyNestedDataCheck implements HealthCheck {
+
+        private static final int DEPTH = 1001;
+
+        @Override
+        public String name() {
+            return "deeply-nested";
+        }
+
+        @Override
+        public Future<HealthCheckResult> check() {
+            Map<String, Object> current = new HashMap<>();
+            current.put("leaf", "value");
+            for (int i = 0; i < DEPTH; i++) {
+                Map<String, Object> parent = new HashMap<>();
+                parent.put("nested", current);
+                current = parent;
+            }
+            return Future.succeededFuture(HealthCheckResult.up(current));
+        }
+    }
+
+    /**
+     * A healthy {@link HealthCheck} that poisons only its first invocation: the first request gets
+     * data nested past the encoder's limit, every later request gets ordinary data.
+     *
+     * <p>Used to prove that answering a poisoned probe leaves the handler and its server usable —
+     * the fallback path must not end the connection in a state that strands the next request.
+     */
+    static class PoisonedOnceCheck implements HealthCheck {
+
+        private static final int DEPTH = 1001;
+
+        private int invocations;
+
+        @Override
+        public String name() {
+            return "poisoned-once";
+        }
+
+        @Override
+        public Future<HealthCheckResult> check() {
+            if (invocations++ > 0) {
+                return Future.succeededFuture(HealthCheckResult.up(Map.of("recovered", true)));
+            }
+            Map<String, Object> current = new HashMap<>();
+            current.put("leaf", "value");
+            for (int i = 0; i < DEPTH; i++) {
+                Map<String, Object> parent = new HashMap<>();
+                parent.put("nested", current);
+                current = parent;
+            }
+            return Future.succeededFuture(HealthCheckResult.up(current));
+        }
+    }
+
+    /**
+     * A {@link HealthCheck} that violates the SPI by returning {@code null} instead of a future.
+     */
+    static class NullReturningCheck implements HealthCheck {
+        @Override
+        public String name() {
+            return "null-future";
+        }
+
+        @Override
+        public Future<HealthCheckResult> check() {
+            return null;
         }
     }
 
@@ -652,6 +764,62 @@ class HealthCheckHandlerTest {
                 ctx.completeNow();
             }));
         }
+
+        @Test
+        @DisplayName("check returning a null future is reported DOWN")
+        void nullReturningCheckIsReportedDown(VertxTestContext ctx) {
+            HealthCheckHandler handler = new HealthCheckHandler(Set.of(new NullReturningCheck()));
+            startServer(vertx, handler).compose(p -> request(vertx, p)).onComplete(ctx.succeeding(json -> {
+                ctx.verify(() -> {
+                    assertEquals(503, json.getInteger("_statusCode"));
+                    assertEquals("DOWN", json.getString("status"));
+                    JsonObject check = checkNamed(json.getJsonArray("checks"), "null-future");
+                    assertNotNull(check, "a check that returns no future must still be reported");
+                    assertEquals("DOWN", check.getString("status"));
+                });
+                ctx.completeNow();
+            }));
+        }
+
+        @Test
+        @DisplayName("data nested deeper than the encoder allows still yields a DOWN response")
+        void deeplyNestedCheckDataStillAnswers(VertxTestContext ctx) {
+            HealthCheckHandler handler = new HealthCheckHandler(Set.of(new DeeplyNestedDataCheck()));
+            startServer(vertx, handler).compose(p -> request(vertx, p)).onComplete(ctx.succeeding(json -> {
+                ctx.verify(() -> {
+                    // Only the response envelope is asserted: this failure surfaces while the whole
+                    // body is being encoded, so it trips the response-boundary fallback rather than
+                    // per-check rendering, and the fallback deliberately answers with no entries.
+                    assertEquals(503, json.getInteger("_statusCode"));
+                    assertEquals("DOWN", json.getString("status"));
+                    assertNotNull(json.getJsonArray("checks"), "the response must still be well formed");
+                });
+                ctx.completeNow();
+            }));
+        }
+
+        @Test
+        @DisplayName("a probe answered by the fallback leaves the next probe unaffected")
+        void serverStillAnswersAfterAPoisonedProbe(VertxTestContext ctx) {
+            HealthCheckHandler handler = new HealthCheckHandler(Set.of(new PoisonedOnceCheck()));
+            startServer(vertx, handler)
+                    .compose(port -> request(vertx, port).compose(poisoned -> {
+                        ctx.verify(() -> assertEquals(
+                                503, poisoned.getInteger("_statusCode"), "the first probe must trip the fallback"));
+                        return request(vertx, port);
+                    }))
+                    .onComplete(ctx.succeeding(json -> {
+                        ctx.verify(() -> {
+                            assertEquals(200, json.getInteger("_statusCode"));
+                            assertEquals("UP", json.getString("status"));
+                            JsonObject check = checkNamed(json.getJsonArray("checks"), "poisoned-once");
+                            assertNotNull(check, "the recovered check must be rendered normally");
+                            assertEquals("UP", check.getString("status"));
+                            assertEquals(true, check.getJsonObject("data").getBoolean("recovered"));
+                        });
+                        ctx.completeNow();
+                    }));
+        }
     }
 
     // --- Sibling isolation ---
@@ -700,6 +868,28 @@ class HealthCheckHandlerTest {
                     assertNotNull(fallbackName, "an unobtainable name must fall back to some placeholder");
                     assertFalse(fallbackName.isBlank(), "the fallback name must not be blank");
                     assertEquals("DOWN", unnamed.getString("status"));
+                });
+                ctx.completeNow();
+            }));
+        }
+
+        @Test
+        @DisplayName("a check whose data is self-referential does not starve a slower sibling")
+        void selfReferentialCheckDataIsReportedDown(VertxTestContext ctx) {
+            HealthCheckHandler handler = new HealthCheckHandler(
+                    Set.of(new SelfReferentialDataCheck(), new DelayedUpCheck(vertx, "delayed-sibling", 100L)));
+            startServer(vertx, handler).compose(p -> request(vertx, p)).onComplete(ctx.succeeding(json -> {
+                ctx.verify(() -> {
+                    assertEquals(503, json.getInteger("_statusCode"));
+                    assertEquals("DOWN", json.getString("status"));
+                    JsonArray checks = json.getJsonArray("checks");
+                    assertEquals(2, checks.size(), "both checks must be reported");
+                    JsonObject poisoned = checkNamed(checks, "self-referential");
+                    assertNotNull(poisoned, "the check with unrenderable data must still be reported");
+                    assertEquals("DOWN", poisoned.getString("status"));
+                    JsonObject sibling = checkNamed(checks, "delayed-sibling");
+                    assertNotNull(sibling, "the delayed sibling must be present");
+                    assertEquals("UP", sibling.getString("status"));
                 });
                 ctx.completeNow();
             }));

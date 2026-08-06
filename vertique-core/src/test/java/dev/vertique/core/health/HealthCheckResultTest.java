@@ -5,6 +5,7 @@ package dev.vertique.core.health;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import java.util.HashMap;
 import java.util.Map;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -178,7 +179,14 @@ class HealthCheckResultTest {
         @Test
         @DisplayName("data map is defensively copied and unmodifiable")
         void dataDefensivelyCopied() {
-            HealthCheckResult result = HealthCheckResult.up(Map.of("key", "value"));
+            // The source must be mutable: seeding from an already-immutable Map.of() would let this
+            // pass even if the constructor stored the caller's reference instead of copying it.
+            Map<String, Object> source = new HashMap<>(Map.of("key", "value"));
+
+            HealthCheckResult result = HealthCheckResult.up(source);
+            source.put("added-after-construction", "value");
+
+            assertEquals(Map.of("key", "value"), result.data(), "later mutations of the source must not leak in");
             assertThrows(
                     UnsupportedOperationException.class, () -> result.data().put("new", "value"));
         }

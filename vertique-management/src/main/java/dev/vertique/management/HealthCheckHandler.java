@@ -8,12 +8,14 @@ import dev.vertique.core.health.HealthCheckResult;
 import dev.vertique.core.health.HealthStatus;
 import io.vertx.core.Future;
 import io.vertx.core.Handler;
+import io.vertx.core.http.HttpServerResponse;
 import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.RoutingContext;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
+import lombok.extern.slf4j.Slf4j;
 
 /**
  * Vert.x route handler that runs a set of {@link HealthCheck} instances concurrently, applies a
@@ -38,23 +40,43 @@ import java.util.concurrent.TimeUnit;
  * {@value #DEFAULT_CHECK_TIMEOUT_SECONDS} seconds). Synchronous exceptions thrown by
  * {@link HealthCheck#check()} are caught and reported as {@code DOWN}.
  *
- * <p><b>Invariant:</b> {@link #handle(RoutingContext)} writes exactly one response, and the
- * {@code checks} array carries exactly one entry per check in the set — for every check that
- * returns or throws an {@link Exception}. A check that fails, times out, throws from
- * {@link HealthCheck#check()} or {@link HealthCheck#name()}, produces data that cannot be
- * serialized, or fails with a throwable whose {@link Throwable#getMessage()} throws, still
- * contributes a {@code DOWN} entry and never suppresses a sibling's entry or the response itself.
+ * <p><b>Invariant:</b> {@link #handle(RoutingContext)} writes exactly one response. A probe always
+ * answers, whatever a contributor does.
  *
- * <p>Two hazards remain, and are deliberately not absorbed: a contributor that throws an
- * {@link Error} propagates rather than being laundered into a {@code DOWN} status (a probe must
- * not report "unhealthy" for an {@code OutOfMemoryError} and carry on), and a contributor that
- * blocks the event loop indefinitely inside {@code check()}, {@code name()}, or
- * {@code Throwable#getMessage()} can still stall the probe — the per-check timeout bounds a
- * pending future, not a thread that never yields.
+ * <p>The response degrades in two steps:
+ *
+ * <ul>
+ *   <li><b>Attributable failure</b> — a failure the handler can pin on one check yields a
+ *       {@code DOWN} entry for that check and leaves every sibling's entry intact. This covers a
+ *       failed or timed-out future, a throw from {@link HealthCheck#check()} or
+ *       {@link HealthCheck#name()}, a failure whose {@link Throwable#getMessage()} throws, and
+ *       diagnostic data that cannot be rendered as JSON — including data whose graph is cyclic or
+ *       too deep for the serializer, which exhausts the stack rather than raising an exception.
+ *   <li><b>Unattributable failure</b> — a failure that surfaces only while the aggregated body is
+ *       being written, so no single check owns it, yields a terse
+ *       {@code 503 {"status":"DOWN","checks":[]}} and an {@code ERROR} log carrying the cause. The
+ *       log is the only record of what went wrong: a throw escaping the aggregation callback is
+ *       swallowed by Vert.x rather than propagated, so it would otherwise leave the probe hanging
+ *       silently.
+ * </ul>
+ *
+ * <p>Two hazards remain and are deliberately not absorbed, both upstream of any code this handler
+ * runs. A contributor that blocks the event loop indefinitely inside {@code check()},
+ * {@code name()}, or {@code Throwable#getMessage()} can still stall the probe — the per-check
+ * timeout bounds a pending future, not a thread that never yields. A contributor {@link Future} that
+ * reports itself failed while returning a {@code null} {@link Future#cause()} breaks the
+ * {@code Future} contract and stalls Vert.x's own aggregation before this handler regains control.
  */
+@Slf4j
 public class HealthCheckHandler implements Handler<RoutingContext> {
 
     private static final long DEFAULT_CHECK_TIMEOUT_SECONDS = 5L;
+
+    /**
+     * The body written when the aggregated response cannot be rendered. It is a constant so that
+     * producing it cannot itself fail on the path that exists to answer a rendering failure.
+     */
+    private static final String FALLBACK_BODY = "{\"status\":\"DOWN\",\"checks\":[]}";
 
     private final Set<HealthCheck> checks;
     private final long checkTimeoutSeconds;
@@ -125,17 +147,48 @@ public class HealthCheckHandler implements Handler<RoutingContext> {
         // while its siblings are still pending and they would render as DOWN. join waits for every
         // constituent to settle, whatever its outcome.
         Future.join(executions.stream().map(CheckExecution::result).toList()).onComplete(ar -> {
-            JsonArray checksArray = new JsonArray();
-            boolean allUp = true;
-            for (CheckExecution execution : executions) {
-                JsonObject checkJson = render(execution);
-                checksArray.add(checkJson);
-                if (!HealthStatus.UP.name().equals(checkJson.getString("status"))) {
-                    allUp = false;
+            try {
+                JsonArray checksArray = new JsonArray();
+                boolean allUp = true;
+                for (CheckExecution execution : executions) {
+                    JsonObject checkJson = render(execution);
+                    checksArray.add(checkJson);
+                    if (!HealthStatus.UP.name().equals(checkJson.getString("status"))) {
+                        allUp = false;
+                    }
                 }
+                sendResponse(ctx, allUp ? HealthStatus.UP : HealthStatus.DOWN, checksArray);
+            } catch (Throwable failure) {
+                answerWithFallback(ctx, failure);
             }
-            sendResponse(ctx, allUp ? HealthStatus.UP : HealthStatus.DOWN, checksArray);
         });
+    }
+
+    /**
+     * Answers a probe whose aggregated response could not be rendered, and records why.
+     *
+     * <p>This is the one boundary that owns the "always answers" invariant, so it catches everything
+     * an interior guard let through. Rethrowing is not an option: {@code Future.join} builds a
+     * contextless composite, so a throw escaping its completion callback reaches no Vert.x exception
+     * handler and is never logged — the probe would simply hang. The {@code ERROR} log below is the
+     * whole replacement for that rethrow.
+     *
+     * @param ctx     the routing context for the incoming HTTP request
+     * @param failure the failure that prevented the aggregated response from being rendered
+     */
+    private void answerWithFallback(RoutingContext ctx, Throwable failure) {
+        log.error("Health probe rendering failed; answering DOWN", failure);
+        HttpServerResponse response = ctx.response();
+        if (!response.closed() && !response.headWritten() && !response.ended()) {
+            try {
+                response.setStatusCode(503)
+                        .putHeader("content-type", "application/json")
+                        .end(FALLBACK_BODY)
+                        .onFailure(t -> log.error("Health probe fallback response failed", t));
+            } catch (Exception writeFailure) {
+                log.error("Health probe fallback response failed", writeFailure);
+            }
+        }
     }
 
     // --- Check execution ---
@@ -167,9 +220,13 @@ public class HealthCheckHandler implements Handler<RoutingContext> {
     // --- Rendering ---
 
     /**
-     * Renders one settled execution as its JSON entry. This method never throws an
-     * {@link Exception}: a failed check, an unserializable data map, and a hostile
+     * Renders one settled execution as its JSON entry. This method never throws: a failed check, an
+     * unserializable data map, a failure carrying no cause, and a hostile
      * {@link Throwable#getMessage()} all degrade to a {@code DOWN} entry.
+     *
+     * <p>Keeping these guards here rather than only at the response boundary is what preserves
+     * per-check fidelity — a single poisoned check degrades its own entry, not the whole response
+     * and its siblings' entries with it.
      *
      * @param execution the settled execution to render
      * @return the check's JSON entry
@@ -183,9 +240,29 @@ public class HealthCheckHandler implements Handler<RoutingContext> {
                 // The check reported a status but its diagnostic data cannot be rendered as JSON;
                 // report the rendering failure instead of dropping the entry.
                 return downJson(execution.name(), e);
+            } catch (StackOverflowError e) {
+                // JsonObject.mapFrom recurses into Map/Collection values, so data whose graph is
+                // cyclic or extremely deep exhausts the stack instead of raising an Exception.
+                // (A cycle between POJOs is wrapped by Jackson as an IllegalArgumentException and
+                // is already handled above.) The stack unwinds fully before this runs, so the entry
+                // is rendered on a healthy stack.
+                return downJson(execution.name(), e);
             }
         }
-        return downJson(execution.name(), result.cause());
+        Throwable cause = result.cause();
+        if (cause == null) {
+            // A third-party Future implementation may report a failure with no cause at all, and
+            // this method reads succeeded()/cause() straight off that object. down(Throwable) is
+            // strict on null by contract — an absent failure object is a caller bug, not a
+            // diagnosable state — so report DOWN with no diagnostic rather than relax it.
+            //
+            // Today no such future reaches here: Future.join reads the same two accessors while
+            // settling its composite and never completes when the cause is null, so the probe
+            // stalls upstream of this branch (measured against vertx-core 5.1.2). The guard is kept
+            // because this is the seam that would observe the state if that ever changed.
+            return toJson(execution.name(), HealthCheckResult.down());
+        }
+        return downJson(execution.name(), cause);
     }
 
     /**
@@ -228,13 +305,18 @@ public class HealthCheckHandler implements Handler<RoutingContext> {
      * @param checks the per-check entries
      */
     private void sendResponse(RoutingContext ctx, HealthStatus status, JsonArray checks) {
+        // Encode before touching the response. JsonObject.encode enforces the serializer's nesting
+        // limit that JsonObject.mapFrom does not, so it can still reject data that every per-check
+        // rendering accepted. Failing before the first mutation hands the boundary fallback an
+        // untouched response instead of one already carrying a status code and a header.
+        String body = new JsonObject()
+                .put("status", status.name())
+                .put("checks", checks)
+                .encode();
         int statusCode = status == HealthStatus.UP ? 200 : 503;
         ctx.response()
                 .setStatusCode(statusCode)
                 .putHeader("content-type", "application/json")
-                .end(new JsonObject()
-                        .put("status", status.name())
-                        .put("checks", checks)
-                        .encode());
+                .end(body);
     }
 }
