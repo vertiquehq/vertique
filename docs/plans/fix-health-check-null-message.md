@@ -81,8 +81,10 @@ public static HealthCheckResult down(String error)
  * Returns an unhealthy result describing the given failure.
  *
  * <p>The {@code error} entry is the throwable's {@linkplain Throwable#getMessage() message}
- * when non-null, and its {@linkplain Class#getName() fully qualified class name} otherwise.
- * A blank message is passed through verbatim; the cause chain is not walked.
+ * when non-null, and its {@linkplain Class#getName() fully qualified class name} otherwise —
+ * including when {@code getMessage()} itself throws an {@link Exception}, since a health check
+ * must be able to describe any failure it is handed. A blank message is passed through
+ * verbatim; the cause chain is not walked.
  *
  * @param cause the failure to describe; must not be {@code null}
  * @return a DOWN result describing {@code cause}
@@ -90,6 +92,10 @@ public static HealthCheckResult down(String error)
  */
 public static HealthCheckResult down(Throwable cause)
 ```
+
+The hostile-`getMessage()` guard lives **here**, not in `HealthCheckHandler` (amendment A1). Every
+caller of the documented `down(cause)` idiom — the handler, `DatabaseHealthCheck`, and any
+third-party check — gets the same guarantee, and the DOWN-rendering policy is stated once.
 
 **Deliberate asymmetry** (stated so it is not re-litigated): `down(String)` is *total* on null,
 `down(Throwable)` is *strict* on null. An absent message is a real state; an absent failure
@@ -112,12 +118,12 @@ is the structural change that makes `join` and the success guard load-bearing (F
 **Handler invariant (new, javadoc'd):** `handle` writes exactly one response, and `checks` carries
 exactly one entry per check in the set, for every check that returns or throws normally.
 
-**Non-fatal failure policy (frozen):** every guard in the handler catches `Exception`, never
-`Throwable`. An `Error` propagates rather than being laundered into a DOWN status — a probe must
-not report "unhealthy" for an `OutOfMemoryError` and carry on. Consequently the invariant above
-holds for `Exception`, and two hazards remain caveated: an `Error` thrown from contributor code,
-and a contributor that **blocks** the event loop indefinitely in `check()`, `name()`, or
-`Throwable#getMessage()` (§8 D3).
+**Non-fatal failure policy (frozen):** every guard added by this change — in the handler and in
+`HealthCheckResult.down(Throwable)` — catches `Exception`, never `Throwable`. An `Error`
+propagates rather than being laundered into a DOWN status; a probe must not report "unhealthy"
+for an `OutOfMemoryError` and carry on. Consequently the invariant above holds for `Exception`,
+and two hazards remain caveated: an `Error` thrown from contributor code, and a contributor that
+**blocks** the event loop indefinitely in `check()`, `name()`, or `Throwable#getMessage()` (§8 D3).
 
 ### Class Inventory
 
@@ -428,7 +434,25 @@ remain caveated (D3).
 
 ---
 
-## 11. Review response (rev 1 → rev 2)
+## 11. Amendments
+
+**A1 — 2026-08-06 — trigger: Simplify-stage altitude review. Contract Appendix change; user approved.**
+The hostile-`getMessage()` guard moves from `HealthCheckHandler.downJson` into
+`HealthCheckResult.down(Throwable)`.
+*Why:* the guard sat one layer above the documented idiom. `DatabaseHealthCheck` uses
+`.otherwise(HealthCheckResult::down)` — exactly what the packaged SPI tells third-party authors to
+write — and got no protection: a failure whose `getMessage()` throws makes the mapper throw, and
+per Vert.x the future then fails with the *mapper's* exception, so the original failure's identity
+is lost and the probe reports a diagnostic describing the wrong throwable. Same defect class as
+issue #35, one layer removed. Moving the guard makes the DOWN-rendering policy live in one place,
+removes the handler's duplicated fallback, and extends the guarantee to every caller.
+*Also:* the plan's §7 prediction that only one S2 test would be red was wrong — four were
+(the two null-message tests fail on a dropped diagnostic, and `hostileGetMessageIsReportedDown`
+hangs). Recorded as a verified-fact correction; no sign-off needed.
+
+---
+
+## 12. Review response (rev 1 → rev 2)
 
 | Finding | Resolution |
 |---|---|
