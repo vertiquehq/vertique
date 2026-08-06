@@ -243,7 +243,8 @@ contributed automatically as a `@Readiness` health check whenever `DbPostgresqlM
 no application wiring is required.
 
 It reports under the name `database`, resolving to UP when the query succeeds and DOWN with the
-failure message otherwise.
+failure's message otherwise, falling back to the failure's fully qualified class name when it has
+no message.
 
 ---
 

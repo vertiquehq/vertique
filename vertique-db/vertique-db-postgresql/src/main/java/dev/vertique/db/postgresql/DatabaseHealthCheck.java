@@ -46,14 +46,15 @@ public class DatabaseHealthCheck implements HealthCheck {
     /**
      * Executes {@code SELECT 1} against the pool to verify connectivity.
      *
-     * @return a future completing with UP if the query succeeds, DOWN with
-     *         the error message otherwise
+     * @return a future completing with UP if the query succeeds, DOWN carrying
+     *         the failure's message otherwise, falling back to the failure's
+     *         fully qualified class name when it has no message
      */
     @Override
     public Future<HealthCheckResult> check() {
         return pool.query("SELECT 1")
                 .execute()
                 .map(rs -> HealthCheckResult.up())
-                .otherwise(cause -> HealthCheckResult.down(cause.getMessage()));
+                .otherwise(HealthCheckResult::down);
     }
 }
