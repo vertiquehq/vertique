@@ -14,6 +14,7 @@ import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.core.http.HttpServer;
 import io.vertx.core.json.JsonObject;
+import io.vertx.ext.web.Router;
 import jakarta.ws.rs.GET;
 import jakarta.ws.rs.Path;
 import jakarta.ws.rs.Produces;
@@ -25,6 +26,7 @@ import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
@@ -33,12 +35,14 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
 
 /**
- * Verifies the ownership and failure-mode contract of {@link RestTestMounts}: it never closes a
- * caller-supplied {@link Vertx} on any path, a blocking start surfaces an exhausted budget as a
- * thrown exception rather than a hang, a start that really reaches the await rethrows its runtime
- * cause unwrapped, a call from an event-loop thread is refused rather than deadlocked, and its
- * recursive delete helper matches the private copies it replaces in the consumer integration tests
- * while refusing the degenerate targets those copies would happily have walked.
+ * Verifies the ownership and failure-mode contract of {@link RestTestMounts}: {@link
+ * RestTestMounts#router} produces the API router on its own and funnels a synchronous build failure
+ * into its documented single failure channel, it never closes a caller-supplied {@link Vertx} on any
+ * path, a blocking start surfaces an exhausted budget as a thrown exception rather than a hang, a
+ * start that really reaches the await rethrows its runtime cause unwrapped, a call from an
+ * event-loop thread is refused rather than deadlocked, and its recursive delete helper matches the
+ * private copies it replaces in the consumer integration tests while refusing the degenerate targets
+ * those copies would happily have walked.
  *
  * <p>The two blocking-start failure tests cover different branches on purpose:
  * {@code startServerBlockingTimesOutCleanly} pins the pre-exhausted budget branch that throws before
@@ -65,6 +69,46 @@ class RestTestMountsTest {
         if (vertx != null) {
             vertx.close().toCompletionStage().toCompletableFuture().get(AWAIT_SECONDS, TimeUnit.SECONDS);
         }
+    }
+
+    // --- Router assembly ---
+
+    @Test
+    @DisplayName("router builds the API router on its own, without going through startServer")
+    void routerReturnsApiRouterWithoutStartingServer() throws Exception {
+        // given: a mount whose graph can resolve its validation strategy, and one JAX-RS resource.
+        RestTestMount mount = mount(noneStrategyConfig());
+
+        // when: only router(...) is called — no server assembly, no bind.
+        Router apiRouter = await(RestTestMounts.router(vertx, mount, resources()));
+
+        // then: the future resolves to a usable router carrying the mounted resource. The route
+        // assertion is what keeps this from passing on an empty router the build never populated.
+        assertThat(apiRouter).isNotNull();
+        assertThat(apiRouter.getRoutes())
+                .as("the resource must actually have been registered on the returned router")
+                .isNotEmpty();
+    }
+
+    @Test
+    @DisplayName("router turns a synchronous router-build failure into a failed future instead of throwing")
+    void routerNormalisesSynchronousBuildFailureIntoFailedFuture() throws Exception {
+        // given: an empty-config graph. JaxRsRouterMount.createRouter resolves the configured
+        // validation strategy eagerly, and RequestValidationStrategySelector.select *throws* rather
+        // than returning a failed future — so without normalisation the exception escapes the call.
+        RestTestMount mount = mount(new JsonObject());
+        AtomicReference<Future<Router>> returned = new AtomicReference<>();
+
+        // when: the failure must arrive through the return value, not the stack.
+        assertThatCode(() -> returned.set(RestTestMounts.router(vertx, mount, resources())))
+                .as("router documents a single failure channel: a synchronous throw must not escape it")
+                .doesNotThrowAnyException();
+
+        // then: and it must be the original exception, not a wrapper a caller cannot assert on.
+        Throwable cause = awaitFailure(returned.get());
+        assertThat(cause)
+                .as("the returned future carries the router-build failure unwrapped")
+                .isInstanceOf(RestConfigurationException.class);
     }
 
     // --- Vertx ownership ---
