@@ -23,6 +23,7 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Predicate;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
@@ -405,12 +406,16 @@ class HealthCheckHandlerTest {
      *
      * <p>Used to prove that answering a poisoned probe leaves the handler and its server usable —
      * the fallback path must not end the connection in a state that strands the next request.
+     *
+     * <p>The counter is atomic because the server is created outside a verticle, so the two probes
+     * can land on different event loops with no happens-before edge between the first probe's write
+     * and the second probe's read.
      */
     static class PoisonedOnceCheck implements HealthCheck {
 
         private static final int DEPTH = 1001;
 
-        private int invocations;
+        private final AtomicInteger invocations = new AtomicInteger();
 
         @Override
         public String name() {
@@ -419,7 +424,7 @@ class HealthCheckHandlerTest {
 
         @Override
         public Future<HealthCheckResult> check() {
-            if (invocations++ > 0) {
+            if (invocations.getAndIncrement() > 0) {
                 return Future.succeededFuture(HealthCheckResult.up(Map.of("recovered", true)));
             }
             Map<String, Object> current = new HashMap<>();
@@ -792,7 +797,11 @@ class HealthCheckHandlerTest {
                     // per-check rendering, and the fallback deliberately answers with no entries.
                     assertEquals(503, json.getInteger("_statusCode"));
                     assertEquals("DOWN", json.getString("status"));
-                    assertNotNull(json.getJsonArray("checks"), "the response must still be well formed");
+                    assertTrue(
+                            json.getJsonArray("checks").isEmpty(),
+                            "the deep-data fixture must fail at aggregate encode (the boundary fallback), not at"
+                                    + " per-check mapFrom — a non-empty checks array means this fixture no longer"
+                                    + " reaches the response boundary");
                 });
                 ctx.completeNow();
             }));
@@ -804,8 +813,17 @@ class HealthCheckHandlerTest {
             HealthCheckHandler handler = new HealthCheckHandler(Set.of(new PoisonedOnceCheck()));
             startServer(vertx, handler)
                     .compose(port -> request(vertx, port).compose(poisoned -> {
-                        ctx.verify(() -> assertEquals(
-                                503, poisoned.getInteger("_statusCode"), "the first probe must trip the fallback"));
+                        ctx.verify(() -> {
+                            assertEquals(
+                                    503, poisoned.getInteger("_statusCode"), "the first probe must trip the fallback");
+                            // An empty checks array is what distinguishes the response-boundary
+                            // fallback from a per-check DOWN entry: if the fixture ever failed at
+                            // mapFrom instead, it would render an ordinary entry and this test
+                            // would no longer exercise the fallback it exists to prove.
+                            assertTrue(
+                                    poisoned.getJsonArray("checks").isEmpty(),
+                                    "the first probe must be answered by the boundary fallback, which names no check");
+                        });
                         return request(vertx, port);
                     }))
                     .onComplete(ctx.succeeding(json -> {
