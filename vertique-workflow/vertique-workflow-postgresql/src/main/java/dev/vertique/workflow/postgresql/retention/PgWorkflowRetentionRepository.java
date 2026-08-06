@@ -11,6 +11,7 @@ import io.vertx.sqlclient.Tuple;
 import jakarta.annotation.Nullable;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
+import java.time.Instant;
 import java.time.OffsetDateTime;
 
 /**

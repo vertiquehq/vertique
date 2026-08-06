@@ -207,10 +207,12 @@ public class PgWorkflowRetentionRepositoryIT {
     }
 
     /**
-     * Purge honours the {@code archived_at <= cutoff} bound in both directions. Every timestamp
-     * here — the two seeded below the cutoff, the one seeded above it, and the cutoff itself —
-     * derives from a single {@link Instant#now()} read, so the comparison has an hour of margin on
-     * each side and involves no database clock. Do not reintroduce an
+     * Purge honours the {@code archived_at <= cutoff} bound in both directions, <em>including the
+     * inclusive edge</em>: one row is seeded strictly below the cutoff, one exactly at it, and one
+     * above. Seeding the second row at the cutoff is what makes the {@code <=} load-bearing —
+     * narrowing it to {@code <} leaves that row behind and fails this test. Every timestamp derives
+     * from a single {@link Instant#now()} read, so the comparison involves no database clock. Do not
+     * reintroduce an
      * {@link PgWorkflowRetentionRepository#archiveBefore} call to produce {@code archived_at}: that
      * stamps the row from the database clock while the cutoff comes from the JVM's, leaving a
      * sub-millisecond margin that skew turns into a flake.
@@ -224,7 +226,7 @@ public class PgWorkflowRetentionRepositoryIT {
         UUID survivor = UUID.randomUUID();
 
         insertInstance(UUID.randomUUID(), "def-A", "COMPLETED", belowCutoff, belowCutoff)
-                .compose(v -> insertInstance(UUID.randomUUID(), "def-A", "COMPLETED", belowCutoff, belowCutoff))
+                .compose(v -> insertInstance(UUID.randomUUID(), "def-A", "COMPLETED", belowCutoff, cutoff))
                 .compose(v -> insertInstance(survivor, "def-A", "COMPLETED", belowCutoff, aboveCutoff))
                 .compose(v -> repository.purgeArchivedBefore(utc(cutoff), null, 100))
                 .compose(count -> {
