@@ -61,7 +61,7 @@ Classify a check by the qualifier you contribute it under. `@Liveness` answers "
 - The overall status is UP only when every individual check is UP.
 - An empty check set is UP with an empty `checks` array.
 - Each check is bounded by a per-check timeout (`healthCheckTimeoutSeconds`, default 5); a timed-out check counts as DOWN.
-- A check that returns a failed future, or that throws synchronously from `check()`, is reported as DOWN carrying the throwable's message — or its fully qualified class name when the throwable has no message.
+- A check that returns a failed future, or that throws an **exception** synchronously from `check()`, is reported as DOWN carrying the throwable's message — or its fully qualified class name when the throwable has no message. A check that throws an `Error` rather than an exception from `check()` or `name()` is not attributable to one entry and degrades the whole probe to the terse `{"status":"DOWN","checks":[]}` body.
 
 ### Response format
 

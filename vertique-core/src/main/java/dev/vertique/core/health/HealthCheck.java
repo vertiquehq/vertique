@@ -42,8 +42,8 @@ public interface HealthCheck {
      * Performs the health check and returns the result asynchronously.
      *
      * <p>Implementations should return a completed {@link Future} with an appropriate
-     * {@link HealthCheckResult} rather than a failed future. If the check itself
-     * throws or returns a failed future, the management endpoint will report it
+     * {@link HealthCheckResult} rather than a failed future. If the check throws an
+     * exception or returns a failed future, the management endpoint will report it
      * as {@link HealthStatus#DOWN} with the throwable's message, or its fully
      * qualified class name when it has no message.
      *

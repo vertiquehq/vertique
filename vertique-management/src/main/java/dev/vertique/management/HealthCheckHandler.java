@@ -40,18 +40,22 @@ import lombok.extern.slf4j.Slf4j;
  * {@value #DEFAULT_CHECK_TIMEOUT_SECONDS} seconds). Synchronous exceptions thrown by
  * {@link HealthCheck#check()} are caught and reported as {@code DOWN}.
  *
- * <p><b>Invariant:</b> {@link #handle(RoutingContext)} writes exactly one response. A probe always
- * answers, whatever a contributor does.
+ * <p><b>Invariant:</b> {@link #handle(RoutingContext)} writes exactly one response for every
+ * outcome that terminates — every {@link Throwable} a contributor raises is absorbed and answered —
+ * but it promises nothing for the two non-terminating hazards described below, where contributor
+ * code never yields and no outcome exists to answer with.
  *
  * <p>The response degrades in two steps:
  *
  * <ul>
  *   <li><b>Attributable failure</b> — a failure the handler can pin on one check yields a
  *       {@code DOWN} entry for that check and leaves every sibling's entry intact. This covers a
- *       failed or timed-out future, a throw from {@link HealthCheck#check()} or
- *       {@link HealthCheck#name()}, a failure whose {@link Throwable#getMessage()} throws, and
- *       diagnostic data that cannot be rendered as JSON — including data whose graph is cyclic or
- *       too deep for the serializer, which exhausts the stack rather than raising an exception.
+ *       failed or timed-out future, an {@link Exception} thrown by {@link HealthCheck#check()} or
+ *       {@link HealthCheck#name()} — an {@code Error} from either is not treated as one check's
+ *       diagnosable status and degrades to the unattributable fallback below — a failure whose
+ *       {@link Throwable#getMessage()} throws, and diagnostic data that cannot be rendered as JSON
+ *       — including data whose graph is cyclic or too deep for the serializer, which exhausts the
+ *       stack rather than raising an exception.
  *   <li><b>Unattributable failure</b> — a failure that surfaces only while the aggregated body is
  *       being written, so no single check owns it, yields a terse
  *       {@code 503 {"status":"DOWN","checks":[]}} and an {@code ERROR} log carrying the cause. The
@@ -138,32 +142,44 @@ public class HealthCheckHandler implements Handler<RoutingContext> {
      */
     @Override
     public void handle(RoutingContext ctx) {
-        if (checks.isEmpty()) {
-            sendResponse(ctx, HealthStatus.UP, new JsonArray());
-            return;
-        }
-
-        List<CheckExecution> executions = checks.stream().map(this::start).toList();
-
-        // join, not all: all is fail-fast, so a single failed check would complete the aggregation
-        // while its siblings are still pending and they would render as DOWN. join waits for every
-        // constituent to settle, whatever its outcome.
-        Future.join(executions.stream().map(CheckExecution::result).toList()).onComplete(ar -> {
-            try {
-                JsonArray checksArray = new JsonArray();
-                boolean allUp = true;
-                for (CheckExecution execution : executions) {
-                    JsonObject checkJson = render(execution);
-                    checksArray.add(checkJson);
-                    if (!HealthStatus.UP.name().equals(checkJson.getString("status"))) {
-                        allUp = false;
-                    }
-                }
-                sendResponse(ctx, allUp ? HealthStatus.UP : HealthStatus.DOWN, checksArray);
-            } catch (Throwable failure) {
-                answerWithFallback(ctx, failure);
+        // The whole body sits inside the boundary, not just the aggregation callback: start()
+        // converts only an Exception, so an Error from a contributor's name() or check() would
+        // otherwise escape into vertx-web and be answered as a generic router 500. When this fires
+        // mid-stream, any sibling check already started is simply abandoned — its future settles
+        // into a callback nobody reads.
+        try {
+            if (checks.isEmpty()) {
+                sendResponse(ctx, HealthStatus.UP, new JsonArray());
+                return;
             }
-        });
+
+            List<CheckExecution> executions = checks.stream().map(this::start).toList();
+
+            // join, not all: all is fail-fast, so a single failed check would complete the
+            // aggregation while its siblings are still pending and they would render as DOWN. join
+            // waits for every constituent to settle, whatever its outcome.
+            Future.join(executions.stream().map(CheckExecution::result).toList())
+                    .onComplete(ar -> {
+                        try {
+                            JsonArray checksArray = new JsonArray();
+                            boolean allUp = true;
+                            for (CheckExecution execution : executions) {
+                                JsonObject checkJson = render(execution);
+                                checksArray.add(checkJson);
+                                if (!HealthStatus.UP.name().equals(checkJson.getString("status"))) {
+                                    allUp = false;
+                                }
+                            }
+                            sendResponse(ctx, allUp ? HealthStatus.UP : HealthStatus.DOWN, checksArray);
+                        } catch (Throwable failure) {
+                            answerWithFallback(ctx, failure);
+                        }
+                    });
+        } catch (Throwable failure) {
+            // Future.join may complete inline, so this can run after the callback above already
+            // answered. That cannot double-answer: answerWithFallback re-checks closed()/ended().
+            answerWithFallback(ctx, failure);
+        }
     }
 
     /**
@@ -173,9 +189,12 @@ public class HealthCheckHandler implements Handler<RoutingContext> {
      * an interior guard let through. Rethrowing is not an option: {@code Future.join} builds a
      * contextless composite, so a throw escaping its completion callback reaches no Vert.x exception
      * handler and is never logged — the probe would simply hang. The {@code ERROR} log is still the
-     * whole replacement for that rethrow, but it runs <em>after</em> the answer has been written:
-     * the appender is application-supplied, so a throw from it would escape this boundary and
-     * re-enter the very swallow this method exists to prevent.
+     * whole replacement for that rethrow, but it runs only once the write has been <em>initiated</em>
+     * — {@code end} returns a future, so the response is already handed to the transport by then.
+     * That ordering keeps an application-supplied appender out of the probe's answer path: a slow
+     * appender delays the log, not the response. Sequencing the log on the write's completion future
+     * is deliberately avoided, because the {@code ERROR} line would then be lost whenever that
+     * future never settles — and it is the only record that the failure happened at all.
      *
      * @param ctx     the routing context for the incoming HTTP request
      * @param failure the failure that prevented the aggregated response from being rendered
@@ -190,9 +209,14 @@ public class HealthCheckHandler implements Handler<RoutingContext> {
                             .end(FALLBACK_BODY)
                             .onFailure(t -> logQuietly("Health probe fallback response failed", t));
                 } else {
-                    // Head committed but the body never completed: terminating leaves the client a
-                    // terminal event instead of an open connection it must time out.
-                    response.end();
+                    // Head committed but the body never completed. The status can no longer be
+                    // changed, so completing the response would report whatever the head already
+                    // says — a 200 when every check was UP — and an orchestrator reads the status
+                    // and ignores the body, so a rendering failure would surface as "healthy".
+                    // reset() aborts instead, giving the client a terminal error event. Kept as
+                    // defense in depth: it is unreachable while sendResponse encodes the body
+                    // before the first mutation of the response.
+                    response.reset().onFailure(t -> logQuietly("Health probe fallback reset failed", t));
                 }
             }
         } catch (Throwable writeFailure) {
@@ -211,8 +235,10 @@ public class HealthCheckHandler implements Handler<RoutingContext> {
         try {
             log.error(message, failure);
         } catch (Throwable ignored) {
-            // An appender is application-supplied. Diagnostics must never be able to prevent the
-            // probe from answering.
+            // An appender is application-supplied, so a throwing one must not fail this probe. A
+            // blocking one is a different matter: it still stalls the event loop after the answer
+            // has been flushed, and nothing here bounds it — the same hazard family as the residual
+            // hazards named in the class javadoc.
         }
     }
 
