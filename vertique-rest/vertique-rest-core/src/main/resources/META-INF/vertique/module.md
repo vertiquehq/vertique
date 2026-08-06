@@ -702,7 +702,6 @@ Three pipelines with distinct scopes. Every callback has a default, so implement
 ```java
 public interface RequestInterceptor extends OrderedExtension {
     String ORIGINAL_ERROR_KEY = "dev.vertique.rest.originalError";
-    String VERTX_STATUS_CODE_KEY = "dev.vertique.rest.vertxStatusCode";
 
     default void onRequest(RoutingContext rc) {}
     default void onError(RoutingContext rc, Throwable error) {}
@@ -733,8 +732,10 @@ public interface ErrorInterceptor extends OrderedExtension {
 Return that new instance from `beforeOperation` or the attribute is lost.
 
 `recoverOperation` defaults to re-failing; returning a succeeded future turns a failure into a
-result. `ORIGINAL_ERROR_KEY` and `VERTX_STATUS_CODE_KEY` name the routing-context entries that carry
-a pre-mapping throwable and a Vert.x-originated status code.
+result. `ORIGINAL_ERROR_KEY` names the routing-context entry that carries the pre-mapping throwable.
+The Vert.x-originated failure status a router-level failure handler records is **not** part of this
+contract — it is an internal handoff owned by `dev.vertique:vertique-rest-jaxrs`; observe the
+resulting status on the `Response` instead.
 
 ### `RequestBodyDecoder` and `ResponseBodyEncoder`
 
