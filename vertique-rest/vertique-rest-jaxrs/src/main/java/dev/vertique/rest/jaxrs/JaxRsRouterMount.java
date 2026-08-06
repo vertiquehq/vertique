@@ -381,13 +381,24 @@ public class JaxRsRouterMount implements RouterMount {
      * and dispatching it through the error pipeline.
      *
      * <p>A bare failure (no {@link Throwable}) is turned into a {@link jakarta.ws.rs.WebApplicationException}
-     * carrying the routing context's status code. A Vert.x {@code HttpException} (e.g. a body-limit 413
-     * from {@link BodyHandler}, or a failure raised by a middleware) is unwrapped so custom
-     * {@code ExceptionMapper<T>} implementations see the original cause; its status code is stored in
-     * {@link RoutingContext#data()} for fallback use when no specific {@code ExceptionMapper} matches.
+     * carrying the routing context's status code — this is the shape a body-limit 413 from
+     * {@link BodyHandler} arrives in, since it fails the context with a status and no throwable. A Vert.x
+     * {@code HttpException} is unwrapped so custom {@code ExceptionMapper<T>} implementations see the
+     * original cause; its status code is stored in {@link RoutingContext#data()} for fallback use when no
+     * specific {@code ExceptionMapper} matches — but only when it is an error status (4xx or 5xx), since
+     * {@code HttpException} accepts any {@code int} and a sub-400 status would otherwise dictate both the
+     * response status and the problem body derived from it.
      * Request-validation failures from the web-validation gate are raised directly as
      * {@code RestValidationException} (not via {@code HttpException}), so they flow through the pipeline
      * unchanged.
+     *
+     * <p>A failure that carries <em>both</em> an explicit 4xx status and a cause that is not an
+     * {@code HttpException} — {@code ctx.fail(400, decoderFailure)} from Vert.x's body handler,
+     * {@code ctx.fail(401, e)} from a JWT claims validator — stores that status the same way, but keeps the
+     * raw cause unwrapped so an application {@code ExceptionMapper} registered for the cause's own type
+     * still matches and still outranks it. The range is deliberately strict: a 5xx is not carried, because
+     * {@code RoutingContext.fail(Throwable)} synthesises a 500 that is indistinguishable from a deliberate
+     * {@code fail(500, cause)}, and a sub-400 status is not a client-error decision at all.
      *
      * <p>Before dispatching, the resolved no-matched-method error-body default mapper (FR-JSON-058) — when
      * non-{@code null} and not already stashed by an upstream per-method handler — is placed under
@@ -439,12 +450,27 @@ public class JaxRsRouterMount implements RouterMount {
             if (statusCode < 400) statusCode = 500;
             cause = new jakarta.ws.rs.WebApplicationException(statusCode);
         } else if (cause instanceof io.vertx.ext.web.handler.HttpException he) {
-            ctx.data().put(RequestInterceptor.VERTX_STATUS_CODE_KEY, he.getStatusCode());
+            // HttpException accepts any int, so a middleware or SecuritySchemeHandler can fail the context
+            // with a non-error status. Carry it as the authoritative failure status only when it actually
+            // denotes an error — the fallback re-derives the whole problem body from this status, so a
+            // stashed 200 would answer a failure with "200 OK" plus a problem document. Unlike the
+            // fail(4xx, cause) branch below, 5xx is legitimate here: HttpException(503, …) is a deliberate
+            // status, not a fail(Throwable) synthesis.
+            int status = he.getStatusCode();
+            if (status >= 400 && status < 600) {
+                ctx.data().put(VertxFailureStatus.KEY, status);
+            }
             if (he.getCause() != null) {
                 cause = he.getCause();
             } else {
                 cause = new jakarta.ws.rs.WebApplicationException(he.getPayload(), he.getStatusCode());
             }
+        } else if (ctx.statusCode() >= 400 && ctx.statusCode() < 500) {
+            // ctx.fail(4xx, cause): the Vert.x layer made a deliberate client-error decision *and* handed
+            // over a cause. Carry the status as the authoritative failure status, but leave the cause raw —
+            // wrapping it would hide the original type from an application ExceptionMapper, which outranks
+            // this status. 5xx is excluded because fail(Throwable) synthesises an indistinguishable 500.
+            ctx.data().put(VertxFailureStatus.KEY, ctx.statusCode());
         }
         dispatchError(ctx, cause, errorPipeline, responsePipeline);
     }

@@ -367,11 +367,57 @@ diagnostic interceptors can still see the root cause after mapping. A `beforeMap
 `afterMapping` handler that fails is logged at WARN and its input passes through unchanged — one bad
 interceptor cannot break the error path.
 
-**Vert.x status-code fallback.** When the failure handler receives a Vert.x `HttpException` that is
-not a validation error, the cause is unwrapped so the registry sees the original exception type, and
-the Vert.x-intended status is stashed under `RequestInterceptor.VERTX_STATUS_CODE_KEY`. If only the
-catch-all matched, that status replaces the response's — preserving, for example, a 401 or 403 raised
-by Vert.x auth middleware.
+**Vert.x status-code fallback.** The router-level failure handler records the status the Vert.x layer
+authoritatively decided for a failure, and the error pipeline reconciles it with the mapper's status.
+Two failure shapes are recorded:
+
+- a Vert.x `HttpException` that is not a validation error — the cause is unwrapped so the registry sees
+  the original exception type;
+- `ctx.fail(<4xx>, cause)` where the cause is *not* an `HttpException` — a decoder rejection from the
+  body handler, a `415` from content-type validation, a `401` from a JWT claims validator. The cause is
+  left as-is, so an `ExceptionMapper` registered for its own type still matches.
+
+The two shapes record different ranges. An `HttpException` carries **400–599**, because its status was
+always chosen deliberately by whatever raised it — an `HttpException(503, …)` from a middleware is
+recorded as-is. The `ctx.fail(<status>, cause)` shape records **400–499** only: a 5xx there is dropped,
+because `ctx.fail(Throwable)` synthesises a 500 indistinguishable from a deliberate
+`ctx.fail(500, cause)`. Neither shape records anything below 400 — that is not an error decision.
+
+When no application-contributed `ExceptionMapper` registered for a type **more specific than
+`Throwable`** matched, that recorded status replaces the mapped one — preserving, for example, a 401
+or 403 raised by Vert.x auth middleware, or the 400 Vert.x determined for a malformed request body.
+An application `ExceptionMapper<Throwable>` is a catch-all, not a specific mapper: it still produces
+the response, but the recorded status overrides it exactly as it overrides the framework's own
+catch-all. Register the mapper for the cause's own type when it must win. Precedence, highest first:
+
+```
+application-contributed ExceptionMapper for a type more specific than Throwable
+  > recorded Vert.x failure status (the ranges above)
+  > framework default mapping (DefaultExceptionMapper)
+  > Throwable catch-all (500)
+```
+
+**One exception: a recorded 401 never replaces a mapped 403.** Whatever produced the `403` — the
+framework's own `ForbiddenException` mapping, or an application `ExceptionMapper<Throwable>` catch-all
+that answered `403` for its own denial type — it outranks a recorded `401` and the response is returned
+untouched, body included. A `403` is an authorization decision; answering `401` instead tells the client
+to authenticate and retry, which no fresh credential can satisfy. It invites a token-refresh loop that
+cannot succeed and hides the denial from access logs and SIEM rules that count 403s. The guard keys on
+the mapped **status**, not on the exception type or on which mapper produced it, so an application
+mapping its own `TenantMismatchException` to `403` is protected exactly as the framework's mapping is.
+This is the only guarded pair: every other recorded status supersedes the mapped one per the ordering
+above.
+
+**What the override does to the body.** When the Vert.x status *replaces* the mapped one, the
+`ProblemDetail` is rebuilt from the new status: `title` is recomputed, `type` is reset to
+`about:blank`, `detail` is dropped, and so are typed subclass fields such as
+`ValidationProblemDetail.errors[]` and any RFC 9457 extension members — only `instance` carries over. Everything the superseded body held was written for a status that no
+longer applies, and on the `ctx.fail(4xx, cause)` path the detail is an arbitrary application
+exception's message that must not reach the client. A mapped response carrying a **non-`ProblemDetail`
+entity** is left exactly as the mapper authored it, body and `Content-Type` included, so only the
+status is reconciled. Register your own `ExceptionMapper` for the cause's type when a specific detail
+is required — it outranks the Vert.x status entirely. When the recorded status *agrees* with the mapped
+one nothing changes, so a 415 whose detail names the offending content type keeps it.
 
 ### `DefaultResponseSerializer`
 
