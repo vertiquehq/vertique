@@ -118,12 +118,25 @@ is the structural change that makes `join` and the success guard load-bearing (F
 **Handler invariant (new, javadoc'd):** `handle` writes exactly one response, and `checks` carries
 exactly one entry per check in the set, for every check that returns or throws normally.
 
-**Non-fatal failure policy (frozen):** every guard added by this change — in the handler and in
-`HealthCheckResult.down(Throwable)` — catches `Exception`, never `Throwable`. An `Error`
-propagates rather than being laundered into a DOWN status; a probe must not report "unhealthy"
-for an `OutOfMemoryError` and carry on. Consequently the invariant above holds for `Exception`,
-and two hazards remain caveated: an `Error` thrown from contributor code, and a contributor that
-**blocks** the event loop indefinitely in `check()`, `name()`, or `Throwable#getMessage()` (§8 D3).
+**Failure-containment policy (frozen; revised by amendment A2):** *interior* guards — in
+`HealthCheckResult.down(Throwable)`, in `start`, and in `render` — catch `Exception`, plus
+`StackOverflowError` on the rendering path where it is a measured, recoverable serializer failure.
+The single *boundary* that owns the response invariant — the `Future.join` completion callback —
+catches `Throwable`, logs at ERROR, and writes a terse `503 {"status":"DOWN","checks":[]}`.
+
+The original "never catch `Throwable`" rule rested on a premise verified false: a throw escaping
+that callback does **not** propagate. `Future.join` builds a contextless composite, so the throw
+reaches a per-thread reporter that is unregistered by default — no context exception handler, no
+log, no response. There is no laundering to prevent, only a silent hang to fix; under
+`OutOfMemoryError` the fallback allocation simply fails back to today's behavior.
+
+**Admission rule for any future `Error` catch** (for the ADR, so the narrow catch is not
+cargo-culted): interior guards catch `Exception`; only the one boundary that owns the response
+invariant catches everything, and it must log. A new interior `Error` catch requires a reproduced,
+safely recoverable, framework-owned failure.
+
+One hazard remains caveated: a contributor that **blocks** the event loop indefinitely in
+`check()`, `name()`, or `Throwable#getMessage()` (§8 D3).
 
 ### Class Inventory
 
@@ -449,6 +462,27 @@ removes the handler's duplicated fallback, and extends the guarantee to every ca
 *Also:* the plan's §7 prediction that only one S2 test would be red was wrong — four were
 (the two null-message tests fail on a dropped diagnostic, and `hostileGetMessageIsReportedDown`
 hangs). Recorded as a verified-fact correction; no sign-off needed.
+
+**A2 — 2026-08-06 — trigger: security review + architect round 3/4. Contract Appendix change; user approved.**
+The failure-containment policy above replaces "every guard catches `Exception`, never `Throwable`".
+*Why, in order of weight:*
+1. **A non-`Error` hang exists.** `JsonObject.mapFrom` does not enforce Jackson's nesting limit but
+   `JsonObject.encode()` does, so `sendResponse` throws `EncodeException` — an ordinary
+   `RuntimeException` — at nesting depth ≥ 1001 (measured: 999 encodes, 1001 throws). It is called
+   outside `render`'s try, inside the unguarded callback. This needs a boundary guard regardless of
+   how the `Error` question is settled.
+2. **The old policy's premise was false.** A throw escaping the `join` callback is silently
+   swallowed, not propagated — verified live against vertx-core 5.1.2 (neither `vertx.exceptionHandler`
+   nor `context.exceptionHandler` fires; nothing is logged). The behavior being "protected" did not exist.
+3. A self-referential `Map`/`Collection`/`JsonObject` in health `data` raises a raw
+   `StackOverflowError` from `mapFrom`. (POJO cycles are already wrapped by Jackson as
+   `IllegalArgumentException` and were always caught, so the exposure is narrower than first reported.)
+*Rejected:* pre-serialization graph validation — the depth cliff is stack-size dependent
+(≈2000–4000 on a 1 MB stack, under 1000 on 512 KB), so any threshold is wrong on some thread, and a
+cycle-safe pre-walk would reimplement the serializer.
+*Consequences:* `HealthCheckHandler` gains `@Slf4j`; `sendResponse` encodes into a local before
+touching the response, so a failed encode leaves it unmutated; the fallback write is gated on
+`!closed() && !headWritten() && !ended()`.
 
 ---
 
