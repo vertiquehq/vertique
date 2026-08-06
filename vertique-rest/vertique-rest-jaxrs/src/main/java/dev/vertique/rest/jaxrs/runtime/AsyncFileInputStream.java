@@ -3,6 +3,7 @@
 
 package dev.vertique.rest.jaxrs.runtime;
 
+import io.vertx.core.Context;
 import io.vertx.core.Vertx;
 import io.vertx.core.file.AsyncFile;
 import io.vertx.core.file.OpenOptions;
@@ -60,9 +61,17 @@ public class AsyncFileInputStream extends InputStream {
             if (initialized) {
                 return;
             }
-            // Warn if called on event loop — read() blocks and would deadlock
-            io.vertx.core.Context context = vertx.getOrCreateContext();
-            if (context.isEventLoopContext()) {
+            // Warn only when the caller really is on a Vert.x event-loop thread — read() blocks
+            // there and would deadlock.
+            //
+            // The current context is read with Vertx.currentContext(), NOT vertx.getOrCreateContext():
+            // the latter *creates* an event-loop context for a caller that is not on a Vert.x thread
+            // at all, so isEventLoopContext() would be true for an ordinary caller and this warning
+            // would fire precisely when the usage is correct. Vertx.currentContext() returns null off
+            // a Vert.x thread, which is the distinction the guard needs. A worker context is
+            // deliberately allowed — blocking is what worker threads are for.
+            Context context = Vertx.currentContext();
+            if (context != null && context.isEventLoopContext()) {
                 LOG.warn(
                         "AsyncFileInputStream.read() called on event loop thread — this will block. "
                                 + "Use a worker thread or executeBlocking(). File: {}",

@@ -137,6 +137,49 @@ class RequestContextLifecycleTest {
         }
 
         @Test
+        @DisplayName("onCloseRun should accept a bare lambda and run it on close")
+        void onCloseRunShouldAcceptBareLambda() {
+            RequestContextLifecycle.Handle handle = new RequestContextLifecycle.Handle();
+            List<String> order = new ArrayList<>();
+
+            // No cast, no typed local: the plain lambda form an adopter would naturally write.
+            // handle.onClose(() -> ...) does not compile — onClose is overloaded on Runnable and
+            // ContextHolder.Scope, two no-argument functional interfaces, so the argument is
+            // ambiguous. onCloseRun is the unambiguous entry point; this test is its regression guard.
+            handle.onCloseRun(() -> order.add("lambda-cleanup"));
+
+            handle.closeAll();
+
+            assertEquals(List.of("lambda-cleanup"), order);
+        }
+
+        @Test
+        @DisplayName("onCloseRun and onClose registrations should interleave in one LIFO order")
+        void onCloseRunShouldShareLifoOrderWithOnClose() {
+            RequestContextLifecycle.Handle handle = new RequestContextLifecycle.Handle();
+            List<String> order = new ArrayList<>();
+
+            handle.onClose(trackingScope("scope-A", order));
+            handle.onCloseRun(() -> order.add("lambda-B"));
+            handle.onClose((Runnable) () -> order.add("runnable-C"));
+
+            handle.closeAll();
+
+            assertEquals(List.of("runnable-C", "lambda-B", "scope-A"), order);
+        }
+
+        @Test
+        @DisplayName("onCloseRun should reject null and throw IllegalStateException after completion")
+        void onCloseRunShouldGuardNullAndLateRegistration() {
+            RequestContextLifecycle.Handle open = new RequestContextLifecycle.Handle();
+            assertThrows(NullPointerException.class, () -> open.onCloseRun(null));
+
+            RequestContextLifecycle.Handle completed = new RequestContextLifecycle.Handle();
+            completed.closeAll();
+            assertThrows(IllegalStateException.class, () -> completed.onCloseRun(() -> {}));
+        }
+
+        @Test
         @DisplayName("Mixed Scope and Runnable registrations should close in LIFO order")
         void mixedRegistrationsShouldCloseInLifoOrder() {
             RequestContextLifecycle.Handle handle = new RequestContextLifecycle.Handle();

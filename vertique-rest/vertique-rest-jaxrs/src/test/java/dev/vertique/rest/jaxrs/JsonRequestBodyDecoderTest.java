@@ -7,14 +7,11 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
 import dev.vertique.rest.core.request.RequestValue;
-import dev.vertique.rest.core.routing.SecurityRequirementSet;
-import dev.vertique.rest.core.security.SecurityPolicy;
 import dev.vertique.rest.jaxrs.request.BoundRequest;
 import dev.vertique.rest.jaxrs.request.DefaultBoundRequest;
 import dev.vertique.rest.jaxrs.routing.BodyDescriptor;
-import dev.vertique.rest.jaxrs.routing.FilePartDescriptor;
 import dev.vertique.rest.jaxrs.routing.JaxRsOperationDescriptor;
-import dev.vertique.rest.jaxrs.routing.ParamDescriptor;
+import dev.vertique.rest.jaxrs.routing.StubOperationDescriptor;
 import io.vertx.core.MultiMap;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.http.HttpServerRequest;
@@ -23,7 +20,6 @@ import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.RequestBody;
 import io.vertx.ext.web.RoutingContext;
-import java.lang.annotation.Annotation;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
 import java.util.List;
@@ -328,72 +324,12 @@ class JsonRequestBodyDecoderTest {
 
     /** Builds a no-param POST operation descriptor for body binding. */
     private static JaxRsOperationDescriptor bodyOp() {
-        return new JaxRsOperationDescriptor() {
-            @Override
-            public String operationId() {
-                return "op";
-            }
-
-            @Override
-            public String httpMethod() {
-                return "POST";
-            }
-
-            @Override
-            public String routeTemplate() {
-                return "/things";
-            }
-
-            @Override
-            public List<String> consumes() {
-                return List.of();
-            }
-
-            @Override
-            public List<String> produces() {
-                return List.of();
-            }
-
-            @Override
-            public SecurityPolicy securityPolicy() {
-                return new SecurityPolicy.None();
-            }
-
-            @Override
-            public List<SecurityRequirementSet> securityRequirementSets() {
-                return List.of();
-            }
-
-            @Override
-            public List<Annotation> methodAnnotations() {
-                return List.of();
-            }
-
-            @Override
-            public List<Annotation> classAnnotations() {
-                return List.of();
-            }
-
-            @Override
-            public <A extends Annotation> Optional<A> findAnnotation(Class<A> type) {
-                return Optional.empty();
-            }
-
-            @Override
-            public List<ParamDescriptor> parameters() {
-                return List.of();
-            }
-
-            @Override
-            public List<FilePartDescriptor> fileParts() {
-                return List.of();
-            }
-
-            @Override
-            public Optional<BodyDescriptor> body() {
-                return Optional.of(new BodyDescriptor(List.class, LIST_OF_SAMPLE_POJO, List.of()));
-            }
-        };
+        return StubOperationDescriptor.builder()
+                .operationId("op")
+                .httpMethod("POST")
+                .routeTemplate("/things")
+                .body(Optional.of(new BodyDescriptor(List.class, LIST_OF_SAMPLE_POJO, List.of())))
+                .build();
     }
 
     // --- helper types ---

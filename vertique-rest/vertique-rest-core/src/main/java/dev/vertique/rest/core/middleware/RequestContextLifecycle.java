@@ -34,7 +34,9 @@ import lombok.extern.slf4j.Slf4j;
  * <ul>
  *   <li>{@link Handle#onClose(ContextHolder.Scope)} — registers a {@link ContextHolder.Scope} that
  *       is closed in LIFO order during cleanup.
- *   <li>{@link Handle#onClose(Runnable)} — registers a {@link Runnable} cleanup in LIFO order.
+ *   <li>{@link Handle#onCloseRun(Runnable)} — registers a {@link Runnable} cleanup in LIFO order;
+ *       the entry point to use for a lambda or method reference.
+ *   <li>{@link Handle#onClose(Runnable)} — as above, for a value already declared {@link Runnable}.
  *   <li>{@link Handle#afterClose(Runnable)} — registers a {@link Runnable} that runs after all
  *       {@code onClose} registrations complete, in FIFO order.
  *   <li>{@link Handle#completeNow()} — idempotent explicit completion, required by the WebSocket
@@ -174,11 +176,46 @@ public final class RequestContextLifecycle implements Middleware {
          * <p>Registrations are executed in LIFO order relative to all other {@code onClose}
          * calls (both {@code Scope} and {@code Runnable} overloads).
          *
+         * <p><strong>Prefer {@link #onCloseRun(Runnable)} for a lambda or method reference.</strong>
+         * This method is overloaded with {@link #onClose(ContextHolder.Scope)}, and both parameter
+         * types are functional interfaces taking no arguments, so the compiler cannot pick between
+         * them for an implicitly-typed argument. Use this overload only when you already hold a
+         * value of declared type {@link Runnable} (or write an explicit {@code (Runnable)} cast).
+         *
          * @param cleanup the cleanup runnable; must not be {@code null}
          * @throws NullPointerException  if {@code cleanup} is {@code null}
          * @throws IllegalStateException if the lifecycle has already completed
          */
         public void onClose(Runnable cleanup) {
+            onCloseRun(cleanup);
+        }
+
+        /**
+         * Registers a {@link Runnable} cleanup to be run during request cleanup — the
+         * lambda-friendly entry point.
+         *
+         * <p>Behaviorally identical to {@link #onClose(Runnable)}, which delegates here. It exists
+         * under a distinct name because {@code onClose} is overloaded on two no-argument functional
+         * interfaces ({@link Runnable} and {@link ContextHolder.Scope}), which makes
+         * {@code onClose(() -> ...)} ambiguous and therefore uncompilable. Choose between the three
+         * entry points as follows:
+         *
+         * <ul>
+         *   <li>{@link #onClose(ContextHolder.Scope)} — you already hold a {@link ContextHolder.Scope}
+         *       (typically returned by {@code ContextHolder.bind(...)}).
+         *   <li>{@code onCloseRun} — you are writing the cleanup inline as a lambda or method
+         *       reference.
+         *   <li>{@link #onClose(Runnable)} — you already hold a value declared as {@link Runnable}.
+         * </ul>
+         *
+         * <p>Registrations are executed in LIFO order relative to all other {@code onClose} and
+         * {@code onCloseRun} calls.
+         *
+         * @param cleanup the cleanup runnable; must not be {@code null}
+         * @throws NullPointerException  if {@code cleanup} is {@code null}
+         * @throws IllegalStateException if the lifecycle has already completed
+         */
+        public void onCloseRun(Runnable cleanup) {
             Objects.requireNonNull(cleanup, "cleanup");
             guardOpen();
             onCloseRegistrations.push(cleanup);
