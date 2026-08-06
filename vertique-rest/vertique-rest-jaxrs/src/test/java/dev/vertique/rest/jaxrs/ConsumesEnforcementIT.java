@@ -53,7 +53,18 @@ import org.junit.jupiter.api.extension.ExtendWith;
  *   <li>POST with body but no Content-Type against {@code @Consumes("application/json")} → 415
  *       with {@code application/problem+json} body (error pipeline).</li>
  *   <li>POST with body but no Content-Type against no-{@code @Consumes} operation → passes (no per-route check).</li>
+ *   <li>POST with mismatched Content-Type → the per-route handler's authored {@code detail} (actual and
+ *       expected content types) survives the error pipeline.</li>
+ *   <li>POST with an unaccepted Content-Type against the broad
+ *       {@link dev.vertique.rest.core.middleware.ContentTypeValidationMiddleware} → its authored
+ *       {@code detail} survives the error pipeline.</li>
  * </ol>
+ *
+ * <p>The last two cases pin the <em>equal-status</em> arm of the Vert.x failure-status fallback. Both 415
+ * producers call {@code ctx.fail(415, new NotSupportedException(msg))}, so the Vert.x failure status and
+ * the mapped status agree and the fallback must leave the representation alone. The fallback clears
+ * {@code detail} only when it <em>overrides</em> the mapped status — a message authored for the status
+ * that survives is a deliberate diagnostic, not a foreign one.
  */
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
@@ -246,6 +257,70 @@ public class ConsumesEnforcementIT {
         });
     }
 
+    // --- Test 6 & 7: a 415 the framework authored keeps its own detail ---
+
+    @Test
+    @DisplayName("PerRoute415KeepsItsAuthoredDetail — the Vert.x failure status equals the mapped status → detail kept")
+    void perRoute415KeepsItsAuthoredDetail(Vertx vertx, VertxTestContext ctx) {
+        // ctx.fail(415, new NotSupportedException(...)) stores 415 as the Vert.x failure status AND maps
+        // to 415, so the status is not overridden — the framework authored both the status and the
+        // message, and the diagnostic it deliberately wrote must survive to the client.
+        deploy(vertx, ctx, Set.of(new JsonOnlyResource()), (port, c) -> {
+            c.request(HttpMethod.POST, port, "localhost", "/echo")
+                    .compose(req -> req.putHeader("Content-Type", "text/xml")
+                            .putHeader("Content-Length", "5")
+                            .send("hello"))
+                    .compose(resp -> resp.body().map(body -> new Object[] {resp.statusCode(), body.toString()}))
+                    .onComplete(ctx.succeeding(pair -> {
+                        String body = (String) pair[1];
+                        ctx.verify(() -> {
+                            assertEquals(415, (Integer) pair[0], "mismatched Content-Type must be rejected with 415");
+                            String detail = new io.vertx.core.json.JsonObject(body).getString("detail");
+                            assertNotNull(detail, "the per-route 415's authored detail must not be cleared: " + body);
+                            assertTrue(
+                                    detail.contains("text/xml"),
+                                    "the detail must still name the actual content type; got: " + detail);
+                            assertTrue(
+                                    detail.contains(MediaType.APPLICATION_JSON),
+                                    "the detail must still name the expected content type; got: " + detail);
+                        });
+                        ctx.completeNow();
+                    }));
+        });
+    }
+
+    @Test
+    @DisplayName("Middleware415KeepsItsAuthoredDetail — ContentTypeValidationMiddleware's detail survives the pipeline")
+    void middleware415KeepsItsAuthoredDetail(Vertx vertx, VertxTestContext ctx) {
+        // The same equal-status shape from the other 415 producer: the broad router-level middleware.
+        deploy(
+                vertx,
+                ctx,
+                Set.of(new NoConsumesResource()),
+                Set.of(new dev.vertique.rest.core.middleware.ContentTypeValidationMiddleware()),
+                (port, c) -> {
+                    c.request(HttpMethod.POST, port, "localhost", "/open")
+                            .compose(req -> req.putHeader("Content-Type", "image/png")
+                                    .putHeader("Content-Length", "5")
+                                    .send("hello"))
+                            .compose(resp -> resp.body().map(body -> new Object[] {resp.statusCode(), body.toString()}))
+                            .onComplete(ctx.succeeding(pair -> {
+                                String body = (String) pair[1];
+                                ctx.verify(() -> {
+                                    assertEquals(
+                                            415,
+                                            (Integer) pair[0],
+                                            "an unaccepted Content-Type must be rejected with 415");
+                                    assertEquals(
+                                            "Unsupported Content-Type",
+                                            new io.vertx.core.json.JsonObject(body).getString("detail"),
+                                            "the middleware's authored detail must survive to the client: " + body);
+                                });
+                                ctx.completeNow();
+                            }));
+                });
+    }
+
     // --- Helper ---
 
     /**
@@ -263,7 +338,28 @@ public class ConsumesEnforcementIT {
             VertxTestContext ctx,
             Set<Object> resources,
             java.util.function.BiConsumer<Integer, HttpClient> afterListen) {
-        JaxRsRouterMount.Factory factory = TestFactories.builder().build();
+        deploy(vertx, ctx, resources, Set.of(), afterListen);
+    }
+
+    /**
+     * Deploys the given resources and router-level middlewares under the default {@code none}
+     * validation strategy, starts an HTTP server, and invokes {@code afterListen} with the bound port
+     * and the shared {@link HttpClient}.
+     *
+     * @param vertx       the Vert.x instance
+     * @param ctx         the test context
+     * @param resources   the JAX-RS resources to mount
+     * @param middlewares the router-level middlewares to install on the mount
+     * @param afterListen callback invoked with the server port and the shared HTTP client
+     */
+    private void deploy(
+            Vertx vertx,
+            VertxTestContext ctx,
+            Set<Object> resources,
+            Set<dev.vertique.rest.core.middleware.Middleware> middlewares,
+            java.util.function.BiConsumer<Integer, HttpClient> afterListen) {
+        JaxRsRouterMount.Factory factory =
+                TestFactories.builder().middlewares(middlewares).build();
         JaxRsRouterMount mount = factory.create("/*", "openapi.json", resources);
         mount.createRouter(vertx)
                 .compose(apiRouter -> {
