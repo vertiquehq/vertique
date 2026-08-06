@@ -22,6 +22,8 @@ import io.vertx.sqlclient.Tuple;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.AfterAll;
@@ -76,7 +78,7 @@ public class PgWorkflowRetentionRepositoryIT {
         pool.query("TRUNCATE TABLE workflow_timers, workflow_tasks, workflow_history,"
                         + " workflow_dedup, workflow_instances RESTART IDENTITY CASCADE")
                 .execute()
-                .onComplete(ar -> ctx.completeNow());
+                .onComplete(ctx.succeedingThenComplete());
     }
 
     @AfterAll
@@ -91,18 +93,64 @@ public class PgWorkflowRetentionRepositoryIT {
     }
 
     /**
-     * Inserts a bare {@code workflow_instances} row directly via SQL, mirroring the seeding helper
-     * in {@link PgWorkflowRetentionServiceIT}. Using SQL rather than the engine path keeps these
-     * tests focused on the repository's archive/purge SQL behavior.
+     * Inserts an unarchived {@code workflow_instances} row directly via SQL, mirroring the seeding
+     * helper in {@link PgWorkflowRetentionServiceIT}. Using SQL rather than the engine path keeps
+     * these tests focused on the repository's archive/purge SQL behavior.
+     *
+     * @param id           the instance UUID
+     * @param definitionId the definition id
+     * @param status       the instance status string
+     * @param completedAt  the {@code completed_at} timestamp (may be null for non-terminal rows)
+     * @return a {@link Future} that completes when the row is inserted
      */
     private Future<Void> insertInstance(UUID id, String definitionId, String status, Instant completedAt) {
+        return insertInstance(id, definitionId, status, completedAt, null);
+    }
+
+    /**
+     * Inserts a {@code workflow_instances} row with an explicit {@code archived_at}, as
+     * {@link PgWorkflowRetentionServiceIT}'s seeding helper does. Seeding {@code archived_at} from
+     * Java is what lets purge tests put both sides of the {@code archived_at <= cutoff} comparison
+     * on one clock; letting {@link PgWorkflowRetentionRepository#archiveBefore} stamp it instead
+     * would put the row's timestamp on the database clock and the cutoff on the JVM's.
+     *
+     * @param id           the instance UUID
+     * @param definitionId the definition id
+     * @param status       the instance status string
+     * @param completedAt  the {@code completed_at} timestamp (may be null for non-terminal rows)
+     * @param archivedAt   the {@code archived_at} timestamp (null = not archived)
+     * @return a {@link Future} that completes when the row is inserted
+     */
+    private Future<Void> insertInstance(
+            UUID id, String definitionId, String status, Instant completedAt, Instant archivedAt) {
         String sql = "INSERT INTO workflow_instances"
                 + " (id, definition_id, definition_version, plan_hash, version, status,"
-                + " current_step_id, state_json, completed_at)"
-                + " VALUES ($1, $2, 1, 'hash', 0, $3, 'done', '{}', $4)";
+                + " current_step_id, state_json, completed_at, archived_at)"
+                + " VALUES ($1, $2, 1, 'hash', 0, $3, 'done', '{}', $4, $5)";
         return pool.preparedQuery(sql)
-                .execute(Tuple.of(id, definitionId, status, completedAt != null ? utc(completedAt) : null))
+                .execute(Tuple.of(
+                        id,
+                        definitionId,
+                        status,
+                        completedAt != null ? utc(completedAt) : null,
+                        archivedAt != null ? utc(archivedAt) : null))
                 .<Void>mapEmpty();
+    }
+
+    /**
+     * Reads the ids of every surviving {@code workflow_instances} row, so a purge test can assert
+     * which rows were spared rather than only how many were deleted.
+     *
+     * @return a {@link Future} containing the surviving ids, ordered by id
+     */
+    private Future<List<UUID>> remainingInstanceIds() {
+        return pool.query("SELECT id FROM workflow_instances ORDER BY id")
+                .execute()
+                .map(rs -> {
+                    List<UUID> ids = new ArrayList<>();
+                    rs.forEach(row -> ids.add(row.getUUID("id")));
+                    return ids;
+                });
     }
 
     @Test
@@ -158,21 +206,33 @@ public class PgWorkflowRetentionRepositoryIT {
                 .onFailure(ctx::failNow);
     }
 
+    /**
+     * Purge honours the {@code archived_at <= cutoff} bound in both directions. Every timestamp
+     * here — the two seeded below the cutoff, the one seeded above it, and the cutoff itself —
+     * derives from a single {@link Instant#now()} read, so the comparison has an hour of margin on
+     * each side and involves no database clock. Do not reintroduce an
+     * {@link PgWorkflowRetentionRepository#archiveBefore} call to produce {@code archived_at}: that
+     * stamps the row from the database clock while the cutoff comes from the JVM's, leaving a
+     * sub-millisecond margin that skew turns into a flake.
+     */
     @Test
-    @DisplayName("purgeArchivedBefore deletes archived rows whose archived_at is below the cutoff")
-    void purgeArchivedBeforeDeletes(VertxTestContext ctx) {
-        Instant ancient = Instant.now().minusSeconds(3_600);
-        Instant cutoff = Instant.now().minusSeconds(60);
+    @DisplayName("purgeArchivedBefore deletes archived rows at or below the cutoff and spares those above")
+    void purgeArchivedBeforeRespectsExplicitCutoff(VertxTestContext ctx) {
+        Instant cutoff = Instant.now();
+        Instant belowCutoff = cutoff.minusSeconds(3_600);
+        Instant aboveCutoff = cutoff.plusSeconds(3_600);
+        UUID survivor = UUID.randomUUID();
 
-        insertInstance(UUID.randomUUID(), "def-A", "COMPLETED", ancient)
-                .compose(v -> insertInstance(UUID.randomUUID(), "def-A", "COMPLETED", ancient))
-                .compose(v -> repository.archiveBefore("COMPLETED", utc(cutoff), null, 100))
-                .compose(archived -> {
-                    ctx.verify(() -> assertEquals(2, archived));
-                    return repository.purgeArchivedBefore(utc(Instant.now()), null, 100);
+        insertInstance(UUID.randomUUID(), "def-A", "COMPLETED", belowCutoff, belowCutoff)
+                .compose(v -> insertInstance(UUID.randomUUID(), "def-A", "COMPLETED", belowCutoff, belowCutoff))
+                .compose(v -> insertInstance(survivor, "def-A", "COMPLETED", belowCutoff, aboveCutoff))
+                .compose(v -> repository.purgeArchivedBefore(utc(cutoff), null, 100))
+                .compose(count -> {
+                    ctx.verify(() -> assertEquals(2, count, "only rows with archived_at <= cutoff are purged"));
+                    return remainingInstanceIds();
                 })
-                .onSuccess(count -> ctx.verify(() -> {
-                    assertEquals(2, count, "all archived rows below cutoff are purged");
+                .onSuccess(remaining -> ctx.verify(() -> {
+                    assertEquals(List.of(survivor), remaining, "the row archived after the cutoff survives");
                     ctx.completeNow();
                 }))
                 .onFailure(ctx::failNow);
