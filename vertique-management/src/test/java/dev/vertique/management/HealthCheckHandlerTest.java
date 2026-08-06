@@ -4,6 +4,7 @@
 package dev.vertique.management;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
 
 import dev.vertique.core.health.HealthCheck;
 import dev.vertique.core.health.HealthCheckResult;
@@ -13,9 +14,11 @@ import io.vertx.core.Vertx;
 import io.vertx.core.http.HttpClient;
 import io.vertx.core.http.HttpMethod;
 import io.vertx.core.http.HttpServer;
+import io.vertx.core.http.HttpServerResponse;
 import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.Router;
+import io.vertx.ext.web.RoutingContext;
 import io.vertx.junit5.Timeout;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
@@ -49,6 +52,9 @@ import org.junit.jupiter.api.extension.ExtendWith;
  *       throwables, a check returning no future at all, and results whose data cannot be
  *       serialized — including data too deeply nested for the encoder, which degrades to the
  *       terse response-boundary fallback rather than a per-check entry
+ *   <li>Response boundary: a synchronous {@link Error} from {@code name()} or {@code check()} is
+ *       answered with the terse fallback instead of escaping into a router-generated 500, and a
+ *       failure arriving after the head is committed aborts the response rather than completing it
  *   <li>Sibling isolation: one misbehaving check must never starve the others or suppress the
  *       HTTP response entirely, including when rendering its data overflows the stack
  *   <li>Continuity: a probe answered by the fallback must leave the server able to answer the next
@@ -62,6 +68,20 @@ import org.junit.jupiter.api.extension.ExtendWith;
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 20, timeUnit = TimeUnit.SECONDS)
 class HealthCheckHandlerTest {
+
+    /**
+     * The body the handler writes when the aggregated response cannot be rendered. Duplicated from
+     * the handler deliberately: asserting against its private constant would prove only that the
+     * constant equals itself.
+     */
+    private static final String TERSE_FALLBACK_BODY = "{\"status\":\"DOWN\",\"checks\":[]}";
+
+    /**
+     * Nesting depth that survives {@link JsonObject#mapFrom(Object)} but breaks
+     * {@link JsonObject#encode()}, whose 1000-level write limit is a Jackson constant. Shared by
+     * every fixture that needs data the aggregate encoder rejects, so the two cannot drift apart.
+     */
+    private static final int ENCODER_BREAKING_DEPTH = 1001;
 
     // --- Class-scoped resources (shared across all @Test methods, including @Nested) ---
 
@@ -244,6 +264,42 @@ class HealthCheckHandlerTest {
     }
 
     /**
+     * A {@link HealthCheck} whose {@link #name()} throws a bare {@link Error}.
+     *
+     * <p>{@code start} converts only an {@link Exception} into a per-check {@code DOWN} entry, so an
+     * {@code Error} escapes the synchronous start path and must be absorbed by the response
+     * boundary, degrading the whole probe to the terse fallback body.
+     */
+    static class ErrorThrowingNameCheck implements HealthCheck {
+        @Override
+        public String name() {
+            throw new Error("name blew up");
+        }
+
+        @Override
+        public Future<HealthCheckResult> check() {
+            return Future.succeededFuture(HealthCheckResult.up());
+        }
+    }
+
+    /**
+     * A {@link HealthCheck} whose {@link #check()} throws a bare {@link Error}. See
+     * {@link ErrorThrowingNameCheck} for why an {@code Error} reaches the response boundary rather
+     * than a per-check entry.
+     */
+    static class ErrorThrowingCheck implements HealthCheck {
+        @Override
+        public String name() {
+            return "error-throwing";
+        }
+
+        @Override
+        public Future<HealthCheckResult> check() {
+            throw new Error("check blew up");
+        }
+    }
+
+    /**
      * A {@link HealthCheck} whose {@link #name()} throws.
      *
      * <p>The handler resolves a name exactly once, when it starts the check, and falls back to the
@@ -374,13 +430,18 @@ class HealthCheckHandlerTest {
      *
      * <p>{@link JsonObject#mapFrom(Object)} does <em>not</em> enforce that limit but
      * {@link JsonObject#encode()} does, so the failure surfaces while the aggregated body is being
-     * encoded — after per-check rendering has already succeeded. Unlike a stack overflow, 1000 is a
-     * library constant rather than a machine-dependent threshold, so a depth-based fixture is
-     * deterministic here.
+     * encoded — after per-check rendering has already succeeded.
+     *
+     * <p>Unlike a stack overflow the 1000-level limit is a library constant rather than a
+     * machine-dependent threshold, but <em>reaching</em> it is not unconditional:
+     * {@link JsonObject#mapFrom(Object)} must first survive
+     * {@value HealthCheckHandlerTest#ENCODER_BREAKING_DEPTH} recursive frames, which needs a thread
+     * stack of at least 1 MB — the JVM default on every supported platform. Under a smaller
+     * {@code -Xss} the fixture takes the interior {@link StackOverflowError} path instead and
+     * renders an ordinary per-check entry; the assertions below then fail loudly with the message
+     * that says exactly this, rather than passing for the wrong reason.
      */
     static class DeeplyNestedDataCheck implements HealthCheck {
-
-        private static final int DEPTH = 1001;
 
         @Override
         public String name() {
@@ -391,7 +452,7 @@ class HealthCheckHandlerTest {
         public Future<HealthCheckResult> check() {
             Map<String, Object> current = new HashMap<>();
             current.put("leaf", "value");
-            for (int i = 0; i < DEPTH; i++) {
+            for (int i = 0; i < ENCODER_BREAKING_DEPTH; i++) {
                 Map<String, Object> parent = new HashMap<>();
                 parent.put("nested", current);
                 current = parent;
@@ -405,15 +466,14 @@ class HealthCheckHandlerTest {
      * data nested past the encoder's limit, every later request gets ordinary data.
      *
      * <p>Used to prove that answering a poisoned probe leaves the handler and its server usable —
-     * the fallback path must not end the connection in a state that strands the next request.
+     * the fallback path must not end the connection in a state that strands the next request. The
+     * poisoned data shares {@link DeeplyNestedDataCheck}'s stack-size precondition.
      *
      * <p>The counter is atomic because the server is created outside a verticle, so the two probes
      * can land on different event loops with no happens-before edge between the first probe's write
      * and the second probe's read.
      */
     static class PoisonedOnceCheck implements HealthCheck {
-
-        private static final int DEPTH = 1001;
 
         private final AtomicInteger invocations = new AtomicInteger();
 
@@ -429,7 +489,7 @@ class HealthCheckHandlerTest {
             }
             Map<String, Object> current = new HashMap<>();
             current.put("leaf", "value");
-            for (int i = 0; i < DEPTH; i++) {
+            for (int i = 0; i < ENCODER_BREAKING_DEPTH; i++) {
                 Map<String, Object> parent = new HashMap<>();
                 parent.put("nested", current);
                 current = parent;
@@ -533,6 +593,29 @@ class HealthCheckHandlerTest {
                     json.put("_statusCode", resp.statusCode());
                     return json;
                 }));
+    }
+
+    /**
+     * One probe response captured verbatim: the HTTP status and the body exactly as written.
+     *
+     * @param statusCode the HTTP status code
+     * @param body       the response body, byte-for-byte
+     */
+    private record RawResponse(int statusCode, String body) {}
+
+    /**
+     * Sends a GET request to {@code /health} on the given port without parsing the body, so that a
+     * response the handler never wrote — a router-generated 500, say — fails an assertion instead
+     * of failing the JSON parse.
+     *
+     * @param vertx the Vert.x instance
+     * @param port  the server port
+     * @return a future completing with the raw status and body
+     */
+    private Future<RawResponse> requestRaw(Vertx vertx, int port) {
+        return client.request(HttpMethod.GET, port, "127.0.0.1", "/health")
+                .compose(req -> req.send())
+                .compose(resp -> resp.body().map(body -> new RawResponse(resp.statusCode(), body.toString())));
     }
 
     // --- Aggregation ---
@@ -787,6 +870,35 @@ class HealthCheckHandlerTest {
         }
 
         @Test
+        @DisplayName("an Error thrown by name() is answered by the terse boundary fallback")
+        void syncErrorFromNameStillAnswers(VertxTestContext ctx) {
+            HealthCheckHandler handler = new HealthCheckHandler(Set.of(new ErrorThrowingNameCheck()));
+            startServer(vertx, handler).compose(p -> requestRaw(vertx, p)).onComplete(ctx.succeeding(response -> {
+                ctx.verify(() -> {
+                    // An Error escapes start(), which converts only Exceptions, so it must be
+                    // absorbed by the handler's own boundary. A 500 here means the throw escaped
+                    // handle() and the router answered instead.
+                    assertEquals(503, response.statusCode());
+                    assertEquals(TERSE_FALLBACK_BODY, response.body());
+                });
+                ctx.completeNow();
+            }));
+        }
+
+        @Test
+        @DisplayName("an Error thrown by check() is answered by the terse boundary fallback")
+        void syncErrorFromCheckStillAnswers(VertxTestContext ctx) {
+            HealthCheckHandler handler = new HealthCheckHandler(Set.of(new ErrorThrowingCheck()));
+            startServer(vertx, handler).compose(p -> requestRaw(vertx, p)).onComplete(ctx.succeeding(response -> {
+                ctx.verify(() -> {
+                    assertEquals(503, response.statusCode());
+                    assertEquals(TERSE_FALLBACK_BODY, response.body());
+                });
+                ctx.completeNow();
+            }));
+        }
+
+        @Test
         @DisplayName("data nested deeper than the encoder allows still yields a DOWN response")
         void deeplyNestedCheckDataStillAnswers(VertxTestContext ctx) {
             HealthCheckHandler handler = new HealthCheckHandler(Set.of(new DeeplyNestedDataCheck()));
@@ -797,8 +909,9 @@ class HealthCheckHandlerTest {
                     // per-check rendering, and the fallback deliberately answers with no entries.
                     assertEquals(503, json.getInteger("_statusCode"));
                     assertEquals("DOWN", json.getString("status"));
-                    assertTrue(
-                            json.getJsonArray("checks").isEmpty(),
+                    assertEquals(
+                            new JsonArray(),
+                            json.getJsonArray("checks"),
                             "the deep-data fixture must fail at aggregate encode (the boundary fallback), not at"
                                     + " per-check mapFrom — a non-empty checks array means this fixture no longer"
                                     + " reaches the response boundary");
@@ -820,8 +933,9 @@ class HealthCheckHandlerTest {
                             // fallback from a per-check DOWN entry: if the fixture ever failed at
                             // mapFrom instead, it would render an ordinary entry and this test
                             // would no longer exercise the fallback it exists to prove.
-                            assertTrue(
-                                    poisoned.getJsonArray("checks").isEmpty(),
+                            assertEquals(
+                                    new JsonArray(),
+                                    poisoned.getJsonArray("checks"),
                                     "the first probe must be answered by the boundary fallback, which names no check");
                         });
                         return request(vertx, port);
@@ -837,6 +951,44 @@ class HealthCheckHandlerTest {
                         });
                         ctx.completeNow();
                     }));
+        }
+    }
+
+    // --- Response boundary fallback ---
+
+    /**
+     * Verifies the fallback branch that runs once the response head is already committed. That
+     * branch is unreachable through the HTTP surface — {@code sendResponse} encodes the whole body
+     * before it touches the response — so it is driven through a stubbed {@link HttpServerResponse}
+     * whose write throws after the head went out.
+     */
+    @Nested
+    class ResponseBoundaryFallback {
+
+        @Test
+        @DisplayName("a write failure after the head is committed aborts the response, never completes it")
+        void committedResponseIsAbortedNotCompleted() {
+            HttpServerResponse response = mock(HttpServerResponse.class);
+            when(response.setStatusCode(anyInt())).thenReturn(response);
+            when(response.putHeader(anyString(), anyString())).thenReturn(response);
+            // The head is already on the wire as 200 and the body write then fails: exactly the
+            // state the committed-head branch exists for.
+            when(response.end(anyString())).thenThrow(new IllegalStateException("response already committed"));
+            when(response.closed()).thenReturn(false);
+            when(response.ended()).thenReturn(false);
+            when(response.headWritten()).thenReturn(true);
+            when(response.reset()).thenReturn(Future.succeededFuture());
+
+            RoutingContext ctx = mock(RoutingContext.class);
+            when(ctx.response()).thenReturn(response);
+
+            new HealthCheckHandler(Set.of()).handle(ctx);
+
+            // Completing a committed 200 would report the probe healthy on a rendering failure —
+            // Kubernetes reads the status and ignores the body. reset() gives the client a terminal
+            // error event instead.
+            verify(response).reset();
+            verify(response, never()).end();
         }
     }
 
