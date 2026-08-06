@@ -55,17 +55,19 @@ import lombok.extern.slf4j.Slf4j;
  *   <li><b>Unattributable failure</b> — a failure that surfaces only while the aggregated body is
  *       being written, so no single check owns it, yields a terse
  *       {@code 503 {"status":"DOWN","checks":[]}} and an {@code ERROR} log carrying the cause. The
- *       log is the only record of what went wrong: a throw escaping the aggregation callback is
- *       swallowed by Vert.x rather than propagated, so it would otherwise leave the probe hanging
- *       silently.
+ *       boundary absorbs any {@link Throwable}, {@code Error}s included, because a probe that
+ *       cannot answer is indistinguishable to an orchestrator from a dead process. The log is the
+ *       only record of what went wrong: a throw escaping the aggregation callback is swallowed by
+ *       Vert.x rather than propagated, so it would otherwise leave the probe hanging silently.
  * </ul>
  *
- * <p>Two hazards remain and are deliberately not absorbed, both upstream of any code this handler
- * runs. A contributor that blocks the event loop indefinitely inside {@code check()},
- * {@code name()}, or {@code Throwable#getMessage()} can still stall the probe — the per-check
- * timeout bounds a pending future, not a thread that never yields. A contributor {@link Future} that
- * reports itself failed while returning a {@code null} {@link Future#cause()} breaks the
- * {@code Future} contract and stalls Vert.x's own aggregation before this handler regains control.
+ * <p>Two hazards remain and are deliberately not absorbed. Both originate in contributor code this
+ * handler invokes, and neither can be bounded by the per-check timeout, which bounds a pending
+ * future rather than a thread that never yields. A contributor that blocks the event loop
+ * indefinitely inside {@code check()}, {@code name()}, or {@code Throwable#getMessage()} stalls the
+ * probe with no future left to time out. A contributor {@link Future} that reports itself failed
+ * while returning a {@code null} {@link Future#cause()} breaks the {@code Future} contract and
+ * stalls Vert.x's own aggregation before this handler regains control.
  */
 @Slf4j
 public class HealthCheckHandler implements Handler<RoutingContext> {
@@ -170,24 +172,47 @@ public class HealthCheckHandler implements Handler<RoutingContext> {
      * <p>This is the one boundary that owns the "always answers" invariant, so it catches everything
      * an interior guard let through. Rethrowing is not an option: {@code Future.join} builds a
      * contextless composite, so a throw escaping its completion callback reaches no Vert.x exception
-     * handler and is never logged — the probe would simply hang. The {@code ERROR} log below is the
-     * whole replacement for that rethrow.
+     * handler and is never logged — the probe would simply hang. The {@code ERROR} log is still the
+     * whole replacement for that rethrow, but it runs <em>after</em> the answer has been written:
+     * the appender is application-supplied, so a throw from it would escape this boundary and
+     * re-enter the very swallow this method exists to prevent.
      *
      * @param ctx     the routing context for the incoming HTTP request
      * @param failure the failure that prevented the aggregated response from being rendered
      */
     private void answerWithFallback(RoutingContext ctx, Throwable failure) {
-        log.error("Health probe rendering failed; answering DOWN", failure);
-        HttpServerResponse response = ctx.response();
-        if (!response.closed() && !response.headWritten() && !response.ended()) {
-            try {
-                response.setStatusCode(503)
-                        .putHeader("content-type", "application/json")
-                        .end(FALLBACK_BODY)
-                        .onFailure(t -> log.error("Health probe fallback response failed", t));
-            } catch (Exception writeFailure) {
-                log.error("Health probe fallback response failed", writeFailure);
+        try {
+            HttpServerResponse response = ctx.response();
+            if (!response.closed() && !response.ended()) {
+                if (!response.headWritten()) {
+                    response.setStatusCode(503)
+                            .putHeader("content-type", "application/json")
+                            .end(FALLBACK_BODY)
+                            .onFailure(t -> logQuietly("Health probe fallback response failed", t));
+                } else {
+                    // Head committed but the body never completed: terminating leaves the client a
+                    // terminal event instead of an open connection it must time out.
+                    response.end();
+                }
             }
+        } catch (Throwable writeFailure) {
+            logQuietly("Health probe fallback response failed", writeFailure);
+        }
+        logQuietly("Health probe rendering failed; answering DOWN", failure);
+    }
+
+    /**
+     * Logs at {@code ERROR} without letting the logging itself fail the caller.
+     *
+     * @param message the message to log
+     * @param failure the failure to attach
+     */
+    private void logQuietly(String message, Throwable failure) {
+        try {
+            log.error(message, failure);
+        } catch (Throwable ignored) {
+            // An appender is application-supplied. Diagnostics must never be able to prevent the
+            // probe from answering.
         }
     }
 
@@ -220,13 +245,24 @@ public class HealthCheckHandler implements Handler<RoutingContext> {
     // --- Rendering ---
 
     /**
-     * Renders one settled execution as its JSON entry. This method never throws: a failed check, an
-     * unserializable data map, a failure carrying no cause, and a hostile
-     * {@link Throwable#getMessage()} all degrade to a {@code DOWN} entry.
+     * Renders one settled execution as its JSON entry, degrading rather than propagating whatever
+     * the check produced. A failed check, an unserializable data map, and a
+     * {@link Throwable#getMessage()} that throws an {@link Exception} each yield a {@code DOWN}
+     * entry. A {@link Throwable} that is not an {@code Exception} — other than the
+     * {@link StackOverflowError} guarded explicitly below — reaches the response boundary instead,
+     * where it degrades the whole probe to the terse fallback. That split is the policy: an
+     * {@code Error} is not a diagnosable per-check condition, so it is answered at the boundary
+     * that owns the "always answers" invariant rather than dressed up as one check's status.
      *
      * <p>Keeping these guards here rather than only at the response boundary is what preserves
      * per-check fidelity — a single poisoned check degrades its own entry, not the whole response
      * and its siblings' entries with it.
+     *
+     * <p>A failure that reports itself failed while carrying a {@code null} {@link Future#cause()}
+     * is handled defensively rather than as a supported case: no current {@code Future}
+     * implementation reaches this method in that state, because Vert.x's own aggregation stalls on
+     * it first. The guard exists because this is the seam that would observe the state if that ever
+     * changed.
      *
      * @param execution the settled execution to render
      * @return the check's JSON entry
