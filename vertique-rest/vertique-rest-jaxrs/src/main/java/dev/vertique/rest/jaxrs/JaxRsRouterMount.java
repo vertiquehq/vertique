@@ -446,9 +446,7 @@ public class JaxRsRouterMount implements RouterMount {
             ctx.put(BoundRequest.KEY_RESOLVED_BODY_MAPPER, noMethodDefaultMapper);
         }
         if (cause == null) {
-            int statusCode = ctx.statusCode();
-            if (statusCode < 400) statusCode = 500;
-            cause = new jakarta.ws.rs.WebApplicationException(statusCode);
+            cause = new jakarta.ws.rs.WebApplicationException(errorStatusOrServerError(ctx.statusCode()));
         } else if (cause instanceof io.vertx.ext.web.handler.HttpException he) {
             // HttpException accepts any int, so a middleware or SecuritySchemeHandler can fail the context
             // with a non-error status. Carry it as the authoritative failure status only when it actually
@@ -463,7 +461,13 @@ public class JaxRsRouterMount implements RouterMount {
             if (he.getCause() != null) {
                 cause = he.getCause();
             } else {
-                cause = new jakarta.ws.rs.WebApplicationException(he.getPayload(), he.getStatusCode());
+                // No cause to map: the status this exception carries becomes the response's own, so it must
+                // be normalized here too. Withholding the hint alone would not save the request — the
+                // default WebApplicationException mapping answers with whatever status the synthesised
+                // exception carries, reintroducing exactly the "200 OK plus a problem document"
+                // contradiction the hint guard above refuses.
+                cause = new jakarta.ws.rs.WebApplicationException(
+                        he.getPayload(), errorStatusOrServerError(he.getStatusCode()));
             }
         } else if (ctx.statusCode() >= 400 && ctx.statusCode() < 500) {
             // ctx.fail(4xx, cause): the Vert.x layer made a deliberate client-error decision *and* handed
@@ -473,6 +477,23 @@ public class JaxRsRouterMount implements RouterMount {
             ctx.data().put(VertxFailureStatus.KEY, ctx.statusCode());
         }
         dispatchError(ctx, cause, errorPipeline, responsePipeline);
+    }
+
+    /**
+     * Normalizes a failure status into one that can actually answer a failure.
+     *
+     * <p>Both the Vert.x routing context and {@code HttpException} accept any {@code int}, and neither
+     * this module's {@code SimpleResponseBuilder} nor {@link jakarta.ws.rs.WebApplicationException}
+     * range-checks what it is handed. A failure answered 1xx/2xx/3xx — or with a status outside the
+     * HTTP range entirely — is a contradiction: the framework would ship a problem document under a
+     * status that claims nothing went wrong. Anything that is not a genuine 4xx/5xx therefore becomes
+     * 500, the same status a bare {@code fail(Throwable)} produces.
+     *
+     * @param statusCode the status the Vert.x layer carried on the failure
+     * @return {@code statusCode} when it is a 4xx or 5xx, otherwise 500
+     */
+    private static int errorStatusOrServerError(int statusCode) {
+        return statusCode >= 400 && statusCode < 600 ? statusCode : 500;
     }
 
     /**

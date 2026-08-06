@@ -433,6 +433,85 @@ class ErrorPipelineTest {
         }
 
         @Test
+        @DisplayName("A rebuilt body does not inherit the superseded body's validators, encoding or digests")
+        void rebuiltBodyDropsInheritedEntityDescribingHeaders() {
+            // Content-Length is not the only header that describes the bytes rather than the response:
+            // an ETag or Content-Digest computed over the superseded body identifies a representation
+            // the client will never receive, and a Content-Encoding it was never encoded with makes the
+            // generated JSON undecodable. Headers that describe the response itself still survive.
+            DefaultExceptionMapper defaults = new DefaultExceptionMapper()
+                    .on(Throwable.class, ex -> Response.status(401)
+                            .entity(ProblemDetail.of(401, "Unauthorized"))
+                            .type("application/problem+json")
+                            .header("Content-Encoding", "gzip")
+                            .header("ETag", "\"superseded\"")
+                            .header("Content-Digest", "sha-256=:deadbeef:")
+                            .header("Content-Range", "bytes 0-41/42")
+                            .header("WWW-Authenticate", "Bearer realm=\"api\"")
+                            .build());
+            ExceptionMapperRegistry registry = new ExceptionMapperRegistry(defaults, Set.of());
+            ErrorPipeline customPipeline = new ErrorPipeline(List.of(), List.of(), new RestExceptionMapper(), registry);
+
+            Future<Response> future = customPipeline.mapToResponse(ctx, new RuntimeException("no credentials"));
+            assertTrue(future.succeeded());
+
+            Response response = future.result();
+            ProblemDetail pd = assertInstanceOf(ProblemDetail.class, response.getEntity());
+            assertEquals("/test", pd.instance(), "the body must actually have been rebuilt by enrichment");
+            assertNull(
+                    response.getHeaderString("Content-Encoding"),
+                    "an encoding the rebuilt body was never encoded with would make it undecodable");
+            assertNull(
+                    response.getHeaderString("ETag"),
+                    "a validator computed over the superseded body must not identify the rebuilt one");
+            assertNull(
+                    response.getHeaderString("Content-Digest"),
+                    "a digest of bytes that will never be sent must not survive onto the rebuilt body");
+            assertNull(
+                    response.getHeaderString("Content-Range"),
+                    "a range describing the superseded body cannot describe the rebuilt one");
+            assertEquals(
+                    "application/problem+json",
+                    response.getMediaType().toString(),
+                    "the media type still describes the rebuilt body and must survive");
+            assertEquals(
+                    "Bearer realm=\"api\"",
+                    response.getHeaderString("WWW-Authenticate"),
+                    "headers that describe the response rather than its bytes must be preserved");
+        }
+
+        @Test
+        @DisplayName("A status override drops the superseded body's entity-describing headers")
+        void statusOverrideDropsInheritedEntityDescribingHeaders() {
+            DefaultExceptionMapper defaults = new DefaultExceptionMapper()
+                    .on(Throwable.class, ex -> Response.status(500)
+                            .entity(ProblemDetail.of(500, "Internal Server Error", "/test"))
+                            .type("application/problem+json")
+                            .header("Content-Length", 42)
+                            .header("ETag", "\"superseded\"")
+                            .header("Retry-After", "120")
+                            .build());
+            ExceptionMapperRegistry registry = new ExceptionMapperRegistry(defaults, Set.of());
+            ErrorPipeline customPipeline = new ErrorPipeline(List.of(), List.of(), new RestExceptionMapper(), registry);
+
+            ctxData.put(VertxFailureStatus.KEY, 400);
+
+            Future<Response> future = customPipeline.mapToResponse(ctx, new RuntimeException("bad request"));
+            assertTrue(future.succeeded());
+
+            Response response = future.result();
+            assertEquals(400, response.getStatus(), "the recorded Vert.x status must win");
+            assertNull(response.getHeaderString("Content-Length"), "the rebuilt body has a different length");
+            assertNull(
+                    response.getHeaderString("ETag"),
+                    "the override rebuilds the problem body, so its validator no longer applies");
+            assertEquals(
+                    "120",
+                    response.getHeaderString("Retry-After"),
+                    "Retry-After describes the response, not its bytes, and must survive the override");
+        }
+
+        @Test
         @DisplayName("Fallback overrides status for non-ProblemDetail entity without modifying entity")
         void fallbackWithNonProblemDetailEntity() {
             // Use a mapper that returns a plain string entity (not ProblemDetail)

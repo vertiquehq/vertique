@@ -383,6 +383,10 @@ recorded as-is. The `ctx.fail(<status>, cause)` shape records **400–499** only
 because `ctx.fail(Throwable)` synthesises a 500 indistinguishable from a deliberate
 `ctx.fail(500, cause)`. Neither shape records anything below 400 — that is not an error decision.
 
+A status outside 400–599 does not reach the client either. `ctx.fail(new HttpException(200))` and
+`ctx.fail(200)` both answer **500**: the failure has no cause to map, so its status would become the
+response's own, and a problem document under `200 OK` claims nothing went wrong.
+
 When no application-contributed `ExceptionMapper` registered for a type **more specific than
 `Throwable`** matched, that recorded status replaces the mapped one — preserving, for example, a 401
 or 403 raised by Vert.x auth middleware, or the 400 Vert.x determined for a malformed request body.
@@ -418,6 +422,17 @@ entity** is left exactly as the mapper authored it, body and `Content-Type` incl
 status is reconciled. Register your own `ExceptionMapper` for the cause's type when a specific detail
 is required — it outranks the Vert.x status entirely. When the recorded status *agrees* with the mapped
 one nothing changes, so a 415 whose detail names the offending content type keeps it.
+
+**Headers when the body is rebuilt.** Rebuilding the body — by this override, or by the `instance`
+enrichment every `ProblemDetail` gets — drops the headers your mapper set that describe the *octets*
+of the body it authored: `Content-Length`, `Content-Encoding`, `Content-Range`, `ETag`, and the
+digest headers (`Content-Digest`, `Repr-Digest`, `Digest`, `Content-MD5`). They would describe bytes
+the client never receives. Every other header survives, including `Content-Type`,
+`Content-Language`, and response-level headers such as `WWW-Authenticate`, `Retry-After` and
+`Allow` — a `WWW-Authenticate` is exactly what a status overridden *to* 401 needs. Set a
+representation header on an error response only if the body is one the framework will not touch
+(a non-`ProblemDetail` entity, or a `ProblemDetail` whose `instance` you set yourself and whose
+status is not overridden).
 
 ### `DefaultResponseSerializer`
 
