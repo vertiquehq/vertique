@@ -82,8 +82,10 @@ public record HealthCheckResult(HealthStatus status, Map<String, Object> data) {
      * Returns an unhealthy result describing the given failure.
      *
      * <p>The {@code error} entry is the throwable's {@linkplain Throwable#getMessage() message}
-     * when non-null, and its {@linkplain Class#getName() fully qualified class name} otherwise.
-     * A blank message is passed through verbatim; the cause chain is not walked.
+     * when non-null, and its {@linkplain Class#getName() fully qualified class name} otherwise —
+     * including when {@code getMessage()} itself throws an {@link Exception}, since a health check
+     * must be able to describe any failure it is handed. A blank message is passed through
+     * verbatim; the cause chain is not walked.
      *
      * @param cause the failure to describe; must not be {@code null}
      * @return a DOWN result describing {@code cause}
@@ -91,9 +93,15 @@ public record HealthCheckResult(HealthStatus status, Map<String, Object> data) {
      */
     public static HealthCheckResult down(Throwable cause) {
         Objects.requireNonNull(cause, "cause");
-        // Read the message once: getMessage() is overridable, so a second call is both wasted work
-        // and a chance to observe a different value.
-        String message = cause.getMessage();
+        // getMessage() is overridable, so it is read exactly once and defensively: a second call
+        // could observe a different value, and a throwable that cannot describe itself must still
+        // produce a DOWN result rather than propagate a second, unrelated failure.
+        String message;
+        try {
+            message = cause.getMessage();
+        } catch (Exception e) {
+            message = null;
+        }
         return down(message != null ? message : cause.getClass().getName());
     }
 

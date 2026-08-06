@@ -189,8 +189,10 @@ public class HealthCheckHandler implements Handler<RoutingContext> {
     }
 
     /**
-     * Builds the {@code DOWN} JSON entry describing a failure, degrading to the failure's class
-     * name when its message cannot be read.
+     * Builds the {@code DOWN} JSON entry describing a failure.
+     *
+     * <p>{@link HealthCheckResult#down(Throwable)} is total for any failure that throws an
+     * {@link Exception} from {@link Throwable#getMessage()}, so no fallback is needed here.
      *
      * @param name  the check's already-resolved name
      * @param cause the failure to describe
@@ -198,15 +200,7 @@ public class HealthCheckHandler implements Handler<RoutingContext> {
      *         message is unavailable or unreadable
      */
     private JsonObject downJson(String name, Throwable cause) {
-        HealthCheckResult result;
-        try {
-            result = HealthCheckResult.down(cause);
-        } catch (Exception e) {
-            // down(Throwable) reads cause.getMessage(), which contributor code can override to
-            // throw. getClass() is final and Class#getName() cannot throw, so this is always safe.
-            result = HealthCheckResult.down(cause.getClass().getName());
-        }
-        return toJson(name, result);
+        return toJson(name, HealthCheckResult.down(cause));
     }
 
     /**

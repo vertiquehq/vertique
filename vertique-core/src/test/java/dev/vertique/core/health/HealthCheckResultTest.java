@@ -135,6 +135,31 @@ class HealthCheckResultTest {
         void downWithNullThrowableRejected() {
             assertThrows(NullPointerException.class, () -> HealthCheckResult.down((Throwable) null));
         }
+
+        @Test
+        @DisplayName("returns the class name when getMessage() itself throws")
+        void downWithHostileMessageFallsBackToClassName() {
+            HostileMessageException cause = new HostileMessageException();
+
+            HealthCheckResult result = assertDoesNotThrow(() -> HealthCheckResult.down(cause));
+
+            assertEquals(HealthStatus.DOWN, result.status());
+            assertEquals(HostileMessageException.class.getName(), result.data().get("error"));
+        }
+    }
+
+    // --- Test fixtures ---
+
+    /**
+     * Throwable whose {@link Throwable#getMessage()} override throws instead of returning a
+     * message, standing in for contributor code that cannot describe its own failure.
+     */
+    private static final class HostileMessageException extends RuntimeException {
+
+        @Override
+        public String getMessage() {
+            throw new RuntimeException("getMessage exploded");
+        }
     }
 
     // --- Data normalization and immutability ---

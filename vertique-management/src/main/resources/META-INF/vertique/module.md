@@ -167,7 +167,7 @@ The canonical constructor normalizes a `null` data map to empty and takes an unm
 | `HealthCheckResult.up(Map<String,Object>)` | UP | provided map |
 | `HealthCheckResult.down()` | DOWN | empty |
 | `HealthCheckResult.down(String error)` | DOWN | `{"error": "<error>"}`, or empty when `error` is `null` |
-| `HealthCheckResult.down(Throwable cause)` | DOWN | `{"error": "<cause.getMessage()>"}`, falling back to the throwable's fully qualified class name when it has no message; `cause` must not be `null` |
+| `HealthCheckResult.down(Throwable cause)` | DOWN | `{"error": "<cause.getMessage()>"}`, falling back to the throwable's fully qualified class name when it has no message or `getMessage()` itself throws an exception; `cause` must not be `null` |
 | `HealthCheckResult.down(Map<String,Object>)` | DOWN | provided map |
 
 `HealthStatus` is a two-constant enum, `UP` and `DOWN`.
@@ -182,7 +182,7 @@ The abstract Dagger module in `dev.vertique.core.health` that declares both `@Mu
 
 ### Invariants & Gotchas
 
-- **Prefer `down(Throwable)` over `down(String)` when you hold the failure.** `down(String)` treats a `null` message as "no diagnostic available" and yields a DOWN result with empty data, so `down(e.getMessage())` silently loses every trace of a message-less exception. `down(e)` falls back to the throwable's class name and keeps a diagnostic in the probe response.
+- **Prefer `down(Throwable)` over `down(String)` when you hold the failure.** `down(String)` treats a `null` message as "no diagnostic available" and yields a DOWN result with empty data, so `down(e.getMessage())` silently loses every trace of a message-less exception. `down(e)` falls back to the throwable's class name and keeps a diagnostic in the probe response — it does so even when `e.getMessage()` throws, so mapping a failure with `.otherwise(HealthCheckResult::down)` can never turn into a second, unrelated failure.
 - **`name()` must be unique within its qualifier set.** Names are the JSON keys in the probe response; duplicates produce two entries that operators cannot tell apart. The framework does not reject a collision.
 - **A check's work counts against the probe's latency.** All checks in a set run concurrently, but the endpoint responds only after the slowest one settles or times out, so `healthCheckTimeoutSeconds` is effectively the probe's worst-case latency.
 - **Never block the event loop inside `check()`.** Offload blocking work with `vertx.executeBlocking` and return the resulting future.

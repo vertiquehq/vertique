@@ -535,10 +535,12 @@ static HealthCheck databaseHealth(DatabaseHealthCheck check) {
 is copied and never `null`. `down(String)` treats a `null` error as "no message" and yields empty
 data rather than throwing, so `down(throwable.getMessage())` is safe for a message-less exception.
 `down(Throwable)` puts the throwable's message under the `error` key, falling back to its fully
-qualified class name when the message is `null`, and rejects a `null` cause with a
-`NullPointerException`. Return a completed future carrying a `DOWN` result rather than a failed
-future — a failed future or a thrown exception is still reported as `DOWN`, but with the error text
-instead of your diagnostic data. `name()` must be unique within its qualifier set.
+qualified class name when the message is `null` — and equally when `getMessage()` itself throws an
+exception, so a failure that cannot describe itself still yields a `DOWN` result instead of a
+second failure. It rejects a `null` cause with a `NullPointerException`. Return a completed future
+carrying a `DOWN` result rather than a failed future — a failed future or a thrown exception is
+still reported as `DOWN`, but with the error text instead of your diagnostic data. `name()` must be
+unique within its qualifier set.
 
 ### `ApplicationStartupStep` and `ApplicationShutdownStep`
 
