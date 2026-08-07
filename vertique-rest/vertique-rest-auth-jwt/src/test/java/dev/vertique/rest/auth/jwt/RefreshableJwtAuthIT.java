@@ -8,6 +8,7 @@ import static com.github.tomakehurst.wiremock.core.WireMockConfiguration.wireMoc
 import static org.junit.jupiter.api.Assertions.*;
 
 import com.github.tomakehurst.wiremock.WireMockServer;
+import io.vertx.core.Handler;
 import io.vertx.core.Vertx;
 import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
@@ -17,6 +18,7 @@ import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.Base64;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.*;
@@ -32,6 +34,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
  *   <li>Transparent key rotation — tokens signed with the new key are accepted after a refresh</li>
  *   <li>Resilience to refresh failures — the existing key set is preserved on HTTP error</li>
  *   <li>Timer cancellation on {@link RefreshableJwtAuth#close()} — no further JWKS fetches occur</li>
+ *   <li>Retention of the documented default clock-skew leeway across a refresh tick — the delegate
+ *       rebuilt by {@code onRefreshTick} must not silently fall back to a leeway of {@code 0}</li>
  * </ul>
  */
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
@@ -48,6 +52,12 @@ public class RefreshableJwtAuthIT {
     private static final String SECRET_B = "secret-key-B-for-testing-must-be-at-least-256-bits!";
 
     private static final String JWKS_PATH = "/.well-known/jwks.json";
+
+    /** How long a JWKS request-count gate waits before failing the test. */
+    private static final long GATE_TIMEOUT_MILLIS = 10_000;
+
+    /** How often a JWKS request-count gate re-reads the WireMock request journal. */
+    private static final long GATE_POLL_INTERVAL_MILLIS = 50;
 
     @BeforeAll
     static void startWireMock() {
@@ -197,7 +207,90 @@ public class RefreshableJwtAuthIT {
         }));
     }
 
+    @Test
+    @DisplayName("After a refresh tick, the default clock-skew leeway is still applied")
+    void shouldRetainDefaultLeewayAfterRefreshTick(Vertx vertx, VertxTestContext testContext) {
+        stubJwks(jwksJson(SECRET_A));
+        String jwksUrl = wireMock.baseUrl() + JWKS_PATH;
+
+        Duration refreshInterval = Duration.ofMillis(200);
+
+        RefreshableJwtAuth.create(vertx, jwksUrl, refreshInterval).onComplete(testContext.succeeding(refreshable -> {
+            // Gate on the observed JWKS request count rather than a bare sleep: a second request can
+            // only come from a periodic refresh tick, so reaching 2 makes "a tick has fired" a fact.
+            awaitJwksRequests(
+                    vertx,
+                    2,
+                    () -> {
+                        JWTAuth signerA = signerForSecret(vertx, SECRET_A);
+                        // exp 10 s in the past — inside the documented 30 s default skew, so the
+                        // post-tick delegate must still accept it. Assert on the outcome only: every
+                        // time-claim rejection carries the identical "token expired" message.
+                        String token = signerA.generateToken(new JsonObject()
+                                .put("sub", "it-user-post-tick-leeway")
+                                .put("exp", Instant.now().getEpochSecond() - 10));
+
+                        refreshable.authenticate(new TokenCredentials(token)).onComplete(authResult -> {
+                            refreshable.close();
+                            if (authResult.failed()) {
+                                testContext.failNow(authResult.cause());
+                            } else {
+                                assertNotNull(authResult.result());
+                                testContext.completeNow();
+                            }
+                        });
+                    },
+                    cause -> {
+                        refreshable.close();
+                        testContext.failNow(cause);
+                    });
+        }));
+    }
+
     // --- Helpers ---
+
+    /**
+     * Polls the WireMock request journal until at least {@code minRequests} JWKS fetches have been
+     * served, then runs {@code onReady}. Gives up after {@link #GATE_TIMEOUT_MILLIS}, which stays
+     * well inside the class-level 20 s timeout so a stalled refresh reports as an assertion failure
+     * rather than a hang.
+     *
+     * @param vertx       the Vert.x instance used to schedule the poll
+     * @param minRequests the JWKS request count to wait for
+     * @param onReady     run once the count is reached
+     * @param onTimeout   invoked with an {@link AssertionError} if the count is never reached
+     */
+    private static void awaitJwksRequests(
+            Vertx vertx, int minRequests, Runnable onReady, Handler<Throwable> onTimeout) {
+        awaitJwksRequests(vertx, minRequests, System.currentTimeMillis() + GATE_TIMEOUT_MILLIS, onReady, onTimeout);
+    }
+
+    /**
+     * Recursive body of the gate above; re-schedules itself on the Vert.x timer rather than blocking
+     * a thread, so the poll never occupies the event loop between checks.
+     *
+     * @param vertx       the Vert.x instance used to schedule the poll
+     * @param minRequests the JWKS request count to wait for
+     * @param deadline    the absolute {@link System#currentTimeMillis()} value at which to give up
+     * @param onReady     run once the count is reached
+     * @param onTimeout   invoked with an {@link AssertionError} once the deadline passes
+     */
+    private static void awaitJwksRequests(
+            Vertx vertx, int minRequests, long deadline, Runnable onReady, Handler<Throwable> onTimeout) {
+        int count = wireMock.countRequestsMatching(
+                        getRequestedFor(urlEqualTo(JWKS_PATH)).build())
+                .getCount();
+        if (count >= minRequests) {
+            onReady.run();
+        } else if (System.currentTimeMillis() >= deadline) {
+            onTimeout.handle(
+                    new AssertionError("Timed out waiting for " + minRequests + " JWKS requests; observed " + count));
+        } else {
+            vertx.setTimer(
+                    GATE_POLL_INTERVAL_MILLIS,
+                    ignored -> awaitJwksRequests(vertx, minRequests, deadline, onReady, onTimeout));
+        }
+    }
 
     /**
      * Builds an HS256 JWKS JSON document for the given secret.

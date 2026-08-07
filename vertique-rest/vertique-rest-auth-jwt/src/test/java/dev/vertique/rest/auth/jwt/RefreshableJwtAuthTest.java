@@ -14,6 +14,7 @@ import io.vertx.ext.auth.jwt.JWTAuth;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -25,6 +26,11 @@ import org.junit.jupiter.api.extension.ExtendWith;
  *
  * <p>Verifies delegation behavior to the wrapped {@link JWTAuth} instance,
  * the periodic key-swap mechanism, and correct close-and-stop semantics.
+ *
+ * <p>Also guards that the refreshing path keeps the documented default clock-skew leeway: the
+ * initial fetch goes through {@link JwtAuthFactory#fromJwksAsync(Vertx, String)}, so a change that
+ * stopped that overload from applying the framework defaults would silently drop the refreshing
+ * path back to a leeway of {@code 0}.
  */
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 10, unit = TimeUnit.SECONDS)
@@ -114,6 +120,38 @@ class RefreshableJwtAuthTest {
                 }));
     }
 
+    // --- Clock-skew leeway guard ---
+
+    @Test
+    @DisplayName("The refreshing path applies the documented 30 s default leeway to an expired token")
+    void shouldApplyDefaultLeewayOnRefreshingPath(Vertx vertx, VertxTestContext testContext) {
+        RefreshableJwtAuth.create(vertx, "classpath:test-jwks.json", Duration.ofMinutes(5))
+                .onComplete(testContext.succeeding(refreshable -> {
+                    // Close up front so no exit path can leak the refresh timer. close() only cancels
+                    // that timer — the delegate built by the initial fetch stays usable, as
+                    // shouldNotSwapAfterClose proves — so the assertion below still exercises exactly
+                    // the JWTAuth that fromJwksAsync(vertx, location) produced.
+                    refreshable.close();
+
+                    // exp 10 s in the past — inside the documented 30 s default skew, so the token must
+                    // be accepted. Signing with the same instance carries the JWKS "kid" in the header.
+                    String token = refreshable.generateToken(
+                            new JsonObject().put("sub", "refresh-leeway-user").put("exp", secondsFromNow(-10)),
+                            new JWTOptions().setAlgorithm("HS256"));
+
+                    // Assert on the outcome only: Vert.x reports every time-claim rejection with the
+                    // identical message "Invalid JWT token: token expired.".
+                    refreshable.authenticate(new TokenCredentials(token)).onComplete(result -> {
+                        if (result.failed()) {
+                            testContext.failNow(result.cause());
+                        } else {
+                            assertNotNull(result.result());
+                            testContext.completeNow();
+                        }
+                    });
+                }));
+    }
+
     // --- Close behavior test ---
 
     @Test
@@ -137,5 +175,17 @@ class RefreshableJwtAuthTest {
                         }
                     });
                 }));
+    }
+
+    // --- Helpers ---
+
+    /**
+     * Returns the epoch-second value {@code offsetSeconds} away from now (negative = in the past).
+     *
+     * @param offsetSeconds the offset from now, in seconds
+     * @return the resulting epoch-second value
+     */
+    private static long secondsFromNow(long offsetSeconds) {
+        return Instant.now().getEpochSecond() + offsetSeconds;
     }
 }
