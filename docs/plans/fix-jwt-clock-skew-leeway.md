@@ -357,16 +357,27 @@ exist:
 S1's five tests turn green here.
 Commit: `fix(rest-auth-jwt): apply configured clock skew on every JWTAuth construction path`
 
-### S3 — Red: refreshing-path leeway against today's signatures · tier `routine`
+### S3 — Regression guard: refreshing-path default leeway · tier `routine`
+
+**Amended after S2 — see Amendment A1. These tests are green on arrival, not red.**
+S2 made the 2-arg `fromJwksAsync` apply the default config, and `RefreshableJwtAuth` calls exactly
+that at both fetch sites, so the *default*-leeway half of the reported bug is already closed by S2.
+The tests below still land: without them, a later change to `onRefreshTick` could silently revert the
+refresh path to leeway 0 and nothing would catch it.
 
 | Test | File | Given | When | Then |
 |---|---|---|---|---|
-| `shouldApplyDefaultLeewayOnRefreshingPath` | `RefreshableJwtAuthTest` | classpath JWKS, token `exp` = now − 10 s | `create(vertx, loc, Duration.ofMinutes(5))` | **succeeds** (RED) |
-| `shouldRetainDefaultLeewayAfterRefreshTick` | `RefreshableJwtAuthIT` | WireMock JWKS, 200 ms interval; gate until `countRequestsMatching(...)` ≥ 2 | authenticate token `exp` = now − 10 s | **succeeds** — the regression test for `onRefreshTick` (RED) |
+| `shouldApplyDefaultLeewayOnRefreshingPath` | `RefreshableJwtAuthTest` | classpath JWKS, token `exp` = now − 10 s | `create(vertx, loc, Duration.ofMinutes(5))` | **succeeds** (green on arrival; guards S2) |
+| `shouldRetainDefaultLeewayAfterRefreshTick` | `RefreshableJwtAuthIT` | WireMock JWKS, 200 ms interval; gate until `countRequestsMatching(...)` ≥ 2 | authenticate token `exp` = now − 10 s | **succeeds** — guards `onRefreshTick` (green on arrival) |
+
+**Prove they can fail.** A guard test that has never been red is worth little (`tests-that-cannot-fail`).
+Before committing, temporarily revert `createFromJwksContent`'s defaulted call site to pass a
+`clockSkewSeconds(0)` config, confirm both tests go red, then restore. Record the result in the commit
+body. Do not ship the temporary edit.
 
 Both compile today (3-arg `create` exists). ITs reuse the existing static WireMock harness in
 `RefreshableJwtAuthIT`; gate on request count, never on a bare sleep.
-Commit: `test(rest-auth-jwt): add failing tests for leeway across JWKS refresh ticks`
+Commit: `test(rest-auth-jwt): guard default leeway across JWKS refresh ticks`
 
 ### S4 — Green: `RefreshableJwtAuth` carries the config · tier `critical`
 
@@ -593,6 +604,30 @@ Issue #37 is closed by this PR; no row above blocks that.
 - **Plan linter:** `vertique-toolkit:vertique-plan-linter`, 2 rounds. Round 1: 5 blocking FAILs.
   Round 2: 1 blocking FAIL (Class Inventory rows for two new test classes), now added and verified
   by inventory-vs-manifest parity check. Currently **PASS**.
+
+## Amendments
+
+| # | Date | Trigger | What changed |
+|---|---|---|---|
+| A1 | 2026-07-30 | Plan gap found executing S2 | S3 re-framed from a **red** slice to a **regression-guard** slice. S2's defaults-delegation routes through the 2-arg `fromJwksAsync`, which is exactly what `RefreshableJwtAuth` calls at both fetch sites — so S3's two planned tests are green on arrival. Verified empirically by the S2 implementer with a throwaway probe, not inferred. S3 gains a mandatory revert-and-confirm-red step so the guards are proven able to fail. S4 is unaffected: its explicit-config tests stay genuinely red because the 4-arg `create` does not exist. No contract, scope, or consumer-visible behavior changed — no sign-off required. |
+| A2 | 2026-07-30 | Verified fact discovered during the S2 simplify pass | New pre-flight finding **F16** (below) on `JwtValidationConfig` equality, and S5's divergence check constrained to a field-wise comparison. This corrects a latent defect in the S5 design as written; it does not alter the frozen Contract Appendix. |
+
+**F16 — `JwtValidationConfig` and `JwtAuthConfig` both use identity equality.**
+`JwtValidationConfig` carries `@Getter @Builder @Jacksonized @Accessors @JsonAutoDetect
+@JsonIgnoreProperties` and **no** `@EqualsAndHashCode`; `javap -p` confirms it declares neither
+`equals` nor `hashCode`, so it inherits `Object`'s identity semantics. `JwtAuthConfig` is a record
+whose generated `equals` delegates per-component into that identity comparison, so it is equally
+unusable for value comparison. The instances S5 compares are *guaranteed* distinct on the commonest
+path: `JwtAuthFactory.defaultValidation()` builds a fresh default per call and `JwtAuthConfig`'s
+`@JsonCreator` independently builds another.
+
+**Consequence for S5, binding:** the divergence check MUST compare
+`applied.clockSkewSeconds() != effective.clockSkewSeconds()` — a field-wise comparison — and MUST NOT
+use `.equals()` on either config type. An `.equals()`-based check would report divergence and fail
+startup on essentially every default deployment. `clockSkewSeconds` is also the only field that needs
+checking: `iss`/`aud` have the handler's post-authentication backstop, which is the whole asymmetry
+§1 rests on. Do **not** resolve this by adding `@EqualsAndHashCode` — that adds `equals`/`hashCode` to
+a public API type outside the frozen §4 appendix and would require sign-off.
 
 ## Execution-start drift reconciliation (2026-07-30, before slice 1)
 
