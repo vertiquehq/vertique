@@ -49,7 +49,16 @@ import lombok.extern.slf4j.Slf4j;
  *
  * // From a PEM-encoded public key (RS256, ES256, etc.)
  * JWTAuth auth = JwtAuthFactory.fromPublicKey(vertx, "RS256", pemString);
+ *
+ * // Any key source with issuer/audience validation
+ * JWTAuth auth = JwtAuthFactory.fromPublicKey(vertx, "RS256", pemString, config);
  * }</pre>
+ *
+ * <p>Every method applies a {@link JwtValidationConfig} to the {@link JWTAuth} it builds. The
+ * overloads that take no config apply {@code JwtValidationConfig.builder().build()}, so the
+ * documented default clock skew ({@link JwtValidationConfig#clockSkewSeconds()}) always reaches
+ * Vert.x as {@code exp}/{@code nbf}/{@code iat} leeway; they leave issuer and audience
+ * unconstrained and log no warning about it, because the caller did not ask for validation.
  *
  * <p>This class is a standalone utility and is not managed by Dagger. Applications call
  * these methods inside their {@code @Provides JWTAuth} binding.
@@ -94,6 +103,11 @@ public final class JwtAuthFactory {
      * retain the handle and delegate shutdown to it — see {@code dev.vertique:vertique-application}
      * for the full startup/shutdown contract.
      *
+     * <p>Applies {@code JwtValidationConfig.builder().build()}, so the documented default clock
+     * skew ({@link JwtValidationConfig#clockSkewSeconds()}, 30 seconds) is honored as
+     * {@code exp}/{@code nbf}/{@code iat} leeway. Issuer and audience stay unconstrained; use
+     * {@link #fromJwks(Vertx, String, JwtValidationConfig)} to constrain them.
+     *
      * @param vertx    the Vert.x instance
      * @param location the JWKS document location
      * @return a configured JWTAuth instance
@@ -115,6 +129,11 @@ public final class JwtAuthFactory {
      * Vert.x worker thread via {@code vertx.executeBlocking()}. For classpath and
      * filesystem locations, delegates to the synchronous {@link #fromJwks} wrapped in a
      * succeeded future.
+     *
+     * <p>Applies {@code JwtValidationConfig.builder().build()}, so the documented default clock
+     * skew ({@link JwtValidationConfig#clockSkewSeconds()}, 30 seconds) is honored as
+     * {@code exp}/{@code nbf}/{@code iat} leeway. Issuer and audience stay unconstrained; use
+     * {@link #fromJwksAsync(Vertx, String, JwtValidationConfig)} to constrain them.
      *
      * @param vertx    the Vert.x instance
      * @param location the JWKS document location
@@ -231,6 +250,11 @@ public final class JwtAuthFactory {
      *
      * <p>Suitable for HS256, HS384, and HS512 algorithms.
      *
+     * <p>Applies {@code JwtValidationConfig.builder().build()}, so the documented default clock
+     * skew ({@link JwtValidationConfig#clockSkewSeconds()}, 30 seconds) is honored as
+     * {@code exp}/{@code nbf}/{@code iat} leeway. Issuer and audience stay unconstrained; use
+     * {@link #fromSymmetricKey(Vertx, String, String, JwtValidationConfig)} to constrain them.
+     *
      * @param vertx     the Vert.x instance
      * @param algorithm the HMAC algorithm (e.g., "HS256")
      * @param secret    the symmetric key
@@ -241,11 +265,30 @@ public final class JwtAuthFactory {
         requireNonBlank(algorithm, "algorithm");
         requireNonBlank(secret, "secret");
 
-        return JWTAuth.create(
-                vertx,
-                new JWTAuthOptions()
-                        .addPubSecKey(
-                                new PubSecKeyOptions().setAlgorithm(algorithm).setBuffer(secret)));
+        return createFromPubSecKey(vertx, algorithm, secret, defaultValidation(), false);
+    }
+
+    /**
+     * Creates a {@link JWTAuth} from a symmetric (HMAC) key, applying the supplied validation
+     * constraints (issuer, audience, and {@code exp}/{@code nbf}/{@code iat} leeway) as
+     * {@link JWTOptions}.
+     *
+     * <p>A startup warning is logged when {@code config.issuer()} or {@code config.audience()}
+     * is {@code null}, as this leaves the token open to substitution attacks.
+     *
+     * @param vertx     the Vert.x instance
+     * @param algorithm the HMAC algorithm (e.g. "HS256")
+     * @param secret    the symmetric key
+     * @param config    the validation constraints to apply; must not be {@code null}
+     * @return a configured JWTAuth instance
+     */
+    public static JWTAuth fromSymmetricKey(Vertx vertx, String algorithm, String secret, JwtValidationConfig config) {
+        Objects.requireNonNull(vertx, "vertx");
+        requireNonBlank(algorithm, "algorithm");
+        requireNonBlank(secret, "secret");
+        Objects.requireNonNull(config, "config");
+
+        return createFromPubSecKey(vertx, algorithm, secret, config, true);
     }
 
     /**
@@ -253,6 +296,11 @@ public final class JwtAuthFactory {
      *
      * <p>Suitable for asymmetric algorithms such as RS256, RS384, RS512, ES256, ES384,
      * ES512, PS256, PS384, and PS512.
+     *
+     * <p>Applies {@code JwtValidationConfig.builder().build()}, so the documented default clock
+     * skew ({@link JwtValidationConfig#clockSkewSeconds()}, 30 seconds) is honored as
+     * {@code exp}/{@code nbf}/{@code iat} leeway. Issuer and audience stay unconstrained; use
+     * {@link #fromPublicKey(Vertx, String, String, JwtValidationConfig)} to constrain them.
      *
      * @param vertx     the Vert.x instance
      * @param algorithm the asymmetric algorithm (e.g., "RS256")
@@ -264,29 +312,105 @@ public final class JwtAuthFactory {
         requireNonBlank(algorithm, "algorithm");
         requireNonBlank(pem, "pem");
 
-        return JWTAuth.create(
-                vertx,
-                new JWTAuthOptions()
-                        .addPubSecKey(
-                                new PubSecKeyOptions().setAlgorithm(algorithm).setBuffer(pem)));
+        return createFromPubSecKey(vertx, algorithm, pem, defaultValidation(), false);
+    }
+
+    /**
+     * Creates a {@link JWTAuth} from a PEM-encoded public key, applying the supplied validation
+     * constraints (issuer, audience, and {@code exp}/{@code nbf}/{@code iat} leeway) as
+     * {@link JWTOptions}.
+     *
+     * <p>A startup warning is logged when {@code config.issuer()} or {@code config.audience()}
+     * is {@code null}, as this leaves the token open to substitution attacks.
+     *
+     * @param vertx     the Vert.x instance
+     * @param algorithm the asymmetric algorithm (e.g. "RS256")
+     * @param pem       the PEM-encoded public key
+     * @param config    the validation constraints to apply; must not be {@code null}
+     * @return a configured JWTAuth instance
+     */
+    public static JWTAuth fromPublicKey(Vertx vertx, String algorithm, String pem, JwtValidationConfig config) {
+        Objects.requireNonNull(vertx, "vertx");
+        requireNonBlank(algorithm, "algorithm");
+        requireNonBlank(pem, "pem");
+        Objects.requireNonNull(config, "config");
+
+        return createFromPubSecKey(vertx, algorithm, pem, config, true);
     }
 
     // --- Internal helpers ---
 
-    private static JWTAuth createFromJwksContent(Vertx vertx, String content) {
-        return createFromJwksContent(vertx, content, null);
+    /**
+     * Returns the framework's default validation constraints — no issuer, no audience, and the
+     * documented default clock skew. Used by every overload that takes no
+     * {@link JwtValidationConfig}, so those paths still reach {@link JWTOptions} with leeway
+     * applied rather than silently defaulting to Vert.x's leeway of {@code 0}.
+     *
+     * @return a fresh default {@link JwtValidationConfig}
+     */
+    private static JwtValidationConfig defaultValidation() {
+        return JwtValidationConfig.builder().build();
     }
 
     /**
-     * Parses a JWKS document and creates a {@link JWTAuth} instance, optionally applying
-     * token validation constraints from the supplied {@link JwtValidationConfig}.
+     * Creates a {@link JWTAuth} backed by a single symmetric or asymmetric key, applying
+     * {@code config} as {@link JWTOptions}.
+     *
+     * @param vertx                    the Vert.x instance
+     * @param algorithm                the signing algorithm
+     * @param key                      the symmetric secret or PEM-encoded key
+     * @param config                   the validation constraints to apply; must not be {@code null}
+     * @param warnOnMissingConstraints whether to log the missing issuer/audience warnings
+     * @return a configured {@link JWTAuth} instance
+     */
+    private static JWTAuth createFromPubSecKey(
+            Vertx vertx, String algorithm, String key, JwtValidationConfig config, boolean warnOnMissingConstraints) {
+        return JWTAuth.create(
+                vertx,
+                new JWTAuthOptions()
+                        .addPubSecKey(
+                                new PubSecKeyOptions().setAlgorithm(algorithm).setBuffer(key))
+                        .setJWTOptions(buildJwtOptions(config, warnOnMissingConstraints)));
+    }
+
+    /**
+     * Parses a JWKS document and creates a {@link JWTAuth} instance applying the framework's
+     * default validation constraints. No missing issuer/audience warning is logged: the caller
+     * did not ask for validation, so only the default leeway is being supplied.
      *
      * @param vertx   the Vert.x instance
      * @param content the raw JWKS JSON string
-     * @param config  optional validation config; {@code null} means no extra validation
+     * @return a configured {@link JWTAuth} instance
+     */
+    private static JWTAuth createFromJwksContent(Vertx vertx, String content) {
+        return createFromJwksContent(vertx, content, defaultValidation(), false);
+    }
+
+    /**
+     * Parses a JWKS document and creates a {@link JWTAuth} instance applying caller-supplied
+     * token validation constraints, warning when issuer or audience is left unset.
+     *
+     * @param vertx   the Vert.x instance
+     * @param content the raw JWKS JSON string
+     * @param config  the validation constraints to apply; must not be {@code null}
      * @return a configured {@link JWTAuth} instance
      */
     private static JWTAuth createFromJwksContent(Vertx vertx, String content, JwtValidationConfig config) {
+        return createFromJwksContent(vertx, content, config, true);
+    }
+
+    /**
+     * Parses a JWKS document and creates a {@link JWTAuth} instance, applying token validation
+     * constraints from the supplied {@link JwtValidationConfig}.
+     *
+     * @param vertx                    the Vert.x instance
+     * @param content                  the raw JWKS JSON string
+     * @param config                   the validation constraints to apply; must not be {@code null}
+     * @param warnOnMissingConstraints whether to log the missing issuer/audience warnings
+     * @return a configured {@link JWTAuth} instance
+     */
+    private static JWTAuth createFromJwksContent(
+            Vertx vertx, String content, JwtValidationConfig config, boolean warnOnMissingConstraints) {
         JsonObject jwksDoc;
         try {
             jwksDoc = new JsonObject(content);
@@ -309,26 +433,32 @@ public final class JwtAuthFactory {
             options.addJwk(keys.getJsonObject(i));
         }
 
-        if (config != null) {
-            options.setJWTOptions(buildJwtOptions(config));
-        }
+        options.setJWTOptions(buildJwtOptions(config, warnOnMissingConstraints));
 
         return JWTAuth.create(vertx, options);
     }
 
     /**
-     * Builds a {@link JWTOptions} from the given {@link JwtValidationConfig}, logging startup
-     * warnings when issuer or audience are not configured.
+     * Builds a {@link JWTOptions} from the given {@link JwtValidationConfig}.
      *
-     * @param config the validation configuration; must not be {@code null}
+     * <p>The missing issuer/audience warnings are gated on {@code warnOnMissingConstraints} rather
+     * than emitted unconditionally: every no-config factory path now routes through this method to
+     * pick up the default leeway, and those callers never asked for issuer/audience validation, so
+     * warning them would be noise.
+     *
+     * @param config                   the validation configuration; must not be {@code null}
+     * @param warnOnMissingConstraints {@code true} when the config came from a caller — an unset
+     *                                 issuer or audience is then worth a startup warning;
+     *                                 {@code false} when the framework supplied the defaults
      * @return a configured {@link JWTOptions} instance
      */
-    private static JWTOptions buildJwtOptions(JwtValidationConfig config) {
-        if (config.issuer() == null) {
+    private static JWTOptions buildJwtOptions(JwtValidationConfig config, boolean warnOnMissingConstraints) {
+        if (warnOnMissingConstraints && config.issuer() == null) {
             log.warn("JwtValidationConfig: issuer is not set. Tokens from any issuer will be accepted. "
                     + "Set 'issuer' in production to prevent token substitution attacks.");
         }
-        if (config.audience() == null || config.audience().isEmpty()) {
+        if (warnOnMissingConstraints
+                && (config.audience() == null || config.audience().isEmpty())) {
             log.warn("JwtValidationConfig: audience is not set. Tokens with any audience will be accepted. "
                     + "Set 'audience' in production to prevent token substitution attacks.");
         }
