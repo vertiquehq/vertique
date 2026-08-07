@@ -7,8 +7,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.time.Instant;
-import java.time.ZoneId;
-import java.util.Map;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -22,40 +20,15 @@ import org.junit.jupiter.api.Test;
 @DisplayName("SystemCronTickPlanner")
 class SystemCronTickPlannerTest {
 
-    /** Timezone used by every job in this class. */
-    private static final ZoneId UTC = ZoneId.of("UTC");
-
     /** A whole-second instant used as the reference boundary for the delay vectors. */
     private static final Instant BOUNDARY = Instant.parse("2026-08-07T10:15:30Z");
 
-    private final SystemCronTickPlanner planner = new SystemCronTickPlanner();
-
-    /**
-     * Builds an every-second EVERY_INSTANCE job in {@link #UTC}; only the expression and timezone
-     * matter to the planner.
-     *
-     * @return a job definition firing on {@code * * * * * *}
-     */
-    private static CronJobDefinition everySecondJob() {
-        return new CronJobDefinition(
-                "planner-job",
-                new CronExpression("* * * * * *"),
-                new CronTargetReference.EventBusTarget("test.address"),
-                "test.address",
-                ExecutionMode.EVERY_INSTANCE,
-                UTC,
-                3,
-                null,
-                OverlapPolicy.SKIP,
-                true,
-                Map.of(),
-                MisfirePolicy.SKIP);
-    }
+    private static final SystemCronTickPlanner planner = new SystemCronTickPlanner();
 
     @Test
     @DisplayName("scheduledAt is the cron expression's next fire time after now — whole-second, strictly after")
     void scheduledAtMatchesCronExpressionFromNow() {
-        CronJobDefinition job = everySecondJob();
+        CronJobDefinition job = CompressedCronTickPlannerTest.jobFiring("* * * * * *");
         Instant now = Instant.parse("2026-08-07T10:15:30.123456789Z");
 
         CronTickPlanner.Tick tick = planner.plan(job, null, now);
@@ -72,7 +45,7 @@ class SystemCronTickPlannerTest {
     @Test
     @DisplayName("delayMs is the clamped positive millisecond distance between now and scheduledAt")
     void delayIsClampedPositiveMillisBetweenNowAndScheduledAt() {
-        CronJobDefinition job = everySecondJob();
+        CronJobDefinition job = CompressedCronTickPlannerTest.jobFiring("* * * * * *");
 
         // 250ms past a whole second: the next occurrence is the following whole second, 750ms out.
         Instant justAfterBoundary = BOUNDARY.plusMillis(250);
@@ -97,7 +70,7 @@ class SystemCronTickPlannerTest {
     @Test
     @DisplayName("previousScheduledAt is ignored — production progression derives from wall clock")
     void previousScheduledAtIsIgnored() {
-        CronJobDefinition job = everySecondJob();
+        CronJobDefinition job = CompressedCronTickPlannerTest.jobFiring("* * * * * *");
         Instant now = Instant.parse("2026-08-07T10:15:30.400Z");
 
         CronTickPlanner.Tick withoutPrevious = planner.plan(job, null, now);

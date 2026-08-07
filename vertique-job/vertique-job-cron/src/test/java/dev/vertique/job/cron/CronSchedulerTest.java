@@ -95,6 +95,38 @@ class CronSchedulerTest {
     }
 
     /**
+     * Builds a {@link CronScheduler} on {@link #FAST_TICKS} with the all-defaults numeric tail
+     * ({@link CronScheduler#DEFAULT_MAX_CONCURRENT_JOBS}, no jitter, no execution timeout) and the
+     * test {@link DispatchEnvelopeBuilder}. Sites needing a non-default numeric argument or a
+     * different planner call the constructor explicitly instead.
+     *
+     * @param vertx the Vert.x instance timers are armed on
+     * @param interceptors the {@link JobInterceptor} set to install
+     * @param repo the repository, or {@code null} for repository-less scheduling
+     * @param resolver the service-target resolver
+     * @param client the event-bus client fires dispatch through
+     * @return a compressed-planner scheduler with default limits
+     */
+    private static CronScheduler compressedScheduler(
+            Vertx vertx,
+            Set<JobInterceptor> interceptors,
+            JobRepository repo,
+            ServiceTargetResolver resolver,
+            EventBusClient client) {
+        return new CronScheduler(
+                vertx,
+                interceptors,
+                repo,
+                resolver,
+                client,
+                CronScheduler.DEFAULT_MAX_CONCURRENT_JOBS,
+                0L,
+                0L,
+                DispatchEnvelopeBuilder.forTesting(),
+                FAST_TICKS);
+    }
+
+    /**
      * Returns a stub {@link ServiceTargetResolver} that resolves any stable target id to the
      * same id used as the address (sufficient for tests that use {@link CronTargetReference.EventBusTarget}).
      */
@@ -297,17 +329,8 @@ class CronSchedulerTest {
                 .when(spyVertx)
                 .setTimer(anyLong(), any());
 
-        CronScheduler localScheduler = new CronScheduler(
-                spyVertx,
-                Set.of(),
-                null,
-                stubTargetResolver(),
-                testEventBusClient(vertx),
-                CronScheduler.DEFAULT_MAX_CONCURRENT_JOBS,
-                0L,
-                0L,
-                DispatchEnvelopeBuilder.forTesting(),
-                FAST_TICKS);
+        CronScheduler localScheduler =
+                compressedScheduler(spyVertx, Set.of(), null, stubTargetResolver(), testEventBusClient(vertx));
         CronJobDefinition job = new CronJobDefinition(
                 "twice-started-job",
                 new CronExpression("0 0 0 * * *"),
@@ -509,17 +532,7 @@ class CronSchedulerTest {
     void bindsDeferredExecutionOrigin(Vertx vertx, VertxTestContext ctx) {
         AtomicBoolean asserted = new AtomicBoolean(false);
 
-        scheduler = new CronScheduler(
-                vertx,
-                Set.of(),
-                null,
-                stubTargetResolver(),
-                testEventBusClient(vertx),
-                CronScheduler.DEFAULT_MAX_CONCURRENT_JOBS,
-                0L,
-                0L,
-                DispatchEnvelopeBuilder.forTesting(),
-                FAST_TICKS);
+        scheduler = compressedScheduler(vertx, Set.of(), null, stubTargetResolver(), testEventBusClient(vertx));
 
         // Inspect the FQCN-keyed dispatch-context map carried in the DispatchEnvelope: the cron
         // boundary must bind a DeferredExecutionOrigin proving deferred (cron) execution (W2/A6).
@@ -566,17 +579,7 @@ class CronSchedulerTest {
         AtomicInteger maxConcurrent = new AtomicInteger();
         AtomicInteger fireCount = new AtomicInteger();
 
-        scheduler = new CronScheduler(
-                vertx,
-                Set.of(),
-                null,
-                stubTargetResolver(),
-                testEventBusClient(vertx),
-                CronScheduler.DEFAULT_MAX_CONCURRENT_JOBS,
-                0L,
-                0L,
-                DispatchEnvelopeBuilder.forTesting(),
-                FAST_TICKS);
+        scheduler = compressedScheduler(vertx, Set.of(), null, stubTargetResolver(), testEventBusClient(vertx));
 
         // Handler that holds execution for HOLD_MS, three compressed tick intervals, so at least
         // two cron ticks necessarily arrive while the first execution is still in flight. The hold
@@ -722,17 +725,8 @@ class CronSchedulerTest {
             }
         };
 
-        scheduler = new CronScheduler(
-                vertx,
-                Set.of(interceptor),
-                null,
-                stubTargetResolver(),
-                testEventBusClient(vertx),
-                CronScheduler.DEFAULT_MAX_CONCURRENT_JOBS,
-                0L,
-                0L,
-                DispatchEnvelopeBuilder.forTesting(),
-                FAST_TICKS);
+        scheduler =
+                compressedScheduler(vertx, Set.of(interceptor), null, stubTargetResolver(), testEventBusClient(vertx));
 
         vertx.eventBus().consumer("test.interceptor.address", msg -> {
             ctx.verify(() -> {
@@ -776,17 +770,8 @@ class CronSchedulerTest {
             }
         };
 
-        scheduler = new CronScheduler(
-                vertx,
-                Set.of(interceptor),
-                null,
-                stubTargetResolver(),
-                testEventBusClient(vertx),
-                CronScheduler.DEFAULT_MAX_CONCURRENT_JOBS,
-                0L,
-                0L,
-                DispatchEnvelopeBuilder.forTesting(),
-                FAST_TICKS);
+        scheduler =
+                compressedScheduler(vertx, Set.of(interceptor), null, stubTargetResolver(), testEventBusClient(vertx));
 
         // Handler that replies immediately
         vertx.eventBus().consumer("test.complete.address", msg -> {
@@ -830,17 +815,8 @@ class CronSchedulerTest {
             }
         };
 
-        scheduler = new CronScheduler(
-                vertx,
-                Set.of(throwingInterceptor),
-                null,
-                stubTargetResolver(),
-                testEventBusClient(vertx),
-                CronScheduler.DEFAULT_MAX_CONCURRENT_JOBS,
-                0L,
-                0L,
-                DispatchEnvelopeBuilder.forTesting(),
-                FAST_TICKS);
+        scheduler = compressedScheduler(
+                vertx, Set.of(throwingInterceptor), null, stubTargetResolver(), testEventBusClient(vertx));
 
         vertx.eventBus().consumer("test.throwing.address", msg -> ctx.completeNow());
 
@@ -1588,17 +1564,7 @@ class CronSchedulerTest {
                             },
                             new IllegalArgumentException("no such target")));
 
-            scheduler = new CronScheduler(
-                    vertx,
-                    Set.of(),
-                    repo,
-                    resolver,
-                    testEventBusClient(vertx),
-                    CronScheduler.DEFAULT_MAX_CONCURRENT_JOBS,
-                    0L,
-                    0L,
-                    DispatchEnvelopeBuilder.forTesting(),
-                    FAST_TICKS);
+            scheduler = compressedScheduler(vertx, Set.of(), repo, resolver, testEventBusClient(vertx));
 
             CronJobDefinition job = serviceTargetJob(
                     "unresolvable-single-instance-job", ExecutionMode.SINGLE_INSTANCE, OverlapPolicy.SKIP);
@@ -1632,17 +1598,7 @@ class CronSchedulerTest {
                     .thenReturn(resolved);
 
             // executionTimeoutMs = 0, so nothing can mask a stranded guard.
-            scheduler = new CronScheduler(
-                    vertx,
-                    Set.of(),
-                    repo,
-                    resolver,
-                    testEventBusClient(vertx),
-                    CronScheduler.DEFAULT_MAX_CONCURRENT_JOBS,
-                    0L,
-                    0L,
-                    DispatchEnvelopeBuilder.forTesting(),
-                    FAST_TICKS);
+            scheduler = compressedScheduler(vertx, Set.of(), repo, resolver, testEventBusClient(vertx));
 
             CronJobDefinition job = serviceTargetJob(
                     "leaks-guard-single-instance-job", ExecutionMode.SINGLE_INSTANCE, OverlapPolicy.SKIP);
@@ -1702,17 +1658,7 @@ class CronSchedulerTest {
                             new IllegalArgumentException("never resolves")));
 
             JobRepository repo = mock(JobRepository.class);
-            scheduler = new CronScheduler(
-                    vertx,
-                    Set.of(),
-                    repo,
-                    resolver,
-                    testEventBusClient(vertx),
-                    CronScheduler.DEFAULT_MAX_CONCURRENT_JOBS,
-                    0L,
-                    0L,
-                    DispatchEnvelopeBuilder.forTesting(),
-                    FAST_TICKS);
+            scheduler = compressedScheduler(vertx, Set.of(), repo, resolver, testEventBusClient(vertx));
             scheduler.register(
                     serviceTargetJob("never-resolves-job", ExecutionMode.SINGLE_INSTANCE, OverlapPolicy.SKIP));
             scheduler.start();
@@ -1738,17 +1684,12 @@ class CronSchedulerTest {
             when(repo.tryInsert(any(JobExecution.class)))
                     .thenReturn(Future.succeededFuture(Optional.of(UUID.randomUUID())));
 
-            scheduler = new CronScheduler(
+            scheduler = compressedScheduler(
                     vertx,
                     Set.of(),
                     repo,
                     resolverMapping(STABLE_TARGET_ID, RESOLVED_ADDRESS),
-                    testEventBusClient(vertx),
-                    CronScheduler.DEFAULT_MAX_CONCURRENT_JOBS,
-                    0L,
-                    0L,
-                    DispatchEnvelopeBuilder.forTesting(),
-                    FAST_TICKS);
+                    testEventBusClient(vertx));
 
             CronJobDefinition job = serviceTargetJob(
                     "resolved-address-single-instance-job", ExecutionMode.SINGLE_INSTANCE, OverlapPolicy.SKIP);
@@ -1943,17 +1884,7 @@ class CronSchedulerTest {
             });
 
             // executionTimeoutMs = 0, so nothing can mask a stranded guard.
-            scheduler = new CronScheduler(
-                    vertx,
-                    Set.of(),
-                    repo,
-                    resolver,
-                    testEventBusClient(vertx),
-                    CronScheduler.DEFAULT_MAX_CONCURRENT_JOBS,
-                    0L,
-                    0L,
-                    DispatchEnvelopeBuilder.forTesting(),
-                    FAST_TICKS);
+            scheduler = compressedScheduler(vertx, Set.of(), repo, resolver, testEventBusClient(vertx));
 
             CronJobDefinition job = serviceTargetJob(
                     "queued-resolution-failure-job", ExecutionMode.EVERY_INSTANCE, OverlapPolicy.QUEUE_ONE);
@@ -1968,17 +1899,12 @@ class CronSchedulerTest {
         void eventBusTargetStillDispatchesToItsAddress(Vertx vertx, VertxTestContext ctx) {
             vertx.eventBus().consumer("plain.address", msg -> ctx.completeNow());
 
-            scheduler = new CronScheduler(
+            scheduler = compressedScheduler(
                     vertx,
                     Set.of(),
                     null,
                     resolverMapping(STABLE_TARGET_ID, RESOLVED_ADDRESS),
-                    testEventBusClient(vertx),
-                    CronScheduler.DEFAULT_MAX_CONCURRENT_JOBS,
-                    0L,
-                    0L,
-                    DispatchEnvelopeBuilder.forTesting(),
-                    FAST_TICKS);
+                    testEventBusClient(vertx));
 
             CronJobDefinition job = new CronJobDefinition(
                     "plain-event-bus-job",
@@ -2053,17 +1979,7 @@ class CronSchedulerTest {
                     .when(throwingClient)
                     .send(anyString(), any());
 
-            scheduler = new CronScheduler(
-                    vertx,
-                    Set.of(),
-                    null,
-                    stubTargetResolver(),
-                    throwingClient,
-                    CronScheduler.DEFAULT_MAX_CONCURRENT_JOBS,
-                    0L,
-                    0L,
-                    DispatchEnvelopeBuilder.forTesting(),
-                    FAST_TICKS);
+            scheduler = compressedScheduler(vertx, Set.of(), null, stubTargetResolver(), throwingClient);
 
             CronJobDefinition job = new CronJobDefinition(
                     "sync-dispatch-throw-job",
@@ -2110,17 +2026,7 @@ class CronSchedulerTest {
                 ctx.completeNow();
             });
 
-            scheduler = new CronScheduler(
-                    vertx,
-                    Set.of(),
-                    repo,
-                    stubTargetResolver(),
-                    testEventBusClient(vertx),
-                    CronScheduler.DEFAULT_MAX_CONCURRENT_JOBS,
-                    0L,
-                    0L,
-                    DispatchEnvelopeBuilder.forTesting(),
-                    FAST_TICKS);
+            scheduler = compressedScheduler(vertx, Set.of(), repo, stubTargetResolver(), testEventBusClient(vertx));
 
             CronJobDefinition job = new CronJobDefinition(
                     "sync-insert-throw-job",
@@ -2166,17 +2072,7 @@ class CronSchedulerTest {
                 ctx.completeNow();
             });
 
-            scheduler = new CronScheduler(
-                    vertx,
-                    Set.of(),
-                    repo,
-                    stubTargetResolver(),
-                    testEventBusClient(vertx),
-                    CronScheduler.DEFAULT_MAX_CONCURRENT_JOBS,
-                    0L,
-                    0L,
-                    DispatchEnvelopeBuilder.forTesting(),
-                    FAST_TICKS);
+            scheduler = compressedScheduler(vertx, Set.of(), repo, stubTargetResolver(), testEventBusClient(vertx));
 
             CronJobDefinition job = new CronJobDefinition(
                     "sync-save-throw-job",
@@ -2235,17 +2131,7 @@ class CronSchedulerTest {
                 }
             });
 
-            scheduler = new CronScheduler(
-                    vertx,
-                    Set.of(),
-                    repo,
-                    stubTargetResolver(),
-                    testEventBusClient(vertx),
-                    CronScheduler.DEFAULT_MAX_CONCURRENT_JOBS,
-                    0L,
-                    0L,
-                    DispatchEnvelopeBuilder.forTesting(),
-                    FAST_TICKS);
+            scheduler = compressedScheduler(vertx, Set.of(), repo, stubTargetResolver(), testEventBusClient(vertx));
 
             CronJobDefinition job = new CronJobDefinition(
                     "sync-complete-throw-job",
@@ -2630,17 +2516,7 @@ class CronSchedulerTest {
         @Test
         @DisplayName("cancel listener sets isCancelled on the JobContext")
         void cancelListenerSetsCancelledFlag(Vertx vertx, VertxTestContext ctx) {
-            scheduler = new CronScheduler(
-                    vertx,
-                    Set.of(),
-                    null,
-                    stubTargetResolver(),
-                    testEventBusClient(vertx),
-                    CronScheduler.DEFAULT_MAX_CONCURRENT_JOBS,
-                    0L,
-                    0L,
-                    DispatchEnvelopeBuilder.forTesting(),
-                    FAST_TICKS);
+            scheduler = compressedScheduler(vertx, Set.of(), null, stubTargetResolver(), testEventBusClient(vertx));
 
             // Handler that captures the JobContext, publishes a cancel signal, then checks the flag
             vertx.eventBus().consumer("test.cancel.address", msg -> {
@@ -2869,17 +2745,8 @@ class CronSchedulerTest {
                 }
             };
 
-            scheduler = new CronScheduler(
-                    vertx,
-                    Set.of(completionProbe),
-                    repo,
-                    stubTargetResolver(),
-                    testEventBusClient(vertx),
-                    CronScheduler.DEFAULT_MAX_CONCURRENT_JOBS,
-                    0L,
-                    0L,
-                    DispatchEnvelopeBuilder.forTesting(),
-                    FAST_TICKS);
+            scheduler = compressedScheduler(
+                    vertx, Set.of(completionProbe), repo, stubTargetResolver(), testEventBusClient(vertx));
 
             AtomicBoolean logged = new AtomicBoolean(false);
             vertx.eventBus().consumer("test.logflush.untracked.address", msg -> {

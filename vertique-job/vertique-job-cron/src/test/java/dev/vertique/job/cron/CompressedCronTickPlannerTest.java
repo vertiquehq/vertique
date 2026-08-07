@@ -31,16 +31,16 @@ class CompressedCronTickPlannerTest {
     /** The planner's default historical origin, pinned as a literal rather than read from the class. */
     private static final Instant BASE = Instant.parse("2020-01-01T00:00:00Z");
 
-    private final CompressedCronTickPlanner planner = new CompressedCronTickPlanner();
+    private static final CompressedCronTickPlanner planner = new CompressedCronTickPlanner();
 
     /**
      * Builds an EVERY_INSTANCE job in {@link #UTC} for the given expression; only the expression and
-     * timezone matter to the planner.
+     * timezone matter to the planner. Package-private so {@link SystemCronTickPlannerTest} reuses it.
      *
      * @param expression the cron expression the job fires on
      * @return a job definition using {@code expression}
      */
-    private static CronJobDefinition jobFiring(String expression) {
+    static CronJobDefinition jobFiring(String expression) {
         return new CronJobDefinition(
                 "compressed-job",
                 new CronExpression(expression),
