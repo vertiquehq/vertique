@@ -5,6 +5,7 @@ package dev.vertique.rest.auth.jwt;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.auth.JWTOptions;
@@ -107,5 +108,57 @@ class JwtAuthFactoryTest {
         auth.authenticate(new TokenCredentials(defaultOptionsToken))
                 .compose(user -> auth.authenticate(new TokenCredentials(explicitOptionsToken)))
                 .onComplete(testContext.succeeding(user -> testContext.completeNow()));
+    }
+
+    @Test
+    @DisplayName("Should not complete synchronously on the event loop for a filesystem location")
+    void shouldNotCompleteSynchronouslyOnEventLoopForFilesystemLocation(
+            @TempDir Path tempDir, Vertx vertx, VertxTestContext testContext) throws Exception {
+        Path jwksFile = tempDir.resolve("jwks.json");
+        try (var is = getClass().getResourceAsStream("/test-jwks.json")) {
+            assertNotNull(is, "test-jwks.json must exist on test classpath");
+            Files.copy(is, jwksFile);
+        }
+
+        assertDoesNotCompleteOnCallingContext(vertx, testContext, jwksFile.toString());
+    }
+
+    @Test
+    @DisplayName("Should not complete synchronously on the event loop for a classpath location")
+    void shouldNotCompleteSynchronouslyOnEventLoopForClasspathLocation(Vertx vertx, VertxTestContext testContext) {
+        assertDoesNotCompleteOnCallingContext(vertx, testContext, "classpath:test-jwks.json");
+    }
+
+    /**
+     * Asserts that {@link JwtAuthFactory#fromJwksAsync(Vertx, String)} moves the JWKS read off the
+     * calling thread, and that the future it returns still resolves successfully.
+     *
+     * <p>The read is issued from inside {@code vertx.runOnContext(...)} — the same footing as
+     * {@code RefreshableJwtAuth}'s refresh tick — and the future is inspected on the very next
+     * statement. Once the read runs on a worker thread, the calling task cannot observe a completed
+     * future: the worker pool would have to hand off a thread and finish the whole read within the
+     * single field access that follows the call. When the read happens inline the future is a
+     * {@code Future.succeededFuture(...)} and is complete before {@code fromJwksAsync} even returns,
+     * which is the event-loop block this asserts against.
+     *
+     * @param vertx       the Vert.x instance supplying the calling context
+     * @param testContext the async assertion sink
+     * @param location    the JWKS location to load
+     */
+    private static void assertDoesNotCompleteOnCallingContext(
+            Vertx vertx, VertxTestContext testContext, String location) {
+        vertx.runOnContext(ignored -> {
+            Future<JWTAuth> future = JwtAuthFactory.fromJwksAsync(vertx, location);
+            boolean completeWhileCallerStillRunning = future.isComplete();
+
+            future.onComplete(testContext.succeeding(auth -> testContext.verify(() -> {
+                assertFalse(
+                        completeWhileCallerStillRunning,
+                        "fromJwksAsync must dispatch the JWKS read to a worker thread; the returned future "
+                                + "was already complete on the calling event-loop task, so the read blocked it");
+                assertNotNull(auth);
+                testContext.completeNow();
+            })));
+        });
     }
 }

@@ -127,10 +127,11 @@ public final class JwtAuthFactory {
     /**
      * Asynchronous variant of {@link #fromJwks(Vertx, String)} that returns a {@link Future}.
      *
-     * <p>For {@code http://} and {@code https://} locations, runs the HTTP fetch on a
-     * Vert.x worker thread via {@code vertx.executeBlocking()}. For classpath and
-     * filesystem locations, delegates to the synchronous {@link #fromJwks} wrapped in a
-     * succeeded future.
+     * <p>Every location kind — classpath, filesystem, and {@code http(s)} — is read on a Vert.x
+     * worker thread via {@code vertx.executeBlocking()}, so this method never blocks the calling
+     * thread and is safe to call from an event loop. An invalid {@code location} still fails fast
+     * with {@link IllegalArgumentException} rather than a failed future; a read failure surfaces as
+     * a failed future.
      *
      * <p>Applies {@code JwtValidationConfig.builder().build()}, so the documented default clock
      * skew ({@link JwtValidationConfig#clockSkewSeconds()}) is honored as
@@ -173,8 +174,6 @@ public final class JwtAuthFactory {
      * takes a caller-supplied config passes {@code true}, because an unset issuer or audience is
      * then worth a startup warning; the overload that defaults the config passes {@code false},
      * because that caller never asked for issuer/audience validation.
-     * {@link #fromJwksAsync(Vertx, String, JwtValidationConfig, boolean)} routes classpath and
-     * filesystem locations through here as well, passing its own flag through unchanged.
      *
      * @param vertx                    the Vert.x instance
      * @param location                 the JWKS document location
@@ -197,14 +196,15 @@ public final class JwtAuthFactory {
     /**
      * Asynchronous variant of {@link #fromJwks(Vertx, String, JwtValidationConfig)}.
      *
-     * <p>For {@code http://} and {@code https://} locations, runs the HTTP fetch on a Vert.x
-     * worker thread via {@code vertx.executeBlocking()}. For classpath and filesystem locations,
-     * delegates to the synchronous overload wrapped in a succeeded future.
+     * <p>Every location kind — classpath, filesystem, and {@code http(s)} — is read on a Vert.x
+     * worker thread via {@code vertx.executeBlocking()}, so this method never blocks the calling
+     * thread and is safe to call from an event loop.
      *
      * @param vertx    the Vert.x instance
      * @param location the JWKS document location
      * @param config   the validation constraints to apply
      * @return a future that completes with a configured JWTAuth instance
+     * @throws IllegalArgumentException if location is null/blank
      */
     public static Future<JWTAuth> fromJwksAsync(Vertx vertx, String location, JwtValidationConfig config) {
         return fromJwksAsync(vertx, location, config, true);
@@ -231,17 +231,15 @@ public final class JwtAuthFactory {
         requireNonBlank(location, "location");
         Objects.requireNonNull(config, "config");
 
-        if (location.startsWith("http://") || location.startsWith("https://")) {
-            return vertx.executeBlocking(() -> {
-                String content = fetchHttp(location);
-                return createFromJwksContent(vertx, content, config, warnOnMissingConstraints);
-            });
-        }
-        try {
-            return Future.succeededFuture(fromJwks(vertx, location, config, warnOnMissingConstraints));
-        } catch (Exception e) {
-            return Future.failedFuture(e);
-        }
+        // Every location kind reads blocking: classpath and filesystem locations go through
+        // vertx.fileSystem().readFileBlocking() / InputStream.readAllBytes() just as an http(s)
+        // location goes through a blocking HTTP exchange. They therefore all dispatch to a worker
+        // thread — a refresh tick calls this from the event loop, so completing inline would block
+        // it on every tick for the lifetime of the process.
+        return vertx.executeBlocking(() -> {
+            String content = readLocation(vertx, location);
+            return createFromJwksContent(vertx, content, config, warnOnMissingConstraints);
+        });
     }
 
     /**
@@ -562,16 +560,20 @@ public final class JwtAuthFactory {
                             + "An on-path attacker could inject malicious keys. Use https:// in production.",
                     uri);
         }
-        try {
-            // Use HTTP/1.1 explicitly. Java 21's HttpClient defaults to HTTP/2 and will attempt
-            // an h2c (HTTP/2 over cleartext) upgrade for http:// URLs. Many JWKS endpoints and
-            // test servers (e.g. WireMock/Jetty) do not support h2c and return 400 Bad Request
-            // for the upgrade request. JWKS fetching is a low-frequency operation; HTTP/1.1 is
-            // universally supported and sufficient.
-            HttpClient client = HttpClient.newBuilder()
-                    .connectTimeout(HTTP_TIMEOUT)
-                    .version(HttpClient.Version.HTTP_1_1)
-                    .build();
+        // Use HTTP/1.1 explicitly. Java 21's HttpClient defaults to HTTP/2 and will attempt
+        // an h2c (HTTP/2 over cleartext) upgrade for http:// URLs. Many JWKS endpoints and
+        // test servers (e.g. WireMock/Jetty) do not support h2c and return 400 Bad Request
+        // for the upgrade request. JWKS fetching is a low-frequency operation; HTTP/1.1 is
+        // universally supported and sufficient.
+        //
+        // The client is closed per fetch rather than shared: an HttpClient owns a selector thread
+        // and an executor, so a refreshing provider that built one per tick would leak both until
+        // GC. Reuse across fetches is deliberately not done — a JWKS refresh runs on the order of
+        // minutes, so connection setup is not on any hot path.
+        try (HttpClient client = HttpClient.newBuilder()
+                .connectTimeout(HTTP_TIMEOUT)
+                .version(HttpClient.Version.HTTP_1_1)
+                .build()) {
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(URI.create(uri))
                     .timeout(HTTP_TIMEOUT)
