@@ -11,6 +11,7 @@ import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.classic.spi.IThrowableProxy;
+import ch.qos.logback.classic.spi.ThrowableProxy;
 import ch.qos.logback.core.read.ListAppender;
 import dev.vertique.context.ContextValues;
 import dev.vertique.core.context.ContextHolder;
@@ -700,6 +701,25 @@ class IdentityResolutionMiddlewareTest {
     @DisplayName("Authorization import")
     class AuthorizationImport {
 
+        /** Logger a log-asserting test attached {@link #logAppender} to; detached in teardown. */
+        private Logger logbackLogger;
+
+        /** Appender attached by log-asserting tests; guaranteed detached by {@link #detachLogAppender()}. */
+        private ListAppender<ILoggingEvent> logAppender;
+
+        /**
+         * Detaches any appender a test attached, even when the test fails during server setup or
+         * the HTTP handshake — an in-handler detach alone would leak the appender onto later tests
+         * in those paths.
+         */
+        @AfterEach
+        void detachLogAppender() {
+            if (logbackLogger != null && logAppender != null) {
+                logbackLogger.detachAppender(logAppender);
+                logAppender.stop();
+            }
+        }
+
         /**
          * Builds the middleware under test with the default resolver/mapper and the given importer,
          * mirroring the Identity-snapshot-capture group's construction style but using the new
@@ -864,10 +884,10 @@ class IdentityResolutionMiddlewareTest {
         @Test
         @DisplayName("Provider failure is logged at ERROR with the UnavailableException cause naming the provider")
         void importerFailureIsLoggedWithCause(Vertx vertx, VertxTestContext ctx) {
-            Logger logbackLogger = (Logger) LoggerFactory.getLogger(IdentityResolutionMiddleware.class);
-            ListAppender<ILoggingEvent> appender = new ListAppender<>();
-            appender.start();
-            logbackLogger.addAppender(appender);
+            logbackLogger = (Logger) LoggerFactory.getLogger(IdentityResolutionMiddleware.class);
+            logAppender = new ListAppender<>();
+            logAppender.start();
+            logbackLogger.addAppender(logAppender);
 
             CapturingSecurityRuntime runtime = new CapturingSecurityRuntime();
             AuthorizationProvider failing = new AuthorizationProvider() {
@@ -890,21 +910,20 @@ class IdentityResolutionMiddlewareTest {
             router.route("/test").handler(mw);
             router.route("/test").failureHandler(rc -> {
                 // The middleware logs synchronously before ctx.fail(), so the event is already
-                // captured when this failure handler runs. Detach before asserting so a failed
-                // assertion cannot leak the appender onto later tests.
-                logbackLogger.detachAppender(appender);
-                appender.stop();
-                List<ILoggingEvent> errors = appender.list.stream()
+                // captured when this failure handler runs; detachLogAppender() guarantees cleanup
+                // on every exit path, including setup/handshake failures that never reach here.
+                List<ILoggingEvent> errors = logAppender.list.stream()
                         .filter(event -> event.getLevel() == Level.ERROR)
                         .toList();
                 assertEquals(
                         1, errors.size(), "exactly one ERROR event must be logged for the failed import: " + errors);
                 IThrowableProxy thrown = errors.get(0).getThrowableProxy();
                 assertNotNull(thrown, "the ERROR event must carry the import failure as its throwable");
-                assertEquals(
-                        dev.vertique.core.exception.UnavailableException.class.getName(),
-                        thrown.getClassName(),
-                        "the logged throwable must be the importer's UnavailableException");
+                assertSame(
+                        rc.failure(),
+                        assertInstanceOf(ThrowableProxy.class, thrown).getThrowable(),
+                        "the logged throwable must be the exact UnavailableException instance the "
+                                + "RoutingContext observed");
                 assertTrue(
                         thrown.getMessage().contains("boom"),
                         "the logged UnavailableException must name the failing provider id: " + thrown.getMessage());

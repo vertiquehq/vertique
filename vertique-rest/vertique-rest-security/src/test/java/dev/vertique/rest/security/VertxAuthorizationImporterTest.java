@@ -356,31 +356,14 @@ class VertxAuthorizationImporterTest {
                     VertxAuthorizationImporter.EXCLUDED_JWT_CLAIMS_PROVIDER_ID, RoleBasedAuthorization.create("admin"));
             VertxAuthorizationImporter defaultImporter = new VertxAuthorizationImporter(Set.of(jwtClaims));
 
-            Future<AuthorizationClaims> defaultResult =
-                    defaultImporter.importInto(alice(), AuthorizationClaims.empty());
-
-            assertTrue(defaultResult.succeeded(), () -> "import must succeed: " + defaultResult.cause());
-            assertFalse(jwtClaims.invoked.get(), "the jwt-claims provider must never be invoked");
-            assertTrue(
-                    defaultResult.result().claims().isEmpty(),
-                    "no claims may be imported from the excluded jwt-claims provider");
-
             // 2-arg constructor: an explicitly excluded arbitrary id gets the same treatment.
             RecordingProvider custom = new RecordingProvider("custom", RoleBasedAuthorization.create("admin"));
             VertxAuthorizationImporter explicitImporter =
                     new VertxAuthorizationImporter(Set.of(custom), Set.of("custom"));
 
-            Future<AuthorizationClaims> explicitResult =
-                    explicitImporter.importInto(alice(), AuthorizationClaims.empty());
-
-            assertTrue(explicitResult.succeeded(), () -> "import must succeed: " + explicitResult.cause());
-            assertFalse(custom.invoked.get(), "an explicitly excluded provider must never be invoked");
-            assertTrue(
-                    explicitResult.result().claims().isEmpty(),
-                    "no claims may be imported from an explicitly excluded provider");
-
-            // Each excluded-and-present provider must be named once at INFO at wiring time, so an
-            // operator can tell from the startup log why the provider's grants never appear.
+            // Each excluded-and-present provider must be named once at INFO at wiring time —
+            // already present after construction, before any importInto call — so an operator can
+            // tell from the startup log why the provider's grants never appear.
             List<String> infoMessages = appender.list.stream()
                     .filter(event -> event.getLevel() == Level.INFO)
                     .map(ILoggingEvent::getFormattedMessage)
@@ -397,6 +380,34 @@ class VertxAuthorizationImporterTest {
                             && infoMessages.get(1).contains(RecordingProvider.class.getName())
                             && infoMessages.get(1).contains("excluded from claims import"),
                     "notice must name the explicitly excluded id and its provider class: " + infoMessages.get(1));
+
+            Future<AuthorizationClaims> defaultResult =
+                    defaultImporter.importInto(alice(), AuthorizationClaims.empty());
+
+            assertTrue(defaultResult.succeeded(), () -> "import must succeed: " + defaultResult.cause());
+            assertFalse(jwtClaims.invoked.get(), "the jwt-claims provider must never be invoked");
+            assertTrue(
+                    defaultResult.result().claims().isEmpty(),
+                    "no claims may be imported from the excluded jwt-claims provider");
+
+            Future<AuthorizationClaims> explicitResult =
+                    explicitImporter.importInto(alice(), AuthorizationClaims.empty());
+
+            assertTrue(explicitResult.succeeded(), () -> "import must succeed: " + explicitResult.cause());
+            assertFalse(custom.invoked.get(), "an explicitly excluded provider must never be invoked");
+            assertTrue(
+                    explicitResult.result().claims().isEmpty(),
+                    "no claims may be imported from an explicitly excluded provider");
+
+            // The notices are wiring-time-only: the two imports above must not have re-emitted
+            // them per request.
+            long infoCountAfterImports = appender.list.stream()
+                    .filter(event -> event.getLevel() == Level.INFO)
+                    .count();
+            assertEquals(
+                    2,
+                    infoCountAfterImports,
+                    "exclusion notices must be emitted once at wiring time, never per importInto call");
         } finally {
             logbackLogger.detachAppender(appender);
             appender.stop();

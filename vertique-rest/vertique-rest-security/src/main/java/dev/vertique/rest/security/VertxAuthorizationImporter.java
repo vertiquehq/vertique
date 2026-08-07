@@ -342,8 +342,10 @@ public final class VertxAuthorizationImporter {
      */
     private void warnDropped(String providerId, Authorization authorization) {
         String type = authorization.getClass().getSimpleName();
+        // Length-prefixing the provider id makes the key unambiguous: no delimiter choice can
+        // collide, even for pathological provider ids or class names containing the separator.
         dropWarnings.once(
-                "authz-import|" + providerId + "|" + type,
+                providerId.length() + ":" + providerId + ":" + type,
                 key -> log.warn(
                         "Dropping unmappable Vert.x authorization of type [{}] from provider [{}]; only "
                                 + "resource-free role and permission authorizations are imported (fail-closed). "
