@@ -33,12 +33,15 @@
 #      options-based bind may build its config far from the bind site (in
 #      MultipartPartCountLimitIT the `.host(` pin sits 12 lines from the
 #      `setPort(0)` call), so a window would false-positive on compliant files.
-#   5. A setter-position wildcard literal anywhere in a test source:
-#      `.host("0.0.0.0")`, `.setHost("0.0.0.0")`, `.put("host", "0.0.0.0")`, or
-#      `bindAddress("0.0.0.0")` (whitespace variance around the arguments is
-#      allowed). The regexes anchor on the setter-call shapes, so a getter
-#      assertion such as `assertEquals("0.0.0.0", config.host())` never matches
-#      — the literal sits in assertEquals' argument position, not a setter call.
+#   5. A wildcard literal in setter or bind-call position anywhere in a test
+#      source: `.host("0.0.0.0")`, `.setHost("0.0.0.0")`,
+#      `.put("host", "0.0.0.0")`, `bindAddress("0.0.0.0")`, or any
+#      `.listen(...)` call carrying the literal among its arguments, e.g.
+#      `.listen(0, "0.0.0.0")` (whitespace variance around the arguments is
+#      allowed). The regexes anchor on the setter- and bind-call shapes, so a
+#      getter assertion such as `assertEquals("0.0.0.0", config.host())` never
+#      matches — the literal sits in assertEquals' argument position, not a
+#      setter or bind call.
 #      This closes the narrow accidental copy-paste case; the general
 #      value-aware check (a wildcard reaching a bind through a variable or
 #      constant) remains deferred to vertiquehq/vertique-dev#170.
@@ -92,11 +95,13 @@ report_failure() {
 # closing parenthesis and never matches.
 bare_listen_pattern='\.listen\([[:space:]]*0[[:space:]]*\)'
 
-# Pattern 5: a wildcard literal in setter position. The alternation anchors on
-# the setter-call shapes — `.host(`, `.setHost(`, `bindAddress(`, and
-# `.put("host", ...)` — so a getter assertion that merely mentions "0.0.0.0"
+# Pattern 5: a wildcard literal in setter or bind-call position. The
+# alternation anchors on the setter- and bind-call shapes — `.host(`,
+# `.setHost(`, `bindAddress(`, `.put("host", ...)`, and a `.listen(...)` call
+# carrying the literal among its arguments (e.g. `.listen(0, "0.0.0.0")`) — so
+# a getter assertion that merely mentions "0.0.0.0"
 # (e.g. assertEquals("0.0.0.0", config.host())) never matches.
-wildcard_setter_pattern='(\.host|\.setHost|bindAddress)\([[:space:]]*"0\.0\.0\.0"[[:space:]]*\)|\.put\([[:space:]]*"host"[[:space:]]*,[[:space:]]*"0\.0\.0\.0"[[:space:]]*\)'
+wildcard_setter_pattern='(\.host|\.setHost|bindAddress)\([[:space:]]*"0\.0\.0\.0"[[:space:]]*\)|\.put\([[:space:]]*"host"[[:space:]]*,[[:space:]]*"0\.0\.0\.0"[[:space:]]*\)|\.listen\([^)]*"0\.0\.0\.0"'
 
 # Pattern 3 lives inside unpinned_port_selectors below: dynamic-port selectors
 # whose host must be pinned in the same five-line window (the line itself plus

@@ -352,6 +352,48 @@ JAVA
 run_case "wildcard-json-host" fail "$fixture_root" \
     'WildcardJsonHostTest.java line 3 sets the wildcard interface "0.0.0.0" in setter position'
 
+# Pattern 5, builder form: .host("0.0.0.0") must be flagged even though it
+# satisfies pattern 3's host-in-window requirement — by the wildcard.
+fixture_reset wildcard-builder-host
+fixture_write_compliant_baseline
+fixture_write_source "vertique-beta/src/test/java/WildcardBuilderHostTest.java" <<'JAVA'
+class WildcardBuilderHostTest {
+    void config() {
+        ManagementConfig.builder().port(0).host("0.0.0.0").build();
+    }
+}
+JAVA
+run_case "wildcard-builder-host" fail "$fixture_root" \
+    'WildcardBuilderHostTest.java line 3 sets the wildcard interface "0.0.0.0" in setter position'
+
+# Pattern 5, WireMock form: bindAddress("0.0.0.0") must be flagged even though
+# it satisfies pattern 2's bindAddress( requirement — by the wildcard.
+fixture_reset wildcard-bind-address
+fixture_write_compliant_baseline
+fixture_write_source "vertique-beta/src/test/java/WildcardBindAddressTest.java" <<'JAVA'
+class WildcardBindAddressTest {
+    static final Object wm = wireMockConfig().dynamicPort().bindAddress("0.0.0.0");
+}
+JAVA
+run_case "wildcard-bind-address" fail "$fixture_root" \
+    'WildcardBindAddressTest.java line 2 sets the wildcard interface "0.0.0.0" in setter position'
+
+# Pattern 5, listen form: a .listen(...) call carrying the wildcard literal
+# must be flagged. .listen(0, "0.0.0.0") has a host argument, so pattern 1
+# never matches it — only the pattern-5 listen alternative catches it.
+fixture_reset wildcard-listen
+fixture_write_compliant_baseline
+fixture_write_source "vertique-beta/src/test/java/WildcardListenTest.java" <<'JAVA'
+class WildcardListenTest {
+    void boot(io.vertx.core.Vertx vertx) {
+        vertx.createHttpServer().requestHandler(r -> {}).listen(0, "0.0.0.0");
+    }
+}
+JAVA
+run_case "wildcard-listen" fail "$fixture_root" \
+    'WildcardListenTest.java line 3 sets the wildcard interface "0.0.0.0" in setter position' \
+    "PinnedListenTest.java"
+
 # Pattern 5 anchors on setter-call shapes: a getter assertion that mentions
 # "0.0.0.0" in argument position (assertEquals) must not be flagged.
 fixture_reset getter-assertion-compliant
