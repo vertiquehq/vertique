@@ -98,10 +98,7 @@ class CapturedAuthorityActivatedEventTest {
     @DisplayName("activateResume emits the CapturedAuthorityActivatedEvent and awaits full observer delivery "
             + "before resolving")
     void emittedAndAwaitedOnActivation(Vertx vertx, VertxTestContext testCtx) {
-        IdentitySnapshotCodec codec =
-                new IdentitySnapshotCodec(new SnapshotHmac(Map.of(ACTIVE_KEY_ID, HMAC_SECRET), ACTIVE_KEY_ID));
-        DefaultCapturedAuthorityReconstruction reconstruction =
-                new DefaultCapturedAuthorityReconstruction(codec, Set.of(ALLOWED_KIND));
+        IdentitySnapshotCodec codec = codec();
 
         AuthorityClaim roleClaim = new AuthorityClaim(AuthorityKind.ROLE, "admin", "idp", "aud", "jwt-roles", Map.of());
         IdentitySnapshot snapshot =
@@ -126,8 +123,7 @@ class CapturedAuthorityActivatedEventTest {
             }
         };
 
-        SecurityEventEmitter emitter = new SecurityEventEmitter(Set.of(observer));
-        CapturedAuthorityActivation activation = new CapturedAuthorityActivation(reconstruction, emitter);
+        CapturedAuthorityActivation activation = activation(codec, observer);
 
         activation
                 .activateResume(snapshot, expectedCarrier)
