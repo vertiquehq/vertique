@@ -327,7 +327,7 @@ public class RestTestMountsIT {
      * @throws Exception when the round trip fails or times out
      */
     private HttpResult get(String path, Map<String, String> headers) throws Exception {
-        return client.request(HttpMethod.GET, server.actualPort(), "localhost", path)
+        return client.request(HttpMethod.GET, server.actualPort(), "127.0.0.1", path)
                 .compose(request -> {
                     headers.forEach(request::putHeader);
                     return request.send();

@@ -141,7 +141,7 @@ public class MagicBytesVerifierRouteIT {
 
     private Future<HttpResult> postMultipart(byte[] content) {
         Buffer body = MultipartBodies.singleFile("upload", "payload.png", "image/png", content);
-        return client.request(HttpMethod.POST, server.actualPort(), "localhost", "/files")
+        return client.request(HttpMethod.POST, server.actualPort(), "127.0.0.1", "/files")
                 .compose(request -> request.putHeader("Content-Type", MultipartBodies.contentType())
                         .send(body))
                 .compose(response -> {

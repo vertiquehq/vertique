@@ -440,7 +440,7 @@ public class ProfiledErrorResponseIT {
         // ErrorEntity body (application/problem+json). The error body reads the stash and OMITS the null
         // "missing" field. Status (422) and media type must be unchanged. PASSES today (slice 3.1).
         deploy(vertx, ctx, Set.of(new ProfiledErrorResource()), Set.of(), (port, c) -> c.request(
-                        HttpMethod.GET, port, "localhost", "/profiled-error")
+                        HttpMethod.GET, port, "127.0.0.1", "/profiled-error")
                 .compose(req -> req.send())
                 .compose(resp -> bodyWithMeta(resp))
                 .onComplete(ctx.succeeding(r -> {
@@ -476,7 +476,7 @@ public class ProfiledErrorResponseIT {
                 Set.of(new RejectBeforeMatchMiddleware()),
                 boundaryDefaultConfig(),
                 Set.of(opinionatedErrorProfile()),
-                (port, c) -> c.request(HttpMethod.GET, port, "localhost", "/anything")
+                (port, c) -> c.request(HttpMethod.GET, port, "127.0.0.1", "/anything")
                         .compose(req -> req.send())
                         .compose(resp -> bodyWithMeta(resp))
                         .onComplete(ctx.succeeding(r -> {
@@ -511,7 +511,7 @@ public class ProfiledErrorResponseIT {
         // slice-3.2 fail-open completes the response via the vertx mapper, making the assertions below
         // pass fast. The fail-open body is the vertx rendering of ErrorEntity ("name":"boom").
         deploy(vertx, ctx, Set.of(new ThrowingErrorResource()), Set.of(), (port, c) -> c.request(
-                        HttpMethod.GET, port, "localhost", "/throwing-error")
+                        HttpMethod.GET, port, "127.0.0.1", "/throwing-error")
                 .compose(req -> req.send())
                 .compose(resp -> bodyWithMeta(resp))
                 .onComplete(ctx.succeeding(r -> {
@@ -543,7 +543,7 @@ public class ProfiledErrorResponseIT {
         // the error leg.
         String expectedBody = Json.encode(ErrorEntity.boom());
         deploy(vertx, ctx, Set.of(new PlainErrorResource()), Set.of(), (port, c) -> c.request(
-                        HttpMethod.GET, port, "localhost", "/plain-error")
+                        HttpMethod.GET, port, "127.0.0.1", "/plain-error")
                 .compose(req -> req.send())
                 .compose(resp -> bodyWithMeta(resp))
                 .onComplete(ctx.succeeding(r -> {
@@ -578,7 +578,7 @@ public class ProfiledErrorResponseIT {
                 Set.of(),
                 boundaryDefaultConfig(),
                 Set.of(opinionatedErrorProfile()),
-                (port, c) -> c.request(HttpMethod.POST, port, "localhost", "/vertx-consumes")
+                (port, c) -> c.request(HttpMethod.POST, port, "127.0.0.1", "/vertx-consumes")
                         .compose(req ->
                                 req.putHeader("Content-Type", "text/plain").send("not json"))
                         .compose(resp -> bodyWithMeta(resp))
@@ -611,7 +611,7 @@ public class ProfiledErrorResponseIT {
         // OMITS the null "missing" field. No boundary default is configured here, isolating the
         // before-stash gap.
         deploy(vertx, ctx, Set.of(new ProfiledConsumesResource()), Set.of(), (port, c) -> c.request(
-                        HttpMethod.POST, port, "localhost", "/profiled-consumes")
+                        HttpMethod.POST, port, "127.0.0.1", "/profiled-consumes")
                 .compose(req -> req.putHeader("Content-Type", "text/plain").send("not json"))
                 .compose(resp -> bodyWithMeta(resp))
                 .onComplete(ctx.succeeding(r -> {
@@ -656,7 +656,7 @@ public class ProfiledErrorResponseIT {
                 Set.of(),
                 boundaryDefaultConfig(),
                 Set.of(opinionatedErrorProfile()),
-                (port, c) -> c.request(HttpMethod.POST, port, "localhost", "/overlap/fixed")
+                (port, c) -> c.request(HttpMethod.POST, port, "127.0.0.1", "/overlap/fixed")
                         .compose(req ->
                                 req.putHeader("Content-Type", "text/plain").send("not json"))
                         .compose(resp -> bodyWithMeta(resp))

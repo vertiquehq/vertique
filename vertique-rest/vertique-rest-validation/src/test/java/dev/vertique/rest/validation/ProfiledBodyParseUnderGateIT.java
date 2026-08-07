@@ -220,7 +220,7 @@ public class ProfiledBodyParseUnderGateIT {
         // effective profile is vertx and the body is parsed by today's default path — a normal body must
         // dispatch to 200, proving the gate-active vertx path is unchanged.
         deploy(vertx, ctx, Set.of(new PlainResource()), (port, c) -> c.request(
-                        HttpMethod.POST, port, "localhost", "/plain")
+                        HttpMethod.POST, port, "127.0.0.1", "/plain")
                 .compose(req ->
                         req.putHeader("Content-Type", "application/json").send(Buffer.buffer("{\"name\":\"alice\"}")))
                 .compose(resp -> resp.body().map(b -> resp.statusCode() + "|" + b.toString()))
@@ -244,7 +244,7 @@ public class ProfiledBodyParseUnderGateIT {
      */
     private void postStrict(Vertx vertx, VertxTestContext ctx, Buffer body, IntConsumer assertion) {
         deploy(vertx, ctx, Set.of(new StrictResource()), (port, c) -> c.request(
-                        HttpMethod.POST, port, "localhost", "/strict")
+                        HttpMethod.POST, port, "127.0.0.1", "/strict")
                 .compose(
                         req -> req.putHeader("Content-Type", "application/json").send(body))
                 .compose(resp -> resp.body().map(b -> resp.statusCode()))

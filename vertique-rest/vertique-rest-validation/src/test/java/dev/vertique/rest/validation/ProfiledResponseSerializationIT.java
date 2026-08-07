@@ -255,7 +255,7 @@ public class ProfiledResponseSerializationIT {
                 .compose(s -> {
                     server = s;
                     client = vertx.createHttpClient();
-                    return client.request(HttpMethod.GET, s.actualPort(), "localhost", path)
+                    return client.request(HttpMethod.GET, s.actualPort(), "127.0.0.1", path)
                             .compose(req -> req.send())
                             .compose(resp -> resp.body().map(b -> b.toString()));
                 })

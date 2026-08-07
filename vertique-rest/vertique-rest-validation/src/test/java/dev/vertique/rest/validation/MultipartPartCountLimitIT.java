@@ -245,6 +245,7 @@ public class MultipartPartCountLimitIT {
         failureCapture = new FailureCapture();
 
         HttpConfig httpConfig = HttpConfig.builder()
+                .host("127.0.0.1")
                 .uploadsDirectory(uploadsDirectory.toString())
                 .build();
         JaxRsRouterMount mount = buildWebValidationFactory(httpConfig, capture, failureCapture)
@@ -265,7 +266,7 @@ public class MultipartPartCountLimitIT {
     }
 
     private HttpResult postMultipart(Buffer body) throws Exception {
-        return client.request(HttpMethod.POST, server.actualPort(), "localhost", "/parts")
+        return client.request(HttpMethod.POST, server.actualPort(), "127.0.0.1", "/parts")
                 .compose(request -> request.putHeader("Content-Type", MultipartBodies.contentType())
                         .send(body))
                 .compose(response -> {
