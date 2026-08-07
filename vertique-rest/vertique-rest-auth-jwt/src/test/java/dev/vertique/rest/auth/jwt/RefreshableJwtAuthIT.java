@@ -51,7 +51,7 @@ public class RefreshableJwtAuthIT {
 
     @BeforeAll
     static void startWireMock() {
-        wireMock = new WireMockServer(wireMockConfig().dynamicPort());
+        wireMock = new WireMockServer(wireMockConfig().dynamicPort().bindAddress("127.0.0.1"));
         wireMock.start();
     }
 
@@ -71,7 +71,7 @@ public class RefreshableJwtAuthIT {
     @DisplayName("Should authenticate tokens signed with the initial JWKS key set")
     void shouldAuthenticateWithInitialKeys(Vertx vertx, VertxTestContext testContext) {
         stubJwks(jwksJson(SECRET_A));
-        String jwksUrl = wireMock.baseUrl() + JWKS_PATH;
+        String jwksUrl = "http://127.0.0.1:" + wireMock.port() + JWKS_PATH;
 
         RefreshableJwtAuth.create(vertx, jwksUrl, Duration.ofMinutes(5))
                 .onComplete(testContext.succeeding(refreshable -> {
@@ -94,7 +94,7 @@ public class RefreshableJwtAuthIT {
     @DisplayName("After key rotation, tokens signed with the new key should be accepted")
     void shouldRotateKeysTransparently(Vertx vertx, VertxTestContext testContext) {
         stubJwks(jwksJson(SECRET_A));
-        String jwksUrl = wireMock.baseUrl() + JWKS_PATH;
+        String jwksUrl = "http://127.0.0.1:" + wireMock.port() + JWKS_PATH;
 
         // Use a short refresh interval so the rotation is picked up quickly.
         Duration refreshInterval = Duration.ofMillis(200);
@@ -132,7 +132,7 @@ public class RefreshableJwtAuthIT {
     @DisplayName("On refresh failure, existing keys should be preserved")
     void shouldPreserveExistingKeysOnRefreshFailure(Vertx vertx, VertxTestContext testContext) {
         stubJwks(jwksJson(SECRET_A));
-        String jwksUrl = wireMock.baseUrl() + JWKS_PATH;
+        String jwksUrl = "http://127.0.0.1:" + wireMock.port() + JWKS_PATH;
 
         Duration refreshInterval = Duration.ofMillis(200);
 
@@ -165,7 +165,7 @@ public class RefreshableJwtAuthIT {
     @DisplayName("After close(), no further JWKS refresh requests should be made")
     void shouldStopRefreshingAfterClose(Vertx vertx, VertxTestContext testContext) {
         stubJwks(jwksJson(SECRET_A));
-        String jwksUrl = wireMock.baseUrl() + JWKS_PATH;
+        String jwksUrl = "http://127.0.0.1:" + wireMock.port() + JWKS_PATH;
 
         Duration refreshInterval = Duration.ofMillis(200);
 

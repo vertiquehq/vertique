@@ -83,7 +83,7 @@ public class RestClientIntegrationIT {
 
     @RegisterExtension
     static WireMockExtension wireMock = WireMockExtension.newInstance()
-            .options(wireMockConfig().dynamicPort())
+            .options(wireMockConfig().dynamicPort().bindAddress("127.0.0.1"))
             .build();
 
     /**
@@ -217,7 +217,7 @@ public class RestClientIntegrationIT {
      * @return a builder pre-configured with the WireMock base URL
      */
     private RestClientBuilder builderFor(Vertx vertx) {
-        return new RestClientBuilder(vertx).baseUrl(wireMock.baseUrl());
+        return new RestClientBuilder(vertx).baseUrl("http://127.0.0.1:" + wireMock.getPort());
     }
 
     // --- Tests ---
@@ -787,7 +787,10 @@ public class RestClientIntegrationIT {
         JsonObject config = new JsonObject()
                 .put(
                         "restClient",
-                        new JsonObject().put("test-service", new JsonObject().put("baseUrl", wireMock.baseUrl())));
+                        new JsonObject()
+                                .put(
+                                        "test-service",
+                                        new JsonObject().put("baseUrl", "http://127.0.0.1:" + wireMock.getPort())));
 
         new RestClientBuilder(vertx)
                 .config(dev.vertique.rest.client.config.RestClientConfig.indexFromConfig(config, configParser())
@@ -884,7 +887,7 @@ public class RestClientIntegrationIT {
                                 .put(
                                         "test-service",
                                         new JsonObject()
-                                                .put("baseUrl", wireMock.baseUrl())
+                                                .put("baseUrl", "http://127.0.0.1:" + wireMock.getPort())
                                                 .put(
                                                         "webClient",
                                                         new JsonObject()
@@ -920,7 +923,7 @@ public class RestClientIntegrationIT {
                                 .put(
                                         "test-service",
                                         new JsonObject()
-                                                .put("baseUrl", wireMock.baseUrl())
+                                                .put("baseUrl", "http://127.0.0.1:" + wireMock.getPort())
                                                 // Override only connectTimeoutMs; keepAlive stays from baseline
                                                 .put("webClient", new JsonObject().put("connectTimeoutMs", 9000))));
 
@@ -956,7 +959,7 @@ public class RestClientIntegrationIT {
                 new RestClientFactory(vertx, java.util.Set.of(globalInterceptor), java.util.Map.of(), null);
 
         factory.builder()
-                .baseUrl(wireMock.baseUrl())
+                .baseUrl("http://127.0.0.1:" + wireMock.getPort())
                 .build(TestClient.class)
                 .getItem("f")
                 .onComplete(ctx.succeeding(item -> ctx.verify(() -> {

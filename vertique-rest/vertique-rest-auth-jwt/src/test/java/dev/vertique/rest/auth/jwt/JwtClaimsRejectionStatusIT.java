@@ -137,7 +137,7 @@ public class JwtClaimsRejectionStatusIT {
                 .compose(apiRouter -> {
                     Router root = Router.router(vertx);
                     root.route("/*").subRouter(apiRouter);
-                    return vertx.createHttpServer().requestHandler(root).listen(0);
+                    return vertx.createHttpServer().requestHandler(root).listen(0, "127.0.0.1");
                 })
                 .onComplete(ctx.succeeding(listeningServer -> {
                     server = listeningServer;
@@ -222,7 +222,7 @@ public class JwtClaimsRejectionStatusIT {
      * @throws Exception if the request does not complete within {@link #ASYNC_TIMEOUT_SECONDS}
      */
     private static HttpResult get() throws Exception {
-        return client.request(HttpMethod.GET, server.actualPort(), "localhost", "/secure")
+        return client.request(HttpMethod.GET, server.actualPort(), "127.0.0.1", "/secure")
                 .compose(request -> request.putHeader("Authorization", "Bearer " + VALID_TOKEN)
                         .send())
                 .compose(response -> {
