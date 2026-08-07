@@ -42,7 +42,10 @@ import org.junit.jupiter.api.Test;
  * shape: {@link JwtValidationConfig} declares no {@code equals}, so it inherits identity semantics,
  * and the two instances being compared are <em>always</em> distinct objects on the all-defaults
  * path. A comparison written with {@code .equals()} would therefore fail startup on essentially
- * every default deployment; that test fails loudly if anyone reintroduces one.
+ * every default deployment; that test fails loudly if anyone reintroduces one. It sources both
+ * instances from the production seams ({@link JwtAuthFactory#defaultValidation()} and
+ * {@link JwtAuthConfig#defaults()}) rather than hand-building equivalents, so it keeps guarding the
+ * real path even if either seam starts sharing a cached instance.
  */
 class JwtAuthModuleProvenanceTest {
 
@@ -52,11 +55,7 @@ class JwtAuthModuleProvenanceTest {
     @Test
     @DisplayName("Divergent applied clock skew fails startup, naming both values and the config path")
     void shouldFailStartupWhenAppliedLeewayDivergesFromConfig() {
-        JWTAuth attested = new AttestedJwtAuth(
-                new HandRolledJwtAuth(),
-                JwtValidationConfig.builder()
-                        .clockSkewSeconds(DEFAULT_SKEW_SECONDS)
-                        .build());
+        JWTAuth attested = attestedWithSkew(DEFAULT_SKEW_SECONDS);
         JwtAuthConfig effective = configWithSkew(DIVERGENT_SKEW_SECONDS);
 
         ConfigurationException failure = assertThrows(
@@ -79,14 +78,10 @@ class JwtAuthModuleProvenanceTest {
     @Test
     @DisplayName("Matching applied clock skew is accepted")
     void shouldAcceptMatchingAppliedValidation() {
-        JWTAuth attested = new AttestedJwtAuth(
-                new HandRolledJwtAuth(),
-                JwtValidationConfig.builder()
-                        .clockSkewSeconds(DEFAULT_SKEW_SECONDS)
-                        .build());
-
         assertNotNull(JwtAuthModule.jwtBearerSchemeHandler(
-                attested, configWithSkew(DEFAULT_SKEW_SECONDS), mock(CredentialRejectionReporter.class)));
+                attestedWithSkew(DEFAULT_SKEW_SECONDS),
+                configWithSkew(DEFAULT_SKEW_SECONDS),
+                mock(CredentialRejectionReporter.class)));
     }
 
     @Test
@@ -103,15 +98,17 @@ class JwtAuthModuleProvenanceTest {
     @Test
     @DisplayName("Two distinct all-defaults config instances agree — the check compares fields, not identity")
     void shouldAcceptDistinctButEquivalentDefaultConfigInstances() {
-        // Exactly the shape of the commonest real deployment: JwtAuthFactory builds a fresh default
-        // config for the JWTAuth, and JwtAuthConfig's @JsonCreator independently builds another.
-        JwtValidationConfig applied = JwtValidationConfig.builder().build();
-        JwtValidationConfig configured = JwtValidationConfig.builder().build();
-        assertNotSame(applied, configured, "the guarded scenario requires two distinct instances");
+        // Driven through the production seams rather than stand-ins, because the trap this guards is
+        // a property of those seams: JwtAuthFactory.defaultValidation() builds a fresh default config
+        // for the JWTAuth it returns, and JwtAuthConfig builds another for the effective config. That
+        // is the commonest real deployment, and the two instances are never the same object.
+        JwtValidationConfig applied = JwtAuthFactory.defaultValidation();
+        JwtAuthConfig effective = JwtAuthConfig.defaults();
+        assertNotSame(applied, effective.validation(), "the guarded scenario requires two distinct instances");
 
         assertNotNull(JwtAuthModule.jwtBearerSchemeHandler(
                 new AttestedJwtAuth(new HandRolledJwtAuth(), applied),
-                new JwtAuthConfig("bearerAuth", configured),
+                effective,
                 mock(CredentialRejectionReporter.class)));
     }
 
@@ -120,6 +117,19 @@ class JwtAuthModuleProvenanceTest {
     private static JwtAuthConfig configWithSkew(int clockSkewSeconds) {
         return new JwtAuthConfig(
                 "bearerAuth",
+                JwtValidationConfig.builder().clockSkewSeconds(clockSkewSeconds).build());
+    }
+
+    /**
+     * Builds a {@link JWTAuth} that attests {@code clockSkewSeconds}, mirroring
+     * {@link #configWithSkew(int)} on the provider side of the comparison.
+     *
+     * @param clockSkewSeconds the clock skew the returned provider attests
+     * @return an attested {@link JWTAuth} over a provider the framework did not build
+     */
+    private static JWTAuth attestedWithSkew(int clockSkewSeconds) {
+        return new AttestedJwtAuth(
+                new HandRolledJwtAuth(),
                 JwtValidationConfig.builder().clockSkewSeconds(clockSkewSeconds).build());
     }
 

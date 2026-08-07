@@ -185,11 +185,41 @@ public final class JwtAuthFactory {
      */
     private static JWTAuth fromJwks(
             Vertx vertx, String location, JwtValidationConfig config, boolean warnOnMissingConstraints) {
+        return fromJwks(vertx, location, config, warnOnMissingConstraints, callerClassLoader());
+    }
+
+    /**
+     * As {@link #fromJwks(Vertx, String, JwtValidationConfig, boolean)}, resolving a
+     * {@code classpath:} location through an explicitly supplied loader instead of the running
+     * thread's context classloader.
+     *
+     * <p>This is the single build pipeline behind both the synchronous and the asynchronous
+     * {@code fromJwks} overloads — {@link #fromJwksAsync(Vertx, String, JwtValidationConfig, boolean)}
+     * calls it from its {@code executeBlocking} lambda rather than repeating the read-then-create
+     * steps. The classloader is a parameter precisely because the two paths run it on different
+     * threads: see {@link #callerClassLoader()}.
+     *
+     * @param vertx                    the Vert.x instance
+     * @param location                 the JWKS document location
+     * @param config                   the validation constraints to apply; must not be {@code null}
+     * @param warnOnMissingConstraints whether to log the missing issuer/audience warnings
+     * @param classpathLoader          the loader used to resolve a {@code classpath:} location; must
+     *                                 not be {@code null}
+     * @return a configured JWTAuth instance
+     * @throws IllegalArgumentException if location is null/blank or the document has no "keys" array
+     * @throws UncheckedIOException     if reading or fetching the document fails
+     */
+    private static JWTAuth fromJwks(
+            Vertx vertx,
+            String location,
+            JwtValidationConfig config,
+            boolean warnOnMissingConstraints,
+            ClassLoader classpathLoader) {
         Objects.requireNonNull(vertx, "vertx");
         requireNonBlank(location, "location");
         Objects.requireNonNull(config, "config");
 
-        String content = readLocation(vertx, location);
+        String content = readLocation(vertx, location, classpathLoader);
         return createFromJwksContent(vertx, content, config, warnOnMissingConstraints);
     }
 
@@ -219,6 +249,9 @@ public final class JwtAuthFactory {
      * {@code false} and the warnings are emitted at most once, on the initial load, rather than on
      * every tick for the lifetime of the process.
      *
+     * <p>The {@code location}/{@code config} pre-checks run before the dispatch, so an invalid
+     * argument still fails fast on the calling thread rather than inside a failed future.
+     *
      * @param vertx                    the Vert.x instance
      * @param location                 the JWKS document location
      * @param config                   the validation constraints to apply; must not be {@code null}
@@ -231,15 +264,19 @@ public final class JwtAuthFactory {
         requireNonBlank(location, "location");
         Objects.requireNonNull(config, "config");
 
+        // Captured here, on the caller's thread, and passed into the worker: a classpath: location
+        // must resolve against the loader the caller sees. The worker thread comes from the Vert.x
+        // pool and its context classloader is not guaranteed to be the caller's, so reading it
+        // inside the lambda would make classpath resolution depend on which thread ran the fetch.
+        ClassLoader classpathLoader = callerClassLoader();
+
         // Every location kind reads blocking: classpath and filesystem locations go through
         // vertx.fileSystem().readFileBlocking() / InputStream.readAllBytes() just as an http(s)
         // location goes through a blocking HTTP exchange. They therefore all dispatch to a worker
         // thread — a refresh tick calls this from the event loop, so completing inline would block
         // it on every tick for the lifetime of the process.
-        return vertx.executeBlocking(() -> {
-            String content = readLocation(vertx, location);
-            return createFromJwksContent(vertx, content, config, warnOnMissingConstraints);
-        });
+        return vertx.executeBlocking(
+                () -> fromJwks(vertx, location, config, warnOnMissingConstraints, classpathLoader));
     }
 
     /**
@@ -524,9 +561,26 @@ public final class JwtAuthFactory {
         return jwtOptions;
     }
 
-    private static String readLocation(Vertx vertx, String location) {
+    /**
+     * Returns the classloader a {@code classpath:} location should resolve against, captured from
+     * the thread that called into this factory.
+     *
+     * <p>Callers that hand the read to a worker thread must call this <em>before</em> the dispatch:
+     * the worker comes from the Vert.x pool and its context classloader is not guaranteed to be the
+     * caller's, so an application running under an isolated or custom classloader would otherwise
+     * see classpath resolution succeed or fail depending on which thread performed the read.
+     *
+     * @return the calling thread's context classloader, or this class's own loader when the thread
+     *         has none; never {@code null}
+     */
+    private static ClassLoader callerClassLoader() {
+        ClassLoader contextLoader = Thread.currentThread().getContextClassLoader();
+        return contextLoader != null ? contextLoader : JwtAuthFactory.class.getClassLoader();
+    }
+
+    private static String readLocation(Vertx vertx, String location, ClassLoader classpathLoader) {
         if (location.startsWith("classpath:")) {
-            return readClasspath(location.substring("classpath:".length()));
+            return readClasspath(location.substring("classpath:".length()), classpathLoader);
         }
         if (location.startsWith("http://") || location.startsWith("https://")) {
             return fetchHttp(location);
@@ -534,8 +588,8 @@ public final class JwtAuthFactory {
         return readFilesystem(vertx, location);
     }
 
-    private static String readClasspath(String resource) {
-        try (InputStream is = Thread.currentThread().getContextClassLoader().getResourceAsStream(resource)) {
+    private static String readClasspath(String resource, ClassLoader classpathLoader) {
+        try (InputStream is = classpathLoader.getResourceAsStream(resource)) {
             if (is == null) {
                 throw new UncheckedIOException(new IOException("Classpath resource not found: " + resource));
             }

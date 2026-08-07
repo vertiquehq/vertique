@@ -77,11 +77,7 @@ class JwtAuthFactoryTest {
     @Test
     @DisplayName("Should create JWTAuth from filesystem path")
     void shouldCreateFromFilesystemPath(@TempDir Path tempDir, Vertx vertx) throws Exception {
-        Path jwksFile = tempDir.resolve("jwks.json");
-        try (var is = getClass().getResourceAsStream("/test-jwks.json")) {
-            assertNotNull(is, "test-jwks.json must exist on test classpath");
-            Files.copy(is, jwksFile);
-        }
+        Path jwksFile = copyJwksToTempDir(tempDir);
 
         JWTAuth auth = JwtAuthFactory.fromJwks(vertx, jwksFile.toString());
         assertNotNull(auth);
@@ -114,11 +110,7 @@ class JwtAuthFactoryTest {
     @DisplayName("Should not complete synchronously on the event loop for a filesystem location")
     void shouldNotCompleteSynchronouslyOnEventLoopForFilesystemLocation(
             @TempDir Path tempDir, Vertx vertx, VertxTestContext testContext) throws Exception {
-        Path jwksFile = tempDir.resolve("jwks.json");
-        try (var is = getClass().getResourceAsStream("/test-jwks.json")) {
-            assertNotNull(is, "test-jwks.json must exist on test classpath");
-            Files.copy(is, jwksFile);
-        }
+        Path jwksFile = copyJwksToTempDir(tempDir);
 
         assertDoesNotCompleteOnCallingContext(vertx, testContext, jwksFile.toString());
     }
@@ -127,6 +119,23 @@ class JwtAuthFactoryTest {
     @DisplayName("Should not complete synchronously on the event loop for a classpath location")
     void shouldNotCompleteSynchronouslyOnEventLoopForClasspathLocation(Vertx vertx, VertxTestContext testContext) {
         assertDoesNotCompleteOnCallingContext(vertx, testContext, "classpath:test-jwks.json");
+    }
+
+    /**
+     * Copies the test JWKS fixture off the classpath into {@code tempDir}, so a test can exercise
+     * the factory's filesystem branch rather than its {@code classpath:} branch.
+     *
+     * @param tempDir the JUnit-managed temporary directory to copy into
+     * @return the path of the copied JWKS document
+     * @throws Exception if the fixture cannot be read or written
+     */
+    private static Path copyJwksToTempDir(Path tempDir) throws Exception {
+        Path jwksFile = tempDir.resolve("jwks.json");
+        try (var is = JwtAuthFactoryTest.class.getResourceAsStream("/test-jwks.json")) {
+            assertNotNull(is, "test-jwks.json must exist on test classpath");
+            Files.copy(is, jwksFile);
+        }
+        return jwksFile;
     }
 
     /**

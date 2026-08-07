@@ -7,7 +7,11 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import dev.vertique.config.parser.DefaultConfigMapper;
+import dev.vertique.config.parser.DefaultConfigParser;
+import dev.vertique.core.config.ConfigParser;
 import dev.vertique.core.exception.ConfigurationException;
+import io.vertx.core.json.JsonObject;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -20,6 +24,11 @@ import org.junit.jupiter.api.Test;
  * far past what RFC 7519 §4.1.4 contemplates ("some small leeway, usually no more than a few
  * minutes"). Both are rejected at construction — including through Jackson, which deserializes via
  * the builder and therefore through the same constructor.
+ *
+ * <p>{@link #shouldRejectClockSkewAboveMaximumThroughConfigParser()} exercises that Jackson claim
+ * end to end rather than leaving it asserted only in prose: an out-of-range value arriving in a
+ * {@code jwt.validation} config section must reach an operator as the framework's own
+ * {@link ConfigurationException}, naming the config path, not as a raw deserialization error.
  */
 class JwtValidationConfigBoundsTest {
 
@@ -56,5 +65,26 @@ class JwtValidationConfigBoundsTest {
 
         assertEquals(300, JwtValidationConfig.MAX_CLOCK_SKEW_SECONDS);
         assertEquals(300, config.clockSkewSeconds());
+    }
+
+    @Test
+    @DisplayName("An out-of-range clock skew in the jwt config section surfaces as a ConfigurationException")
+    void shouldRejectClockSkewAboveMaximumThroughConfigParser() {
+        // given: a jwt section whose nested validation object exceeds the maximum — the shape an
+        // operator actually produces, deserialized the same way JwtAuthModule deserializes it
+        JsonObject jwtSection = new JsonObject()
+                .put(
+                        "validation",
+                        new JsonObject().put("clockSkewSeconds", JwtValidationConfig.MAX_CLOCK_SKEW_SECONDS + 1));
+        ConfigParser parser = new DefaultConfigParser(DefaultConfigMapper.lenient());
+
+        // when: parsing the section
+        ConfigurationException failure =
+                assertThrows(ConfigurationException.class, () -> parser.parse(jwtSection, JwtAuthConfig.class));
+
+        // then: the framework's own message reaches the operator, not a bare Jackson diagnostic
+        assertTrue(
+                failure.getMessage().contains("jwt.validation.clockSkewSeconds"),
+                () -> "message must name the config path, was: " + failure.getMessage());
     }
 }

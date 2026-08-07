@@ -90,7 +90,7 @@ public final class RefreshableJwtAuth implements JWTAuth, ValidationAttested {
     private long timerId = -1;
 
     /**
-     * The current JWT authenticator.
+     * The current JWT authenticator, always stored unwrapped (see {@link #unattested(JWTAuth)}).
      *
      * <p>Written only from the Vert.x event loop after a successful JWKS refresh, and read from
      * any thread during authentication. {@code volatile} guarantees that reads always see the
@@ -104,7 +104,7 @@ public final class RefreshableJwtAuth implements JWTAuth, ValidationAttested {
         this.vertx = vertx;
         this.jwksLocation = jwksLocation;
         this.validation = validation;
-        this.delegate = initial;
+        this.delegate = unattested(initial);
     }
 
     /**
@@ -307,12 +307,29 @@ public final class RefreshableJwtAuth implements JWTAuth, ValidationAttested {
         JwtAuthFactory.fromJwksAsync(vertx, jwksLocation, validation, false)
                 .onSuccess(newAuth -> {
                     if (!closed.get()) {
-                        delegate = newAuth;
+                        delegate = unattested(newAuth);
                         log.info("JWKS refreshed from {}", jwksLocation);
                     }
                 })
                 .onFailure(err -> log.warn("JWKS refresh failed, keeping existing keys", err))
                 .onComplete(v -> refreshInProgress.set(false));
+    }
+
+    /**
+     * Strips the factory's attestation wrapper, if present, from a provider about to be stored as
+     * {@link #delegate}.
+     *
+     * <p>{@link JwtAuthFactory} attests every {@link JWTAuth} it builds, but this class reports
+     * {@link #appliedValidation()} from its own {@link #validation} field, so an inner attestation
+     * is unreachable: it would only add an allocation on every refresh tick and a dispatch hop on
+     * every {@code authenticate}. Unwrapping keeps this instance the single attestation carrier on
+     * the refreshing path, which is what its class javadoc promises.
+     *
+     * @param auth the provider the factory returned; must not be {@code null}
+     * @return the underlying provider when {@code auth} is attested, otherwise {@code auth} itself
+     */
+    private static JWTAuth unattested(JWTAuth auth) {
+        return auth instanceof AttestedJwtAuth attested ? attested.delegate() : auth;
     }
 
     private static void requireNonBlank(String value, String name) {

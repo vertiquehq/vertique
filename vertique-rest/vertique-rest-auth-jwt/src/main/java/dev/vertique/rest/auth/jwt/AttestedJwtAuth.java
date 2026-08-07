@@ -54,6 +54,20 @@ final class AttestedJwtAuth implements JWTAuth, ValidationAttested {
         return validation;
     }
 
+    /**
+     * Returns the provider this wrapper forwards to.
+     *
+     * <p>Exists for {@link RefreshableJwtAuth}, which answers {@link #appliedValidation()} from its
+     * own field and is therefore the sole attestation carrier on its path. Storing a wrapper it can
+     * never consult would cost an allocation per refresh tick and a dispatch hop per authenticate,
+     * so it unwraps what the factory hands it.
+     *
+     * @return the wrapped provider; never {@code null}
+     */
+    JWTAuth delegate() {
+        return delegate;
+    }
+
     // --- JWTAuth delegation ---
 
     /**
