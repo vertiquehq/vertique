@@ -37,8 +37,11 @@
 #      source: `.host("0.0.0.0")`, `.setHost("0.0.0.0")`,
 #      `.put("host", "0.0.0.0")`, `bindAddress("0.0.0.0")`, or any
 #      `.listen(...)` call carrying the literal among its arguments, e.g.
-#      `.listen(0, "0.0.0.0")` (whitespace variance around the arguments is
-#      allowed). The regexes anchor on the setter- and bind-call shapes, so a
+#      `.listen(0, "0.0.0.0")`. Line-oriented and same-line only: an argument
+#      list split across lines, or a nested call before the literal (e.g.
+#      `.listen(port(), "0.0.0.0")`), is not matched — accepted false-negative
+#      budget; the general value-aware check is vertiquehq/vertique-dev#170.
+#      The regexes anchor on the setter- and bind-call shapes, so a
 #      getter assertion such as `assertEquals("0.0.0.0", config.host())` never
 #      matches — the literal sits in assertEquals' argument position, not a
 #      setter or bind call.
