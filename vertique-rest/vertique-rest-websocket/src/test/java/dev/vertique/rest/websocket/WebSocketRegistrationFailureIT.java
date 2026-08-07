@@ -115,7 +115,7 @@ public class WebSocketRegistrationFailureIT {
         registrar(securityRuntime, new NullReturnRegisterManager())
                 .registerAll(Set.of(new NullReturnEndpoint()), router);
 
-        vertx.createHttpServer().requestHandler(router).listen(0).onComplete(ctx.succeeding(s -> {
+        vertx.createHttpServer().requestHandler(router).listen(0, "127.0.0.1").onComplete(ctx.succeeding(s -> {
             server = s;
             port = s.actualPort();
             ctx.completeNow();
@@ -149,7 +149,7 @@ public class WebSocketRegistrationFailureIT {
         // assertions run. Either way the socket must not stay open, @OnOpen must not run, and the scope
         // handed to the binding must be released.
         wsClient.connect(new WebSocketConnectOptions()
-                        .setHost("localhost")
+                        .setHost("127.0.0.1")
                         .setPort(port)
                         .setURI("/ws/reg-fail"))
                 .onComplete(connectResult -> {
@@ -258,7 +258,7 @@ public class WebSocketRegistrationFailureIT {
     private void assertFailsClosed(
             Vertx vertx, VertxTestContext ctx, String uri, AtomicReference<SecurityContext> onOpenProbe) {
         wsClient.connect(new WebSocketConnectOptions()
-                        .setHost("localhost")
+                        .setHost("127.0.0.1")
                         .setPort(port)
                         .setURI(uri))
                 .onComplete(ar -> {
