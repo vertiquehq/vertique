@@ -160,6 +160,28 @@ class JobLogFlusherTest {
     }
 
     /**
+     * Pins the injectable write-timeout bound: the flush write timeout is bounded by the injected
+     * limit, awaited here under a 2-second ceiling (≈ 10× the 200ms limit the green slice injects).
+     */
+    @Test
+    @DisplayName("flush write timeout is bounded by the injected limit")
+    @Timeout(value = 10, unit = TimeUnit.SECONDS)
+    void flushWriteTimeoutIsBoundedByInjectedLimit() throws Exception {
+        Promise<Void> neverSettles = Promise.promise();
+        when(repository.saveLogs(any(), any()))
+                .thenReturn(neverSettles.future())
+                .thenReturn(Future.succeededFuture());
+        logger.error("must not be lost");
+        JobLogFlusher flusher = new JobLogFlusher(repository, executionId, logger);
+
+        Future<Void> first = flusher.flush();
+
+        first.toCompletionStage().toCompletableFuture().get(2, TimeUnit.SECONDS);
+        assertTrue(first.succeeded(), "a timed-out write must not fail the job whose logs these are");
+        assertRetriedBatchIsResent(flusher, "must not be lost");
+    }
+
+    /**
      * Asserts that the next flush re-sends the previously failed batch — proof that the failure
      * path cleared the single-flight marker instead of wedging it.
      *
