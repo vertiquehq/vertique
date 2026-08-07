@@ -4,6 +4,7 @@
 package dev.vertique.rest.security;
 
 import dev.vertique.context.WarningThrottle;
+import dev.vertique.core.async.Combinators;
 import dev.vertique.core.exception.UnavailableException;
 import dev.vertique.security.authz.AuthorityClaim;
 import dev.vertique.security.authz.AuthorityKind;
@@ -198,11 +199,9 @@ public final class VertxAuthorizationImporter {
         // One request-local user for the whole chain. The caller's User is not touched again.
         User localUser = User.create(copyOrEmpty(user.principal()), copyOrEmpty(user.attributes()));
 
-        Future<Void> chain = Future.succeededFuture();
-        for (AuthorizationProvider provider : orderedProviders) {
-            chain = chain.compose(ignored -> invoke(provider, localUser));
-        }
-        return chain.map(ignored -> merge(base, collectClaims(localUser)));
+        return Combinators.foldSequential(
+                        orderedProviders, (Void) null, (provider, ignored) -> invoke(provider, localUser))
+                .map(ignored -> merge(base, collectClaims(localUser)));
     }
 
     // --- Private helpers ---

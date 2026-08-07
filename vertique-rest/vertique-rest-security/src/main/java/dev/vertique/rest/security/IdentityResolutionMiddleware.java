@@ -309,10 +309,10 @@ public final class IdentityResolutionMiddleware implements Handler<RoutingContex
      * {@link #bindAndEnrich} once the (possibly asynchronous) import has completed.
      *
      * <p>The importer is consulted only when it is wired <em>and</em> the request carries a Vert.x
-     * {@link User}; otherwise the base claims are carried forward on an already-completed future, so
-     * an application that has not opted in pays no async hop. An import failure fails the request:
-     * no {@link AuthenticatedSecurityContext} is bound and {@link RoutingContext#next()} is never
-     * called.
+     * {@link User}; otherwise the base claims are carried forward synchronously — no future, no
+     * callback — so an application that has not opted in pays no async hop. An import failure fails
+     * the request: no {@link AuthenticatedSecurityContext} is bound and {@link RoutingContext#next()}
+     * is never called.
      *
      * @param ctx         the current routing context
      * @param identity    the identity resolved by the resolver chain
@@ -341,12 +341,15 @@ public final class IdentityResolutionMiddleware implements Handler<RoutingContex
 
         // 6b. Import Vert.x AuthorizationProvider grants when the opt-in importer is wired and the
         //     request is authenticated. Absent importer or anonymous request → no provider is ever
-        //     consulted and the base claims are carried forward unchanged.
-        Future<AuthorizationClaims> claimsFuture = authorizationImporter.isPresent() && user != null
-                ? authorizationImporter.get().importInto(user, base)
-                : Future.succeededFuture(base);
+        //     consulted and the base claims are carried forward synchronously (no future allocated),
+        //     inside handle()'s outer synchronous-throw guard.
+        if (authorizationImporter.isEmpty() || user == null) {
+            bindAndEnrich(ctx, identity, authentication, base, origin, correlation);
+            ctx.next();
+            return;
+        }
 
-        claimsFuture.onComplete(claimsAr -> {
+        authorizationImporter.get().importInto(user, base).onComplete(claimsAr -> {
             if (claimsAr.failed()) {
                 ctx.fail(claimsAr.cause());
                 return;
