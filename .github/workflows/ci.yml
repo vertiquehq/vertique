@@ -26,8 +26,31 @@ permissions:
   contents: read
 
 jobs:
+  # Classifies the changed paths so a docs-only pull request can skip the
+  # expensive build (a job skipped via `if:` satisfies its required check).
+  # The decision lives in a repository-owned, contract-tested script; pushes
+  # to main always build, so SNAPSHOT publication only trails verified SHAs.
+  classify:
+    name: Classify changed paths
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 5
+    outputs:
+      docs_only: ${{ steps.scope.outputs.docs_only }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+      - id: scope
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: bash scripts/detect-docs-only-scope.sh --event-name "$EVENT_NAME" --base-sha "$BASE_SHA" --head-sha "$HEAD_SHA" >> "$GITHUB_OUTPUT"
+
   build:
     name: Build and Test
+    needs: classify
+    if: needs.classify.outputs.docs_only != 'true'
     runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 70
     steps:
@@ -47,7 +70,7 @@ jobs:
           node-version: "22"
 
       - name: Verify release contracts
-        run: node --test release/tests/publication-contract.test.mjs release/tests/coverage-aggregate-contract.test.mjs
+        run: node --test release/tests/publication-contract.test.mjs release/tests/coverage-aggregate-contract.test.mjs release/tests/docs-only-scope.test.mjs
 
       # Per-module HTML reports are skipped: the vertique-coverage-report
       # aggregate XML produced by this same invocation is the only coverage
