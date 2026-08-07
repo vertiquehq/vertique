@@ -492,6 +492,14 @@ class IdentitySnapshotCodecTest {
     }
 
     @Test
+    @DisplayName("guard detects an unordered Set behind a generic array's GenericArrayType node")
+    void guardDetectsGenericArraySet() {
+        // List<Set<String>>[] is non-reifiable, so its component reflects as a GenericArrayType —
+        // Class.isArray() never sees it. This pins the walker's GenericArrayType branch specifically.
+        assertGuardNames(GenericArrayOffender.class, "GenericArrayOffender.values");
+    }
+
+    @Test
     @DisplayName("guard detects an unordered Set visible only through a component's type-variable bound")
     void guardDetectsTypeVariableBoundSet() {
         assertGuardNames(TypeVariableBoundOffender.class, "TypeVariableBoundOffender.bounded");
@@ -530,6 +538,9 @@ class IdentitySnapshotCodecTest {
 
     /** Offender fixture: a reifiable array whose element record carries an unordered Set. */
     private record RecordArrayOffender(PlainSetCarrier[] carriers) {}
+
+    /** Offender fixture: a generic array — the one node kind reached only via {@code GenericArrayType}. */
+    private record GenericArrayOffender(List<Set<String>>[] values) {}
 
     /** Offender fixture: the unordered Set is visible only through the component's type-variable bound. */
     private record TypeVariableBoundOffender<T extends Set<String>>(T bounded) {}
