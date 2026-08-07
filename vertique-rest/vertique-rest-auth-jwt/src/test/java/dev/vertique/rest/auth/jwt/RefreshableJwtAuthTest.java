@@ -28,9 +28,9 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * the periodic key-swap mechanism, and correct close-and-stop semantics.
  *
  * <p>Also guards that the refreshing path keeps the documented default clock-skew leeway: the
- * initial fetch goes through {@link JwtAuthFactory#fromJwksAsync(Vertx, String, JwtValidationConfig)},
- * so a change that stopped that overload from applying the framework defaults would silently drop
- * the refreshing path back to a leeway of {@code 0}.
+ * initial fetch goes through {@link JwtAuthFactory}'s config-carrying async seam, so a change that
+ * stopped it from applying the framework defaults would silently drop the refreshing path back to a
+ * leeway of {@code 0}.
  *
  * <p>Finally, pins two contracts of the config-carrying refreshing surface: an explicitly supplied
  * {@link JwtValidationConfig} reaches the initial delegate, and
@@ -135,7 +135,8 @@ class RefreshableJwtAuthTest {
                     // Close up front so no exit path can leak the refresh timer. close() only cancels
                     // that timer — the delegate built by the initial fetch stays usable, as
                     // shouldNotSwapAfterClose proves — so the assertion below still exercises exactly
-                    // the JWTAuth that fromJwksAsync(vertx, location) produced.
+                    // the JWTAuth that the initial fetch produced, via
+                    // fromJwksAsync(vertx, location, defaultValidation(), false).
                     refreshable.close();
 
                     // exp 10 s in the past — inside the documented 30 s default skew, so the token must

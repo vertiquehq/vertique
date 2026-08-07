@@ -36,9 +36,12 @@ import org.junit.jupiter.api.extension.ExtendWith;
  *   <li>Timer cancellation on {@link RefreshableJwtAuth#close()} — no further JWKS fetches occur</li>
  *   <li>Retention of the documented default clock-skew leeway across a refresh tick — the delegate
  *       rebuilt by {@code onRefreshTick} must not silently fall back to a leeway of {@code 0}</li>
- *   <li>Retention of an <em>explicitly configured</em> clock-skew leeway across a refresh tick, proved
- *       against the post-swap delegate by rotating the served key set first</li>
+ *   <li>Retention of an <em>explicitly configured</em> clock-skew leeway across a refresh tick</li>
  * </ul>
+ *
+ * <p>Both leeway tests rotate the served key set before asserting, so the assertion can only be
+ * satisfied by a delegate a refresh tick installed. Gating on a JWKS request count instead would
+ * leave them satisfiable by the pre-swap delegate, and therefore unable to fail on a lost leeway.
  */
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
 @ExtendWith(VertxExtension.class)
@@ -121,21 +124,23 @@ public class RefreshableJwtAuthIT {
                 wireMock.resetAll();
                 stubJwks(jwksJson(SECRET_B));
 
-                // Wait long enough for at least one refresh (500 ms >> 200 ms interval)
-                vertx.setTimer(500, ignored -> {
-                    JWTAuth signerB = signerForSecret(vertx, SECRET_B);
-                    String tokenB = signerB.generateToken(new JsonObject().put("sub", "it-user-rotation-new"));
+                JWTAuth signerB = signerForSecret(vertx, SECRET_B);
+                String tokenB = signerB.generateToken(new JsonObject().put("sub", "it-user-rotation-new"));
 
-                    refreshable.authenticate(new TokenCredentials(tokenB)).onComplete(authResult -> {
-                        refreshable.close();
-                        if (authResult.failed()) {
-                            testContext.failNow(authResult.cause());
-                        } else {
-                            assertNotNull(authResult.result());
+                // Gate on the rotation landing rather than sleeping past it: accepting a B-signed
+                // token IS the property under test, so the gate succeeding is the assertion.
+                awaitAuthenticationSuccess(
+                        vertx,
+                        refreshable,
+                        tokenB,
+                        () -> {
+                            refreshable.close();
                             testContext.completeNow();
-                        }
-                    });
-                });
+                        },
+                        cause -> {
+                            refreshable.close();
+                            testContext.failNow(cause);
+                        });
             }));
         }));
     }
@@ -149,27 +154,36 @@ public class RefreshableJwtAuthIT {
         Duration refreshInterval = Duration.ofMillis(200);
 
         RefreshableJwtAuth.create(vertx, jwksUrl, refreshInterval).onComplete(testContext.succeeding(refreshable -> {
-            // Make the JWKS endpoint return 500 to trigger a refresh failure
+            // Make the JWKS endpoint return 500 to trigger a refresh failure. resetAll() also rewinds
+            // the request journal, so the gate below counts only post-rotation requests.
             wireMock.resetAll();
             wireMock.stubFor(get(urlEqualTo(JWKS_PATH))
                     .willReturn(aResponse().withStatus(500).withBody("Internal Server Error")));
 
-            // Wait for at least one failed refresh attempt
-            vertx.setTimer(500, ignored -> {
-                // Old key set (A) must still be accepted
-                JWTAuth signerA = signerForSecret(vertx, SECRET_A);
-                String token = signerA.generateToken(new JsonObject().put("sub", "it-user-failure-resilience"));
+            // Gate on a journaled request rather than sleeping: WireMock journals the request even
+            // though the stub answers 500, so reaching 1 makes "a refresh attempt has failed" a fact.
+            awaitJwksRequests(
+                    vertx,
+                    1,
+                    () -> {
+                        // Old key set (A) must still be accepted
+                        JWTAuth signerA = signerForSecret(vertx, SECRET_A);
+                        String token = signerA.generateToken(new JsonObject().put("sub", "it-user-failure-resilience"));
 
-                refreshable.authenticate(new TokenCredentials(token)).onComplete(authResult -> {
-                    refreshable.close();
-                    if (authResult.failed()) {
-                        testContext.failNow(authResult.cause());
-                    } else {
-                        assertNotNull(authResult.result());
-                        testContext.completeNow();
-                    }
-                });
-            });
+                        refreshable.authenticate(new TokenCredentials(token)).onComplete(authResult -> {
+                            refreshable.close();
+                            if (authResult.failed()) {
+                                testContext.failNow(authResult.cause());
+                            } else {
+                                assertNotNull(authResult.result());
+                                testContext.completeNow();
+                            }
+                        });
+                    },
+                    cause -> {
+                        refreshable.close();
+                        testContext.failNow(cause);
+                    });
         }));
     }
 
@@ -182,30 +196,44 @@ public class RefreshableJwtAuthIT {
         Duration refreshInterval = Duration.ofMillis(200);
 
         RefreshableJwtAuth.create(vertx, jwksUrl, refreshInterval).onComplete(testContext.succeeding(refreshable -> {
-            // Wait long enough for at least one periodic refresh (300 ms > 200 ms interval)
-            vertx.setTimer(300, ignored -> {
-                int countBeforeClose = wireMock.countRequestsMatching(
-                                getRequestedFor(urlEqualTo(JWKS_PATH)).build())
-                        .getCount();
-                assertTrue(countBeforeClose >= 1, "Expected at least one JWKS request before close");
+            // Gate on the second JWKS request rather than sleeping: @BeforeEach empties the journal,
+            // so request 1 is the initial fetch and request 2 can only come from a periodic tick.
+            // That is the premise this test needs — proving close() stops the ticks is worthless
+            // unless a tick actually fired first.
+            awaitJwksRequests(
+                    vertx,
+                    2,
+                    () -> {
+                        int countBeforeClose = wireMock.countRequestsMatching(
+                                        getRequestedFor(urlEqualTo(JWKS_PATH)).build())
+                                .getCount();
+                        assertTrue(
+                                countBeforeClose >= 2,
+                                "Expected the initial JWKS fetch plus at least one periodic refresh before close");
 
-                refreshable.close();
+                        refreshable.close();
 
-                // Wait to confirm no additional requests arrive after close
-                vertx.setTimer(500, ignored2 -> {
-                    int countAfterClose = wireMock.countRequestsMatching(
-                                    getRequestedFor(urlEqualTo(JWKS_PATH)).build())
-                            .getCount();
+                        // Wait to confirm no additional requests arrive after close. No gate can
+                        // shortcut this one: it proves an ABSENCE of further requests, so the only
+                        // evidence is elapsed time with the count unchanged.
+                        vertx.setTimer(500, ignored2 -> {
+                            int countAfterClose = wireMock.countRequestsMatching(getRequestedFor(urlEqualTo(JWKS_PATH))
+                                            .build())
+                                    .getCount();
 
-                    // Allow at most one in-flight request that was already in progress at
-                    // close() time; beyond that the timer must have stopped.
-                    assertTrue(
-                            countAfterClose <= countBeforeClose + 1,
-                            "JWKS requests continued after close(): before=" + countBeforeClose + " after="
-                                    + countAfterClose);
-                    testContext.completeNow();
-                });
-            });
+                            // Allow at most one in-flight request that was already in progress at
+                            // close() time; beyond that the timer must have stopped.
+                            assertTrue(
+                                    countAfterClose <= countBeforeClose + 1,
+                                    "JWKS requests continued after close(): before=" + countBeforeClose + " after="
+                                            + countAfterClose);
+                            testContext.completeNow();
+                        });
+                    },
+                    cause -> {
+                        refreshable.close();
+                        testContext.failNow(cause);
+                    });
         }));
     }
 
@@ -218,29 +246,41 @@ public class RefreshableJwtAuthIT {
         Duration refreshInterval = Duration.ofMillis(200);
 
         RefreshableJwtAuth.create(vertx, jwksUrl, refreshInterval).onComplete(testContext.succeeding(refreshable -> {
-            // Gate on the observed JWKS request count rather than a bare sleep: a second request can
-            // only come from a periodic refresh tick, so reaching 2 makes "a tick has fired" a fact.
-            awaitJwksRequests(
+            // Rotate the served key set. A token signed with B can only be accepted by a delegate
+            // that a refresh tick installed, so gating on that outcome proves the leeway assertion
+            // below runs against the POST-SWAP delegate. Gating on a JWKS request count could not:
+            // the served key would never change, so the pre-swap delegate would satisfy the
+            // assertion just as well and the test could not fail on a lost leeway.
+            wireMock.resetAll();
+            stubJwks(jwksJson(SECRET_B));
+
+            JWTAuth signerB = signerForSecret(vertx, SECRET_B);
+            // No "exp" claim, so this probe is unaffected by leeway — it isolates the swap.
+            String probeToken = signerB.generateToken(new JsonObject().put("sub", "it-user-post-tick-default-probe"));
+
+            awaitAuthenticationSuccess(
                     vertx,
-                    2,
+                    refreshable,
+                    probeToken,
                     () -> {
-                        JWTAuth signerA = signerForSecret(vertx, SECRET_A);
                         // exp 10 s in the past — inside the documented 30 s default skew, so the
-                        // post-tick delegate must still accept it. Assert on the outcome only: every
+                        // post-swap delegate must still accept it. Assert on the outcome only: every
                         // time-claim rejection carries the identical "token expired" message.
-                        String token = signerA.generateToken(new JsonObject()
+                        String expiredToken = signerB.generateToken(new JsonObject()
                                 .put("sub", "it-user-post-tick-leeway")
                                 .put("exp", Instant.now().getEpochSecond() - 10));
 
-                        refreshable.authenticate(new TokenCredentials(token)).onComplete(authResult -> {
-                            refreshable.close();
-                            if (authResult.failed()) {
-                                testContext.failNow(authResult.cause());
-                            } else {
-                                assertNotNull(authResult.result());
-                                testContext.completeNow();
-                            }
-                        });
+                        refreshable
+                                .authenticate(new TokenCredentials(expiredToken))
+                                .onComplete(authResult -> {
+                                    refreshable.close();
+                                    if (authResult.failed()) {
+                                        testContext.failNow(authResult.cause());
+                                    } else {
+                                        assertNotNull(authResult.result());
+                                        testContext.completeNow();
+                                    }
+                                });
                     },
                     cause -> {
                         refreshable.close();

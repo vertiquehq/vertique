@@ -115,11 +115,7 @@ public final class JwtAuthFactory {
      * @throws UncheckedIOException     if reading or fetching the document fails
      */
     public static JWTAuth fromJwks(Vertx vertx, String location) {
-        Objects.requireNonNull(vertx, "vertx");
-        requireNonBlank(location, "location");
-
-        String content = readLocation(vertx, location);
-        return createFromJwksContent(vertx, content, defaultValidation(), false);
+        return fromJwks(vertx, location, defaultValidation(), false);
     }
 
     /**
@@ -140,20 +136,7 @@ public final class JwtAuthFactory {
      * @return a future that completes with a configured JWTAuth instance
      */
     public static Future<JWTAuth> fromJwksAsync(Vertx vertx, String location) {
-        Objects.requireNonNull(vertx, "vertx");
-        requireNonBlank(location, "location");
-
-        if (location.startsWith("http://") || location.startsWith("https://")) {
-            return vertx.executeBlocking(() -> {
-                String content = fetchHttp(location);
-                return createFromJwksContent(vertx, content, defaultValidation(), false);
-            });
-        }
-        try {
-            return Future.succeededFuture(fromJwks(vertx, location));
-        } catch (Exception e) {
-            return Future.failedFuture(e);
-        }
+        return fromJwksAsync(vertx, location, defaultValidation(), false);
     }
 
     /**
@@ -177,12 +160,15 @@ public final class JwtAuthFactory {
     }
 
     /**
-     * As {@link #fromJwks(Vertx, String, JwtValidationConfig)}, with explicit control over the
-     * missing issuer/audience advisory.
+     * Shared implementation behind every synchronous {@code fromJwks} overload, with explicit
+     * control over the missing issuer/audience advisory.
      *
-     * <p>Package-private seam for framework callers that re-fetch the same location repeatedly —
-     * see {@link RefreshableJwtAuth}. The advisory is a startup concern, so a periodic re-fetch
-     * passes {@code false} and the warnings are emitted at most once, on the initial load.
+     * <p>{@code warnOnMissingConstraints} is the only thing its callers vary: the overload that
+     * takes a caller-supplied config passes {@code true}, because an unset issuer or audience is
+     * then worth a startup warning; the overload that defaults the config passes {@code false},
+     * because that caller never asked for issuer/audience validation.
+     * {@link #fromJwksAsync(Vertx, String, JwtValidationConfig, boolean)} routes classpath and
+     * filesystem locations through here as well, passing its own flag through unchanged.
      *
      * @param vertx                    the Vert.x instance
      * @param location                 the JWKS document location
@@ -192,7 +178,7 @@ public final class JwtAuthFactory {
      * @throws IllegalArgumentException if location is null/blank or the document has no "keys" array
      * @throws UncheckedIOException     if reading or fetching the document fails
      */
-    static JWTAuth fromJwks(
+    private static JWTAuth fromJwks(
             Vertx vertx, String location, JwtValidationConfig config, boolean warnOnMissingConstraints) {
         Objects.requireNonNull(vertx, "vertx");
         requireNonBlank(location, "location");
@@ -416,9 +402,14 @@ public final class JwtAuthFactory {
      * {@link JwtValidationConfig}, so those paths still reach {@link JWTOptions} with leeway
      * applied rather than silently defaulting to Vert.x's leeway of {@code 0}.
      *
+     * <p>Package-private rather than private so
+     * {@link RefreshableJwtAuth#create(Vertx, String, Duration)} shares the same authority: one
+     * place decides what "the caller supplied no config" means, so the refreshing path cannot
+     * drift from the factory paths.
+     *
      * @return a fresh default {@link JwtValidationConfig}
      */
-    private static JwtValidationConfig defaultValidation() {
+    static JwtValidationConfig defaultValidation() {
         return JwtValidationConfig.builder().build();
     }
 

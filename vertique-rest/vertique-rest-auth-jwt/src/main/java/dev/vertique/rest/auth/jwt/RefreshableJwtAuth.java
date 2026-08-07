@@ -54,7 +54,7 @@ import lombok.extern.slf4j.Slf4j;
  * previous tick's I/O is still in flight when the next tick fires, the new tick returns immediately
  * without starting a second fetch.
  *
- * @see JwtAuthFactory#fromJwksAsync(Vertx, String, JwtValidationConfig)
+ * @see JwtAuthFactory
  */
 @Slf4j
 public final class RefreshableJwtAuth implements JWTAuth {
@@ -139,12 +139,7 @@ public final class RefreshableJwtAuth implements JWTAuth {
      * @throws IllegalArgumentException if {@code jwksLocation} is blank
      */
     public static Future<RefreshableJwtAuth> create(Vertx vertx, String jwksLocation, Duration refreshInterval) {
-        return create(
-                vertx,
-                jwksLocation,
-                refreshInterval,
-                JwtValidationConfig.builder().build(),
-                false);
+        return create(vertx, jwksLocation, refreshInterval, JwtAuthFactory.defaultValidation(), false);
     }
 
     /**
