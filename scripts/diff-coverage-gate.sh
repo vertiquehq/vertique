@@ -40,13 +40,26 @@ if [[ ! -x "$VENV/bin/diff-cover" ]]; then
   "$VENV/bin/pip" install --quiet 'diff_cover==9.*'
 fi
 
+# diff-cover maps a JaCoCo <package>/<sourcefile> onto a diff path only when
+# join(src_root, package, file) equals that path exactly, so in a multi-module
+# reactor every module's source root must be listed — with the default root
+# the mapping never matches and the gate is silently vacuous for Java diffs.
+# Derived from tracked files so the list can never go stale.
+SRC_ROOTS=$(git ls-files -- '*/src/main/java/*' | sed -E 's#(.*/src/main/java)/.*#\1#' | sort -u)
+if [[ -z "$SRC_ROOTS" ]]; then
+  echo "diff-coverage-gate: no */src/main/java roots found in the index" >&2
+  exit 1
+fi
+
 # Paths outside the aggregate (examples, archetype resources, test sources)
 # carry no coverage data and are excluded rather than reported as uncovered.
 # The JSON report lands next to the aggregate XML; the Coverage Comment
 # workflow turns it into a PR comment. diff-cover writes the report before
 # applying the threshold, so the report exists even when the gate fails.
+# shellcheck disable=SC2086 — SRC_ROOTS word-splits into one path per root.
 "$VENV/bin/diff-cover" "$XML" \
   --compare-branch "$COMPARE_BRANCH" \
   --fail-under "$FAIL_UNDER" \
-  --json-report "$(dirname "$XML")/diff-cover.json" \
+  --format "json:$(dirname "$XML")/diff-cover.json" \
+  --src-roots $SRC_ROOTS \
   --exclude 'examples/**' 'vertique-archetype/**' 'integration-tests/**' '**/src/test/**' '**/src/it/**'
