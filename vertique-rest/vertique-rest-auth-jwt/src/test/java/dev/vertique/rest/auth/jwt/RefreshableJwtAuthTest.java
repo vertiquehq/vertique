@@ -28,9 +28,14 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * the periodic key-swap mechanism, and correct close-and-stop semantics.
  *
  * <p>Also guards that the refreshing path keeps the documented default clock-skew leeway: the
- * initial fetch goes through {@link JwtAuthFactory#fromJwksAsync(Vertx, String)}, so a change that
- * stopped that overload from applying the framework defaults would silently drop the refreshing
- * path back to a leeway of {@code 0}.
+ * initial fetch goes through {@link JwtAuthFactory#fromJwksAsync(Vertx, String, JwtValidationConfig)},
+ * so a change that stopped that overload from applying the framework defaults would silently drop
+ * the refreshing path back to a leeway of {@code 0}.
+ *
+ * <p>Finally, pins two contracts of the config-carrying refreshing surface: an explicitly supplied
+ * {@link JwtValidationConfig} reaches the initial delegate, and
+ * {@link JwtAuthFactory#fromJwksRefreshing(Vertx, String, java.time.Duration)} declares
+ * {@link RefreshableJwtAuth} rather than erasing it to {@link JWTAuth}.
  */
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 10, unit = TimeUnit.SECONDS)
@@ -150,6 +155,54 @@ class RefreshableJwtAuthTest {
                         }
                     });
                 }));
+    }
+
+    @Test
+    @DisplayName("The refreshing factory overload applies an explicitly configured leeway")
+    void shouldApplyExplicitLeewayThroughRefreshingFactory(Vertx vertx, VertxTestContext testContext) {
+        JwtValidationConfig config =
+                JwtValidationConfig.builder().clockSkewSeconds(300).build();
+
+        JwtAuthFactory.fromJwksRefreshing(vertx, "classpath:test-jwks.json", Duration.ofMinutes(5), config)
+                .onComplete(testContext.succeeding(refreshable -> {
+                    // Close up front so no exit path can leak the refresh timer; the delegate built by
+                    // the initial fetch stays usable (see shouldNotSwapAfterClose).
+                    refreshable.close();
+
+                    // exp 120 s in the past — inside the configured 300 s skew, far outside the 30 s
+                    // default, so only the supplied config can make this succeed.
+                    String token = refreshable.generateToken(
+                            new JsonObject()
+                                    .put("sub", "refreshing-factory-leeway-user")
+                                    .put("exp", secondsFromNow(-120)),
+                            new JWTOptions().setAlgorithm("HS256"));
+
+                    refreshable.authenticate(new TokenCredentials(token)).onComplete(result -> {
+                        if (result.failed()) {
+                            testContext.failNow(result.cause());
+                        } else {
+                            assertNotNull(result.result());
+                            testContext.completeNow();
+                        }
+                    });
+                }));
+    }
+
+    // --- Return-type contract ---
+
+    @Test
+    @DisplayName("fromJwksRefreshing returns RefreshableJwtAuth, so close() is reachable without a cast")
+    void shouldReturnRefreshableTypeFromFactory(Vertx vertx, VertxTestContext testContext) {
+        // The declared type is the assertion: this assignment does not compile if the factory still
+        // erases its result to Future<JWTAuth>, which would hide the close() the caller must call.
+        Future<RefreshableJwtAuth> refreshing =
+                JwtAuthFactory.fromJwksRefreshing(vertx, "classpath:test-jwks.json", Duration.ofMinutes(5));
+
+        refreshing.onComplete(testContext.succeeding(refreshable -> {
+            assertNotNull(refreshable, "fromJwksRefreshing must not complete with null");
+            refreshable.close();
+            testContext.completeNow();
+        }));
     }
 
     // --- Close behavior test ---

@@ -36,6 +36,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
  *   <li>Timer cancellation on {@link RefreshableJwtAuth#close()} — no further JWKS fetches occur</li>
  *   <li>Retention of the documented default clock-skew leeway across a refresh tick — the delegate
  *       rebuilt by {@code onRefreshTick} must not silently fall back to a leeway of {@code 0}</li>
+ *   <li>Retention of an <em>explicitly configured</em> clock-skew leeway across a refresh tick, proved
+ *       against the post-swap delegate by rotating the served key set first</li>
  * </ul>
  */
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
@@ -247,7 +249,114 @@ public class RefreshableJwtAuthIT {
         }));
     }
 
+    @Test
+    @DisplayName("After a refresh tick, an explicitly configured clock-skew leeway is still applied")
+    void shouldRetainExplicitLeewayAfterRefreshTick(Vertx vertx, VertxTestContext testContext) {
+        stubJwks(jwksJson(SECRET_A));
+        String jwksUrl = wireMock.baseUrl() + JWKS_PATH;
+
+        // 300 s is an order of magnitude above the 30 s default, so a delegate that silently fell back
+        // to the defaults cannot satisfy the assertion below.
+        JwtValidationConfig config =
+                JwtValidationConfig.builder().clockSkewSeconds(300).build();
+
+        RefreshableJwtAuth.create(vertx, jwksUrl, Duration.ofMillis(200), config)
+                .onComplete(testContext.succeeding(refreshable -> {
+                    // Rotate the served key set. A token signed with B can only be accepted by a
+                    // delegate that a refresh tick installed, so gating on that outcome proves the
+                    // leeway assertion below runs against the POST-SWAP delegate rather than the one
+                    // the initial fetch built. Gating on a request count could not prove that.
+                    wireMock.resetAll();
+                    stubJwks(jwksJson(SECRET_B));
+
+                    JWTAuth signerB = signerForSecret(vertx, SECRET_B);
+                    // No "exp" claim, so this probe is unaffected by leeway — it isolates the swap.
+                    String probeToken = signerB.generateToken(new JsonObject().put("sub", "it-user-post-tick-probe"));
+
+                    awaitAuthenticationSuccess(
+                            vertx,
+                            refreshable,
+                            probeToken,
+                            () -> {
+                                // exp 120 s in the past: inside the configured 300 s skew, far outside
+                                // the 30 s default. Assert on the outcome only — every time-claim
+                                // rejection carries the identical "token expired" message.
+                                String expiredToken = signerB.generateToken(new JsonObject()
+                                        .put("sub", "it-user-post-tick-explicit-leeway")
+                                        .put("exp", Instant.now().getEpochSecond() - 120));
+
+                                refreshable
+                                        .authenticate(new TokenCredentials(expiredToken))
+                                        .onComplete(authResult -> {
+                                            refreshable.close();
+                                            if (authResult.failed()) {
+                                                testContext.failNow(authResult.cause());
+                                            } else {
+                                                assertNotNull(authResult.result());
+                                                testContext.completeNow();
+                                            }
+                                        });
+                            },
+                            cause -> {
+                                refreshable.close();
+                                testContext.failNow(cause);
+                            });
+                }));
+    }
+
     // --- Helpers ---
+
+    /**
+     * Polls until {@code token} authenticates successfully against {@code auth}, then runs
+     * {@code onReady}. Used to gate on a delegate swap having completed: a token signed with the
+     * newly served key can only succeed once {@code onRefreshTick} has installed the refreshed
+     * delegate, which a WireMock request count cannot establish.
+     *
+     * @param vertx     the Vert.x instance used to schedule the poll
+     * @param auth      the instance under test
+     * @param token     a token signed with the rotated-in key, carrying no {@code exp} claim so the
+     *                  probe is independent of the leeway under test
+     * @param onReady   run once authentication succeeds
+     * @param onTimeout invoked with an {@link AssertionError} if the swap never lands
+     */
+    private static void awaitAuthenticationSuccess(
+            Vertx vertx, RefreshableJwtAuth auth, String token, Runnable onReady, Handler<Throwable> onTimeout) {
+        awaitAuthenticationSuccess(
+                vertx, auth, token, System.currentTimeMillis() + GATE_TIMEOUT_MILLIS, onReady, onTimeout);
+    }
+
+    /**
+     * Recursive body of the swap gate above; re-schedules itself on the Vert.x timer rather than
+     * blocking a thread. Gives up after the deadline, which stays well inside the class-level 20 s
+     * timeout so a stalled refresh reports as an assertion failure rather than a hang.
+     *
+     * @param vertx     the Vert.x instance used to schedule the poll
+     * @param auth      the instance under test
+     * @param token     a token signed with the rotated-in key
+     * @param deadline  the absolute {@link System#currentTimeMillis()} value at which to give up
+     * @param onReady   run once authentication succeeds
+     * @param onTimeout invoked with an {@link AssertionError} once the deadline passes
+     */
+    private static void awaitAuthenticationSuccess(
+            Vertx vertx,
+            RefreshableJwtAuth auth,
+            String token,
+            long deadline,
+            Runnable onReady,
+            Handler<Throwable> onTimeout) {
+        auth.authenticate(new TokenCredentials(token)).onComplete(result -> {
+            if (result.succeeded()) {
+                onReady.run();
+            } else if (System.currentTimeMillis() >= deadline) {
+                onTimeout.handle(new AssertionError(
+                        "Timed out waiting for a refresh tick to install the rotated key set", result.cause()));
+            } else {
+                vertx.setTimer(
+                        GATE_POLL_INTERVAL_MILLIS,
+                        ignored -> awaitAuthenticationSuccess(vertx, auth, token, deadline, onReady, onTimeout));
+            }
+        });
+    }
 
     /**
      * Polls the WireMock request journal until at least {@code minRequests} JWKS fetches have been

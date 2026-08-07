@@ -173,12 +173,33 @@ public final class JwtAuthFactory {
      * @throws UncheckedIOException     if reading or fetching the document fails
      */
     public static JWTAuth fromJwks(Vertx vertx, String location, JwtValidationConfig config) {
+        return fromJwks(vertx, location, config, true);
+    }
+
+    /**
+     * As {@link #fromJwks(Vertx, String, JwtValidationConfig)}, with explicit control over the
+     * missing issuer/audience advisory.
+     *
+     * <p>Package-private seam for framework callers that re-fetch the same location repeatedly —
+     * see {@link RefreshableJwtAuth}. The advisory is a startup concern, so a periodic re-fetch
+     * passes {@code false} and the warnings are emitted at most once, on the initial load.
+     *
+     * @param vertx                    the Vert.x instance
+     * @param location                 the JWKS document location
+     * @param config                   the validation constraints to apply; must not be {@code null}
+     * @param warnOnMissingConstraints whether to log the missing issuer/audience warnings
+     * @return a configured JWTAuth instance
+     * @throws IllegalArgumentException if location is null/blank or the document has no "keys" array
+     * @throws UncheckedIOException     if reading or fetching the document fails
+     */
+    static JWTAuth fromJwks(
+            Vertx vertx, String location, JwtValidationConfig config, boolean warnOnMissingConstraints) {
         Objects.requireNonNull(vertx, "vertx");
         requireNonBlank(location, "location");
         Objects.requireNonNull(config, "config");
 
         String content = readLocation(vertx, location);
-        return createFromJwksContent(vertx, content, config, true);
+        return createFromJwksContent(vertx, content, config, warnOnMissingConstraints);
     }
 
     /**
@@ -194,6 +215,26 @@ public final class JwtAuthFactory {
      * @return a future that completes with a configured JWTAuth instance
      */
     public static Future<JWTAuth> fromJwksAsync(Vertx vertx, String location, JwtValidationConfig config) {
+        return fromJwksAsync(vertx, location, config, true);
+    }
+
+    /**
+     * As {@link #fromJwksAsync(Vertx, String, JwtValidationConfig)}, with explicit control over the
+     * missing issuer/audience advisory.
+     *
+     * <p>Package-private seam for framework callers that re-fetch the same location repeatedly —
+     * see {@link RefreshableJwtAuth}. The advisory is a startup concern, so a refresh tick passes
+     * {@code false} and the warnings are emitted at most once, on the initial load, rather than on
+     * every tick for the lifetime of the process.
+     *
+     * @param vertx                    the Vert.x instance
+     * @param location                 the JWKS document location
+     * @param config                   the validation constraints to apply; must not be {@code null}
+     * @param warnOnMissingConstraints whether to log the missing issuer/audience warnings
+     * @return a future that completes with a configured JWTAuth instance
+     */
+    static Future<JWTAuth> fromJwksAsync(
+            Vertx vertx, String location, JwtValidationConfig config, boolean warnOnMissingConstraints) {
         Objects.requireNonNull(vertx, "vertx");
         requireNonBlank(location, "location");
         Objects.requireNonNull(config, "config");
@@ -201,11 +242,11 @@ public final class JwtAuthFactory {
         if (location.startsWith("http://") || location.startsWith("https://")) {
             return vertx.executeBlocking(() -> {
                 String content = fetchHttp(location);
-                return createFromJwksContent(vertx, content, config, true);
+                return createFromJwksContent(vertx, content, config, warnOnMissingConstraints);
             });
         }
         try {
-            return Future.succeededFuture(fromJwks(vertx, location, config));
+            return Future.succeededFuture(fromJwks(vertx, location, config, warnOnMissingConstraints));
         } catch (Exception e) {
             return Future.failedFuture(e);
         }
@@ -214,11 +255,17 @@ public final class JwtAuthFactory {
     /**
      * Creates a self-refreshing {@link JWTAuth} that periodically re-fetches a JWKS document.
      *
-     * <p>Loads the initial key set from the given location using
-     * {@link #fromJwksAsync(Vertx, String)}, then registers a Vert.x periodic timer to refresh
-     * the keys at the specified interval. The returned {@link JWTAuth} is a
-     * {@link RefreshableJwtAuth} that transparently swaps its internal delegate on each
-     * successful refresh.
+     * <p>Loads the initial key set from the given location, then registers a Vert.x periodic timer
+     * to refresh the keys at the specified interval. The returned {@link RefreshableJwtAuth}
+     * transparently swaps its internal delegate on each successful refresh; the concrete type is
+     * declared rather than erased to {@link JWTAuth} so callers can reach
+     * {@link RefreshableJwtAuth#close()} and stop the timer at shutdown.
+     *
+     * <p>Applies {@code JwtValidationConfig.builder().build()} to the initial key set and to every
+     * refreshed one, so the documented default clock skew
+     * ({@link JwtValidationConfig#clockSkewSeconds()}) is honored as {@code exp}/{@code nbf}/
+     * {@code iat} leeway. Issuer and audience stay unconstrained; use
+     * {@link #fromJwksRefreshing(Vertx, String, Duration, JwtValidationConfig)} to constrain them.
      *
      * <p>Example:
      * <pre>{@code
@@ -241,8 +288,31 @@ public final class JwtAuthFactory {
      * @return a future that completes with a self-refreshing JWTAuth instance
      * @see RefreshableJwtAuth
      */
-    public static Future<JWTAuth> fromJwksRefreshing(Vertx vertx, String location, Duration refreshInterval) {
-        return RefreshableJwtAuth.create(vertx, location, refreshInterval).map(auth -> auth);
+    public static Future<RefreshableJwtAuth> fromJwksRefreshing(
+            Vertx vertx, String location, Duration refreshInterval) {
+        return RefreshableJwtAuth.create(vertx, location, refreshInterval);
+    }
+
+    /**
+     * As {@link #fromJwksRefreshing(Vertx, String, Duration)}, applying {@code config} to the initial
+     * key set and to every key set fetched by a subsequent refresh tick.
+     *
+     * <p>The config is captured once, so a refresh cannot silently relax the issuer, audience, or
+     * {@code exp}/{@code nbf}/{@code iat} leeway that guarded the initial key set.
+     *
+     * <p>A startup warning is logged when {@code config.issuer()} or {@code config.audience()}
+     * is {@code null}, as this leaves the token open to substitution attacks.
+     *
+     * @param vertx           the Vert.x instance
+     * @param location        the JWKS document location (classpath, filesystem, or HTTP URL)
+     * @param refreshInterval how often to refresh the JWKS keys
+     * @param config          the validation constraints to apply; must not be {@code null}
+     * @return a future that completes with a self-refreshing JWTAuth instance
+     * @see RefreshableJwtAuth
+     */
+    public static Future<RefreshableJwtAuth> fromJwksRefreshing(
+            Vertx vertx, String location, Duration refreshInterval, JwtValidationConfig config) {
+        return RefreshableJwtAuth.create(vertx, location, refreshInterval, config);
     }
 
     /**
