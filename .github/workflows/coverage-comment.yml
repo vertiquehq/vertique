@@ -1,0 +1,56 @@
+# SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
+# SPDX-License-Identifier: EUPL-1.2
+#
+# Coverage PR comment — the snapshot.yml credential model applied to PR
+# feedback. Required CI stays read-only and merely uploads the coverage-pr
+# artifact (diff-cover.json + aggregate jacoco.xml); this separate,
+# non-required workflow_run workflow holds the pull-request write and upserts
+# one sticky coverage comment per PR.
+#
+# Pull-request code never runs here: workflow_run executes this file from the
+# default branch, the checkout below is the default branch (never
+# workflow_run.head_sha), and the target PR is resolved server-side from the
+# verified run's head SHA — never from artifact content, which the PR author
+# controls. Artifact content is rendered as escaped display text only.
+#
+# Deliberately NOT a required check: a failed comment publication must never
+# erase the required-CI result that was already established.
+
+name: Coverage Comment
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+
+permissions:
+  contents: read
+  actions: read
+  pull-requests: write
+
+# One comment publisher per head SHA; a newer run for the same SHA supersedes.
+concurrency:
+  group: coverage-comment-${{ github.event.workflow_run.head_sha }}
+  cancel-in-progress: true
+
+jobs:
+  comment:
+    name: Post coverage summary
+    # Success and failure both get a comment (a failing gate is exactly when
+    # the numbers matter); cancelled/skipped runs carry no artifact.
+    if: github.event.workflow_run.event == 'pull_request' && (github.event.workflow_run.conclusion == 'success' || github.event.workflow_run.conclusion == 'failure')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # Default ref on workflow_run is the default branch: the script that
+      # runs with the write credential is always the reviewed main version.
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: "22"
+
+      - name: Upsert the PR coverage comment
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/coverage-pr-comment.mjs --repo ${{ github.repository }} --run-id ${{ github.event.workflow_run.id }} --head-sha ${{ github.event.workflow_run.head_sha }}

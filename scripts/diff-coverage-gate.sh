@@ -42,7 +42,11 @@ fi
 
 # Paths outside the aggregate (examples, archetype resources, test sources)
 # carry no coverage data and are excluded rather than reported as uncovered.
+# The JSON report lands next to the aggregate XML; the Coverage Comment
+# workflow turns it into a PR comment. diff-cover writes the report before
+# applying the threshold, so the report exists even when the gate fails.
 "$VENV/bin/diff-cover" "$XML" \
   --compare-branch "$COMPARE_BRANCH" \
   --fail-under "$FAIL_UNDER" \
+  --json-report "$(dirname "$XML")/diff-cover.json" \
   --exclude 'examples/**' 'vertique-archetype/**' 'integration-tests/**' '**/src/test/**' '**/src/it/**'
