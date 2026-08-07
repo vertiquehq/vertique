@@ -7,7 +7,7 @@
 # wildcard interface. Wildcard test binds trigger macOS firewall prompts, expose
 # ephemeral test servers to the network, and have produced CI-only flakes.
 #
-# Four violation patterns are scanned, all heuristic and tuned so that a false
+# Five violation patterns are scanned, all heuristic and tuned so that a false
 # positive never occurs on a compliant tree while a false negative merely leaves
 # one bind for review to catch:
 #
@@ -26,11 +26,22 @@
 #      is treated as absent. False negatives are acceptable here — a chain that
 #      pins its host three lines away simply goes unflagged.
 #   4. A file that calls `setPort(0)` (HttpServerOptions-style dynamic-port
-#      selection) but nowhere calls `.host(`, `setHost(`, or `bindAddress(`.
+#      selection) but nowhere calls `.host(` or `setHost(`. WireMock's
+#      `bindAddress(` is not accepted as a pin here: it cannot pin a Vert.x
+#      options-based server, and pattern 2 owns the WireMock pairing.
 #      Like pattern 2 this is a file-level check, not a windowed one: an
 #      options-based bind may build its config far from the bind site (in
 #      MultipartPartCountLimitIT the `.host(` pin sits 12 lines from the
 #      `setPort(0)` call), so a window would false-positive on compliant files.
+#   5. A setter-position wildcard literal anywhere in a test source:
+#      `.host("0.0.0.0")`, `.setHost("0.0.0.0")`, `.put("host", "0.0.0.0")`, or
+#      `bindAddress("0.0.0.0")` (whitespace variance around the arguments is
+#      allowed). The regexes anchor on the setter-call shapes, so a getter
+#      assertion such as `assertEquals("0.0.0.0", config.host())` never matches
+#      — the literal sits in assertEquals' argument position, not a setter call.
+#      This closes the narrow accidental copy-paste case; the general
+#      value-aware check (a wildcard reaching a bind through a variable or
+#      constant) remains deferred to vertiquehq/vertique-dev#170.
 #
 # Scope: every *.java file under a src/test directory, build output (target/)
 # excluded. Archetype template tests live at
@@ -80,6 +91,12 @@ report_failure() {
 # argument can follow. `.listen(0, "127.0.0.1")` carries a comma before the
 # closing parenthesis and never matches.
 bare_listen_pattern='\.listen\([[:space:]]*0[[:space:]]*\)'
+
+# Pattern 5: a wildcard literal in setter position. The alternation anchors on
+# the setter-call shapes — `.host(`, `.setHost(`, `bindAddress(`, and
+# `.put("host", ...)` — so a getter assertion that merely mentions "0.0.0.0"
+# (e.g. assertEquals("0.0.0.0", config.host())) never matches.
+wildcard_setter_pattern='(\.host|\.setHost|bindAddress)\([[:space:]]*"0\.0\.0\.0"[[:space:]]*\)|\.put\([[:space:]]*"host"[[:space:]]*,[[:space:]]*"0\.0\.0\.0"[[:space:]]*\)'
 
 # Pattern 3 lives inside unpinned_port_selectors below: dynamic-port selectors
 # whose host must be pinned in the same five-line window (the line itself plus
@@ -166,13 +183,21 @@ while IFS= read -r source_file; do
 
     # Pattern 4: an options-based dynamic-port selection anywhere in the file
     # must have its host pinned somewhere in the same file. File-level, like
-    # pattern 2: the pin may legitimately sit far from the bind site.
+    # pattern 2: the pin may legitimately sit far from the bind site. WireMock's
+    # bindAddress( does not count as a pin — it cannot pin a Vert.x
+    # options-based server (pattern 2 owns the WireMock pairing).
     if grep -q 'setPort(0)' "$source_file" \
             && ! grep -q '\.host(' "$source_file" \
-            && ! grep -q 'setHost(' "$source_file" \
-            && ! grep -q 'bindAddress(' "$source_file"; then
-        report_failure "$relative_path calls setPort(0) but never .host(, setHost(, or bindAddress(; pin the loopback interface, e.g. .setHost(\"127.0.0.1\")"
+            && ! grep -q 'setHost(' "$source_file"; then
+        report_failure "$relative_path calls setPort(0) but never .host( or setHost(; pin the loopback interface, e.g. .setHost(\"127.0.0.1\")"
     fi
+
+    # Pattern 5: a setter-position wildcard literal is a violation anywhere,
+    # regardless of what else the file pins.
+    while IFS= read -r match; do
+        [[ -n "$match" ]] || continue
+        report_failure "$relative_path line ${match%%:*} sets the wildcard interface \"0.0.0.0\" in setter position; bind the loopback interface \"127.0.0.1\" instead: $(trim "${match#*:}")"
+    done < <(grep -nE "$wildcard_setter_pattern" "$source_file" || true)
 
     # Pattern 3: dynamic-port selectors with no pinned host in the window.
     while IFS=$'\t' read -r line_number kind offending_line; do

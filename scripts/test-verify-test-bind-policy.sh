@@ -299,8 +299,73 @@ class UnpinnedOptionsPortTest {
 }
 JAVA
 run_case "options-port-unpinned" fail "$fixture_root" \
-    "UnpinnedOptionsPortTest.java calls setPort(0) but never .host(, setHost(, or bindAddress(" \
+    "UnpinnedOptionsPortTest.java calls setPort(0) but never .host( or setHost(" \
     "PinnedFarHostOptionsTest.java"
+
+# Pattern 4 does not accept WireMock's bindAddress( as an options-server pin:
+# a file whose WireMock is correctly pinned but whose setPort(0) options server
+# has no .host(/setHost( pin must still be flagged.
+fixture_reset options-port-wiremock-pinned
+fixture_write_compliant_baseline
+fixture_write_source "vertique-beta/src/test/java/WireMockPinnedOptionsUnpinnedTest.java" <<'JAVA'
+class WireMockPinnedOptionsUnpinnedTest {
+    static final Object wm = wireMockConfig().dynamicPort().bindAddress("127.0.0.1");
+
+    void boot(io.vertx.core.Vertx vertx) {
+        vertx.createHttpServer(new HttpServerOptions().setPort(0))
+                .requestHandler(r -> {})
+                .listen();
+    }
+}
+JAVA
+run_case "options-port-wiremock-pinned" fail "$fixture_root" \
+    "WireMockPinnedOptionsUnpinnedTest.java calls setPort(0) but never .host( or setHost(" \
+    "PinnedFarHostOptionsTest.java"
+
+# Pattern 5: a wildcard literal in setHost( position must be flagged even
+# though the file pins a host (pattern 4 is satisfied — by the wildcard).
+fixture_reset wildcard-sethost
+fixture_write_compliant_baseline
+fixture_write_source "vertique-beta/src/test/java/WildcardSetHostTest.java" <<'JAVA'
+class WildcardSetHostTest {
+    void boot(io.vertx.core.Vertx vertx) {
+        vertx.createHttpServer(new HttpServerOptions().setHost("0.0.0.0").setPort(0))
+                .requestHandler(r -> {})
+                .listen();
+    }
+}
+JAVA
+run_case "wildcard-sethost" fail "$fixture_root" \
+    'WildcardSetHostTest.java line 3 sets the wildcard interface "0.0.0.0" in setter position'
+
+# Pattern 5, JSON form: .put("host", "0.0.0.0") must be flagged even though it
+# satisfies pattern 3's host-in-window requirement.
+fixture_reset wildcard-json-host
+fixture_write_compliant_baseline
+fixture_write_source "vertique-beta/src/test/java/WildcardJsonHostTest.java" <<'JAVA'
+class WildcardJsonHostTest {
+    void config() {
+        new JsonObject().put("http", new JsonObject().put("port", 0).put("host", "0.0.0.0"));
+    }
+}
+JAVA
+run_case "wildcard-json-host" fail "$fixture_root" \
+    'WildcardJsonHostTest.java line 3 sets the wildcard interface "0.0.0.0" in setter position'
+
+# Pattern 5 anchors on setter-call shapes: a getter assertion that mentions
+# "0.0.0.0" in argument position (assertEquals) must not be flagged.
+fixture_reset getter-assertion-compliant
+fixture_write_compliant_baseline
+fixture_write_source "vertique-alpha/src/test/java/WildcardGetterAssertionTest.java" <<'JAVA'
+class WildcardGetterAssertionTest {
+    void verifyDefault(ManagementConfig config) {
+        assertEquals("0.0.0.0", config.host());
+    }
+}
+JAVA
+run_case "getter-assertion-compliant" pass "$fixture_root" \
+    "PASS: 8 test source files honor the loopback bind policy" \
+    "WildcardGetterAssertionTest.java"
 
 # Archetype template tests live under src/main/resources/archetype-resources
 # and must be scanned like any other test source: a violation there must be
