@@ -104,7 +104,7 @@ public final class JwtAuthFactory {
      * for the full startup/shutdown contract.
      *
      * <p>Applies {@code JwtValidationConfig.builder().build()}, so the documented default clock
-     * skew ({@link JwtValidationConfig#clockSkewSeconds()}, 30 seconds) is honored as
+     * skew ({@link JwtValidationConfig#clockSkewSeconds()}) is honored as
      * {@code exp}/{@code nbf}/{@code iat} leeway. Issuer and audience stay unconstrained; use
      * {@link #fromJwks(Vertx, String, JwtValidationConfig)} to constrain them.
      *
@@ -119,7 +119,7 @@ public final class JwtAuthFactory {
         requireNonBlank(location, "location");
 
         String content = readLocation(vertx, location);
-        return createFromJwksContent(vertx, content);
+        return createFromJwksContent(vertx, content, defaultValidation(), false);
     }
 
     /**
@@ -131,7 +131,7 @@ public final class JwtAuthFactory {
      * succeeded future.
      *
      * <p>Applies {@code JwtValidationConfig.builder().build()}, so the documented default clock
-     * skew ({@link JwtValidationConfig#clockSkewSeconds()}, 30 seconds) is honored as
+     * skew ({@link JwtValidationConfig#clockSkewSeconds()}) is honored as
      * {@code exp}/{@code nbf}/{@code iat} leeway. Issuer and audience stay unconstrained; use
      * {@link #fromJwksAsync(Vertx, String, JwtValidationConfig)} to constrain them.
      *
@@ -146,7 +146,7 @@ public final class JwtAuthFactory {
         if (location.startsWith("http://") || location.startsWith("https://")) {
             return vertx.executeBlocking(() -> {
                 String content = fetchHttp(location);
-                return createFromJwksContent(vertx, content);
+                return createFromJwksContent(vertx, content, defaultValidation(), false);
             });
         }
         try {
@@ -178,7 +178,7 @@ public final class JwtAuthFactory {
         Objects.requireNonNull(config, "config");
 
         String content = readLocation(vertx, location);
-        return createFromJwksContent(vertx, content, config);
+        return createFromJwksContent(vertx, content, config, true);
     }
 
     /**
@@ -201,7 +201,7 @@ public final class JwtAuthFactory {
         if (location.startsWith("http://") || location.startsWith("https://")) {
             return vertx.executeBlocking(() -> {
                 String content = fetchHttp(location);
-                return createFromJwksContent(vertx, content, config);
+                return createFromJwksContent(vertx, content, config, true);
             });
         }
         try {
@@ -251,7 +251,7 @@ public final class JwtAuthFactory {
      * <p>Suitable for HS256, HS384, and HS512 algorithms.
      *
      * <p>Applies {@code JwtValidationConfig.builder().build()}, so the documented default clock
-     * skew ({@link JwtValidationConfig#clockSkewSeconds()}, 30 seconds) is honored as
+     * skew ({@link JwtValidationConfig#clockSkewSeconds()}) is honored as
      * {@code exp}/{@code nbf}/{@code iat} leeway. Issuer and audience stay unconstrained; use
      * {@link #fromSymmetricKey(Vertx, String, String, JwtValidationConfig)} to constrain them.
      *
@@ -298,7 +298,7 @@ public final class JwtAuthFactory {
      * ES512, PS256, PS384, and PS512.
      *
      * <p>Applies {@code JwtValidationConfig.builder().build()}, so the documented default clock
-     * skew ({@link JwtValidationConfig#clockSkewSeconds()}, 30 seconds) is honored as
+     * skew ({@link JwtValidationConfig#clockSkewSeconds()}) is honored as
      * {@code exp}/{@code nbf}/{@code iat} leeway. Issuer and audience stay unconstrained; use
      * {@link #fromPublicKey(Vertx, String, String, JwtValidationConfig)} to constrain them.
      *
@@ -374,34 +374,13 @@ public final class JwtAuthFactory {
     }
 
     /**
-     * Parses a JWKS document and creates a {@link JWTAuth} instance applying the framework's
-     * default validation constraints. No missing issuer/audience warning is logged: the caller
-     * did not ask for validation, so only the default leeway is being supplied.
-     *
-     * @param vertx   the Vert.x instance
-     * @param content the raw JWKS JSON string
-     * @return a configured {@link JWTAuth} instance
-     */
-    private static JWTAuth createFromJwksContent(Vertx vertx, String content) {
-        return createFromJwksContent(vertx, content, defaultValidation(), false);
-    }
-
-    /**
-     * Parses a JWKS document and creates a {@link JWTAuth} instance applying caller-supplied
-     * token validation constraints, warning when issuer or audience is left unset.
-     *
-     * @param vertx   the Vert.x instance
-     * @param content the raw JWKS JSON string
-     * @param config  the validation constraints to apply; must not be {@code null}
-     * @return a configured {@link JWTAuth} instance
-     */
-    private static JWTAuth createFromJwksContent(Vertx vertx, String content, JwtValidationConfig config) {
-        return createFromJwksContent(vertx, content, config, true);
-    }
-
-    /**
      * Parses a JWKS document and creates a {@link JWTAuth} instance, applying token validation
      * constraints from the supplied {@link JwtValidationConfig}.
+     *
+     * <p>Callers pass {@code warnOnMissingConstraints = false} together with
+     * {@link #defaultValidation()} when the framework — not the application — supplied the config:
+     * such a caller never asked for issuer/audience validation, so warning about their absence
+     * would be noise. Caller-supplied configs pass {@code true}.
      *
      * @param vertx                    the Vert.x instance
      * @param content                  the raw JWKS JSON string
@@ -453,21 +432,25 @@ public final class JwtAuthFactory {
      * @return a configured {@link JWTOptions} instance
      */
     private static JWTOptions buildJwtOptions(JwtValidationConfig config, boolean warnOnMissingConstraints) {
-        if (warnOnMissingConstraints && config.issuer() == null) {
-            log.warn("JwtValidationConfig: issuer is not set. Tokens from any issuer will be accepted. "
-                    + "Set 'issuer' in production to prevent token substitution attacks.");
-        }
-        if (warnOnMissingConstraints
-                && (config.audience() == null || config.audience().isEmpty())) {
-            log.warn("JwtValidationConfig: audience is not set. Tokens with any audience will be accepted. "
-                    + "Set 'audience' in production to prevent token substitution attacks.");
+        boolean issuerUnset = config.issuer() == null;
+        boolean audienceUnset = config.audience() == null || config.audience().isEmpty();
+
+        if (warnOnMissingConstraints) {
+            if (issuerUnset) {
+                log.warn("JwtValidationConfig: issuer is not set. Tokens from any issuer will be accepted. "
+                        + "Set 'issuer' in production to prevent token substitution attacks.");
+            }
+            if (audienceUnset) {
+                log.warn("JwtValidationConfig: audience is not set. Tokens with any audience will be accepted. "
+                        + "Set 'audience' in production to prevent token substitution attacks.");
+            }
         }
 
         JWTOptions jwtOptions = new JWTOptions().setLeeway(config.clockSkewSeconds());
-        if (config.issuer() != null) {
+        if (!issuerUnset) {
             jwtOptions.setIssuer(config.issuer());
         }
-        if (config.audience() != null && !config.audience().isEmpty()) {
+        if (!audienceUnset) {
             jwtOptions.setAudience(config.audience());
         }
         return jwtOptions;
