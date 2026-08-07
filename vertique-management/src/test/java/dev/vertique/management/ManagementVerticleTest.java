@@ -141,8 +141,22 @@ class ManagementVerticleTest {
      * @return a future completing with the parsed response body
      */
     private Future<JsonObject> request(Vertx vertx, int port, String path) {
+        return request(vertx, port, "localhost", path);
+    }
+
+    /**
+     * Sends a GET request to the management server on an explicit host and returns a JsonObject
+     * with an extra {@code _statusCode} field carrying the HTTP response status.
+     *
+     * @param vertx the Vert.x instance
+     * @param port  the management server port
+     * @param host  the host to connect to
+     * @param path  the request path
+     * @return a future completing with the parsed response body
+     */
+    private Future<JsonObject> request(Vertx vertx, int port, String host, String path) {
         return vertx.createHttpClient()
-                .request(HttpMethod.GET, port, "localhost", path)
+                .request(HttpMethod.GET, port, host, path)
                 .compose(req -> req.send())
                 .compose(resp -> resp.body().map(body -> {
                     JsonObject json = new JsonObject(body);
@@ -357,6 +371,55 @@ class ManagementVerticleTest {
                         .compose(req -> req.send())
                         .onComplete(ctx.failing(cause -> ctx.completeNow()));
             }));
+        }
+    }
+
+    // --- Host binding ---
+
+    @Nested
+    @DisplayName("HostBinding")
+    class HostBinding {
+
+        @Test
+        @DisplayName("host defaults to the wildcard bind address")
+        void hostDefaultsToWildcard() {
+            ManagementConfig config = ManagementConfig.builder().port(0).build();
+
+            assertEquals("0.0.0.0", config.host());
+        }
+
+        @Test
+        @DisplayName("pinned loopback host serves health endpoint on 127.0.0.1")
+        void pinnedHostServesOnLoopback(Vertx vertx, VertxTestContext ctx) {
+            ManagementConfig config =
+                    ManagementConfig.builder().port(0).host("127.0.0.1").build();
+            ManagementVerticle verticle = new ManagementVerticle(Set.of(), Set.of(), config, Set.of());
+
+            vertx.deployVerticle(verticle)
+                    .compose(id -> {
+                        int boundPort =
+                                (int) vertx.sharedData().getLocalMap("vertique").get("management.port");
+                        return request(vertx, boundPort, "127.0.0.1", "/health/live");
+                    })
+                    .onComplete(ctx.succeeding(json -> {
+                        ctx.verify(() -> {
+                            assertEquals(200, json.getInteger("_statusCode"));
+                            assertEquals("UP", json.getString("status"));
+                        });
+                        ctx.completeNow();
+                    }));
+        }
+
+        @Test
+        @DisplayName("unresolvable host fails deployment")
+        void invalidHostFailsDeployment(Vertx vertx, VertxTestContext ctx) {
+            ManagementConfig config = ManagementConfig.builder()
+                    .port(0)
+                    .host("999.invalid.example")
+                    .build();
+            ManagementVerticle verticle = new ManagementVerticle(Set.of(), Set.of(), config, Set.of());
+
+            vertx.deployVerticle(verticle).onComplete(ctx.failing(cause -> ctx.completeNow()));
         }
     }
 
