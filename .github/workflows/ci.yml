@@ -61,6 +61,19 @@ jobs:
         if: github.event_name == 'pull_request'
         run: bash scripts/diff-coverage-gate.sh
 
+      # Consumed by the non-required Coverage Comment workflow. Uploaded even
+      # when the gate fails — a failing gate is exactly when the PR comment
+      # matters — and needs no write permission and no secret.
+      - name: Upload PR coverage report
+        if: github.event_name == 'pull_request' && !cancelled()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage-pr
+          path: |
+            vertique-coverage-report/target/site/jacoco-aggregate/jacoco.xml
+            vertique-coverage-report/target/site/jacoco-aggregate/diff-cover.json
+          if-no-files-found: ignore
+
       # Consumed by the non-required Coverage Trend workflow. Uploading needs
       # no write permission and no secret.
       - name: Upload aggregate coverage report
