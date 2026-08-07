@@ -58,13 +58,24 @@ public final class DefaultIdentityReconstruction implements IdentityReconstructi
 
     /**
      * Stable framework authority-id for a deferred reconstruction's scheduling
-     * {@link DelegationContext} (the scheduling relationship is a framework-mediated grant, never an
-     * origin summary, which is provenance rather than an authority-grant id), and the fallback
-     * substituted in {@link #toDelegationContext(DelegationSummary)} when a captured
-     * {@link DelegationSummary} carries no grant identifier — so a reconstructed
-     * {@link DelegationContext} always has a non-blank {@link DelegationContext#authorityId()}.
+     * {@link DelegationContext} — the scheduling relationship is a framework-mediated grant, never
+     * an origin summary, which is provenance rather than an authority-grant id.
      */
-    private static final String NO_AUTHORITY_ID_MARKER = "deferred-execution";
+    private static final String DEFERRED_EXECUTION_AUTHORITY_ID = "deferred-execution";
+
+    /**
+     * Self-describing fallback substituted in {@link #toDelegationContext(DelegationSummary)} when a
+     * captured {@link DelegationSummary} carries no grant identifier, so a reconstructed
+     * {@link DelegationContext} always has a non-blank {@link DelegationContext#authorityId()}
+     * (which {@link DelegationSummary#authorityId()}, being {@link Optional}, does not guarantee).
+     *
+     * <p>Deliberately <strong>not</strong> {@link #DEFERRED_EXECUTION_AUTHORITY_ID}: reusing that
+     * literal would leave a resumed grant-backed delegation (say {@code kind="psd2-pis"}) whose
+     * captured summary had no grant id indistinguishable, to a consumer, from a real grant whose id
+     * genuinely is {@code "deferred-execution"}. Mirrors
+     * {@code DefaultCapturedAuthorityReconstruction}'s constant.
+     */
+    private static final String ABSENT_AUTHORITY_ID_MARKER = "no-captured-authority-id";
 
     private final IdentitySnapshotCodec codec;
 
@@ -160,7 +171,7 @@ public final class DefaultIdentityReconstruction implements IdentityReconstructi
         PrincipalRef subjectOfRecord = content.subject().orElse(content.actor());
         DelegationContext delegation = new DelegationContext(
                 DelegationContext.DEFERRED_EXECUTION_KIND,
-                NO_AUTHORITY_ID_MARKER,
+                DEFERRED_EXECUTION_AUTHORITY_ID,
                 Optional.empty(),
                 capturedDelegationAttributes(content));
 
@@ -307,13 +318,15 @@ public final class DefaultIdentityReconstruction implements IdentityReconstructi
 
     /**
      * Converts a snapshot's {@link DelegationSummary} back into a full {@link DelegationContext},
-     * with no reason and no attributes (the summary never carried them).
+     * with no reason and no attributes (the summary never carried them). A summary carrying no
+     * grant identifier yields {@link #ABSENT_AUTHORITY_ID_MARKER}, which states the absence rather
+     * than fabricating an id a consumer could mistake for a real grant.
      *
      * @param summary the delegation summary to expand
      * @return the reconstructed {@link DelegationContext}
      */
     private static DelegationContext toDelegationContext(DelegationSummary summary) {
-        String authorityId = summary.authorityId().orElse(NO_AUTHORITY_ID_MARKER);
+        String authorityId = summary.authorityId().orElse(ABSENT_AUTHORITY_ID_MARKER);
         return new DelegationContext(summary.kind(), authorityId, Optional.empty(), Map.of());
     }
 }

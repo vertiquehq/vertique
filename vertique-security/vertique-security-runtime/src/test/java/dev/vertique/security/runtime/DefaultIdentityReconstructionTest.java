@@ -63,6 +63,15 @@ class DefaultIdentityReconstructionTest {
     private static final PrincipalRef SUBJECT =
             new PrincipalRef(PrincipalType.USER, "user-42", Map.of("realm", "acme-realm"));
     private static final DelegationSummary DELEGATION = new DelegationSummary("on-behalf-of", Optional.of("grant-7"));
+
+    /**
+     * The same grant-backed scheme captured <em>without</em> a grant identifier — the shape that
+     * drives {@code DefaultIdentityReconstruction.toDelegationContext}'s absent-id fallback, which
+     * {@link #DELEGATION} (always carrying an id) never reaches.
+     */
+    private static final DelegationSummary UNIDENTIFIED_DELEGATION =
+            new DelegationSummary("on-behalf-of", Optional.empty());
+
     private static final ClientRef CLIENT = new ClientRef("client-abc", "jwt-azp", Map.of("app", "mobile"));
     private static final SnapshotCarrierBinding CARRIER =
             new SnapshotCarrierBinding("carrier-1", new DurableTarget("outbox", "orders", Optional.empty()));
@@ -95,6 +104,36 @@ class DefaultIdentityReconstructionTest {
                 ctx.identity().delegation().get().authorityId());
         assertTrue(ctx.identity().client().isPresent());
         assertEquals(CLIENT, ctx.identity().client().get());
+    }
+
+    @Test
+    @DisplayName("resumeAsPrincipal states the absence of a captured grant id rather than reusing the "
+            + "deferred-execution marker")
+    void resumeStatesAbsentCapturedAuthorityId() {
+        IdentitySnapshotCodec codec = new IdentitySnapshotCodec(new SnapshotHmac(KEYSET, ACTIVE_KEY_ID));
+        DefaultIdentityReconstruction reconstruction = new DefaultIdentityReconstruction(codec);
+
+        IdentitySnapshot snapshot = signedSnapshot(
+                codec,
+                ACTOR,
+                Optional.of(SUBJECT),
+                Optional.of(UNIDENTIFIED_DELEGATION),
+                Optional.of(CLIENT),
+                List.of());
+
+        SecurityContext resumed = reconstruction.resumeAsPrincipal(snapshot, matching(snapshot));
+
+        assertTrue(resumed.identity().delegation().isPresent());
+        DelegationContext delegation = resumed.identity().delegation().orElseThrow();
+        assertEquals(
+                UNIDENTIFIED_DELEGATION.kind(),
+                delegation.kind(),
+                "the captured delegation scheme must be preserved verbatim");
+        assertEquals(
+                "no-captured-authority-id",
+                delegation.authorityId(),
+                "a Mode-1 resume whose captured summary carried no grant id must state the absence, never "
+                        + "reuse the deferred-execution literal a consumer could mistake for a real grant id");
     }
 
     @Test

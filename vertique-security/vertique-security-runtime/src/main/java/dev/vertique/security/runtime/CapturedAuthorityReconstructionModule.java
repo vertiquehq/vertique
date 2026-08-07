@@ -32,16 +32,23 @@ import jakarta.inject.Singleton;
  * degraded or empty implementation. An application enables Mode 3 by explicitly including this
  * module in its component's module list, which is visible at code review.
  *
- * <p><strong>The audited seam is structurally unavoidable.</strong> This module deliberately
+ * <p><strong>No Dagger binding bypasses the audited seam.</strong> This module deliberately
  * exposes <em>only</em> {@link CapturedAuthorityActivation} — it declares no {@code @Provides}
  * (and {@link CapturedAuthorityReconstruction} declares no {@code @Inject} constructor) for the
  * raw {@link CapturedAuthorityReconstruction} seam anywhere in the framework, so there is no
  * injectable binding for it to obtain and bypass the activation-audit event with. The
  * {@link DefaultCapturedAuthorityReconstruction} collaborator {@link #capturedAuthorityActivation}
  * constructs is a purely internal implementation detail of that one provider, never itself a
- * Dagger binding — so the only way any framework or application code can put captured authority
- * into effect is through {@link CapturedAuthorityActivation}, which always emits and awaits the
- * activation-audit event before resolving.
+ * Dagger binding — so the only way framework or application code can <em>inject</em> a way to put
+ * captured authority into effect is {@link CapturedAuthorityActivation}, which always emits and
+ * awaits the activation-audit event before resolving.
+ *
+ * <p>The guarantee is scoped to injection, not to the language. {@link
+ * CapturedAuthorityReconstruction} is a public interface and {@link CapturedAuthorityActivation}'s
+ * constructor is public, so application code that deliberately hand-wires its own implementation —
+ * or its own activation instance over one — reconstructs without emitting the event. <strong>No
+ * Dagger binding can bypass the audited seam; a deliberate hand-wired instantiation of the public
+ * constructor can</strong>, and is visible at code review exactly like installing this module is.
  *
  * <p>This module must always be installed alongside {@link IdentitySnapshotCarriageModule} (for
  * the shared, config-backed {@link IdentitySnapshotCodec} and {@link IdentitySnapshotConfig}) and
@@ -96,9 +103,10 @@ public abstract class CapturedAuthorityReconstructionModule {
      * then constructs the {@link DefaultCapturedAuthorityReconstruction} collaborator internally
      * and hands it, along with the injected {@link SecurityEventEmitter}, to a new {@link
      * CapturedAuthorityActivation}. The raw {@link CapturedAuthorityReconstruction} instance is
-     * never itself exposed as a Dagger binding — see the class javadoc's "The audited seam is
-     * structurally unavoidable" note — so there is no way to reach it other than through the
-     * emit-and-await {@link CapturedAuthorityActivation} seam.
+     * never itself exposed as a Dagger binding — see the class javadoc's "No Dagger binding
+     * bypasses the audited seam" note — so no <em>injectable</em> route reaches it other than the
+     * emit-and-await {@link CapturedAuthorityActivation} seam; a deliberate hand-wired
+     * instantiation of the public {@link CapturedAuthorityReconstruction} interface still can.
      *
      * @param codec    the snapshot codec used to re-verify a snapshot's integrity before
      *                 reconstruction; must not be {@code null}
