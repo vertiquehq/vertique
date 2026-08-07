@@ -20,6 +20,7 @@ import dev.vertique.rest.security.HolderBackedSecurityRuntime;
 import dev.vertique.rest.security.IdentityResolutionMiddleware;
 import dev.vertique.rest.security.RestAuthenticationEvidence;
 import dev.vertique.rest.security.SecurityPolicyEnforcer;
+import dev.vertique.rest.security.VertxAuthorizationImporter;
 import dev.vertique.security.AuthenticationEvidence;
 import dev.vertique.security.DefaultAuthMethod;
 import dev.vertique.security.PrincipalRef;
@@ -44,6 +45,9 @@ import io.vertx.core.http.WebSocketClient;
 import io.vertx.core.http.WebSocketConnectOptions;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.auth.User;
+import io.vertx.ext.auth.authorization.Authorization;
+import io.vertx.ext.auth.authorization.AuthorizationProvider;
+import io.vertx.ext.auth.authorization.RoleBasedAuthorization;
 import io.vertx.ext.web.Router;
 import io.vertx.ext.web.RoutingContext;
 import io.vertx.ext.web.impl.UserContextInternal;
@@ -115,6 +119,15 @@ public class WebSocketSecurityPipelineIT {
      */
     private static ChannelIdentityManager channelManager;
 
+    /** Shared security runtime — reused by the {@link WebSocketMount.Factory} parity tests. */
+    private static HolderBackedSecurityRuntime securityRuntime;
+
+    /** Shared no-observer event emitter — reused by the {@link WebSocketMount.Factory} parity tests. */
+    private static SecurityEventEmitter emitter;
+
+    /** Shared stub {@link ContextHolder} — reused by the {@link WebSocketMount.Factory} parity tests. */
+    private static ContextHolder contextHolder;
+
     // --- Token format constants used by the stub auth handler ---
 
     /**
@@ -135,6 +148,12 @@ public class WebSocketSecurityPipelineIT {
      */
     static final String TOKEN_BOB_USER = "bob|user";
 
+    /**
+     * A bearer token for user "alice" with only the {@code viewer} role (not {@code team-lead}).
+     * Format: {@code <sub>|<csv-roles>}
+     */
+    static final String TOKEN_ALICE_VIEWER = "alice|viewer";
+
     // --- BeforeAll / AfterAll ---
 
     /**
@@ -154,16 +173,16 @@ public class WebSocketSecurityPipelineIT {
         wsClient = vertx.createWebSocketClient();
 
         // --- Security runtime (ContextValues-backed, shared across all tests) ---
-        HolderBackedSecurityRuntime securityRuntime = new HolderBackedSecurityRuntime((sc, secure) -> null);
+        securityRuntime = new HolderBackedSecurityRuntime((sc, secure) -> null);
 
         // --- Security event emitter (no observers needed in tests) ---
-        SecurityEventEmitter emitter = new SecurityEventEmitter(Set.of());
+        emitter = new SecurityEventEmitter(Set.of());
 
         // --- ContextHolder that provides a stub CorrelationContext so the manager can emit events ---
         CorrelationContextFactory correlationFactory = new CorrelationContextFactory(Optional.empty());
         CorrelationContext stubCorrelation = correlationFactory.create(
                 new CorrelationIdentifier("test-req", "test"), new CorrelationIdentifier("test-cor", "test"));
-        ContextHolder contextHolder = new ContextHolder() {
+        contextHolder = new ContextHolder() {
             @Override
             @SuppressWarnings("unchecked")
             public <T> Optional<T> current(Class<T> type) {
@@ -445,6 +464,223 @@ public class WebSocketSecurityPipelineIT {
         }));
     }
 
+    // --- Factory parity tests (Vert.x authorization import) ---
+
+    /**
+     * Scenario 5a — WebSocket parity of the Vert.x authorization import: a
+     * {@link WebSocketMount.Factory} built via the import-aware constructor with a present
+     * {@link VertxAuthorizationImporter} must thread the importer into the WebSocket identity
+     * pipeline, so a provider-granted {@code team-lead} role authorizes an upgrade to a
+     * {@code @RolesAllowed("team-lead")} endpoint even though the caller's principal lacks the role.
+     *
+     * <p>Mirrors {@code VertxAuthorizationImportIT#providerGrantedRoleAuthorizesConstrainedRoute}
+     * for the OpenAPI pipeline.
+     *
+     * @param vertx the Vert.x instance
+     * @param ctx   the test context
+     */
+    @Test
+    @DisplayName("provider-granted role authorizes a constrained WS endpoint via the import-aware factory")
+    void providerGrantedRoleAuthorizesConstrainedWebSocketEndpoint(Vertx vertx, VertxTestContext ctx) {
+        WebSocketMount.Factory factory = importAwareFactory(Optional.of(new VertxAuthorizationImporter(
+                Set.of(grantingProvider("teams", RoleBasedAuthorization.create("team-lead"))))));
+
+        startTeamServer(vertx, factory)
+                .onComplete(ctx.succeeding(srv -> connectWithToken(srv.actualPort(), "/ws/team", TOKEN_ALICE_VIEWER)
+                        .onComplete(ar -> {
+                            if (ar.failed()) {
+                                srv.close()
+                                        .onComplete(v -> ctx.failNow(new AssertionError(
+                                                "handshake must succeed: the wired importer grants team-lead "
+                                                        + "through provider 'teams'",
+                                                ar.cause())));
+                                return;
+                            }
+                            ar.result().close().onComplete(v -> srv.close().onComplete(v2 -> ctx.completeNow()));
+                        })));
+    }
+
+    /**
+     * Scenario 5b — negative control: the same import-aware factory built with
+     * {@link Optional#empty()} as the importer must reject the same upgrade exactly as today —
+     * the principal alone lacks {@code team-lead}, and no provider is ever consulted.
+     *
+     * @param vertx the Vert.x instance
+     * @param ctx   the test context
+     */
+    @Test
+    @DisplayName("without an importer, WS authorization is unchanged: constrained upgrade rejected")
+    void withoutImporterWebSocketAuthorizationUnchanged(Vertx vertx, VertxTestContext ctx) {
+        WebSocketMount.Factory factory = importAwareFactory(Optional.empty());
+
+        startTeamServer(vertx, factory).onComplete(ctx.succeeding(srv -> connectWithToken(
+                        srv.actualPort(), "/ws/team", TOKEN_ALICE_VIEWER)
+                .onComplete(ar -> {
+                    if (ar.succeeded()) {
+                        ar.result().close().onComplete(v -> srv.close()
+                                .onComplete(v2 -> ctx.failNow(
+                                        new AssertionError("handshake must be rejected when no importer is wired "
+                                                + "and the principal lacks team-lead"))));
+                        return;
+                    }
+                    srv.close().onComplete(v -> {
+                        ctx.verify(() -> assertNotNull(ar.cause(), "handshake rejection must carry a non-null cause"));
+                        ctx.completeNow();
+                    });
+                })));
+    }
+
+    /**
+     * Scenario 5c — retention control: a factory built via the pre-existing injected constructor
+     * (no importer parameter) with the {@code teams} provider contributed through the
+     * {@code authorizationProviders} set must keep today's behavior: the provider set does not feed
+     * the claims pipeline, so the constrained upgrade is rejected.
+     *
+     * @param vertx the Vert.x instance
+     * @param ctx   the test context
+     */
+    @Test
+    @DisplayName("legacy factory constructor still compiles and behaves: provider set alone does not authorize")
+    void legacyFactoryConstructorStillCompilesAndBehaves(Vertx vertx, VertxTestContext ctx) {
+        WebSocketMount.Factory factory =
+                legacyFactory(Set.of(grantingProvider("teams", RoleBasedAuthorization.create("team-lead"))));
+
+        startTeamServer(vertx, factory).onComplete(ctx.succeeding(srv -> connectWithToken(
+                        srv.actualPort(), "/ws/team", TOKEN_ALICE_VIEWER)
+                .onComplete(ar -> {
+                    if (ar.succeeded()) {
+                        ar.result().close().onComplete(v -> srv.close()
+                                .onComplete(v2 -> ctx.failNow(
+                                        new AssertionError("handshake must be rejected: without the importer, the "
+                                                + "authorizationProviders set must not grant roles"))));
+                        return;
+                    }
+                    srv.close().onComplete(v -> {
+                        ctx.verify(() -> assertNotNull(ar.cause(), "handshake rejection must carry a non-null cause"));
+                        ctx.completeNow();
+                    });
+                })));
+    }
+
+    // --- Factory parity helpers ---
+
+    /**
+     * Builds a {@link WebSocketMount.Factory} via the import-aware constructor (the 16 injected
+     * parameters plus the trailing optional {@link VertxAuthorizationImporter}), wired with the
+     * shared stub security pipeline used by this IT's registrar-based tests.
+     *
+     * @param importer the optional Vert.x authorization importer to thread into the factory
+     * @return the configured factory
+     */
+    private static WebSocketMount.Factory importAwareFactory(Optional<VertxAuthorizationImporter> importer) {
+        return new WebSocketMount.Factory(
+                new WebSocketMessageCodec(),
+                Set.of(),
+                Set.<SecurityIdentityResolver>of(new EvidenceBasedIdentityResolver()),
+                Optional.of(securityRuntime),
+                Optional.<dev.vertique.rest.security.SecurityClaimMapper>of(new DefaultSecurityClaimMapper()),
+                contextHolder,
+                emitter,
+                Optional.<dev.vertique.rest.security.AuthorizationDecisionPoint>of(new RoleCheckDecisionPoint()),
+                Optional.empty(),
+                Set.<RouteAuthHandler>of(new StubBearerAuthHandler()),
+                Set.of(),
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty(),
+                importer);
+    }
+
+    /**
+     * Builds a {@link WebSocketMount.Factory} via the pre-existing injected constructor (exact
+     * current 16-parameter signature — no importer parameter), with the given providers contributed
+     * through the {@code authorizationProviders} set.
+     *
+     * @param providers the Vert.x authorization providers passed to the enforcer's provider set
+     * @return the configured factory
+     */
+    private static WebSocketMount.Factory legacyFactory(Set<AuthorizationProvider> providers) {
+        return new WebSocketMount.Factory(
+                new WebSocketMessageCodec(),
+                providers,
+                Set.<SecurityIdentityResolver>of(new EvidenceBasedIdentityResolver()),
+                Optional.of(securityRuntime),
+                Optional.<dev.vertique.rest.security.SecurityClaimMapper>of(new DefaultSecurityClaimMapper()),
+                contextHolder,
+                emitter,
+                Optional.<dev.vertique.rest.security.AuthorizationDecisionPoint>of(new RoleCheckDecisionPoint()),
+                Optional.empty(),
+                Set.<RouteAuthHandler>of(new StubBearerAuthHandler()),
+                Set.of(),
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty());
+    }
+
+    /**
+     * Creates a mount for {@link TeamEndpoint} from the given factory, mounts its sub-router behind
+     * a {@link RequestContextLifecycle}, and starts an HTTP server bound to {@code 127.0.0.1:0}.
+     *
+     * <p>The caller owns the returned server and must close it in every test exit path.
+     *
+     * @param vertx   the Vert.x instance
+     * @param factory the factory to create the WebSocket mount from
+     * @return a future completing with the started server
+     */
+    private static Future<HttpServer> startTeamServer(Vertx vertx, WebSocketMount.Factory factory) {
+        WebSocketMount mount = factory.create("/*", Set.<Object>of(new TeamEndpoint()));
+        return mount.createRouter(vertx).compose(wsRouter -> {
+            Router root = Router.router(vertx);
+            root.route("/*").handler(new RequestContextLifecycle());
+            root.route("/*").subRouter(wsRouter);
+            return vertx.createHttpServer().requestHandler(root).listen(0, "127.0.0.1");
+        });
+    }
+
+    /**
+     * Opens a WebSocket connection against an explicit per-test server port, carrying the given
+     * bearer token in the Authorization header.
+     *
+     * @param serverPort the per-test server's actual port
+     * @param path       the path to connect to
+     * @param token      the bearer token value (the raw token, without the "Bearer " prefix)
+     * @return a future completing with the connected WebSocket
+     */
+    private static Future<WebSocket> connectWithToken(int serverPort, String path, String token) {
+        return wsClient.connect(new WebSocketConnectOptions()
+                .setHost("127.0.0.1")
+                .setPort(serverPort)
+                .setURI(path)
+                .addHeader("Authorization", "Bearer " + token));
+    }
+
+    /**
+     * Creates a stub {@link AuthorizationProvider} that grants the given authorization under the
+     * given provider id.
+     *
+     * @param id    the provider id
+     * @param grant the authorization to put into the provider's bucket
+     * @return the stub provider
+     */
+    private static AuthorizationProvider grantingProvider(String id, Authorization grant) {
+        return new AuthorizationProvider() {
+            @Override
+            public String getId() {
+                return id;
+            }
+
+            @Override
+            public Future<Void> getAuthorizations(User user) {
+                user.authorizations().put(id, Set.of(grant));
+                return Future.succeededFuture();
+            }
+        };
+    }
+
     // --- Endpoints ---
 
     /**
@@ -516,6 +752,26 @@ public class WebSocketSecurityPipelineIT {
         @OnOpen
         public void onOpen(WebSocketSession session, SecurityContext sc) {
             onOpenSc.set(sc);
+        }
+    }
+
+    /**
+     * WebSocket endpoint at {@code /ws/team} that requires the {@code team-lead} role. Used by the
+     * factory parity tests: the connecting principal never carries {@code team-lead} directly, so
+     * the upgrade succeeds only when the Vert.x authorization import contributes the role.
+     */
+    @WebSocketEndpoint("/ws/team")
+    @RolesAllowed("team-lead")
+    static class TeamEndpoint {
+
+        /**
+         * Invoked on connection open — no-op; the parity tests assert on the handshake outcome only.
+         *
+         * @param session the WebSocket session
+         */
+        @OnOpen
+        public void onOpen(WebSocketSession session) {
+            // parity tests assert on handshake outcome only
         }
     }
 

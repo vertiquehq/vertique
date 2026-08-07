@@ -15,6 +15,7 @@ import dev.vertique.rest.security.AuthorizationDecisionPoint;
 import dev.vertique.rest.security.IdentityResolutionMiddleware;
 import dev.vertique.rest.security.SecurityClaimMapper;
 import dev.vertique.rest.security.SecurityPolicyEnforcer;
+import dev.vertique.rest.security.VertxAuthorizationImporter;
 import dev.vertique.security.authz.ActionRegistry;
 import dev.vertique.security.authz.AuthorizationPolicy;
 import dev.vertique.security.authz.Authorizer;
@@ -304,6 +305,79 @@ public class WebSocketMount implements RouterMount {
                 this.identityResolutionMiddleware = null;
                 this.channelAdapter = null;
             }
+        }
+
+        /**
+         * Creates the factory with all shared framework services plus the optional Vert.x
+         * authorization importer.
+         *
+         * <p>Identical to the injected constructor above for the first sixteen parameters; the
+         * additional {@code vertxAuthorizationImporter} parameter mirrors the seam
+         * {@link IdentityResolutionMiddleware}'s canonical constructor exposes, so WebSocket
+         * upgrades participate in the Vert.x authorization import the same way OpenAPI routes do
+         * when the application opts in via
+         * {@link dev.vertique.rest.security.VertxAuthorizationImportModule}.
+         *
+         * @param messageCodec                   codec for JSON message serialization/deserialization
+         * @param authorizationProviders         set of authorization providers; empty when security
+         *                                       module is absent
+         * @param identityResolvers              set of identity resolvers; empty when security
+         *                                       module is absent
+         * @param securityRuntime                optional security runtime; present when the security
+         *                                       module is included
+         * @param claimMapper                    optional custom claim mapper for token claim
+         *                                       extraction
+         * @param contextHolder                  the context holder for reading ambient correlation
+         * @param securityEventEmitter           the security event emitter for lifecycle events
+         * @param authorizationDecisionPoint     optional app-provided async authorization decision
+         *                                       point; takes precedence over the sync policy
+         * @param authorizationPolicy            optional app-provided sync authorization policy
+         * @param routeAuthHandlers              set of registered route-level authentication handlers
+         * @param requestInterceptors            HTTP-level request interceptors
+         * @param beanValidator                  optional Bean Validation engine
+         * @param objectProcessor                optional canonicalization/sanitization processor
+         * @param channelIdentityManager         optional channel identity manager
+         * @param authorizer                     optional core action {@link Authorizer}
+         * @param actionRegistry                 optional framework {@link ActionRegistry}
+         * @param vertxAuthorizationImporter     optional Vert.x authorization importer; present only
+         *                                       when the application opts in by including
+         *                                       {@link dev.vertique.rest.security.VertxAuthorizationImportModule}
+         */
+        public Factory(
+                WebSocketMessageCodec messageCodec,
+                Set<AuthorizationProvider> authorizationProviders,
+                Set<dev.vertique.security.resolver.SecurityIdentityResolver> identityResolvers,
+                Optional<SecurityRuntime> securityRuntime,
+                Optional<SecurityClaimMapper> claimMapper,
+                dev.vertique.core.context.ContextHolder contextHolder,
+                dev.vertique.security.runtime.events.SecurityEventEmitter securityEventEmitter,
+                Optional<AuthorizationDecisionPoint> authorizationDecisionPoint,
+                Optional<AuthorizationPolicy> authorizationPolicy,
+                Set<RouteAuthHandler> routeAuthHandlers,
+                Set<RequestInterceptor> requestInterceptors,
+                Optional<BeanValidator> beanValidator,
+                Optional<InputObjectProcessor> objectProcessor,
+                Optional<ChannelIdentityManager> channelIdentityManager,
+                Optional<Authorizer> authorizer,
+                Optional<ActionRegistry> actionRegistry,
+                Optional<VertxAuthorizationImporter> vertxAuthorizationImporter) {
+            this(
+                    messageCodec,
+                    authorizationProviders,
+                    identityResolvers,
+                    securityRuntime,
+                    claimMapper,
+                    contextHolder,
+                    securityEventEmitter,
+                    authorizationDecisionPoint,
+                    authorizationPolicy,
+                    routeAuthHandlers,
+                    requestInterceptors,
+                    beanValidator,
+                    objectProcessor,
+                    channelIdentityManager,
+                    authorizer,
+                    actionRegistry);
         }
 
         /**
