@@ -228,7 +228,7 @@ The source config subtree is resolved in pass 1 (tree-only), so `endpoint` and `
 
 ## Testing
 
-The IT (`AzureKeyVaultPropertySourceIT`) uses [Lowkey Vault](https://github.com/nagyesta/lowkey-vault) (`nagyesta/lowkey-vault:7.3.0` via Testcontainers) as the Azure Key Vault test double. Lowkey Vault serves HTTPS with a self-signed certificate on port 8443.
+The IT (`AzureKeyVaultPropertySourceIT`) uses [Lowkey Vault](https://github.com/nagyesta/lowkey-vault) (`nagyesta/lowkey-vault:7.3.0-ubi10-minimal` via Testcontainers) as the Azure Key Vault test double. Lowkey Vault serves HTTPS with a self-signed certificate on port 8443.
 
 The production `SdkKeyVaultGateway.buildClient(AzureConnectionSettings)` path (which uses `DefaultAzureCredential` / `ManagedIdentityCredential` with real TLS) is **not** exercised against Lowkey Vault by design — those credential types require a real Azure endpoint or a local CLI session. Instead, the IT injects a pre-built `SecretClient` (with the container's trust store and dummy basic auth) via the package-private `SdkKeyVaultGateway(String, SecretClient)` test-seam constructor and the `AzureKeyVaultPropertySourceFactory(BiFunction)` gateway-factory seam.
 
