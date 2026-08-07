@@ -3,16 +3,21 @@
 # SPDX-License-Identifier: EUPL-1.2
 set -euo pipefail
 
-# Decide whether a pull request touches only documentation, in which case the
-# expensive Build and Test job is skipped (a job skipped via `if:` reports its
-# required check as satisfied). The workflow delegates here so the decision is
-# locally runnable and covered by the release contract tests.
+# Decide whether a pull request touches only documentation that no build step
+# verifies, in which case the expensive Build and Test job is skipped (a job
+# skipped via `if:` reports its required check as satisfied). The workflow
+# delegates here so the decision is locally runnable and covered by the
+# release contract tests.
 #
-# Only an explicit allowlist can skip the build: any path outside it — source,
-# poms, workflows, scripts, this file itself — keeps the full build. Packaged
-# module.md resources are deliberately on the allowlist: they cannot fail
-# compilation, and the push to main after merge always runs the full build, so
-# SNAPSHOT publication only ever trails a fully verified SHA.
+# The allowlist is deliberately minimal in this repository: most Markdown here
+# is EXECUTABLE documentation gated by integration tests —
+# StarterFamilyDocumentationContractTest (README.md, docs/architecture.md,
+# docs/modules.md, every canonical module.md), CodegenDocumentationPolicyTest
+# (README.md, docs/packaging.md, named module.md resources), and the archetype
+# contract tests (module READMEs). Skipping the build for those files would
+# convert a pre-merge failure into a post-merge red main, which also blocks
+# SNAPSHOT publication. Only prose no test reads may skip the build; extend
+# the allowlist only after proving nothing in the reactor asserts on the path.
 
 event_name=""
 base_sha=""
@@ -49,8 +54,12 @@ if [[ -z "$changed" ]]; then
   exit 0
 fi
 
-if grep -Evq '^(docs|LICENSES)/|^NOTICE$|\.md$' <<< "$changed"; then
-  echo 'docs_only=false'
-else
-  echo 'docs_only=true'
-fi
+# Exit 0: some path is outside the allowlist. Exit 1: all paths allowlisted.
+# Anything else is a grep failure and must never skip the build.
+status=0
+grep -Evq '^(CONTRIBUTING|SECURITY)\.md$|^LICENSES/|^NOTICE$' <<< "$changed" || status=$?
+case "$status" in
+  0) echo 'docs_only=false' ;;
+  1) echo 'docs_only=true' ;;
+  *) echo "detect-docs-only-scope: allowlist match failed (grep exit $status)" >&2; exit 1 ;;
+esac

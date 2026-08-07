@@ -5,11 +5,13 @@
  * Docs-only CI scope contract.
  *
  * Proves that scripts/detect-docs-only-scope.sh skips the Build and Test job
- * only for pull requests whose every changed path is on the documentation
- * allowlist, and keeps the full build for everything else — mixed changes,
- * non-pull-request events, empty diffs, and malformed inputs. Runs against
- * synthetic git repositories so the contract is exercised end to end through
- * the same `git diff` the workflow uses.
+ * only for pull requests whose every changed path is on the minimal
+ * documentation allowlist, and keeps the full build for everything else —
+ * including the contract-gated Markdown (README.md, docs/**, canonical
+ * module.md resources) that the reactor's documentation integration tests
+ * assert on, mixed changes, non-pull-request events, empty diffs, and
+ * malformed inputs. Runs against synthetic git repositories so the contract
+ * is exercised end to end through the same `git diff` the workflow uses.
  */
 
 import { describe, it, before, after } from 'node:test';
@@ -84,14 +86,13 @@ describe('detect-docs-only-scope', () => {
     return commit(repo, files, name);
   }
 
-  it('skips the build for a pull request touching only allowlisted documentation', () => {
+  it('skips the build for a pull request touching only allowlisted prose', () => {
     const head = branchWith(
       {
-        'docs/adr/0001-example.md': 'adr\n',
-        'README.md': 'updated\n',
+        'CONTRIBUTING.md': 'contributing\n',
+        'SECURITY.md': 'security\n',
         'LICENSES/EUPL-1.2.txt': 'license\n',
         'NOTICE': 'notice\n',
-        'vertique-core/src/main/resources/META-INF/vertique/module.md': 'module doc\n',
       },
       'docs-only',
     );
@@ -100,9 +101,24 @@ describe('detect-docs-only-scope', () => {
     assert.equal(result.stdout.trim(), 'docs_only=true');
   });
 
-  it('keeps the full build when documentation and code change together', () => {
+  it('keeps the full build for contract-gated Markdown the reactor tests assert on', () => {
+    for (const [file, name] of [
+      ['README.md', 'readme'],
+      ['docs/architecture.md', 'architecture'],
+      ['docs/modules.md', 'modules-index'],
+      ['docs/packaging.md', 'packaging'],
+      ['vertique-core/src/main/resources/META-INF/vertique/module.md', 'module-doc'],
+    ]) {
+      const head = branchWith({ [file]: 'changed\n' }, `gated-${name}`);
+      const result = detectPr(head);
+      assert.equal(result.status, 0);
+      assert.equal(result.stdout.trim(), 'docs_only=false', `${file} is contract-gated and must build`);
+    }
+  });
+
+  it('keeps the full build when allowlisted prose and code change together', () => {
     const head = branchWith(
-      { 'docs/guide.md': 'guide\n', 'vertique-core/src/main/java/A.java': 'class A {}\n' },
+      { 'CONTRIBUTING.md': 'guide\n', 'vertique-core/src/main/java/A.java': 'class A {}\n' },
       'mixed',
     );
     const result = detectPr(head);
@@ -124,7 +140,22 @@ describe('detect-docs-only-scope', () => {
     }
   });
 
-  it('detects the docs-only side of a rename away from documentation', () => {
+  it('keeps the full build for allowlist-anchor lookalikes', () => {
+    for (const [file, name] of [
+      ['x/NOTICE', 'nested-notice'],
+      ['NOTICE.java', 'notice-suffixed'],
+      ['foo/LICENSES/x.txt', 'nested-licenses'],
+      ['foo/CONTRIBUTING.md', 'nested-contributing'],
+      ['CONTRIBUTING.mdx', 'mdx'],
+    ]) {
+      const head = branchWith({ [file]: 'changed\n' }, `lookalike-${name}`);
+      const result = detectPr(head);
+      assert.equal(result.status, 0);
+      assert.equal(result.stdout.trim(), 'docs_only=false', `${file} must keep the build`);
+    }
+  });
+
+  it('detects the non-docs side of a rename away from documentation', () => {
     git(repo, 'checkout', '--quiet', '-b', 'rename', baseSha);
     git(repo, 'mv', 'README.md', 'run.sh');
     const head = commit(repo, {}, 'rename');
@@ -146,16 +177,16 @@ describe('detect-docs-only-scope', () => {
   });
 
   it('rejects malformed inputs instead of guessing', () => {
-    assert.notEqual(detect(repo, []).status, 0, 'missing event name must fail');
-    assert.notEqual(
-      detect(repo, ['--event-name', 'pull_request', '--base-sha', 'main', '--head-sha', baseSha]).status,
-      0,
-      'non-SHA base must fail',
-    );
-    assert.notEqual(
-      detect(repo, ['--event-name', 'pull_request', '--base-sha', baseSha, '--head-sha', 'HEAD']).status,
-      0,
-      'non-SHA head must fail',
-    );
+    const missingEvent = detect(repo, []);
+    assert.notEqual(missingEvent.status, 0);
+    assert.match(missingEvent.stderr, /--event-name is required/);
+
+    const badBase = detect(repo, ['--event-name', 'pull_request', '--base-sha', 'main', '--head-sha', baseSha]);
+    assert.notEqual(badBase.status, 0);
+    assert.match(badBase.stderr, /--base-sha must be a lowercase full SHA/);
+
+    const badHead = detect(repo, ['--event-name', 'pull_request', '--base-sha', baseSha, '--head-sha', 'HEAD']);
+    assert.notEqual(badHead.status, 0);
+    assert.match(badHead.stderr, /--head-sha must be a lowercase full SHA/);
   });
 });
