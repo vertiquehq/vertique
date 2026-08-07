@@ -392,6 +392,10 @@ class ManagementVerticleTest {
         @Test
         @DisplayName("host defaults to the wildcard bind address")
         void hostDefaultsToWildcard() {
+            // Intentionally an unpinned builder chain: this test asserts the default and never
+            // deploys, so nothing binds; the config.host() getter on the next line is what
+            // satisfies the bind-policy checker's presence window — future checker tightening
+            // must keep a getter-tolerant regex or add suppression (vertiquehq/vertique-dev#170).
             ManagementConfig config = ManagementConfig.builder().port(0).build();
 
             assertEquals("0.0.0.0", config.host());
@@ -417,6 +421,42 @@ class ManagementVerticleTest {
                         });
                         ctx.completeNow();
                     }));
+        }
+
+        @Test
+        @DisplayName("explicit null host fails deployment with a message naming management.host")
+        void nullHostFailsDeploymentWithConfigMessage(Vertx vertx, VertxTestContext ctx) {
+            ManagementConfig config =
+                    ManagementConfig.builder().port(0).host(null).build();
+            ManagementVerticle verticle = new ManagementVerticle(Set.of(), Set.of(), config, Set.of());
+
+            vertx.deployVerticle(verticle).onComplete(ctx.failing(cause -> {
+                ctx.verify(() -> {
+                    assertInstanceOf(IllegalArgumentException.class, cause);
+                    assertTrue(
+                            cause.getMessage().contains("management.host"),
+                            "expected a configuration-style message naming management.host, got: " + cause);
+                });
+                ctx.completeNow();
+            }));
+        }
+
+        @Test
+        @DisplayName("explicit blank host fails deployment with a message naming management.host")
+        void blankHostFailsDeploymentWithConfigMessage(Vertx vertx, VertxTestContext ctx) {
+            ManagementConfig config =
+                    ManagementConfig.builder().port(0).host("   ").build();
+            ManagementVerticle verticle = new ManagementVerticle(Set.of(), Set.of(), config, Set.of());
+
+            vertx.deployVerticle(verticle).onComplete(ctx.failing(cause -> {
+                ctx.verify(() -> {
+                    assertInstanceOf(IllegalArgumentException.class, cause);
+                    assertTrue(
+                            cause.getMessage().contains("management.host"),
+                            "expected a configuration-style message naming management.host, got: " + cause);
+                });
+                ctx.completeNow();
+            }));
         }
 
         @Test

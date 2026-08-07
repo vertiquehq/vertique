@@ -293,7 +293,7 @@ Deserialized from the `management` section into `ManagementConfig`. Every field 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `port` | `int` | `9090` | Management HTTP server port; `0` binds an ephemeral port |
-| `host` | `String` | `"0.0.0.0"` | Network interface to bind; `"127.0.0.1"` restricts the server to loopback |
+| `host` | `String` | `"0.0.0.0"` | Network interface to bind; `"127.0.0.1"` restricts the server to loopback; must be non-blank |
 | `enabled` | `boolean` | `true` | `false` skips port binding and contributor invocation |
 | `healthCheckTimeoutSeconds` | `long` | `5` | Per-check timeout for both probe endpoints; must be positive |
 
@@ -308,7 +308,7 @@ Deserialized from the `management` section into `ManagementConfig`. Every field 
 }
 ```
 
-`healthCheckTimeoutSeconds` is validated when the verticle starts, not when configuration is parsed: a zero or negative value fails the management verticle's deployment with `IllegalArgumentException` rather than at config-load time. Unknown properties in the `management` section are ignored.
+`healthCheckTimeoutSeconds` and `host` are validated when the verticle starts, not when configuration is parsed: a zero or negative timeout, or an explicitly `null` or blank `management.host`, fails the management verticle's deployment with `IllegalArgumentException` rather than at config-load time. Unknown properties in the `management` section are ignored.
 
 With hierarchical property expansion, `management.port=9090` in a `.properties` source expands to the same nested object.
 

@@ -85,6 +85,11 @@ public class ManagementVerticle extends AbstractVerticle {
      * in {@link OrderedExtension#comparator()} order. If any contributor throws, the start
      * promise is failed with that exception and no HTTP server port is bound.
      *
+     * <p>Like {@code healthCheckTimeoutSeconds}, the configured host is validated here rather
+     * than at config-load time: an explicit {@code null} or blank {@code management.host} fails
+     * the deployment with an {@link IllegalArgumentException} naming the configuration key,
+     * instead of a bare {@link NullPointerException} out of the bind.
+     *
      * @param startPromise the promise to complete when the server is ready, or fail on error
      */
     @Override
@@ -93,6 +98,10 @@ public class ManagementVerticle extends AbstractVerticle {
             log.info("Management server disabled");
             startPromise.complete();
             return;
+        }
+
+        if (host == null || host.isBlank()) {
+            throw new IllegalArgumentException("management.host must be a non-blank bind address, got: " + host);
         }
 
         Router router = Router.router(vertx);
