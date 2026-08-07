@@ -84,8 +84,10 @@ class ApplicationIT {
     private static JsonObject buildConfig() {
         DbPoolConfig pool = db.toPoolConfig();
         return new JsonObject()
-                .put("http", new JsonObject().put("port", 0))
-                .put("management", new JsonObject().put("enabled", true).put("port", 0))
+                .put("http", new JsonObject().put("port", 0).put("host", "127.0.0.1"))
+                .put(
+                        "management",
+                        new JsonObject().put("enabled", true).put("port", 0).put("host", "127.0.0.1"))
                 .put(
                         "db",
                         new JsonObject()
@@ -99,7 +101,7 @@ class ApplicationIT {
 
     @BeforeAll
     static void setUp() {
-        RestAssured.baseURI = "http://localhost";
+        RestAssured.baseURI = "http://127.0.0.1";
         RestAssured.port = app.httpPort();
     }
 
