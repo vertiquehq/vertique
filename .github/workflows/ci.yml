@@ -26,9 +26,31 @@ permissions:
   contents: read
 
 jobs:
+  # Fast-fail signal: compiles and packages every module (main and test
+  # sources) without running tests, so cross-module API breakage surfaces in
+  # minutes instead of after the full verify. Not a substitute for the
+  # required Build and Test job, which remains the authoritative gate.
+  compile:
+    name: Fast compile check
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      # archetype.test.skip: the archetype integration tests run nested Maven
+      # builds of generated projects, which -DskipTests does not reach.
+      - name: Compile and package
+        run: ./mvnw -ntp -DskipTests -Darchetype.test.skip=true clean verify
+
   build:
     name: Build and Test
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 70
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -51,9 +73,10 @@ jobs:
 
       # Per-module HTML reports are skipped: the vertique-coverage-report
       # aggregate XML produced by this same invocation is the only coverage
-      # output CI consumes.
+      # output CI consumes. Reactor parallelism (-T1C) comes from
+      # .mvn/maven.config so local and CI builds share one setting.
       - name: Build and test
-        run: ./mvnw -ntp -T 1 -Djacoco.module.report.skip=true clean verify
+        run: ./mvnw -ntp -Djacoco.module.report.skip=true clean verify
 
       # Gates only the lines this PR changes (threshold = the standing 80%
       # target). No credential, no external service; locally runnable as-is.
@@ -72,4 +95,4 @@ jobs:
           if-no-files-found: error
 
       - name: Check formatting
-        run: ./mvnw -ntp -T 1 -pl '!vertique-app-parent' spotless:check
+        run: ./mvnw -ntp -pl '!vertique-app-parent' spotless:check
