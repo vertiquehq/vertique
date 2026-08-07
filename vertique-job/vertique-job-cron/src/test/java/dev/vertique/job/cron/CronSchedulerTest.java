@@ -1390,21 +1390,18 @@ class CronSchedulerTest {
             when(repo.tryInsert(any(JobExecution.class)))
                     .thenReturn(Future.succeededFuture(Optional.of(UUID.randomUUID())));
 
+            // Causal window-closing signal: the SECOND resolver invocation. The resolver is
+            // consulted once per admitted fire, so reaching it twice proves the unresolvable path
+            // was exercised on two separate ticks — the same "a fire really was admitted" evidence
+            // the old fixed 2.5s deadline bought, without waiting for it. The assertions are
+            // deferred to the next event-loop turn so Mockito is not re-entered from inside its own
+            // answer, and so they observe the second fire only after it has unwound through the
+            // resolution gate (release + skip) under test.
+            AtomicInteger resolveCount = new AtomicInteger();
             ServiceTargetResolver resolver = mock(ServiceTargetResolver.class);
-            when(resolver.resolve(STABLE_TARGET_ID)).thenThrow(new IllegalArgumentException("no such target"));
-
-            scheduler = new CronScheduler(
-                    vertx, Set.of(), repo, resolver, testEventBusClient(vertx), DispatchEnvelopeBuilder.forTesting());
-
-            CronJobDefinition job = serviceTargetJob(
-                    "unresolvable-single-instance-job", ExecutionMode.SINGLE_INSTANCE, OverlapPolicy.SKIP);
-
-            scheduler.register(job);
-            scheduler.start();
-
-            vertx.setTimer(
-                    2500,
-                    id -> ctx.verify(() -> {
+            when(resolver.resolve(STABLE_TARGET_ID)).thenAnswer(inv -> {
+                if (resolveCount.incrementAndGet() == 2) {
+                    vertx.runOnContext(ignored -> ctx.verify(() -> {
                         // Proves a fire really was admitted and reached the gate. Without this, a
                         // run where no cron tick ever fired at all (e.g. under CI load) would pass
                         // the two assertions below vacuously — they cannot otherwise distinguish
@@ -1417,6 +1414,22 @@ class CronSchedulerTest {
                                 "consumer at " + RESOLVED_ADDRESS + " must never receive an unresolvable dispatch");
                         ctx.completeNow();
                     }));
+                }
+                throw new IllegalArgumentException("no such target");
+            });
+
+            scheduler = new CronScheduler(
+                    vertx, Set.of(), repo, resolver, testEventBusClient(vertx), DispatchEnvelopeBuilder.forTesting());
+
+            CronJobDefinition job = serviceTargetJob(
+                    "unresolvable-single-instance-job", ExecutionMode.SINGLE_INSTANCE, OverlapPolicy.SKIP);
+
+            scheduler.register(job);
+            scheduler.start();
+
+            // Completion comes from the second resolver invocation above — no fixed deadline. If no
+            // tick ever reaches the resolver, the nest's @Timeout fails the test rather than letting
+            // the never()/hit-count assertions pass vacuously.
         }
 
         @Test
@@ -1463,22 +1476,19 @@ class CronSchedulerTest {
         @Test
         @DisplayName("permanently unresolvable target logs ERROR once, not once per tick")
         void permanentlyUnresolvableTargetLogsErrorOnce(Vertx vertx, VertxTestContext ctx) {
+            // Causal window-closing signal: the THIRD resolver invocation — one per admitted fire,
+            // so three invocations are three failed fires, the same "asserted over three or more
+            // ticks" evidence the old fixed 3.5s deadline bought. A per-tick ERROR regression can
+            // therefore not pass by timing luck. The assertion is deferred to the next event-loop
+            // turn so Mockito is not re-entered from inside its own answer and so the third fire's
+            // own log record has already been written when the counts are taken. Appender
+            // attach/detach is handled unconditionally by attachLogAppender()/detachLogAppender()
+            // above, so a @Timeout or an assertion throwing here still leaves the JVM fork clean.
+            AtomicInteger resolveCount = new AtomicInteger();
             ServiceTargetResolver resolver = mock(ServiceTargetResolver.class);
-            when(resolver.resolve(STABLE_TARGET_ID)).thenThrow(new IllegalArgumentException("never resolves"));
-
-            JobRepository repo = mock(JobRepository.class);
-            scheduler = new CronScheduler(
-                    vertx, Set.of(), repo, resolver, testEventBusClient(vertx), DispatchEnvelopeBuilder.forTesting());
-            scheduler.register(
-                    serviceTargetJob("never-resolves-job", ExecutionMode.SINGLE_INSTANCE, OverlapPolicy.SKIP));
-            scheduler.start();
-
-            // ~3.5s over a one-second cron: at least three failed fires. Appender attach/detach is
-            // handled unconditionally by attachLogAppender()/detachLogAppender() above, so a
-            // @Timeout or an earlier assertion throwing here still leaves the JVM fork clean.
-            vertx.setTimer(
-                    3500,
-                    id -> ctx.verify(() -> {
+            when(resolver.resolve(STABLE_TARGET_ID)).thenAnswer(inv -> {
+                if (resolveCount.incrementAndGet() == 3) {
+                    vertx.runOnContext(ignored -> ctx.verify(() -> {
                         // Filtered on the same "skipping this fire" marker as the DEBUG count below so an
                         // unrelated CronScheduler ERROR logged elsewhere in the window cannot inflate this
                         // count and break the assertion.
@@ -1501,6 +1511,16 @@ class CronSchedulerTest {
                                         + " observable; got " + debugs);
                         ctx.completeNow();
                     }));
+                }
+                throw new IllegalArgumentException("never resolves");
+            });
+
+            JobRepository repo = mock(JobRepository.class);
+            scheduler = new CronScheduler(
+                    vertx, Set.of(), repo, resolver, testEventBusClient(vertx), DispatchEnvelopeBuilder.forTesting());
+            scheduler.register(
+                    serviceTargetJob("never-resolves-job", ExecutionMode.SINGLE_INSTANCE, OverlapPolicy.SKIP));
+            scheduler.start();
         }
 
         /**
@@ -1636,12 +1656,22 @@ class CronSchedulerTest {
          * the queued re-dispatch taken inside {@code markCompleted} rather than at admission. The
          * discriminating assertion is that a <em>later</em>, independent tick still dispatches —
          * the only way to observe that both guards were actually released rather than stranded.
+         *
+         * <p><b>Terminal signal:</b> the second handler hit. It is the earliest causally-guaranteed
+         * observation of the release — the guards are released inside {@code markCompleted} when the
+         * queued re-dispatch aborts, and the very next dispatch is the first externally visible
+         * consequence of that release. There is no fixed assertion deadline; the two timers below
+         * are causal holds (keep the first execution open long enough to overlap; disarm before the
+         * next tick), not padding. {@code queuedResolutionFailures} guards against a vacuous pass:
+         * without it, a run where no tick overlapped (so nothing was ever queued) would satisfy the
+         * second hit without ever exercising the double-release branch under test.
          */
         @Test
         @DisplayName("QUEUE_ONE queued-fire resolution failure in markCompleted releases both the in-flight "
                 + "guard and the concurrency slot, so a later tick can still dispatch")
         void queuedFireResolutionFailureReleasesBothGuards(Vertx vertx, VertxTestContext ctx) {
             AtomicInteger hitCount = new AtomicInteger();
+            AtomicInteger queuedResolutionFailures = new AtomicInteger();
             AtomicBoolean failQueuedResolution = new AtomicBoolean(false);
             vertx.eventBus().consumer(RESOLVED_ADDRESS, msg -> {
                 int hits = hitCount.incrementAndGet();
@@ -1674,7 +1704,16 @@ class CronSchedulerTest {
                                     new DeliveryOptions().setCodecName("dispatch.envelope"));
                 }
                 if (hits >= 2) {
-                    ctx.completeNow();
+                    // Terminal signal: this dispatch exists only because markCompleted released
+                    // both guards after the queued re-dispatch's resolution failed.
+                    ctx.verify(() -> {
+                        assertTrue(
+                                queuedResolutionFailures.get() >= 1,
+                                "the queued re-dispatch's resolution must actually have failed — a run where"
+                                        + " no tick overlapped would reach this hit without exercising the"
+                                        + " double-release branch under test");
+                        ctx.completeNow();
+                    });
                 }
             });
 
@@ -1688,6 +1727,7 @@ class CronSchedulerTest {
             ServiceTargetResolver resolver = mock(ServiceTargetResolver.class);
             when(resolver.resolve(STABLE_TARGET_ID)).thenAnswer(inv -> {
                 if (failQueuedResolution.get()) {
+                    queuedResolutionFailures.incrementAndGet();
                     throw new IllegalArgumentException("queued re-dispatch resolution failure");
                 }
                 return new ResolvedServiceTarget(STABLE_TARGET_ID, null, "ns", "svc", "op", null, RESOLVED_ADDRESS);
@@ -2247,15 +2287,14 @@ class CronSchedulerTest {
             scheduler.register(job);
             scheduler.start();
 
-            // Wait long enough for the job to fire (≤1s) and the timeout to fire (300 ms after)
-            vertx.setTimer(
-                    3000,
-                    id -> ctx.verify(() -> {
-                        verify(repo, timeout(1000).atLeastOnce())
-                                .completeExecution(
-                                        any(UUID.class), eq(JobState.ABANDONED), anyString(), anyString(), any());
-                        ctx.completeNow();
-                    }));
+            // The ABANDONED write is the terminal state transition itself, and it is mutually
+            // exclusive with the only other way this fire can end (a reply, which the handler above
+            // never sends) — so there is no quiet window to observe and no fixed padding needed.
+            // The Mockito timeout is a generous ceiling (~1s first tick + the 300 ms injected
+            // execution timeout), not an elapsed-time assertion.
+            verify(repo, timeout(2000).atLeastOnce())
+                    .completeExecution(any(UUID.class), eq(JobState.ABANDONED), anyString(), anyString(), any());
+            ctx.completeNow();
         }
 
         @Test
@@ -2268,7 +2307,8 @@ class CronSchedulerTest {
             when(repo.updateScheduleFireTimes(anyString(), any(Instant.class), any(Instant.class)))
                     .thenAnswer(inv -> Future.succeededFuture());
 
-            // 2 second timeout — handler replies in 100 ms
+            // 300 ms timeout — handler replies in 100 ms. Shrinking the injected timeout shrinks the
+            // quiet window this negative proof has to hold open (see below).
             scheduler = new CronScheduler(
                     vertx,
                     Set.of(),
@@ -2276,11 +2316,12 @@ class CronSchedulerTest {
                     stubTargetResolver(),
                     testEventBusClient(vertx),
                     10,
-                    2000L,
+                    300L,
                     0L,
                     DispatchEnvelopeBuilder.forTesting());
 
             AtomicInteger completeCount = new AtomicInteger();
+            AtomicBoolean quietWindowArmed = new AtomicBoolean(false);
 
             vertx.eventBus().consumer("test.fast-reply.address", msg -> {
                 var body = (DispatchEnvelope<?>) msg.body();
@@ -2292,10 +2333,40 @@ class CronSchedulerTest {
                                         DispatchEnvelope.of("done"),
                                         new DeliveryOptions().setCodecName("dispatch.envelope"));
                         completeCount.incrementAndGet();
+                        // Negative proof: the reply is the positive completion signal, and the quiet
+                        // window is anchored *after* it — an execution-timeout regression fires
+                        // within the injected 300 ms of a dispatch, so max(1_000, 3 × 300) = 1_000 ms
+                        // of post-reply silence is what makes verify(never()) meaningful. Anchoring
+                        // at scheduler start instead would let the first ~1s cron alignment eat the
+                        // window. Armed once: the one-second cron keeps firing (and replying) for
+                        // the whole window, which only adds chances for a regression to show.
+                        if (quietWindowArmed.compareAndSet(false, true)) {
+                            vertx.setTimer(
+                                    1000,
+                                    quietId -> ctx.verify(() -> {
+                                        assertTrue(
+                                                completeCount.get() >= 1, "Handler should have replied at least once");
+                                        // completeExecution should NOT have been called with ABANDONED
+                                        // (called with SUCCEEDED from normal completion path)
+                                        verify(repo, org.mockito.Mockito.never())
+                                                .completeExecution(
+                                                        any(UUID.class),
+                                                        eq(JobState.ABANDONED),
+                                                        anyString(),
+                                                        anyString(),
+                                                        any());
+                                        ctx.completeNow();
+                                    }));
+                        }
                     });
                 }
             });
 
+            // tracked=true is load-bearing, not incidental: CronJobDispatcher only writes the
+            // ABANDONED completion when the fire has a job_executions record, so an untracked job
+            // makes the verify(never()) below unfalsifiable — it would hold even if the execution
+            // timeout fired after the reply. The repository stubs above (save/completeExecution/
+            // updateScheduleFireTimes) exist for exactly this tracked path.
             CronJobDefinition job = new CronJobDefinition(
                     "fast-reply-job",
                     new CronExpression("* * * * * *"),
@@ -2306,25 +2377,15 @@ class CronSchedulerTest {
                     3,
                     null,
                     OverlapPolicy.SKIP,
-                    false,
+                    true,
                     Map.of(),
                     MisfirePolicy.SKIP);
 
             scheduler.register(job);
             scheduler.start();
 
-            // Give the job time to fire, reply, and confirm ABANDONED was NOT called
-            vertx.setTimer(
-                    2500,
-                    id -> ctx.verify(() -> {
-                        assertTrue(completeCount.get() >= 1, "Handler should have replied at least once");
-                        // completeExecution should NOT have been called with ABANDONED
-                        // (called with SUCCEEDED from normal completion path)
-                        verify(repo, org.mockito.Mockito.never())
-                                .completeExecution(
-                                        any(UUID.class), eq(JobState.ABANDONED), anyString(), anyString(), any());
-                        ctx.completeNow();
-                    }));
+            // Completion comes from the post-reply quiet window armed in the consumer above — the
+            // test never waits on a deadline that is not anchored to an observed reply.
         }
     }
 
@@ -2350,7 +2411,10 @@ class CronSchedulerTest {
                         UUID executionId = jobCtx.executionId();
                         // Publish a cancel signal on the job.cancel.<executionId> address
                         vertx.eventBus().publish("job.cancel." + executionId, "cancel");
-                        // Give the event bus time to deliver the cancel message, then read the flag
+                        // Give the event bus time to deliver the cancel message, then read the flag.
+                        // Reading it *is* the observation of the cancelled-flag transition, so it is
+                        // also the terminal signal: assert and complete here rather than at a fixed
+                        // deadline that would only re-read the same already-settled value later.
                         vertx.setTimer(100, id -> {
                             cancelObserved.set(jobCtx.isCancelled());
                             // Reply to unblock the scheduler
@@ -2361,6 +2425,12 @@ class CronSchedulerTest {
                                                 DispatchEnvelope.of("done"),
                                                 new DeliveryOptions().setCodecName("dispatch.envelope"));
                             }
+                            ctx.verify(() -> {
+                                assertTrue(
+                                        cancelObserved.get(),
+                                        "JobContext should have isCancelled=true after cancel signal");
+                                ctx.completeNow();
+                            });
                         });
                     }
                 }
@@ -2383,12 +2453,8 @@ class CronSchedulerTest {
             scheduler.register(job);
             scheduler.start();
 
-            vertx.setTimer(
-                    3000,
-                    id -> ctx.verify(() -> {
-                        assertTrue(cancelObserved.get(), "JobContext should have isCancelled=true after cancel signal");
-                        ctx.completeNow();
-                    }));
+            // Completion comes from the flag observation inside the consumer above — no fixed
+            // deadline. If no tick ever reaches the handler, the nest's @Timeout fails the test.
         }
     }
 
