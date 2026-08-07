@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
@@ -238,11 +239,9 @@ class DelayedJobPollerTest {
                     .thenReturn(Future.succeededFuture(List.of()));
 
             // Causal terminal signal: the poller invokes the completion handler only after the
-            // handler's reply has settled the dispatch, so this answer runs strictly after the
-            // asserted state transition. By the time the answer executes, Mockito has already
-            // recorded the invocation, so the original atLeastOnce expectation holds here.
+            // handler's reply has settled the dispatch, so reaching this answer at all IS the
+            // proof that the dispatch completed and the completion handler was called.
             when(completionHandler.handleCompletion(any(), any(), any())).thenAnswer(invocation -> {
-                ctx.verify(() -> verify(completionHandler, atLeastOnce()).handleCompletion(any(), any(), any()));
                 ctx.completeNow();
                 return Future.succeededFuture();
             });
@@ -518,31 +517,21 @@ class DelayedJobPollerTest {
                     .thenReturn(Future.succeededFuture(List.of()));
             when(completionHandler.handleCompletion(any(), any(), any())).thenReturn(Future.succeededFuture());
 
-            AtomicInteger dispatchCount = new AtomicInteger();
-            AtomicInteger completeCount = new AtomicInteger();
-
             // One lax checkpoint per interceptor callback: the context completes only once both
-            // callbacks have fired (lax preserves the original "at least once" tolerance).
-            // onComplete is the FINAL callback — it fires after onDispatch on the completion
-            // path — so it is the causal terminal signal and asserts both counters.
+            // callbacks have fired (lax preserves the original "at least once" tolerance). A
+            // callback that never fires leaves its checkpoint unflagged and the test times out.
             Checkpoint dispatchFired = ctx.laxCheckpoint();
             Checkpoint completeFired = ctx.laxCheckpoint();
 
             JobInterceptor interceptor = new JobInterceptor() {
                 @Override
                 public void onDispatch(JobDispatchContext dispatchCtx) {
-                    dispatchCount.incrementAndGet();
                     dispatchFired.flag();
                 }
 
                 @Override
                 public void onComplete(
                         JobDispatchContext dispatchCtx, Result<?> result, Instant startTime, Instant endTime) {
-                    completeCount.incrementAndGet();
-                    ctx.verify(() -> {
-                        assertTrue(dispatchCount.get() >= 1, "Expected at least 1 dispatch interceptor call");
-                        assertTrue(completeCount.get() >= 1, "Expected at least 1 complete interceptor call");
-                    });
                     completeFired.flag();
                 }
             };
@@ -1237,6 +1226,47 @@ class DelayedJobPollerTest {
                     .compose(vertx::undeploy)
                     .onSuccess(v -> ctx.completeNow())
                     .onFailure(ctx::failNow);
+        }
+
+        @Test
+        @DisplayName("rejects a non-positive shutdown flush timeout at construction")
+        void rejectsNonPositiveShutdownFlushTimeout() {
+            // A zero or negative bound would make stop()'s cutoff-drain timeout fire immediately,
+            // silently dropping every buffered log line — the misconfiguration must surface at
+            // construction rather than at shutdown.
+            IllegalArgumentException zero =
+                    assertThrows(IllegalArgumentException.class, () -> pollerWithShutdownFlushTimeout(0L));
+            assertTrue(
+                    zero.getMessage().contains("shutdownFlushTimeoutMs"),
+                    "the rejection must name the offending parameter, was: " + zero.getMessage());
+
+            IllegalArgumentException negative =
+                    assertThrows(IllegalArgumentException.class, () -> pollerWithShutdownFlushTimeout(-1L));
+            assertTrue(
+                    negative.getMessage().contains("shutdownFlushTimeoutMs"),
+                    "the rejection must name the offending parameter, was: " + negative.getMessage());
+        }
+
+        /**
+         * Constructs a poller through the package-private test seam with the given shutdown flush
+         * timeout. Construction only — nothing is deployed, so this stays sleep-free.
+         *
+         * @param shutdownFlushTimeoutMs the bound under test
+         * @return the constructed poller (never reached for a non-positive bound)
+         */
+        private DelayedJobPoller pollerWithShutdownFlushTimeout(long shutdownFlushTimeoutMs) {
+            return new DelayedJobPoller(
+                    "default",
+                    fastConfig(),
+                    repository,
+                    completionHandler,
+                    Set.of(),
+                    null,
+                    0L,
+                    0L,
+                    DispatchEnvelopeBuilder.forTesting(),
+                    noOpPropagator(),
+                    shutdownFlushTimeoutMs);
         }
     }
 }

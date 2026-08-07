@@ -5,6 +5,7 @@ package dev.vertique.job;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
@@ -139,9 +140,15 @@ class JobLogFlusherTest {
         assertRetriedBatchIsResent(flusher, "must not be lost");
     }
 
+    /**
+     * Pins both halves of the bounded-write contract: a write that never settles is timed out
+     * rather than wedging the buffer, and the bound applied is the <em>injected</em> limit — the
+     * 2-second await here is ≈ 10× the 200ms limit injected below, so the test could not pass on
+     * the {@value JobLogFlusher#DEFAULT_WRITE_TIMEOUT_MS} ms production default.
+     */
     @Test
-    @DisplayName("flush times out a write that never settles and retains the batch")
-    @Timeout(value = 30, unit = TimeUnit.SECONDS)
+    @DisplayName("flush times out a write that never settles, bounded by the injected limit, and retains the batch")
+    @Timeout(value = 10, unit = TimeUnit.SECONDS)
     void flushTimesOutAWriteThatNeverSettles() throws Exception {
         // A hung write would otherwise leave the single-flight marker set forever: neither ack()
         // nor nack() runs, so no later flush can ever claim again and the buffer grows unbounded.
@@ -159,26 +166,22 @@ class JobLogFlusherTest {
         assertRetriedBatchIsResent(flusher, "must not be lost");
     }
 
-    /**
-     * Pins the injectable write-timeout bound: the flush write timeout is bounded by the injected
-     * limit, awaited here under a 2-second ceiling (≈ 10× the 200ms limit the green slice injects).
-     */
     @Test
-    @DisplayName("flush write timeout is bounded by the injected limit")
-    @Timeout(value = 10, unit = TimeUnit.SECONDS)
-    void flushWriteTimeoutIsBoundedByInjectedLimit() throws Exception {
-        Promise<Void> neverSettles = Promise.promise();
-        when(repository.saveLogs(any(), any()))
-                .thenReturn(neverSettles.future())
-                .thenReturn(Future.succeededFuture());
-        logger.error("must not be lost");
-        JobLogFlusher flusher = new JobLogFlusher(repository, executionId, logger, 200L);
+    @DisplayName("rejects a non-positive write timeout at construction")
+    void rejectsNonPositiveWriteTimeout() {
+        // A zero or negative bound would make Future.timeout() fire immediately (or reject), turning
+        // every write into an instant nack — the misconfiguration must surface at construction.
+        IllegalArgumentException zero = assertThrows(
+                IllegalArgumentException.class, () -> new JobLogFlusher(repository, executionId, logger, 0L));
+        assertTrue(
+                zero.getMessage().contains("writeTimeoutMs"),
+                "the rejection must name the offending parameter, was: " + zero.getMessage());
 
-        Future<Void> first = flusher.flush();
-
-        first.toCompletionStage().toCompletableFuture().get(2, TimeUnit.SECONDS);
-        assertTrue(first.succeeded(), "a timed-out write must not fail the job whose logs these are");
-        assertRetriedBatchIsResent(flusher, "must not be lost");
+        IllegalArgumentException negative = assertThrows(
+                IllegalArgumentException.class, () -> new JobLogFlusher(repository, executionId, logger, -1L));
+        assertTrue(
+                negative.getMessage().contains("writeTimeoutMs"),
+                "the rejection must name the offending parameter, was: " + negative.getMessage());
     }
 
     /**
