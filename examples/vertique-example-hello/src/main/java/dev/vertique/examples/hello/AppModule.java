@@ -15,6 +15,7 @@ import dev.vertique.rest.auth.jwt.JwtAuthFactory;
 import dev.vertique.rest.core.router.HttpVerticle;
 import io.vertx.core.Vertx;
 import io.vertx.core.json.JsonObject;
+import io.vertx.ext.auth.authorization.AuthorizationProvider;
 import io.vertx.ext.auth.jwt.JWTAuth;
 import jakarta.inject.Provider;
 import jakarta.inject.Singleton;
@@ -60,6 +61,22 @@ public class AppModule {
     static JWTAuth jwtAuth(Vertx vertx) {
         return JwtAuthFactory.fromSymmetricKey(
                 vertx, "HS256", "super-secret-key-for-example-app-minimum-256-bits-long!!");
+    }
+
+    /**
+     * Contributes the example Vert.x authorization provider to the framework's
+     * {@link AuthorizationProvider} multibinding set.
+     *
+     * <p>The set is consulted only because {@code AppComponent} also includes
+     * {@link dev.vertique.rest.security.VertxAuthorizationImportModule}; without that module the
+     * contribution is inert. See {@link ExampleTeamAuthorizationProvider} for the grant logic.
+     *
+     * @return the example provider granting {@code team-lead} to subject {@code team-alice}
+     */
+    @Provides
+    @IntoSet
+    static AuthorizationProvider exampleTeamAuthorizationProvider() {
+        return new ExampleTeamAuthorizationProvider();
     }
 
     @Provides

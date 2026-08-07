@@ -235,6 +235,39 @@ public class HelloResource {
     }
 
     /**
+     * Team-only endpoint requiring the 'team-lead' role granted by a Vert.x authorization provider.
+     *
+     * <p>No JWT in this example carries a {@code team-lead} role claim; the role is granted at
+     * request time by {@code ExampleTeamAuthorizationProvider} (id {@code teams}) through the
+     * opt-in {@code VertxAuthorizationImportModule}, demonstrating that provider-granted roles
+     * satisfy {@code @RolesAllowed} exactly like claim-derived ones.
+     *
+     * @param sc the security context
+     * @return team greeting for the provider-authorized user
+     */
+    @GET
+    @Path("/team")
+    @Produces(MediaType.APPLICATION_JSON)
+    @RolesAllowed("team-lead")
+    @Operation(
+            operationId = "teamGreeting",
+            summary = "Team-only greeting (requires provider-granted 'team-lead' role)",
+            description = "Returns a greeting only accessible to subjects the Vert.x authorization"
+                    + " provider recognizes as team leads",
+            security = @SecurityRequirement(name = "bearerAuth"))
+    @ApiResponse(
+            responseCode = "200",
+            description = "Successful greeting",
+            content =
+                    @Content(mediaType = "application/json", schema = @Schema(implementation = GreetingResponse.class)))
+    @ApiResponse(responseCode = "401", description = "Not authenticated")
+    @ApiResponse(responseCode = "403", description = "Insufficient role")
+    public Future<GreetingResponse> teamGreeting(@Parameter(hidden = true) SecurityContext sc) {
+        String userId = sc.identity().actor().id();
+        return Future.succeededFuture(new GreetingResponse("Team area: Hello, " + userId + "!"));
+    }
+
+    /**
      * Endpoint requiring both 'user' role and 'write' scope.
      *
      * @param sc the security context
