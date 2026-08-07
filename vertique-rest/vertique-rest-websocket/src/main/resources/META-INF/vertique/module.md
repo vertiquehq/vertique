@@ -524,7 +524,7 @@ coalesce with the same declaration in `AuthModule` when both are present.
 | `AuthorizationPolicy` | application | Same |
 | `Authorizer` | `SecurityAuthzModule` | Any endpoint declaring `@RequiresAction` fails startup |
 | `ActionRegistry` | `SecurityAuthzModule` | Same |
-| `VertxAuthorizationImporter` | `VertxAuthorizationImportModule` (opt-in, from `dev.vertique:vertique-rest-security`) | Contributed `AuthorizationProvider`s are never consulted; authorization decisions come only from resolved claims |
+| `VertxAuthorizationImporter` | `VertxAuthorizationImportModule` (opt-in, from `dev.vertique:vertique-rest-security`) | The upgrade-time authorization import is skipped: contributed `AuthorizationProvider`s stay inert and claims come from the claim mapper only |
 | `BeanValidator` | `ValidationModule` | Messages are not validated |
 | `InputObjectProcessor` | `SanitizationModule` | Messages and path parameters are not sanitized |
 
