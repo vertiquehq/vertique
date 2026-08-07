@@ -1187,6 +1187,7 @@ class DelayedJobPollerTest {
 
         @Test
         @DisplayName("stop() completes even when the cutoff flush never settles")
+        @Timeout(value = 2, unit = TimeUnit.SECONDS)
         void stopCompletesEvenWhenTheCutoffFlushNeverSettles(Vertx vertx, VertxTestContext ctx) {
             String handlerAddress = "test.logflush.stop.wedged.handler";
             JobExecution execution = sampleExecution("log-stop-wedged-job", handlerAddress);
