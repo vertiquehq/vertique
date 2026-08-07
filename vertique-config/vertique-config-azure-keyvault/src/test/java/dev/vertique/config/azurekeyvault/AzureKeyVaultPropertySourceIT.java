@@ -18,6 +18,7 @@ import dev.vertique.config.placeholder.PlaceholderResolver;
 import dev.vertique.config.source.ConfigPropertySource;
 import dev.vertique.config.source.ConfigPropertySourceException;
 import io.vertx.core.json.JsonObject;
+import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.AfterAll;
@@ -102,9 +103,10 @@ public class AzureKeyVaultPropertySourceIT {
      * {@code lowkey-vault-testcontainers:7.3.0} library dependency.
      *
      * <p>The {@code nagyesta/lowkey-vault} image does not publish a {@code latest} tag;
-     * the version tag must be supplied explicitly.
+     * the version tag must be supplied explicitly. The {@code -ubi10-minimal} variant is
+     * multi-arch (amd64 + arm64), avoiding slow amd64 emulation on arm64 hosts.
      */
-    private static final String LOWKEY_IMAGE = "nagyesta/lowkey-vault:7.3.0";
+    private static final String LOWKEY_IMAGE = "nagyesta/lowkey-vault:7.3.0-ubi10-minimal";
 
     /** Secret name seeded in the vault for the simple-resolution test. */
     private static final String SECRET_PASSWORD = "password";
@@ -140,11 +142,17 @@ public class AzureKeyVaultPropertySourceIT {
 
     // --- Shared container ---
 
-    /** Static Lowkey Vault container shared across all tests in this class. */
+    /**
+     * Static Lowkey Vault container shared across all tests in this class.
+     *
+     * <p>The 60s Testcontainers default startup timeout is tight under reactor/CI load, so it is
+     * raised to 120s (mirrors {@code KafkaTestContainers}).
+     */
     @SuppressWarnings("resource")
     static final LowkeyVaultContainer lowkeyVault = LowkeyVaultContainerBuilder.lowkeyVault(LOWKEY_IMAGE)
             .vaultNames(java.util.Set.of(VAULT_NAME))
-            .build();
+            .build()
+            .withStartupTimeout(Duration.ofSeconds(120));
 
     // --- Lifecycle ---
 
