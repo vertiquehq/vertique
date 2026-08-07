@@ -230,12 +230,12 @@ public class RestServerExemplarIT {
 
         vertx.createHttpServer()
                 .requestHandler(router)
-                .listen(0)
+                .listen(0, "127.0.0.1")
                 .compose(s -> {
                     this.server = s;
                     this.httpClient = vertx.createHttpClient();
                     return httpClient
-                            .request(HttpMethod.GET, s.actualPort(), "localhost", "/exemplar")
+                            .request(HttpMethod.GET, s.actualPort(), "127.0.0.1", "/exemplar")
                             .compose(req -> req.send());
                 })
                 .compose(resp -> pollUntilSpanPresent(vertx, exporter, 40, 50))
@@ -318,12 +318,12 @@ public class RestServerExemplarIT {
 
         vertx.createHttpServer()
                 .requestHandler(router)
-                .listen(0)
+                .listen(0, "127.0.0.1")
                 .compose(s -> {
                     this.server = s;
                     this.httpClient = vertx.createHttpClient();
                     return httpClient
-                            .request(HttpMethod.GET, s.actualPort(), "localhost", "/negative")
+                            .request(HttpMethod.GET, s.actualPort(), "127.0.0.1", "/negative")
                             .compose(req -> req.send());
                 })
                 .compose(resp -> pollUntilSpanPresent(vertx, exporter, 40, 50))

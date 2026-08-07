@@ -91,12 +91,12 @@ public class PrometheusScrapeIT {
 
         vertx.createHttpServer()
                 .requestHandler(appRouter)
-                .listen(0)
+                .listen(0, "127.0.0.1")
                 .compose(server -> {
                     appServerPort = server.actualPort();
                     // Fire one request to / to seed HTTP server metrics
                     return vertx.createHttpClient()
-                            .request(HttpMethod.GET, appServerPort, "localhost", "/")
+                            .request(HttpMethod.GET, appServerPort, "127.0.0.1", "/")
                             .compose(req -> req.send())
                             .mapEmpty();
                 })
@@ -107,7 +107,7 @@ public class PrometheusScrapeIT {
                     PrometheusScrapeEndpoint scrapeEndpoint =
                             new PrometheusScrapeEndpoint(vertx, Optional.empty(), scrapeConfig);
                     ManagementConfig mgmtConfig =
-                            ManagementConfig.builder().port(0).build();
+                            ManagementConfig.builder().port(0).host("127.0.0.1").build();
                     ManagementVerticle mgmtVerticle =
                             new ManagementVerticle(Set.of(), Set.of(), mgmtConfig, Set.of(scrapeEndpoint));
                     return vertx.deployVerticle(mgmtVerticle);
@@ -155,7 +155,7 @@ public class PrometheusScrapeIT {
     @DisplayName("GET /metrics with Accept: application/openmetrics-text → openmetrics content-type and '# EOF'")
     void openmetricsAcceptHeader(VertxTestContext ctx) {
         vertx.createHttpClient()
-                .request(HttpMethod.GET, managementPort, "localhost", "/metrics")
+                .request(HttpMethod.GET, managementPort, "127.0.0.1", "/metrics")
                 .compose(req -> {
                     req.putHeader("Accept", "application/openmetrics-text; version=1.0.0");
                     return req.send();
@@ -180,7 +180,7 @@ public class PrometheusScrapeIT {
     @DisplayName("GET /health/live → 200 (health endpoint still works alongside /metrics)")
     void healthLiveStillWorks(VertxTestContext ctx) {
         vertx.createHttpClient()
-                .request(HttpMethod.GET, managementPort, "localhost", "/health/live")
+                .request(HttpMethod.GET, managementPort, "127.0.0.1", "/health/live")
                 .compose(req -> req.send())
                 .onSuccess(resp -> {
                     ctx.verify(() -> assertEquals(200, resp.statusCode()));
@@ -193,7 +193,7 @@ public class PrometheusScrapeIT {
     @DisplayName("NFR-TEL-005: GET /metrics on application port → 404 (Router-based app server)")
     void metricsNotOnApplicationPort(VertxTestContext ctx) {
         vertx.createHttpClient()
-                .request(HttpMethod.GET, appServerPort, "localhost", "/metrics")
+                .request(HttpMethod.GET, appServerPort, "127.0.0.1", "/metrics")
                 .compose(req -> req.send())
                 .onSuccess(resp -> {
                     ctx.verify(() -> assertEquals(404, resp.statusCode(), "app server must return 404 for /metrics"));
@@ -217,7 +217,7 @@ public class PrometheusScrapeIT {
                         () -> ctx.failNow(new AssertionError("Prometheus registry must be present")));
 
         vertx.createHttpClient()
-                .request(HttpMethod.GET, managementPort, "localhost", "/metrics")
+                .request(HttpMethod.GET, managementPort, "127.0.0.1", "/metrics")
                 .compose(req -> req.send())
                 .compose(resp -> resp.body())
                 // Small delay to ensure the gauge supplier has been invoked
@@ -268,7 +268,7 @@ public class PrometheusScrapeIT {
             return;
         }
         vertx.createHttpClient()
-                .request(HttpMethod.GET, managementPort, "localhost", "/metrics")
+                .request(HttpMethod.GET, managementPort, "127.0.0.1", "/metrics")
                 .compose(req -> req.send())
                 .compose(resp -> resp.body())
                 .onSuccess(body -> {
