@@ -480,6 +480,12 @@ public class SessionRefresher {
 Compose on the returned future — it completes only once the new identity is in effect. The refresh
 replaces the `SecurityContext` only; correlation and MDC bound at upgrade survive it.
 
+The Vert.x authorization import (opt-in via `VertxAuthorizationImportModule` from
+`dev.vertique:vertique-rest-security`) runs during identity resolution at upgrade time only. A
+refresh rebinds the supplied `SecurityContext` as-is — it does not re-invoke identity resolvers or
+contributed `AuthorizationProvider`s. Resolve any refreshed authorities into the new context before
+calling `refreshIdentity`.
+
 **`@OnClose` runs before the channel is deregistered**, so your close handler still observes the
 authenticated `SecurityContext` rather than an anonymous one. Cleanup — the channel-closed event,
 expiry-timer cancellation, and scope release — happens after your close logic has settled.
@@ -502,7 +508,9 @@ connection's context scope is released directly on close.
 
 It also declares empty `Set<RouteAuthHandler>`, `Set<AuthorizationProvider>`, and
 `Set<SecurityIdentityResolver>` multibindings so the graph resolves with no security module present.
-`AuthModule` contributes into the same sets when it is installed.
+`AuthModule` contributes into the same sets when it is installed. The `AuthorizationProvider` set is
+inert until the application also installs `VertxAuthorizationImportModule` (see the optional
+`VertxAuthorizationImporter` binding below).
 
 Optional bindings (`@BindsOptionalOf`), each absent unless the named module is in the component. All
 coalesce with the same declaration in `AuthModule` when both are present.
@@ -516,6 +524,7 @@ coalesce with the same declaration in `AuthModule` when both are present.
 | `AuthorizationPolicy` | application | Same |
 | `Authorizer` | `SecurityAuthzModule` | Any endpoint declaring `@RequiresAction` fails startup |
 | `ActionRegistry` | `SecurityAuthzModule` | Same |
+| `VertxAuthorizationImporter` | `VertxAuthorizationImportModule` (opt-in, from `dev.vertique:vertique-rest-security`) | Contributed `AuthorizationProvider`s are never consulted; authorization decisions come only from resolved claims |
 | `BeanValidator` | `ValidationModule` | Messages are not validated |
 | `InputObjectProcessor` | `SanitizationModule` | Messages and path parameters are not sanitized |
 
@@ -573,8 +582,12 @@ be enforced refuses to boot rather than serving traffic with the gate silently m
   inbound delivery starts only after `@OnOpen`'s future completes.
 - **Using a `@PathParam` type other than `String`, `int`/`Integer`, or `long`/`Long`.** This passes
   startup validation and fails per-invocation.
-- **Adding a Vert.x `AuthorizationProvider` and expecting it to change an authorization outcome.**
-  Role and scope decisions are evaluated from the framework's `SecurityContext` claims.
+- **Adding a Vert.x `AuthorizationProvider` without installing `VertxAuthorizationImportModule`.**
+  The provider multibinding is inert on its own — role and scope decisions are evaluated from the
+  framework's `SecurityContext` claims. When the application includes the opt-in
+  `VertxAuthorizationImportModule` (from `dev.vertique:vertique-rest-security`), the mount factory
+  threads the importer into identity resolution, so contributed providers change authorization
+  outcomes at upgrade time.
 
 ---
 

@@ -18,6 +18,7 @@ import dev.vertique.rest.core.security.RouteAuthHandler;
 import dev.vertique.rest.core.security.SecurityRuntime;
 import dev.vertique.rest.security.AuthorizationDecisionPoint;
 import dev.vertique.rest.security.SecurityClaimMapper;
+import dev.vertique.rest.security.VertxAuthorizationImporter;
 import dev.vertique.rest.websocket.WebSocketConfig;
 import dev.vertique.rest.websocket.WebSocketMessageCodec;
 import dev.vertique.rest.websocket.WebSocketMount;
@@ -202,6 +203,20 @@ public abstract class WebSocketModule {
      */
     @BindsOptionalOf
     abstract ActionRegistry optionalActionRegistry();
+
+    /**
+     * Optional binding for {@link VertxAuthorizationImporter}. Present when the application opts in
+     * by including {@link dev.vertique.rest.security.VertxAuthorizationImportModule}; absent
+     * otherwise. Threaded by {@link WebSocketMount.Factory} into the
+     * {@link dev.vertique.rest.security.IdentityResolutionMiddleware} so contributed Vert.x
+     * {@link AuthorizationProvider}s are consulted during identity resolution at upgrade time.
+     * Declared here so a WebSocket-only component (no auth module) still satisfies the factory's
+     * injection; coalesces with {@code AuthModule}'s declaration when both are present.
+     *
+     * @return the optional {@link VertxAuthorizationImporter} binding declaration
+     */
+    @BindsOptionalOf
+    abstract VertxAuthorizationImporter optionalVertxAuthorizationImporter();
 
     // --- Singleton providers ---
 
