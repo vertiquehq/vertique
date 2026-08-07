@@ -49,6 +49,7 @@ public class ManagementVerticle extends AbstractVerticle {
     private final Set<HealthCheck> livenessChecks;
     private final Set<HealthCheck> readinessChecks;
     private final int port;
+    private final String host;
     private final boolean enabled;
     private final long healthCheckTimeoutSeconds;
     private final Set<ManagementEndpointContributor> endpointContributors;
@@ -71,6 +72,7 @@ public class ManagementVerticle extends AbstractVerticle {
         this.livenessChecks = livenessChecks;
         this.readinessChecks = readinessChecks;
         this.port = config.port();
+        this.host = config.host();
         this.enabled = config.enabled();
         this.healthCheckTimeoutSeconds = config.healthCheckTimeoutSeconds();
         this.endpointContributors = endpointContributors;
@@ -116,10 +118,10 @@ public class ManagementVerticle extends AbstractVerticle {
 
         vertx.createHttpServer()
                 .requestHandler(router)
-                .listen(port)
+                .listen(port, host)
                 .onSuccess(server -> {
                     vertx.sharedData().getLocalMap("vertique").put("management.port", server.actualPort());
-                    log.info("Management server started on port {}", server.actualPort());
+                    log.info("Management server started on {}:{}", host, server.actualPort());
                     startPromise.complete();
                 })
                 .onFailure(cause -> {

@@ -141,7 +141,7 @@ class ManagementVerticleTest {
      * @return a future completing with the parsed response body
      */
     private Future<JsonObject> request(Vertx vertx, int port, String path) {
-        return request(vertx, port, "localhost", path);
+        return request(vertx, port, "127.0.0.1", path);
     }
 
     /**
@@ -367,7 +367,7 @@ class ManagementVerticleTest {
             vertx.deployVerticle(verticle).onComplete(ctx.succeeding(id -> {
                 // Verify port is NOT bound by attempting to connect — the request must fail
                 vertx.createHttpClient()
-                        .request(HttpMethod.GET, 9999, "localhost", "/health/live")
+                        .request(HttpMethod.GET, 9999, "127.0.0.1", "/health/live")
                         .compose(req -> req.send())
                         .onComplete(ctx.failing(cause -> ctx.completeNow()));
             }));

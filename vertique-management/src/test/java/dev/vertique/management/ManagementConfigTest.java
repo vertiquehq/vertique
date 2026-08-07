@@ -23,11 +23,13 @@ class ManagementConfigTest {
     class Defaults {
 
         @Test
-        @DisplayName("empty JsonObject deserializes to port=9090, enabled=true, healthCheckTimeoutSeconds=5")
+        @DisplayName(
+                "empty JsonObject deserializes to port=9090, host=0.0.0.0, enabled=true, healthCheckTimeoutSeconds=5")
         void emptyJsonObjectProducesDefaults() {
             ManagementConfig config = new JsonObject().mapTo(ManagementConfig.class);
 
             assertEquals(9090, config.port());
+            assertEquals("0.0.0.0", config.host());
             assertTrue(config.enabled());
             assertEquals(5L, config.healthCheckTimeoutSeconds());
         }
@@ -41,12 +43,16 @@ class ManagementConfigTest {
         @Test
         @DisplayName("all fields set are correctly deserialized")
         void allFieldsDeserialized() {
-            JsonObject json =
-                    new JsonObject().put("port", 8081).put("enabled", false).put("healthCheckTimeoutSeconds", 10);
+            JsonObject json = new JsonObject()
+                    .put("port", 8081)
+                    .put("host", "127.0.0.1")
+                    .put("enabled", false)
+                    .put("healthCheckTimeoutSeconds", 10);
 
             ManagementConfig config = json.mapTo(ManagementConfig.class);
 
             assertEquals(8081, config.port());
+            assertEquals("127.0.0.1", config.host());
             assertFalse(config.enabled());
             assertEquals(10L, config.healthCheckTimeoutSeconds());
         }
