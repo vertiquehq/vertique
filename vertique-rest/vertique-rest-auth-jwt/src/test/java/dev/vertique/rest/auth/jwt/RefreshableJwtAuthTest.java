@@ -3,6 +3,9 @@
 
 package dev.vertique.rest.auth.jwt;
 
+import static dev.vertique.rest.auth.jwt.JwtAuthTestSupport.assertAuthenticationSucceeds;
+import static dev.vertique.rest.auth.jwt.JwtAuthTestSupport.closeThenAssertAuthenticationSucceeds;
+import static dev.vertique.rest.auth.jwt.JwtAuthTestSupport.secondsFromNow;
 import static org.junit.jupiter.api.Assertions.*;
 
 import io.vertx.core.Future;
@@ -14,7 +17,6 @@ import io.vertx.ext.auth.jwt.JWTAuth;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
 import java.time.Duration;
-import java.time.Instant;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -110,17 +112,9 @@ class RefreshableJwtAuthTest {
                     // Wait long enough for at least two refresh ticks (300 ms >> 100 ms interval)
                     vertx.setTimer(300, ignored -> {
                         // After refresh(es), tokens signed with the same key should still be accepted
-                        // because the classpath JWKS has not changed between ticks.
-                        TokenCredentials creds = new TokenCredentials(token);
-                        refreshable.authenticate(creds).onComplete(result -> {
-                            refreshable.close();
-                            // Authentication must succeed: the swapped delegate still knows the same key
-                            if (result.failed()) {
-                                testContext.failNow(result.cause());
-                            } else {
-                                testContext.completeNow();
-                            }
-                        });
+                        // because the classpath JWKS has not changed between ticks: the swapped
+                        // delegate still knows the same key.
+                        closeThenAssertAuthenticationSucceeds(refreshable, token, testContext);
                     });
                 }));
     }
@@ -147,14 +141,7 @@ class RefreshableJwtAuthTest {
 
                     // Assert on the outcome only: Vert.x reports every time-claim rejection with the
                     // identical message "Invalid JWT token: token expired.".
-                    refreshable.authenticate(new TokenCredentials(token)).onComplete(result -> {
-                        if (result.failed()) {
-                            testContext.failNow(result.cause());
-                        } else {
-                            assertNotNull(result.result());
-                            testContext.completeNow();
-                        }
-                    });
+                    assertAuthenticationSucceeds(refreshable, token, testContext);
                 }));
     }
 
@@ -178,14 +165,7 @@ class RefreshableJwtAuthTest {
                                     .put("exp", secondsFromNow(-120)),
                             new JWTOptions().setAlgorithm("HS256"));
 
-                    refreshable.authenticate(new TokenCredentials(token)).onComplete(result -> {
-                        if (result.failed()) {
-                            testContext.failNow(result.cause());
-                        } else {
-                            assertNotNull(result.result());
-                            testContext.completeNow();
-                        }
-                    });
+                    assertAuthenticationSucceeds(refreshable, token, testContext);
                 }));
     }
 
@@ -219,27 +199,8 @@ class RefreshableJwtAuthTest {
                     // The original delegate is still intact; tokens must be verifiable
                     JsonObject claims = new JsonObject().put("sub", "closed-test-user");
                     String token = refreshable.generateToken(claims);
-                    TokenCredentials creds = new TokenCredentials(token);
 
-                    refreshable.authenticate(creds).onComplete(result -> {
-                        if (result.failed()) {
-                            testContext.failNow(result.cause());
-                        } else {
-                            testContext.completeNow();
-                        }
-                    });
+                    assertAuthenticationSucceeds(refreshable, token, testContext);
                 }));
-    }
-
-    // --- Helpers ---
-
-    /**
-     * Returns the epoch-second value {@code offsetSeconds} away from now (negative = in the past).
-     *
-     * @param offsetSeconds the offset from now, in seconds
-     * @return the resulting epoch-second value
-     */
-    private static long secondsFromNow(long offsetSeconds) {
-        return Instant.now().getEpochSecond() + offsetSeconds;
     }
 }

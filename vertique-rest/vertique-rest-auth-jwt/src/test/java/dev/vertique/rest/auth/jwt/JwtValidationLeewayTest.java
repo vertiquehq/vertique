@@ -3,11 +3,14 @@
 
 package dev.vertique.rest.auth.jwt;
 
+import static dev.vertique.rest.auth.jwt.JwtAuthTestSupport.assertAuthenticationFails;
+import static dev.vertique.rest.auth.jwt.JwtAuthTestSupport.assertAuthenticationSucceeds;
+import static dev.vertique.rest.auth.jwt.JwtAuthTestSupport.secondsFromNow;
+
 import io.vertx.core.Vertx;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.auth.JWTOptions;
 import io.vertx.ext.auth.PubSecKeyOptions;
-import io.vertx.ext.auth.authentication.TokenCredentials;
 import io.vertx.ext.auth.jwt.JWTAuth;
 import io.vertx.ext.auth.jwt.JWTAuthOptions;
 import io.vertx.junit5.VertxExtension;
@@ -15,7 +18,6 @@ import io.vertx.junit5.VertxTestContext;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
 import java.security.NoSuchAlgorithmException;
-import java.time.Instant;
 import java.util.Base64;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.DisplayName;
@@ -165,11 +167,6 @@ class JwtValidationLeewayTest {
 
     // --- Helpers ---
 
-    /** Returns the epoch-second value {@code offsetSeconds} away from now (negative = past). */
-    private static long secondsFromNow(long offsetSeconds) {
-        return Instant.now().getEpochSecond() + offsetSeconds;
-    }
-
     /**
      * Signs the supplied claims. Time claims are placed explicitly in the claims object rather than
      * derived from {@code JWTOptions}, so each test controls the exact offset it needs.
@@ -196,27 +193,5 @@ class JwtValidationLeewayTest {
     private static String pem(String label, byte[] der) {
         String body = Base64.getMimeEncoder(64, new byte[] {'\n'}).encodeToString(der);
         return "-----BEGIN " + label + "-----\n" + body + "\n-----END " + label + "-----\n";
-    }
-
-    /** Completes the context when authentication succeeds; fails it with the cause otherwise. */
-    private static void assertAuthenticationSucceeds(JWTAuth auth, String token, VertxTestContext testContext) {
-        auth.authenticate(new TokenCredentials(token)).onComplete(result -> {
-            if (result.succeeded()) {
-                testContext.completeNow();
-            } else {
-                testContext.failNow(result.cause());
-            }
-        });
-    }
-
-    /** Completes the context when authentication fails; fails it when the token is accepted. */
-    private static void assertAuthenticationFails(JWTAuth auth, String token, VertxTestContext testContext) {
-        auth.authenticate(new TokenCredentials(token)).onComplete(result -> {
-            if (result.failed()) {
-                testContext.completeNow();
-            } else {
-                testContext.failNow(new AssertionError("Expected authentication to fail, but it succeeded"));
-            }
-        });
     }
 }
