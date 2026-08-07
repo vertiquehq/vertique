@@ -35,20 +35,33 @@ import lombok.extern.slf4j.Slf4j;
  *
  * <h2>Timer context</h2>
  * The Vert.x timer fires on the event loop of the {@link Vertx} instance. Each tick dispatches the
- * JWKS fetch to a worker thread via {@link JwtAuthFactory#fromJwksAsync(Vertx, String)}; the
- * delegate swap happens back on the event loop. Cancelling the timer with {@link #close()} stops
- * future ticks, but an in-progress refresh is allowed to complete harmlessly because {@code closed}
- * is checked before the swap.
+ * JWKS fetch to a worker thread via {@link JwtAuthFactory}; the delegate swap happens back on the
+ * event loop. Cancelling the timer with {@link #close()} stops future ticks, but an in-progress
+ * refresh is allowed to complete harmlessly because {@code closed} is checked before the swap.
+ *
+ * <p>A refresh tick never logs the missing issuer/audience advisory: that warning belongs to
+ * startup, and the validation constraints cannot change after construction, so emitting it on every
+ * interval would add nothing but log volume.
+ *
+ * <h2>Validation constraints</h2>
+ * The {@link JwtValidationConfig} supplied at creation is immutable for the instance's lifetime and
+ * is re-applied to <em>every</em> delegate, including each one a refresh tick builds. A refreshed
+ * key set therefore never silently reverts to a different issuer, audience, or
+ * {@code exp}/{@code nbf}/{@code iat} leeway than the initial one.
+ *
+ * <p>Because that config is stable, this class attests it directly through
+ * {@link #appliedValidation()} rather than being wrapped: the value it reports holds for the current
+ * delegate and for every future one.
  *
  * <h2>Overlapping refresh prevention</h2>
  * {@link AtomicBoolean} {@code refreshInProgress} guards against concurrent refreshes — if a
  * previous tick's I/O is still in flight when the next tick fires, the new tick returns immediately
  * without starting a second fetch.
  *
- * @see JwtAuthFactory#fromJwksAsync(Vertx, String)
+ * @see JwtAuthFactory
  */
 @Slf4j
-public final class RefreshableJwtAuth implements JWTAuth {
+public final class RefreshableJwtAuth implements JWTAuth, ValidationAttested {
 
     // --- State ---
 
@@ -56,6 +69,15 @@ public final class RefreshableJwtAuth implements JWTAuth {
     private final String jwksLocation;
     private final AtomicBoolean closed = new AtomicBoolean(false);
     private final AtomicBoolean refreshInProgress = new AtomicBoolean(false);
+
+    /**
+     * The validation constraints applied to every delegate this instance builds.
+     *
+     * <p>{@code final} and never re-read from configuration: the constraints that guarded the
+     * initial key set must keep guarding every refreshed key set, so {@link #onRefreshTick(long)}
+     * passes this same value to each fetch.
+     */
+    private final JwtValidationConfig validation;
 
     /**
      * The Vert.x periodic timer ID.
@@ -68,7 +90,7 @@ public final class RefreshableJwtAuth implements JWTAuth {
     private long timerId = -1;
 
     /**
-     * The current JWT authenticator.
+     * The current JWT authenticator, always stored unwrapped (see {@link #unattested(JWTAuth)}).
      *
      * <p>Written only from the Vert.x event loop after a successful JWKS refresh, and read from
      * any thread during authentication. {@code volatile} guarantees that reads always see the
@@ -78,19 +100,26 @@ public final class RefreshableJwtAuth implements JWTAuth {
 
     // --- Constructor and factory ---
 
-    private RefreshableJwtAuth(Vertx vertx, String jwksLocation, JWTAuth initial) {
+    private RefreshableJwtAuth(Vertx vertx, String jwksLocation, JwtValidationConfig validation, JWTAuth initial) {
         this.vertx = vertx;
         this.jwksLocation = jwksLocation;
-        this.delegate = initial;
+        this.validation = validation;
+        this.delegate = unattested(initial);
     }
 
     /**
      * Asynchronous factory method that fetches an initial JWKS and starts a background refresh timer.
      *
-     * <p>The initial JWKS fetch uses {@link JwtAuthFactory#fromJwksAsync(Vertx, String)} and runs
-     * on a worker thread for {@code http://} and {@code https://} locations. Once the initial
-     * {@link JWTAuth} is ready, a Vert.x periodic timer is registered to refresh the keys every
-     * {@code refreshInterval}.
+     * <p>The initial JWKS fetch goes through {@link JwtAuthFactory} and runs on a worker thread for
+     * {@code http://} and {@code https://} locations. Once the initial {@link JWTAuth} is ready, a
+     * Vert.x periodic timer is registered to refresh the keys every {@code refreshInterval}.
+     *
+     * <p>Applies {@code JwtValidationConfig.builder().build()}, so the documented default clock
+     * skew ({@link JwtValidationConfig#clockSkewSeconds()}) is honored as
+     * {@code exp}/{@code nbf}/{@code iat} leeway on the initial key set and on every refreshed one.
+     * Issuer and audience stay unconstrained and no warning is logged about it, because the caller
+     * did not ask for validation; use
+     * {@link #create(Vertx, String, Duration, JwtValidationConfig)} to constrain them.
      *
      * <p>Example usage:
      * <pre>{@code
@@ -114,15 +143,68 @@ public final class RefreshableJwtAuth implements JWTAuth {
      * @throws IllegalArgumentException if {@code jwksLocation} is blank
      */
     public static Future<RefreshableJwtAuth> create(Vertx vertx, String jwksLocation, Duration refreshInterval) {
+        return create(vertx, jwksLocation, refreshInterval, JwtAuthFactory.defaultValidation(), false);
+    }
+
+    /**
+     * As {@link #create(Vertx, String, Duration)}, applying {@code config} to the initial key set and
+     * to every key set fetched by a subsequent refresh tick.
+     *
+     * <p>The config is captured once and never re-read: a refreshed delegate is built with exactly
+     * the constraints the initial one carried, so issuer, audience, and clock-skew leeway cannot
+     * silently change underneath a running application when the JWKS endpoint is re-fetched.
+     *
+     * <p>A warning is logged when {@code config.issuer()} or {@code config.audience()} is
+     * {@code null}, as this leaves the token open to substitution attacks. It is logged at most
+     * once, on the initial load — refresh ticks never re-emit it.
+     *
+     * @param vertx           the Vert.x instance, must not be {@code null}
+     * @param jwksLocation    the JWKS document location (classpath, filesystem, or HTTP URL),
+     *                        must not be {@code null} or blank
+     * @param refreshInterval how often to refresh the JWKS keys, must not be {@code null}
+     * @param config          the validation constraints to apply; must not be {@code null}
+     * @return a future that completes with a configured {@link RefreshableJwtAuth} instance
+     * @throws IllegalArgumentException if {@code jwksLocation} is blank
+     */
+    public static Future<RefreshableJwtAuth> create(
+            Vertx vertx, String jwksLocation, Duration refreshInterval, JwtValidationConfig config) {
+        return create(vertx, jwksLocation, refreshInterval, config, true);
+    }
+
+    /**
+     * Shared implementation behind both public {@code create} overloads.
+     *
+     * <p>{@code warnOnInitialLoad} is the only difference between them: the overload that takes a
+     * caller-supplied config passes {@code true}, because an unset issuer or audience is then worth
+     * a startup warning; the overload that defaults the config passes {@code false}, because the
+     * caller never asked for issuer/audience validation. Either way the flag applies only to the
+     * initial load — {@link #onRefreshTick(long)} always suppresses the advisory.
+     *
+     * @param vertx             the Vert.x instance, must not be {@code null}
+     * @param jwksLocation      the JWKS document location, must not be {@code null} or blank
+     * @param refreshInterval   how often to refresh the JWKS keys, must not be {@code null}
+     * @param config            the validation constraints to apply; must not be {@code null}
+     * @param warnOnInitialLoad whether the initial load logs the missing issuer/audience warnings
+     * @return a future that completes with a configured {@link RefreshableJwtAuth} instance
+     * @throws IllegalArgumentException if {@code jwksLocation} is blank
+     */
+    private static Future<RefreshableJwtAuth> create(
+            Vertx vertx,
+            String jwksLocation,
+            Duration refreshInterval,
+            JwtValidationConfig config,
+            boolean warnOnInitialLoad) {
         Objects.requireNonNull(vertx, "vertx");
         requireNonBlank(jwksLocation, "jwksLocation");
         Objects.requireNonNull(refreshInterval, "refreshInterval");
+        Objects.requireNonNull(config, "config");
 
-        return JwtAuthFactory.fromJwksAsync(vertx, jwksLocation).map(initial -> {
-            RefreshableJwtAuth auth = new RefreshableJwtAuth(vertx, jwksLocation, initial);
-            auth.timerId = vertx.setPeriodic(refreshInterval.toMillis(), auth::onRefreshTick);
-            return auth;
-        });
+        return JwtAuthFactory.fromJwksAsync(vertx, jwksLocation, config, warnOnInitialLoad)
+                .map(initial -> {
+                    RefreshableJwtAuth auth = new RefreshableJwtAuth(vertx, jwksLocation, config, initial);
+                    auth.timerId = vertx.setPeriodic(refreshInterval.toMillis(), auth::onRefreshTick);
+                    return auth;
+                });
     }
 
     /**
@@ -137,6 +219,20 @@ public final class RefreshableJwtAuth implements JWTAuth {
     public void close() {
         closed.set(true);
         vertx.cancelTimer(timerId);
+    }
+
+    // --- ValidationAttested ---
+
+    /**
+     * Returns the validation constraints applied to this instance's delegate, including every
+     * refreshed delegate. Public by interface rule (implements the package-private
+     * {@code ValidationAttested}); the interface type itself is not exported.
+     *
+     * @return the applied validation config; never {@code null}
+     */
+    @Override
+    public JwtValidationConfig appliedValidation() {
+        return validation;
     }
 
     // --- JWTAuth delegation ---
@@ -193,21 +289,47 @@ public final class RefreshableJwtAuth implements JWTAuth {
      * On success, swaps the delegate only if the instance is still open. Always clears the
      * {@code refreshInProgress} flag on completion, regardless of success or failure.
      *
+     * <p>The fetch passes {@link #validation} rather than relying on factory defaults: the swapped-in
+     * delegate must enforce the same issuer, audience, and clock-skew leeway the caller configured
+     * for the initial key set, otherwise a refresh would silently relax token validation.
+     *
+     * <p>It passes {@code warnOnMissingConstraints = false} unconditionally. The missing
+     * issuer/audience advisory is a startup concern, and {@link #validation} is immutable for this
+     * instance's lifetime, so a tick can never surface a constraint gap the initial load did not
+     * already report — re-warning every interval would be pure noise for the life of the process.
+     *
      * @param id the timer ID provided by Vert.x (unused)
      */
     private void onRefreshTick(long id) {
         if (closed.get() || !refreshInProgress.compareAndSet(false, true)) {
             return;
         }
-        JwtAuthFactory.fromJwksAsync(vertx, jwksLocation)
+        JwtAuthFactory.fromJwksAsync(vertx, jwksLocation, validation, false)
                 .onSuccess(newAuth -> {
                     if (!closed.get()) {
-                        delegate = newAuth;
+                        delegate = unattested(newAuth);
                         log.info("JWKS refreshed from {}", jwksLocation);
                     }
                 })
                 .onFailure(err -> log.warn("JWKS refresh failed, keeping existing keys", err))
                 .onComplete(v -> refreshInProgress.set(false));
+    }
+
+    /**
+     * Strips the factory's attestation wrapper, if present, from a provider about to be stored as
+     * {@link #delegate}.
+     *
+     * <p>{@link JwtAuthFactory} attests every {@link JWTAuth} it builds, but this class reports
+     * {@link #appliedValidation()} from its own {@link #validation} field, so an inner attestation
+     * is unreachable: it would only add an allocation on every refresh tick and a dispatch hop on
+     * every {@code authenticate}. Unwrapping keeps this instance the single attestation carrier on
+     * the refreshing path, which is what its class javadoc promises.
+     *
+     * @param auth the provider the factory returned; must not be {@code null}
+     * @return the underlying provider when {@code auth} is attested, otherwise {@code auth} itself
+     */
+    private static JWTAuth unattested(JWTAuth auth) {
+        return auth instanceof AttestedJwtAuth attested ? attested.delegate() : auth;
     }
 
     private static void requireNonBlank(String value, String name) {

@@ -110,7 +110,7 @@ public class WebValidationGateIT {
                 .onComplete(ctx.succeeding(s -> {
                     server = s;
                     client = vertx.createHttpClient();
-                    client.request(HttpMethod.POST, s.actualPort(), "localhost", "/create")
+                    client.request(HttpMethod.POST, s.actualPort(), "127.0.0.1", "/create")
                             .compose(req -> req.putHeader("Content-Type", "application/json")
                                     .send("{\"name\":\"AB\"}"))
                             .compose(resp -> resp.body().map(b ->
@@ -157,7 +157,7 @@ public class WebValidationGateIT {
                 .onComplete(ctx.succeeding(s -> {
                     server = s;
                     client = vertx.createHttpClient();
-                    client.request(HttpMethod.GET, s.actualPort(), "localhost", "/tags")
+                    client.request(HttpMethod.GET, s.actualPort(), "127.0.0.1", "/tags")
                             .compose(req -> {
                                 req.headers().add("X-Tag", "a");
                                 req.headers().add("X-Tag", "b");

@@ -21,13 +21,9 @@ import dev.vertique.core.extension.ExtensionPhase;
 import dev.vertique.rest.core.RestValidationException;
 import dev.vertique.rest.core.ValidationErrorDetail;
 import dev.vertique.rest.core.config.JaxRsConfig;
-import dev.vertique.rest.core.routing.SecurityRequirementSet;
-import dev.vertique.rest.core.security.SecurityPolicy;
 import dev.vertique.rest.jaxrs.convert.ConversionContexts;
-import dev.vertique.rest.jaxrs.routing.BodyDescriptor;
 import dev.vertique.rest.jaxrs.routing.FilePartDescriptor;
 import dev.vertique.rest.jaxrs.routing.JaxRsOperationDescriptor;
-import dev.vertique.rest.jaxrs.routing.ParamDescriptor;
 import dev.vertique.rest.jaxrs.validation.FileContentVerifier;
 import dev.vertique.rest.jaxrs.validation.FileVerificationResult;
 import dev.vertique.rest.jaxrs.validation.OperationSchemas;
@@ -38,12 +34,10 @@ import io.vertx.core.http.Cookie;
 import io.vertx.core.http.HttpServerRequest;
 import io.vertx.ext.web.FileUpload;
 import io.vertx.ext.web.RoutingContext;
-import java.lang.annotation.Annotation;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.DisplayName;
@@ -365,72 +359,13 @@ class WebValidationGateVerifierTest {
     }
 
     private static JaxRsOperationDescriptor descriptor(List<FilePartDescriptor> fileParts) {
-        return new JaxRsOperationDescriptor() {
-            @Override
-            public String operationId() {
-                return "verifyUploads";
-            }
-
-            @Override
-            public String httpMethod() {
-                return "POST";
-            }
-
-            @Override
-            public String routeTemplate() {
-                return "/files";
-            }
-
-            @Override
-            public List<String> consumes() {
-                return List.of("multipart/form-data");
-            }
-
-            @Override
-            public List<String> produces() {
-                return List.of();
-            }
-
-            @Override
-            public SecurityPolicy securityPolicy() {
-                return new SecurityPolicy.None();
-            }
-
-            @Override
-            public List<SecurityRequirementSet> securityRequirementSets() {
-                return List.of();
-            }
-
-            @Override
-            public List<Annotation> methodAnnotations() {
-                return List.of();
-            }
-
-            @Override
-            public List<Annotation> classAnnotations() {
-                return List.of();
-            }
-
-            @Override
-            public <A extends Annotation> Optional<A> findAnnotation(Class<A> type) {
-                return Optional.empty();
-            }
-
-            @Override
-            public List<ParamDescriptor> parameters() {
-                return List.of();
-            }
-
-            @Override
-            public Optional<BodyDescriptor> body() {
-                return Optional.empty();
-            }
-
-            @Override
-            public List<FilePartDescriptor> fileParts() {
-                return fileParts;
-            }
-        };
+        return StubDescriptors.builder()
+                .operationId("verifyUploads")
+                .httpMethod("POST")
+                .routeTemplate("/files")
+                .consumes(List.of("multipart/form-data"))
+                .fileParts(fileParts)
+                .build();
     }
 
     private record RecordingVerifier(String id, ExtensionPhase phase, int priority, List<String> calls)

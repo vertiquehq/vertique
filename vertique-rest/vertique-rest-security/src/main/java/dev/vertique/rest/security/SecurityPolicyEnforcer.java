@@ -81,7 +81,7 @@ import lombok.extern.slf4j.Slf4j;
  *   <li>Default {@link VertxProviderDecisionPoint} (evaluates role/scope/permission requirements
  *       from the request's {@link dev.vertique.security.authz.AuthorizationClaims}; the injected
  *       Vert.x {@link AuthorizationProvider} set is retained for compatibility / future adapters and
- *       is not consulted in v1 — GitHub issue #73)</li>
+ *       is not consulted in v1 — GitHub issue #165)</li>
  * </ol>
  *
  * <p>Used by both {@link AuthorizationContributor} (JAX-RS routes) and the WebSocket module

@@ -26,12 +26,42 @@ permissions:
   contents: read
 
 jobs:
+  # Classifies the changed paths so a docs-only pull request can skip the
+  # expensive build (a job skipped via `if:` satisfies its required check).
+  # The decision lives in a repository-owned, contract-tested script; pushes
+  # to main always build, so SNAPSHOT publication only trails verified SHAs.
+  classify:
+    name: Classify changed paths
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 5
+    outputs:
+      docs_only: ${{ steps.scope.outputs.docs_only }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - id: scope
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: bash scripts/detect-docs-only-scope.sh --event-name "$EVENT_NAME" --base-sha "$BASE_SHA" --head-sha "$HEAD_SHA" >> "$GITHUB_OUTPUT"
+
   build:
     name: Build and Test
-    runs-on: ubuntu-latest
+    needs: classify
+    # !cancelled(): if classify itself fails, docs_only is empty and the full
+    # build still runs — a classify failure must never satisfy the required
+    # check by skipping the job it exists to gate.
+    if: ${{ !cancelled() && needs.classify.outputs.docs_only != 'true' }}
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 70
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          # Full history: the diff coverage gate diffs against origin/main.
+          fetch-depth: 0
 
       - uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5
         with:
@@ -44,10 +74,48 @@ jobs:
           node-version: "22"
 
       - name: Verify release contracts
-        run: node --test release/tests/publication-contract.test.mjs
+        run: node --test release/tests/publication-contract.test.mjs release/tests/coverage-aggregate-contract.test.mjs release/tests/docs-only-scope.test.mjs
 
+      - name: Verify test bind policy
+        run: |
+          bash scripts/test-verify-test-bind-policy.sh
+          bash scripts/verify-test-bind-policy.sh
+
+      # Per-module HTML reports are skipped: the vertique-coverage-report
+      # aggregate XML produced by this same invocation is the only coverage
+      # output CI consumes. Reactor parallelism (-T1C) comes from
+      # .mvn/maven.config so local and CI builds share one setting.
       - name: Build and test
-        run: ./mvnw -ntp -T 1 clean verify
+        run: ./mvnw -ntp -Djacoco.module.report.skip=true clean verify
+
+      # Gates only the lines this PR changes (threshold = the standing 80%
+      # target). No credential, no external service; locally runnable as-is.
+      - name: Diff coverage gate
+        if: github.event_name == 'pull_request'
+        run: bash scripts/diff-coverage-gate.sh
+
+      # Consumed by the non-required Coverage Comment workflow. Uploaded even
+      # when the gate fails — a failing gate is exactly when the PR comment
+      # matters — and needs no write permission and no secret.
+      - name: Upload PR coverage report
+        if: github.event_name == 'pull_request' && !cancelled()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage-pr
+          path: |
+            vertique-coverage-report/target/site/jacoco-aggregate/jacoco.xml
+            vertique-coverage-report/target/site/jacoco-aggregate/diff-cover.json
+          if-no-files-found: ignore
+
+      # Consumed by the non-required Coverage Trend workflow. Uploading needs
+      # no write permission and no secret.
+      - name: Upload aggregate coverage report
+        if: github.event_name == 'push'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: jacoco-aggregate
+          path: vertique-coverage-report/target/site/jacoco-aggregate/jacoco.xml
+          if-no-files-found: error
 
       - name: Check formatting
-        run: ./mvnw -ntp -T 1 -pl '!vertique-app-parent' spotless:check
+        run: ./mvnw -ntp -pl '!vertique-app-parent' spotless:check

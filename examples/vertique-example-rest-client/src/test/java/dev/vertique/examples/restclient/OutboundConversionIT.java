@@ -100,7 +100,7 @@ public class OutboundConversionIT {
             this.vertx
                     .createHttpServer()
                     .requestHandler(router)
-                    .listen(0)
+                    .listen(0, "127.0.0.1")
                     .onSuccess(s -> {
                         echoServer = s;
                         echoPort = s.actualPort();
@@ -113,8 +113,9 @@ public class OutboundConversionIT {
     /**
      * Deploys the echo server verticle on the injected {@link Vertx} instance.
      *
-     * <p>The server binds to port {@code 0} (OS-allocated ephemeral); the actual port is read from the
-     * {@link HttpServer} reference after {@code listen(0)} resolves and stored in {@link #echoPort}.
+     * <p>The server binds to IPv4 loopback on port {@code 0} (OS-allocated ephemeral); the actual
+     * port is read from the {@link HttpServer} reference after {@code listen(0, "127.0.0.1")}
+     * resolves and stored in {@link #echoPort}.
      *
      * @param injectedVertx the Vert.x instance provided by {@link VertxExtension}
      * @param ctx the test context used to signal setup completion or failure
@@ -242,7 +243,7 @@ public class OutboundConversionIT {
 
     private RestClientBuilder builder() {
         return RestClientBuilder.create(vertx)
-                .baseUrl("http://localhost:" + echoPort)
+                .baseUrl("http://127.0.0.1:" + echoPort)
                 .paramConverterBinding(new ParamConverterBinding<>(Sku.class, SKU_CONVERTER))
                 .paramConverterProvider(TAG_PROVIDER);
     }

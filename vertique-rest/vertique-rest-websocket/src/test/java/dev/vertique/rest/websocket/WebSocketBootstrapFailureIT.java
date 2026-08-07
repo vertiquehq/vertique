@@ -128,7 +128,7 @@ public class WebSocketBootstrapFailureIT {
                 Set.of(new BootstrapFailingEndpoint(), new AsyncBootstrapFailingEndpoint(), new HealthyAnonEndpoint()),
                 router);
 
-        vertx.createHttpServer().requestHandler(router).listen(0).onComplete(ctx.succeeding(s -> {
+        vertx.createHttpServer().requestHandler(router).listen(0, "127.0.0.1").onComplete(ctx.succeeding(s -> {
             server = s;
             port = s.actualPort();
             ctx.completeNow();
@@ -146,7 +146,7 @@ public class WebSocketBootstrapFailureIT {
 
     private Future<WebSocket> connect(String path) {
         return wsClient.connect(
-                new WebSocketConnectOptions().setHost("localhost").setPort(port).setURI(path));
+                new WebSocketConnectOptions().setHost("127.0.0.1").setPort(port).setURI(path));
     }
 
     // --- Tests ---

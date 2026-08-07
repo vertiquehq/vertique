@@ -27,6 +27,9 @@ import lombok.extern.slf4j.Slf4j;
  * test fixture: it is stood up by {@code UserClientIT} on a separate {@link io.vertx.core.Vertx}
  * instance to back the {@code UserClient} the example application exercises — it is not part of the
  * application's Dagger graph.
+ *
+ * <p>The server binds to IPv4 loopback ({@code 127.0.0.1}) only — it is test support and must never
+ * be remotely reachable.
  */
 @Slf4j
 public class MockServerVerticle extends AbstractVerticle {
@@ -115,7 +118,7 @@ public class MockServerVerticle extends AbstractVerticle {
 
         vertx.createHttpServer()
                 .requestHandler(router)
-                .listen(port)
+                .listen(port, "127.0.0.1")
                 .onSuccess(server -> {
                     httpServer = server;
                     log.info("Mock server listening on port {}", server.actualPort());

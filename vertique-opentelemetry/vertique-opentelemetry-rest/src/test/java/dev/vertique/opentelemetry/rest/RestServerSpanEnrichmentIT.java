@@ -203,11 +203,14 @@ public class RestServerSpanEnrichmentIT {
      * @return a future resolving to the actual bound port
      */
     private Future<Integer> startServer(Vertx vertx, Router router) {
-        return vertx.createHttpServer().requestHandler(router).listen(0).map(s -> {
-            this.server = s;
-            this.httpClient = vertx.createHttpClient();
-            return s.actualPort();
-        });
+        return vertx.createHttpServer()
+                .requestHandler(router)
+                .listen(0, "127.0.0.1")
+                .map(s -> {
+                    this.server = s;
+                    this.httpClient = vertx.createHttpClient();
+                    return s.actualPort();
+                });
     }
 
     // --- Test 1: W3C traceparent → server span renamed, attrs set, traceId + parentSpanId match ---
@@ -230,7 +233,7 @@ public class RestServerSpanEnrichmentIT {
 
         startServer(vertx, router)
                 .compose(port -> httpClient
-                        .request(HttpMethod.GET, port, "localhost", "/orders/42")
+                        .request(HttpMethod.GET, port, "127.0.0.1", "/orders/42")
                         .compose(req -> {
                             req.putHeader("traceparent", traceparent);
                             return req.send();
@@ -298,12 +301,12 @@ public class RestServerSpanEnrichmentIT {
 
         vertx.createHttpServer()
                 .requestHandler(router)
-                .listen(0)
+                .listen(0, "127.0.0.1")
                 .compose(s -> {
                     this.server = s;
                     this.httpClient = vertx.createHttpClient();
                     return httpClient
-                            .request(HttpMethod.GET, s.actualPort(), "localhost", "/orders/99")
+                            .request(HttpMethod.GET, s.actualPort(), "127.0.0.1", "/orders/99")
                             .compose(req -> req.send());
                 })
                 .compose(resp -> {
