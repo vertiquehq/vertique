@@ -10,6 +10,7 @@ import dagger.multibindings.IntoSet;
 import dev.vertique.core.VertxConfig;
 import dev.vertique.core.config.ConfigParser;
 import dev.vertique.core.config.JsonConfigPaths;
+import dev.vertique.core.exception.ConfigurationException;
 import dev.vertique.rest.core.router.OperationHandlerContributor;
 import dev.vertique.rest.core.router.OperationRegistrationContext;
 import dev.vertique.rest.core.security.RouteAuthHandler;
@@ -117,17 +118,88 @@ public abstract class JwtAuthModule {
      * Provides the {@link JwtBearerSecuritySchemeHandler} contributed to the
      * {@link SecuritySchemeHandler} multibinding.
      *
+     * <p>Built through {@link #verifiedSchemeHandler}, which runs {@link #verifyAppliedValidation}
+     * first, so a {@link JWTAuth} built with a clock skew other than the configured one fails
+     * startup instead of silently ignoring the setting.
+     *
      * @param jwtAuth           the JWT authentication provider
      * @param effective         the effective JWT auth config (scheme name + validation constraints)
      * @param rejectionReporter the credential rejection reporter
      * @return the configured security scheme handler
+     * @throws dev.vertique.core.exception.ConfigurationException if the provider attests a clock
+     *         skew that differs from {@code jwt.validation.clockSkewSeconds}
      */
     @Provides
     @IntoSet
     static SecuritySchemeHandler jwtBearerSchemeHandler(
             JWTAuth jwtAuth, @JwtEffective JwtAuthConfig effective, CredentialRejectionReporter rejectionReporter) {
+        return verifiedSchemeHandler(jwtAuth, effective, rejectionReporter);
+    }
+
+    /**
+     * Runs the startup provenance check and builds the scheme handler both JWT bindings hand out.
+     *
+     * <p>Every binding that exposes the {@link JWTAuth} to traffic goes through here, so the
+     * fail-fast cannot be skipped by resolving only one of them: an application that authenticates
+     * solely over a non-OpenAPI transport (e.g. WebSocket) never resolves the
+     * {@link SecuritySchemeHandler} multibinding, and one that serves only OpenAPI routes never
+     * resolves the {@link RouteAuthHandler} one. The check is idempotent, so an application
+     * resolving both simply runs it twice.
+     *
+     * @param jwtAuth           the JWT authentication provider bound by the application
+     * @param effective         the effective JWT auth config (scheme name + validation constraints)
+     * @param rejectionReporter the credential rejection reporter
+     * @return the configured scheme handler
+     * @throws ConfigurationException if the provider attests a clock skew that differs from
+     *         {@code jwt.validation.clockSkewSeconds}
+     */
+    private static JwtBearerSecuritySchemeHandler verifiedSchemeHandler(
+            JWTAuth jwtAuth, JwtAuthConfig effective, CredentialRejectionReporter rejectionReporter) {
+        verifyAppliedValidation(jwtAuth, effective);
         return new JwtBearerSecuritySchemeHandler(
                 effective.schemeName(), jwtAuth, effective.validation(), rejectionReporter);
+    }
+
+    /**
+     * Fails startup when a framework-built {@link JWTAuth} applied a different clock skew than the
+     * effective configuration asks for.
+     *
+     * <p>{@link JwtValidationConfig#clockSkewSeconds()} is <em>permissive</em>: once the
+     * {@link JWTAuth} has rejected a token as expired, no downstream handler can un-reject it. Unlike
+     * issuer and audience — which {@link JwtBearerSecuritySchemeHandler} re-enforces
+     * post-authentication — leeway has no backstop, so it must be right at construction. Clock skew
+     * is therefore the only field compared here.
+     *
+     * <p>A {@link JWTAuth} that carries no attestation was not built by {@link JwtAuthFactory}; the
+     * framework has nothing to compare and returns silently rather than second-guessing an
+     * application's own provider.
+     *
+     * <p>The comparison is deliberately <em>field-wise</em>. {@link JwtValidationConfig} declares no
+     * {@code equals}, so it inherits identity semantics, and the two instances compared here are
+     * always distinct objects on the all-defaults path — the factory builds one default and
+     * {@link JwtAuthConfig}'s {@code @JsonCreator} independently builds another. An
+     * {@code equals}-based check would therefore fail startup on essentially every default
+     * deployment.
+     *
+     * @param jwtAuth   the JWT authentication provider bound by the application
+     * @param effective the effective JWT auth config
+     * @throws dev.vertique.core.exception.ConfigurationException if the provider attests a clock
+     *         skew that differs from {@code jwt.validation.clockSkewSeconds}
+     */
+    static void verifyAppliedValidation(JWTAuth jwtAuth, JwtAuthConfig effective) {
+        if (!(jwtAuth instanceof ValidationAttested attested)) {
+            return;
+        }
+        int applied = attested.appliedValidation().clockSkewSeconds();
+        int configured = effective.validation().clockSkewSeconds();
+        if (applied != configured) {
+            throw new ConfigurationException("The bound JWTAuth was built with a clock skew of " + applied
+                    + " seconds, but jwt.validation.clockSkewSeconds is " + configured
+                    + ". Clock skew is applied at JWTAuth construction and cannot be enforced later, so the "
+                    + "configured value would be silently ignored. Pass the effective JwtValidationConfig "
+                    + "(inject @JwtEffective JwtAuthConfig and use its validation()) into the JwtAuthFactory call "
+                    + "that builds the JWTAuth, or align jwt.validation.clockSkewSeconds with it.");
+        }
     }
 
     /**
@@ -153,18 +225,23 @@ public abstract class JwtAuthModule {
      * identity-resolution middleware to resolve a non-anonymous identity) and rejections are
      * reported through {@link CredentialRejectionReporter}.
      *
+     * <p>Built through {@link #verifiedSchemeHandler}, so this binding runs the startup provenance
+     * check too — an application authenticating solely over a non-OpenAPI transport never resolves
+     * {@link #jwtBearerSchemeHandler} and would otherwise skip the fail-fast entirely.
+     *
      * @param jwtAuth           the JWT authentication provider
      * @param effective         the effective JWT auth config (scheme name + validation constraints)
      * @param rejectionReporter the credential rejection reporter
      * @return the configured route auth handler
+     * @throws dev.vertique.core.exception.ConfigurationException if the provider attests a clock
+     *         skew that differs from {@code jwt.validation.clockSkewSeconds}
      */
     @Provides
     @IntoSet
     static RouteAuthHandler jwtRouteAuthHandler(
             JWTAuth jwtAuth, @JwtEffective JwtAuthConfig effective, CredentialRejectionReporter rejectionReporter) {
+        JwtBearerSecuritySchemeHandler schemeHandler = verifiedSchemeHandler(jwtAuth, effective, rejectionReporter);
         String name = effective.schemeName();
-        JwtBearerSecuritySchemeHandler schemeHandler =
-                new JwtBearerSecuritySchemeHandler(name, jwtAuth, effective.validation(), rejectionReporter);
         return new RouteAuthHandler() {
             @Override
             public String schemeName() {

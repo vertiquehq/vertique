@@ -65,6 +65,8 @@ jobs:
         id: guard
         run: node release/snapshot-guard.mjs --github-output >> "$GITHUB_OUTPUT"
 
+      # Inherits -T1C from .mvn/maven.config deliberately: parallel install of
+      # an already-verified SHA changes wall-clock only, not published bytes.
       - name: Install reactor into an isolated repository
         if: steps.guard.outputs.allowed == 'true'
         run: ./mvnw -ntp -B -Dmaven.repo.local=${{ runner.temp }}/m2 -DskipTests -Prelease clean install

@@ -219,12 +219,14 @@ run_maven() {
     local log_file="$1"
     shift
 
+    # Explicit -T 1: .mvn/maven.config injects -T1C, which would raise
+    # per-sample variance and break comparability with historical medians.
     if $dry_run; then
-        print_command "$maven_wrapper" -ntp "-Drevision=$reactor_revision" "$@"
+        print_command "$maven_wrapper" -ntp -T 1 "-Drevision=$reactor_revision" "$@"
         return 0
     fi
 
-    if ! "$maven_wrapper" -ntp "-Drevision=$reactor_revision" "$@" >"$log_file" 2>&1; then
+    if ! "$maven_wrapper" -ntp -T 1 "-Drevision=$reactor_revision" "$@" >"$log_file" 2>&1; then
         echo "Maven command failed; tail of $log_file:" >&2
         tail -n 80 "$log_file" >&2
         return 1

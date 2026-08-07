@@ -135,7 +135,8 @@ public class VertiqueBootstrapVerticleIT {
                     assertTrue(port > 0, "HTTP server must have bound on an ephemeral port, got: " + port);
 
                     // Issue an HTTP GET to the live server and assert 200.
-                    HttpClient client = vertx.createHttpClient(new HttpClientOptions().setDefaultPort(port));
+                    HttpClient client = vertx.createHttpClient(
+                            new HttpClientOptions().setDefaultPort(port).setDefaultHost("127.0.0.1"));
                     return client.request(HttpMethod.GET, "/")
                             .compose(req -> req.send())
                             .compose(response -> {
@@ -177,7 +178,7 @@ public class VertiqueBootstrapVerticleIT {
         public void start(Promise<Void> startPromise) {
             vertxRef.createHttpServer()
                     .requestHandler(req -> req.response().setStatusCode(200).end())
-                    .listen(0)
+                    .listen(0, "127.0.0.1")
                     .onSuccess(server -> {
                         portCapture.set(server.actualPort());
                         startPromise.complete();

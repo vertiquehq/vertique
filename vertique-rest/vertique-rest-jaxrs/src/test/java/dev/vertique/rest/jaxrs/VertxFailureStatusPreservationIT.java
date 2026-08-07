@@ -112,7 +112,7 @@ public class VertxFailureStatusPreservationIT {
                 .compose(apiRouter -> {
                     Router root = Router.router(vertx);
                     root.route("/*").subRouter(apiRouter);
-                    return vertx.createHttpServer().requestHandler(root).listen(0);
+                    return vertx.createHttpServer().requestHandler(root).listen(0, "127.0.0.1");
                 })
                 .onComplete(ctx.succeeding(listeningServer -> {
                     server = listeningServer;
@@ -241,7 +241,7 @@ public class VertxFailureStatusPreservationIT {
     // --- Harness ---
 
     private static HttpResult get(String failMode) throws Exception {
-        return client.request(HttpMethod.GET, server.actualPort(), "localhost", "/probe")
+        return client.request(HttpMethod.GET, server.actualPort(), "127.0.0.1", "/probe")
                 .compose(
                         request -> request.putHeader(FAIL_MODE_HEADER, failMode).send())
                 .compose(response -> {

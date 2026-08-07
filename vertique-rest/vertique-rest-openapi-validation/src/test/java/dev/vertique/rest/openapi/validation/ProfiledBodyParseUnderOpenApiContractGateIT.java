@@ -16,10 +16,7 @@ import dev.vertique.json.VertxJsonSupport;
 import dev.vertique.rest.core.RestValidationException;
 import dev.vertique.rest.core.config.JaxRsConfig;
 import dev.vertique.rest.jaxrs.request.BoundRequest;
-import dev.vertique.rest.jaxrs.routing.BodyDescriptor;
-import dev.vertique.rest.jaxrs.routing.FilePartDescriptor;
 import dev.vertique.rest.jaxrs.routing.JaxRsOperationDescriptor;
-import dev.vertique.rest.jaxrs.routing.ParamDescriptor;
 import dev.vertique.rest.jaxrs.validation.OperationSchemas;
 import io.vertx.core.Future;
 import io.vertx.core.Handler;
@@ -33,8 +30,6 @@ import io.vertx.ext.web.RoutingContext;
 import io.vertx.ext.web.handler.BodyHandler;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
-import java.util.List;
-import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -144,7 +139,7 @@ public class ProfiledBodyParseUnderOpenApiContractGateIT {
 
         vertx.createHttpServer()
                 .requestHandler(router)
-                .listen(0)
+                .listen(0, "127.0.0.1")
                 .onSuccess(s -> {
                     server = s;
                     port = s.actualPort();
@@ -168,7 +163,7 @@ public class ProfiledBodyParseUnderOpenApiContractGateIT {
         // minLength + additionalProperties:false), so without the profile first parse the openapi-contract
         // RequestValidator accepts it and dispatch returns 201. With the fix, the strict profile mapper's
         // FIRST PARSE rejects the duplicate key -> ValidationException -> 400, before OpenAPI validation.
-        client.request(HttpMethod.POST, port, "localhost", "/widgets")
+        client.request(HttpMethod.POST, port, "127.0.0.1", "/widgets")
                 .compose(req -> {
                     req.putHeader("content-type", "application/json");
                     return req.send(Buffer.buffer("{\"name\":\"a\",\"name\":\"b\"}"));
@@ -200,7 +195,7 @@ public class ProfiledBodyParseUnderOpenApiContractGateIT {
         // A single-key conforming body passes the profile first parse AND the OpenAPI schema, proving the
         // profiled openapi-contract path does not reject valid bodies — the strict parse only adds the
         // duplicate-key/trailing-token rejection, it does not break the happy path.
-        client.request(HttpMethod.POST, port, "localhost", "/widgets")
+        client.request(HttpMethod.POST, port, "127.0.0.1", "/widgets")
                 .compose(req -> {
                     req.putHeader("content-type", "application/json");
                     return req.send(Buffer.buffer("{\"name\":\"gizmo\"}"));
@@ -218,71 +213,10 @@ public class ProfiledBodyParseUnderOpenApiContractGateIT {
     // --- helpers ---
 
     private static JaxRsOperationDescriptor op(String method, String route, String operationId) {
-        return new JaxRsOperationDescriptor() {
-            @Override
-            public String operationId() {
-                return operationId;
-            }
-
-            @Override
-            public String httpMethod() {
-                return method;
-            }
-
-            @Override
-            public String routeTemplate() {
-                return route;
-            }
-
-            @Override
-            public List<String> consumes() {
-                return List.of();
-            }
-
-            @Override
-            public List<String> produces() {
-                return List.of();
-            }
-
-            @Override
-            public dev.vertique.rest.core.security.SecurityPolicy securityPolicy() {
-                return new dev.vertique.rest.core.security.SecurityPolicy.None();
-            }
-
-            @Override
-            public List<dev.vertique.rest.core.routing.SecurityRequirementSet> securityRequirementSets() {
-                return List.of();
-            }
-
-            @Override
-            public List<java.lang.annotation.Annotation> methodAnnotations() {
-                return List.of();
-            }
-
-            @Override
-            public List<java.lang.annotation.Annotation> classAnnotations() {
-                return List.of();
-            }
-
-            @Override
-            public <A extends java.lang.annotation.Annotation> Optional<A> findAnnotation(Class<A> type) {
-                return Optional.empty();
-            }
-
-            @Override
-            public List<ParamDescriptor> parameters() {
-                return List.of();
-            }
-
-            @Override
-            public List<FilePartDescriptor> fileParts() {
-                return List.of();
-            }
-
-            @Override
-            public Optional<BodyDescriptor> body() {
-                return Optional.empty();
-            }
-        };
+        return StubDescriptors.builder()
+                .operationId(operationId)
+                .httpMethod(method)
+                .routeTemplate(route)
+                .build();
     }
 }

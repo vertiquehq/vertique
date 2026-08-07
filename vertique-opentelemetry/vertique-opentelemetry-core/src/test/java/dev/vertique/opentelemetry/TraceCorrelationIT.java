@@ -177,11 +177,14 @@ public class TraceCorrelationIT {
      * @return future of the actual port
      */
     private Future<Integer> startServer(Vertx vertx, Router router) {
-        return vertx.createHttpServer().requestHandler(router).listen(0).map(s -> {
-            this.server = s;
-            this.client = vertx.createHttpClient();
-            return s.actualPort();
-        });
+        return vertx.createHttpServer()
+                .requestHandler(router)
+                .listen(0, "127.0.0.1")
+                .map(s -> {
+                    this.server = s;
+                    this.client = vertx.createHttpClient();
+                    return s.actualPort();
+                });
     }
 
     /**
@@ -231,7 +234,7 @@ public class TraceCorrelationIT {
         });
 
         startServer(vertx, router)
-                .compose(port -> client.request(HttpMethod.GET, port, "localhost", "/test")
+                .compose(port -> client.request(HttpMethod.GET, port, "127.0.0.1", "/test")
                         .compose(req -> req.send()))
                 // Wait for the SERVER span to be exported
                 .compose(resp -> pollUntilSpanPresent(vertx, exporter, 30, 50))
@@ -299,9 +302,9 @@ public class TraceCorrelationIT {
         });
 
         startServer(vertx, router)
-                .compose(port -> client.request(HttpMethod.GET, port, "localhost", "/test")
+                .compose(port -> client.request(HttpMethod.GET, port, "127.0.0.1", "/test")
                         .compose(req -> req.send())
-                        .compose(resp1 -> client.request(HttpMethod.GET, port, "localhost", "/test")
+                        .compose(resp1 -> client.request(HttpMethod.GET, port, "127.0.0.1", "/test")
                                 .compose(req -> req.send())))
                 .compose(resp2 -> pollUntilSpanPresent(vertx, exporter, 30, 50))
                 .onComplete(ctx.succeeding(v -> {
@@ -336,7 +339,7 @@ public class TraceCorrelationIT {
         });
 
         startServer(vertx, router)
-                .compose(port -> client.request(HttpMethod.GET, port, "localhost", "/test")
+                .compose(port -> client.request(HttpMethod.GET, port, "127.0.0.1", "/test")
                         .compose(req -> req.send()))
                 // Wait a bit for the response to be processed
                 .compose(resp -> Future.<Void>future(p -> vertx.setTimer(100, id -> p.complete())))
@@ -390,11 +393,11 @@ public class TraceCorrelationIT {
 
         vertx.createHttpServer()
                 .requestHandler(router)
-                .listen(0)
+                .listen(0, "127.0.0.1")
                 .compose(s -> {
                     this.server = s;
                     this.client = vertx.createHttpClient();
-                    return client.request(HttpMethod.GET, s.actualPort(), "localhost", "/test")
+                    return client.request(HttpMethod.GET, s.actualPort(), "127.0.0.1", "/test")
                             .compose(req -> req.send());
                 })
                 .onComplete(ctx.succeeding(resp -> {

@@ -39,7 +39,7 @@ public class GeneratedClientSelectionIT {
     @RegisterExtension
     static final VertiqueAppExtension app = VertiqueAppExtension.forFactory(new AppComponentVertiqueComponentFactory())
             .withConfig(new JsonObject()
-                    .put("http", new JsonObject().put("port", 0))
+                    .put("http", new JsonObject().put("port", 0).put("host", "127.0.0.1"))
                     .put("management", new JsonObject().put("enabled", false)));
 
     private static AppComponent component;

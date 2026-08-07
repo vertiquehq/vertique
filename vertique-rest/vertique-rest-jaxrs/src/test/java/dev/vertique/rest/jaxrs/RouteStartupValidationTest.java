@@ -424,12 +424,12 @@ public class RouteStartupValidationTest {
                 .compose(apiRouter -> {
                     Router root = Router.router(vertx);
                     root.route("/*").subRouter(apiRouter);
-                    return vertx.createHttpServer().requestHandler(root).listen(0);
+                    return vertx.createHttpServer().requestHandler(root).listen(0, "127.0.0.1");
                 })
                 .onComplete(ctx.succeeding(s -> {
                     server = s;
                     client = vertx.createHttpClient();
-                    client.request(HttpMethod.GET, s.actualPort(), "localhost", "/strict/values?v=a&v=b")
+                    client.request(HttpMethod.GET, s.actualPort(), "127.0.0.1", "/strict/values?v=a&v=b")
                             .compose(req -> req.send())
                             .compose(resp -> resp.body().map(b -> resp.statusCode() + "|" + b.toString()))
                             .onComplete(ctx.succeeding(statusAndBody -> {

@@ -43,8 +43,15 @@ import java.util.Set;
  * <p>Claim parsing is delegated to {@link JwtClaimExtractor} for consistent behaviour with
  * {@link dev.vertique.rest.security.DefaultSecurityClaimMapper}.
  *
- * <p>The extracted authorizations can be enforced via {@code @RolesAllowed} and
- * {@code @Authorized(scopes = ...)} annotations on JAX-RS resource methods.
+ * <p><strong>These authorizations are not what {@code @RolesAllowed} and
+ * {@code @Authorized(scopes = ...)} enforce.</strong> The framework's decision point evaluates
+ * directly from the {@code SecurityContext}'s {@code AuthorizationClaims}, populated by
+ * {@link dev.vertique.rest.security.SecurityClaimMapper}, and does not consult the Vert.x
+ * {@code AuthorizationProvider} chain at all — so this provider populates the Vert.x user's
+ * authorization cache for interoperability with code that reads it, not for annotation
+ * enforcement. To change what {@code @RolesAllowed} or {@code @Authorized} decide, replace the
+ * {@code SecurityClaimMapper}; contributing another {@code AuthorizationProvider} has no effect.
+ * Whether that should remain so is GitHub issue #165.
  */
 public class JwtClaimAuthorizationProvider implements AuthorizationProvider {
 

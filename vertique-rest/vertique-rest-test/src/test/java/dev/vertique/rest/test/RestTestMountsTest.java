@@ -129,7 +129,7 @@ class RestTestMountsTest {
         // The caller still owns the Vertx after both paths: a fresh server binds on it.
         HttpServer probe = await(vertx.createHttpServer()
                 .requestHandler(request -> request.response().end())
-                .listen(0));
+                .listen(0, "127.0.0.1"));
         assertThat(probe.actualPort())
                 .as("the caller-supplied Vertx must still be usable after startServer")
                 .isPositive();
@@ -153,7 +153,7 @@ class RestTestMountsTest {
         // The timeout is a caller-visible failure, not a teardown: the Vertx is untouched.
         HttpServer probe = await(vertx.createHttpServer()
                 .requestHandler(request -> request.response().end())
-                .listen(0));
+                .listen(0, "127.0.0.1"));
         assertThat(probe.actualPort()).isPositive();
         await(probe.close());
     }

@@ -39,7 +39,7 @@ public class SseJobProgressIT {
     @RegisterExtension
     static final VertiqueAppExtension app = VertiqueAppExtension.forFactory(new AppComponentVertiqueComponentFactory())
             .withConfig(new JsonObject()
-                    .put("http", new JsonObject().put("port", 0))
+                    .put("http", new JsonObject().put("port", 0).put("host", "127.0.0.1"))
                     .put("management", new JsonObject().put("enabled", false))
                     .put("job", new JsonObject().put("stepIntervalMs", 20).put("stepCount", 4)));
 
@@ -48,7 +48,7 @@ public class SseJobProgressIT {
     @BeforeAll
     static void setUp() {
         httpClient = app.vertx().createHttpClient();
-        RestAssured.baseURI = "http://localhost";
+        RestAssured.baseURI = "http://127.0.0.1";
         RestAssured.port = app.httpPort();
         RestAssured.filters(new RequestLoggingFilter(), new ResponseLoggingFilter());
     }
@@ -97,7 +97,7 @@ public class SseJobProgressIT {
         List<SseFrame> frames = new ArrayList<>();
 
         RequestOptions opts = new RequestOptions()
-                .setHost("localhost")
+                .setHost("127.0.0.1")
                 .setPort(app.httpPort())
                 .setMethod(HttpMethod.GET)
                 .setURI("/jobs/" + jobId + "/events");
@@ -155,7 +155,7 @@ public class SseJobProgressIT {
         // First subscription — collect all frames
         Buffer firstAccumulated = Buffer.buffer();
         RequestOptions firstOpts = new RequestOptions()
-                .setHost("localhost")
+                .setHost("127.0.0.1")
                 .setPort(app.httpPort())
                 .setMethod(HttpMethod.GET)
                 .setURI("/jobs/" + jobId + "/events");
@@ -178,7 +178,7 @@ public class SseJobProgressIT {
                 // Reconnect with Last-Event-ID: 1
                 Buffer secondAccumulated = Buffer.buffer();
                 RequestOptions secondOpts = new RequestOptions()
-                        .setHost("localhost")
+                        .setHost("127.0.0.1")
                         .setPort(app.httpPort())
                         .setMethod(HttpMethod.GET)
                         .setURI("/jobs/" + jobId + "/events")

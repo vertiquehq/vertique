@@ -56,7 +56,7 @@ class RestClientResponseFailureIT {
 
     @RegisterExtension
     static WireMockExtension wireMock = WireMockExtension.newInstance()
-            .options(wireMockConfig().dynamicPort())
+            .options(wireMockConfig().dynamicPort().bindAddress("127.0.0.1"))
             .build();
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
@@ -78,7 +78,9 @@ class RestClientResponseFailureIT {
      * @return a ready-to-use test client
      */
     private ResponseFailureClient buildClient(Vertx vertx) {
-        return new RestClientBuilder(vertx).baseUrl(wireMock.baseUrl()).build(ResponseFailureClient.class);
+        return new RestClientBuilder(vertx)
+                .baseUrl("http://127.0.0.1:" + wireMock.getPort())
+                .build(ResponseFailureClient.class);
     }
 
     @ParameterizedTest(name = "{0}")

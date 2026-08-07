@@ -52,7 +52,8 @@ class CustomResponseIT {
 
     @RegisterExtension
     static final VertiqueAppExtension app = VertiqueAppExtension.forFactory(new AppComponentVertiqueComponentFactory())
-            .withConfig(new JsonObject().put("http", new JsonObject().put("port", 0)));
+            .withConfig(
+                    new JsonObject().put("http", new JsonObject().put("port", 0).put("host", "127.0.0.1")));
 
     private static JWTAuth jwtAuth;
 
@@ -60,7 +61,7 @@ class CustomResponseIT {
     static void setUp() {
         jwtAuth = JwtAuthFactory.fromSymmetricKey(
                 app.vertx(), "HS256", "super-secret-key-for-example-app-minimum-256-bits-long!!");
-        RestAssured.baseURI = "http://localhost";
+        RestAssured.baseURI = "http://127.0.0.1";
         RestAssured.port = app.httpPort();
         RestAssured.filters(new RequestLoggingFilter(), new ResponseLoggingFilter());
     }

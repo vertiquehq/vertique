@@ -37,7 +37,7 @@ import java.util.Set;
  *   <li>{@link AuthorizationProvider} multibinding, retained for compatibility / future adapters;
  *       in v1 the default {@link VertxProviderDecisionPoint} evaluates decisions from the resolved
  *       {@link dev.vertique.security.authz.AuthorizationClaims} and does not consult this set
- *       (GitHub issue #73)</li>
+ *       (GitHub issue #165)</li>
  *   <li>{@link IdentityResolutionMiddleware} — resolves {@link dev.vertique.security.SecurityIdentity}
  *       from accumulated {@link dev.vertique.security.AuthenticationEvidence} and binds the new
  *       {@link dev.vertique.security.SecurityContext} (added to each OpenAPI route via
@@ -54,7 +54,7 @@ import java.util.Set;
  * <p>Applications contribute authentication by adding {@link SecuritySchemeHandler} bindings.
  * Authorization in v1 is driven by the resolved {@link dev.vertique.security.authz.AuthorizationClaims};
  * custom {@link AuthorizationProvider} bindings are accepted but not consulted by the default
- * decision point (GitHub issue #73). Applications needing custom authorization should bind an
+ * decision point (GitHub issue #165). Applications needing custom authorization should bind an
  * {@link AuthorizationPolicy} or {@link AuthorizationDecisionPoint} instead.
  *
  * <p>To override JWT claim extraction, provide a custom {@link SecurityClaimMapper} binding in

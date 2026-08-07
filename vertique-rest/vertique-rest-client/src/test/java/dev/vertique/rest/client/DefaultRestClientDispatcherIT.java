@@ -53,7 +53,7 @@ class DefaultRestClientDispatcherIT {
 
     @RegisterExtension
     static WireMockExtension wireMock = WireMockExtension.newInstance()
-            .options(wireMockConfig().dynamicPort())
+            .options(wireMockConfig().dynamicPort().bindAddress("127.0.0.1"))
             .build();
 
     /**
@@ -94,7 +94,7 @@ class DefaultRestClientDispatcherIT {
     // --- Builder helper ---
 
     private RestClientBuilder builderFor(Vertx vertx) {
-        return new RestClientBuilder(vertx).baseUrl(wireMock.baseUrl());
+        return new RestClientBuilder(vertx).baseUrl("http://127.0.0.1:" + wireMock.getPort());
     }
 
     // --- Tests ---

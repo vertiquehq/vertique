@@ -121,7 +121,7 @@ public class UploadTempFileCleanupIT {
         UploadPathCapture capture = startServer(uploadsDirectory);
 
         Buffer multipart = multipart("application/octet-stream", PAYLOAD);
-        try (Socket socket = new Socket("localhost", server.actualPort())) {
+        try (Socket socket = new Socket("127.0.0.1", server.actualPort())) {
             socket.setSoTimeout((int) TimeUnit.SECONDS.toMillis(ASYNC_TIMEOUT_SECONDS));
             writeRawMultipartRequest(socket, "/cleanup/stream", multipart);
 
@@ -209,7 +209,7 @@ public class UploadTempFileCleanupIT {
 
     private HttpResult postMultipart(String path, String declaredType, byte[] content) throws Exception {
         Buffer body = multipart(declaredType, content);
-        return client.request(HttpMethod.POST, server.actualPort(), "localhost", path)
+        return client.request(HttpMethod.POST, server.actualPort(), "127.0.0.1", path)
                 .compose(request -> request.putHeader("Content-Type", MultipartBodies.contentType())
                         .send(body))
                 .compose(response -> {
@@ -224,7 +224,7 @@ public class UploadTempFileCleanupIT {
     private StreamingResponse postStreamingMultipart(String path, byte[] content) throws Exception {
         Buffer body = multipart("application/octet-stream", content);
         io.vertx.core.http.HttpClientResponse response = client.request(
-                        HttpMethod.POST, server.actualPort(), "localhost", path)
+                        HttpMethod.POST, server.actualPort(), "127.0.0.1", path)
                 .compose(request -> request.putHeader("Content-Type", MultipartBodies.contentType())
                         .send(body))
                 .map(pausedResponse -> {

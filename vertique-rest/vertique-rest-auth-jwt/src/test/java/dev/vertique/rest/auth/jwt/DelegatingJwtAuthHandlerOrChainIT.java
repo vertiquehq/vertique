@@ -201,7 +201,7 @@ public class DelegatingJwtAuthHandlerOrChainIT {
         router.route("/or-identity").handler(identityChain);
         router.route("/or-identity").handler(DelegatingJwtAuthHandlerOrChainIT::resolveIdentity);
 
-        vertx.createHttpServer().requestHandler(router).listen(0).onComplete(ctx.succeeding(s -> {
+        vertx.createHttpServer().requestHandler(router).listen(0, "127.0.0.1").onComplete(ctx.succeeding(s -> {
             server = s;
             port = s.actualPort();
             ctx.completeNow();
@@ -364,7 +364,7 @@ public class DelegatingJwtAuthHandlerOrChainIT {
     @Test
     @DisplayName("Missing Authorization header is rejected by the OR chain (401)")
     void missingToken_rejected(VertxTestContext ctx) {
-        client.request(HttpMethod.GET, port, "localhost", "/or-secured")
+        client.request(HttpMethod.GET, port, "127.0.0.1", "/or-secured")
                 .compose(req -> req.send())
                 .compose(resp -> resp.body().map(b -> resp.statusCode()))
                 .onComplete(ctx.succeeding(status -> ctx.verify(() -> {
@@ -525,7 +525,7 @@ public class DelegatingJwtAuthHandlerOrChainIT {
      * @return a future of the response status code
      */
     private Future<Integer> statusFor(String path, String token) {
-        return client.request(HttpMethod.GET, port, "localhost", path)
+        return client.request(HttpMethod.GET, port, "127.0.0.1", path)
                 .compose(
                         req -> req.putHeader("Authorization", "Bearer " + token).send())
                 .compose(resp -> resp.body().map(b -> resp.statusCode()));
@@ -553,7 +553,7 @@ public class DelegatingJwtAuthHandlerOrChainIT {
      * @return a future of the response status code
      */
     private Future<Integer> statusFor(String token) {
-        return client.request(HttpMethod.GET, port, "localhost", "/or-secured")
+        return client.request(HttpMethod.GET, port, "127.0.0.1", "/or-secured")
                 .compose(
                         req -> req.putHeader("Authorization", "Bearer " + token).send())
                 .compose(resp -> resp.body().map(b -> resp.statusCode()));
@@ -568,7 +568,7 @@ public class DelegatingJwtAuthHandlerOrChainIT {
      * @return a future of the resolved-identity JSON body
      */
     private Future<JsonObject> identityFor(String token) {
-        return client.request(HttpMethod.GET, port, "localhost", "/or-identity")
+        return client.request(HttpMethod.GET, port, "127.0.0.1", "/or-identity")
                 .compose(
                         req -> req.putHeader("Authorization", "Bearer " + token).send())
                 .compose(resp -> resp.body().map(b -> {

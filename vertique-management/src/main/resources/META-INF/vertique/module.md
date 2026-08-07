@@ -87,6 +87,8 @@ The Vert.x verticle that owns the management server. It is `@Inject`-constructib
 
 When `management.enabled` is `false` the verticle starts successfully, binds no port, and invokes no endpoint contributors — which is the usual configuration for unit tests and for environments where probes are handled outside the process.
 
+The server binds `management.port` on the interface named by `management.host`, which defaults to `0.0.0.0` — every interface. Set it to `127.0.0.1` to keep the management server reachable only from inside the host, for example in tests and on developer machines where an ephemeral port on a wildcard bind would otherwise be exposed to the local network. A host that cannot be resolved fails the verticle's deployment rather than falling back to the wildcard address.
+
 After a successful bind, the resolved port is published into the Vert.x shared local map `vertique` under the key `management.port`. Configure `port: 0` and read that entry to discover the ephemeral port in tests:
 
 ```java
@@ -95,7 +97,7 @@ int boundPort = (int) vertx.sharedData().getLocalMap("vertique").get("management
 
 ### ManagementConfig
 
-Typed configuration object deserialized from the `management` configuration section. Inject it wherever the port or enablement flag is needed and read `config.port()`, `config.enabled()`, and `config.healthCheckTimeoutSeconds()`. There are no separate scalar bindings for these values.
+Typed configuration object deserialized from the `management` configuration section. Inject it wherever the bind address or enablement flag is needed and read `config.port()`, `config.host()`, `config.enabled()`, and `config.healthCheckTimeoutSeconds()`. There are no separate scalar bindings for these values.
 
 ### ManagementModule
 
@@ -291,6 +293,7 @@ Deserialized from the `management` section into `ManagementConfig`. Every field 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `port` | `int` | `9090` | Management HTTP server port; `0` binds an ephemeral port |
+| `host` | `String` | `"0.0.0.0"` | Network interface to bind; `"127.0.0.1"` restricts the server to loopback; must be non-blank |
 | `enabled` | `boolean` | `true` | `false` skips port binding and contributor invocation |
 | `healthCheckTimeoutSeconds` | `long` | `5` | Per-check timeout for both probe endpoints; must be positive |
 
@@ -298,13 +301,14 @@ Deserialized from the `management` section into `ManagementConfig`. Every field 
 {
   "management": {
     "port": 9090,
+    "host": "0.0.0.0",
     "enabled": true,
     "healthCheckTimeoutSeconds": 10
   }
 }
 ```
 
-`healthCheckTimeoutSeconds` is validated when the verticle starts, not when configuration is parsed: a zero or negative value fails the management verticle's deployment with `IllegalArgumentException` rather than at config-load time. Unknown properties in the `management` section are ignored.
+`healthCheckTimeoutSeconds` and `host` are validated when the verticle starts, not when configuration is parsed: a zero or negative timeout, or an explicitly `null` or blank `management.host`, fails the management verticle's deployment with `IllegalArgumentException` rather than at config-load time. Unknown properties in the `management` section are ignored.
 
 With hierarchical property expansion, `management.port=9090` in a `.properties` source expands to the same nested object.
 

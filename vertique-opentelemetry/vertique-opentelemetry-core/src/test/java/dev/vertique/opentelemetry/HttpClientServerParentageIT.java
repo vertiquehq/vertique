@@ -147,7 +147,7 @@ public class HttpClientServerParentageIT {
 
         vertx.createHttpServer()
                 .requestHandler(router)
-                .listen(0)
+                .listen(0, "127.0.0.1")
                 .compose(s -> {
                     this.server = s;
                     this.httpClient = vertx.createHttpClient();
@@ -166,7 +166,7 @@ public class HttpClientServerParentageIT {
                     return Future.<Void>future(promise -> vertx.runOnContext(v -> {
                         Scope scope = parentSpan.makeCurrent();
                         httpClient
-                                .request(HttpMethod.GET, port, "localhost", "/ping")
+                                .request(HttpMethod.GET, port, "127.0.0.1", "/ping")
                                 .compose(req -> req.send())
                                 .onComplete(ar -> {
                                     scope.close();

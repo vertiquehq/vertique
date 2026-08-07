@@ -68,12 +68,12 @@ public class MicrometerVertxIT {
         // Start an HTTP server on port 0
         vertx.createHttpServer()
                 .requestHandler(req -> req.response().end("OK"))
-                .listen(0)
+                .listen(0, "127.0.0.1")
                 .compose(server -> {
                     int port = server.actualPort();
                     // Issue one HTTP request using the vertx web client
                     return vertx.createHttpClient()
-                            .request(io.vertx.core.http.HttpMethod.GET, port, "localhost", "/")
+                            .request(io.vertx.core.http.HttpMethod.GET, port, "127.0.0.1", "/")
                             .compose(req -> req.send())
                             .compose(resp -> {
                                 assertEquals(200, resp.statusCode());
@@ -106,11 +106,11 @@ public class MicrometerVertxIT {
         // Start server, make a request, assert no vertx. meters
         vertx.createHttpServer()
                 .requestHandler(req -> req.response().end("OK"))
-                .listen(0)
+                .listen(0, "127.0.0.1")
                 .compose(server -> {
                     int port = server.actualPort();
                     return vertx.createHttpClient()
-                            .request(io.vertx.core.http.HttpMethod.GET, port, "localhost", "/")
+                            .request(io.vertx.core.http.HttpMethod.GET, port, "127.0.0.1", "/")
                             .compose(req -> req.send())
                             .compose(resp -> {
                                 assertEquals(200, resp.statusCode());
