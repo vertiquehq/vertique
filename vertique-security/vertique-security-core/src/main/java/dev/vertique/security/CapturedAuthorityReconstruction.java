@@ -42,7 +42,10 @@ import dev.vertique.core.context.DurableCarrierDescriptor;
  * cannot invoke an injected emitter by construction, and this contract preserves that discipline
  * deliberately. The consuming infrastructure that invokes {@code CapturedAuthorityReconstruction}
  * is responsible for emitting the dedicated activation-audit event once Mode-3 authority is
- * actually put into effect (a later slice; not implemented by this interface).
+ * actually put into effect. That infrastructure is {@code CapturedAuthorityActivation} in
+ * {@code dev.vertique:vertique-security-runtime} — the only binding the opt-in wiring module
+ * exposes — which invokes this SPI and then emits and awaits
+ * {@link dev.vertique.security.events.CapturedAuthorityActivatedEvent}.
  *
  * <p>{@link #deferredExecutionWithCapturedAuthority} preserves the actor/subject split used by
  * {@link IdentityReconstruction#deferredExecution}: the executing service is always the acting

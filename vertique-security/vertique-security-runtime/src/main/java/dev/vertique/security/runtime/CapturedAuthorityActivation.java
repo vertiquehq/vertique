@@ -133,7 +133,10 @@ public final class CapturedAuthorityActivation {
      * <p>The reconstructed {@link SecurityIdentity} is carried <strong>uncollapsed</strong>: actor,
      * subject-of-record, delegation, and client all reach the observer as distinct facts, so an
      * audit consumer can attribute a privileged activation correctly instead of receiving one
-     * pre-merged principal.
+     * pre-merged principal. The context's {@link SecurityContext#authorization()} — the captured
+     * claim set Mode-3 reconstruction installs as <em>current</em> authority — is carried alongside
+     * it, so an audit record can state which privileges the activation granted, not merely that one
+     * occurred.
      *
      * <p>The event's correlation is always {@link CorrelationContext#unbound()} — Mode-3
      * activation is not necessarily tied to a live inbound request (e.g. a scheduled job or
@@ -142,8 +145,8 @@ public final class CapturedAuthorityActivation {
      * own {@code activationId}, so two activations of the same carrier row stay distinguishable as
      * audit source events.
      *
-     * @param ctx      the reconstructed context whose identity, authentication state, and origin
-     *                 the event carries
+     * @param ctx      the reconstructed context whose identity, authentication state, activated
+     *                 authorization claims, and origin the event carries
      * @param snapshot the snapshot whose signed carrier binding the event carries
      * @param mode     the activation entry point that put the captured authority into effect
      * @return a {@link Future} resolving to {@code ctx} once every observer has settled
@@ -156,6 +159,7 @@ public final class CapturedAuthorityActivation {
                 ctx.origin(),
                 ctx.authentication(),
                 ctx.identity(),
+                ctx.authorization(),
                 mode,
                 UUID.randomUUID(),
                 snapshot.carrier());

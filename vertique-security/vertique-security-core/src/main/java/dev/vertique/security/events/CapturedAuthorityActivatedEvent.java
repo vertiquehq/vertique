@@ -7,6 +7,7 @@ import dev.vertique.core.correlation.CorrelationContext;
 import dev.vertique.security.AuthenticationState;
 import dev.vertique.security.SecurityIdentity;
 import dev.vertique.security.SnapshotCarrierBinding;
+import dev.vertique.security.authz.AuthorizationClaims;
 import dev.vertique.security.origin.RequestOrigin;
 import java.time.Instant;
 import java.util.Objects;
@@ -40,9 +41,21 @@ import java.util.UUID;
  * @param origin         captured network-envelope facts when present; non-null {@link Optional}.
  *                       A Mode-3 reconstruction never carries one, so in practice always empty
  * @param authentication the reconstructed authentication state — its {@code primaryMethod} is the
- *                       <em>original captured</em> method, not a reconstruction marker; never null
+ *                       <em>original captured</em> method, not a reconstruction marker.
+ *                       <strong>Credential-free by construction:</strong> {@code evidence()} is
+ *                       always empty and {@code tokens()} always {@link Optional#empty()}, because
+ *                       a Mode-3 snapshot carries no evidence or token component. A
+ *                       {@link dev.vertique.security.CapturedAuthorityReconstruction}
+ *                       implementation hand-wired outside {@code
+ *                       CapturedAuthorityReconstructionModule} is solely responsible for upholding
+ *                       that projection — observers are arbitrary application code and must not
+ *                       receive credential material here; never null
  * @param identity       the full reconstructed identity: actor, subject, delegation, client;
  *                       never null
+ * @param authorization  the captured authority actually put into effect — the frozen claim set
+ *                       installed as the reconstructed context's <em>current</em> authority, so an
+ *                       audit record can state which privileges the activation granted and not
+ *                       merely that one occurred; never null
  * @param mode           whether this activation resumed a captured session or began deferred
  *                       execution under captured authority; never null
  * @param activationId   identifier of <em>this activation occurrence</em>, minted fresh per
@@ -57,13 +70,18 @@ public record CapturedAuthorityActivatedEvent(
         Optional<RequestOrigin> origin,
         AuthenticationState authentication,
         SecurityIdentity identity,
+        AuthorizationClaims authorization,
         Mode mode,
         UUID activationId,
         SnapshotCarrierBinding carrier) {
 
     /** Which Mode-3 activation entry point put the captured authority into effect. */
     public enum Mode {
-        /** A captured session was resumed for its own subject-of-record. */
+        /**
+         * The {@code resumeWithCapturedAuthority} entry point was used — the snapshot's own
+         * captured actor and subject are presented as-is. This records which entry point ran;
+         * it is not a claim that the actor and the subject-of-record are the same principal.
+         */
         RESUME,
         /** A system component began deferred execution under a captured subject's authority. */
         DEFERRED
@@ -76,6 +94,7 @@ public record CapturedAuthorityActivatedEvent(
         Objects.requireNonNull(origin, "origin");
         Objects.requireNonNull(authentication, "authentication");
         Objects.requireNonNull(identity, "identity");
+        Objects.requireNonNull(authorization, "authorization");
         Objects.requireNonNull(mode, "mode");
         Objects.requireNonNull(activationId, "activationId");
         Objects.requireNonNull(carrier, "carrier");
