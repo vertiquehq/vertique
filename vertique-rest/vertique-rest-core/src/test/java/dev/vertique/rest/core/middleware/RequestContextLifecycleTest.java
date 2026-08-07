@@ -380,11 +380,11 @@ class RequestContextLifecycleTest {
 
         vertx.createHttpServer()
                 .requestHandler(router)
-                .listen(0)
+                .listen(0, "127.0.0.1")
                 .compose(server -> {
                     int port = server.actualPort();
                     return vertx.createHttpClient()
-                            .request(io.vertx.core.http.HttpMethod.GET, port, "localhost", "/test")
+                            .request(io.vertx.core.http.HttpMethod.GET, port, "127.0.0.1", "/test")
                             .compose(req -> req.send())
                             .compose(resp -> {
                                 ctx.verify(() -> assertEquals(200, resp.statusCode()));

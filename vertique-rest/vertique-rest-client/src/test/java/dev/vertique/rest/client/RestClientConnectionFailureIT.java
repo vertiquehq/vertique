@@ -46,7 +46,7 @@ class RestClientConnectionFailureIT {
 
     @RegisterExtension
     static WireMockExtension wireMock = WireMockExtension.newInstance()
-            .options(wireMockConfig().dynamicPort())
+            .options(wireMockConfig().dynamicPort().bindAddress("127.0.0.1"))
             .build();
 
     /**
@@ -68,7 +68,7 @@ class RestClientConnectionFailureIT {
      */
     private FailureClient buildClient(Vertx vertx) {
         return new RestClientBuilder(vertx)
-                .baseUrl(wireMock.baseUrl())
+                .baseUrl("http://127.0.0.1:" + wireMock.getPort())
                 .readTimeout(1, TimeUnit.SECONDS)
                 .build(FailureClient.class);
     }

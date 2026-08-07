@@ -223,7 +223,7 @@ public class ActionOnlyRouteClaimsValidatorIT {
 
                     assertEquals(true, actionRegistry.contains(CONTENT_READ));
 
-                    return vertx.createHttpServer().requestHandler(root).listen(0);
+                    return vertx.createHttpServer().requestHandler(root).listen(0, "127.0.0.1");
                 })
                 .onComplete(ctx.succeeding(s -> {
                     server = s;
@@ -304,7 +304,7 @@ public class ActionOnlyRouteClaimsValidatorIT {
      * @return a future resolving with the response status code
      */
     private Future<Integer> get(String path, String token) {
-        return client.request(HttpMethod.GET, port, "localhost", path).compose(req -> {
+        return client.request(HttpMethod.GET, port, "127.0.0.1", path).compose(req -> {
             req.putHeader("Authorization", "Bearer " + token);
             return req.send().map(resp -> resp.statusCode());
         });

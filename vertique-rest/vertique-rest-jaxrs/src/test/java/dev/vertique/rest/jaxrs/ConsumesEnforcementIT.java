@@ -131,7 +131,7 @@ public class ConsumesEnforcementIT {
     @DisplayName("PostWithMismatchedContentTypeReturns415 — @Consumes('application/json'), request 'text/xml' → 415")
     void postWithMismatchedContentTypeReturns415(Vertx vertx, VertxTestContext ctx) {
         deploy(vertx, ctx, Set.of(new JsonOnlyResource()), (port, c) -> {
-            c.request(HttpMethod.POST, port, "localhost", "/echo")
+            c.request(HttpMethod.POST, port, "127.0.0.1", "/echo")
                     .compose(req -> req.putHeader("Content-Type", "text/xml")
                             .putHeader("Content-Length", "5")
                             .send("hello"))
@@ -163,7 +163,7 @@ public class ConsumesEnforcementIT {
     @DisplayName("PostWithMatchingContentTypePasses — @Consumes('application/json'), request 'application/json' → 200")
     void postWithMatchingContentTypePasses(Vertx vertx, VertxTestContext ctx) {
         deploy(vertx, ctx, Set.of(new JsonOnlyResource()), (port, c) -> {
-            c.request(HttpMethod.POST, port, "localhost", "/echo")
+            c.request(HttpMethod.POST, port, "127.0.0.1", "/echo")
                     .compose(req -> req.putHeader("Content-Type", "application/json")
                             .putHeader("Content-Length", "2")
                             .send("{}"))
@@ -185,7 +185,7 @@ public class ConsumesEnforcementIT {
         // error on the body content (the body has no param binding, but the body is eagerly parsed).
         // The purpose of this test is solely to assert no per-route 415 is added for no-@Consumes ops.
         deploy(vertx, ctx, Set.of(new NoConsumesResource()), (port, c) -> {
-            c.request(HttpMethod.POST, port, "localhost", "/open")
+            c.request(HttpMethod.POST, port, "127.0.0.1", "/open")
                     .compose(req -> req.putHeader("Content-Type", "application/cbor")
                             .putHeader("Content-Length", "2")
                             .send("{}"))
@@ -205,7 +205,7 @@ public class ConsumesEnforcementIT {
             "RequestWithBodyAndNoContentTypeAgainstConsumesOperation — @Consumes present, no Content-Type header → 415")
     void requestWithBodyAndNoContentTypeAgainstConsumesOperation(Vertx vertx, VertxTestContext ctx) {
         deploy(vertx, ctx, Set.of(new JsonOnlyResource()), (port, c) -> {
-            c.request(HttpMethod.POST, port, "localhost", "/echo")
+            c.request(HttpMethod.POST, port, "127.0.0.1", "/echo")
                     .compose(req -> req.putHeader("Content-Length", "5")
                             // No Content-Type header set
                             .send("hello"))
@@ -244,7 +244,7 @@ public class ConsumesEnforcementIT {
         // Content-Length: 0 to have no body, so the middleware also skips validation. The test
         // proves no additional per-route 415 is added for the no-consumes operation.
         deploy(vertx, ctx, Set.of(new NoConsumesResource()), (port, c) -> {
-            c.request(HttpMethod.POST, port, "localhost", "/open")
+            c.request(HttpMethod.POST, port, "127.0.0.1", "/open")
                     .compose(req -> req.putHeader("Content-Length", "0")
                             // No Content-Type header; empty body → no middleware 415 either
                             .send())
@@ -266,7 +266,7 @@ public class ConsumesEnforcementIT {
         // to 415, so the status is not overridden — the framework authored both the status and the
         // message, and the diagnostic it deliberately wrote must survive to the client.
         deploy(vertx, ctx, Set.of(new JsonOnlyResource()), (port, c) -> {
-            c.request(HttpMethod.POST, port, "localhost", "/echo")
+            c.request(HttpMethod.POST, port, "127.0.0.1", "/echo")
                     .compose(req -> req.putHeader("Content-Type", "text/xml")
                             .putHeader("Content-Length", "5")
                             .send("hello"))
@@ -299,7 +299,7 @@ public class ConsumesEnforcementIT {
                 Set.of(new NoConsumesResource()),
                 Set.of(new dev.vertique.rest.core.middleware.ContentTypeValidationMiddleware()),
                 (port, c) -> {
-                    c.request(HttpMethod.POST, port, "localhost", "/open")
+                    c.request(HttpMethod.POST, port, "127.0.0.1", "/open")
                             .compose(req -> req.putHeader("Content-Type", "image/png")
                                     .putHeader("Content-Length", "5")
                                     .send("hello"))
@@ -365,7 +365,7 @@ public class ConsumesEnforcementIT {
                 .compose(apiRouter -> {
                     Router root = Router.router(vertx);
                     root.route("/*").subRouter(apiRouter);
-                    return vertx.createHttpServer().requestHandler(root).listen(0);
+                    return vertx.createHttpServer().requestHandler(root).listen(0, "127.0.0.1");
                 })
                 .onComplete(ctx.succeeding(s -> {
                     server = s;

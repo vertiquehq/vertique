@@ -76,6 +76,11 @@ jobs:
       - name: Verify release contracts
         run: node --test release/tests/publication-contract.test.mjs release/tests/coverage-aggregate-contract.test.mjs release/tests/docs-only-scope.test.mjs
 
+      - name: Verify test bind policy
+        run: |
+          bash scripts/test-verify-test-bind-policy.sh
+          bash scripts/verify-test-bind-policy.sh
+
       # Per-module HTML reports are skipped: the vertique-coverage-report
       # aggregate XML produced by this same invocation is the only coverage
       # output CI consumes. Reactor parallelism (-T1C) comes from

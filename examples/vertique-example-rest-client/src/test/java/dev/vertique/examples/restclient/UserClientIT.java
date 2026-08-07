@@ -77,7 +77,7 @@ class UserClientIT {
             .put(
                     "restClient",
                     new JsonObject()
-                            .put("userService", new JsonObject().put("baseUrl", "http://localhost:" + mockPort)));
+                            .put("userService", new JsonObject().put("baseUrl", "http://127.0.0.1:" + mockPort)));
 
     @RegisterExtension
     static final VertiqueAppExtension app = VertiqueAppExtension.forFactory(new AppComponentVertiqueComponentFactory())

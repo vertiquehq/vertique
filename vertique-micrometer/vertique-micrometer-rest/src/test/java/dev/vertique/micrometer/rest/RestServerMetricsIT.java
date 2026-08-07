@@ -142,11 +142,14 @@ public class RestServerMetricsIT {
             }
         });
 
-        return vertx.createHttpServer().requestHandler(router).listen(0).map(s -> {
-            this.server = s;
-            this.client = vertx.createHttpClient();
-            return s.actualPort();
-        });
+        return vertx.createHttpServer()
+                .requestHandler(router)
+                .listen(0, "127.0.0.1")
+                .map(s -> {
+                    this.server = s;
+                    this.client = vertx.createHttpClient();
+                    return s.actualPort();
+                });
     }
 
     /**
@@ -157,7 +160,7 @@ public class RestServerMetricsIT {
      * @return a future resolving to the HTTP status code
      */
     private Future<Integer> get(int port, String path) {
-        return client.request(HttpMethod.GET, port, "localhost", path)
+        return client.request(HttpMethod.GET, port, "127.0.0.1", path)
                 .compose(req -> req.send())
                 .map(resp -> resp.statusCode());
     }

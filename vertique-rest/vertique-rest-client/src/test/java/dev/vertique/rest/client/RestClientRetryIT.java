@@ -138,7 +138,7 @@ class RestClientRetryIT {
 
     @RegisterExtension
     static WireMockExtension wireMock = WireMockExtension.newInstance()
-            .options(wireMockConfig().dynamicPort())
+            .options(wireMockConfig().dynamicPort().bindAddress("127.0.0.1"))
             .build();
 
     /**
@@ -159,7 +159,9 @@ class RestClientRetryIT {
      * @return a ready-to-use client
      */
     private RetryTestClient buildClient(Vertx vertx) {
-        return new RestClientBuilder(vertx).baseUrl(wireMock.baseUrl()).build(RetryTestClient.class);
+        return new RestClientBuilder(vertx)
+                .baseUrl("http://127.0.0.1:" + wireMock.getPort())
+                .build(RetryTestClient.class);
     }
 
     /**
@@ -171,7 +173,7 @@ class RestClientRetryIT {
      */
     private RetryTestClient buildClientWithInterceptor(Vertx vertx, RestClientInterceptor interceptor) {
         return new RestClientBuilder(vertx)
-                .baseUrl(wireMock.baseUrl())
+                .baseUrl("http://127.0.0.1:" + wireMock.getPort())
                 .register(interceptor)
                 .build(RetryTestClient.class);
     }

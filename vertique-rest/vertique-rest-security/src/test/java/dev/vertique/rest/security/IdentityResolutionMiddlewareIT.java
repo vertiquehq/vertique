@@ -150,10 +150,10 @@ public class IdentityResolutionMiddlewareIT {
             rc.response().setStatusCode(200).end("ok");
         });
 
-        vertx.createHttpServer().requestHandler(router).listen(0).onComplete(ctx.succeeding(s -> {
+        vertx.createHttpServer().requestHandler(router).listen(0, "127.0.0.1").onComplete(ctx.succeeding(s -> {
             server = s;
             client = vertx.createHttpClient();
-            client.request(HttpMethod.GET, s.actualPort(), "localhost", "/secure")
+            client.request(HttpMethod.GET, s.actualPort(), "127.0.0.1", "/secure")
                     .compose(req -> req.send())
                     .compose(resp -> {
                         assertEquals(200, resp.statusCode());
@@ -208,16 +208,16 @@ public class IdentityResolutionMiddlewareIT {
         router.route("/second").handler(buildMiddleware());
         router.route("/second").handler(rc -> rc.response().setStatusCode(200).end("second"));
 
-        vertx.createHttpServer().requestHandler(router).listen(0).onComplete(ctx.succeeding(s -> {
+        vertx.createHttpServer().requestHandler(router).listen(0, "127.0.0.1").onComplete(ctx.succeeding(s -> {
             server = s;
             client = vertx.createHttpClient();
             int port = s.actualPort();
 
-            client.request(HttpMethod.GET, port, "localhost", "/first")
+            client.request(HttpMethod.GET, port, "127.0.0.1", "/first")
                     .compose(req -> req.send())
                     .compose(resp -> resp.body())
                     .compose(body -> Future.<Void>future(p -> vertx.setTimer(50, id -> p.complete(null))))
-                    .compose(ignored -> client.request(HttpMethod.GET, port, "localhost", "/second"))
+                    .compose(ignored -> client.request(HttpMethod.GET, port, "127.0.0.1", "/second"))
                     .compose(req -> req.send())
                     .compose(resp -> resp.body())
                     .onComplete(ctx.succeeding(body -> {
@@ -266,16 +266,16 @@ public class IdentityResolutionMiddlewareIT {
             rc.response().setStatusCode(200).end("second");
         });
 
-        vertx.createHttpServer().requestHandler(router).listen(0).onComplete(ctx.succeeding(s -> {
+        vertx.createHttpServer().requestHandler(router).listen(0, "127.0.0.1").onComplete(ctx.succeeding(s -> {
             server = s;
             client = vertx.createHttpClient();
             int port = s.actualPort();
 
-            client.request(HttpMethod.GET, port, "localhost", "/first")
+            client.request(HttpMethod.GET, port, "127.0.0.1", "/first")
                     .compose(req -> req.send())
                     .compose(resp -> resp.body())
                     .compose(body -> Future.<Void>future(p -> vertx.setTimer(50, id -> p.complete(null))))
-                    .compose(ignored -> client.request(HttpMethod.GET, port, "localhost", "/second"))
+                    .compose(ignored -> client.request(HttpMethod.GET, port, "127.0.0.1", "/second"))
                     .compose(req -> req.send())
                     .compose(resp -> resp.body())
                     .onComplete(ctx.succeeding(body -> {
@@ -315,10 +315,10 @@ public class IdentityResolutionMiddlewareIT {
             rc.response().setStatusCode(200).end("anon");
         });
 
-        vertx.createHttpServer().requestHandler(router).listen(0).onComplete(ctx.succeeding(s -> {
+        vertx.createHttpServer().requestHandler(router).listen(0, "127.0.0.1").onComplete(ctx.succeeding(s -> {
             server = s;
             client = vertx.createHttpClient();
-            client.request(HttpMethod.GET, s.actualPort(), "localhost", "/anon")
+            client.request(HttpMethod.GET, s.actualPort(), "127.0.0.1", "/anon")
                     .compose(req -> req.send())
                     .compose(resp -> resp.body())
                     .onComplete(ctx.succeeding(body -> {

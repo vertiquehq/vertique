@@ -144,7 +144,7 @@ public class FileVerifierRejectionIT {
     }
 
     private Future<HttpResult> postMultipart(Buffer body) {
-        return client.request(HttpMethod.POST, server.actualPort(), "localhost", "/files")
+        return client.request(HttpMethod.POST, server.actualPort(), "127.0.0.1", "/files")
                 .compose(request -> request.putHeader("Content-Type", MultipartBodies.contentType())
                         .send(body))
                 .compose(response -> {

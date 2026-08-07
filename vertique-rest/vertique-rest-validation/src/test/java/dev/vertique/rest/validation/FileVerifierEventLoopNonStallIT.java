@@ -130,7 +130,7 @@ public class FileVerifierEventLoopNonStallIT {
     private Future<HttpResult> postMultipart() {
         Buffer body = MultipartBodies.singleFile(
                 "upload", "payload.bin", MediaType.APPLICATION_OCTET_STREAM, new byte[] {1, 2, 3});
-        return client.request(HttpMethod.POST, server.actualPort(), "localhost", "/files")
+        return client.request(HttpMethod.POST, server.actualPort(), "127.0.0.1", "/files")
                 .compose(request -> request.putHeader("Content-Type", MultipartBodies.contentType())
                         .send(body))
                 .compose(response -> {
@@ -140,7 +140,7 @@ public class FileVerifierEventLoopNonStallIT {
     }
 
     private Future<HttpResult> getPing() {
-        return client.request(HttpMethod.GET, server.actualPort(), "localhost", "/ping")
+        return client.request(HttpMethod.GET, server.actualPort(), "127.0.0.1", "/ping")
                 .compose(request -> request.send())
                 .compose(response -> {
                     int statusCode = response.statusCode();

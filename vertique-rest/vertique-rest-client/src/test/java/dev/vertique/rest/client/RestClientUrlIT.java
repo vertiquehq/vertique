@@ -56,7 +56,7 @@ public class RestClientUrlIT {
 
     @RegisterExtension
     static WireMockExtension wireMock = WireMockExtension.newInstance()
-            .options(wireMockConfig().dynamicPort())
+            .options(wireMockConfig().dynamicPort().bindAddress("127.0.0.1"))
             .build();
 
     /**
@@ -189,12 +189,13 @@ public class RestClientUrlIT {
     }
 
     /**
-     * Returns the WireMock base URL for use as a dynamic URI prefix in tests.
+     * Returns the WireMock base URL for use as a dynamic URI prefix in tests, pinned to the IPv4
+     * loopback address the server is bound to.
      *
-     * @return base URL string, e.g. {@code http://localhost:54321}
+     * @return base URL string, e.g. {@code http://127.0.0.1:54321}
      */
     private String baseUrl() {
-        return wireMock.baseUrl();
+        return "http://127.0.0.1:" + wireMock.getPort();
     }
 
     // --- Happy-path tests ---
@@ -415,7 +416,7 @@ public class RestClientUrlIT {
         // strict HTTP servers that require a path component before the query string.
         wireMock.stubFor(get(urlEqualTo("/?added=2")).willReturn(okJson("{\"name\":\"root\"}")));
 
-        URI url = URI.create(wireMock.baseUrl());
+        URI url = URI.create(baseUrl());
         buildClient(vertx)
                 .getWithQuery(url, "2")
                 .onComplete(ctx.succeeding(item -> ctx.verify(() -> {

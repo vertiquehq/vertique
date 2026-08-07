@@ -98,7 +98,7 @@ public class OpenApiContractSanitizationIT {
 
         vertx.createHttpServer()
                 .requestHandler(router)
-                .listen(0)
+                .listen(0, "127.0.0.1")
                 .onSuccess(s -> {
                     server = s;
                     port = s.actualPort();
@@ -173,7 +173,7 @@ public class OpenApiContractSanitizationIT {
     // --- helpers ---
 
     private Future<Integer> post(String path, String jsonBody) {
-        return client.request(HttpMethod.POST, port, "localhost", path)
+        return client.request(HttpMethod.POST, port, "127.0.0.1", path)
                 .compose(req -> {
                     req.putHeader("content-type", "application/json");
                     return req.send(Buffer.buffer(jsonBody));

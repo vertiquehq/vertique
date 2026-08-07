@@ -139,7 +139,7 @@ public class ProfiledBodyParseUnderOpenApiContractGateIT {
 
         vertx.createHttpServer()
                 .requestHandler(router)
-                .listen(0)
+                .listen(0, "127.0.0.1")
                 .onSuccess(s -> {
                     server = s;
                     port = s.actualPort();
@@ -163,7 +163,7 @@ public class ProfiledBodyParseUnderOpenApiContractGateIT {
         // minLength + additionalProperties:false), so without the profile first parse the openapi-contract
         // RequestValidator accepts it and dispatch returns 201. With the fix, the strict profile mapper's
         // FIRST PARSE rejects the duplicate key -> ValidationException -> 400, before OpenAPI validation.
-        client.request(HttpMethod.POST, port, "localhost", "/widgets")
+        client.request(HttpMethod.POST, port, "127.0.0.1", "/widgets")
                 .compose(req -> {
                     req.putHeader("content-type", "application/json");
                     return req.send(Buffer.buffer("{\"name\":\"a\",\"name\":\"b\"}"));
@@ -195,7 +195,7 @@ public class ProfiledBodyParseUnderOpenApiContractGateIT {
         // A single-key conforming body passes the profile first parse AND the OpenAPI schema, proving the
         // profiled openapi-contract path does not reject valid bodies — the strict parse only adds the
         // duplicate-key/trailing-token rejection, it does not break the happy path.
-        client.request(HttpMethod.POST, port, "localhost", "/widgets")
+        client.request(HttpMethod.POST, port, "127.0.0.1", "/widgets")
                 .compose(req -> {
                     req.putHeader("content-type", "application/json");
                     return req.send(Buffer.buffer("{\"name\":\"gizmo\"}"));

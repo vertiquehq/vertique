@@ -20,6 +20,7 @@ import lombok.extern.jackson.Jacksonized;
  * {
  *   "management": {
  *     "port": 9090,
+ *     "host": "0.0.0.0",
  *     "enabled": true,
  *     "healthCheckTimeoutSeconds": 5
  *   }
@@ -42,6 +43,10 @@ public class ManagementConfig {
     /** The port for the management HTTP server (default 9090). */
     @Builder.Default
     private final int port = 9090;
+
+    /** Network interface the management server binds to. Defaults to {@code "0.0.0.0"} (all interfaces). */
+    @Builder.Default
+    private final String host = "0.0.0.0";
 
     /** Whether management endpoints are enabled (default {@code true}). */
     @Builder.Default

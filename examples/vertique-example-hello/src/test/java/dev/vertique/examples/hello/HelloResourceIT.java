@@ -26,7 +26,7 @@ public class HelloResourceIT {
     @RegisterExtension
     static final VertiqueAppExtension app = VertiqueAppExtension.forFactory(new AppComponentVertiqueComponentFactory())
             .withConfig(new JsonObject()
-                    .put("http", new JsonObject().put("port", 0))
+                    .put("http", new JsonObject().put("port", 0).put("host", "127.0.0.1"))
                     .put("hello", "Hello, %s!")
                     .put("management", new JsonObject().put("enabled", false))
                     .put("jaxrs", new JsonObject().put("validationStrategy", "openapi-contract")));
@@ -43,7 +43,7 @@ public class HelloResourceIT {
                                 .build())
                         .build());
 
-        RestAssured.baseURI = "http://localhost";
+        RestAssured.baseURI = "http://127.0.0.1";
         RestAssured.port = app.httpPort();
         RestAssured.filters(new RequestLoggingFilter(), new ResponseLoggingFilter(), openApiFilter);
     }

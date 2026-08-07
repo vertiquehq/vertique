@@ -215,13 +215,13 @@ public class JaxRsRouterMountMiddlewareOrderIT {
                 .compose(apiRouter -> {
                     Router root = Router.router(vertx);
                     root.route("/*").subRouter(apiRouter);
-                    return vertx.createHttpServer().requestHandler(root).listen(0);
+                    return vertx.createHttpServer().requestHandler(root).listen(0, "127.0.0.1");
                 })
                 .onComplete(ctx.succeeding(s -> {
                     server = s;
                     client = vertx.createHttpClient();
 
-                    client.request(HttpMethod.GET, s.actualPort(), "localhost", "/ping")
+                    client.request(HttpMethod.GET, s.actualPort(), "127.0.0.1", "/ping")
                             .compose(req -> req.send())
                             .compose(resp -> resp.body())
                             .onComplete(ctx.succeeding(body -> {

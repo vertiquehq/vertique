@@ -166,9 +166,9 @@ class PrometheusScrapeEndpointTest {
 
             vertx.createHttpServer()
                     .requestHandler(router)
-                    .listen(0)
+                    .listen(0, "127.0.0.1")
                     .compose(server -> vertx.createHttpClient()
-                            .request(HttpMethod.GET, server.actualPort(), "localhost", "/metrics")
+                            .request(HttpMethod.GET, server.actualPort(), "127.0.0.1", "/metrics")
                             .compose(req -> req.send())
                             .compose(resp -> resp.body().map(body -> {
                                 ctx.verify(() -> {
@@ -202,9 +202,9 @@ class PrometheusScrapeEndpointTest {
 
             vertx.createHttpServer()
                     .requestHandler(router)
-                    .listen(0)
+                    .listen(0, "127.0.0.1")
                     .compose(server -> vertx.createHttpClient()
-                            .request(HttpMethod.GET, server.actualPort(), "localhost", "/metrics")
+                            .request(HttpMethod.GET, server.actualPort(), "127.0.0.1", "/metrics")
                             .compose(req -> {
                                 req.putHeader("Accept", "application/openmetrics-text; version=1.0.0");
                                 return req.send();
@@ -246,9 +246,9 @@ class PrometheusScrapeEndpointTest {
 
             vertx.createHttpServer()
                     .requestHandler(router)
-                    .listen(0)
+                    .listen(0, "127.0.0.1")
                     .compose(server -> vertx.createHttpClient()
-                            .request(HttpMethod.GET, server.actualPort(), "localhost", "/metrics")
+                            .request(HttpMethod.GET, server.actualPort(), "127.0.0.1", "/metrics")
                             .compose(req -> req.send())
                             .compose(resp -> resp.body().map(body -> {
                                 ctx.verify(() -> {
@@ -290,9 +290,9 @@ class PrometheusScrapeEndpointTest {
 
             vertx.createHttpServer()
                     .requestHandler(router)
-                    .listen(0)
+                    .listen(0, "127.0.0.1")
                     .compose(server -> vertx.createHttpClient()
-                            .request(HttpMethod.GET, server.actualPort(), "localhost", "/metrics")
+                            .request(HttpMethod.GET, server.actualPort(), "127.0.0.1", "/metrics")
                             .compose(req -> req.send())
                             .compose(resp -> resp.body().map(body -> {
                                 ctx.verify(() -> {

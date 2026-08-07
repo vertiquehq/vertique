@@ -103,7 +103,7 @@ public class WebSocketContextHandoffIT {
         // --- Register endpoints ---
         registrar.registerAll(Set.of(new ContextCapturingEndpoint(), new AnonCapturingEndpoint()), router);
 
-        vertx.createHttpServer().requestHandler(router).listen(0).onComplete(ctx.succeeding(s -> {
+        vertx.createHttpServer().requestHandler(router).listen(0, "127.0.0.1").onComplete(ctx.succeeding(s -> {
             server = s;
             port = s.actualPort();
             ctx.completeNow();
@@ -121,7 +121,7 @@ public class WebSocketContextHandoffIT {
 
     private Future<WebSocket> connect(String path) {
         return wsClient.connect(
-                new WebSocketConnectOptions().setHost("localhost").setPort(port).setURI(path));
+                new WebSocketConnectOptions().setHost("127.0.0.1").setPort(port).setURI(path));
     }
 
     // --- Tests ---
