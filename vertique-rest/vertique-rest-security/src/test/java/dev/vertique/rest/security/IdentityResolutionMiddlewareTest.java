@@ -707,6 +707,12 @@ class IdentityResolutionMiddlewareTest {
         /** Appender attached by log-asserting tests; guaranteed detached by {@link #detachLogAppender()}. */
         private ListAppender<ILoggingEvent> logAppender;
 
+        /** Second logger a log-asserting test attached {@link #secondLogAppender} to; detached in teardown. */
+        private Logger secondLogbackLogger;
+
+        /** Second appender, used when a test must assert on two loggers at once (e.g. single-log proof). */
+        private ListAppender<ILoggingEvent> secondLogAppender;
+
         /**
          * Detaches any appender a test attached, even when the test fails during server setup or
          * the HTTP handshake — an in-handler detach alone would leak the appender onto later tests
@@ -717,6 +723,10 @@ class IdentityResolutionMiddlewareTest {
             if (logbackLogger != null && logAppender != null) {
                 logbackLogger.detachAppender(logAppender);
                 logAppender.stop();
+            }
+            if (secondLogbackLogger != null && secondLogAppender != null) {
+                secondLogbackLogger.detachAppender(secondLogAppender);
+                secondLogAppender.stop();
             }
         }
 
@@ -869,12 +879,18 @@ class IdentityResolutionMiddlewareTest {
             router.route("/test").handler(mw);
             router.route("/test").handler(rc -> ctx.failNow("ctx.next() must never be called when the importer fails"));
             router.route("/test").failureHandler(rc -> {
-                assertInstanceOf(
-                        dev.vertique.core.exception.UnavailableException.class,
-                        rc.failure(),
-                        "a provider failure must fail the request with UnavailableException");
-                assertNull(
-                        runtime.getCaptured(), "no SecurityContext may be bound when the authorization import fails");
+                // ctx.verify(...) is mandatory here: a bare assertion thrown inside a Router
+                // handler is swallowed by the Router (the response still ends 500), so the test
+                // would pass no matter what this block asserts.
+                ctx.verify(() -> {
+                    assertInstanceOf(
+                            dev.vertique.core.exception.UnavailableException.class,
+                            rc.failure(),
+                            "a provider failure must fail the request with UnavailableException");
+                    assertNull(
+                            runtime.getCaptured(),
+                            "no SecurityContext may be bound when the authorization import fails");
+                });
                 rc.response().setStatusCode(500).end("failed-as-expected");
             });
 
@@ -882,12 +898,21 @@ class IdentityResolutionMiddlewareTest {
         }
 
         @Test
-        @DisplayName("Provider failure is logged at ERROR with the UnavailableException cause naming the provider")
+        @DisplayName("Provider failure is logged exactly once at ERROR — by the importer, naming the provider; the "
+                + "middleware logs nothing")
         void importerFailureIsLoggedWithCause(Vertx vertx, VertxTestContext ctx) {
-            logbackLogger = (Logger) LoggerFactory.getLogger(IdentityResolutionMiddleware.class);
+            // The importer owns the failure log now: it is the only component that knows the
+            // provider id, which the client-visible UnavailableException deliberately omits.
+            logbackLogger = (Logger) LoggerFactory.getLogger(VertxAuthorizationImporter.class);
             logAppender = new ListAppender<>();
             logAppender.start();
             logbackLogger.addAppender(logAppender);
+
+            // The middleware must not double-log the same failure.
+            secondLogbackLogger = (Logger) LoggerFactory.getLogger(IdentityResolutionMiddleware.class);
+            secondLogAppender = new ListAppender<>();
+            secondLogAppender.start();
+            secondLogbackLogger.addAppender(secondLogAppender);
 
             CapturingSecurityRuntime runtime = new CapturingSecurityRuntime();
             AuthorizationProvider failing = new AuthorizationProvider() {
@@ -908,25 +933,52 @@ class IdentityResolutionMiddlewareTest {
             installLifecycle(router, "/test");
             router.route("/test").handler(authenticateAs("alice", new JsonObject().put("sub", "alice")));
             router.route("/test").handler(mw);
+            router.route("/test").handler(rc -> ctx.failNow("ctx.next() must never be called when the importer fails"));
             router.route("/test").failureHandler(rc -> {
-                // The middleware logs synchronously before ctx.fail(), so the event is already
-                // captured when this failure handler runs; detachLogAppender() guarantees cleanup
-                // on every exit path, including setup/handshake failures that never reach here.
-                List<ILoggingEvent> errors = logAppender.list.stream()
-                        .filter(event -> event.getLevel() == Level.ERROR)
-                        .toList();
-                assertEquals(
-                        1, errors.size(), "exactly one ERROR event must be logged for the failed import: " + errors);
-                IThrowableProxy thrown = errors.get(0).getThrowableProxy();
-                assertNotNull(thrown, "the ERROR event must carry the import failure as its throwable");
-                assertSame(
-                        rc.failure(),
-                        assertInstanceOf(ThrowableProxy.class, thrown).getThrowable(),
-                        "the logged throwable must be the exact UnavailableException instance the "
-                                + "RoutingContext observed");
-                assertTrue(
-                        thrown.getMessage().contains("boom"),
-                        "the logged UnavailableException must name the failing provider id: " + thrown.getMessage());
+                // ctx.verify(...) is mandatory here: a bare assertion thrown inside a Router
+                // handler is swallowed by the Router (the response still ends 500), so the test
+                // would pass no matter what this block asserts.
+                ctx.verify(() -> {
+                    // The importer logs synchronously before failing its future, so the event is
+                    // already captured when this failure handler runs; detachLogAppender()
+                    // guarantees cleanup on every exit path, including setup/handshake failures
+                    // that never reach here.
+                    dev.vertique.core.exception.UnavailableException failure = assertInstanceOf(
+                            dev.vertique.core.exception.UnavailableException.class,
+                            rc.failure(),
+                            "a provider failure must fail the request with UnavailableException");
+                    assertEquals(
+                            "Authorization is temporarily unavailable",
+                            failure.getMessage(),
+                            "the client-visible failure detail must be the generic, provider-agnostic message");
+
+                    List<ILoggingEvent> errors = logAppender.list.stream()
+                            .filter(event -> event.getLevel() == Level.ERROR)
+                            .toList();
+                    assertEquals(
+                            1,
+                            errors.size(),
+                            "exactly one ERROR event must be logged by the importer for the failed import: " + errors);
+                    ILoggingEvent error = errors.get(0);
+                    assertTrue(
+                            error.getFormattedMessage().contains("boom"),
+                            "the importer's ERROR must name the failing provider id: " + error.getFormattedMessage());
+                    IThrowableProxy thrown = error.getThrowableProxy();
+                    assertNotNull(thrown, "the ERROR event must carry the provider's failure as its throwable");
+                    assertSame(
+                            failure.getCause(),
+                            assertInstanceOf(ThrowableProxy.class, thrown).getThrowable(),
+                            "the logged throwable must be the provider's own failure, i.e. the cause the "
+                                    + "RoutingContext's UnavailableException carries");
+
+                    assertEquals(
+                            List.of(),
+                            secondLogAppender.list.stream()
+                                    .filter(event -> event.getLevel() == Level.ERROR)
+                                    .map(ILoggingEvent::getFormattedMessage)
+                                    .toList(),
+                            "the middleware must not re-log a failure the importer already logged");
+                });
                 rc.response().setStatusCode(500).end("failed-as-expected");
             });
 

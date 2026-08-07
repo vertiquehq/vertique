@@ -4,6 +4,8 @@
 package dev.vertique.rest.security;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vertique.core.context.ContextHolder;
 import dev.vertique.core.context.ContextValue;
@@ -81,6 +83,9 @@ import org.junit.jupiter.api.extension.ExtendWith;
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
 public class VertxAuthorizationImportIT {
 
+    /** Id of the provider wired behind {@code /failing-importer}; must never reach the client. */
+    private static final String FAILING_PROVIDER_ID = "teams-down";
+
     private static int port;
     private static HttpServer server;
     private static HttpClient client;
@@ -135,7 +140,7 @@ public class VertxAuthorizationImportIT {
                 securityRuntime,
                 emitter,
                 contextHolder,
-                Optional.of(new VertxAuthorizationImporter(Set.of(failingProvider("teams-down")), Set.of())));
+                Optional.of(new VertxAuthorizationImporter(Set.of(failingProvider(FAILING_PROVIDER_ID)), Set.of())));
 
         OpenAPIContract.from(vertx, "vertx-authz-import-test-openapi.json")
                 .compose(contract -> {
@@ -160,11 +165,20 @@ public class VertxAuthorizationImportIT {
                     root.route("/*").handler(new RequestContextLifecycle());
                     root.route("/*").subRouter(apiRouter);
                     // Mirrors the production DefaultExceptionMapper's core semantic mapping for the
-                    // one type this IT proves (UnavailableException -> 503); status-only failures
-                    // (401/403 from the auth/authorization handlers) keep their status.
+                    // one type this IT proves (UnavailableException -> ProblemDetail.of(503,
+                    // ex.getMessage()) as application/problem+json); status-only failures
+                    // (401/403 from the auth/authorization handlers) keep their status. The body
+                    // carries the exception message verbatim, exactly as the production mapper
+                    // does, so this IT can prove what a client actually gets to see.
                     root.route().failureHandler(rc -> {
-                        if (rc.failure() instanceof UnavailableException) {
-                            rc.response().setStatusCode(503).end("unavailable");
+                        if (rc.failure() instanceof UnavailableException unavailable) {
+                            rc.response()
+                                    .setStatusCode(503)
+                                    .putHeader("content-type", "application/problem+json")
+                                    .end(new JsonObject()
+                                            .put("status", 503)
+                                            .put("detail", unavailable.getMessage())
+                                            .encode());
                             return;
                         }
                         rc.response()
@@ -237,12 +251,13 @@ public class VertxAuthorizationImportIT {
 
     /**
      * A failing provider fails the whole request with {@link UnavailableException}, surfaced as 503
-     * — never a partially-authorized 200 or a misleading 403.
+     * — never a partially-authorized 200 or a misleading 403. The client-visible ProblemDetail
+     * carries only the generic detail: the failing provider's id stays server-side.
      *
      * @param ctx the test context
      */
     @Test
-    @DisplayName("provider failure yields 503 Service Unavailable")
+    @DisplayName("provider failure yields 503 whose ProblemDetail detail is generic and names no provider")
     void providerFailureYieldsServiceUnavailable(VertxTestContext ctx) {
         get("/failing-importer", "alice|viewer")
                 .onComplete(ctx.succeeding(resp -> ctx.verify(() -> {
@@ -251,6 +266,13 @@ public class VertxAuthorizationImportIT {
                             resp.status(),
                             () -> "a failing authorization provider must surface as 503; got " + resp.status()
                                     + diagnosticSuffix(resp));
+                    assertTrue(
+                            resp.body().contains("Authorization is temporarily unavailable"),
+                            () -> "the 503 ProblemDetail must carry the generic detail; got " + resp.body());
+                    assertFalse(
+                            resp.body().contains(FAILING_PROVIDER_ID),
+                            () -> "the 503 body must never name the failing provider id [" + FAILING_PROVIDER_ID
+                                    + "]; got " + resp.body());
                     ctx.completeNow();
                 })));
     }
@@ -394,7 +416,7 @@ public class VertxAuthorizationImportIT {
 
     /**
      * Issues a {@code GET} to the given path with an {@code Authorization: Bearer} header, drains
-     * the response body, and resolves with the response status plus marker-header presence.
+     * the response body, and resolves with the response status, body, and marker-header presence.
      *
      * @param path  the request path
      * @param token the bearer token value (format {@code <sub>|<csv-roles>})
@@ -404,18 +426,21 @@ public class VertxAuthorizationImportIT {
         return client.request(HttpMethod.GET, port, "127.0.0.1", path).compose(req -> {
             req.putHeader("Authorization", "Bearer " + token);
             return req.send().compose(resp -> resp.body()
-                    .map(body -> new Resp(resp.statusCode(), resp.getHeader("x-vq-test-server") != null)));
+                    .map(body ->
+                            new Resp(resp.statusCode(), body.toString(), resp.getHeader("x-vq-test-server") != null)));
         });
     }
 
     /**
-     * Response status plus whether the {@code x-vq-test-server} marker header (stamped by this
-     * test's root router) was present; used only to enrich failure messages (see #186).
+     * Response status, body text, and whether the {@code x-vq-test-server} marker header (stamped by
+     * this test's root router) was present; the marker is used only to enrich failure messages (see
+     * #186).
      *
      * @param status         the HTTP status code
+     * @param body           the response body as text
      * @param fromThisServer whether the marker header was present on the response
      */
-    private record Resp(int status, boolean fromThisServer) {}
+    private record Resp(int status, String body, boolean fromThisServer) {}
 
     /**
      * Builds the marker-diagnostic suffix appended to status-assertion failure messages (see #186).

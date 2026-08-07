@@ -8,6 +8,8 @@ import static org.junit.jupiter.api.Assertions.*;
 import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.classic.spi.IThrowableProxy;
+import ch.qos.logback.classic.spi.ThrowableProxy;
 import ch.qos.logback.core.read.ListAppender;
 import dev.vertique.core.exception.UnavailableException;
 import dev.vertique.security.authz.AuthorityClaim;
@@ -287,9 +289,10 @@ class VertxAuthorizationImporterTest {
         for (Future<AuthorizationClaims> future : List.of(first, second)) {
             assertTrue(future.failed(), "import must fail atomically when any provider fails");
             UnavailableException cause = assertInstanceOf(UnavailableException.class, future.cause());
-            assertTrue(
-                    cause.getMessage().contains("b"),
-                    "failure message must name the failing provider id: " + cause.getMessage());
+            assertEquals(
+                    "Authorization is temporarily unavailable",
+                    cause.getMessage(),
+                    "the client-visible failure detail must be the generic, provider-agnostic message");
             assertNull(future.result(), "no claims may be observable from a failed import");
         }
         assertFalse(
@@ -417,22 +420,56 @@ class VertxAuthorizationImporterTest {
     // --- Atomic failure & empty set ---
 
     @Test
-    @DisplayName("Any provider failure fails the whole import with UnavailableException naming the provider")
+    @DisplayName("Any provider failure fails the whole import with a generic UnavailableException, logging the "
+            + "provider id once at ERROR")
     void failsWholeImportOnProviderFailure() {
-        User caller = alice();
-        RecordingProvider a = new RecordingProvider("a", RoleBasedAuthorization.create("admin"));
-        FailingProvider b = new FailingProvider("b");
-        VertxAuthorizationImporter importer = new VertxAuthorizationImporter(Set.of(a, b));
+        Logger logbackLogger = (Logger) LoggerFactory.getLogger(VertxAuthorizationImporter.class);
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        logbackLogger.addAppender(appender);
+        try {
+            User caller = alice();
+            RecordingProvider a = new RecordingProvider("a", RoleBasedAuthorization.create("admin"));
+            // A distinctive id so "the client-visible message does not name the provider" is a real
+            // assertion — a one-letter id would appear by accident inside the generic wording.
+            FailingProvider failing = new FailingProvider("teams-down");
+            VertxAuthorizationImporter importer = new VertxAuthorizationImporter(Set.of(a, failing));
 
-        Future<AuthorizationClaims> future = importer.importInto(caller, AuthorizationClaims.empty());
+            Future<AuthorizationClaims> future = importer.importInto(caller, AuthorizationClaims.empty());
 
-        assertTrue(future.failed(), "import must fail when any provider fails");
-        UnavailableException cause = assertInstanceOf(UnavailableException.class, future.cause());
-        assertTrue(
-                cause.getMessage().contains("b"),
-                "failure message must contain the failing provider id: " + cause.getMessage());
-        assertNull(future.result(), "nothing imported from provider a may be observable");
-        assertFalse(caller.authorizations().contains("a"), "provider a's grants must not leak onto the caller's User");
+            assertTrue(future.failed(), "import must fail when any provider fails");
+            UnavailableException cause = assertInstanceOf(UnavailableException.class, future.cause());
+            assertEquals(
+                    "Authorization is temporarily unavailable",
+                    cause.getMessage(),
+                    "the client-visible failure detail must be the generic, provider-agnostic message");
+            assertFalse(
+                    cause.getMessage().contains("teams-down"),
+                    "the client-visible failure detail must never name the failing provider id: " + cause.getMessage());
+            assertNull(future.result(), "nothing imported from provider a may be observable");
+            assertFalse(
+                    caller.authorizations().contains("a"), "provider a's grants must not leak onto the caller's User");
+
+            // The provider id is server-side-only: exactly one ERROR at the importer names it and
+            // carries the provider's own failure, so an operator can diagnose what the 503 hides.
+            List<ILoggingEvent> errors = appender.list.stream()
+                    .filter(event -> event.getLevel() == Level.ERROR)
+                    .toList();
+            assertEquals(1, errors.size(), "exactly one ERROR must be logged for the failed import: " + errors);
+            ILoggingEvent error = errors.get(0);
+            assertTrue(
+                    error.getFormattedMessage().contains("teams-down"),
+                    "the server-side ERROR must name the failing provider id: " + error.getFormattedMessage());
+            IThrowableProxy thrown = error.getThrowableProxy();
+            assertNotNull(thrown, "the ERROR event must carry the provider's failure as its throwable");
+            assertSame(
+                    cause.getCause(),
+                    assertInstanceOf(ThrowableProxy.class, thrown).getThrowable(),
+                    "the logged throwable must be the provider's own failure, i.e. the UnavailableException's cause");
+        } finally {
+            logbackLogger.detachAppender(appender);
+            appender.stop();
+        }
     }
 
     @Test
@@ -453,6 +490,23 @@ class VertxAuthorizationImporterTest {
         assertTrue(excludedResult.succeeded(), "future must already be completed — no async hop");
         assertSame(base, excludedResult.result(), "the same base instance must be returned");
         assertFalse(only.invoked.get(), "an excluded provider must not be invoked");
+    }
+
+    @Test
+    @DisplayName("A provider that ran but mapped no claims returns the same base instance")
+    void emptyImportResultReturnsBaseSameInstance() {
+        // The provider is invoked and grants an authorization, but the grant is unmappable, so the
+        // import contributes nothing — the merge must degenerate to returning base itself.
+        RecordingProvider provider =
+                new RecordingProvider("p1", WildcardPermissionBasedAuthorization.create("orders:*"));
+        AuthorizationClaims base = new AuthorizationClaims(Set.of(role("base-role", "")), Map.of("k", "v"));
+        VertxAuthorizationImporter importer = new VertxAuthorizationImporter(Set.of(provider));
+
+        Future<AuthorizationClaims> future = importer.importInto(alice(), base);
+
+        assertTrue(future.succeeded(), () -> "import must succeed: " + future.cause());
+        assertTrue(provider.invoked.get(), "the provider must have been invoked");
+        assertSame(base, future.result(), "an import that maps no claims must return the very same base instance");
     }
 
     // --- Deep-copy isolation ---
