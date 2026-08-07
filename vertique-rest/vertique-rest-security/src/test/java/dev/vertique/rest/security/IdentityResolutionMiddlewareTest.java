@@ -1152,8 +1152,13 @@ class IdentityResolutionMiddlewareTest {
             router.route("/test").handler(middleware);
             // Failure handler — verifies ctx.fail was called with the correct cause
             router.route("/test").failureHandler(rc -> {
-                Throwable failure = rc.failure();
-                assertEquals(cause, failure, "failure must be the resolver exception");
+                // ctx.verify(...) is mandatory here: a bare assertion thrown inside a Router
+                // handler is swallowed by the Router (the response still ends 500), so the test
+                // would pass no matter what this block asserts.
+                ctx.verify(() -> {
+                    Throwable failure = rc.failure();
+                    assertEquals(cause, failure, "failure must be the resolver exception");
+                });
                 rc.response().setStatusCode(500).end("failed-as-expected");
             });
 
@@ -1200,11 +1205,16 @@ class IdentityResolutionMiddlewareTest {
                     .handler(rc -> ctx.failNow(
                             "downstream handler must not be reached when identity resolution fails closed"));
             router.route("/test").failureHandler(rc -> {
-                Throwable failure = rc.failure();
-                assertInstanceOf(
-                        IdentityResolutionException.class,
-                        failure,
-                        "failure must propagate the resolver's IdentityResolutionException");
+                // ctx.verify(...) is mandatory here: a bare assertion thrown inside a Router
+                // handler is swallowed by the Router (the response still ends 500), so the test
+                // would pass no matter what this block asserts.
+                ctx.verify(() -> {
+                    Throwable failure = rc.failure();
+                    assertInstanceOf(
+                            IdentityResolutionException.class,
+                            failure,
+                            "failure must propagate the resolver's IdentityResolutionException");
+                });
                 rc.response().setStatusCode(500).end("failed-as-expected");
             });
 
@@ -1265,11 +1275,14 @@ class IdentityResolutionMiddlewareTest {
                     rc.response().setStatusCode(400).end(String.valueOf(failure.getMessage()));
                     return;
                 }
-                assertInstanceOf(
+                // ctx.verify(...) is mandatory here: a bare assertion thrown inside a Router
+                // handler is swallowed by the Router (the response still ends 500), so the test
+                // would pass no matter what this block asserts.
+                ctx.verify(() -> assertInstanceOf(
                         IdentityResolutionException.class,
                         failure,
                         "failure must propagate the resolver's IdentityResolutionException, not an "
-                                + "arbitrary exception type: " + failure);
+                                + "arbitrary exception type: " + failure));
                 rc.response().setStatusCode(500).end("failed-as-expected");
             });
 
