@@ -351,6 +351,7 @@ public final class IdentityResolutionMiddleware implements Handler<RoutingContex
 
         authorizationImporter.get().importInto(user, base).onComplete(claimsAr -> {
             if (claimsAr.failed()) {
+                log.error("Vert.x authorization import failed; failing request with 503", claimsAr.cause());
                 ctx.fail(claimsAr.cause());
                 return;
             }

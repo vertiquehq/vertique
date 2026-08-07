@@ -7,6 +7,11 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.classic.spi.IThrowableProxy;
+import ch.qos.logback.core.read.ListAppender;
 import dev.vertique.context.ContextValues;
 import dev.vertique.core.context.ContextHolder;
 import dev.vertique.core.context.ContextValue;
@@ -45,6 +50,7 @@ import io.vertx.ext.web.impl.UserContextInternal;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -54,6 +60,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.slf4j.LoggerFactory;
 
 /**
  * Unit tests for {@link IdentityResolutionMiddleware}.
@@ -848,6 +855,59 @@ class IdentityResolutionMiddlewareTest {
                         "a provider failure must fail the request with UnavailableException");
                 assertNull(
                         runtime.getCaptured(), "no SecurityContext may be bound when the authorization import fails");
+                rc.response().setStatusCode(500).end("failed-as-expected");
+            });
+
+            startAndSend(vertx, ctx, router, 500);
+        }
+
+        @Test
+        @DisplayName("Provider failure is logged at ERROR with the UnavailableException cause naming the provider")
+        void importerFailureIsLoggedWithCause(Vertx vertx, VertxTestContext ctx) {
+            Logger logbackLogger = (Logger) LoggerFactory.getLogger(IdentityResolutionMiddleware.class);
+            ListAppender<ILoggingEvent> appender = new ListAppender<>();
+            appender.start();
+            logbackLogger.addAppender(appender);
+
+            CapturingSecurityRuntime runtime = new CapturingSecurityRuntime();
+            AuthorizationProvider failing = new AuthorizationProvider() {
+                @Override
+                public String getId() {
+                    return "boom";
+                }
+
+                @Override
+                public Future<Void> getAuthorizations(User user) {
+                    return Future.failedFuture(new IllegalStateException("provider down"));
+                }
+            };
+            VertxAuthorizationImporter importer = new VertxAuthorizationImporter(Set.of(failing), Set.of());
+            IdentityResolutionMiddleware mw = middleware(runtime, Optional.of(importer));
+
+            Router router = Router.router(vertx);
+            installLifecycle(router, "/test");
+            router.route("/test").handler(authenticateAs("alice", new JsonObject().put("sub", "alice")));
+            router.route("/test").handler(mw);
+            router.route("/test").failureHandler(rc -> {
+                // The middleware logs synchronously before ctx.fail(), so the event is already
+                // captured when this failure handler runs. Detach before asserting so a failed
+                // assertion cannot leak the appender onto later tests.
+                logbackLogger.detachAppender(appender);
+                appender.stop();
+                List<ILoggingEvent> errors = appender.list.stream()
+                        .filter(event -> event.getLevel() == Level.ERROR)
+                        .toList();
+                assertEquals(
+                        1, errors.size(), "exactly one ERROR event must be logged for the failed import: " + errors);
+                IThrowableProxy thrown = errors.get(0).getThrowableProxy();
+                assertNotNull(thrown, "the ERROR event must carry the import failure as its throwable");
+                assertEquals(
+                        dev.vertique.core.exception.UnavailableException.class.getName(),
+                        thrown.getClassName(),
+                        "the logged throwable must be the importer's UnavailableException");
+                assertTrue(
+                        thrown.getMessage().contains("boom"),
+                        "the logged UnavailableException must name the failing provider id: " + thrown.getMessage());
                 rc.response().setStatusCode(500).end("failed-as-expected");
             });
 

@@ -71,7 +71,10 @@ import lombok.extern.slf4j.Slf4j;
  *   <li><strong>Provenance and merge.</strong> Imported claims carry
  *       {@code source = "vertx-provider:<providerId>"} and are merged into the base claims by plain
  *       set union under full record equality, preserving the base claims' attributes. A base claim
- *       that differs only in {@code source} therefore survives alongside its imported twin.</li>
+ *       that differs only in {@code source} therefore survives alongside its imported twin.
+ *       Attribution is bucket-keyed, not writer-keyed — a provider is trusted to write only its own
+ *       bucket, and a claim's {@code source} reflects the bucket it was read from, not necessarily
+ *       the provider that wrote it.</li>
  *   <li><strong>Excluded providers.</strong> Providers whose id is excluded are neither invoked nor
  *       read. The safe single-argument constructor always excludes
  *       {@value #EXCLUDED_JWT_CLAIMS_PROVIDER_ID}, whose bucket is a lossy re-projection of JWT
@@ -161,6 +164,18 @@ public final class VertxAuthorizationImporter {
                         + provider.getClass().getName());
             }
         }
+
+        // Wiring-time visibility: name every contributed provider that the exclusion set silences,
+        // so an operator can tell from the startup log why a provider's grants never appear.
+        byId.forEach((id, provider) -> {
+            if (excluded.contains(id)) {
+                log.info(
+                        "Vert.x authorization provider [{}] ({}) is excluded from claims import and will not be "
+                                + "invoked",
+                        id,
+                        provider.getClass().getName());
+            }
+        });
 
         this.orderedProviders = byId.entrySet().stream()
                 .filter(entry -> !excluded.contains(entry.getKey()))

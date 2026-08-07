@@ -5,6 +5,10 @@ package dev.vertique.rest.security;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import dev.vertique.core.exception.UnavailableException;
 import dev.vertique.security.authz.AuthorityClaim;
 import dev.vertique.security.authz.AuthorityKind;
@@ -31,6 +35,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.slf4j.LoggerFactory;
 
 /**
  * Unit tests for {@link VertxAuthorizationImporter}.
@@ -341,30 +346,61 @@ class VertxAuthorizationImporterTest {
     @Test
     @DisplayName("Excluded providers are neither invoked nor imported (default jwt-claims and explicit exclusions)")
     void excludedProviderNeitherInvokedNorImported() {
-        // 1-arg constructor: "jwt-claims" is always excluded.
-        RecordingProvider jwtClaims = new RecordingProvider(
-                VertxAuthorizationImporter.EXCLUDED_JWT_CLAIMS_PROVIDER_ID, RoleBasedAuthorization.create("admin"));
-        VertxAuthorizationImporter defaultImporter = new VertxAuthorizationImporter(Set.of(jwtClaims));
+        Logger logbackLogger = (Logger) LoggerFactory.getLogger(VertxAuthorizationImporter.class);
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        logbackLogger.addAppender(appender);
+        try {
+            // 1-arg constructor: "jwt-claims" is always excluded.
+            RecordingProvider jwtClaims = new RecordingProvider(
+                    VertxAuthorizationImporter.EXCLUDED_JWT_CLAIMS_PROVIDER_ID, RoleBasedAuthorization.create("admin"));
+            VertxAuthorizationImporter defaultImporter = new VertxAuthorizationImporter(Set.of(jwtClaims));
 
-        Future<AuthorizationClaims> defaultResult = defaultImporter.importInto(alice(), AuthorizationClaims.empty());
+            Future<AuthorizationClaims> defaultResult =
+                    defaultImporter.importInto(alice(), AuthorizationClaims.empty());
 
-        assertTrue(defaultResult.succeeded(), () -> "import must succeed: " + defaultResult.cause());
-        assertFalse(jwtClaims.invoked.get(), "the jwt-claims provider must never be invoked");
-        assertTrue(
-                defaultResult.result().claims().isEmpty(),
-                "no claims may be imported from the excluded jwt-claims provider");
+            assertTrue(defaultResult.succeeded(), () -> "import must succeed: " + defaultResult.cause());
+            assertFalse(jwtClaims.invoked.get(), "the jwt-claims provider must never be invoked");
+            assertTrue(
+                    defaultResult.result().claims().isEmpty(),
+                    "no claims may be imported from the excluded jwt-claims provider");
 
-        // 2-arg constructor: an explicitly excluded arbitrary id gets the same treatment.
-        RecordingProvider custom = new RecordingProvider("custom", RoleBasedAuthorization.create("admin"));
-        VertxAuthorizationImporter explicitImporter = new VertxAuthorizationImporter(Set.of(custom), Set.of("custom"));
+            // 2-arg constructor: an explicitly excluded arbitrary id gets the same treatment.
+            RecordingProvider custom = new RecordingProvider("custom", RoleBasedAuthorization.create("admin"));
+            VertxAuthorizationImporter explicitImporter =
+                    new VertxAuthorizationImporter(Set.of(custom), Set.of("custom"));
 
-        Future<AuthorizationClaims> explicitResult = explicitImporter.importInto(alice(), AuthorizationClaims.empty());
+            Future<AuthorizationClaims> explicitResult =
+                    explicitImporter.importInto(alice(), AuthorizationClaims.empty());
 
-        assertTrue(explicitResult.succeeded(), () -> "import must succeed: " + explicitResult.cause());
-        assertFalse(custom.invoked.get(), "an explicitly excluded provider must never be invoked");
-        assertTrue(
-                explicitResult.result().claims().isEmpty(),
-                "no claims may be imported from an explicitly excluded provider");
+            assertTrue(explicitResult.succeeded(), () -> "import must succeed: " + explicitResult.cause());
+            assertFalse(custom.invoked.get(), "an explicitly excluded provider must never be invoked");
+            assertTrue(
+                    explicitResult.result().claims().isEmpty(),
+                    "no claims may be imported from an explicitly excluded provider");
+
+            // Each excluded-and-present provider must be named once at INFO at wiring time, so an
+            // operator can tell from the startup log why the provider's grants never appear.
+            List<String> infoMessages = appender.list.stream()
+                    .filter(event -> event.getLevel() == Level.INFO)
+                    .map(ILoggingEvent::getFormattedMessage)
+                    .toList();
+            assertEquals(
+                    2, infoMessages.size(), "one exclusion notice per excluded-and-present provider: " + infoMessages);
+            assertTrue(
+                    infoMessages.get(0).contains("[" + VertxAuthorizationImporter.EXCLUDED_JWT_CLAIMS_PROVIDER_ID + "]")
+                            && infoMessages.get(0).contains(RecordingProvider.class.getName())
+                            && infoMessages.get(0).contains("excluded from claims import"),
+                    "notice must name the jwt-claims id and its provider class: " + infoMessages.get(0));
+            assertTrue(
+                    infoMessages.get(1).contains("[custom]")
+                            && infoMessages.get(1).contains(RecordingProvider.class.getName())
+                            && infoMessages.get(1).contains("excluded from claims import"),
+                    "notice must name the explicitly excluded id and its provider class: " + infoMessages.get(1));
+        } finally {
+            logbackLogger.detachAppender(appender);
+            appender.stop();
+        }
     }
 
     // --- Atomic failure & empty set ---
