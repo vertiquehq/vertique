@@ -40,6 +40,12 @@ and `ci`.
 Open changes through a pull request. Maintainers may request focused tests,
 documentation updates, or a clean full build before merging.
 
+CI skips the full build only for pull requests whose every changed path is
+non-executable prose (`CONTRIBUTING.md`, `SECURITY.md`, `LICENSES/`,
+`NOTICE`). Everything else — including `README.md`, `docs/`, and packaged
+`module.md` resources, which integration tests assert on — runs the full
+build and test suite.
+
 ## Releases
 
 Tags in this repository do not publish artifacts. Release orchestration and
