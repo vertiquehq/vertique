@@ -45,13 +45,17 @@ import java.util.Set;
  *
  * <p><strong>These authorizations are not what {@code @RolesAllowed} and
  * {@code @Authorized(scopes = ...)} enforce.</strong> The framework's decision point evaluates
- * directly from the {@code SecurityContext}'s {@code AuthorizationClaims}, populated by
- * {@link dev.vertique.rest.security.SecurityClaimMapper}, and does not consult the Vert.x
- * {@code AuthorizationProvider} chain at all — so this provider populates the Vert.x user's
- * authorization cache for interoperability with code that reads it, not for annotation
+ * directly from the {@code SecurityContext}'s {@code AuthorizationClaims}. Contributed Vert.x
+ * {@code AuthorizationProvider}s reach those claims only through the opt-in
+ * {@link dev.vertique.rest.security.VertxAuthorizationImportModule} — and that import deliberately
+ * <strong>excludes this provider's {@code "jwt-claims"} bucket</strong>, because its
+ * scope&rarr;permission projection is lossy: a {@code scope} claim would come back as a
+ * {@code PERMISSION} authority. JWT claims instead reach {@code AuthorizationClaims} with full kind
+ * fidelity (a scope stays a {@code SCOPE}) via
+ * {@link dev.vertique.rest.security.SecurityClaimMapper}. This provider therefore remains available
+ * for application code that queries the Vert.x authorization API directly, not for annotation
  * enforcement. To change what {@code @RolesAllowed} or {@code @Authorized} decide, replace the
- * {@code SecurityClaimMapper}; contributing another {@code AuthorizationProvider} has no effect.
- * Whether that should remain so is GitHub issue #165.
+ * {@code SecurityClaimMapper}.
  */
 public class JwtClaimAuthorizationProvider implements AuthorizationProvider {
 

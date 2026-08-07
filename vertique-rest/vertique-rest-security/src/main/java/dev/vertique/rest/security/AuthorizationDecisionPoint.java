@@ -26,11 +26,13 @@ import io.vertx.core.Future;
  *
  * <p>The framework provides two default implementations:
  * <ul>
- *   <li>{@link VertxProviderDecisionPoint} — wraps the Vert.x {@link io.vertx.ext.auth.authorization.AuthorizationProvider}
- *       set for compatibility / future adapters but, in v1, evaluates role/scope/permission
- *       requirements directly from the request's {@link dev.vertique.security.authz.AuthorizationClaims}
- *       and does NOT consult the provider set (GitHub issue #165); the default when no app-provided
- *       decision point or policy is bound</li>
+ *   <li>{@link VertxProviderDecisionPoint} — evaluates role/scope/permission requirements directly
+ *       from the request's {@link dev.vertique.security.authz.AuthorizationClaims}; the default when
+ *       no app-provided decision point or policy is bound. Vert.x
+ *       {@link io.vertx.ext.auth.authorization.AuthorizationProvider}s are consulted only via the
+ *       opt-in identity-resolution import ({@link VertxAuthorizationImportModule}), which merges
+ *       their grants into those claims upstream; this decision point itself still evaluates claims
+ *       only</li>
  *   <li>{@link SyncPolicyDecisionPoint} — wraps an app-bound sync {@link dev.vertique.security.authz.AuthorizationPolicy};
  *       used when an app provides a sync policy but no async decision point override</li>
  * </ul>

@@ -34,10 +34,13 @@ import java.util.Set;
  * <p>Include this module in your application's Dagger component to enable:
  * <ul>
  *   <li>{@link SecuritySchemeHandler} multibinding for OpenAPI security scheme configuration</li>
- *   <li>{@link AuthorizationProvider} multibinding, retained for compatibility / future adapters;
- *       in v1 the default {@link VertxProviderDecisionPoint} evaluates decisions from the resolved
- *       {@link dev.vertique.security.authz.AuthorizationClaims} and does not consult this set
- *       (GitHub issue #165)</li>
+ *   <li>{@link AuthorizationProvider} multibinding. The set is consulted at identity-resolution
+ *       time — by {@link IdentityResolutionMiddleware} through {@link VertxAuthorizationImporter} —
+ *       only when the application opts in by also including {@link VertxAuthorizationImportModule};
+ *       the imported authorities are merged into the request's
+ *       {@link dev.vertique.security.authz.AuthorizationClaims}. Without that module the set remains
+ *       inert: no provider is ever invoked, and the default {@link VertxProviderDecisionPoint}
+ *       evaluates decisions purely from the resolved claims</li>
  *   <li>{@link IdentityResolutionMiddleware} — resolves {@link dev.vertique.security.SecurityIdentity}
  *       from accumulated {@link dev.vertique.security.AuthenticationEvidence} and binds the new
  *       {@link dev.vertique.security.SecurityContext} (added to each OpenAPI route via
@@ -52,10 +55,12 @@ import java.util.Set;
  * runtime binding without also pulling in {@code AuthModule}.
  *
  * <p>Applications contribute authentication by adding {@link SecuritySchemeHandler} bindings.
- * Authorization in v1 is driven by the resolved {@link dev.vertique.security.authz.AuthorizationClaims};
- * custom {@link AuthorizationProvider} bindings are accepted but not consulted by the default
- * decision point (GitHub issue #165). Applications needing custom authorization should bind an
- * {@link AuthorizationPolicy} or {@link AuthorizationDecisionPoint} instead.
+ * Authorization is driven by the resolved {@link dev.vertique.security.authz.AuthorizationClaims}.
+ * Contributed {@link AuthorizationProvider} bindings feed those claims through the opt-in
+ * {@link VertxAuthorizationImportModule}, which installs the {@link VertxAuthorizationImporter} that
+ * {@link IdentityResolutionMiddleware} runs on every authenticated request; without that module the
+ * providers are never consulted. Applications needing custom decision logic — rather than extra
+ * claims — should bind an {@link AuthorizationPolicy} or {@link AuthorizationDecisionPoint} instead.
  *
  * <p>To override JWT claim extraction, provide a custom {@link SecurityClaimMapper} binding in
  * the application's Dagger module. The optional binding declared here allows any single
@@ -166,6 +171,20 @@ public abstract class AuthModule {
      */
     @BindsOptionalOf
     abstract dev.vertique.security.authz.Authorizer optionalAuthorizer();
+
+    /**
+     * Optional binding for the {@link VertxAuthorizationImporter} consulted by
+     * {@link IdentityResolutionMiddleware}.
+     *
+     * <p>The binding is satisfied only when the application opts in by including
+     * {@link VertxAuthorizationImportModule}; it is empty otherwise, in which case the
+     * {@link AuthorizationProvider} multibinding set is never read and the identity pipeline's
+     * authorization-import step is skipped entirely.
+     *
+     * @return the optional Vert.x authorization importer binding
+     */
+    @BindsOptionalOf
+    abstract VertxAuthorizationImporter optionalVertxAuthorizationImporter();
 
     /**
      * Registers the authorization handler contributor.

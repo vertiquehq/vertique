@@ -36,7 +36,7 @@ import lombok.extern.slf4j.Slf4j;
  * <ul>
  *   <li><strong>Opt-in.</strong> The importer is never active by default. It is installed only when
  *       the application wires the Vert.x authorization-import module
- *       ({@code VertxAuthorizationImportModule}); with no such wiring, no Vert.x authorization
+ *       ({@link VertxAuthorizationImportModule}); with no such wiring, no Vert.x authorization
  *       provider is ever consulted and {@link AuthorizationClaims} keeps whatever the identity
  *       pipeline already produced.</li>
  *   <li><strong>Sequential, deterministic invocation.</strong> Providers run one at a time, in
@@ -83,7 +83,7 @@ import lombok.extern.slf4j.Slf4j;
  * @see AuthorizationClaims
  */
 @Slf4j
-final class VertxAuthorizationImporter {
+public final class VertxAuthorizationImporter {
 
     /**
      * Provider id of the Vert.x {@code jwt-claims} authorization bucket, excluded by default.
@@ -114,7 +114,7 @@ final class VertxAuthorizationImporter {
      * @throws IllegalStateException if any provider exposes a {@code null} or blank id, or if two
      *                               providers share the same id
      */
-    VertxAuthorizationImporter(Set<AuthorizationProvider> providers) {
+    public VertxAuthorizationImporter(Set<AuthorizationProvider> providers) {
         this(providers, Set.of(EXCLUDED_JWT_CLAIMS_PROVIDER_ID));
     }
 
@@ -188,7 +188,7 @@ final class VertxAuthorizationImporter {
      *         fails
      * @throws NullPointerException if {@code user} or {@code base} is {@code null}
      */
-    Future<AuthorizationClaims> importInto(User user, AuthorizationClaims base) {
+    public Future<AuthorizationClaims> importInto(User user, AuthorizationClaims base) {
         Objects.requireNonNull(user, "user");
         Objects.requireNonNull(base, "base");
         if (orderedProviders.isEmpty()) {

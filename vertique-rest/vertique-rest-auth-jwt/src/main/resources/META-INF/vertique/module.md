@@ -115,9 +115,13 @@ the request's `SecurityContext`. Those are produced during identity resolution i
 
 This module also contributes a Vert.x `AuthorizationProvider` (`JwtClaimAuthorizationProvider`) that
 populates the Vert.x `User`'s own authorization cache from the same claims. That cache is available
-to code that asks Vert.x directly — but the framework's authorization decision does **not** read it.
-Adding another `AuthorizationProvider` to the multibinding will not change an authorization outcome;
-replace the `SecurityClaimMapper` instead.
+to code that asks Vert.x directly. Contributed `AuthorizationProvider`s reach the framework's
+`AuthorizationClaims` only when the application includes the opt-in `VertxAuthorizationImportModule`
+from `dev.vertique:vertique-rest-security`, which consults them at identity-resolution time — and
+that import deliberately excludes this provider's `"jwt-claims"` bucket, because its
+scope→permission projection is lossy (a `scope` claim would come back as a `PERMISSION` authority).
+JWT claims already reach `AuthorizationClaims` with full kind fidelity through the
+`SecurityClaimMapper`; to shape JWT-derived claims, replace or extend the `SecurityClaimMapper`.
 
 ### Every rejection is reported before the request fails
 
@@ -210,7 +214,7 @@ The application must supply exactly one thing: a `JWTAuth` binding. Everything e
 |---|---|---|
 | `Set<SecuritySchemeHandler>` | `@IntoSet` | A `JwtBearerSecuritySchemeHandler` registered under the effective scheme name, for OpenAPI-described operations |
 | `Set<RouteAuthHandler>` | `@IntoSet` | A route-level handler under the same scheme name, for transports with no OpenAPI description (WebSocket upgrades, action-only routes) |
-| `Set<AuthorizationProvider>` | `@IntoSet` | `JwtClaimAuthorizationProvider` |
+| `Set<AuthorizationProvider>` | `@IntoSet` | `JwtClaimAuthorizationProvider` — feeds the Vert.x cache; the opt-in `VertxAuthorizationImportModule` import always excludes it |
 | `Set<OperationHandlerContributor>` | `@IntoSet` | `JwtClaimsValidatorContributor` at priority 50 when a `JwtClaimsValidator` is bound; otherwise a no-op contributor |
 | `JwtAuthConfig` | `@BindsOptionalOf` | The application's optional whole-config override |
 | `JwtClaimsValidator` | `@BindsOptionalOf` | The application's optional custom claim check |
@@ -494,9 +498,13 @@ Each claim accepts either a JSON array (`["read", "write"]`) or a space-delimite
 (`"read write"`). Non-string array elements and blank values are skipped. A `null` user or a user
 with no principal is a no-op.
 
-Framework authorization does not consult this cache — see
+The cache is there for application code that queries the Vert.x authorization API directly. The
+framework's opt-in import path — `VertxAuthorizationImportModule` in
+`dev.vertique:vertique-rest-security` — excludes this provider's `"jwt-claims"` bucket by design:
+collapsing OAuth scopes into `PermissionBasedAuthorization` loses the scope/permission distinction,
+which the `SecurityClaimMapper` already preserves when mapping the same claims into
+`AuthorizationClaims`. See
 [Claims become framework authorization claims](#claims-become-framework-authorization-claims-not-vertx-authorizations).
-The cache is there for application code that queries Vert.x directly.
 
 ---
 
@@ -646,8 +654,12 @@ also makes it, not the `jwt` section, the value the startup clock-skew check com
   and mints accepted tokens. The factory warns; treat the warning as an error.
 - **Leaving `issuer` and `audience` unset in production.** Any validly signed token from any issuer
   reachable through the configured keys is accepted.
-- **Contributing another `AuthorizationProvider` to change `@RolesAllowed` outcomes.** The framework
-  decides from the `SecurityContext`'s claims; replace the `SecurityClaimMapper` instead.
+- **Contributing another `AuthorizationProvider` and expecting it to change `@RolesAllowed` outcomes
+  by itself.** The multibinding is inert unless the application also includes the opt-in
+  `VertxAuthorizationImportModule` from `dev.vertique:vertique-rest-security`; with it included,
+  contributed providers are imported into `AuthorizationClaims` — except
+  `JwtClaimAuthorizationProvider`, which is never imported regardless. To shape JWT-derived claims,
+  replace the `SecurityClaimMapper`.
 - **Expecting `JwtClaimsValidator` to run on unauthenticated routes.** It is skipped when there is no
   verified user.
 - **Calling `fromJwks` with an HTTP location from an event-loop thread.** It blocks. Use
