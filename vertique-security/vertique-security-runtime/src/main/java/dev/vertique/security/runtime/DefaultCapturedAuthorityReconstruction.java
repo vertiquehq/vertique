@@ -52,11 +52,24 @@ import java.util.Set;
 final class DefaultCapturedAuthorityReconstruction implements CapturedAuthorityReconstruction {
 
     /**
-     * Stable framework authority-id for a deferred reconstruction's scheduling {@link
-     * DelegationContext}, and the fallback substituted when a captured {@link DelegationSummary}
-     * carries no grant identifier. Mirrors {@link DefaultIdentityReconstruction}'s constant.
+     * Stable framework authority-id for a deferred reconstruction's scheduling
+     * {@link DelegationContext}. Mirrors {@link DefaultIdentityReconstruction}'s constant.
      */
-    private static final String NO_AUTHORITY_ID_MARKER = "deferred-execution";
+    private static final String DEFERRED_EXECUTION_AUTHORITY_ID = "deferred-execution";
+
+    /**
+     * Self-describing fallback substituted in {@link #toDelegationContext(DelegationSummary)} when a
+     * captured {@link DelegationSummary} carries no grant identifier, so a reconstructed
+     * {@link DelegationContext} always has a non-blank {@link DelegationContext#authorityId()}
+     * (which {@link DelegationSummary#authorityId()}, being {@link Optional}, does not guarantee).
+     *
+     * <p>Deliberately <strong>not</strong> {@link #DEFERRED_EXECUTION_AUTHORITY_ID}: reusing that
+     * literal would leave a resumed grant-backed delegation (say {@code kind="psd2-pis"}) whose
+     * captured summary had no grant id indistinguishable, to an audit consumer of the activation
+     * event, from a real grant whose id genuinely is {@code "deferred-execution"}. Mirrors
+     * {@link DefaultIdentityReconstruction}'s constant.
+     */
+    private static final String ABSENT_AUTHORITY_ID_MARKER = "no-captured-authority-id";
 
     private final IdentitySnapshotCodec codec;
     private final Set<String> allowedTargetKinds;
@@ -139,7 +152,7 @@ final class DefaultCapturedAuthorityReconstruction implements CapturedAuthorityR
         PrincipalRef subjectOfRecord = content.subject().orElse(content.actor());
         DelegationContext delegation = new DelegationContext(
                 DelegationContext.DEFERRED_EXECUTION_KIND,
-                NO_AUTHORITY_ID_MARKER,
+                DEFERRED_EXECUTION_AUTHORITY_ID,
                 Optional.empty(),
                 capturedDelegationAttributes(content));
 
@@ -296,13 +309,16 @@ final class DefaultCapturedAuthorityReconstruction implements CapturedAuthorityR
 
     /**
      * Converts a snapshot's {@link DelegationSummary} back into a full {@link DelegationContext},
-     * with no reason and no attributes. Mirrors {@code DefaultIdentityReconstruction.toDelegationContext}.
+     * with no reason and no attributes. A summary carrying no grant identifier yields
+     * {@link #ABSENT_AUTHORITY_ID_MARKER}, which states the absence rather than fabricating an id a
+     * consumer of the activation event could mistake for a real grant. Mirrors
+     * {@code DefaultIdentityReconstruction.toDelegationContext}.
      *
      * @param summary the delegation summary to expand
      * @return the reconstructed {@link DelegationContext}
      */
     private static DelegationContext toDelegationContext(DelegationSummary summary) {
-        String authorityId = summary.authorityId().orElse(NO_AUTHORITY_ID_MARKER);
+        String authorityId = summary.authorityId().orElse(ABSENT_AUTHORITY_ID_MARKER);
         return new DelegationContext(summary.kind(), authorityId, Optional.empty(), Map.of());
     }
 }

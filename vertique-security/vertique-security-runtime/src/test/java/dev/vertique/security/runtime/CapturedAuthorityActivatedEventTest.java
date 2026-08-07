@@ -4,17 +4,23 @@
 package dev.vertique.security.runtime;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vertique.core.context.DurableCarrierDescriptor;
 import dev.vertique.core.context.DurableTarget;
 import dev.vertique.core.correlation.CorrelationContext;
+import dev.vertique.security.AuthenticationAssurance;
 import dev.vertique.security.AuthenticationState;
+import dev.vertique.security.CapturedAuthorityReconstruction;
+import dev.vertique.security.ClientRef;
 import dev.vertique.security.DefaultAuthMethod;
 import dev.vertique.security.DelegationContext;
+import dev.vertique.security.DelegationSummary;
 import dev.vertique.security.IdentitySnapshot;
 import dev.vertique.security.IdentitySnapshotContent;
 import dev.vertique.security.PrincipalRef;
@@ -26,6 +32,7 @@ import dev.vertique.security.SnapshotIntegrity;
 import dev.vertique.security.SystemIdentities;
 import dev.vertique.security.authz.AuthorityClaim;
 import dev.vertique.security.authz.AuthorityKind;
+import dev.vertique.security.authz.AuthorizationClaims;
 import dev.vertique.security.authz.ReconstructedAuthorityMode;
 import dev.vertique.security.events.CapturedAuthorityActivatedEvent;
 import dev.vertique.security.events.SecurityEventObserver;
@@ -72,10 +79,15 @@ import org.junit.jupiter.api.extension.ExtendWith;
  *       constructor enforces as non-null — an invariant an unchecked {@code safeAttributes} marker
  *       could not provide;</li>
  *   <li>the reconstructed {@link AuthenticationState}, whose {@code primaryMethod} is the
- *       <em>original captured</em> method rather than a reconstruction marker;</li>
+ *       <em>original captured</em> method rather than a reconstruction marker, and which is
+ *       credential-free — no evidence, no tokens — on both entry points;</li>
+ *   <li>the activated {@link dev.vertique.security.authz.AuthorizationClaims}, so a record can state
+ *       <em>which</em> privileges the activation granted and not merely that one occurred;</li>
  *   <li>the whole signed {@link SnapshotCarrierBinding}, {@code carrierId} included;</li>
  *   <li>a per-activation {@code activationId}, minted fresh so distinct activations of one carrier
- *       row remain distinguishable as audit source events.</li>
+ *       row remain distinguishable as audit source events;</li>
+ *   <li>the emission envelope itself — a freshly stamped {@code occurredAt}, the unbound
+ *       correlation sentinel, and the resolved context's own {@code origin}.</li>
  * </ul>
  */
 @ExtendWith(VertxExtension.class)
@@ -93,6 +105,29 @@ class CapturedAuthorityActivatedEventTest {
 
     private static final SnapshotCarrierBinding ALLOWED_CARRIER =
             new SnapshotCarrierBinding("carrier-1", new DurableTarget(ALLOWED_KIND, "orders", Optional.empty()));
+
+    /** A grant-backed captured delegation — the resume path maps it onto a {@link DelegationContext}. */
+    private static final DelegationSummary GRANTED_DELEGATION =
+            new DelegationSummary("psd2-pis", Optional.of("consent-7"));
+
+    /** The same grant-backed scheme captured <em>without</em> a grant identifier (F-A). */
+    private static final DelegationSummary UNIDENTIFIED_DELEGATION =
+            new DelegationSummary("psd2-pis", Optional.empty());
+
+    private static final ClientRef CLIENT = new ClientRef("client-abc", "jwt-azp", Map.of("app", "mobile"));
+
+    /**
+     * A captured IdP assurance with a <strong>single</strong> {@code amr} value. The set is
+     * deliberately one element: {@code IdentitySnapshotCodec.verifyIntegrity} re-canonicalizes the
+     * typed model, and {@code AuthenticationAssurance.amr} is a {@code Set.copyOf} whose iteration
+     * order is per-JVM salted, so a multi-value {@code amr} can re-serialize in a different order
+     * than it was signed in and fail verification for reasons unrelated to this test.
+     */
+    private static final AuthenticationAssurance ASSURANCE = new AuthenticationAssurance(
+            Optional.of("urn:mace:incommon:iap:silver"),
+            Set.of("pwd"),
+            Optional.of(Instant.parse("2026-07-01T10:15:29Z")),
+            Optional.of(2));
 
     @Test
     @DisplayName("activateResume emits the CapturedAuthorityActivatedEvent and awaits full observer delivery "
@@ -266,6 +301,7 @@ class CapturedAuthorityActivatedEventTest {
                         Optional.empty(),
                         authentication,
                         identity,
+                        AuthorizationClaims.empty(),
                         null,
                         activationId,
                         ALLOWED_CARRIER),
@@ -342,6 +378,186 @@ class CapturedAuthorityActivatedEventTest {
                         + "deduplicator would erase the second");
     }
 
+    @Test
+    @DisplayName("the activation event carries the activated authority claims — the frozen captured claim set "
+            + "reconstruction installs as the reconstructed context's current authority")
+    void activation_carriesTheActivatedAuthorityClaims() {
+        IdentitySnapshotCodec codec = codec();
+        AuthorityClaim role = new AuthorityClaim(AuthorityKind.ROLE, "admin", "idp", "aud", "jwt-roles", Map.of());
+        AuthorityClaim scope =
+                new AuthorityClaim(AuthorityKind.SCOPE, "orders:write", "idp", "aud", "jwt-scope", Map.of());
+        IdentitySnapshot snapshot =
+                signedSnapshot(codec, ALLOWED_CARRIER, ACTOR, Optional.of(SUBJECT), List.of(role, scope));
+        CapturingObserver observer = new CapturingObserver();
+
+        Future<SecurityContext> result = activation(codec, observer).activateResume(snapshot, matching(snapshot));
+
+        assertTrue(result.succeeded(), "a valid resume activation must resolve successfully");
+        CapturedAuthorityActivatedEvent event = observer.single();
+        assertEquals(
+                Set.of(role, scope),
+                event.authorization().claims(),
+                "the event must state which privileges the activation granted, not merely that one occurred");
+        assertEquals(
+                result.result().authorization().claims(),
+                event.authorization().claims(),
+                "the event's authorization must be the reconstructed context's own current authority");
+    }
+
+    @Test
+    @DisplayName("the activation event carries the captured delegation, client, and assurance when the snapshot "
+            + "carried them")
+    void activation_carriesDelegationClientAndAssuranceWhenCaptured() {
+        IdentitySnapshotCodec codec = codec();
+        IdentitySnapshot snapshot = signedSnapshot(
+                codec,
+                ALLOWED_CARRIER,
+                ACTOR,
+                Optional.of(SUBJECT),
+                List.of(),
+                Optional.of(GRANTED_DELEGATION),
+                Optional.of(CLIENT),
+                Optional.of(ASSURANCE));
+        CapturingObserver observer = new CapturingObserver();
+
+        Future<SecurityContext> result = activation(codec, observer).activateResume(snapshot, matching(snapshot));
+
+        assertTrue(result.succeeded(), "a valid resume activation must resolve successfully");
+        CapturedAuthorityActivatedEvent event = observer.single();
+
+        DelegationContext delegation = event.identity()
+                .delegation()
+                .orElseThrow(() -> new AssertionError("the captured delegation must survive onto the event"));
+        assertEquals(
+                GRANTED_DELEGATION.kind(),
+                delegation.kind(),
+                "the resume path must map the captured delegation's scheme onto the event");
+        assertEquals(
+                GRANTED_DELEGATION.authorityId().orElseThrow(),
+                delegation.authorityId(),
+                "the resume path must map the captured grant id onto the event");
+        assertEquals(
+                Optional.of(CLIENT),
+                event.identity().client(),
+                "the captured OAuth client must survive onto the event's identity");
+        assertEquals(
+                Optional.of(ASSURANCE),
+                event.authentication().assurance(),
+                "the captured IdP assurance must survive onto the event's authentication state");
+    }
+
+    @Test
+    @DisplayName("a resume whose captured delegation carried no grant id does not fabricate one that reads as the "
+            + "deferred-execution marker")
+    void activateResume_doesNotFabricateAnAuthorityIdWhenNoneWasCaptured() {
+        IdentitySnapshotCodec codec = codec();
+        IdentitySnapshot snapshot = signedSnapshot(
+                codec,
+                ALLOWED_CARRIER,
+                ACTOR,
+                Optional.of(SUBJECT),
+                List.of(),
+                Optional.of(UNIDENTIFIED_DELEGATION),
+                Optional.empty(),
+                Optional.empty());
+        CapturingObserver observer = new CapturingObserver();
+
+        Future<SecurityContext> result = activation(codec, observer).activateResume(snapshot, matching(snapshot));
+
+        assertTrue(result.succeeded(), "a valid resume activation must resolve successfully");
+        DelegationContext delegation = observer.single()
+                .identity()
+                .delegation()
+                .orElseThrow(() -> new AssertionError("the captured delegation must survive onto the event"));
+        assertEquals(
+                UNIDENTIFIED_DELEGATION.kind(),
+                delegation.kind(),
+                "the captured delegation scheme must be preserved verbatim");
+        assertNotEquals(
+                DelegationContext.DEFERRED_EXECUTION_KIND,
+                delegation.authorityId(),
+                "a resume with no captured grant id must not substitute the deferred-execution literal — an audit "
+                        + "consumer could not tell that from a real grant id with that value");
+    }
+
+    @Test
+    @DisplayName("the activation event carries a credential-free authentication state on both entry points")
+    void activation_carriesACredentialFreeAuthenticationState() {
+        IdentitySnapshotCodec codec = codec();
+        IdentitySnapshot snapshot = signedSnapshot(
+                codec,
+                ALLOWED_CARRIER,
+                ACTOR,
+                Optional.of(SUBJECT),
+                List.of(),
+                Optional.of(GRANTED_DELEGATION),
+                Optional.of(CLIENT),
+                Optional.of(ASSURANCE));
+        DurableCarrierDescriptor expectedCarrier = matching(snapshot);
+        CapturingObserver observer = new CapturingObserver();
+        CapturedAuthorityActivation activation = activation(codec, observer);
+
+        assertTrue(
+                activation.activateResume(snapshot, expectedCarrier).succeeded(),
+                "a valid resume activation must resolve successfully");
+        assertTrue(
+                activation
+                        .activateDeferred(
+                                SystemIdentities.scheduledJob("nightly-reconciliation"), snapshot, expectedCarrier)
+                        .succeeded(),
+                "a valid deferred activation must resolve successfully");
+
+        assertEquals(2, observer.events().size(), "the observer must have received one event per activation");
+        for (CapturedAuthorityActivatedEvent event : observer.events()) {
+            AuthenticationState authentication = event.authentication();
+            assertTrue(
+                    authentication.evidence().isEmpty(),
+                    "observers are arbitrary application code — an activation event must never carry credential "
+                            + "evidence");
+            assertTrue(
+                    authentication.tokens().isEmpty(),
+                    "observers are arbitrary application code — an activation event must never carry token material");
+        }
+    }
+
+    @Test
+    @DisplayName("the activation event pins its emission envelope: a fresh occurredAt, the unbound correlation, the "
+            + "resolved context's own origin, and the reconstruction's own context instance")
+    void activation_pinsTheEmissionEnvelope() {
+        IdentitySnapshotCodec codec = codec();
+        IdentitySnapshot snapshot = signedSnapshot(codec, ALLOWED_CARRIER, ACTOR, Optional.of(SUBJECT), List.of());
+        CapturingObserver observer = new CapturingObserver();
+        AtomicReference<SecurityContext> reconstructed = new AtomicReference<>();
+        CapturedAuthorityActivation activation = new CapturedAuthorityActivation(
+                recording(new DefaultCapturedAuthorityReconstruction(codec, Set.of(ALLOWED_KIND)), reconstructed),
+                new SecurityEventEmitter(Set.of(observer)));
+
+        Instant before = Instant.now();
+        Future<SecurityContext> result = activation.activateResume(snapshot, matching(snapshot));
+        Instant after = Instant.now();
+
+        assertTrue(result.succeeded(), "a valid resume activation must resolve successfully");
+        CapturedAuthorityActivatedEvent event = observer.single();
+
+        assertFalse(
+                event.occurredAt().isBefore(before),
+                "occurredAt must be stamped during the activation, not defaulted to an epoch or a captured instant");
+        assertFalse(event.occurredAt().isAfter(after), "occurredAt must be stamped during the activation");
+        assertSame(
+                CorrelationContext.unbound(),
+                event.correlation(),
+                "activation is not necessarily tied to a live inbound request, so the correlation is the unbound "
+                        + "sentinel — the fact the audit projector keys its empty-correlation mapping on");
+        assertEquals(
+                result.result().origin(),
+                event.origin(),
+                "the event's origin must mirror the resolved context's own origin, whatever it is");
+        assertSame(
+                reconstructed.get(),
+                result.result(),
+                "the seam must resolve to the reconstruction's own context instance, never a rebuilt copy");
+    }
+
     /**
      * The shared HMAC-signing codec used by the fact-set tests, keyed on {@link #ACTIVE_KEY_ID}.
      *
@@ -366,6 +582,39 @@ class CapturedAuthorityActivatedEventTest {
     }
 
     /**
+     * Wraps a reconstruction so the {@link SecurityContext} instance it mints is observable to the
+     * test, which is what makes the seam's "resolves to the reconstruction's own context" contract
+     * assertable by reference identity rather than by equality.
+     *
+     * @param delegate     the reconstruction to delegate to
+     * @param reconstructed the holder receiving every context {@code delegate} mints
+     * @return a recording {@link CapturedAuthorityReconstruction}
+     */
+    private static CapturedAuthorityReconstruction recording(
+            CapturedAuthorityReconstruction delegate, AtomicReference<SecurityContext> reconstructed) {
+        return new CapturedAuthorityReconstruction() {
+            @Override
+            public SecurityContext resumeWithCapturedAuthority(
+                    IdentitySnapshot snapshot, DurableCarrierDescriptor expectedCarrier) {
+                SecurityContext ctx = delegate.resumeWithCapturedAuthority(snapshot, expectedCarrier);
+                reconstructed.set(ctx);
+                return ctx;
+            }
+
+            @Override
+            public SecurityContext deferredExecutionWithCapturedAuthority(
+                    SecurityIdentity executingServiceIdentity,
+                    IdentitySnapshot snapshot,
+                    DurableCarrierDescriptor expectedCarrier) {
+                SecurityContext ctx = delegate.deferredExecutionWithCapturedAuthority(
+                        executingServiceIdentity, snapshot, expectedCarrier);
+                reconstructed.set(ctx);
+                return ctx;
+            }
+        };
+    }
+
+    /**
      * The trusted receive-side expected carrier that matches {@code snapshot}'s signed carrier.
      * Mirrors {@code CapturedAuthorityReconstructionTest.matching}.
      *
@@ -378,9 +627,8 @@ class CapturedAuthorityActivatedEventTest {
     }
 
     /**
-     * Builds a genuinely valid, HMAC-signed schema-v2 {@link IdentitySnapshot} bound to
-     * {@code carrier}, round-tripped through the codec's {@code encode}/{@code decode} so it
-     * carries a real, verifiable tag. Mirrors {@code CapturedAuthorityReconstructionTest.signedSnapshot}.
+     * Builds a genuinely valid, HMAC-signed schema-v2 {@link IdentitySnapshot} carrying no
+     * delegation, client, or assurance — the shape the identity-structure tests need.
      *
      * @param codec   the codec used to sign and verify the snapshot
      * @param carrier the carrier binding to sign the snapshot for
@@ -395,14 +643,47 @@ class CapturedAuthorityActivatedEventTest {
             PrincipalRef actor,
             Optional<PrincipalRef> subject,
             List<AuthorityClaim> claims) {
+        return signedSnapshot(
+                codec, carrier, actor, subject, claims, Optional.empty(), Optional.empty(), Optional.empty());
+    }
+
+    /**
+     * Builds a genuinely valid, HMAC-signed schema-v2 {@link IdentitySnapshot} bound to
+     * {@code carrier}, round-tripped through the codec's {@code encode}/{@code decode} so it
+     * carries a real, verifiable tag. Mirrors {@code CapturedAuthorityReconstructionTest.signedSnapshot}.
+     *
+     * <p>{@code delegation}, {@code client}, and {@code assurance} are parameters rather than
+     * hard-coded empties deliberately: with all three pinned empty, the resume path's delegation
+     * mapping, the identity's client component, and the authentication state's assurance were
+     * unexercised by every test in this class, so a defect in any of them was invisible.
+     *
+     * @param codec      the codec used to sign and verify the snapshot
+     * @param carrier    the carrier binding to sign the snapshot for
+     * @param actor      the acting principal to record on the snapshot content
+     * @param subject    the optional subject-on-behalf-of to record
+     * @param claims     the authority claims to record
+     * @param delegation the optional captured delegation summary to record
+     * @param client     the optional OAuth client reference to record
+     * @param assurance  the optional IdP-reported authentication assurance to record
+     * @return a decoded, HMAC-verified {@link IdentitySnapshot}
+     */
+    private static IdentitySnapshot signedSnapshot(
+            IdentitySnapshotCodec codec,
+            SnapshotCarrierBinding carrier,
+            PrincipalRef actor,
+            Optional<PrincipalRef> subject,
+            List<AuthorityClaim> claims,
+            Optional<DelegationSummary> delegation,
+            Optional<ClientRef> client,
+            Optional<AuthenticationAssurance> assurance) {
         IdentitySnapshotContent content = new IdentitySnapshotContent(
                 actor,
                 subject,
-                Optional.empty(),
-                Optional.empty(),
+                delegation,
+                client,
                 "jwt",
                 Instant.parse("2026-07-01T10:15:30Z"),
-                Optional.empty(),
+                assurance,
                 claims,
                 "rest:authenticated",
                 Instant.parse("2026-07-01T10:15:31Z"));
