@@ -437,9 +437,28 @@ All event records carry `occurredAt` (`Instant`), `correlation` (`CorrelationCon
 | `ChannelIdentityRefreshedEvent` | Channel identity refreshed; carries both new and prior `SecurityContext` |
 | `ChannelClosedEvent` | Channel closed by peer, server, or expiry; carries `reasonCode` |
 | `IdentitySnapshotDegradationEvent` | A durably-carried `IdentitySnapshot` is present but cannot be reconstructed (bad HMAC, unknown/unavailable key, decode failure, incompatible schema version, or a stale/malformed temporal envelope) — or a `CarriageRequirement#REQUIRED` durable target dispatched with no snapshot at all (`EXPECTED_ABSENT`); carries a non-blank `reasonCode` and a best-effort recovered `origin` |
-| `CapturedAuthorityActivatedEvent` | Mode-3 captured authority is actually put into effect — a durably-captured snapshot's frozen claims are presented as a reconstructed context's current authority; carries the activated `PrincipalRef` and the `DurableTarget` |
+| `CapturedAuthorityActivatedEvent` | Mode-3 captured authority is actually put into effect — a durably-captured snapshot's frozen claims are presented as a reconstructed context's current authority; carries the reconstructed identity **uncollapsed**, the activation mode, a per-activation id, and the signed carrier binding |
 
 `AuthorizationDecisionEvent` carries two derived accessors beyond its record components. `invocationOrigin()` surfaces the embedded request's `InvocationOrigin`. `authorityMode()` derives the governing `ReconstructedAuthorityMode` in three steps: an explicit `ReconstructedAuthorityMode.DECISION_ATTRIBUTE` stamp on the decision's `safeAttributes()` (the only source for `LIVE_RESOLVED`, which a marker can never carry), else the request context's intrinsic `reconstruction()` marker mode, else `Optional.empty()`. An unrecognized stamped value yields `Optional.empty()` rather than throwing.
+
+`CapturedAuthorityActivatedEvent` carries the facts an audit consumer needs to attribute a privileged Mode-3 activation, and deliberately does **not** pre-collapse them:
+
+```java
+public record CapturedAuthorityActivatedEvent(
+    Instant occurredAt, CorrelationContext correlation, Optional<RequestOrigin> origin,
+    AuthenticationState authentication, SecurityIdentity identity,
+    CapturedAuthorityActivatedEvent.Mode mode, UUID activationId, SnapshotCarrierBinding carrier)
+
+public enum Mode { RESUME, DEFERRED }
+```
+
+- **`identity`** — the whole reconstructed `SecurityIdentity`. On the deferred path `actor()` is the executing service, `subject()` is the captured subject-of-record, and `delegation()` carries the framework-mediated `DEFERRED_EXECUTION_KIND`; on the resume path actor and subject both come from the snapshot's own content. A consumer needing "whose authority is in effect" collapses it itself with `identity().subject().orElse(identity().actor())`.
+- **`authentication`** — the reconstructed `AuthenticationState`. Its `primaryMethod()` is the *original captured* method, never a reconstruction marker; the `CAPTURED-RESUME` / `CAPTURED-DEFERRED` marker lives in `safeAttributes()` under `identity.reconstructed.mode`.
+- **`mode`** — the typed activation entry point, validated non-null by the compact constructor. Prefer it over the `safeAttributes` marker: `AuthenticationState` copies that map without validating any key, so only the typed component is an enforceable invariant.
+- **`activationId`** — minted fresh per activation, so two activations of the same durable row stay distinguishable as audit source events (a safe deduplication key).
+- **`carrier`** — the whole signed `SnapshotCarrierBinding` (`carrierId` plus `target`), kept as one unit rather than split, because the binding composes them as a single signed, validated fact.
+
+Delivery is **accepted-for-delivery**, not durable: awaiting the activation seam guarantees emission ordering and that every observer settled, never that any observer persisted the event.
 
 `ChannelLifecycleEvent` is a sealed interface exposing `occurredAt()`, `channelId()`, `securityContext()`, and `correlation()`; use a sealed `switch` to dispatch on subtypes:
 
@@ -854,7 +873,7 @@ Both entry points share `IdentityReconstruction`'s fail-closed trust boundary an
 
 `deferredExecutionWithCapturedAuthority` preserves the actor/subject split used by `IdentityReconstruction#deferredExecution` — the executing service is always the acting principal, the snapshot's subject-of-record is carried as the delegated subject, never impersonated. Deferred-execution infrastructure MUST use this method, never `resumeWithCapturedAuthority`.
 
-**Event-silent.** Like `IdentityReconstruction`, this interface emits no `SecurityEventObserver` event — a plain interface method cannot invoke an injected emitter by construction. The sanctioned activation seam in `dev.vertique:vertique-security-runtime` is the only binding an application can obtain; it invokes this SPI and then emits and awaits `CapturedAuthorityActivatedEvent` once reconstruction has actually succeeded.
+**Event-silent.** Like `IdentityReconstruction`, this interface emits no `SecurityEventObserver` event — a plain interface method cannot invoke an injected emitter by construction. The sanctioned activation seam in `dev.vertique:vertique-security-runtime` is the only binding an application can obtain; it invokes this SPI and then emits and awaits `CapturedAuthorityActivatedEvent` once reconstruction has actually succeeded. The event carries the reconstructed `SecurityIdentity` whole, so the actor/subject split this SPI establishes survives all the way to the observer.
 
 ---
 
