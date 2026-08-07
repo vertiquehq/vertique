@@ -417,15 +417,32 @@ class CronSchedulerTest {
     @Test
     @DisplayName("EVERY_INSTANCE job does not fire concurrently when previous execution is still in progress")
     void everyInstanceDoesNotFireConcurrently(Vertx vertx, VertxTestContext ctx) {
+        // Wiring proof only: that the scheduler consults the per-job overlap guard at all. The
+        // *exactness* of SKIP (suppressed, queues nothing, releases on completion) is proven
+        // sleep-free in CronConcurrencyManagerTest — handler hits cannot prove it here, because a
+        // suppressed tick never reaches the handler.
         AtomicInteger concurrentCount = new AtomicInteger();
         AtomicInteger maxConcurrent = new AtomicInteger();
         AtomicInteger fireCount = new AtomicInteger();
 
-        // Handler that holds execution for 1.5 seconds (longer than 1s cron interval)
+        // Handler that holds execution for 1.5 seconds (longer than 1s cron interval), so at least
+        // one cron tick necessarily arrives while the first execution is still in flight.
         vertx.eventBus().consumer("test.concurrent.address", msg -> {
             int current = concurrentCount.incrementAndGet();
             maxConcurrent.updateAndGet(max -> Math.max(max, current));
-            fireCount.incrementAndGet();
+            // Causal terminal signal: the SECOND handler invocation. Reaching it means the first
+            // execution's overlap window has closed and a later tick was admitted afterwards — so
+            // the max-in-flight tracker has already observed everything the guard had to prevent.
+            // Without the guard, the tick inside the 1.5s hold would raise it to 2 before this runs.
+            if (fireCount.incrementAndGet() == 2) {
+                ctx.verify(() -> {
+                    assertTrue(
+                            maxConcurrent.get() <= 1,
+                            "Expected max 1 concurrent execution, got " + maxConcurrent.get());
+                    assertEquals(1, current, "second fire must start only after the first one finished");
+                });
+                ctx.completeNow();
+            }
             // Simulate slow work — hold for 1.5s before replying
             vertx.setTimer(1500, id -> {
                 concurrentCount.decrementAndGet();
@@ -459,33 +476,58 @@ class CronSchedulerTest {
         scheduler.register(job);
         scheduler.start();
 
-        // Wait 4 seconds — without the guard, we'd see 4 concurrent executions
-        vertx.setTimer(
-                4000,
-                id -> ctx.verify(() -> {
-                    // With the per-job concurrency guard, max concurrent should be 1
-                    assertTrue(
-                            maxConcurrent.get() <= 1,
-                            "Expected max 1 concurrent execution, got " + maxConcurrent.get());
-                    assertTrue(fireCount.get() >= 1, "Job should have fired at least once");
-                    ctx.completeNow();
-                }));
+        // Completion comes from the handler's second invocation above — no fixed deadline. If the
+        // guard never admits a later tick the class-level VertxTestContext timeout fails the test.
     }
 
     @Test
     @DisplayName("QUEUE_ONE policy executes queued fire after first execution completes")
     void queueOnePolicyExecutesAfterCompletion(Vertx vertx, VertxTestContext ctx) {
+        // Wiring proof only: that the scheduler dispatches the fire QUEUE_ONE parked, after the
+        // running execution completes. How many fires may be parked (exactly one, most recent
+        // wins) is proven sleep-free in CronConcurrencyManagerTest — a handler-hit count cannot
+        // tell a queued fire from the next natural fire, which is why the discriminator below is
+        // the fire's scheduledAt rather than its ordinal.
         AtomicInteger fireCount = new AtomicInteger();
+        AtomicReference<Instant> firstScheduledAt = new AtomicReference<>();
+        AtomicReference<Instant> firstCompletedAt = new AtomicReference<>();
 
         // Handler that holds execution for 1.5s (longer than 1s cron interval) then replies
         vertx.eventBus().consumer("test.queue-one.address", msg -> {
-            fireCount.incrementAndGet();
+            var envelope = (dev.vertique.core.eventbus.DispatchEnvelope<?>) msg.body();
+            Instant scheduledAt = ((JobDispatchContext)
+                            envelope.metadata().dispatchContext().get(JobDispatchContext.class.getName()))
+                    .scheduledAt();
+            int fire = fireCount.incrementAndGet();
+            if (fire == 1) {
+                firstScheduledAt.set(scheduledAt);
+            } else if (fire == 2) {
+                // Causal terminal signal: the second dispatch, which only happens once the first
+                // execution's completion callback has drained the parked fire. Asserting on its
+                // scheduledAt is what separates a *queued* fire from a natural next fire: the
+                // parked tick fell inside the first execution's hold, so its scheduled time is
+                // earlier than the moment that execution completed, while a natural fire's tick
+                // is necessarily later.
+                Instant completedAt = firstCompletedAt.get();
+                ctx.verify(() -> {
+                    assertTrue(completedAt != null, "the first execution must have completed before the queued fire");
+                    assertTrue(
+                            scheduledAt.isAfter(firstScheduledAt.get()),
+                            "queued fire must be a later tick than the running execution's own");
+                    assertTrue(
+                            scheduledAt.isBefore(completedAt),
+                            "second fire must be the tick queued during the first execution (scheduled=" + scheduledAt
+                                    + "), not a natural fire after it completed (completed=" + completedAt + ")");
+                });
+                ctx.completeNow();
+                return;
+            }
             vertx.setTimer(1500, id -> {
-                var body = (dev.vertique.core.eventbus.DispatchEnvelope<?>) msg.body();
-                if (body.replyAddress().isPresent()) {
+                firstCompletedAt.compareAndSet(null, Instant.now());
+                if (envelope.replyAddress().isPresent()) {
                     vertx.eventBus()
                             .send(
-                                    body.replyAddress().orElseThrow(),
+                                    envelope.replyAddress().orElseThrow(),
                                     dev.vertique.core.eventbus.DispatchEnvelope.of("done"),
                                     new DeliveryOptions().setCodecName("dispatch.envelope"));
                 }
@@ -510,16 +552,8 @@ class CronSchedulerTest {
         scheduler.register(job);
         scheduler.start();
 
-        // Wait 4s: first execution fires ~at 0s (holds 1.5s), fires from cron at 1s are queued,
-        // queued fire runs after first completes (~1.5s), so by 4s we should have at least 2 fires
-        vertx.setTimer(
-                4000,
-                id -> ctx.verify(() -> {
-                    assertTrue(
-                            fireCount.get() >= 2,
-                            "Expected at least 2 fires with QUEUE_ONE policy, got " + fireCount.get());
-                    ctx.completeNow();
-                }));
+        // Completion comes from the queued fire's dispatch above — no fixed deadline. If the
+        // queued fire is never dispatched, the class-level VertxTestContext timeout fails the test.
     }
 
     // --- Interceptor tests ---
@@ -576,7 +610,13 @@ class CronSchedulerTest {
             @Override
             public void onComplete(
                     JobDispatchContext dispatchCtx, Result<?> result, Instant startTime, Instant endTime) {
-                completeCount.incrementAndGet();
+                // Causal terminal signal: onComplete runs after the execution it reports on has
+                // settled, so its first invocation is exactly the transition under test.
+                if (completeCount.incrementAndGet() == 1) {
+                    ctx.verify(() ->
+                            assertTrue(completeCount.get() >= 1, "onComplete should have been called at least once"));
+                    ctx.completeNow();
+                }
             }
         };
 
@@ -617,12 +657,7 @@ class CronSchedulerTest {
         scheduler.register(job);
         scheduler.start();
 
-        vertx.setTimer(
-                2500,
-                id -> ctx.verify(() -> {
-                    assertTrue(completeCount.get() >= 1, "onComplete should have been called at least once");
-                    ctx.completeNow();
-                }));
+        // Completion comes from the interceptor's onComplete callback above — no fixed deadline.
     }
 
     @Test
