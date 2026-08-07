@@ -7,7 +7,7 @@
 # wildcard interface. Wildcard test binds trigger macOS firewall prompts, expose
 # ephemeral test servers to the network, and have produced CI-only flakes.
 #
-# Three violation patterns are scanned, all heuristic and tuned so that a false
+# Four violation patterns are scanned, all heuristic and tuned so that a false
 # positive never occurs on a compliant tree while a false negative merely leaves
 # one bind for review to catch:
 #
@@ -25,12 +25,23 @@
 #      put the host call on the same or an adjacent line, so a host further away
 #      is treated as absent. False negatives are acceptable here — a chain that
 #      pins its host three lines away simply goes unflagged.
+#   4. A file that calls `setPort(0)` (HttpServerOptions-style dynamic-port
+#      selection) but nowhere calls `.host(`, `setHost(`, or `bindAddress(`.
+#      Like pattern 2 this is a file-level check, not a windowed one: an
+#      options-based bind may build its config far from the bind site (in
+#      MultipartPartCountLimitIT the `.host(` pin sits 12 lines from the
+#      `setPort(0)` call), so a window would false-positive on compliant files.
 #
 # Scope: every *.java file under a src/test directory, build output (target/)
 # excluded. Archetype template tests live at
 # src/main/resources/archetype-resources/**/src/test/java and must comply like
 # any other test source; their embedded src/test path segment keeps them in
 # scope, and the self-test pins that inclusion with a fixture.
+#
+# Known scope exemption: test-support servers that live under src/main — e.g.
+# examples/vertique-example-rest-client's MockServerVerticle — are production
+# sources to this scan and are never visited. Their bind pinning relies on
+# code review, not on this checker.
 #
 # Usage: verify-test-bind-policy.sh [repository-root]
 # The repository root defaults to the script's parent directory; an explicit
@@ -151,6 +162,16 @@ while IFS= read -r source_file; do
     # bind address pinned somewhere in the same file.
     if grep -q 'wireMockConfig()' "$source_file" && ! grep -q 'bindAddress(' "$source_file"; then
         report_failure "$relative_path calls wireMockConfig() but never bindAddress(; pin the WireMock bind with .bindAddress(\"127.0.0.1\")"
+    fi
+
+    # Pattern 4: an options-based dynamic-port selection anywhere in the file
+    # must have its host pinned somewhere in the same file. File-level, like
+    # pattern 2: the pin may legitimately sit far from the bind site.
+    if grep -q 'setPort(0)' "$source_file" \
+            && ! grep -q '\.host(' "$source_file" \
+            && ! grep -q 'setHost(' "$source_file" \
+            && ! grep -q 'bindAddress(' "$source_file"; then
+        report_failure "$relative_path calls setPort(0) but never .host(, setHost(, or bindAddress(; pin the loopback interface, e.g. .setHost(\"127.0.0.1\")"
     fi
 
     # Pattern 3: dynamic-port selectors with no pinned host in the window.

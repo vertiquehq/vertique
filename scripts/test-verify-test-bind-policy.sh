@@ -94,6 +94,40 @@ class PinnedBuilderPortTest {
     }
 }
 JAVA
+
+    # The MultipartPartCountLimitIT shape: an options-based setPort(0) bind whose
+    # .host( pin sits many lines away in the same file. Pattern 4 is file-level,
+    # so this must pass; a windowed check would false-positive here.
+    fixture_write_source "vertique-alpha/src/test/java/PinnedFarHostOptionsTest.java" <<'JAVA'
+class PinnedFarHostOptionsTest {
+    void boot(io.vertx.core.Vertx vertx) {
+        HttpConfig httpConfig = HttpConfig.builder()
+                .host("127.0.0.1")
+                .maxFormAttributeSize(8192)
+                .maxHeaderSize(8192)
+                .compressionSupported(false)
+                .decompressionSupported(false)
+                .idleTimeoutSeconds(30)
+                .build();
+        vertx.createHttpServer(httpConfig.toHttpServerOptions().setPort(0))
+                .requestHandler(r -> {})
+                .listen();
+    }
+}
+JAVA
+
+    # The HttpVerticleTest shape: setPort(0) pinned through setHost( on the same
+    # options chain. setHost( does not match the .host( regex, so pattern 4 must
+    # recognize it as a pin in its own right.
+    fixture_write_source "vertique-alpha/src/test/java/PinnedSetHostOptionsTest.java" <<'JAVA'
+class PinnedSetHostOptionsTest {
+    void boot(io.vertx.core.Vertx vertx) {
+        vertx.createHttpServer(new HttpServerOptions().setHost("127.0.0.1").setPort(0))
+                .requestHandler(r -> {})
+                .listen();
+    }
+}
+JAVA
 }
 
 # --- Case execution ---
@@ -167,11 +201,11 @@ run_case() {
 # --- Cases ---
 
 # A tree containing only compliant shapes of every pattern must pass, and the
-# summary must count all five baseline files.
+# summary must count all seven baseline files.
 fixture_reset compliant-tree
 fixture_write_compliant_baseline
 run_case "compliant-tree" pass "$fixture_root" \
-    "PASS: 5 test source files honor the loopback bind policy"
+    "PASS: 7 test source files honor the loopback bind policy"
 
 # Pattern 1: a bare .listen(0) with no host argument must be flagged.
 fixture_reset bare-listen
@@ -249,6 +283,25 @@ run_case "builder-port-unpinned" fail "$fixture_root" \
     "UnpinnedBuilderPortTest.java line 3 sets .port(0) with no .host(...)" \
     "PinnedBuilderPortTest.java"
 
+# Pattern 4: an options-based setPort(0) bind in a file with no .host(,
+# setHost(, or bindAddress( anywhere must be flagged as a file-level violation.
+# The forbidden diagnostic proves the compliant far-host baseline file is not
+# swept up by the file-level check.
+fixture_reset options-port-unpinned
+fixture_write_compliant_baseline
+fixture_write_source "vertique-beta/src/test/java/UnpinnedOptionsPortTest.java" <<'JAVA'
+class UnpinnedOptionsPortTest {
+    void boot(io.vertx.core.Vertx vertx) {
+        vertx.createHttpServer(new HttpServerOptions().setPort(0))
+                .requestHandler(r -> {})
+                .listen();
+    }
+}
+JAVA
+run_case "options-port-unpinned" fail "$fixture_root" \
+    "UnpinnedOptionsPortTest.java calls setPort(0) but never .host(, setHost(, or bindAddress(" \
+    "PinnedFarHostOptionsTest.java"
+
 # Archetype template tests live under src/main/resources/archetype-resources
 # and must be scanned like any other test source: a violation there must be
 # flagged even though the path runs through src/main/resources.
@@ -278,7 +331,7 @@ class GeneratedListenTest {
 }
 JAVA
 run_case "target-output-ignored" pass "$fixture_root" \
-    "PASS: 5 test source files honor the loopback bind policy" \
+    "PASS: 7 test source files honor the loopback bind policy" \
     "GeneratedListenTest.java"
 
 # Production sources are out of scope: the same violation under src/main/java
@@ -293,7 +346,7 @@ class ProductionServer {
 }
 JAVA
 run_case "main-source-ignored" pass "$fixture_root" \
-    "PASS: 5 test source files honor the loopback bind policy" \
+    "PASS: 7 test source files honor the loopback bind policy" \
     "ProductionServer.java"
 
 # A root with no test sources at all is a mis-pointed scan, not a clean tree.
