@@ -15,7 +15,7 @@ import dev.vertique.job.ProgressSnapshot;
 import dev.vertique.services.ServiceTargetResolver;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
-import java.time.Duration;
+import jakarta.annotation.Nullable;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -136,6 +136,13 @@ public class CronScheduler {
     private final CronConcurrencyManager concurrency;
     private final CronJobDispatcher dispatcher;
 
+    /**
+     * Computes each tick's nominal fire instant and real timer delay. Always
+     * {@link SystemCronTickPlanner} in production; the package-private constructor lets tests inject
+     * a compressed planner so the real timer loop runs without the whole-second alignment floor.
+     */
+    private final CronTickPlanner tickPlanner;
+
     /** Misfire recovery helper; {@code null} when no repository is available. */
     private final CronMisfireRecovery misfireRecovery;
 
@@ -174,7 +181,8 @@ public class CronScheduler {
                 DEFAULT_MAX_CONCURRENT_JOBS,
                 0L,
                 0L,
-                envelopeBuilder);
+                envelopeBuilder,
+                new SystemCronTickPlanner());
     }
 
     /**
@@ -207,10 +215,62 @@ public class CronScheduler {
             long executionTimeoutMs,
             long progressFlushIntervalMs,
             dev.vertique.context.DispatchEnvelopeBuilder envelopeBuilder) {
+        this(
+                vertx,
+                interceptors,
+                repository,
+                serviceTargetResolver,
+                eventBusClient,
+                maxConcurrentJobs,
+                executionTimeoutMs,
+                progressFlushIntervalMs,
+                envelopeBuilder,
+                new SystemCronTickPlanner());
+    }
+
+    /**
+     * Test seam constructor: the public full constructor's parameter list with the
+     * {@link CronTickPlanner} appended.
+     *
+     * <p>Package-private on purpose — the planner is an internal collaborator, not configuration.
+     * Production always uses {@link SystemCronTickPlanner}, wired by both public constructors; tests
+     * inject a compressed planner so the scheduler's real timer loop runs without the whole-second
+     * alignment floor of the underlying {@link CronExpression}.
+     *
+     * @param vertx                   the Vert.x instance for timer management and event bus dispatch
+     * @param interceptors            the set of job interceptors to invoke around each dispatch
+     * @param repository              optional job repository for persistent execution tracking and
+     *                                SINGLE_INSTANCE leader election; may be {@code null} for
+     *                                in-memory mode
+     * @param serviceTargetResolver   resolver for translating stable service target ids to runtime
+     *                                event bus addresses, once per admitted fire
+     * @param eventBusClient          the event bus client for dispatch protocol sends
+     * @param maxConcurrentJobs       the maximum number of jobs that can execute concurrently;
+     *                                must be positive
+     * @param executionTimeoutMs      per-execution timeout in milliseconds; {@code 0} disables
+     * @param progressFlushIntervalMs interval in milliseconds for flushing progress snapshots;
+     *                                {@code 0} disables
+     * @param envelopeBuilder         envelope builder used to construct outgoing job-dispatch
+     *                                envelopes through the context substrate (FR-CTX-015)
+     * @param tickPlanner             planner computing each tick's nominal fire instant and real
+     *                                timer delay; must not be {@code null}
+     */
+    CronScheduler(
+            Vertx vertx,
+            Set<JobInterceptor> interceptors,
+            JobRepository repository,
+            ServiceTargetResolver serviceTargetResolver,
+            EventBusClient eventBusClient,
+            int maxConcurrentJobs,
+            long executionTimeoutMs,
+            long progressFlushIntervalMs,
+            dev.vertique.context.DispatchEnvelopeBuilder envelopeBuilder,
+            CronTickPlanner tickPlanner) {
         if (maxConcurrentJobs <= 0) {
             throw new IllegalArgumentException("maxConcurrentJobs must be positive, got: " + maxConcurrentJobs);
         }
         java.util.Objects.requireNonNull(envelopeBuilder, "envelopeBuilder must not be null (FR-CTX-015)");
+        this.tickPlanner = java.util.Objects.requireNonNull(tickPlanner, "tickPlanner must not be null");
         this.vertx = vertx;
         this.maxConcurrentJobs = maxConcurrentJobs;
         this.repository = repository;
@@ -311,7 +371,7 @@ public class CronScheduler {
         }
         running = true;
         for (CronJobDefinition job : jobs) {
-            scheduleNext(job);
+            scheduleNext(job, null);
         }
         if (misfireRecovery != null) {
             try {
@@ -378,30 +438,33 @@ public class CronScheduler {
     /**
      * Schedules the next timer for the given job based on its cron expression.
      *
-     * @param job the cron job to schedule
+     * <p>A planning failure is caught, logged, and the job is <em>not</em> rescheduled — the same
+     * contract this method has always had for a throwing {@link CronExpression}.
+     *
+     * @param job                 the cron job to schedule
+     * @param previousScheduledAt the nominal fire instant of the tick this call re-arms after, or
+     *                            {@code null} when called from {@link #start()}
      */
-    private void scheduleNext(CronJobDefinition job) {
+    private void scheduleNext(CronJobDefinition job, @Nullable Instant previousScheduledAt) {
         if (!running) {
             return;
         }
         Instant now = Instant.now();
-        Instant nextFire;
+        CronTickPlanner.Tick tick;
         try {
-            nextFire = job.cronExpression().computeNextFireTime(now, job.timezone());
+            tick = tickPlanner.plan(job, previousScheduledAt, now);
         } catch (Exception e) {
             log.error("Failed to compute next fire time for cron job '{}' — job will not be rescheduled", job.id(), e);
             return;
         }
 
-        long delayMs = Math.max(1L, Duration.between(now, nextFire).toMillis());
-        log.debug("Scheduling cron job '{}' to fire in {}ms (at {})", job.id(), delayMs, nextFire);
+        log.debug("Scheduling cron job '{}' to fire in {}ms (at {})", job.id(), tick.delayMs(), tick.scheduledAt());
 
-        final Instant scheduledAt = nextFire;
-        long timerId = vertx.setTimer(delayMs, id -> {
+        long timerId = vertx.setTimer(tick.delayMs(), id -> {
             if (running) {
-                scheduleNext(job);
+                scheduleNext(job, tick.scheduledAt());
                 try {
-                    fire(job, scheduledAt);
+                    fire(job, tick.scheduledAt());
                 } catch (Exception e) {
                     log.error("Cron job '{}' fire() threw unexpected exception", job.id(), e);
                 }

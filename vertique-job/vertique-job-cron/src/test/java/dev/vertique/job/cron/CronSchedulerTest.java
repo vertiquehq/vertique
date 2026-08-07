@@ -367,6 +367,79 @@ class CronSchedulerTest {
     }
 
     @Test
+    @DisplayName("a throwing tick planner leaves the job unscheduled without crashing start()")
+    void throwingPlannerLeavesJobUnscheduledWithoutCrashing(Vertx vertx) {
+        // scheduleNext() has always treated a failure to compute the next fire time as terminal for
+        // that job: caught, logged at ERROR, no timer armed, startup unaffected. The planner seam
+        // sits inside that same try/catch, so a throwing planner must behave exactly like a throwing
+        // CronExpression did — this pins that the extraction did not widen or narrow the catch.
+        Vertx spyVertx = spy(vertx);
+        AtomicInteger setTimerCalls = new AtomicInteger();
+        doAnswer(inv -> {
+                    setTimerCalls.incrementAndGet();
+                    return inv.callRealMethod();
+                })
+                .when(spyVertx)
+                .setTimer(anyLong(), any());
+
+        CronTickPlanner throwingPlanner = (job, previousScheduledAt, now) -> {
+            throw new IllegalStateException("planner boom");
+        };
+        CronScheduler localScheduler = new CronScheduler(
+                spyVertx,
+                Set.of(),
+                null,
+                stubTargetResolver(),
+                testEventBusClient(vertx),
+                CronScheduler.DEFAULT_MAX_CONCURRENT_JOBS,
+                0L,
+                0L,
+                DispatchEnvelopeBuilder.forTesting(),
+                throwingPlanner);
+        CronJobDefinition job = new CronJobDefinition(
+                "planner-failure-job",
+                new CronExpression("* * * * * *"),
+                new CronTargetReference.EventBusTarget("test.address"),
+                "test.address",
+                ExecutionMode.EVERY_INSTANCE,
+                ZoneId.of("UTC"),
+                3,
+                null,
+                OverlapPolicy.SKIP,
+                true,
+                Map.of(),
+                MisfirePolicy.SKIP);
+
+        // Attached around the start() call only, and detached in the finally below, so a failing
+        // assertion cannot leave the appender on the static CronScheduler logger for the rest of
+        // the fork (same discipline as the service-target nest's attach/detach hooks).
+        ch.qos.logback.classic.Logger schedulerLogger =
+                (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(CronScheduler.class);
+        ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> logAppender =
+                new ch.qos.logback.core.read.ListAppender<>();
+        logAppender.setContext(schedulerLogger.getLoggerContext());
+        logAppender.start();
+        schedulerLogger.addAppender(logAppender);
+        try {
+            localScheduler.register(job);
+
+            Future<Void> started = localScheduler.start();
+
+            assertTrue(started.succeeded(), "a planning failure must not fail start()");
+            assertEquals(0, setTimerCalls.get(), "a job whose planner throws must not have a timer armed");
+            long errorsForJob = logAppender.list.stream()
+                    .filter(event -> event.getLevel() == ch.qos.logback.classic.Level.ERROR)
+                    .filter(event -> event.getFormattedMessage().contains("planner-failure-job"))
+                    .count();
+            assertEquals(1, errorsForJob, "the planning failure must be logged exactly once");
+        } finally {
+            schedulerLogger.detachAppender(logAppender);
+            logAppender.stop();
+            localScheduler.stop();
+        }
+    }
+
+    @Test
     @DisplayName("start returns succeeded future")
     void startReturnsSucceededFuture(Vertx vertx, VertxTestContext ctx) {
         scheduler.start().onSuccess(v -> ctx.completeNow()).onFailure(ctx::failNow);
