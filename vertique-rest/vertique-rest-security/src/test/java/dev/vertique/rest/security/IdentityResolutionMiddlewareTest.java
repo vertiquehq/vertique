@@ -37,6 +37,9 @@ import io.vertx.core.http.HttpClient;
 import io.vertx.core.http.HttpServer;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.auth.User;
+import io.vertx.ext.auth.authorization.AuthorizationProvider;
+import io.vertx.ext.auth.authorization.PermissionBasedAuthorization;
+import io.vertx.ext.auth.authorization.RoleBasedAuthorization;
 import io.vertx.ext.web.Router;
 import io.vertx.ext.web.impl.UserContextInternal;
 import io.vertx.junit5.VertxExtension;
@@ -681,6 +684,314 @@ class IdentityResolutionMiddlewareTest {
                     bindings.put(type, previous);
                 }
             };
+        }
+    }
+
+    // --- Authorization import (Vert.x provider importer wiring) ---
+
+    @Nested
+    @DisplayName("Authorization import")
+    class AuthorizationImport {
+
+        /**
+         * Builds the middleware under test with the default resolver/mapper and the given importer,
+         * mirroring the Identity-snapshot-capture group's construction style but using the new
+         * 7-arg constructor.
+         */
+        private IdentityResolutionMiddleware middleware(
+                CapturingSecurityRuntime runtime, Optional<VertxAuthorizationImporter> importer) {
+            return new IdentityResolutionMiddleware(
+                    Set.of(new DefaultSecurityIdentityResolver()),
+                    Optional.of(new DefaultSecurityClaimMapper()),
+                    new SecurityEventEmitter(Set.of()),
+                    runtime,
+                    EMPTY_HOLDER,
+                    Optional.empty(),
+                    importer);
+        }
+
+        /** Pre-handler that appends JWT evidence for {@code sub} and sets a Vert.x user principal. */
+        private io.vertx.core.Handler<io.vertx.ext.web.RoutingContext> authenticateAs(
+                String sub, JsonObject principal) {
+            return rc -> {
+                AuthenticationEvidence evidence = new AuthenticationEvidence(
+                        DefaultAuthMethod.jwt(),
+                        Optional.of(sub),
+                        Instant.now(),
+                        Optional.empty(),
+                        new dev.vertique.security.verification.CustomVerificationSource("test", Map.of()),
+                        Map.of("sub", sub));
+                RestAuthenticationEvidence.append(rc, evidence);
+                ((UserContextInternal) rc.userContext()).setUser(User.create(principal));
+                rc.next();
+            };
+        }
+
+        @Test
+        @DisplayName("Absent importer Optional leaves the mapper-produced claims untouched")
+        void importerAbsentLeavesClaimsUntouched(Vertx vertx, VertxTestContext ctx) {
+            CapturingSecurityRuntime runtime = new CapturingSecurityRuntime();
+            IdentityResolutionMiddleware mw = middleware(runtime, Optional.empty());
+
+            Router router = Router.router(vertx);
+            installLifecycle(router, "/test");
+            router.route("/test")
+                    .handler(authenticateAs(
+                            "alice", new JsonObject().put("sub", "alice").put("roles", java.util.List.of("editor"))));
+            router.route("/test").handler(mw);
+            router.route("/test").handler(rc -> {
+                SecurityContext sc = runtime.getCaptured();
+                assertNotNull(sc);
+                assertEquals(
+                        Set.of(new dev.vertique.security.authz.AuthorityClaim(
+                                dev.vertique.security.authz.AuthorityKind.ROLE, "editor", "", "", "", Map.of())),
+                        sc.authorization().claims(),
+                        "without an importer the bound claims must be exactly the mapper-produced set");
+                rc.response().setStatusCode(200).end("ok");
+            });
+
+            startAndSend(vertx, ctx, router, 200);
+        }
+
+        @Test
+        @DisplayName("Present importer merges provider-granted claims with vertx-provider:<id> provenance")
+        void importerPresentMergesProviderClaims(Vertx vertx, VertxTestContext ctx) {
+            CapturingSecurityRuntime runtime = new CapturingSecurityRuntime();
+            VertxAuthorizationImporter importer = new VertxAuthorizationImporter(
+                    Set.of(grantingProvider("p1", RoleBasedAuthorization.create("provider-role"))), Set.of());
+            IdentityResolutionMiddleware mw = middleware(runtime, Optional.of(importer));
+
+            Router router = Router.router(vertx);
+            installLifecycle(router, "/test");
+            router.route("/test")
+                    .handler(authenticateAs(
+                            "alice", new JsonObject().put("sub", "alice").put("roles", java.util.List.of("editor"))));
+            router.route("/test").handler(mw);
+            router.route("/test").handler(rc -> {
+                SecurityContext sc = runtime.getCaptured();
+                assertNotNull(sc);
+                assertEquals(
+                        Set.of(
+                                new dev.vertique.security.authz.AuthorityClaim(
+                                        dev.vertique.security.authz.AuthorityKind.ROLE, "editor", "", "", "", Map.of()),
+                                new dev.vertique.security.authz.AuthorityClaim(
+                                        dev.vertique.security.authz.AuthorityKind.ROLE,
+                                        "provider-role",
+                                        "",
+                                        "",
+                                        "vertx-provider:p1",
+                                        Map.of())),
+                        sc.authorization().claims(),
+                        "bound claims must be the union of mapper claims and imported provider claims");
+                rc.response().setStatusCode(200).end("ok");
+            });
+
+            startAndSend(vertx, ctx, router, 200);
+        }
+
+        @Test
+        @DisplayName("Importer present but request anonymous: provider never invoked, claims empty")
+        void importerNotInvokedForAnonymousRequest(Vertx vertx, VertxTestContext ctx) {
+            CapturingSecurityRuntime runtime = new CapturingSecurityRuntime();
+            InvocationRecordingProvider provider = new InvocationRecordingProvider();
+            VertxAuthorizationImporter importer = new VertxAuthorizationImporter(Set.of(provider), Set.of());
+            IdentityResolutionMiddleware mw = middleware(runtime, Optional.of(importer));
+
+            Router router = Router.router(vertx);
+            installLifecycle(router, "/test");
+            // No pre-auth handler: ctx.user() stays null and no evidence is appended.
+            router.route("/test").handler(mw);
+            router.route("/test").handler(rc -> {
+                SecurityContext sc = runtime.getCaptured();
+                assertNotNull(sc);
+                assertFalse(
+                        provider.invoked.get(),
+                        "the authorization provider must never be consulted for an anonymous request");
+                assertTrue(
+                        sc.authorization().claims().isEmpty(),
+                        "an anonymous request must carry no authorization claims");
+                rc.response().setStatusCode(200).end("ok");
+            });
+
+            startAndSend(vertx, ctx, router, 200);
+        }
+
+        @Test
+        @DisplayName("Provider failure fails the request with UnavailableException; no SecurityContext bound")
+        void importerFailureFailsRequest(Vertx vertx, VertxTestContext ctx) {
+            CapturingSecurityRuntime runtime = new CapturingSecurityRuntime();
+            AuthorizationProvider failing = new AuthorizationProvider() {
+                @Override
+                public String getId() {
+                    return "boom";
+                }
+
+                @Override
+                public Future<Void> getAuthorizations(User user) {
+                    return Future.failedFuture(new IllegalStateException("provider down"));
+                }
+            };
+            VertxAuthorizationImporter importer = new VertxAuthorizationImporter(Set.of(failing), Set.of());
+            IdentityResolutionMiddleware mw = middleware(runtime, Optional.of(importer));
+
+            Router router = Router.router(vertx);
+            installLifecycle(router, "/test");
+            router.route("/test")
+                    .handler(authenticateAs(
+                            "alice", new JsonObject().put("sub", "alice").put("roles", java.util.List.of("editor"))));
+            router.route("/test").handler(mw);
+            router.route("/test").handler(rc -> ctx.failNow("ctx.next() must never be called when the importer fails"));
+            router.route("/test").failureHandler(rc -> {
+                assertInstanceOf(
+                        dev.vertique.core.exception.UnavailableException.class,
+                        rc.failure(),
+                        "a provider failure must fail the request with UnavailableException");
+                assertNull(
+                        runtime.getCaptured(), "no SecurityContext may be bound when the authorization import fails");
+                rc.response().setStatusCode(500).end("failed-as-expected");
+            });
+
+            startAndSend(vertx, ctx, router, 500);
+        }
+
+        @Test
+        @DisplayName("Synchronous throw in the post-resolver body is routed to ctx.fail, never propagated")
+        void syncThrowInPostResolverBodyFailsRequest() {
+            // Direct handle() invocation with a mocked RoutingContext: a real Router's catch-all
+            // around handler invocation would mask a synchronous propagation out of handle(), and
+            // the throw inside the onComplete lambda would otherwise vanish into the Vert.x context
+            // exception handler, hanging the request. The changed seam is handle() itself.
+            RuntimeException boom = new RuntimeException("mapper-boom");
+            SecurityClaimMapper throwingMapper = claims -> {
+                throw boom;
+            };
+            CapturingSecurityRuntime runtime = new CapturingSecurityRuntime();
+            IdentityResolutionMiddleware mw = new IdentityResolutionMiddleware(
+                    Set.of(new DefaultSecurityIdentityResolver()),
+                    Optional.of(throwingMapper),
+                    new SecurityEventEmitter(Set.of()),
+                    runtime,
+                    EMPTY_HOLDER,
+                    Optional.empty(),
+                    Optional.empty());
+
+            io.vertx.ext.web.RoutingContext rc = mock(io.vertx.ext.web.RoutingContext.class);
+            when(rc.user()).thenReturn(User.create(new JsonObject().put("sub", "alice")));
+
+            assertDoesNotThrow(() -> mw.handle(rc), "handle() must not propagate a synchronous mapper throw");
+            verify(rc).fail(boom);
+            verify(rc, never()).next();
+        }
+
+        @Test
+        @DisplayName("Synchronous throw from a resolver is routed to ctx.fail, never propagated")
+        void resolverSyncThrowFailsRequest() {
+            // Direct handle() invocation for the same reason as syncThrowInPostResolverBodyFailsRequest:
+            // the Router catch-all would convert a propagated throw into ctx.fail and falsely pass.
+            RuntimeException boom = new RuntimeException("resolver-sync-boom");
+            SecurityIdentityResolver throwingResolver = c -> {
+                throw boom;
+            };
+            CapturingSecurityRuntime runtime = new CapturingSecurityRuntime();
+            IdentityResolutionMiddleware mw = new IdentityResolutionMiddleware(
+                    Set.of(throwingResolver),
+                    Optional.of(new DefaultSecurityClaimMapper()),
+                    new SecurityEventEmitter(Set.of()),
+                    runtime,
+                    EMPTY_HOLDER,
+                    Optional.empty(),
+                    Optional.empty());
+
+            io.vertx.ext.web.RoutingContext rc = mock(io.vertx.ext.web.RoutingContext.class);
+
+            assertDoesNotThrow(() -> mw.handle(rc), "handle() must not propagate a synchronous resolver throw");
+            verify(rc).fail(boom);
+            verify(rc, never()).next();
+        }
+
+        @Test
+        @DisplayName("SCOPE kind fidelity: jwt-claims provider excluded by the safe constructor, so a "
+                + "mapper SCOPE claim is never re-imported as PERMISSION")
+        void scopeKindFidelityPreservedForJwtApps(Vertx vertx, VertxTestContext ctx) {
+            CapturingSecurityRuntime runtime = new CapturingSecurityRuntime();
+            // Safe 1-arg constructor: "jwt-claims" is excluded by default. The sentinel provider is
+            // NOT excluded — its imported claim proves the importer actually ran, making the
+            // "no PERMISSION twin" assertion non-vacuous.
+            VertxAuthorizationImporter importer = new VertxAuthorizationImporter(Set.of(
+                    grantingProvider("jwt-claims", PermissionBasedAuthorization.create("read")),
+                    grantingProvider("p2", RoleBasedAuthorization.create("sentinel-role"))));
+            IdentityResolutionMiddleware mw = middleware(runtime, Optional.of(importer));
+
+            Router router = Router.router(vertx);
+            installLifecycle(router, "/test");
+            router.route("/test")
+                    .handler(authenticateAs(
+                            "alice", new JsonObject().put("sub", "alice").put("scope", "read")));
+            router.route("/test").handler(mw);
+            router.route("/test").handler(rc -> {
+                SecurityContext sc = runtime.getCaptured();
+                assertNotNull(sc);
+                Set<dev.vertique.security.authz.AuthorityClaim> claims =
+                        sc.authorization().claims();
+                assertTrue(
+                        claims.contains(new dev.vertique.security.authz.AuthorityClaim(
+                                dev.vertique.security.authz.AuthorityKind.SCOPE, "read", "", "", "", Map.of())),
+                        "mapper-produced (SCOPE, read) claim must survive: " + claims);
+                assertTrue(
+                        claims.contains(new dev.vertique.security.authz.AuthorityClaim(
+                                dev.vertique.security.authz.AuthorityKind.ROLE,
+                                "sentinel-role",
+                                "",
+                                "",
+                                "vertx-provider:p2",
+                                Map.of())),
+                        "sentinel provider claim must be imported (proves the importer ran): " + claims);
+                assertTrue(
+                        claims.stream()
+                                .noneMatch(c -> c.kind() == dev.vertique.security.authz.AuthorityKind.PERMISSION
+                                        && "read".equals(c.value())),
+                        "the excluded jwt-claims provider must not re-project SCOPE read as PERMISSION: " + claims);
+                rc.response().setStatusCode(200).end("ok");
+            });
+
+            startAndSend(vertx, ctx, router, 200);
+        }
+
+        /**
+         * Builds an {@link AuthorizationProvider} that grants the given authorizations into its own
+         * provider bucket on invocation.
+         */
+        private AuthorizationProvider grantingProvider(
+                String id, io.vertx.ext.auth.authorization.Authorization... grants) {
+            return new AuthorizationProvider() {
+                @Override
+                public String getId() {
+                    return id;
+                }
+
+                @Override
+                public Future<Void> getAuthorizations(User user) {
+                    user.authorizations().put(id, Set.of(grants));
+                    return Future.succeededFuture();
+                }
+            };
+        }
+    }
+
+    /** An {@link AuthorizationProvider} that records whether it was ever invoked. */
+    private static final class InvocationRecordingProvider implements AuthorizationProvider {
+
+        final java.util.concurrent.atomic.AtomicBoolean invoked = new java.util.concurrent.atomic.AtomicBoolean();
+
+        @Override
+        public String getId() {
+            return "recording";
+        }
+
+        @Override
+        public Future<Void> getAuthorizations(User user) {
+            invoked.set(true);
+            return Future.succeededFuture();
         }
     }
 

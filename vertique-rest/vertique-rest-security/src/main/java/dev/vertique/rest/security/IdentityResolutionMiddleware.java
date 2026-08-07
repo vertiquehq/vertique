@@ -198,6 +198,43 @@ public final class IdentityResolutionMiddleware implements Handler<RoutingContex
         this.identitySnapshotCapture = Objects.requireNonNull(identitySnapshotCapture, "identitySnapshotCapture");
     }
 
+    /**
+     * Creates a new {@code IdentityResolutionMiddleware} with an optional Vert.x authorization
+     * importer.
+     *
+     * <p>Delegates to the Dagger-injected constructor above for all identity-resolution wiring. The
+     * {@code authorizationImporter} parameter is accepted but not yet consulted — the import step is
+     * wired into {@link #handle(RoutingContext)} in a follow-up slice.
+     *
+     * @param resolvers               the set of identity resolvers contributed via Dagger
+     *                                multibinding; must not be {@code null}
+     * @param claimMapper             optional custom claim mapper; uses
+     *                                {@link DefaultSecurityClaimMapper} when absent; must not be
+     *                                {@code null}
+     * @param emitter                 the security event emitter for lifecycle events; must not be
+     *                                {@code null}
+     * @param securityRuntime         the security runtime for binding the resolved context; must
+     *                                not be {@code null}
+     * @param contextHolder           the context holder for reading the ambient
+     *                                {@link CorrelationContext}; must not be {@code null}
+     * @param identitySnapshotCapture the optional ingress capture seam; must not be {@code null} as
+     *                                an {@link Optional}
+     * @param authorizationImporter   the optional Vert.x authorization importer; must not be
+     *                                {@code null} as an {@link Optional}
+     * @throws IllegalStateException if two resolvers share the same {@code (priority, id)} pair
+     */
+    public IdentityResolutionMiddleware(
+            Set<SecurityIdentityResolver> resolvers,
+            Optional<SecurityClaimMapper> claimMapper,
+            SecurityEventEmitter emitter,
+            SecurityRuntime securityRuntime,
+            ContextHolder contextHolder,
+            Optional<IdentitySnapshotCapture> identitySnapshotCapture,
+            Optional<VertxAuthorizationImporter> authorizationImporter) {
+        this(resolvers, claimMapper, emitter, securityRuntime, contextHolder, identitySnapshotCapture);
+        Objects.requireNonNull(authorizationImporter, "authorizationImporter");
+    }
+
     // --- Handler ---
 
     /**
