@@ -246,6 +246,10 @@ class CapturedAuthorityActivatedEventTest {
                 event.identity().actor(),
                 event.identity().subject().orElseThrow(),
                 "actor and subject must remain distinguishable — the event must not collapse them");
+        assertTrue(
+                event.identity().delegation().isEmpty(),
+                "a snapshot carrying no captured delegation must yield no delegation on the event — the resume "
+                        + "path must never fabricate one");
     }
 
     @Test
@@ -307,6 +311,33 @@ class CapturedAuthorityActivatedEventTest {
                         ALLOWED_CARRIER),
                 "a null activation mode must be rejected at construction, never carried onto an audit record");
         assertEquals("mode", failure.getMessage(), "the rejection must name the offending component");
+    }
+
+    @Test
+    @DisplayName("the compact constructor rejects null activated authority — an audit record must never claim an "
+            + "activation occurred without stating which privileges it granted")
+    void constructorRejectsNullAuthorization() {
+        AuthenticationState authentication = new AuthenticationState(
+                DefaultAuthMethod.custom("jwt"), List.of(), Optional.empty(), Optional.empty(), Map.of());
+        SecurityIdentity identity =
+                new SecurityIdentity(ACTOR, Optional.of(SUBJECT), Optional.empty(), Optional.empty());
+        Instant occurredAt = Instant.parse("2026-07-01T10:15:32Z");
+        UUID activationId = UUID.randomUUID();
+
+        NullPointerException failure = assertThrows(
+                NullPointerException.class,
+                () -> new CapturedAuthorityActivatedEvent(
+                        occurredAt,
+                        CorrelationContext.unbound(),
+                        Optional.empty(),
+                        authentication,
+                        identity,
+                        null,
+                        CapturedAuthorityActivatedEvent.Mode.RESUME,
+                        activationId,
+                        ALLOWED_CARRIER),
+                "null activated authority must be rejected at construction, never carried onto an audit record");
+        assertEquals("authorization", failure.getMessage(), "the rejection must name the offending component");
     }
 
     @Test
@@ -473,11 +504,12 @@ class CapturedAuthorityActivatedEventTest {
                 UNIDENTIFIED_DELEGATION.kind(),
                 delegation.kind(),
                 "the captured delegation scheme must be preserved verbatim");
-        assertNotEquals(
-                DelegationContext.DEFERRED_EXECUTION_KIND,
+        assertEquals(
+                "no-captured-authority-id",
                 delegation.authorityId(),
-                "a resume with no captured grant id must not substitute the deferred-execution literal — an audit "
-                        + "consumer could not tell that from a real grant id with that value");
+                "a resume with no captured grant id must state the absence with its own literal, never substitute "
+                        + "the deferred-execution one — an audit consumer could not tell that from a real grant id "
+                        + "with that value");
     }
 
     @Test
