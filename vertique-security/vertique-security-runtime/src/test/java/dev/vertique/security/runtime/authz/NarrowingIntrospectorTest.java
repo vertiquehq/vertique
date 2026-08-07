@@ -47,6 +47,7 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -118,7 +119,8 @@ class NarrowingIntrospectorTest {
         SecurityContext lowAssuranceCtx = ctxWithRolesAndAssurance("editor", Optional.empty());
         SecurityContext highAssuranceCtx = ctxWithRolesAndAssurance(
                 "editor",
-                Optional.of(new AuthenticationAssurance(Optional.empty(), Set.of(), Optional.of(NOW), Optional.of(5))));
+                Optional.of(new AuthenticationAssurance(
+                        Optional.empty(), new LinkedHashSet<>(), Optional.of(NOW), Optional.of(5))));
 
         RequirementDescriptor expected = new RequirementDescriptor("ASSURANCE", "minProviderLevel=3, maxAgeMs=300000");
         assertEquals(

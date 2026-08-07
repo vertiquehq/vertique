@@ -44,6 +44,7 @@ import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -117,15 +118,15 @@ class CapturedAuthorityActivatedEventTest {
     private static final ClientRef CLIENT = new ClientRef("client-abc", "jwt-azp", Map.of("app", "mobile"));
 
     /**
-     * A captured IdP assurance with a <strong>single</strong> {@code amr} value. The set is
-     * deliberately one element: {@code IdentitySnapshotCodec.verifyIntegrity} re-canonicalizes the
-     * typed model, and {@code AuthenticationAssurance.amr} is a {@code Set.copyOf} whose iteration
-     * order is per-JVM salted, so a multi-value {@code amr} can re-serialize in a different order
-     * than it was signed in and fail verification for reasons unrelated to this test.
+     * A captured IdP assurance with a single {@code amr} value — this test is about event emission,
+     * not about {@code amr} cardinality. Multi-value {@code amr} round-tripping through
+     * {@code IdentitySnapshotCodec.verifyIntegrity} is pinned by {@code IdentitySnapshotCodecTest}
+     * (issue #181), which is what makes {@code AuthenticationAssurance.amr} an encounter-order
+     * preserving {@link java.util.SequencedSet}.
      */
     private static final AuthenticationAssurance ASSURANCE = new AuthenticationAssurance(
             Optional.of("urn:mace:incommon:iap:silver"),
-            Set.of("pwd"),
+            new LinkedHashSet<>(List.of("pwd")),
             Optional.of(Instant.parse("2026-07-01T10:15:29Z")),
             Optional.of(2));
 

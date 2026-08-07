@@ -9,10 +9,10 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.time.Instant;
-import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Optional;
+import java.util.SequencedSet;
 import java.util.Set;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -37,7 +37,7 @@ class AuthenticationAssuranceTest {
     void typicalOauthAssurance() {
         AuthenticationAssurance assurance = new AuthenticationAssurance(
                 Optional.of("urn:mace:incommon:iap:bronze"),
-                Set.of("pwd", "mfa"),
+                new LinkedHashSet<>(List.of("pwd", "mfa")),
                 Optional.of(AUTH_TIME),
                 Optional.of(2));
 
@@ -50,8 +50,8 @@ class AuthenticationAssuranceTest {
     @Test
     @DisplayName("constructs with all optionals empty")
     void allOptionalsEmpty() {
-        AuthenticationAssurance assurance =
-                new AuthenticationAssurance(Optional.empty(), Set.of(), Optional.empty(), Optional.empty());
+        AuthenticationAssurance assurance = new AuthenticationAssurance(
+                Optional.empty(), new LinkedHashSet<>(), Optional.empty(), Optional.empty());
 
         assertFalse(assurance.acr().isPresent());
         assertTrue(assurance.amr().isEmpty());
@@ -70,7 +70,7 @@ class AuthenticationAssuranceTest {
         void rejectsNullAcr() {
             assertThrows(
                     NullPointerException.class,
-                    () -> new AuthenticationAssurance(null, Set.of(), Optional.empty(), Optional.empty()));
+                    () -> new AuthenticationAssurance(null, new LinkedHashSet<>(), Optional.empty(), Optional.empty()));
         }
 
         @Test
@@ -78,7 +78,7 @@ class AuthenticationAssuranceTest {
         void rejectsNullAuthTime() {
             assertThrows(
                     NullPointerException.class,
-                    () -> new AuthenticationAssurance(Optional.empty(), Set.of(), null, Optional.empty()));
+                    () -> new AuthenticationAssurance(Optional.empty(), new LinkedHashSet<>(), null, Optional.empty()));
         }
 
         @Test
@@ -86,7 +86,7 @@ class AuthenticationAssuranceTest {
         void rejectsNullProviderLevel() {
             assertThrows(
                     NullPointerException.class,
-                    () -> new AuthenticationAssurance(Optional.empty(), Set.of(), Optional.empty(), null));
+                    () -> new AuthenticationAssurance(Optional.empty(), new LinkedHashSet<>(), Optional.empty(), null));
         }
     }
 
@@ -95,7 +95,7 @@ class AuthenticationAssuranceTest {
     @Test
     @DisplayName("amr is a defensive copy — mutations to original set do not affect record")
     void amrDefensiveCopy() {
-        Set<String> mutable = new HashSet<>();
+        SequencedSet<String> mutable = new LinkedHashSet<>();
         mutable.add("pwd");
         AuthenticationAssurance assurance =
                 new AuthenticationAssurance(Optional.empty(), mutable, Optional.empty(), Optional.empty());
@@ -123,8 +123,8 @@ class AuthenticationAssuranceTest {
         // snapshot signed on one node fails its own HMAC when re-serialized on another (issue #181).
         // A hash-ordered copy collapses BOTH sources below to one identical iteration order, so at
         // most one of these two assertions can hold unless the copy is encounter-order preserving.
-        Set<String> forward = new LinkedHashSet<>(List.of("pwd", "otp"));
-        Set<String> reverse = new LinkedHashSet<>(List.of("otp", "pwd"));
+        SequencedSet<String> forward = new LinkedHashSet<>(List.of("pwd", "otp"));
+        SequencedSet<String> reverse = new LinkedHashSet<>(List.of("otp", "pwd"));
 
         AuthenticationAssurance forwardAssurance =
                 new AuthenticationAssurance(Optional.empty(), forward, Optional.empty(), Optional.empty());
@@ -156,7 +156,7 @@ class AuthenticationAssuranceTest {
     @Test
     @DisplayName("rejects a null element inside amr")
     void rejectsNullAmrElement() {
-        Set<String> withNullElement = new LinkedHashSet<>();
+        SequencedSet<String> withNullElement = new LinkedHashSet<>();
         withNullElement.add("pwd");
         withNullElement.add(null);
 
