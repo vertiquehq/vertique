@@ -831,27 +831,31 @@ class IdentityResolutionMiddlewareTest {
                 rc.response().setStatusCode(500).end("failed-as-expected");
             });
 
-            vertx.createHttpServer().requestHandler(router).listen(0).onComplete(ctx.succeeding(s -> {
-                server = s;
-                (client = vertx.createHttpClient())
-                        .request(io.vertx.core.http.HttpMethod.GET, s.actualPort(), "localhost", "/test")
-                        .compose(req -> req.send())
-                        .compose(resp -> {
-                            assertEquals(
-                                    500,
-                                    resp.statusCode(),
-                                    "blank sub must fail resolution the same way as an underivable id "
-                                            + "(500), not surface as a 400 validation error");
-                            return resp.body().map(Object::toString);
-                        })
-                        .onComplete(ctx.succeeding(body -> {
-                            assertFalse(
-                                    body.toLowerCase(java.util.Locale.ROOT).contains("must not be blank"),
-                                    "response body must not leak the internal PrincipalRef/ClientRef "
-                                            + "validation message: " + body);
-                            ctx.completeNow();
-                        }));
-            }));
+            vertx.createHttpServer()
+                    .requestHandler(router)
+                    .listen(0, "127.0.0.1")
+                    .onComplete(ctx.succeeding(s -> {
+                        server = s;
+                        (client = vertx.createHttpClient())
+                                .request(io.vertx.core.http.HttpMethod.GET, s.actualPort(), "127.0.0.1", "/test")
+                                .compose(req -> req.send())
+                                .compose(resp -> {
+                                    assertEquals(
+                                            500,
+                                            resp.statusCode(),
+                                            "blank sub must fail resolution the same way as an underivable id "
+                                                    + "(500), not surface as a 400 validation error");
+                                    return resp.body().map(Object::toString);
+                                })
+                                .onComplete(ctx.succeeding(body -> {
+                                    assertFalse(
+                                            body.toLowerCase(java.util.Locale.ROOT)
+                                                    .contains("must not be blank"),
+                                            "response body must not leak the internal PrincipalRef/ClientRef "
+                                                    + "validation message: " + body);
+                                    ctx.completeNow();
+                                }));
+                    }));
         }
     }
 
@@ -887,10 +891,10 @@ class IdentityResolutionMiddlewareTest {
      * @param expectedStatus the expected HTTP status code
      */
     private void startAndSend(Vertx vertx, VertxTestContext ctx, Router router, int expectedStatus) {
-        vertx.createHttpServer().requestHandler(router).listen(0).onComplete(ctx.succeeding(s -> {
+        vertx.createHttpServer().requestHandler(router).listen(0, "127.0.0.1").onComplete(ctx.succeeding(s -> {
             server = s;
             (client = vertx.createHttpClient())
-                    .request(io.vertx.core.http.HttpMethod.GET, s.actualPort(), "localhost", "/test")
+                    .request(io.vertx.core.http.HttpMethod.GET, s.actualPort(), "127.0.0.1", "/test")
                     .compose(req -> req.send())
                     .compose(resp -> {
                         assertEquals(expectedStatus, resp.statusCode());

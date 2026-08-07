@@ -63,11 +63,11 @@ public class FailureHandlerChainProbeIT {
 
         vertx.createHttpServer()
                 .requestHandler(router)
-                .listen(0)
+                .listen(0, "127.0.0.1")
                 .compose(s -> {
                     server = s;
                     client = vertx.createHttpClient();
-                    return client.request(HttpMethod.GET, s.actualPort(), "localhost", "/op")
+                    return client.request(HttpMethod.GET, s.actualPort(), "127.0.0.1", "/op")
                             .compose(req -> req.send())
                             .compose(resp -> resp.body().map(b -> b.toString()));
                 })

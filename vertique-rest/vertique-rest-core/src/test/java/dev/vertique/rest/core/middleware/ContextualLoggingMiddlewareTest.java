@@ -61,11 +61,11 @@ class ContextualLoggingMiddlewareTest {
 
         vertx.createHttpServer()
                 .requestHandler(router)
-                .listen(0)
+                .listen(0, "127.0.0.1")
                 .compose(server -> {
                     int port = server.actualPort();
                     return vertx.createHttpClient()
-                            .request(HttpMethod.POST, port, "localhost", "/test")
+                            .request(HttpMethod.POST, port, "127.0.0.1", "/test")
                             .compose(req -> req.send()
                                     .compose(response -> response.body().mapEmpty()));
                 })
