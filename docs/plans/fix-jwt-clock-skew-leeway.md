@@ -144,7 +144,7 @@ config is semantically meaningless; the residual risk it removes is divergence, 
 **D2 — Consumer-visible behavior change, accepted deliberately: leeway 0 → 30 on every defaulted
 path.** 30 is the documented default; today's 0 is the bug. Safety argument: leeway is **permissive
 only**, so no token accepted today becomes rejected — the change can only widen tolerance near the
-`exp`/`nbf`/`iat` boundaries. Recorded in ADR-0206 and pinned by a test asserting all-defaults leeway
+`exp`/`nbf`/`iat` boundaries. Recorded in ADR-0209 and pinned by a test asserting all-defaults leeway
 is 30, not 0 (S1). RFC 7519 §4.1.4 permits "some small leeway, usually no more than a few minutes".
 **Do not cite FAPI 2.0** in the ADR — that claim surfaced in consultation unverified.
 
@@ -267,7 +267,7 @@ public static final int MAX_CLOCK_SKEW_SECONDS = 300;
 private JwtValidationConfig(String issuer, List<String> audience, int clockSkewSeconds);
 ```
 
-Upper-bound rationale (recorded in ADR-0206): RFC 7519 §4.1.4's "no more than a few minutes"; above
+Upper-bound rationale (recorded in ADR-0209): RFC 7519 §4.1.4's "no more than a few minutes"; above
 300 s a misconfiguration is likelier than an intent.
 
 ### Internal — no public surface
@@ -433,7 +433,7 @@ Commit: `fix(rest-auth-jwt): keep JWKS reads off the event loop and close the HT
 
 ### S7 — ADR + documentation · tier `routine`
 
-ADR-0206 (§7); rewrite the `module.md` enforcement table, `JwtAuthFactory` capability table
+ADR-0209 (§7); rewrite the `module.md` enforcement table, `JwtAuthFactory` capability table
 (`module.md:256–262`), `RefreshableJwtAuth` section (`:314–332`) and the two stale "Common mistakes"
 bullets (`:535–541`); update the maintainer doc — including **removing** its "Known gap —
 `clockSkewSeconds` has no handler-layer backstop" callout (`docs/modules/vertique-rest-auth-jwt.md:96`) and
@@ -451,7 +451,7 @@ Commit: `docs(rest-security): correct authorization-provider tracker references 
 
 ## 7. ADRs to write
 
-**ADR-0206 — Apply JWT validation config on every `JWTAuth` construction path** (written in S7).
+**ADR-0209 — Apply JWT validation config on every `JWTAuth` construction path** (written in S7).
 
 Records: leeway is permissive-only and therefore cannot have a handler-layer backstop, unlike
 `iss`/`aud` (F3–F5); the deliberate 0 → 30 default change and its safety argument (D2); the 300 s
@@ -461,8 +461,8 @@ mandatory config (D1); the `warnOnMissingConstraints` split (D4); the
 `Future<RefreshableJwtAuth>` return-type change (D6); and a **"Deferred alternatives and re-entry
 triggers"** section that is the named destination for §11's design deferrals.
 
-Location: `vertique-dev/docs/adr/product/0206-jwt-validation-config-on-every-construction-path.md`; bump
-the `Next ADR number:` marker in `vertique-dev/docs/adr/product/README.md:218` to 0207.
+Location: `vertique-dev/docs/adr/product/0209-jwt-validation-config-on-every-construction-path.md`; bump
+the `Next ADR number:` marker in `vertique-dev/docs/adr/product/README.md:221` to 0210.
 
 > ADR numbers race across parallel worktrees. Re-check `docs/adr/product/README.md` on `main` at merge
 > time and expect a renumber, including any textual reference from the module docs.
@@ -510,10 +510,10 @@ the `Next ADR number:` marker in `vertique-dev/docs/adr/product/README.md:218` t
 ### Governance repository — paths relative to `vertique-dev`, docs-only, direct to `main`
 
 **New**
-- `docs/adr/product/0206-jwt-validation-config-on-every-construction-path.md`
+- `docs/adr/product/0209-jwt-validation-config-on-every-construction-path.md`
 
 **Modified**
-- `docs/adr/product/README.md` — next-number marker (line 218) → 0207
+- `docs/adr/product/README.md` — next-number marker (line 221) → 0210
 - `docs/modules/vertique-rest-auth-jwt.md` — enforcement-layering table (line 87); **remove** the "Known gap"
   callout (lines 96–103); add the attestation invariant and its proving test
 - `docs/modules/vertique-rest-security.md` — line 279, `#73` → the new issue number
@@ -528,7 +528,7 @@ the `Next ADR number:` marker in `vertique-dev/docs/adr/product/README.md:218` t
    component-construction. Acceptable: still fail-fast, never first-request. Watch-item, not a
    guarantee.
 2. **Attestation is self-reported.** It catches wiring slips, not a determined caller. Stated plainly
-   in ADR-0206 rather than sold as enforcement.
+   in ADR-0209 rather than sold as enforcement.
 3. **`AttestedJwtAuth` must delegate all three `JWTAuth` methods.** Missing either `generateToken`
    overload silently breaks token signing — and the module's own ITs sign tokens, so the gap would
    surface, but only as a confusing IT failure.
@@ -585,9 +585,9 @@ Every row has a named destination.
 | Should a contributed `AuthorizationProvider` have effect, or be rejected at startup? (F14) | **New GitHub issue** `vertiquehq/vertique-dev`, filed in S8; its number replaces all 7 `#73` citations |
 | `RefreshableJwtAuth.close()` has no production caller / who owns the timer lifecycle (F12) | **New GitHub issue**, filed in S8 |
 | `HttpClient` reuse across fetches; stale-key budget on repeated refresh failure | **New GitHub issue** ("JWKS refresh robustness"), filed in S8. Re-entry: measurement shows connection setup affects refresh latency, or an IdP publishes a key-retirement window |
-| Public `ConfiguredJwtAuth` binding contract | **ADR-0206 § "Deferred alternatives and re-entry triggers"** (S7). Re-entry: a real app hand-rolls a raw `JWTAuth`, or a divergence slips past the internal check |
-| `JwtAuthModule` owning `JWTAuth` construction from typed config | **ADR-0206 § "Deferred alternatives and re-entry triggers"** (S7). Re-entry: a second app wants config-only setup, or the framework must own JWKS readiness/retry/staleness |
-| Builder / parameter object for `JwtAuthFactory` | **ADR-0206 § "Deferred alternatives and re-entry triggers"** (S7). Re-entry: a second independent per-source option (custom HTTP client/TLS, retry, cache budget) |
+| Public `ConfiguredJwtAuth` binding contract | **ADR-0209 § "Deferred alternatives and re-entry triggers"** (S7). Re-entry: a real app hand-rolls a raw `JWTAuth`, or a divergence slips past the internal check |
+| `JwtAuthModule` owning `JWTAuth` construction from typed config | **ADR-0209 § "Deferred alternatives and re-entry triggers"** (S7). Re-entry: a second app wants config-only setup, or the framework must own JWKS readiness/retry/staleness |
+| Builder / parameter object for `JwtAuthFactory` | **ADR-0209 § "Deferred alternatives and re-entry triggers"** (S7). Re-entry: a second independent per-source option (custom HTTP client/TLS, retry, cache budget) |
 
 Issue #37 is closed by this PR; no row above blocks that.
 

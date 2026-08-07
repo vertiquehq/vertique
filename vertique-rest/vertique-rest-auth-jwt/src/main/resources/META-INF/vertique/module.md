@@ -403,7 +403,9 @@ the result.
   service down.
 - Overlapping refresh ticks are skipped while one is in flight.
 - `close()` cancels the timer and is idempotent; a refresh still in flight afterwards completes but
-  does not swap the delegate. Vert.x also cancels the timer when the owning verticle is undeployed.
+  does not swap the delegate. Vert.x also cancels the timer when the owning verticle is undeployed —
+  but only when `create` ran on that verticle's context. A `main()`-style bootstrap that creates the
+  provider outside a verticle keeps the timer running until you call `close()` yourself.
 
 **The `JwtValidationConfig` given at creation is applied to every delegate**, the initial one and
 each refreshed one, and is never re-read. A key rotation therefore cannot silently relax the issuer,
