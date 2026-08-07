@@ -1224,7 +1224,8 @@ class DelayedJobPollerTest {
                     0L,
                     0L,
                     DispatchEnvelopeBuilder.forTesting(),
-                    noOpPropagator());
+                    noOpPropagator(),
+                    200L);
 
             vertx.deployVerticle(poller)
                     .compose(deploymentId -> handlerLogged.future().map(deploymentId))

@@ -123,12 +123,12 @@ public class DelayedJobPoller extends AbstractVerticle {
     // --- Constants ---
 
     /**
-     * Upper bound, in seconds, on how long {@link #stop(Promise)} waits for one execution's
-     * shutdown log drain to settle. {@link JobLogFlusher#flush()} already bounds each individual
-     * write, so a drain settles on its own eventually; this bound collapses the drain's whole round
-     * budget into one wait so undeploy is not held for the sum of them.
+     * Default upper bound, in milliseconds, on how long {@link #stop(Promise)} waits for one
+     * execution's shutdown log drain to settle. {@link JobLogFlusher#flush()} already bounds each
+     * individual write, so a drain settles on its own eventually; this bound collapses the drain's
+     * whole round budget into one wait so undeploy is not held for the sum of them.
      */
-    private static final long SHUTDOWN_FLUSH_TIMEOUT_SECONDS = 5L;
+    static final long DEFAULT_SHUTDOWN_FLUSH_TIMEOUT_MS = 5_000L;
 
     // --- Dependencies ---
 
@@ -152,6 +152,13 @@ public class DelayedJobPoller extends AbstractVerticle {
      * flush.
      */
     private final long progressFlushIntervalMs;
+
+    /**
+     * Upper bound, in milliseconds, on how long {@link #stop(Promise)} waits for one execution's
+     * shutdown log drain to settle. Defaults to {@link #DEFAULT_SHUTDOWN_FLUSH_TIMEOUT_MS}; only
+     * the package-private test-seam constructor can override it.
+     */
+    private final long shutdownFlushTimeoutMs;
 
     /**
      * Optional dispatch envelope builder; when present, outbound job-dispatch envelopes are built
@@ -284,6 +291,59 @@ public class DelayedJobPoller extends AbstractVerticle {
             long progressFlushIntervalMs,
             dev.vertique.context.DispatchEnvelopeBuilder envelopeBuilder,
             DurableContextPropagator propagator) {
+        this(
+                queue,
+                config,
+                repository,
+                completionHandler,
+                interceptors,
+                eventBusClient,
+                executionTimeoutMs,
+                progressFlushIntervalMs,
+                envelopeBuilder,
+                propagator,
+                DEFAULT_SHUTDOWN_FLUSH_TIMEOUT_MS);
+    }
+
+    /**
+     * Test seam bounding the {@link #stop(Promise)}-path cutoff flush drain. Identical to the full
+     * public constructor with the shutdown-flush timeout appended; the public constructors keep the
+     * {@link #DEFAULT_SHUTDOWN_FLUSH_TIMEOUT_MS 5 s} default.
+     *
+     * @param queue                   the logical queue name to poll
+     * @param config                  per-queue polling configuration
+     * @param repository              the job repository for claiming and state updates
+     * @param completionHandler       shared utility for handling job completion
+     * @param interceptors            job interceptors to fire around each dispatch, in
+     *                                {@link dev.vertique.core.extension.OrderedExtension} order
+     *                                (phase → priority → orderKey)
+     * @param eventBusClient          the event bus client for dispatch protocol sends
+     * @param executionTimeoutMs      per-execution timeout in milliseconds; {@code 0} disables
+     * @param progressFlushIntervalMs interval in milliseconds for flushing progress snapshots;
+     *                                {@code 0} disables
+     * @param envelopeBuilder         envelope builder used to construct outgoing job-dispatch envelopes
+     * @param propagator              durable context propagator for decoding persisted metadata into
+     *                                the outgoing envelope's caller-overrides (FR-CTX-177); must not
+     *                                be {@code null}
+     * @param shutdownFlushTimeoutMs  upper bound, in milliseconds, on how long {@code stop()} waits
+     *                                for one execution's cutoff flush drain to settle; must be positive
+     * @throws IllegalArgumentException if {@code shutdownFlushTimeoutMs} is not positive
+     */
+    DelayedJobPoller(
+            String queue,
+            DelayedJobQueueConfig config,
+            JobRepository repository,
+            JobCompletionHandler completionHandler,
+            Set<JobInterceptor> interceptors,
+            EventBusClient eventBusClient,
+            long executionTimeoutMs,
+            long progressFlushIntervalMs,
+            dev.vertique.context.DispatchEnvelopeBuilder envelopeBuilder,
+            DurableContextPropagator propagator,
+            long shutdownFlushTimeoutMs) {
+        if (shutdownFlushTimeoutMs <= 0) {
+            throw new IllegalArgumentException("shutdownFlushTimeoutMs must be positive: " + shutdownFlushTimeoutMs);
+        }
         this.queue = queue;
         this.config = config;
         this.repository = repository;
@@ -291,6 +351,7 @@ public class DelayedJobPoller extends AbstractVerticle {
         this.eventBusClient = eventBusClient;
         this.executionTimeoutMs = executionTimeoutMs;
         this.progressFlushIntervalMs = progressFlushIntervalMs;
+        this.shutdownFlushTimeoutMs = shutdownFlushTimeoutMs;
         this.envelopeBuilder =
                 java.util.Objects.requireNonNull(envelopeBuilder, "envelopeBuilder must not be null (FR-CTX-015)");
         this.propagator = java.util.Objects.requireNonNull(propagator, "propagator must not be null (FR-CTX-177)");
@@ -380,10 +441,8 @@ public class DelayedJobPoller extends AbstractVerticle {
         // contain nothing at all.
         Combinators.joinAllSwallow(
                         pending,
-                        resources -> resources
-                                .logFlusher()
-                                .drain()
-                                .timeout(SHUTDOWN_FLUSH_TIMEOUT_SECONDS, TimeUnit.SECONDS),
+                        resources ->
+                                resources.logFlusher().drain().timeout(shutdownFlushTimeoutMs, TimeUnit.MILLISECONDS),
                         (resources, err) -> log.warn(
                                 "Shutdown job-log flush did not settle for queue='{}': {}", queue, err.getMessage()))
                 .onComplete(ar -> {
