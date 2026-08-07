@@ -48,7 +48,7 @@ public class WebSocketChatIT {
     @RegisterExtension
     static final VertiqueAppExtension app = VertiqueAppExtension.forFactory(new AppComponentVertiqueComponentFactory())
             .withConfig(new JsonObject()
-                    .put("http", new JsonObject().put("port", 0))
+                    .put("http", new JsonObject().put("port", 0).put("host", "127.0.0.1"))
                     .put("management", new JsonObject().put("enabled", false)));
 
     private static JWTAuth jwtAuth;
@@ -92,7 +92,7 @@ public class WebSocketChatIT {
      */
     private Future<WebSocket> connect(String room, String token) {
         WebSocketConnectOptions opts = new WebSocketConnectOptions()
-                .setHost("localhost")
+                .setHost("127.0.0.1")
                 .setPort(app.httpPort())
                 .setURI("/ws/chat/" + room)
                 .addHeader("Authorization", "Bearer " + token);
@@ -119,7 +119,7 @@ public class WebSocketChatIT {
     @DisplayName("missing Bearer token → upgrade rejected")
     void missingTokenRejectedWith401(VertxTestContext ctx) {
         WebSocketConnectOptions opts = new WebSocketConnectOptions()
-                .setHost("localhost")
+                .setHost("127.0.0.1")
                 .setPort(app.httpPort())
                 .setURI("/ws/chat/general");
 
