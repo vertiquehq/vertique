@@ -92,6 +92,9 @@ SPDX-License-Identifier: EUPL-1.2
         <module>examples/vertique-example-events</module>
         <module>examples/vertique-example-localization</module>
         <module>examples/vertique-example-workflow-order-fulfillment</module>
+        <!-- Last on purpose: depends on every code-bearing module, so the JaCoCo
+             aggregate report is always the reactor's final act. -->
+        <module>vertique-coverage-report</module>
     </modules>
 
     <properties>
@@ -164,6 +167,11 @@ SPDX-License-Identifier: EUPL-1.2
         <jib-maven-plugin.version>3.5.1</jib-maven-plugin.version>
         <spotless.version>3.3.0</spotless.version>
         <jacoco.version>0.8.12</jacoco.version>
+        <!-- Per-module HTML/XML report at verify. CI sets this to true: the
+             vertique-coverage-report aggregate XML is the only report CI
+             consumes, so the ~90 per-module report renderings are waste there.
+             Local builds keep them for browsable per-module HTML. -->
+        <jacoco.module.report.skip>false</jacoco.module.report.skip>
 
         <!-- Default for Surefire/Failsafe late replacement when JaCoCo is skipped. -->
         <argLine/>
@@ -1175,6 +1183,9 @@ SPDX-License-Identifier: EUPL-1.2
                             <goals>
                                 <goal>report</goal>
                             </goals>
+                            <configuration>
+                                <skip>${jacoco.module.report.skip}</skip>
+                            </configuration>
                         </execution>
                     </executions>
                 </plugin>
