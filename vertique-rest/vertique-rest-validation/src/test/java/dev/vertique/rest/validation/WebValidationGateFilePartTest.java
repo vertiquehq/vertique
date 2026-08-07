@@ -17,9 +17,6 @@ import static org.mockito.Mockito.when;
 import dev.vertique.rest.core.RestValidationException;
 import dev.vertique.rest.core.ValidationErrorDetail;
 import dev.vertique.rest.core.config.JaxRsConfig;
-import dev.vertique.rest.core.routing.SecurityRequirementSet;
-import dev.vertique.rest.core.security.SecurityPolicy;
-import dev.vertique.rest.jaxrs.routing.BodyDescriptor;
 import dev.vertique.rest.jaxrs.routing.FilePartDescriptor;
 import dev.vertique.rest.jaxrs.routing.JaxRsOperationDescriptor;
 import dev.vertique.rest.jaxrs.routing.ParamDescriptor;
@@ -33,11 +30,9 @@ import io.vertx.core.json.Json;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.FileUpload;
 import io.vertx.ext.web.RoutingContext;
-import java.lang.annotation.Annotation;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.Set;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -420,71 +415,13 @@ class WebValidationGateFilePartTest {
 
     private static JaxRsOperationDescriptor descriptor(
             List<ParamDescriptor> parameters, List<FilePartDescriptor> fileParts) {
-        return new JaxRsOperationDescriptor() {
-            @Override
-            public String operationId() {
-                return "uploadAvatar";
-            }
-
-            @Override
-            public String httpMethod() {
-                return "POST";
-            }
-
-            @Override
-            public String routeTemplate() {
-                return "/files";
-            }
-
-            @Override
-            public List<String> consumes() {
-                return List.of("multipart/form-data");
-            }
-
-            @Override
-            public List<String> produces() {
-                return List.of();
-            }
-
-            @Override
-            public SecurityPolicy securityPolicy() {
-                return new SecurityPolicy.None();
-            }
-
-            @Override
-            public List<SecurityRequirementSet> securityRequirementSets() {
-                return List.of();
-            }
-
-            @Override
-            public List<Annotation> methodAnnotations() {
-                return List.of();
-            }
-
-            @Override
-            public List<Annotation> classAnnotations() {
-                return List.of();
-            }
-
-            @Override
-            public <A extends Annotation> Optional<A> findAnnotation(Class<A> type) {
-                return Optional.empty();
-            }
-
-            @Override
-            public List<ParamDescriptor> parameters() {
-                return parameters;
-            }
-
-            @Override
-            public Optional<BodyDescriptor> body() {
-                return Optional.empty();
-            }
-
-            @Override
-            public List<FilePartDescriptor> fileParts() {
-                return fileParts;
-            }
-        };
+        return StubDescriptors.builder()
+                .operationId("uploadAvatar")
+                .httpMethod("POST")
+                .routeTemplate("/files")
+                .consumes(List.of("multipart/form-data"))
+                .parameters(parameters)
+                .fileParts(fileParts)
+                .build();
     }
 }

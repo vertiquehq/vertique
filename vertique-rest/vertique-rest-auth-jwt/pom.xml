@@ -86,6 +86,16 @@ SPDX-License-Identifier: EUPL-1.2
             <artifactId>vertique-config-core</artifactId>
             <scope>test</scope>
         </dependency>
+        <!-- Test-only: the claims-rejection status IT mounts the real JaxRsRouterMount so a
+             JwtClaimsValidator rejection reaches the router-level failure handler under test.
+             Test-scoped only — rest-auth-jwt has NO production dependency on the JAX-RS runtime;
+             it contributes to it through the neutral rest-core SPIs. Declared explicitly here
+             because test-scoped dependencies are not transitive from vertique-rest-security. -->
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-rest-jaxrs</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>

@@ -228,11 +228,11 @@ class AuthSecurityLifecycleHookTest {
                     });
                     mainRouter.route("/*").subRouter(apiRouter);
 
-                    return vertx.createHttpServer().requestHandler(mainRouter).listen(0);
+                    return vertx.createHttpServer().requestHandler(mainRouter).listen(0, "127.0.0.1");
                 })
                 .onComplete(ctx.succeeding(s -> {
                     server = s;
-                    client.request(HttpMethod.GET, s.actualPort(), "localhost", "/test")
+                    client.request(HttpMethod.GET, s.actualPort(), "127.0.0.1", "/test")
                             .compose(req -> req.send())
                             .compose(resp -> {
                                 assertEquals(200, resp.statusCode());
@@ -279,11 +279,11 @@ class AuthSecurityLifecycleHookTest {
                     });
                     mainRouter.route("/*").subRouter(apiRouter);
 
-                    return vertx.createHttpServer().requestHandler(mainRouter).listen(0);
+                    return vertx.createHttpServer().requestHandler(mainRouter).listen(0, "127.0.0.1");
                 })
                 .onComplete(ctx.succeeding(s -> {
                     server = s;
-                    client.request(HttpMethod.GET, s.actualPort(), "localhost", "/test")
+                    client.request(HttpMethod.GET, s.actualPort(), "127.0.0.1", "/test")
                             .compose(req -> req.send())
                             .compose(resp -> resp.body())
                             .onComplete(ctx.succeeding(body -> {
@@ -339,11 +339,11 @@ class AuthSecurityLifecycleHookTest {
                     mainRouter.route("/*").handler(new RequestContextLifecycle());
                     mainRouter.route("/*").subRouter(apiRouter);
 
-                    return vertx.createHttpServer().requestHandler(mainRouter).listen(0);
+                    return vertx.createHttpServer().requestHandler(mainRouter).listen(0, "127.0.0.1");
                 })
                 .onComplete(ctx.succeeding(s -> {
                     server = s;
-                    client.request(HttpMethod.GET, s.actualPort(), "localhost", "/test")
+                    client.request(HttpMethod.GET, s.actualPort(), "127.0.0.1", "/test")
                             .compose(req -> req.send())
                             .compose(resp -> resp.body())
                             .onComplete(ctx.succeeding(body -> {

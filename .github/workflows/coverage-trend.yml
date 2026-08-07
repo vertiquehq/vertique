@@ -1,0 +1,52 @@
+# SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
+# SPDX-License-Identifier: EUPL-1.2
+#
+# Coverage trend publisher — the snapshot.yml pattern applied to coverage
+# data. Required CI stays read-only and merely uploads the aggregate JaCoCo
+# XML as an artifact; this separate, non-required, main-only workflow holds
+# the repository-content write credential and appends one datapoint (plus a
+# shields.io endpoint badge) to the coverage-data branch.
+#
+# It is bound to the completion of the named required-CI workflow, so it can
+# only publish numbers from bytes that were verified, and it is deliberately
+# NOT a required check: a failed trend publication must never erase the
+# required-CI result that was already established. Pull-request code never
+# reaches the credential — workflow_run executes this file from main.
+
+name: Coverage Trend
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: write
+  actions: read
+
+# Appends must serialize; a lost datapoint is better than a corrupted branch.
+concurrency:
+  group: coverage-trend-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Append coverage datapoint
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          # The exact commit required CI verified — never a moving ref.
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: "22"
+
+      - name: Append datapoint to the coverage-data branch
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/coverage-trend.mjs --run-id ${{ github.event.workflow_run.id }} --head-sha ${{ github.event.workflow_run.head_sha }}

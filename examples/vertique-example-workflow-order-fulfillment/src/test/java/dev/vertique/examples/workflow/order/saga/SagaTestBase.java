@@ -184,7 +184,7 @@ public abstract class SagaTestBase {
                                 .put("shipping", new JsonObject().put("instances", 1))
                                 .put("fraud", new JsonObject().put("instances", 1))
                                 .put("workflow", new JsonObject().put("signals", new JsonObject().put("instances", 1))))
-                .put("management", new JsonObject().put("port", 0));
+                .put("management", new JsonObject().put("port", 0).put("host", "127.0.0.1"));
 
         component = DaggerAppComponent.builder()
                 .vertxModule(new VertxModule(vertx, config))

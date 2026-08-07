@@ -209,6 +209,7 @@ Before each row's scope opens, the sweep loads the owning `WorkflowInstance` (a 
 - **Late callbacks are swallowed deliberately.** Task / timer callbacks carrying a `branchTokenId` from a superseded branch are recorded as `BRANCH_LATE_CALLBACK_IGNORED` history entries and return without raising — preventing zombie callbacks from corrupting later state.
 - **Signal claim is non-locking + race-safe upsert.** `signal()` and `cancel()` use `findById` + `claimOrResolveSignal` to honor the `workflow_timers`-before-`workflow_instances` lock-order invariant.
 - **Archived rows are filtered by default.** `findFiltered` / `findByFilter` exclude `archived_at IS NOT NULL` rows unless `WorkflowFilter.includeArchived = true`.
+- **Archive and purge do not share a clock.** `archiveBefore` stamps `archived_at` from the *database* clock, while `purgeArchivedBefore` compares it against the cutoff *you* supply. Since your application drives the sweep cadence, a purge issued immediately after an archive with a cutoff read from your own clock may skip rows it just archived, whenever the database clock is running ahead. Use a cutoff meaningfully in the past — real retention horizons of hours or days make this invisible.
 
 ---
 

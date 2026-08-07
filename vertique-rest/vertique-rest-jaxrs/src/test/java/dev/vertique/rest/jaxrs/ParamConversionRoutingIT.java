@@ -201,7 +201,7 @@ public class ParamConversionRoutingIT {
     @Test
     @DisplayName("A valid @HeaderParam enum converts to the enum constant and the resource returns 200")
     void enumHeaderParamConverts(io.vertx.core.Vertx vertx, VertxTestContext ctx) {
-        deploy(vertx, ctx, port -> client.request(HttpMethod.GET, port, "localhost", "/convert/mode")
+        deploy(vertx, ctx, port -> client.request(HttpMethod.GET, port, "127.0.0.1", "/convert/mode")
                 .compose(req -> req.putHeader("X-Mode", "VALUE_A").send())
                 .compose(resp -> {
                     int status = resp.statusCode();
@@ -270,7 +270,7 @@ public class ParamConversionRoutingIT {
             VertxTestContext ctx,
             String path,
             java.util.function.Consumer<String> assertion) {
-        deploy(vertx, ctx, port -> client.request(HttpMethod.GET, port, "localhost", path)
+        deploy(vertx, ctx, port -> client.request(HttpMethod.GET, port, "127.0.0.1", path)
                 .compose(req -> req.send())
                 .compose(resp -> {
                     int status = resp.statusCode();
@@ -297,7 +297,7 @@ public class ParamConversionRoutingIT {
                 .compose(apiRouter -> {
                     Router root = Router.router(vertx);
                     root.route("/*").subRouter(apiRouter);
-                    return vertx.createHttpServer().requestHandler(root).listen(0);
+                    return vertx.createHttpServer().requestHandler(root).listen(0, "127.0.0.1");
                 })
                 .onComplete(ctx.succeeding(s -> {
                     server = s;

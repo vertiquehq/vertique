@@ -7,28 +7,12 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import dagger.BindsInstance;
-import dagger.Component;
-import dev.vertique.json.DefaultJsonMapperProfileRegistry;
-import dev.vertique.json.JsonConfig;
 import dev.vertique.rest.core.ValidationErrorDetail;
-import dev.vertique.rest.core.config.HttpConfig;
-import dev.vertique.rest.core.config.JaxRsConfig;
-import dev.vertique.rest.core.context.RestContextResolution;
 import dev.vertique.rest.core.request.FilePart;
-import dev.vertique.rest.core.response.BufferedBody;
-import dev.vertique.rest.core.response.ResponseBodyEncoder;
-import dev.vertique.rest.core.response.ResponseSerializer;
-import dev.vertique.rest.core.response.SerializedBody;
-import dev.vertique.rest.jaxrs.DefaultExceptionMapper;
-import dev.vertique.rest.jaxrs.DefaultResponseSerializer;
-import dev.vertique.rest.jaxrs.ExceptionMapperRegistry;
-import dev.vertique.rest.jaxrs.JaxRsRouterMount;
-import dev.vertique.rest.jaxrs.RestExceptionMapper;
-import dev.vertique.rest.jaxrs.runtime.MagicBytesVerifierModule;
 import dev.vertique.rest.jaxrs.validation.FileContentVerifier;
-import dev.vertique.rest.jaxrs.validation.OperationSchemaSource;
-import dev.vertique.rest.jaxrs.validation.RequestValidationStrategy;
+import dev.vertique.rest.test.RestTestContributions;
+import dev.vertique.rest.test.RestTestMount;
+import dev.vertique.rest.test.RestTestMounts;
 import io.swagger.v3.oas.annotations.Operation;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
@@ -36,27 +20,18 @@ import io.vertx.core.buffer.Buffer;
 import io.vertx.core.http.HttpClient;
 import io.vertx.core.http.HttpMethod;
 import io.vertx.core.http.HttpServer;
-import io.vertx.core.json.Json;
 import io.vertx.core.json.JsonArray;
+import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.FileUpload;
-import io.vertx.ext.web.Router;
-import io.vertx.ext.web.RoutingContext;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
-import jakarta.inject.Singleton;
 import jakarta.ws.rs.Consumes;
 import jakarta.ws.rs.FormParam;
 import jakarta.ws.rs.POST;
 import jakarta.ws.rs.Path;
 import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
-import jakarta.ws.rs.core.Response;
-import java.io.IOException;
-import java.nio.file.Files;
 import java.util.Base64;
-import java.util.Comparator;
-import java.util.List;
-import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
@@ -89,7 +64,7 @@ public class MagicBytesVerifierRouteIT {
     static void setUpClient(Vertx injectedVertx) {
         vertx = injectedVertx;
         client = vertx.createHttpClient();
-        verifiers = DaggerMagicBytesVerifierRouteIT_MagicBytesVerifierComponent.factory()
+        verifiers = DaggerValidationMountComponent_MagicBytesVerifierComponent.factory()
                 .create(vertx)
                 .fileContentVerifiers();
     }
@@ -105,7 +80,7 @@ public class MagicBytesVerifierRouteIT {
         if (server != null) {
             server.close().toCompletionStage().toCompletableFuture().get(ASYNC_TIMEOUT_SECONDS, TimeUnit.SECONDS);
         }
-        deleteRecursively(uploadsDirectory);
+        RestTestMounts.deleteRecursively(uploadsDirectory);
     }
 
     @Test
@@ -161,17 +136,12 @@ public class MagicBytesVerifierRouteIT {
     }
 
     private Future<HttpServer> startServer(UploadResource resource) {
-        JaxRsRouterMount mount = buildFactory().create("/*", "openapi.json", Set.of(resource));
-        return mount.createRouter(vertx).compose(apiRouter -> {
-            Router root = Router.router(vertx);
-            root.route("/*").subRouter(apiRouter);
-            return vertx.createHttpServer().requestHandler(root).listen(0);
-        });
+        return RestTestMounts.startServer(vertx, buildMount(), Set.of(resource));
     }
 
     private Future<HttpResult> postMultipart(byte[] content) {
         Buffer body = MultipartBodies.singleFile("upload", "payload.png", "image/png", content);
-        return client.request(HttpMethod.POST, server.actualPort(), "localhost", "/files")
+        return client.request(HttpMethod.POST, server.actualPort(), "127.0.0.1", "/files")
                 .compose(request -> request.putHeader("Content-Type", MultipartBodies.contentType())
                         .send(body))
                 .compose(response -> {
@@ -181,74 +151,26 @@ public class MagicBytesVerifierRouteIT {
                 });
     }
 
-    private JaxRsRouterMount.Factory buildFactory() {
-        DefaultExceptionMapper defaultMapper = new DefaultExceptionMapper()
-                .on(dev.vertique.rest.core.RestValidationException.class, ex -> Response.status(400)
-                        .entity(dev.vertique.rest.core.ValidationProblemDetail.of(ex.getMessage(), ex.errors()))
-                        .type("application/problem+json")
-                        .build());
-        ExceptionMapperRegistry registry = new ExceptionMapperRegistry(defaultMapper, Set.of());
-        RestExceptionMapper restExceptionMapper = new RestExceptionMapper();
-        RestContextResolution restContextResolution = new RestContextResolution(Set.of());
-        List<ResponseBodyEncoder> encoders = List.of(new StringEncoder(), new JsonEncoder());
-        ResponseSerializer responseSerializer = new DefaultResponseSerializer(List.of(), encoders);
-        HttpConfig httpConfig = HttpConfig.builder()
-                .uploadsDirectory(uploadsDirectory.toString())
-                .build();
-        JaxRsConfig jaxRsConfig = JaxRsConfig.builder()
-                .validationStrategy(WebValidationStrategy.ID)
-                .build();
-        RequestValidationStrategy webValidation = new WebValidationStrategy(
-                jaxRsConfig, dev.vertique.rest.jaxrs.convert.ConversionContexts.defaultResolver(), verifiers);
-        OperationSchemaSource schemaSource = new AnnotationSchemaSource();
-
-        return new JaxRsRouterMount.Factory(
-                Set.of(),
-                Set.of(),
-                Set.of(),
-                Set.of(),
-                Set.of(),
-                Set.of(),
-                Set.of(),
-                restExceptionMapper,
-                registry,
-                Set.of(),
-                responseSerializer,
-                restContextResolution,
-                dev.vertique.rest.jaxrs.convert.ConversionContexts.defaultResolver(),
-                null,
-                Optional.empty(),
-                List.of(),
-                encoders,
-                httpConfig,
-                jaxRsConfig,
-                new DefaultJsonMapperProfileRegistry(Set.of()),
-                JsonConfig.defaults(),
-                Optional.empty(),
-                Optional.empty(),
-                Set.of(),
-                Optional.empty(),
-                Optional.empty(),
-                verifiers,
-                Set.of(webValidation),
-                Optional.of(schemaSource));
+    /**
+     * Builds the mount handle for this test through {@link ValidationMountComponent}, carrying the
+     * real magic-bytes verifier resolved in {@link #setUpClient} as a test contribution. An instance
+     * method (not static) because it reads the per-test {@link #uploadsDirectory} field, which flows
+     * in as the production {@code http.uploadsDirectory} config.
+     *
+     * @return the real mount handle, wired with the {@code web-validation} strategy and the
+     *     opt-in magic-bytes verifier
+     */
+    private RestTestMount buildMount() {
+        RestTestContributions.Builder contributions = RestTestContributions.builder();
+        verifiers.forEach(contributions::addFileContentVerifier);
+        JsonObject config =
+                new JsonObject().put("http", new JsonObject().put("uploadsDirectory", uploadsDirectory.toString()));
+        return MountFixtures.mount(vertx, config, contributions.build());
     }
 
     private static java.nio.file.Path uniqueUploadsDirectory(String testName) {
         return java.nio.file.Path.of(
                 "target", "file-uploads", "MagicBytesVerifierRouteIT", testName + "-" + UUID.randomUUID());
-    }
-
-    private static void deleteRecursively(java.nio.file.Path directory) throws IOException {
-        if (directory == null || Files.notExists(directory)) {
-            return;
-        }
-        try (var paths = Files.walk(directory)) {
-            for (java.nio.file.Path path :
-                    paths.sorted(Comparator.reverseOrder()).toList()) {
-                Files.deleteIfExists(path);
-            }
-        }
     }
 
     private record HttpResult(int statusCode, String contentType, Buffer body) {}
@@ -266,55 +188,6 @@ public class MagicBytesVerifierRouteIT {
         public String upload(@FormParam("upload") @FilePart(allowedTypes = {"image/png"}) FileUpload upload) {
             invoked.set(true);
             return "accepted";
-        }
-    }
-
-    /** Test graph proving opt-in through the public module without naming its package-private verifier. */
-    @Singleton
-    @Component(modules = MagicBytesVerifierModule.class)
-    interface MagicBytesVerifierComponent {
-
-        Set<FileContentVerifier> fileContentVerifiers();
-
-        @Component.Factory
-        interface Factory {
-            MagicBytesVerifierComponent create(@BindsInstance Vertx vertx);
-        }
-    }
-
-    /** Minimal String response encoder. */
-    private static final class StringEncoder implements ResponseBodyEncoder {
-        @Override
-        public boolean canEncode(Class<?> entityType, String contentType) {
-            return entityType == String.class;
-        }
-
-        @Override
-        public SerializedBody encode(RoutingContext ctx, Response response, Object entity) {
-            return new BufferedBody(Buffer.buffer(String.valueOf(entity)), "text/plain", null);
-        }
-
-        @Override
-        public int priority() {
-            return 1000;
-        }
-    }
-
-    /** Minimal validation-problem JSON encoder. */
-    private static final class JsonEncoder implements ResponseBodyEncoder {
-        @Override
-        public boolean canEncode(Class<?> entityType, String contentType) {
-            return contentType == null || contentType.contains("json");
-        }
-
-        @Override
-        public SerializedBody encode(RoutingContext ctx, Response response, Object entity) {
-            return new BufferedBody(Buffer.buffer(Json.encode(entity)), "application/json", null);
-        }
-
-        @Override
-        public int priority() {
-            return 1100;
         }
     }
 }

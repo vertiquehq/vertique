@@ -57,11 +57,11 @@ Classify a check by the qualifier you contribute it under. `@Liveness` answers "
 
 ### Aggregation rules
 
-- Every check in the set runs concurrently; the endpoint waits for all of them.
+- Every check in the set runs concurrently; the endpoint waits for all of them to settle, whatever their outcome. The one exception is a check that throws an `Error` while starting — see the last bullet.
 - The overall status is UP only when every individual check is UP.
 - An empty check set is UP with an empty `checks` array.
 - Each check is bounded by a per-check timeout (`healthCheckTimeoutSeconds`, default 5); a timed-out check counts as DOWN.
-- A check that returns a failed future, or that throws synchronously from `check()`, is reported as DOWN carrying the throwable's message.
+- A check that returns a failed future, or that throws an **exception** synchronously from `check()`, is reported as DOWN carrying the throwable's message — or its fully qualified class name when the throwable has no message. A check that throws an `Error` rather than an exception from `check()` or `name()` is not attributable to one entry and degrades the whole probe to the terse `{"status":"DOWN","checks":[]}` body. Because checks are started in sequence, such an `Error` also prevents the checks after it from starting at all and abandons those already in flight.
 
 ### Response format
 
@@ -87,6 +87,8 @@ The Vert.x verticle that owns the management server. It is `@Inject`-constructib
 
 When `management.enabled` is `false` the verticle starts successfully, binds no port, and invokes no endpoint contributors — which is the usual configuration for unit tests and for environments where probes are handled outside the process.
 
+The server binds `management.port` on the interface named by `management.host`, which defaults to `0.0.0.0` — every interface. Set it to `127.0.0.1` to keep the management server reachable only from inside the host, for example in tests and on developer machines where an ephemeral port on a wildcard bind would otherwise be exposed to the local network. A host that cannot be resolved fails the verticle's deployment rather than falling back to the wildcard address.
+
 After a successful bind, the resolved port is published into the Vert.x shared local map `vertique` under the key `management.port`. Configure `port: 0` and read that entry to discover the ephemeral port in tests:
 
 ```java
@@ -95,7 +97,7 @@ int boundPort = (int) vertx.sharedData().getLocalMap("vertique").get("management
 
 ### ManagementConfig
 
-Typed configuration object deserialized from the `management` configuration section. Inject it wherever the port or enablement flag is needed and read `config.port()`, `config.enabled()`, and `config.healthCheckTimeoutSeconds()`. There are no separate scalar bindings for these values.
+Typed configuration object deserialized from the `management` configuration section. Inject it wherever the bind address or enablement flag is needed and read `config.port()`, `config.host()`, `config.enabled()`, and `config.healthCheckTimeoutSeconds()`. There are no separate scalar bindings for these values.
 
 ### ManagementModule
 
@@ -123,7 +125,7 @@ public interface HealthCheck {
 }
 ```
 
-Return a *completed* future carrying an UP or DOWN `HealthCheckResult` rather than a failed future. A failed future is still reported as DOWN, but the message it carries is the raw throwable message.
+Return a *completed* future carrying an UP or DOWN `HealthCheckResult` rather than a failed future. A failed future is still reported as DOWN, but the diagnostic it carries is only the raw throwable message — or the throwable's class name when it has no message.
 
 ```java
 @Singleton
@@ -147,7 +149,7 @@ public class CacheHealthCheck implements HealthCheck {
             return Future.succeededFuture(
                     cache.ping() ? HealthCheckResult.up() : HealthCheckResult.down("ping failed"));
         } catch (Exception e) {
-            return Future.succeededFuture(HealthCheckResult.down(String.valueOf(e.getMessage())));
+            return Future.succeededFuture(HealthCheckResult.down(e));
         }
     }
 }
@@ -166,7 +168,8 @@ The canonical constructor normalizes a `null` data map to empty and takes an unm
 | `HealthCheckResult.up()` | UP | empty |
 | `HealthCheckResult.up(Map<String,Object>)` | UP | provided map |
 | `HealthCheckResult.down()` | DOWN | empty |
-| `HealthCheckResult.down(String error)` | DOWN | `{"error": "<error>"}` |
+| `HealthCheckResult.down(String error)` | DOWN | `{"error": "<error>"}`, or empty when `error` is `null` |
+| `HealthCheckResult.down(Throwable cause)` | DOWN | `{"error": "<cause.getMessage()>"}`, falling back to the throwable's fully qualified class name when it has no message or `getMessage()` itself throws an exception; `cause` must not be `null` |
 | `HealthCheckResult.down(Map<String,Object>)` | DOWN | provided map |
 
 `HealthStatus` is a two-constant enum, `UP` and `DOWN`.
@@ -181,7 +184,8 @@ The abstract Dagger module in `dev.vertique.core.health` that declares both `@Mu
 
 ### Invariants & Gotchas
 
-- **`HealthCheckResult.down(String)` rejects a `null` message.** The single-argument overload builds `Map.of("error", error)`, and `Map.of` throws `NullPointerException` on a `null` value. A throwable's message is frequently `null`, so wrap it (`String.valueOf(e.getMessage())`) instead of passing it straight through.
+- **Prefer `down(Throwable)` over `down(String)` when you hold the failure.** `down(String)` treats a `null` message as "no diagnostic available" and yields a DOWN result with empty data, so `down(e.getMessage())` silently loses every trace of a message-less exception. `down(e)` falls back to the throwable's class name and keeps a diagnostic in the probe response — it does so for any failure whose `getMessage()` throws an exception, so mapping such a failure with `.otherwise(HealthCheckResult::down)` does not turn into a second, unrelated failure. A `getMessage()` that throws an `Error` rather than an exception still propagates.
+- **Health check `data` must be flat, JSON-shaped and acyclic.** Values are serialized into the probe response, so a map or collection that refers back to itself — or that nests deeper than roughly 1000 levels — cannot be rendered. Such a check is reported DOWN, and data deep enough to break the response as a whole degrades the probe to a terse `{"status":"DOWN","checks":[]}` body that names no check at all. Put identifiers, counts and short strings in `data`; keep object graphs out of it.
 - **`name()` must be unique within its qualifier set.** Names are the JSON keys in the probe response; duplicates produce two entries that operators cannot tell apart. The framework does not reject a collision.
 - **A check's work counts against the probe's latency.** All checks in a set run concurrently, but the endpoint responds only after the slowest one settles or times out, so `healthCheckTimeoutSeconds` is effectively the probe's worst-case latency.
 - **Never block the event loop inside `check()`.** Offload blocking work with `vertx.executeBlocking` and return the resulting future.
@@ -289,6 +293,7 @@ Deserialized from the `management` section into `ManagementConfig`. Every field 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `port` | `int` | `9090` | Management HTTP server port; `0` binds an ephemeral port |
+| `host` | `String` | `"0.0.0.0"` | Network interface to bind; `"127.0.0.1"` restricts the server to loopback; must be non-blank |
 | `enabled` | `boolean` | `true` | `false` skips port binding and contributor invocation |
 | `healthCheckTimeoutSeconds` | `long` | `5` | Per-check timeout for both probe endpoints; must be positive |
 
@@ -296,13 +301,14 @@ Deserialized from the `management` section into `ManagementConfig`. Every field 
 {
   "management": {
     "port": 9090,
+    "host": "0.0.0.0",
     "enabled": true,
     "healthCheckTimeoutSeconds": 10
   }
 }
 ```
 
-`healthCheckTimeoutSeconds` is validated when the verticle starts, not when configuration is parsed: a zero or negative value fails the management verticle's deployment with `IllegalArgumentException` rather than at config-load time. Unknown properties in the `management` section are ignored.
+`healthCheckTimeoutSeconds` and `host` are validated when the verticle starts, not when configuration is parsed: a zero or negative timeout, or an explicitly `null` or blank `management.host`, fails the management verticle's deployment with `IllegalArgumentException` rather than at config-load time. Unknown properties in the `management` section are ignored.
 
 With hierarchical property expansion, `management.port=9090` in a `.properties` source expands to the same nested object.
 

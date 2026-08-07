@@ -216,8 +216,8 @@ class RequestLocaleInterceptorTest {
             HttpClient client = vertx.createHttpClient();
             vertx.createHttpServer()
                     .requestHandler(router)
-                    .listen(0)
-                    .compose(server -> client.request(HttpMethod.GET, server.actualPort(), "localhost", "/test")
+                    .listen(0, "127.0.0.1")
+                    .compose(server -> client.request(HttpMethod.GET, server.actualPort(), "127.0.0.1", "/test")
                             .compose(req -> req.putHeader(HttpHeaders.ACCEPT_LANGUAGE.toString(), "sv-SE")
                                     .send())
                             .compose(resp -> resp.body())

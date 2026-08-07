@@ -49,6 +49,7 @@ public class ManagementVerticle extends AbstractVerticle {
     private final Set<HealthCheck> livenessChecks;
     private final Set<HealthCheck> readinessChecks;
     private final int port;
+    private final String host;
     private final boolean enabled;
     private final long healthCheckTimeoutSeconds;
     private final Set<ManagementEndpointContributor> endpointContributors;
@@ -71,6 +72,7 @@ public class ManagementVerticle extends AbstractVerticle {
         this.livenessChecks = livenessChecks;
         this.readinessChecks = readinessChecks;
         this.port = config.port();
+        this.host = config.host();
         this.enabled = config.enabled();
         this.healthCheckTimeoutSeconds = config.healthCheckTimeoutSeconds();
         this.endpointContributors = endpointContributors;
@@ -83,6 +85,11 @@ public class ManagementVerticle extends AbstractVerticle {
      * in {@link OrderedExtension#comparator()} order. If any contributor throws, the start
      * promise is failed with that exception and no HTTP server port is bound.
      *
+     * <p>Like {@code healthCheckTimeoutSeconds}, the configured host is validated here rather
+     * than at config-load time: an explicit {@code null} or blank {@code management.host} fails
+     * the deployment with an {@link IllegalArgumentException} naming the configuration key,
+     * instead of a bare {@link NullPointerException} out of the bind.
+     *
      * @param startPromise the promise to complete when the server is ready, or fail on error
      */
     @Override
@@ -91,6 +98,10 @@ public class ManagementVerticle extends AbstractVerticle {
             log.info("Management server disabled");
             startPromise.complete();
             return;
+        }
+
+        if (host == null || host.isBlank()) {
+            throw new IllegalArgumentException("management.host must be a non-blank bind address, got: " + host);
         }
 
         Router router = Router.router(vertx);
@@ -116,10 +127,10 @@ public class ManagementVerticle extends AbstractVerticle {
 
         vertx.createHttpServer()
                 .requestHandler(router)
-                .listen(port)
+                .listen(port, host)
                 .onSuccess(server -> {
                     vertx.sharedData().getLocalMap("vertique").put("management.port", server.actualPort());
-                    log.info("Management server started on port {}", server.actualPort());
+                    log.info("Management server started on {}:{}", host, server.actualPort());
                     startPromise.complete();
                 })
                 .onFailure(cause -> {

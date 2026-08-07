@@ -7,15 +7,12 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import dev.vertique.rest.core.routing.SecurityRequirementSet;
-import dev.vertique.rest.core.security.SecurityPolicy;
 import dev.vertique.rest.jaxrs.routing.BodyDescriptor;
-import dev.vertique.rest.jaxrs.routing.FilePartDescriptor;
 import dev.vertique.rest.jaxrs.routing.JaxRsOperationDescriptor;
 import dev.vertique.rest.jaxrs.routing.ParamDescriptor;
+import dev.vertique.rest.jaxrs.routing.StubOperationDescriptor;
 import io.vertx.core.Handler;
 import io.vertx.ext.web.RoutingContext;
-import java.lang.annotation.Annotation;
 import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.DisplayName;
@@ -35,72 +32,13 @@ class RequestValidationStrategyTest {
     // --- Descriptor stub ---
 
     private static JaxRsOperationDescriptor op(List<ParamDescriptor> params, Optional<BodyDescriptor> body) {
-        return new JaxRsOperationDescriptor() {
-            @Override
-            public String operationId() {
-                return "op";
-            }
-
-            @Override
-            public String httpMethod() {
-                return "POST";
-            }
-
-            @Override
-            public String routeTemplate() {
-                return "/things";
-            }
-
-            @Override
-            public List<String> consumes() {
-                return List.of();
-            }
-
-            @Override
-            public List<String> produces() {
-                return List.of();
-            }
-
-            @Override
-            public SecurityPolicy securityPolicy() {
-                return new SecurityPolicy.None();
-            }
-
-            @Override
-            public List<SecurityRequirementSet> securityRequirementSets() {
-                return List.of();
-            }
-
-            @Override
-            public List<Annotation> methodAnnotations() {
-                return List.of();
-            }
-
-            @Override
-            public List<Annotation> classAnnotations() {
-                return List.of();
-            }
-
-            @Override
-            public <A extends Annotation> Optional<A> findAnnotation(Class<A> type) {
-                return Optional.empty();
-            }
-
-            @Override
-            public List<ParamDescriptor> parameters() {
-                return params;
-            }
-
-            @Override
-            public List<FilePartDescriptor> fileParts() {
-                return List.of();
-            }
-
-            @Override
-            public Optional<BodyDescriptor> body() {
-                return body;
-            }
-        };
+        return StubOperationDescriptor.builder()
+                .operationId("op")
+                .httpMethod("POST")
+                .routeTemplate("/things")
+                .parameters(params)
+                .body(body)
+                .build();
     }
 
     /** A minimal in-test strategy whose {@code id()} is {@code "web-validation"}. */

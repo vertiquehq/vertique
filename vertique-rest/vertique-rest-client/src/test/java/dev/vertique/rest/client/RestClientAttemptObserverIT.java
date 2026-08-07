@@ -210,7 +210,7 @@ public class RestClientAttemptObserverIT {
 
     @RegisterExtension
     static WireMockExtension wireMock = WireMockExtension.newInstance()
-            .options(wireMockConfig().dynamicPort())
+            .options(wireMockConfig().dynamicPort().bindAddress("127.0.0.1"))
             .build();
 
     /**
@@ -234,7 +234,7 @@ public class RestClientAttemptObserverIT {
      * @return a ready-to-use proxy
      */
     private ObserverClient buildClient(Vertx vertx, RestClientInterceptor... interceptors) {
-        RestClientBuilder b = new RestClientBuilder(vertx).baseUrl(wireMock.baseUrl());
+        RestClientBuilder b = new RestClientBuilder(vertx).baseUrl("http://127.0.0.1:" + wireMock.getPort());
         for (RestClientInterceptor i : interceptors) {
             b.register(i);
         }
@@ -251,8 +251,9 @@ public class RestClientAttemptObserverIT {
      */
     private ObserverClient buildClientWithCapturer(
             Vertx vertx, RestClientContextCapturer<?> capturer, RestClientInterceptor... interceptors) {
-        RestClientBuilder b =
-                new RestClientBuilder(vertx).baseUrl(wireMock.baseUrl()).registerCapturer(capturer);
+        RestClientBuilder b = new RestClientBuilder(vertx)
+                .baseUrl("http://127.0.0.1:" + wireMock.getPort())
+                .registerCapturer(capturer);
         for (RestClientInterceptor i : interceptors) {
             b.register(i);
         }
@@ -285,7 +286,7 @@ public class RestClientAttemptObserverIT {
                     assertThat(a.durationMs()).isGreaterThanOrEqualTo(0L);
                     // Safe-by-type target — scheme/host/port/pathTemplate, never the expanded URI.
                     assertThat(a.target().scheme()).isEqualTo("http");
-                    assertThat(a.target().host()).isEqualTo("localhost");
+                    assertThat(a.target().host()).isEqualTo("127.0.0.1");
                     assertThat(a.target().port()).isEqualTo(wireMock.getPort());
                     assertThat(a.target().pathTemplate()).isEqualTo("/single");
                     ctx.completeNow();
@@ -307,14 +308,14 @@ public class RestClientAttemptObserverIT {
                 .baseUrl("http://configured-base:9999")
                 .register(obs)
                 .build(ObserverClient.class);
-        java.net.URI target = java.net.URI.create(wireMock.baseUrl() + "/url-target");
+        java.net.URI target = java.net.URI.create("http://127.0.0.1:" + wireMock.getPort() + "/url-target");
 
         client.viaUrl(target)
                 .onComplete(ctx.succeeding(body -> ctx.verify(() -> {
                     assertThat(obs.attempts).hasSize(1);
                     CapturingObserver.Attempt a = obs.attempts.get(0);
                     assertThat(a.target().scheme()).isEqualTo("http");
-                    assertThat(a.target().host()).isEqualTo("localhost"); // the @Url host, not "configured-base"
+                    assertThat(a.target().host()).isEqualTo("127.0.0.1"); // the @Url host, not "configured-base"
                     assertThat(a.target().port()).isEqualTo(wireMock.getPort());
                     assertThat(a.target().pathTemplate()).isNull(); // @Url has no route template
                     ctx.completeNow();
@@ -673,7 +674,7 @@ public class RestClientAttemptObserverIT {
         };
 
         new RestClientBuilder(vertx)
-                .baseUrl(wireMock.baseUrl())
+                .baseUrl("http://127.0.0.1:" + wireMock.getPort())
                 .register(systemFirst)
                 .register(appLast)
                 .build(ObserverClient.class)

@@ -50,8 +50,12 @@ class HttpVerticleTest {
             }
         };
 
-        HttpVerticle verticle =
-                new HttpVerticle(new HttpServerOptions().setPort(0), Set.of(), Set.of(), Set.of(badMount), Set.of());
+        HttpVerticle verticle = new HttpVerticle(
+                new HttpServerOptions().setHost("127.0.0.1").setPort(0),
+                Set.of(),
+                Set.of(),
+                Set.of(badMount),
+                Set.of());
 
         vertx.deployVerticle(verticle).onComplete(ctx.failing(err -> {
             ctx.verify(() -> assertTrue(err.getMessage().contains("must start with '/'")));
@@ -74,8 +78,12 @@ class HttpVerticleTest {
             }
         };
 
-        HttpVerticle verticle =
-                new HttpVerticle(new HttpServerOptions().setPort(0), Set.of(), Set.of(), Set.of(badMount), Set.of());
+        HttpVerticle verticle = new HttpVerticle(
+                new HttpServerOptions().setHost("127.0.0.1").setPort(0),
+                Set.of(),
+                Set.of(),
+                Set.of(badMount),
+                Set.of());
 
         vertx.deployVerticle(verticle).onComplete(ctx.failing(err -> {
             ctx.verify(() -> assertTrue(err.getMessage().contains("must end with '/*'")));
@@ -98,8 +106,12 @@ class HttpVerticleTest {
             }
         };
 
-        HttpVerticle verticle =
-                new HttpVerticle(new HttpServerOptions().setPort(0), Set.of(), Set.of(), Set.of(badMount), Set.of());
+        HttpVerticle verticle = new HttpVerticle(
+                new HttpServerOptions().setHost("127.0.0.1").setPort(0),
+                Set.of(),
+                Set.of(),
+                Set.of(badMount),
+                Set.of());
 
         vertx.deployVerticle(verticle).onComplete(ctx.failing(err -> {
             ctx.verify(() -> assertTrue(err.getMessage().contains("null or blank")));
@@ -122,8 +134,12 @@ class HttpVerticleTest {
             }
         };
 
-        HttpVerticle verticle =
-                new HttpVerticle(new HttpServerOptions().setPort(0), Set.of(), Set.of(), Set.of(badMount), Set.of());
+        HttpVerticle verticle = new HttpVerticle(
+                new HttpServerOptions().setHost("127.0.0.1").setPort(0),
+                Set.of(),
+                Set.of(),
+                Set.of(badMount),
+                Set.of());
 
         vertx.deployVerticle(verticle).onComplete(ctx.failing(err -> {
             ctx.verify(() -> assertTrue(err.getMessage().contains("double slash")));
@@ -146,8 +162,12 @@ class HttpVerticleTest {
             }
         };
 
-        HttpVerticle verticle =
-                new HttpVerticle(new HttpServerOptions().setPort(0), Set.of(), Set.of(), Set.of(badMount), Set.of());
+        HttpVerticle verticle = new HttpVerticle(
+                new HttpServerOptions().setHost("127.0.0.1").setPort(0),
+                Set.of(),
+                Set.of(),
+                Set.of(badMount),
+                Set.of());
 
         vertx.deployVerticle(verticle).onComplete(ctx.failing(err -> {
             ctx.verify(() -> assertTrue(err.getMessage().contains("query or fragment")));
@@ -217,7 +237,7 @@ class HttpVerticleTest {
         };
 
         HttpVerticle verticle = new HttpVerticle(
-                new HttpServerOptions().setPort(0),
+                new HttpServerOptions().setHost("127.0.0.1").setPort(0),
                 Set.of(),
                 Set.of(),
                 Set.of(mountPrio100, mountPrio0, mountPrio50),
@@ -279,7 +299,11 @@ class HttpVerticleTest {
         };
 
         HttpVerticle verticle = new HttpVerticle(
-                new HttpServerOptions().setPort(0), Set.of(), Set.of(), Set.of(mountGamma, mountBeta), Set.of());
+                new HttpServerOptions().setHost("127.0.0.1").setPort(0),
+                Set.of(),
+                Set.of(),
+                Set.of(mountGamma, mountBeta),
+                Set.of());
 
         vertx.deployVerticle(verticle).onComplete(ctx.succeeding(id -> {
             ctx.verify(() -> {
@@ -296,8 +320,8 @@ class HttpVerticleTest {
     @Test
     @DisplayName("Should start successfully with no mounts")
     void shouldStartWithNoMounts(Vertx vertx, VertxTestContext ctx) {
-        HttpVerticle verticle =
-                new HttpVerticle(new HttpServerOptions().setPort(0), Set.of(), Set.of(), Set.of(), Set.of());
+        HttpVerticle verticle = new HttpVerticle(
+                new HttpServerOptions().setHost("127.0.0.1").setPort(0), Set.of(), Set.of(), Set.of(), Set.of());
 
         vertx.deployVerticle(verticle).onComplete(ctx.succeeding(id -> ctx.completeNow()));
     }
@@ -320,7 +344,11 @@ class HttpVerticleTest {
         };
 
         HttpVerticle verticle = new HttpVerticle(
-                new HttpServerOptions().setPort(0), Set.of(), Set.of(), Set.of(failingMount), Set.of());
+                new HttpServerOptions().setHost("127.0.0.1").setPort(0),
+                Set.of(),
+                Set.of(),
+                Set.of(failingMount),
+                Set.of());
 
         vertx.deployVerticle(verticle).onComplete(ctx.failing(err -> {
             ctx.verify(() -> assertEquals("router creation failed", err.getMessage()));
@@ -351,7 +379,11 @@ class HttpVerticleTest {
         };
 
         HttpVerticle verticle = new HttpVerticle(
-                new HttpServerOptions().setPort(0), Set.of(beforeCustomizer), Set.of(), Set.of(mount), Set.of());
+                new HttpServerOptions().setHost("127.0.0.1").setPort(0),
+                Set.of(beforeCustomizer),
+                Set.of(),
+                Set.of(mount),
+                Set.of());
 
         vertx.deployVerticle(verticle).onComplete(ctx.succeeding(id -> {
             ctx.verify(() -> {
@@ -394,7 +426,11 @@ class HttpVerticleTest {
         };
 
         HttpVerticle verticle = new HttpVerticle(
-                new HttpServerOptions().setPort(0), Set.of(afterCustomizer), Set.of(), Set.of(mount), Set.of());
+                new HttpServerOptions().setHost("127.0.0.1").setPort(0),
+                Set.of(afterCustomizer),
+                Set.of(),
+                Set.of(mount),
+                Set.of());
 
         vertx.deployVerticle(verticle).onComplete(ctx.succeeding(id -> {
             ctx.verify(() -> {
@@ -445,7 +481,11 @@ class HttpVerticleTest {
         };
 
         HttpVerticle verticle = new HttpVerticle(
-                new HttpServerOptions().setPort(0), Set.of(afterCustomizer), Set.of(), Set.of(mount), Set.of());
+                new HttpServerOptions().setHost("127.0.0.1").setPort(0),
+                Set.of(afterCustomizer),
+                Set.of(),
+                Set.of(mount),
+                Set.of());
 
         vertx.deployVerticle(verticle).onComplete(ctx.succeeding(id -> {
             ctx.verify(() -> {
@@ -489,7 +529,11 @@ class HttpVerticleTest {
         };
 
         HttpVerticle verticle = new HttpVerticle(
-                new HttpServerOptions().setPort(0), Set.of(), Set.of(), Set.of(mount), Set.of(matchingCustomizer));
+                new HttpServerOptions().setHost("127.0.0.1").setPort(0),
+                Set.of(),
+                Set.of(),
+                Set.of(mount),
+                Set.of(matchingCustomizer));
 
         vertx.deployVerticle(verticle).onComplete(ctx.succeeding(id -> {
             ctx.verify(() -> {
@@ -530,7 +574,11 @@ class HttpVerticleTest {
         };
 
         HttpVerticle verticle = new HttpVerticle(
-                new HttpServerOptions().setPort(0), Set.of(), Set.of(), Set.of(mount), Set.of(nonMatchingCustomizer));
+                new HttpServerOptions().setHost("127.0.0.1").setPort(0),
+                Set.of(),
+                Set.of(),
+                Set.of(mount),
+                Set.of(nonMatchingCustomizer));
 
         vertx.deployVerticle(verticle).onComplete(ctx.succeeding(id -> {
             ctx.verify(() -> assertTrue(customized.isEmpty(), "Non-matching MountCustomizer must not be applied"));

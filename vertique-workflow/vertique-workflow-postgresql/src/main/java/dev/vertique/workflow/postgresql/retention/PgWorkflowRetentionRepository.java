@@ -11,6 +11,7 @@ import io.vertx.sqlclient.Tuple;
 import jakarta.annotation.Nullable;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
+import java.time.Instant;
 import java.time.OffsetDateTime;
 
 /**
@@ -34,6 +35,18 @@ import java.time.OffsetDateTime;
  * <p>Both queries use {@code ORDER BY <cutoff column> ASC, id ASC} for deterministic batch
  * progression so workers picking from the same pool of eligible rows under contention see a
  * stable scan order.
+ *
+ * <p><strong>Archive and purge do not share a clock.</strong> {@link #archiveBefore} stamps
+ * {@code archived_at} with the database's {@code NOW()} — {@code transaction_timestamp()}, the
+ * instant its transaction began — whereas the {@code cutoff} both methods compare against is
+ * supplied by the caller and therefore comes from the caller's clock. The two clocks drift
+ * independently, so a row archived moments ago may carry an {@code archived_at} that is
+ * <em>greater</em> than a cutoff derived from the caller's own {@code now()}, and the purge will
+ * skip it. Nothing here is wrong for production use, where retention cutoffs sit hours or days in
+ * the past; but no caller — a test above all — may assume that archiving and then immediately
+ * purging with a caller-side {@code now()} cutoff deletes the rows it just archived. Where that
+ * round trip must be exercised, seed {@code archived_at} explicitly so both sides of the
+ * comparison come from one clock.
  */
 @Singleton
 public final class PgWorkflowRetentionRepository extends PgSqlRepository {

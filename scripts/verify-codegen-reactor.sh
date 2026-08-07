@@ -225,7 +225,9 @@ run_build() {
 }
 
 record_poison_manifest "$poison_manifest_before"
-run_build sequential
+# Explicit -T 1: .mvn/maven.config injects -T1C, which would silently turn the
+# sequential baseline into a parallel run and void the comparison contract.
+run_build sequential -T 1
 run_build parallel -T 2
 record_poison_manifest "$poison_manifest_after"
 

@@ -229,7 +229,7 @@ public class WebSocketSecurityPipelineIT {
                 Set.of(new AuthUserEndpoint(), new AdminEndpoint(), new OpenEndpoint(), new ServerCloseEndpoint()),
                 router);
 
-        vertx.createHttpServer().requestHandler(router).listen(0).onComplete(ctx.succeeding(s -> {
+        vertx.createHttpServer().requestHandler(router).listen(0, "127.0.0.1").onComplete(ctx.succeeding(s -> {
             server = s;
             port = s.actualPort();
             ctx.completeNow();
@@ -259,7 +259,7 @@ public class WebSocketSecurityPipelineIT {
      */
     private Future<WebSocket> connectWithToken(String path, String token) {
         return wsClient.connect(new WebSocketConnectOptions()
-                .setHost("localhost")
+                .setHost("127.0.0.1")
                 .setPort(port)
                 .setURI(path)
                 .addHeader("Authorization", "Bearer " + token));
@@ -273,7 +273,7 @@ public class WebSocketSecurityPipelineIT {
      */
     private Future<WebSocket> connectAnonymous(String path) {
         return wsClient.connect(
-                new WebSocketConnectOptions().setHost("localhost").setPort(port).setURI(path));
+                new WebSocketConnectOptions().setHost("127.0.0.1").setPort(port).setURI(path));
     }
 
     // --- Tests ---

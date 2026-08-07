@@ -7,24 +7,10 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import dev.vertique.json.DefaultJsonMapperProfileRegistry;
-import dev.vertique.json.JsonConfig;
 import dev.vertique.rest.core.ValidationErrorDetail;
-import dev.vertique.rest.core.config.HttpConfig;
-import dev.vertique.rest.core.config.JaxRsConfig;
-import dev.vertique.rest.core.context.RestContextResolution;
 import dev.vertique.rest.core.request.FilePart;
-import dev.vertique.rest.core.response.BufferedBody;
-import dev.vertique.rest.core.response.ResponseBodyEncoder;
-import dev.vertique.rest.core.response.ResponseSerializer;
-import dev.vertique.rest.core.response.SerializedBody;
-import dev.vertique.rest.jaxrs.DefaultExceptionMapper;
-import dev.vertique.rest.jaxrs.DefaultResponseSerializer;
-import dev.vertique.rest.jaxrs.ExceptionMapperRegistry;
-import dev.vertique.rest.jaxrs.JaxRsRouterMount;
-import dev.vertique.rest.jaxrs.RestExceptionMapper;
-import dev.vertique.rest.jaxrs.validation.OperationSchemaSource;
-import dev.vertique.rest.jaxrs.validation.RequestValidationStrategy;
+import dev.vertique.rest.test.RestTestContributions;
+import dev.vertique.rest.test.RestTestMounts;
 import io.swagger.v3.oas.annotations.Operation;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
@@ -32,12 +18,9 @@ import io.vertx.core.buffer.Buffer;
 import io.vertx.core.http.HttpClient;
 import io.vertx.core.http.HttpMethod;
 import io.vertx.core.http.HttpServer;
-import io.vertx.core.json.Json;
 import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.FileUpload;
-import io.vertx.ext.web.Router;
-import io.vertx.ext.web.RoutingContext;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
 import jakarta.validation.constraints.Size;
@@ -47,10 +30,8 @@ import jakarta.ws.rs.POST;
 import jakarta.ws.rs.Path;
 import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
-import jakarta.ws.rs.core.Response;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -66,6 +47,12 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * End-to-end proof that a named {@link FilePart} constraint is projected into the web-validation
  * gate, rejects a disallowed declared type as a complete problem detail, and preserves binding for a
  * conforming raw multipart request.
+ *
+ * <p>Built through {@link MountFixtures} over {@link ValidationMountComponent} (the {@code
+ * vertique-rest-test} fixture) with {@link RestTestContributions#none()} — nothing beyond the
+ * real {@code web-validation} strategy and the victools-backed {@code AnnotationSchemaSource} that
+ * including {@code RestValidationModule} already supplies. The mount is built once in
+ * {@link #setUp}, for the whole class, rather than per test.
  */
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
@@ -98,14 +85,8 @@ public class MultipartFilePartValidationIT {
 
     @BeforeAll
     static void setUp(Vertx vertx, VertxTestContext ctx) {
-        JaxRsRouterMount mount = buildWebValidationFactory().create("/*", "openapi.json", Set.of(new FileResource()));
-
-        mount.createRouter(vertx)
-                .compose(apiRouter -> {
-                    Router root = Router.router(vertx);
-                    root.route("/*").subRouter(apiRouter);
-                    return vertx.createHttpServer().requestHandler(root).listen(0);
-                })
+        RestTestMounts.startServer(
+                        vertx, MountFixtures.mount(vertx, RestTestContributions.none()), Set.of(new FileResource()))
                 .onComplete(ctx.succeeding(listeningServer -> {
                     server = listeningServer;
                     client = vertx.createHttpClient();
@@ -227,7 +208,7 @@ public class MultipartFilePartValidationIT {
     }
 
     private static Future<HttpResult> postMultipart(Buffer body) {
-        return client.request(HttpMethod.POST, server.actualPort(), "localhost", "/files")
+        return client.request(HttpMethod.POST, server.actualPort(), "127.0.0.1", "/files")
                 .compose(request -> request.putHeader("Content-Type", MultipartBodies.contentType())
                         .send(body))
                 .compose(response -> {
@@ -238,90 +219,4 @@ public class MultipartFilePartValidationIT {
     }
 
     private record HttpResult(int statusCode, String contentType, Buffer body) {}
-
-    private static JaxRsRouterMount.Factory buildWebValidationFactory() {
-        DefaultExceptionMapper defaultMapper = new DefaultExceptionMapper()
-                .on(dev.vertique.rest.core.RestValidationException.class, ex -> Response.status(400)
-                        .entity(dev.vertique.rest.core.ValidationProblemDetail.of(ex.getMessage(), ex.errors()))
-                        .type("application/problem+json")
-                        .build());
-        ExceptionMapperRegistry registry = new ExceptionMapperRegistry(defaultMapper, Set.of());
-        RestExceptionMapper restExceptionMapper = new RestExceptionMapper();
-        RestContextResolution restContextResolution = new RestContextResolution(Set.of());
-        List<ResponseBodyEncoder> encoders = List.of(new StringEncoder(), new JsonEncoder());
-        ResponseSerializer responseSerializer = new DefaultResponseSerializer(List.of(), encoders);
-        HttpConfig httpConfig = HttpConfig.builder().build();
-        JaxRsConfig jaxRsConfig = JaxRsConfig.builder()
-                .validationStrategy(WebValidationStrategy.ID)
-                .build();
-        RequestValidationStrategy webValidation = new WebValidationStrategy(jaxRsConfig);
-        OperationSchemaSource schemaSource = new AnnotationSchemaSource();
-
-        return new JaxRsRouterMount.Factory(
-                Set.of(),
-                Set.of(),
-                Set.of(),
-                Set.of(),
-                Set.of(),
-                Set.of(),
-                Set.of(),
-                restExceptionMapper,
-                registry,
-                Set.of(),
-                responseSerializer,
-                restContextResolution,
-                dev.vertique.rest.jaxrs.convert.ConversionContexts.defaultResolver(),
-                null,
-                Optional.empty(),
-                List.of(),
-                encoders,
-                httpConfig,
-                jaxRsConfig,
-                new DefaultJsonMapperProfileRegistry(Set.of()),
-                JsonConfig.defaults(),
-                Optional.empty(),
-                Optional.empty(),
-                Set.of(),
-                Optional.empty(),
-                Optional.empty(),
-                Set.of(),
-                Set.of(webValidation),
-                Optional.of(schemaSource));
-    }
-
-    /** Minimal public-SPI String response encoder producing {@code text/plain}. */
-    static final class StringEncoder implements ResponseBodyEncoder {
-        @Override
-        public boolean canEncode(Class<?> entityType, String contentType) {
-            return entityType == String.class;
-        }
-
-        @Override
-        public SerializedBody encode(RoutingContext ctx, Response response, Object entity) {
-            return new BufferedBody(Buffer.buffer(String.valueOf(entity)), "text/plain", null);
-        }
-
-        @Override
-        public int priority() {
-            return 1000;
-        }
-    }
-
-    /** Minimal public-SPI JSON encoder for the validation problem body. */
-    static final class JsonEncoder implements ResponseBodyEncoder {
-        @Override
-        public boolean canEncode(Class<?> entityType, String contentType) {
-            return contentType == null || contentType.contains("json");
-        }
-
-        @Override
-        public SerializedBody encode(RoutingContext ctx, Response response, Object entity) {
-            return new BufferedBody(Buffer.buffer(Json.encode(entity)), "application/json", null);
-        }
-
-        @Override
-        public int priority() {
-            return 1100;
-        }
-    }
 }

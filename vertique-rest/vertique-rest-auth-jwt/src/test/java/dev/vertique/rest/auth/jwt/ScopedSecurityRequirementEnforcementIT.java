@@ -180,7 +180,7 @@ public class ScopedSecurityRequirementEnforcementIT {
                 new SecurityRequirementSet(List.of(new SecurityRequirement("bearerAuth", List.of())));
         mountOperation(vertx, router, "/open", "getOpen", List.of(scopelessSet), authHandler, sortedContributors);
 
-        vertx.createHttpServer().requestHandler(router).listen(0).onComplete(ctx.succeeding(s -> {
+        vertx.createHttpServer().requestHandler(router).listen(0, "127.0.0.1").onComplete(ctx.succeeding(s -> {
             server = s;
             port = s.actualPort();
             ctx.completeNow();
@@ -302,7 +302,7 @@ public class ScopedSecurityRequirementEnforcementIT {
      * @return a future resolving with the response status code
      */
     private Future<Integer> get(String path, String token) {
-        return client.request(HttpMethod.GET, port, "localhost", path).compose(req -> {
+        return client.request(HttpMethod.GET, port, "127.0.0.1", path).compose(req -> {
             req.putHeader("Authorization", "Bearer " + token);
             return req.send().map(resp -> resp.statusCode());
         });

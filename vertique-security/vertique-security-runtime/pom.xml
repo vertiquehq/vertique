@@ -20,22 +20,6 @@ SPDX-License-Identifier: EUPL-1.2
     <name>Vertique Security Runtime</name>
     <description>Default security runtime: authorization engine, action registry, in-memory policy resolvers, security event emitter, and Dagger modules</description>
 
-    <build>
-        <plugins>
-            <plugin>
-                <artifactId>maven-jar-plugin</artifactId>
-                <executions>
-                    <execution>
-                        <id>test-jar</id>
-                        <goals>
-                            <goal>test-jar</goal>
-                        </goals>
-                    </execution>
-                </executions>
-            </plugin>
-        </plugins>
-    </build>
-
     <dependencies>
         <dependency>
             <groupId>dev.vertique</groupId>

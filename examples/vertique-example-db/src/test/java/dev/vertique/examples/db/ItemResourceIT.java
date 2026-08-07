@@ -75,7 +75,7 @@ public class ItemResourceIT {
      */
     private static JsonObject buildConfig() {
         return new JsonObject()
-                .put("http", new JsonObject().put("port", 0))
+                .put("http", new JsonObject().put("port", 0).put("host", "127.0.0.1"))
                 .put(
                         "db",
                         new JsonObject()
@@ -104,7 +104,7 @@ public class ItemResourceIT {
                                 .build())
                         .build());
 
-        RestAssured.baseURI = "http://localhost";
+        RestAssured.baseURI = "http://127.0.0.1";
         RestAssured.port = app.httpPort();
         RestAssured.filters(new RequestLoggingFilter(), new ResponseLoggingFilter(), openApiFilter);
     }

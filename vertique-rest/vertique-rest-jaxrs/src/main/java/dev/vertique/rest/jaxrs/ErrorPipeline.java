@@ -11,6 +11,8 @@ import io.vertx.core.Future;
 import io.vertx.ext.web.RoutingContext;
 import jakarta.ws.rs.core.Response;
 import java.util.List;
+import java.util.Locale;
+import java.util.Set;
 import lombok.extern.slf4j.Slf4j;
 
 /**
@@ -30,6 +32,24 @@ import lombok.extern.slf4j.Slf4j;
  */
 @Slf4j
 public class ErrorPipeline {
+
+    /**
+     * Lower-cased names of the headers dropped when this pipeline replaces a response entity — the
+     * ones whose value describes the octets of the superseded body rather than the response itself.
+     * A header describing what the body <em>means</em> ({@code Content-Type},
+     * {@code Content-Language}) is not here: the replacement is always a {@link ProblemDetail} in the
+     * same media type, so those still hold. Matched case-insensitively; see
+     * {@link #rebuildWithHeaders} for why each must not survive.
+     */
+    private static final Set<String> ENTITY_DESCRIBING_HEADERS = Set.of(
+            "content-length",
+            "content-encoding",
+            "content-range",
+            "content-md5",
+            "etag",
+            "digest",
+            "content-digest",
+            "repr-digest");
 
     private final List<ErrorInterceptor> errorInterceptors;
     private final List<RequestInterceptor> requestInterceptors;
@@ -77,6 +97,14 @@ public class ErrorPipeline {
      *   <li>{@link ErrorInterceptor#afterMapping} async chain (transforms the response)</li>
      * </ol>
      *
+     * <p>The Vert.x failure-status hint ({@code VertxFailureStatus.KEY}) is <em>consumed</em> at the
+     * mapping step: read and removed from {@link RoutingContext#data()} exactly once, whichever mapper
+     * produces the response and whether or not the fallback ends up applying it. The hint describes the
+     * failure being mapped, so it must not survive it — otherwise a mapping raised later on the same
+     * context (a reroute, for instance) would be steered by a status that no longer describes anything.
+     * Consumption happens after the {@link ErrorInterceptor#beforeMapping} chain, so an error
+     * interceptor still observes the hint that produced the failure it is inspecting.
+     *
      * @param ctx   the current routing context
      * @param cause the throwable to map into an error response
      * @return a {@link Future} that completes with the mapped {@link Response}; callers should
@@ -114,9 +142,17 @@ public class ErrorPipeline {
                                 }))
                 .map(mappedCause -> restExceptionMapper.translate(mappedCause))
                 .map(translated -> {
+                    // Consume the Vert.x failure-status hint here, at the mapping step itself, rather than
+                    // inside the fallback: the hint describes exactly the failure being mapped, so it must
+                    // be gone whichever mapper produces the response — including on the branch below where a
+                    // specific application mapper outranks it and the fallback never runs. Leaving it behind
+                    // would let it steer a mapping raised later on the same context (reroute() clears failure
+                    // and statusCode, but not data()). Consuming here rather than at method entry keeps it
+                    // observable to the beforeMapping chain, which runs before this step.
+                    Object vertxFailureStatus = ctx.data().remove(VertxFailureStatus.KEY);
                     Response response = exceptionMapperRegistry.toResponse(translated);
                     if (!exceptionMapperRegistry.hasSpecificMapper(translated.getClass())) {
-                        response = applyVertxStatusCodeFallback(ctx, response);
+                        response = applyVertxStatusCodeFallback(response, vertxFailureStatus);
                     }
                     return enrichProblemDetail(ctx, response);
                 })
@@ -149,57 +185,127 @@ public class ErrorPipeline {
             ProblemDetail enriched =
                     pd.toBuilder().instance(ctx.request().path()).build();
             Response.ResponseBuilder rb = Response.status(response.getStatus()).entity(enriched);
-            return rebuildWithHeaders(response, rb);
+            return rebuildWithHeaders(response, rb, true);
         }
         return response;
     }
 
     /**
-     * Applies the Vert.x status code fallback when the error pipeline produced a 500 response
-     * (indicating the {@link Throwable} catch-all handled it) but a Vert.x-intended status code
-     * is stored in context data. This preserves HTTP semantics (e.g. 401, 403) for unwrapped
-     * {@code HttpException} causes that had no specific {@link jakarta.ws.rs.ext.ExceptionMapper} match.
+     * Applies the Vert.x status code fallback: when the routing context carries an authoritative
+     * Vert.x failure status that differs from the status the exception mapper produced, the Vert.x
+     * status wins. It overrides any framework-default mapping — not only the {@link Throwable}
+     * catch-all's 500 — because the status Vert.x set is a deliberate decision about this request,
+     * whereas a framework default is a decision about the exception's type alone. This preserves HTTP
+     * semantics (e.g. 401, 403) for unwrapped {@code HttpException} causes and for a 4xx the Vert.x
+     * layer set alongside an arbitrary cause.
      *
      * <p>The fallback does not activate when:
      * <ul>
-     *   <li>No {@link RequestInterceptor#VERTX_STATUS_CODE_KEY} is present (not a Vert.x HttpException)</li>
+     *   <li>No status was recorded under {@link VertxFailureStatus#KEY} (the Vert.x layer decided none)</li>
      *   <li>The response already has the correct status (matches the stored code)</li>
+     *   <li>The mapper produced 403 and the stored status is 401 — a hint never downgrades an
+     *       authorization outcome into an authentication challenge</li>
      * </ul>
+     *
+     * <p>That last guard keys on the <em>mapped status</em>, never on the exception type that produced
+     * it: any 403 survives a 401 hint, whether it came from the framework's own
+     * {@code ForbiddenException} mapping or from an application {@code ExceptionMapper<Throwable>}
+     * catch-all that chose 403 for its own denial type. Keying on a list of authorization exception
+     * types instead was considered and rejected — the list would drift the moment a new denial type
+     * appears, and it would invert the guard for the case that most deserves it (an application mapping
+     * its own {@code TenantMismatchException} to 403 would be overridden back to 401).
+     *
+     * <p>The stored status is consumed by the caller before this method runs — see
+     * {@link #mapToResponse} — so it is passed in rather than read from the context here.
+     *
+     * <p>When it does override, the {@link ProblemDetail} body is rebuilt from the overriding status
+     * rather than patched: the title is recomputed and the detail is dropped. A detail was written
+     * for the status being superseded — and on the {@code ctx.fail(4xx, cause)} path it is an arbitrary
+     * application exception's message — so carrying it into the new status would both contradict the
+     * title and publish a message the framework never intended for the client. The same reasoning
+     * applies to everything else the superseded body carried: typed subclass fields (such as
+     * {@link dev.vertique.rest.core.ValidationProblemDetail#errors()}) and RFC 9457 extension members
+     * are dropped with it, so only {@code instance} — request-scoped and status-independent — survives.
+     * A body the mapper authored <em>for the status that survives</em> is untouched, which is what the
+     * equal-status early return above protects.
      *
      * <p>This method is only called when no specific (user-contributed) {@code ExceptionMapper}
      * matched the unwrapped cause — the caller checks
      * {@link ExceptionMapperRegistry#hasSpecificMapper} before invoking.
      *
-     * @param ctx      the routing context containing the Vert.x status code (if any)
-     * @param response the response produced by the exception mapper
-     * @return the response with the status overridden, or the original response unchanged
+     * @param response     the response produced by the exception mapper
+     * @param storedStatus the status the Vert.x layer recorded for this failure, already consumed from
+     *                     the routing context by {@link #mapToResponse}; {@code null} (or any
+     *                     non-{@link Integer}) when no status was recorded
+     * @return the response with the status overridden and its problem body rebuilt, or the original
+     *         response unchanged
      */
-    private static Response applyVertxStatusCodeFallback(RoutingContext ctx, Response response) {
-        Object storedCode = ctx.data().get(RequestInterceptor.VERTX_STATUS_CODE_KEY);
-        if (!(storedCode instanceof Integer vertxStatus)) {
+    private static Response applyVertxStatusCodeFallback(Response response, Object storedStatus) {
+        if (!(storedStatus instanceof Integer vertxStatus)) {
             return response;
         }
         if (response.getStatus() == vertxStatus) {
             return response;
         }
-        // Override: the catch-all produced 500 but Vert.x intended a different status
+        if (response.getStatus() == 403 && vertxStatus == 401) {
+            // Directional guard, deliberately narrow. 403 is an authorization decision the cause itself
+            // carried; answering 401 instead tells the client "authenticate and retry", which is false for
+            // a denial no fresh credential can lift — it invites a token-refresh loop that cannot succeed,
+            // and it hides the denial from access logs and SIEM rules that count 403s to spot probing.
+            // Keyed on the mapped status, not on the exception type: an application ExceptionMapper<Throwable>
+            // catch-all answering 403 is protected too, because "never turn a 403 into a 401" is a property
+            // of the status, not of which mapper decided it. See this method's javadoc for the rejected
+            // type-list alternative. This is the only guarded status pair — every other mapped status is
+            // superseded normally.
+            return response;
+        }
+        // Override: the mapper's status is superseded by the status Vert.x decided.
         Object entity = response.getEntity();
         if (entity instanceof ProblemDetail pd) {
-            entity = pd.toBuilder().status(vertxStatus).build();
+            // Build a fresh body rather than deriving one from the superseded problem: pd may be a
+            // ProblemDetail subclass (e.g. ValidationProblemDetail) or carry RFC 9457 extension
+            // members, and toBuilder() would copy those fields — which describe the status being
+            // superseded — straight into the overriding status, defeating the cleared detail. Only
+            // instance carries over; it is request-scoped and status-independent.
+            entity = ProblemDetail.of(vertxStatus, null, pd.instance());
         }
         Response.ResponseBuilder rb = Response.status(vertxStatus).entity(entity);
-        return rebuildWithHeaders(response, rb);
+        return rebuildWithHeaders(response, rb, entity != response.getEntity());
     }
 
     /**
-     * Copies all headers from the source response into the builder and returns the built response.
+     * Copies the source response's headers into the builder and returns the built response.
      *
-     * @param source  the original response whose headers should be preserved
-     * @param builder the response builder (with status and entity already set)
-     * @return the built response with all original headers
+     * <p>The headers dropped when the entity was replaced are exactly those that describe the
+     * <em>octets</em> of the body the superseded response carried, listed in
+     * {@link #ENTITY_DESCRIBING_HEADERS}. Nothing downstream recomputes them —
+     * {@code ResponsePipeline.applyToWire} copies every JAX-RS header to the wire and
+     * {@code DefaultResponseSerializer} only overwrites the length when the encoder supplies one,
+     * which the JSON encoder does not — so each would describe a body that no longer exists: a
+     * {@code Content-Length} declaring a length for other bytes is the framing violation
+     * {@link ResponsePipeline} already detects, a {@code Content-Encoding} makes the generated JSON
+     * undecodable, and an {@code ETag} or digest identifies a representation the client never
+     * receives.
+     *
+     * <p>Everything else is preserved deliberately, including headers that describe the body's
+     * <em>meaning</em> rather than its bytes: the rebuilt entity is a {@link ProblemDetail} in every
+     * case (either enriched with its instance or re-derived at the overriding status), so
+     * {@code Content-Type} and {@code Content-Language} still hold. {@code WWW-Authenticate},
+     * {@code Retry-After} and {@code Allow} describe the response, not its body, and remain correct —
+     * indeed a {@code WWW-Authenticate} the mapper authored is exactly what a status overridden
+     * <em>to</em> 401 needs.
+     *
+     * @param source         the original response whose headers should be preserved
+     * @param builder        the response builder (with status and entity already set)
+     * @param entityReplaced whether the builder carries a different entity than {@code source} did
+     * @return the built response with the source's headers
      */
-    private static Response rebuildWithHeaders(Response source, Response.ResponseBuilder builder) {
+    private static Response rebuildWithHeaders(
+            Response source, Response.ResponseBuilder builder, boolean entityReplaced) {
         source.getStringHeaders().forEach((name, values) -> {
+            if (entityReplaced && ENTITY_DESCRIBING_HEADERS.contains(name.toLowerCase(Locale.ROOT))) {
+                return;
+            }
             for (String value : values) {
                 builder.header(name, value);
             }

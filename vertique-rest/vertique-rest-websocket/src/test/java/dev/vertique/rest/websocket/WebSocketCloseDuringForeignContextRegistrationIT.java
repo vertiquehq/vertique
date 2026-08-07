@@ -127,7 +127,7 @@ public class WebSocketCloseDuringForeignContextRegistrationIT {
 
         registrar.registerAll(Set.of(new ForeignOpenEndpoint(), new ForeignClosePendingEndpoint()), router);
 
-        vertx.createHttpServer().requestHandler(router).listen(0).onComplete(ctx.succeeding(s -> {
+        vertx.createHttpServer().requestHandler(router).listen(0, "127.0.0.1").onComplete(ctx.succeeding(s -> {
             server = s;
             port = s.actualPort();
             ctx.completeNow();
@@ -162,7 +162,7 @@ public class WebSocketCloseDuringForeignContextRegistrationIT {
         deferredRegister.set(null);
 
         wsClient.connect(new WebSocketConnectOptions()
-                        .setHost("localhost")
+                        .setHost("127.0.0.1")
                         .setPort(port)
                         .setURI("/ws/foreign-open"))
                 .onComplete(ctx.succeeding(ws -> {
@@ -216,7 +216,7 @@ public class WebSocketCloseDuringForeignContextRegistrationIT {
         deferredRegister.set(null);
 
         wsClient.connect(new WebSocketConnectOptions()
-                        .setHost("localhost")
+                        .setHost("127.0.0.1")
                         .setPort(port)
                         .setURI("/ws/foreign-close-pending"))
                 .onComplete(ctx.succeeding(ws -> {

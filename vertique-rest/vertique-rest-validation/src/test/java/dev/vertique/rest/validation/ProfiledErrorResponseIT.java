@@ -19,25 +19,12 @@ import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import dev.vertique.core.json.JsonMapperProfile;
 import dev.vertique.core.json.JsonProfile;
 import dev.vertique.core.json.JsonProfileId;
-import dev.vertique.json.DefaultJsonMapperProfileRegistry;
-import dev.vertique.json.JsonConfig;
 import dev.vertique.json.JsonMapperProfiles;
 import dev.vertique.json.VertxJsonSupport;
-import dev.vertique.rest.core.config.HttpConfig;
-import dev.vertique.rest.core.config.JaxRsConfig;
-import dev.vertique.rest.core.context.RestContextResolution;
 import dev.vertique.rest.core.middleware.Middleware;
 import dev.vertique.rest.core.middleware.MiddlewareScope;
-import dev.vertique.rest.core.response.ResponseBodyEncoder;
-import dev.vertique.rest.core.response.ResponseSerializer;
-import dev.vertique.rest.jaxrs.DefaultExceptionMapper;
-import dev.vertique.rest.jaxrs.DefaultResponseSerializer;
-import dev.vertique.rest.jaxrs.ExceptionMapperRegistry;
-import dev.vertique.rest.jaxrs.JaxRsRouterMount;
-import dev.vertique.rest.jaxrs.JsonBodyEncoderTestAccess;
-import dev.vertique.rest.jaxrs.RestExceptionMapper;
-import dev.vertique.rest.jaxrs.validation.OperationSchemaSource;
-import dev.vertique.rest.jaxrs.validation.RequestValidationStrategy;
+import dev.vertique.rest.test.RestTestContributions;
+import dev.vertique.rest.test.RestTestMounts;
 import io.swagger.v3.oas.annotations.Operation;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
@@ -46,7 +33,7 @@ import io.vertx.core.http.HttpClientResponse;
 import io.vertx.core.http.HttpMethod;
 import io.vertx.core.http.HttpServer;
 import io.vertx.core.json.Json;
-import io.vertx.ext.web.Router;
+import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.RoutingContext;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
@@ -58,9 +45,8 @@ import jakarta.ws.rs.Path;
 import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
+import jakarta.ws.rs.ext.ExceptionMapper;
 import java.io.IOException;
-import java.util.List;
-import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BiConsumer;
@@ -80,9 +66,9 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * {@code application/problem+json} media type — never collapsing to a bare 500 that drops the mapped
  * status.
  *
- * <p>The encoder under test is the <strong>production</strong> {@code JsonBodyEncoder}, obtained via
- * {@link JsonBodyEncoderTestAccess}, so the RED&rarr;green transition is genuinely driven by the
- * production error-serialization path — not a re-implemented stub.
+ * <p>The encoder under test is the <strong>production</strong> {@code JsonBodyEncoder}, reached through
+ * {@link ValidationMountComponent} (the {@code vertique-rest-test} fixture), so the RED&rarr;green
+ * transition is genuinely driven by the production error-serialization path — not a re-implemented stub.
  *
  * <p><strong>Observable technique (probe-safe, mirrors {@code ProfiledResponseSerializationIT}).</strong>
  * Each error body is a plain {@link ErrorEntity} POJO carrying a present {@code name} and a {@code null}
@@ -454,7 +440,7 @@ public class ProfiledErrorResponseIT {
         // ErrorEntity body (application/problem+json). The error body reads the stash and OMITS the null
         // "missing" field. Status (422) and media type must be unchanged. PASSES today (slice 3.1).
         deploy(vertx, ctx, Set.of(new ProfiledErrorResource()), Set.of(), (port, c) -> c.request(
-                        HttpMethod.GET, port, "localhost", "/profiled-error")
+                        HttpMethod.GET, port, "127.0.0.1", "/profiled-error")
                 .compose(req -> req.send())
                 .compose(resp -> bodyWithMeta(resp))
                 .onComplete(ctx.succeeding(r -> {
@@ -483,18 +469,14 @@ public class ProfiledErrorResponseIT {
         // The failure handler must resolve the boundary default and stash it before serializing the 404
         // ErrorEntity body so the null "missing" field is OMITTED. TODAY no mapper is stashed on the
         // no-method path => Json.encode runs => "missing":null is present and this FAILS (the RED signal).
-        JaxRsConfig boundaryDefault = JaxRsConfig.builder()
-                .validationStrategy(WebValidationStrategy.ID)
-                .jsonProfile(OPINIONATED_PROFILE)
-                .build();
         deploy(
                 vertx,
                 ctx,
                 Set.of(new UnusedResource()),
                 Set.of(new RejectBeforeMatchMiddleware()),
-                boundaryDefault,
+                boundaryDefaultConfig(),
                 Set.of(opinionatedErrorProfile()),
-                (port, c) -> c.request(HttpMethod.GET, port, "localhost", "/anything")
+                (port, c) -> c.request(HttpMethod.GET, port, "127.0.0.1", "/anything")
                         .compose(req -> req.send())
                         .compose(resp -> bodyWithMeta(resp))
                         .onComplete(ctx.succeeding(r -> {
@@ -529,7 +511,7 @@ public class ProfiledErrorResponseIT {
         // slice-3.2 fail-open completes the response via the vertx mapper, making the assertions below
         // pass fast. The fail-open body is the vertx rendering of ErrorEntity ("name":"boom").
         deploy(vertx, ctx, Set.of(new ThrowingErrorResource()), Set.of(), (port, c) -> c.request(
-                        HttpMethod.GET, port, "localhost", "/throwing-error")
+                        HttpMethod.GET, port, "127.0.0.1", "/throwing-error")
                 .compose(req -> req.send())
                 .compose(resp -> bodyWithMeta(resp))
                 .onComplete(ctx.succeeding(r -> {
@@ -561,7 +543,7 @@ public class ProfiledErrorResponseIT {
         // the error leg.
         String expectedBody = Json.encode(ErrorEntity.boom());
         deploy(vertx, ctx, Set.of(new PlainErrorResource()), Set.of(), (port, c) -> c.request(
-                        HttpMethod.GET, port, "localhost", "/plain-error")
+                        HttpMethod.GET, port, "127.0.0.1", "/plain-error")
                 .compose(req -> req.send())
                 .compose(resp -> bodyWithMeta(resp))
                 .onComplete(ctx.succeeding(r -> {
@@ -588,19 +570,15 @@ public class ProfiledErrorResponseIT {
         // marks the error-body mapper as DECIDED-vertx, so handleFailure must NOT overlay the boundary
         // default: the 415 error body must be byte-for-byte vertx (null "missing" PRESENT). Without the
         // fix, handleFailure stashes the boundary default and the null is OMITTED (the asymmetry bug).
-        JaxRsConfig boundaryDefault = JaxRsConfig.builder()
-                .validationStrategy(WebValidationStrategy.ID)
-                .jsonProfile(OPINIONATED_PROFILE)
-                .build();
         String expectedVertxBody = Json.encode(ErrorEntity.boom());
         deploy(
                 vertx,
                 ctx,
                 Set.of(new VertxConsumesResource()),
                 Set.of(),
-                boundaryDefault,
+                boundaryDefaultConfig(),
                 Set.of(opinionatedErrorProfile()),
-                (port, c) -> c.request(HttpMethod.POST, port, "localhost", "/vertx-consumes")
+                (port, c) -> c.request(HttpMethod.POST, port, "127.0.0.1", "/vertx-consumes")
                         .compose(req ->
                                 req.putHeader("Content-Type", "text/plain").send("not json"))
                         .compose(resp -> bodyWithMeta(resp))
@@ -633,7 +611,7 @@ public class ProfiledErrorResponseIT {
         // OMITS the null "missing" field. No boundary default is configured here, isolating the
         // before-stash gap.
         deploy(vertx, ctx, Set.of(new ProfiledConsumesResource()), Set.of(), (port, c) -> c.request(
-                        HttpMethod.POST, port, "localhost", "/profiled-consumes")
+                        HttpMethod.POST, port, "127.0.0.1", "/profiled-consumes")
                 .compose(req -> req.putHeader("Content-Type", "text/plain").send("not json"))
                 .compose(resp -> bodyWithMeta(resp))
                 .onComplete(ctx.succeeding(r -> {
@@ -670,19 +648,15 @@ public class ProfiledErrorResponseIT {
         // handler short-circuits, so the 415 error body is byte-for-byte vertx (null "missing" PRESENT).
         // WITHOUT the guard, the param route's handler observes KEY_RESOLVED_BODY_MAPPER == null and
         // stashes its opinionated profile mapper, so the null field is OMITTED — the leak this test pins.
-        JaxRsConfig boundaryDefault = JaxRsConfig.builder()
-                .validationStrategy(WebValidationStrategy.ID)
-                .jsonProfile(OPINIONATED_PROFILE)
-                .build();
         String expectedVertxBody = Json.encode(ErrorEntity.boom());
         deploy(
                 vertx,
                 ctx,
                 Set.of(new OverlapFixedResource(), new OverlapParamResource()),
                 Set.of(),
-                boundaryDefault,
+                boundaryDefaultConfig(),
                 Set.of(opinionatedErrorProfile()),
-                (port, c) -> c.request(HttpMethod.POST, port, "localhost", "/overlap/fixed")
+                (port, c) -> c.request(HttpMethod.POST, port, "127.0.0.1", "/overlap/fixed")
                         .compose(req ->
                                 req.putHeader("Content-Type", "text/plain").send("not json"))
                         .compose(resp -> bodyWithMeta(resp))
@@ -721,6 +695,17 @@ public class ProfiledErrorResponseIT {
     }
 
     /**
+     * Returns the boundary configuration selecting {@code jaxrs.jsonProfile=error-profile} — the
+     * non-{@code vertx} boundary default the boundary-default and overlapping-route regression tests
+     * deploy under.
+     *
+     * @return the boundary-default configuration
+     */
+    private static JsonObject boundaryDefaultConfig() {
+        return new JsonObject().put("jaxrs", new JsonObject().put("jsonProfile", OPINIONATED_PROFILE));
+    }
+
+    /**
      * Deploys {@code resources} and {@code middlewares} under the {@code web-validation} strategy with no
      * configured default profile and the opinionated {@code error-profile} registered, then invokes
      * {@code afterListen}.
@@ -737,29 +722,31 @@ public class ProfiledErrorResponseIT {
             Set<Object> resources,
             Set<Middleware> middlewares,
             BiConsumer<Integer, HttpClient> afterListen) {
-        JaxRsConfig defaults = JaxRsConfig.builder()
-                .validationStrategy(WebValidationStrategy.ID)
-                .build();
         deploy(
                 vertx,
                 ctx,
                 resources,
                 middlewares,
-                defaults,
+                new JsonObject(),
                 Set.of(opinionatedErrorProfile(), throwingErrorProfile()),
                 afterListen);
     }
 
     /**
      * Deploys {@code resources} and {@code middlewares} under the {@code web-validation} strategy with the
-     * given {@code jaxRsConfig} and profile registry, starts an HTTP server, and invokes
-     * {@code afterListen} with the bound port and a shared {@link HttpClient}.
+     * given configuration and profile registry, starts an HTTP server, and invokes {@code afterListen}
+     * with the bound port and a shared {@link HttpClient}.
+     *
+     * <p>Built through {@link MountFixtures} over {@link ValidationMountComponent}, so the graph carries
+     * every real production collaborator (including the production {@code JsonBodyEncoder} — the
+     * {@code ErrorEntity} bodies this test asserts on never match any of the other five production
+     * encoders) plus this test's contributed middlewares, profiles, and exception mappers.
      *
      * @param vertx the Vert.x instance
      * @param ctx the test context
      * @param resources the JAX-RS resources to mount
      * @param middlewares the middlewares to mount
-     * @param jaxRsConfig the JAX-RS routing config (carries the optional {@code jaxrs.jsonProfile} default)
+     * @param config the application configuration (carries the optional {@code jaxrs.jsonProfile} default)
      * @param profiles the profiles to register
      * @param afterListen callback invoked with the bound port and the shared HTTP client
      */
@@ -768,17 +755,21 @@ public class ProfiledErrorResponseIT {
             VertxTestContext ctx,
             Set<Object> resources,
             Set<Middleware> middlewares,
-            JaxRsConfig jaxRsConfig,
+            JsonObject config,
             Set<JsonMapperProfile> profiles,
             BiConsumer<Integer, HttpClient> afterListen) {
-        JaxRsRouterMount.Factory factory = buildFactory(jaxRsConfig, middlewares, profiles);
-        JaxRsRouterMount mount = factory.create("/*", "openapi.json", resources);
-        mount.createRouter(vertx)
-                .compose(apiRouter -> {
-                    Router root = Router.router(vertx);
-                    root.route("/*").subRouter(apiRouter);
-                    return vertx.createHttpServer().requestHandler(root).listen(0);
-                })
+        RestTestContributions.Builder contributions = RestTestContributions.builder()
+                // Maps @Consumes 415 (raised as NotSupportedException by JaxRsRouteRegistrar's
+                // per-route 415 check) to an observable ErrorEntity body so the vertx-vs-profile
+                // null-omission difference is visible (ProblemDetail would be NON_NULL and thus
+                // indistinguishable).
+                .addExceptionMapper(new MappedFailureMapper())
+                .addExceptionMapper(new NoMethodFailureMapper())
+                .addExceptionMapper(new UnsupportedMediaTypeMapper());
+        middlewares.forEach(contributions::addMiddleware);
+        profiles.forEach(contributions::addJsonMapperProfile);
+
+        RestTestMounts.startServer(vertx, MountFixtures.mount(vertx, config, contributions.build()), resources)
                 .onComplete(ctx.succeeding(s -> {
                     server = s;
                     client = vertx.createHttpClient();
@@ -786,78 +777,36 @@ public class ProfiledErrorResponseIT {
                 }));
     }
 
-    /**
-     * Builds a {@link JaxRsRouterMount.Factory} wired with the real {@code web-validation} strategy, the
-     * victools {@link AnnotationSchemaSource}, the given middlewares and profile registry, the
-     * <strong>production</strong> {@code JsonBodyEncoder} (via {@link JsonBodyEncoderTestAccess}), and a
-     * {@link DefaultExceptionMapper} that maps {@link MappedFailure} &rarr; 422 and {@link NoMethodFailure}
-     * &rarr; 404, both with an {@link ErrorEntity} {@code application/problem+json} body. Mirrors
-     * {@code ProfiledResponseSerializationIT}'s factory but for the error leg.
-     *
-     * @param jaxRsConfig the JAX-RS routing config
-     * @param middlewares the middlewares to mount
-     * @param profiles the profiles to register
-     * @return a factory wired for the profiled error-response ITs
-     */
-    private static JaxRsRouterMount.Factory buildFactory(
-            JaxRsConfig jaxRsConfig, Set<Middleware> middlewares, Set<JsonMapperProfile> profiles) {
-        DefaultExceptionMapper defaultMapper = new DefaultExceptionMapper()
-                .on(MappedFailure.class, ex -> Response.status(422)
-                        .entity(ErrorEntity.boom())
-                        .type("application/problem+json")
-                        .build())
-                .on(NoMethodFailure.class, ex -> Response.status(404)
-                        .entity(ErrorEntity.boom())
-                        .type("application/problem+json")
-                        .build())
-                // Map the @Consumes 415 (raised as NotSupportedException by JaxRsRouteRegistrar's
-                // per-route 415 check) to an observable ErrorEntity body so the vertx-vs-profile
-                // null-omission difference is visible (ProblemDetail would be NON_NULL and thus
-                // indistinguishable).
-                .on(NotSupportedException.class, ex -> Response.status(415)
-                        .entity(ErrorEntity.boom())
-                        .type("application/problem+json")
-                        .build());
-        ExceptionMapperRegistry registry = new ExceptionMapperRegistry(defaultMapper, Set.of());
-        RestExceptionMapper restExceptionMapper = new RestExceptionMapper();
-        RestContextResolution restContextResolution = new RestContextResolution(Set.of());
-        ResponseBodyEncoder jsonBodyEncoder = JsonBodyEncoderTestAccess.create();
-        List<ResponseBodyEncoder> encoders = List.of(jsonBodyEncoder);
-        ResponseSerializer responseSerializer = new DefaultResponseSerializer(List.of(), encoders);
-        HttpConfig httpConfig = HttpConfig.builder().build();
+    /** Maps {@link MappedFailure} to a 422 {@link ErrorEntity} {@code application/problem+json} body. */
+    private static final class MappedFailureMapper implements ExceptionMapper<MappedFailure> {
+        @Override
+        public Response toResponse(MappedFailure exception) {
+            return Response.status(422)
+                    .entity(ErrorEntity.boom())
+                    .type("application/problem+json")
+                    .build();
+        }
+    }
 
-        RequestValidationStrategy webValidation = new WebValidationStrategy(jaxRsConfig);
-        OperationSchemaSource schemaSource = new AnnotationSchemaSource();
+    /** Maps {@link NoMethodFailure} to a 404 {@link ErrorEntity} {@code application/problem+json} body. */
+    private static final class NoMethodFailureMapper implements ExceptionMapper<NoMethodFailure> {
+        @Override
+        public Response toResponse(NoMethodFailure exception) {
+            return Response.status(404)
+                    .entity(ErrorEntity.boom())
+                    .type("application/problem+json")
+                    .build();
+        }
+    }
 
-        return new JaxRsRouterMount.Factory(
-                Set.of(), // routerLifecycleHooks
-                Set.of(), // operationInterceptors
-                Set.of(), // errorInterceptors
-                middlewares, // middlewares
-                Set.of(), // operationHandlerContributors
-                Set.of(), // securitySchemeHandlers
-                Set.of(), // requestInterceptors
-                restExceptionMapper,
-                registry,
-                Set.of(), // responseProducerBindings
-                responseSerializer,
-                restContextResolution,
-                dev.vertique.rest.jaxrs.convert.ConversionContexts.defaultResolver(), // paramConversionResolver
-                null, // securityPolicyValidator
-                Optional.empty(), // authEnforcementCapability
-                List.of(), // sortedDecoders (no request body on these GETs)
-                encoders, // sortedEncoders
-                httpConfig,
-                jaxRsConfig,
-                new DefaultJsonMapperProfileRegistry(profiles), // jsonMapperProfileRegistry
-                JsonConfig.defaults(), // jsonConfig
-                Optional.empty(), // beanValidator
-                Optional.empty(), // objectProcessor
-                Set.of(), // evidenceCapturers
-                Optional.empty(), // actionRegistry
-                Optional.empty(), // authorizer
-                Set.of(), // fileContentVerifiers
-                Set.of(webValidation),
-                Optional.of(schemaSource));
+    /** Maps {@link NotSupportedException} (the {@code @Consumes} 415) to an observable {@link ErrorEntity} body. */
+    private static final class UnsupportedMediaTypeMapper implements ExceptionMapper<NotSupportedException> {
+        @Override
+        public Response toResponse(NotSupportedException exception) {
+            return Response.status(415)
+                    .entity(ErrorEntity.boom())
+                    .type("application/problem+json")
+                    .build();
+        }
     }
 }

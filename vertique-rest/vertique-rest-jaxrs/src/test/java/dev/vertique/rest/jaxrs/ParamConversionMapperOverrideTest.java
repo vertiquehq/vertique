@@ -124,12 +124,12 @@ public class ParamConversionMapperOverrideTest {
                 .compose(apiRouter -> {
                     Router root = Router.router(vertx);
                     root.route("/*").subRouter(apiRouter);
-                    return vertx.createHttpServer().requestHandler(root).listen(0);
+                    return vertx.createHttpServer().requestHandler(root).listen(0, "127.0.0.1");
                 })
                 .onComplete(ctx.succeeding(s -> {
                     server = s;
                     client = vertx.createHttpClient();
-                    client.request(HttpMethod.GET, s.actualPort(), "localhost", "/conv/not-a-uuid")
+                    client.request(HttpMethod.GET, s.actualPort(), "127.0.0.1", "/conv/not-a-uuid")
                             .compose(req -> req.send())
                             .compose(resp -> resp.body().map(b -> resp.statusCode() + "|" + b.toString()))
                             .onComplete(ctx.succeeding(statusAndBody -> {
