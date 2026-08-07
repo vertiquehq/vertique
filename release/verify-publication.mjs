@@ -127,6 +127,11 @@ export function readPom(pomPath) {
     .map((d) => ({ groupId: childText(d, 'groupId'), artifactId: childText(d, 'artifactId') }))
     .filter((d) => d.groupId && d.artifactId);
 
+  const dependencies = childrenNamed(project, 'dependencies')
+    .flatMap((ds) => childrenNamed(ds, 'dependency'))
+    .map((d) => ({ groupId: childText(d, 'groupId'), artifactId: childText(d, 'artifactId') }))
+    .filter((d) => d.groupId && d.artifactId);
+
   // Only project-level declarations are read, because a profile's modules and
   // managed dependencies are conditional on activation and cannot be resolved
   // build-independently. Refuse rather than silently under-report: a profile
@@ -144,7 +149,7 @@ export function readPom(pomPath) {
     }
   }
 
-  return { artifactId, groupId, packaging: childText(project, 'packaging') ?? 'jar', modules, managed };
+  return { artifactId, groupId, packaging: childText(project, 'packaging') ?? 'jar', modules, managed, dependencies };
 }
 
 /**
