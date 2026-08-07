@@ -6,6 +6,7 @@ package dev.vertique.rest.auth.jwt;
 import com.fasterxml.jackson.annotation.JsonAutoDetect;
 import com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import dev.vertique.core.exception.ConfigurationException;
 import java.util.List;
 import lombok.Builder;
 import lombok.Getter;
@@ -58,6 +59,16 @@ import lombok.extern.jackson.Jacksonized;
 public class JwtValidationConfig {
 
     /**
+     * Maximum permitted clock skew, in seconds.
+     *
+     * <p>RFC 7519 §4.1.4 contemplates "some small leeway, usually no more than a few minutes" for
+     * time-claim validation. Beyond five minutes a misconfiguration is likelier than an intent, and
+     * the cost of accepting it silently is a permanently widened {@code exp}/{@code nbf}/{@code iat}
+     * acceptance window.
+     */
+    public static final int MAX_CLOCK_SKEW_SECONDS = 300;
+
+    /**
      * Expected issuer ({@code iss} claim). When non-null, tokens with a different or missing
      * issuer are rejected. Should be the full issuer URI of the identity provider.
      */
@@ -73,7 +84,36 @@ public class JwtValidationConfig {
     /**
      * Permitted clock skew in seconds when validating time-based claims ({@code exp}, {@code nbf},
      * {@code iat}). Defaults to {@code 30} seconds to tolerate minor clock drift between services.
+     * Must be between {@code 0} and {@link #MAX_CLOCK_SKEW_SECONDS} inclusive; a value outside that
+     * range fails construction with a
+     * {@link dev.vertique.core.exception.ConfigurationException}.
      */
     @Builder.Default
     private final int clockSkewSeconds = 30;
+
+    /**
+     * Validates the clock skew and assigns every field.
+     *
+     * <p>This type is a Lombok {@code @Builder} class rather than a record, so there is no compact
+     * constructor to host the bounds check. Declaring the all-args constructor explicitly gives the
+     * check a single choke point: the class-level {@code @Builder} reuses this constructor instead
+     * of generating one, so both {@code builder().build()} and {@code @Jacksonized} deserialization
+     * (which routes through the builder) are validated here.
+     *
+     * @param issuer           the expected issuer, or {@code null} to leave it unconstrained
+     * @param audience         the expected audience values, or {@code null} to leave them
+     *                         unconstrained
+     * @param clockSkewSeconds the permitted clock skew in seconds
+     * @throws dev.vertique.core.exception.ConfigurationException if {@code clockSkewSeconds} is
+     *         negative or greater than {@link #MAX_CLOCK_SKEW_SECONDS}
+     */
+    private JwtValidationConfig(String issuer, List<String> audience, int clockSkewSeconds) {
+        if (clockSkewSeconds < 0 || clockSkewSeconds > MAX_CLOCK_SKEW_SECONDS) {
+            throw new ConfigurationException("jwt.validation.clockSkewSeconds must be between 0 and "
+                    + MAX_CLOCK_SKEW_SECONDS + " seconds, but was " + clockSkewSeconds);
+        }
+        this.issuer = issuer;
+        this.audience = audience;
+        this.clockSkewSeconds = clockSkewSeconds;
+    }
 }

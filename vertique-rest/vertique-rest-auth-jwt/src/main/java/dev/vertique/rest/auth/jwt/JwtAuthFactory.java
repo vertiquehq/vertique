@@ -60,6 +60,12 @@ import lombok.extern.slf4j.Slf4j;
  * Vert.x as {@code exp}/{@code nbf}/{@code iat} leeway; they leave issuer and audience
  * unconstrained and log no warning about it, because the caller did not ask for validation.
  *
+ * <p>Every returned {@link JWTAuth} also <em>attests</em> the {@link JwtValidationConfig} it was
+ * built with, so {@link JwtAuthModule} can fail startup when the applied clock skew diverges from
+ * the effective {@code jwt.validation} configuration. The attestation is internal — the returned
+ * type is still a plain {@link JWTAuth} and applications' {@code @Provides} signatures are
+ * unaffected.
+ *
  * <p>This class is a standalone utility and is not managed by Dagger. Applications call
  * these methods inside their {@code @Provides JWTAuth} binding.
  *
@@ -336,7 +342,7 @@ public final class JwtAuthFactory {
      * @param algorithm the HMAC algorithm (e.g. "HS256")
      * @param secret    the symmetric key
      * @param config    the validation constraints to apply; must not be {@code null}
-     * @return a configured JWTAuth instance
+     * @return a configured JWTAuth instance that attests {@code config}
      */
     public static JWTAuth fromSymmetricKey(Vertx vertx, String algorithm, String secret, JwtValidationConfig config) {
         Objects.requireNonNull(vertx, "vertx");
@@ -422,16 +428,19 @@ public final class JwtAuthFactory {
      * @param key                      the symmetric secret or PEM-encoded key
      * @param config                   the validation constraints to apply; must not be {@code null}
      * @param warnOnMissingConstraints whether to log the missing issuer/audience warnings
-     * @return a configured {@link JWTAuth} instance
+     * @return a configured {@link JWTAuth} instance attesting {@code config}
      */
     private static JWTAuth createFromPubSecKey(
             Vertx vertx, String algorithm, String key, JwtValidationConfig config, boolean warnOnMissingConstraints) {
-        return JWTAuth.create(
-                vertx,
-                new JWTAuthOptions()
-                        .addPubSecKey(
-                                new PubSecKeyOptions().setAlgorithm(algorithm).setBuffer(key))
-                        .setJWTOptions(buildJwtOptions(config, warnOnMissingConstraints)));
+        return new AttestedJwtAuth(
+                JWTAuth.create(
+                        vertx,
+                        new JWTAuthOptions()
+                                .addPubSecKey(new PubSecKeyOptions()
+                                        .setAlgorithm(algorithm)
+                                        .setBuffer(key))
+                                .setJWTOptions(buildJwtOptions(config, warnOnMissingConstraints))),
+                config);
     }
 
     /**
@@ -447,7 +456,7 @@ public final class JwtAuthFactory {
      * @param content                  the raw JWKS JSON string
      * @param config                   the validation constraints to apply; must not be {@code null}
      * @param warnOnMissingConstraints whether to log the missing issuer/audience warnings
-     * @return a configured {@link JWTAuth} instance
+     * @return a configured {@link JWTAuth} instance attesting {@code config}
      */
     private static JWTAuth createFromJwksContent(
             Vertx vertx, String content, JwtValidationConfig config, boolean warnOnMissingConstraints) {
@@ -475,7 +484,7 @@ public final class JwtAuthFactory {
 
         options.setJWTOptions(buildJwtOptions(config, warnOnMissingConstraints));
 
-        return JWTAuth.create(vertx, options);
+        return new AttestedJwtAuth(JWTAuth.create(vertx, options), config);
     }
 
     /**

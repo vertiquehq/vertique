@@ -49,6 +49,10 @@ import lombok.extern.slf4j.Slf4j;
  * key set therefore never silently reverts to a different issuer, audience, or
  * {@code exp}/{@code nbf}/{@code iat} leeway than the initial one.
  *
+ * <p>Because that config is stable, this class attests it directly through
+ * {@link #appliedValidation()} rather than being wrapped: the value it reports holds for the current
+ * delegate and for every future one.
+ *
  * <h2>Overlapping refresh prevention</h2>
  * {@link AtomicBoolean} {@code refreshInProgress} guards against concurrent refreshes — if a
  * previous tick's I/O is still in flight when the next tick fires, the new tick returns immediately
@@ -57,7 +61,7 @@ import lombok.extern.slf4j.Slf4j;
  * @see JwtAuthFactory
  */
 @Slf4j
-public final class RefreshableJwtAuth implements JWTAuth {
+public final class RefreshableJwtAuth implements JWTAuth, ValidationAttested {
 
     // --- State ---
 
@@ -215,6 +219,20 @@ public final class RefreshableJwtAuth implements JWTAuth {
     public void close() {
         closed.set(true);
         vertx.cancelTimer(timerId);
+    }
+
+    // --- ValidationAttested ---
+
+    /**
+     * Returns the validation constraints applied to this instance's delegate, including every
+     * refreshed delegate. Public by interface rule (implements the package-private
+     * {@code ValidationAttested}); the interface type itself is not exported.
+     *
+     * @return the applied validation config; never {@code null}
+     */
+    @Override
+    public JwtValidationConfig appliedValidation() {
+        return validation;
     }
 
     // --- JWTAuth delegation ---

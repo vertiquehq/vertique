@@ -7,8 +7,11 @@ import static org.junit.jupiter.api.Assertions.*;
 
 import io.vertx.core.Vertx;
 import io.vertx.core.json.JsonObject;
+import io.vertx.ext.auth.JWTOptions;
+import io.vertx.ext.auth.authentication.TokenCredentials;
 import io.vertx.ext.auth.jwt.JWTAuth;
 import io.vertx.junit5.VertxExtension;
+import io.vertx.junit5.VertxTestContext;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -81,5 +84,28 @@ class JwtAuthFactoryTest {
 
         JWTAuth auth = JwtAuthFactory.fromJwks(vertx, jwksFile.toString());
         assertNotNull(auth);
+    }
+
+    @Test
+    @DisplayName("Should delegate authenticate and both generateToken overloads through the returned JWTAuth")
+    void shouldDelegateEveryJwtAuthMethod(Vertx vertx, VertxTestContext testContext) {
+        // The factory returns a wrapper that attests the validation config it applied. The wrapper
+        // must forward every JWTAuth method: dropping either generateToken overload would silently
+        // break token signing for every application (and every test) that signs through the factory.
+        JWTAuth auth =
+                JwtAuthFactory.fromSymmetricKey(vertx, "HS256", "super-secret-key-for-testing-minimum-256-bits-long!");
+
+        String defaultOptionsToken = auth.generateToken(new JsonObject().put("sub", "delegation-default"));
+        String explicitOptionsToken =
+                auth.generateToken(new JsonObject().put("sub", "delegation-explicit"), new JWTOptions());
+
+        assertNotNull(defaultOptionsToken);
+        assertFalse(defaultOptionsToken.isBlank());
+        assertNotNull(explicitOptionsToken);
+        assertFalse(explicitOptionsToken.isBlank());
+
+        auth.authenticate(new TokenCredentials(defaultOptionsToken))
+                .compose(user -> auth.authenticate(new TokenCredentials(explicitOptionsToken)))
+                .onComplete(testContext.succeeding(user -> testContext.completeNow()));
     }
 }
