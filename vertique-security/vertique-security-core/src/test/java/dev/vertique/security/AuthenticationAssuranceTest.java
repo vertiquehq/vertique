@@ -10,6 +10,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.time.Instant;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import org.junit.jupiter.api.DisplayName;
@@ -20,7 +22,9 @@ import org.junit.jupiter.api.Test;
  * Unit tests for {@link AuthenticationAssurance}.
  *
  * <p>Verifies: typical OAuth assurance construction; null rejections for required Optional fields;
- * defensive copy of {@code amr} set; null {@code amr} treated as empty set.
+ * defensive copy of {@code amr} set; null {@code amr} treated as empty set; and — the contract this
+ * class pins for issue #181 — that {@code amr} preserves its source encounter order, stays
+ * immutable, and rejects null elements.
  */
 class AuthenticationAssuranceTest {
 
@@ -108,5 +112,58 @@ class AuthenticationAssuranceTest {
                 new AuthenticationAssurance(Optional.empty(), null, Optional.empty(), Optional.empty());
 
         assertTrue(assurance.amr().isEmpty());
+    }
+
+    // --- encounter order (issue #181) ---
+
+    @Test
+    @DisplayName("amr preserves encounter order for both insertion orders")
+    void preservesEncounterOrderForBothInsertionOrders() {
+        // The stored JSON array order of amr must round-trip through the typed model, otherwise a
+        // snapshot signed on one node fails its own HMAC when re-serialized on another (issue #181).
+        // A hash-ordered copy collapses BOTH sources below to one identical iteration order, so at
+        // most one of these two assertions can hold unless the copy is encounter-order preserving.
+        Set<String> forward = new LinkedHashSet<>(List.of("pwd", "otp"));
+        Set<String> reverse = new LinkedHashSet<>(List.of("otp", "pwd"));
+
+        AuthenticationAssurance forwardAssurance =
+                new AuthenticationAssurance(Optional.empty(), forward, Optional.empty(), Optional.empty());
+        AuthenticationAssurance reverseAssurance =
+                new AuthenticationAssurance(Optional.empty(), reverse, Optional.empty(), Optional.empty());
+
+        assertEquals(
+                List.of("pwd", "otp"),
+                List.copyOf(forwardAssurance.amr()),
+                "amr must iterate in its own source encounter order, not a hash-derived order");
+        assertEquals(
+                List.of("otp", "pwd"),
+                List.copyOf(reverseAssurance.amr()),
+                "amr must iterate in its own source encounter order, not a hash-derived order");
+    }
+
+    @Test
+    @DisplayName("amr is immutable — mutation attempts on the record's set are rejected")
+    void amrIsImmutable() {
+        AuthenticationAssurance assurance = new AuthenticationAssurance(
+                Optional.empty(), new LinkedHashSet<>(List.of("pwd", "otp")), Optional.empty(), Optional.empty());
+
+        assertThrows(
+                UnsupportedOperationException.class,
+                () -> assurance.amr().add("x"),
+                "the order-preserving copy must remain unmodifiable");
+    }
+
+    @Test
+    @DisplayName("rejects a null element inside amr")
+    void rejectsNullAmrElement() {
+        Set<String> withNullElement = new LinkedHashSet<>();
+        withNullElement.add("pwd");
+        withNullElement.add(null);
+
+        assertThrows(
+                NullPointerException.class,
+                () -> new AuthenticationAssurance(
+                        Optional.empty(), withNullElement, Optional.empty(), Optional.empty()),
+                "the order-preserving copy must keep Set.copyOf's null-element rejection");
     }
 }

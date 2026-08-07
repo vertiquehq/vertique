@@ -4,7 +4,9 @@
 package dev.vertique.security.runtime;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -22,15 +24,25 @@ import dev.vertique.security.SnapshotIntegrity;
 import dev.vertique.security.authz.AuthorityClaim;
 import dev.vertique.security.authz.AuthorityKind;
 import java.lang.reflect.Field;
+import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.RecordComponent;
+import java.lang.reflect.Type;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
+import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.ZoneOffset;
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.Deque;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.SequencedSet;
+import java.util.Set;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -389,6 +401,167 @@ class IdentitySnapshotCodecTest {
         assertEquals("svc-billing", decoded.content().actor().id());
         assertEquals(1, decoded.content().authorizationClaims().size());
         assertEquals("key-1", decoded.integrity().keyId());
+    }
+
+    // --- issue #181: a multi-element amr must survive a cross-process decode + verifyForUse ---
+
+    /**
+     * FROZEN pre-signed snapshot whose stored {@code content.assurance.amr} array is
+     * {@code ["pwd","otp"]}, signed under {@code key-1}. Generated once by a throwaway harness and
+     * hard-coded here so it stands in for a durable row written by a <em>different</em> process — a
+     * snapshot the codec must accept without re-deriving the array order from its own typed model.
+     */
+    private static final String AMR_PWD_OTP_SNAPSHOT_JSON = """
+            {"carrier":{"carrierId":"carrier-1","target":{"address":"orders","kind":"outbox","messageType":null}},"content":{"actor":{"attributes":{"tenant":"acme"},"id":"svc-scheduler","type":"SERVICE"},"assurance":{"acr":"urn:acr","amr":["pwd","otp"],"authTime":"2026-07-01T10:15:30Z","providerLevel":2},"authenticatedAt":"2026-07-01T10:15:30Z","authenticationMethodKind":"jwt","authorizationClaims":[{"attributes":{},"audience":"aud","issuer":"idp","kind":"ROLE","source":"jwt-roles","value":"admin"}],"capturedAt":"2026-07-01T10:15:31Z","client":{"attributes":{"app":"mobile"},"clientId":"client-abc","source":"jwt-azp"},"delegation":{"authorityId":"grant-7","kind":"on-behalf-of"},"originSummary":"rest:authenticated","subject":{"attributes":{"realm":"acme-realm"},"id":"user-42","type":"USER"}},"expiresAt":"2026-07-01T11:15:31Z","integrity":{"algorithm":"HmacSHA256","keyId":"key-1","tag":"VnjnocKofWb6n9yv_BbYgDSlywccHUwOfFE-FKsvxgo"},"issuedAt":"2026-07-01T10:15:31Z","schemaVersion":2}\
+            """;
+
+    /**
+     * FROZEN pre-signed twin of {@link #AMR_PWD_OTP_SNAPSHOT_JSON} whose stored
+     * {@code content.assurance.amr} array is the reversed {@code ["otp","pwd"]}, independently signed
+     * under {@code key-1}. Together the pair covers both encounter orders, so exactly one of them
+     * would happen to match any given JVM's hash-set iteration order — the asymmetry issue #181 is
+     * about.
+     */
+    private static final String AMR_OTP_PWD_SNAPSHOT_JSON = """
+            {"carrier":{"carrierId":"carrier-1","target":{"address":"orders","kind":"outbox","messageType":null}},"content":{"actor":{"attributes":{"tenant":"acme"},"id":"svc-scheduler","type":"SERVICE"},"assurance":{"acr":"urn:acr","amr":["otp","pwd"],"authTime":"2026-07-01T10:15:30Z","providerLevel":2},"authenticatedAt":"2026-07-01T10:15:30Z","authenticationMethodKind":"jwt","authorizationClaims":[{"attributes":{},"audience":"aud","issuer":"idp","kind":"ROLE","source":"jwt-roles","value":"admin"}],"capturedAt":"2026-07-01T10:15:31Z","client":{"attributes":{"app":"mobile"},"clientId":"client-abc","source":"jwt-azp"},"delegation":{"authorityId":"grant-7","kind":"on-behalf-of"},"originSummary":"rest:authenticated","subject":{"attributes":{"realm":"acme-realm"},"id":"user-42","type":"USER"}},"expiresAt":"2026-07-01T11:15:31Z","integrity":{"algorithm":"HmacSHA256","keyId":"key-1","tag":"mcqnEr0op2mReGIHhRNYxG0VDCnihYZefmicVqkwv3c"},"issuedAt":"2026-07-01T10:15:31Z","schemaVersion":2}\
+            """;
+
+    @Test
+    @DisplayName(
+            "a pre-signed snapshot storing amr as [\"pwd\",\"otp\"] decodes, keeps that order, and verifies for use")
+    void preSignedPwdOtpAmrSnapshotVerifiesForUse() {
+        assertPreSignedFixtureVerifiesForUse(AMR_PWD_OTP_SNAPSHOT_JSON, List.of("pwd", "otp"));
+    }
+
+    @Test
+    @DisplayName(
+            "a pre-signed snapshot storing amr as [\"otp\",\"pwd\"] decodes, keeps that order, and verifies for use")
+    void preSignedOtpPwdAmrSnapshotVerifiesForUse() {
+        assertPreSignedFixtureVerifiesForUse(AMR_OTP_PWD_SNAPSHOT_JSON, List.of("otp", "pwd"));
+    }
+
+    @Test
+    @DisplayName("the two frozen amr fixtures really are distinct payloads carrying distinct integrity tags")
+    void frozenAmrFixturesAreDistinctAndIndependentlySigned() {
+        assertNotEquals(
+                AMR_PWD_OTP_SNAPSHOT_JSON,
+                AMR_OTP_PWD_SNAPSHOT_JSON,
+                "the two fixtures must differ, otherwise they do not cover two encounter orders");
+        assertNotEquals(
+                tagOf(AMR_PWD_OTP_SNAPSHOT_JSON),
+                tagOf(AMR_OTP_PWD_SNAPSHOT_JSON),
+                "each fixture must carry its own signature over its own stored amr order");
+    }
+
+    @Test
+    @DisplayName("no snapshot record component is declared as an unordered java.util.Set")
+    void snapshotModelDeclaresNoUnorderedSetComponents() {
+        // The HMAC is computed over a serialization of the typed model on the verifyIntegrity path,
+        // so ANY unordered Set anywhere in the snapshot tree reintroduces the issue-#181 cross-process
+        // verification failure. Pin the structural invariant, not just the one known offender.
+        Deque<Class<?>> queue = new ArrayDeque<>();
+        Set<Class<?>> visited = new HashSet<>();
+        queue.add(IdentitySnapshot.class);
+
+        while (!queue.isEmpty()) {
+            Class<?> record = queue.poll();
+            if (!visited.add(record)) {
+                continue;
+            }
+            for (RecordComponent component : record.getRecordComponents()) {
+                Class<?> raw = component.getType();
+                if (Set.class.isAssignableFrom(raw)) {
+                    assertTrue(
+                            SequencedSet.class.isAssignableFrom(raw),
+                            record.getSimpleName() + "." + component.getName()
+                                    + " is declared as an unordered " + raw.getName()
+                                    + "; every set-valued snapshot component must be declared as a "
+                                    + "java.util.SequencedSet so its stored JSON array order round-trips");
+                }
+                if (raw.isRecord()) {
+                    queue.add(raw);
+                }
+                for (Class<?> argument : recordTypeArgumentsOf(component.getGenericType())) {
+                    queue.add(argument);
+                }
+            }
+        }
+    }
+
+    /**
+     * Asserts that a frozen, externally-signed snapshot fixture decodes, exposes {@code amr} in the
+     * exact order the fixture stores it, and passes {@link IdentitySnapshotCodec#verifyForUse} — the
+     * three seams issue #181 breaks, asserted separately so a failure names which one gave way.
+     *
+     * @param fixtureJson      the frozen pre-signed snapshot JSON
+     * @param expectedAmrOrder the amr order stored in {@code fixtureJson}
+     */
+    private static void assertPreSignedFixtureVerifiesForUse(String fixtureJson, List<String> expectedAmrOrder) {
+        IdentitySnapshotCodec codec = fixtureCodec();
+        byte[] stored = fixtureJson.getBytes(StandardCharsets.UTF_8);
+
+        IdentitySnapshot decoded =
+                assertDoesNotThrow(() -> codec.decode(stored), "the stored bytes must decode and verify as written");
+
+        assertEquals(
+                expectedAmrOrder,
+                List.copyOf(decoded.content().assurance().orElseThrow().amr()),
+                "the decoded typed model must preserve the stored amr array order");
+
+        assertDoesNotThrow(
+                () -> codec.verifyForUse(decoded),
+                "verifyForUse re-serializes the typed model, so a snapshot whose stored amr order differs "
+                        + "from the model's iteration order fails its own valid HMAC (issue #181)");
+    }
+
+    /**
+     * Builds the codec used against the frozen fixtures: the same fixed keyset as {@link #newCodec()},
+     * plus a clock pinned inside the fixtures' signed validity window so they verify forever.
+     *
+     * @return a codec whose freshness clock is fixed at {@code 2026-07-01T10:30:00Z}
+     */
+    private static IdentitySnapshotCodec fixtureCodec() {
+        return new IdentitySnapshotCodec(
+                new SnapshotHmac(Map.of("key-1", "super-secret-signing-key-material"), "key-1"),
+                new SnapshotFreshnessPolicy(
+                        Optional.empty(),
+                        Optional.empty(),
+                        Duration.ofSeconds(30),
+                        Clock.fixed(Instant.parse("2026-07-01T10:30:00Z"), ZoneOffset.UTC)));
+    }
+
+    /**
+     * Extracts the {@code integrity.tag} value from a snapshot JSON string.
+     *
+     * @param json the snapshot JSON
+     * @return the base64url tag value
+     */
+    private static String tagOf(String json) {
+        int start = json.indexOf("\"tag\":\"") + "\"tag\":\"".length();
+        return json.substring(start, json.indexOf('"', start));
+    }
+
+    /**
+     * Returns the generic type arguments of {@code type} that are Vertique records — the container
+     * elements ({@code Optional<T>}, {@code List<T>}, {@code Set<T>}, {@code Map<K,V>}) the snapshot
+     * walker must descend into.
+     *
+     * @param type the component's generic type
+     * @return the record type arguments, possibly empty
+     */
+    private static List<Class<?>> recordTypeArgumentsOf(Type type) {
+        if (!(type instanceof ParameterizedType parameterized)) {
+            return List.of();
+        }
+        List<Class<?>> records = new ArrayList<>();
+        for (Type argument : parameterized.getActualTypeArguments()) {
+            if (argument instanceof Class<?> raw
+                    && raw.isRecord()
+                    && raw.getName().startsWith("dev.vertique.")) {
+                records.add(raw);
+            }
+        }
+        return records;
     }
 
     /**
