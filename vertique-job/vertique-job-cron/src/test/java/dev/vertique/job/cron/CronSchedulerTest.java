@@ -96,9 +96,10 @@ class CronSchedulerTest {
 
     /**
      * Builds a {@link CronScheduler} on {@link #FAST_TICKS} with the all-defaults numeric tail
-     * ({@link CronScheduler#DEFAULT_MAX_CONCURRENT_JOBS}, no jitter, no execution timeout) and the
-     * test {@link DispatchEnvelopeBuilder}. Sites needing a non-default numeric argument or a
-     * different planner call the constructor explicitly instead.
+     * ({@link CronScheduler#DEFAULT_MAX_CONCURRENT_JOBS}, {@code executionTimeoutMs = 0} so no
+     * execution timeout is armed, {@code progressFlushIntervalMs = 0} so no periodic progress flush
+     * is armed) and the test {@link DispatchEnvelopeBuilder}. Sites needing a non-default numeric
+     * argument or a different planner call the constructor explicitly instead.
      *
      * @param vertx the Vert.x instance timers are armed on
      * @param interceptors the {@link JobInterceptor} set to install
@@ -2422,8 +2423,9 @@ class CronSchedulerTest {
             when(repo.updateScheduleFireTimes(anyString(), any(Instant.class), any(Instant.class)))
                     .thenAnswer(inv -> Future.succeededFuture());
 
-            // 300 ms timeout — handler replies in 100 ms. Shrinking the injected timeout shrinks the
-            // quiet window this negative proof has to hold open (see below).
+            // 300 ms timeout — the handler replies immediately on receipt, so no wall-clock margin
+            // has to survive a starved runner. Shrinking the injected timeout shrinks the quiet
+            // window this negative proof has to hold open (see below).
             scheduler = new CronScheduler(
                     vertx,
                     Set.of(),
@@ -2442,40 +2444,41 @@ class CronSchedulerTest {
             vertx.eventBus().consumer("test.fast-reply.address", msg -> {
                 var body = (DispatchEnvelope<?>) msg.body();
                 if (body.replyAddress().isPresent()) {
-                    vertx.setTimer(100, id -> {
-                        vertx.eventBus()
-                                .send(
-                                        body.replyAddress().orElseThrow(),
-                                        DispatchEnvelope.of("done"),
-                                        new DeliveryOptions().setCodecName("dispatch.envelope"));
-                        completeCount.incrementAndGet();
-                        // Negative proof: the reply is the positive completion signal, and the quiet
-                        // window is anchored *after* it — an execution-timeout regression fires
-                        // within the injected 300 ms of a dispatch, so max(1_000, 3 × 300) = 1_000 ms
-                        // of post-reply silence is what makes verify(never()) meaningful. Anchoring
-                        // at scheduler start instead would leave the window's start at the mercy of
-                        // whenever the first tick landed. Armed once: the job keeps firing (and
-                        // replying) for the whole window, which only adds chances for a regression
-                        // to show — under compressed ticks, many more of them.
-                        if (quietWindowArmed.compareAndSet(false, true)) {
-                            vertx.setTimer(
-                                    1000,
-                                    quietId -> ctx.verify(() -> {
-                                        assertTrue(
-                                                completeCount.get() >= 1, "Handler should have replied at least once");
-                                        // completeExecution should NOT have been called with ABANDONED
-                                        // (called with SUCCEEDED from normal completion path)
-                                        verify(repo, org.mockito.Mockito.never())
-                                                .completeExecution(
-                                                        any(UUID.class),
-                                                        eq(JobState.ABANDONED),
-                                                        anyString(),
-                                                        anyString(),
-                                                        any());
-                                        ctx.completeNow();
-                                    }));
-                        }
-                    });
+                    // Reply on receipt, with no intervening timer: the causal chain this test proves
+                    // is receive → reply → quiet window, and any reply delay would burn part of the
+                    // injected 300 ms timeout budget before the reply is even sent — on a starved
+                    // runner that turns into a false ABANDONED failure.
+                    vertx.eventBus()
+                            .send(
+                                    body.replyAddress().orElseThrow(),
+                                    DispatchEnvelope.of("done"),
+                                    new DeliveryOptions().setCodecName("dispatch.envelope"));
+                    completeCount.incrementAndGet();
+                    // Negative proof: the reply is the positive completion signal, and the quiet
+                    // window is anchored *after* it — an execution-timeout regression fires
+                    // within the injected 300 ms of a dispatch, so max(1_000, 3 × 300) = 1_000 ms
+                    // of post-reply silence is what makes verify(never()) meaningful. Anchoring
+                    // at scheduler start instead would leave the window's start at the mercy of
+                    // whenever the first tick landed. Armed once: the job keeps firing (and
+                    // replying) for the whole window, which only adds chances for a regression
+                    // to show — under compressed ticks, many more of them.
+                    if (quietWindowArmed.compareAndSet(false, true)) {
+                        vertx.setTimer(
+                                1000,
+                                quietId -> ctx.verify(() -> {
+                                    assertTrue(completeCount.get() >= 1, "Handler should have replied at least once");
+                                    // completeExecution should NOT have been called with ABANDONED
+                                    // (called with SUCCEEDED from normal completion path)
+                                    verify(repo, org.mockito.Mockito.never())
+                                            .completeExecution(
+                                                    any(UUID.class),
+                                                    eq(JobState.ABANDONED),
+                                                    anyString(),
+                                                    anyString(),
+                                                    any());
+                                    ctx.completeNow();
+                                }));
+                    }
                 }
             });
 
