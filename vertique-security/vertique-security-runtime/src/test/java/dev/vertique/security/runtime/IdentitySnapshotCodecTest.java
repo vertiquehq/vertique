@@ -28,6 +28,7 @@ import java.lang.reflect.GenericArrayType;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.RecordComponent;
 import java.lang.reflect.Type;
+import java.lang.reflect.TypeVariable;
 import java.lang.reflect.WildcardType;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
@@ -35,9 +36,6 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
-import java.util.ArrayDeque;
-import java.util.ArrayList;
-import java.util.Deque;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -47,6 +45,7 @@ import java.util.SequencedSet;
 import java.util.Set;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import thirdparty.fixture.ThirdPartyRecordFixture;
 
 /**
  * Tests for {@link IdentitySnapshotCodec} against the schema-v2 content/envelope split (PRD-ID-002
@@ -461,20 +460,98 @@ class IdentitySnapshotCodecTest {
         // The HMAC is computed over a serialization of the typed model on the verifyIntegrity path,
         // so ANY unordered Set anywhere in the snapshot tree reintroduces the issue-#181 cross-process
         // verification failure. Pin the structural invariant, not just the one known offender.
-        Deque<Class<?>> queue = new ArrayDeque<>();
-        Set<Class<?>> visited = new HashSet<>();
-        queue.add(IdentitySnapshot.class);
+        assertNoUnorderedSetReachableFrom(IdentitySnapshot.class);
+    }
 
-        while (!queue.isEmpty()) {
-            Class<?> record = queue.poll();
-            if (!visited.add(record)) {
-                continue;
-            }
-            for (RecordComponent component : record.getRecordComponents()) {
-                assertNoUnorderedSetIn(record, component, component.getGenericType());
-                queue.addAll(recordTypesIn(component.getGenericType()));
-            }
-        }
+    // --- structural-guard self-tests: synthetic roots pinning the walker's detection + termination ---
+
+    @Test
+    @DisplayName("guard detects an unordered Set buried in nested type arguments")
+    void guardDetectsNestedParameterizedSet() {
+        assertGuardNames(NestedParameterizedOffender.class, "NestedParameterizedOffender.deeplyNested");
+    }
+
+    @Test
+    @DisplayName("guard detects an offending record reachable only through a wildcard upper bound")
+    void guardDetectsWildcardBoundOffender() {
+        // The offending Set is declared on PlainSetCarrier, reachable only by descending
+        // List<? extends PlainSetCarrier>'s wildcard upper bound.
+        assertGuardNames(WildcardBoundOffender.class, "PlainSetCarrier.tags");
+    }
+
+    @Test
+    @DisplayName("guard detects a reifiable Set[] component, which carries no generic type node")
+    void guardDetectsReifiableSetArray() {
+        assertGuardNames(SetArrayOffender.class, "SetArrayOffender.rawSets");
+    }
+
+    @Test
+    @DisplayName("guard detects an offending record behind a reifiable array of records")
+    void guardDetectsReifiableRecordArray() {
+        assertGuardNames(RecordArrayOffender.class, "PlainSetCarrier.tags");
+    }
+
+    @Test
+    @DisplayName("guard detects an unordered Set visible only through a component's type-variable bound")
+    void guardDetectsTypeVariableBoundSet() {
+        assertGuardNames(TypeVariableBoundOffender.class, "TypeVariableBoundOffender.bounded");
+    }
+
+    @Test
+    @DisplayName("guard detects an unordered Set inside an embedded record outside dev.vertique")
+    void guardDetectsThirdPartyRecordSet() {
+        // Pins the removal of the old dev.vertique package filter: a foreign record embedded in the
+        // signed graph is walked on exactly the same terms as a Vertique-owned one.
+        assertGuardNames(ThirdPartyRoot.class, "ThirdPartyRecordFixture.tags");
+    }
+
+    @Test
+    @DisplayName("guard terminates on a self-referential generic bound and passes a Set-free record")
+    void guardTerminatesOnRecursiveTypeVariableBound() {
+        // T extends Comparable<T> is a cycle in the type graph: without the visited set the walk
+        // recurses forever (StackOverflowError). With it, the walk terminates and finds no offender.
+        assertDoesNotThrow(
+                () -> assertNoUnorderedSetReachableFrom(RecursiveBoundRecord.class),
+                "a record with a recursive type-variable bound and no unordered Set must pass, not hang");
+    }
+
+    /** Offender fixture: the unordered Set hides two container levels deep in a nested generic. */
+    private record NestedParameterizedOffender(Optional<List<Set<String>>> deeplyNested) {}
+
+    /** Offender fixture: a plainly declared unordered Set component, reached via other fixtures. */
+    private record PlainSetCarrier(Set<String> tags) {}
+
+    /** Offender fixture: the carrier record is reachable only through a wildcard upper bound. */
+    private record WildcardBoundOffender(List<? extends PlainSetCarrier> carriers) {}
+
+    /** Offender fixture: a reifiable raw {@code Set[]} — no parameterized/generic-array node exists. */
+    @SuppressWarnings("rawtypes")
+    private record SetArrayOffender(Set[] rawSets) {}
+
+    /** Offender fixture: a reifiable array whose element record carries an unordered Set. */
+    private record RecordArrayOffender(PlainSetCarrier[] carriers) {}
+
+    /** Offender fixture: the unordered Set is visible only through the component's type-variable bound. */
+    private record TypeVariableBoundOffender<T extends Set<String>>(T bounded) {}
+
+    /** Termination fixture: a self-referential bound the walker must not chase forever. */
+    private record RecursiveBoundRecord<T extends Comparable<T>>(T sortable, String label) {}
+
+    /** Offender fixture: the unordered Set lives in an embedded record outside {@code dev.vertique}. */
+    private record ThirdPartyRoot(ThirdPartyRecordFixture embedded) {}
+
+    /**
+     * Asserts that walking {@code root} fails and that the failure names the offending component, so
+     * each fixture proves detection <em>and</em> that the message still points at the culprit.
+     *
+     * @param root              the synthetic root record to walk
+     * @param expectedComponent the {@code Record.component} the message must name
+     */
+    private static void assertGuardNames(Class<?> root, String expectedComponent) {
+        AssertionError failure = assertThrows(AssertionError.class, () -> assertNoUnorderedSetReachableFrom(root));
+        assertTrue(
+                failure.getMessage().contains(expectedComponent),
+                "the guard must name " + expectedComponent + ", but failed with: " + failure.getMessage());
     }
 
     /**
@@ -531,97 +608,110 @@ class IdentitySnapshotCodecTest {
     }
 
     /**
-     * Recursively asserts that no {@code Set}-assignable raw type anywhere in {@code type}'s generic
-     * structure — the component's own type, nested type arguments ({@code Optional<Set<String>>},
-     * {@code List<Set<String>>}, {@code Map<K, Set<V>>}, arbitrarily deep), and wildcard upper
-     * bounds — escapes being {@code SequencedSet}-assignable.
+     * Asserts that no unordered {@code Set} appears anywhere in the serialization graph reachable
+     * from {@code rootRecord}'s components. Extracted from the real-model test so a synthetic root
+     * record can be walked directly by the structural-guard self-tests above.
      *
-     * @param record    the record declaring the component (for the failure message)
-     * @param component the component whose generic structure is being checked
-     * @param type      the type node currently being visited
+     * @param rootRecord the record class whose reachable type graph is checked
      */
-    private static void assertNoUnorderedSetIn(Class<?> record, RecordComponent component, Type type) {
-        Class<?> raw = rawClassOf(type);
-        if (raw != null && Set.class.isAssignableFrom(raw)) {
-            assertTrue(
-                    SequencedSet.class.isAssignableFrom(raw),
-                    record.getSimpleName() + "." + component.getName()
-                            + " declares an unordered " + raw.getName() + " in its generic type "
-                            + component.getGenericType().getTypeName()
-                            + "; every set-valued snapshot component must be declared as a "
-                            + "java.util.SequencedSet so its stored JSON array order round-trips");
-        }
-        if (type instanceof ParameterizedType parameterized) {
-            for (Type argument : parameterized.getActualTypeArguments()) {
-                assertNoUnorderedSetIn(record, component, argument);
-            }
-        } else if (type instanceof WildcardType wildcard) {
-            for (Type bound : wildcard.getUpperBounds()) {
-                assertNoUnorderedSetIn(record, component, bound);
-            }
-        } else if (type instanceof GenericArrayType array) {
-            assertNoUnorderedSetIn(record, component, array.getGenericComponentType());
+    private static void assertNoUnorderedSetReachableFrom(Class<?> rootRecord) {
+        Set<Type> visited = new HashSet<>();
+        visited.add(rootRecord);
+        walkRecordComponents(rootRecord, visited);
+    }
+
+    /**
+     * Walks each component of {@code record}, carrying the declaring record and the component along
+     * so a failure buried deep inside a nested generic still names the component that introduced it.
+     *
+     * @param record  the record whose components are walked
+     * @param visited the shared cycle guard
+     */
+    private static void walkRecordComponents(Class<?> record, Set<Type> visited) {
+        // Deliberately no dev.vertique package filter: the guard's subject is the serialization graph
+        // that feeds the HMAC, not code ownership — an embedded third-party record's unordered Set has
+        // exactly the issue-#181 failure mode. A false positive should fail loud and earn an explicit
+        // per-type allowlist, never a blanket package gate.
+        for (RecordComponent component : record.getRecordComponents()) {
+            walkType(component.getGenericType(), record, component, visited);
         }
     }
 
     /**
-     * Returns every Vertique record class reachable anywhere in {@code type}'s generic structure —
-     * recursive contract: the type itself, nested {@link ParameterizedType} arguments (e.g.
-     * {@code Optional<List<SomeRecord>>}, {@code Map<String, List<SomeRecord>>}), and wildcard upper
-     * bounds ({@code List<? extends SomeRecord>}) are all descended into, so the snapshot walker
-     * visits records at any container depth.
+     * Single cycle-safe visitor over one {@link Type} node: asserts the node's raw class is not an
+     * unordered {@code Set}, then descends into every child the reflective generic model exposes —
+     * record components, a parameterized type's raw type and type arguments, wildcard upper bounds,
+     * generic and reifiable array component types, and type-variable bounds.
      *
-     * @param type the component's generic type
-     * @return the reachable record types, possibly empty
+     * <p>{@code visited} is what makes the walk terminate: a self-referential generic bound
+     * ({@code T extends Comparable<T>}) or a record transitively containing its own type would
+     * otherwise recurse until the stack overflows. It is required precisely because the type-variable
+     * branch below follows bounds.
+     *
+     * @param type      the type node being visited; {@code null} nodes are ignored
+     * @param declaring the record declaring the component this node was reached from
+     * @param component the component this node was reached from, named in the failure message
+     * @param visited   the shared cycle guard
      */
-    private static List<Class<?>> recordTypesIn(Type type) {
-        List<Class<?>> records = new ArrayList<>();
-        collectRecordTypes(type, records);
-        return records;
+    private static void walkType(Type type, Class<?> declaring, RecordComponent component, Set<Type> visited) {
+        if (type == null || !visited.add(type)) {
+            return;
+        }
+        switch (type) {
+            case Class<?> raw -> {
+                assertNotUnorderedSet(raw, declaring, component);
+                if (raw.isArray()) {
+                    // A reifiable array (Set[], PlainSetCarrier[]) has no ParameterizedType or
+                    // GenericArrayType node, so its element type is reachable only through the Class.
+                    // Recursing here re-enters this branch for multi-dimensional arrays.
+                    walkType(raw.getComponentType(), declaring, component, visited);
+                }
+                if (raw.isRecord()) {
+                    walkRecordComponents(raw, visited);
+                }
+            }
+            case ParameterizedType parameterized -> {
+                walkType(parameterized.getRawType(), declaring, component, visited);
+                for (Type argument : parameterized.getActualTypeArguments()) {
+                    walkType(argument, declaring, component, visited);
+                }
+            }
+            case WildcardType wildcard -> {
+                for (Type bound : wildcard.getUpperBounds()) {
+                    walkType(bound, declaring, component, visited);
+                }
+            }
+            case GenericArrayType array -> walkType(array.getGenericComponentType(), declaring, component, visited);
+            case TypeVariable<?> variable -> {
+                for (Type bound : variable.getBounds()) {
+                    walkType(bound, declaring, component, visited);
+                }
+            }
+            default -> {
+                // Nothing further to descend into for this node kind.
+            }
+        }
     }
 
     /**
-     * Accumulator half of {@link #recordTypesIn(Type)}: adds {@code type}'s Vertique record class
-     * (when it has one) to {@code records} and recurses into nested type arguments, wildcard upper
-     * bounds, and generic array component types.
+     * Asserts that a single raw class reached by {@link #walkType} is not an unordered {@code Set},
+     * naming the declaring component and its full generic type when it is.
      *
-     * @param type    the type node currently being visited
-     * @param records the accumulator of discovered record classes
+     * @param raw       the raw class at the current node
+     * @param declaring the record declaring the component the node was reached from
+     * @param component the component the node was reached from
      */
-    private static void collectRecordTypes(Type type, List<Class<?>> records) {
-        Class<?> raw = rawClassOf(type);
-        if (raw != null && raw.isRecord() && raw.getName().startsWith("dev.vertique.")) {
-            records.add(raw);
+    private static void assertNotUnorderedSet(Class<?> raw, Class<?> declaring, RecordComponent component) {
+        if (!Set.class.isAssignableFrom(raw)) {
+            return;
         }
-        if (type instanceof ParameterizedType parameterized) {
-            for (Type argument : parameterized.getActualTypeArguments()) {
-                collectRecordTypes(argument, records);
-            }
-        } else if (type instanceof WildcardType wildcard) {
-            for (Type bound : wildcard.getUpperBounds()) {
-                collectRecordTypes(bound, records);
-            }
-        } else if (type instanceof GenericArrayType array) {
-            collectRecordTypes(array.getGenericComponentType(), records);
-        }
-    }
-
-    /**
-     * Resolves the raw {@link Class} of a type node: the class itself, or a parameterized type's raw
-     * type. Wildcards, type variables, and generic arrays have no raw class here and return null —
-     * their nested structure is handled by the callers' recursion.
-     *
-     * @param type the type node
-     * @return the raw class, or {@code null} when the node carries none
-     */
-    private static Class<?> rawClassOf(Type type) {
-        if (type instanceof Class<?> raw) {
-            return raw;
-        }
-        if (type instanceof ParameterizedType parameterized && parameterized.getRawType() instanceof Class<?> raw) {
-            return raw;
-        }
-        return null;
+        assertTrue(
+                SequencedSet.class.isAssignableFrom(raw),
+                declaring.getSimpleName() + "." + component.getName()
+                        + " declares an unordered " + raw.getName() + " in its generic type "
+                        + component.getGenericType().getTypeName()
+                        + "; every set-valued snapshot component must be declared as a "
+                        + "java.util.SequencedSet so its stored JSON array order round-trips");
     }
 
     /**
