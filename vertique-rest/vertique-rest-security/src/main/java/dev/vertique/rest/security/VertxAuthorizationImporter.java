@@ -59,8 +59,11 @@ import lombok.extern.slf4j.Slf4j;
  *   <li><strong>All-or-nothing publication.</strong> Claims are derived and merged only after
  *       <em>every</em> provider has succeeded. Any provider failure — a failed future or a
  *       synchronous throw — short-circuits the chain and fails the whole import with
- *       {@link UnavailableException}, naming the offending provider id and carrying its cause. No
- *       partially imported claim is ever observable.</li>
+ *       {@link UnavailableException} carrying the provider's cause. Its message is the generic,
+ *       client-safe {@value #UNAVAILABLE_MESSAGE} and deliberately does <em>not</em> name the
+ *       offending provider — that message is what reaches the caller as the 503 problem detail. The
+ *       provider id is recorded server-side instead, in exactly one ERROR log event per failed
+ *       import. No partially imported claim is ever observable.</li>
  *   <li><strong>Fail-closed mapping.</strong> Only resource-free {@link RoleBasedAuthorization} and
  *       {@link PermissionBasedAuthorization} grants with a non-blank value map to an
  *       {@link AuthorityClaim}. Everything else — wildcard permissions, {@code And}/{@code Or}/
@@ -80,7 +83,8 @@ import lombok.extern.slf4j.Slf4j;
  *       {@value #EXCLUDED_JWT_CLAIMS_PROVIDER_ID}, whose bucket is a lossy re-projection of JWT
  *       claims already handled by the identity pipeline. When no provider remains after exclusion,
  *       the base claims instance is returned unchanged on an already-completed future — no async
- *       hop, no allocation.</li>
+ *       hop, no allocation. The very same {@code base} instance is also returned when providers did
+ *       run but the import mapped no claims: an empty import never allocates a copy.</li>
  * </ul>
  *
  * @see AuthorizationProvider
@@ -100,6 +104,15 @@ public final class VertxAuthorizationImporter {
 
     /** Prefix of the {@link AuthorityClaim#source()} value stamped on every imported claim. */
     private static final String SOURCE_PREFIX = "vertx-provider:";
+
+    /**
+     * Client-visible detail of every import failure — deliberately generic.
+     *
+     * <p>This message reaches the caller verbatim as the 503 problem detail, so it must not disclose
+     * internal topology such as which authorization provider failed. The provider id goes to the
+     * server log instead.
+     */
+    static final String UNAVAILABLE_MESSAGE = "Authorization is temporarily unavailable";
 
     /** Non-excluded providers, sorted by ascending {@link AuthorizationProvider#getId()}. */
     private final List<AuthorizationProvider> orderedProviders;
@@ -199,9 +212,10 @@ public final class VertxAuthorizationImporter {
      * @param base the claims resolved so far by the identity pipeline; must not be {@code null}. Its
      *             attributes are carried over unchanged
      * @return a future completing with the union of {@code base}'s claims and the imported claims;
-     *         the very same {@code base} instance on an already-completed future when no provider
-     *         remains after exclusion; failed with {@link UnavailableException} when any provider
-     *         fails
+     *         the very same {@code base} instance in both cases where the import adds nothing —
+     *         when no provider remains after exclusion (on an already-completed future) and when
+     *         providers ran but mapped no claims; failed with {@link UnavailableException} when any
+     *         provider fails
      * @throws NullPointerException if {@code user} or {@code base} is {@code null}
      */
     public Future<AuthorizationClaims> importInto(User user, AuthorizationClaims base) {
@@ -233,8 +247,8 @@ public final class VertxAuthorizationImporter {
 
     /**
      * Invokes one provider against the request-local user, normalizing every failure mode — a failed
-     * future, a synchronous throw, or a {@code null} future — into a failed future carrying an
-     * {@link UnavailableException} that names the provider.
+     * future, a synchronous throw, or a {@code null} future — into a failed future carrying a
+     * generic {@link UnavailableException}, after logging the offending provider id once at ERROR.
      *
      * @param provider  the provider to invoke; must not be {@code null}
      * @param localUser the request-local user the provider may read and mutate; must not be
@@ -257,15 +271,22 @@ public final class VertxAuthorizationImporter {
     }
 
     /**
-     * Builds the failure raised when a provider cannot resolve its authorizations.
+     * Records the failure server-side and builds the client-visible failure raised when a provider
+     * cannot resolve its authorizations.
+     *
+     * <p>This is the single point at which a failed import is logged: the provider chain
+     * short-circuits on the first failure, and no caller re-logs the returned exception. The ERROR
+     * names the provider id and carries its cause, both of which the returned exception's generic
+     * message withholds from the client.
      *
      * @param providerId the failing provider's id
      * @param cause      the underlying failure
-     * @return an {@link UnavailableException} naming the provider and carrying {@code cause}
+     * @return an {@link UnavailableException} with the generic {@value #UNAVAILABLE_MESSAGE} detail,
+     *         carrying {@code cause}
      */
     private static UnavailableException unavailable(String providerId, Throwable cause) {
-        return new UnavailableException(
-                "Vert.x authorization provider [" + providerId + "] failed to resolve authorizations", cause);
+        log.error("Vert.x authorization provider [{}] failed to resolve authorizations", providerId, cause);
+        return new UnavailableException(UNAVAILABLE_MESSAGE, cause);
     }
 
     /**
@@ -359,9 +380,13 @@ public final class VertxAuthorizationImporter {
      *
      * @param base     the claims resolved by the identity pipeline
      * @param imported the claims derived from the provider chain
-     * @return the merged claims
+     * @return the merged claims, or the very same {@code base} instance when {@code imported} is
+     *         empty — an import that mapped nothing changes nothing, so no copy is allocated
      */
     private static AuthorizationClaims merge(AuthorizationClaims base, Set<AuthorityClaim> imported) {
+        if (imported.isEmpty()) {
+            return base;
+        }
         Set<AuthorityClaim> merged = new LinkedHashSet<>(base.claims());
         merged.addAll(imported);
         return new AuthorizationClaims(merged, base.attributes());

@@ -536,6 +536,13 @@ Execution contract:
 - **All-or-nothing.** Claims are merged only after every provider has succeeded. Any provider
   failure — a failed future, a synchronous throw, or a `null` future — fails the request with 503;
   no partially imported claim is ever observable.
+- **Generic client detail, provider id server-side.** The `UnavailableException` behind that 503
+  carries the fixed detail `Authorization is temporarily unavailable`, so the response never
+  discloses which provider failed. The failing provider id and its cause are recorded instead in
+  exactly one ERROR log event per failed import, emitted by the importer.
+- **Same-instance return on an empty import.** When the import contributes no claim — every
+  provider excluded, or providers ran but granted nothing mappable — the base `AuthorizationClaims`
+  instance is carried through unchanged rather than copied.
 - **No importer-level timeout.** Providers must not block the event loop and own their own
   timeouts; a provider whose future never completes stalls that request's authorization.
 
@@ -673,7 +680,7 @@ There is no warn-only mode. Every validation failure stops startup.
 | 403 | `DENY_ALL` | `@DenyAll` |
 | 403 | the decision's own code | The decision point denied |
 | 403 | `INTERNAL_AUTHZ_ERROR` | The decision point or `Authorizer` threw, returned a `null` future, or resolved to a `null` decision — fail-closed |
-| 503 | — | A provider failed during the opt-in [Vert.x authorization import](#vertx-authorization-import-opt-in) — fail-closed: the `SecurityContext` is never bound and no partially imported claim is observable |
+| 503 | — | A provider failed during the opt-in [Vert.x authorization import](#vertx-authorization-import-opt-in) — fail-closed: the `SecurityContext` is never bound and no partially imported claim is observable. The problem detail is the generic `Authorization is temporarily unavailable`; the failing provider id is logged, never returned |
 | — | `PERMITTED` | Both gates passed |
 
 A failed (rather than denied) decision future propagates its cause through the error pipeline after
