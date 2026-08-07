@@ -173,7 +173,8 @@ class ManagementVerticleTest {
         @Test
         @DisplayName("returns 200 UP with empty liveness checks")
         void emptyChecks(Vertx vertx, VertxTestContext ctx) {
-            ManagementConfig config = ManagementConfig.builder().port(0).build();
+            ManagementConfig config =
+                    ManagementConfig.builder().port(0).host("127.0.0.1").build();
             ManagementVerticle verticle = new ManagementVerticle(Set.of(), Set.of(), config, Set.of());
             deployAndRequest(vertx, verticle, "/health/live").onComplete(ctx.succeeding(json -> {
                 ctx.verify(() -> {
@@ -188,7 +189,8 @@ class ManagementVerticleTest {
         @Test
         @DisplayName("returns 200 UP with single passing liveness check")
         void passingCheck(Vertx vertx, VertxTestContext ctx) {
-            ManagementConfig config = ManagementConfig.builder().port(0).build();
+            ManagementConfig config =
+                    ManagementConfig.builder().port(0).host("127.0.0.1").build();
             ManagementVerticle verticle =
                     new ManagementVerticle(Set.of(new UpCheck("process")), Set.of(), config, Set.of());
             deployAndRequest(vertx, verticle, "/health/live").onComplete(ctx.succeeding(json -> {
@@ -208,7 +210,8 @@ class ManagementVerticleTest {
         @Test
         @DisplayName("returns 503 DOWN when any liveness check fails")
         void failingCheck(Vertx vertx, VertxTestContext ctx) {
-            ManagementConfig config = ManagementConfig.builder().port(0).build();
+            ManagementConfig config =
+                    ManagementConfig.builder().port(0).host("127.0.0.1").build();
             ManagementVerticle verticle =
                     new ManagementVerticle(Set.of(new DownCheck("process", "OOM")), Set.of(), config, Set.of());
             deployAndRequest(vertx, verticle, "/health/live").onComplete(ctx.succeeding(json -> {
@@ -232,7 +235,8 @@ class ManagementVerticleTest {
         @Test
         @DisplayName("returns 200 UP with empty readiness checks")
         void emptyChecks(Vertx vertx, VertxTestContext ctx) {
-            ManagementConfig config = ManagementConfig.builder().port(0).build();
+            ManagementConfig config =
+                    ManagementConfig.builder().port(0).host("127.0.0.1").build();
             ManagementVerticle verticle = new ManagementVerticle(Set.of(), Set.of(), config, Set.of());
             deployAndRequest(vertx, verticle, "/health/ready").onComplete(ctx.succeeding(json -> {
                 ctx.verify(() -> {
@@ -247,7 +251,8 @@ class ManagementVerticleTest {
         @Test
         @DisplayName("returns 200 UP with passing readiness check including data")
         void passingCheckWithData(Vertx vertx, VertxTestContext ctx) {
-            ManagementConfig config = ManagementConfig.builder().port(0).build();
+            ManagementConfig config =
+                    ManagementConfig.builder().port(0).host("127.0.0.1").build();
             ManagementVerticle verticle =
                     new ManagementVerticle(Set.of(), Set.of(new UpCheckWithData()), config, Set.of());
             deployAndRequest(vertx, verticle, "/health/ready").onComplete(ctx.succeeding(json -> {
@@ -267,7 +272,8 @@ class ManagementVerticleTest {
         @Test
         @DisplayName("returns 503 DOWN when any readiness check fails")
         void failingCheck(Vertx vertx, VertxTestContext ctx) {
-            ManagementConfig config = ManagementConfig.builder().port(0).build();
+            ManagementConfig config =
+                    ManagementConfig.builder().port(0).host("127.0.0.1").build();
             ManagementVerticle verticle = new ManagementVerticle(
                     Set.of(), Set.of(new DownCheck("database", "connection refused")), config, Set.of());
             deployAndRequest(vertx, verticle, "/health/ready").onComplete(ctx.succeeding(json -> {
@@ -287,7 +293,8 @@ class ManagementVerticleTest {
         @Test
         @DisplayName("returns 503 DOWN with all results when mix of UP and DOWN")
         void mixedChecks(Vertx vertx, VertxTestContext ctx) {
-            ManagementConfig config = ManagementConfig.builder().port(0).build();
+            ManagementConfig config =
+                    ManagementConfig.builder().port(0).host("127.0.0.1").build();
             ManagementVerticle verticle = new ManagementVerticle(
                     Set.of(), Set.of(new UpCheck("cache"), new DownCheck("database", "timeout")), config, Set.of());
             deployAndRequest(vertx, verticle, "/health/ready").onComplete(ctx.succeeding(json -> {
@@ -319,7 +326,8 @@ class ManagementVerticleTest {
         @Test
         @DisplayName("check returning failed future is reported as DOWN")
         void failedFuture(Vertx vertx, VertxTestContext ctx) {
-            ManagementConfig config = ManagementConfig.builder().port(0).build();
+            ManagementConfig config =
+                    ManagementConfig.builder().port(0).host("127.0.0.1").build();
             ManagementVerticle verticle =
                     new ManagementVerticle(Set.of(), Set.of(new FailingCheck()), config, Set.of());
             deployAndRequest(vertx, verticle, "/health/ready").onComplete(ctx.succeeding(json -> {
@@ -337,7 +345,8 @@ class ManagementVerticleTest {
         @Test
         @DisplayName("check throwing exception synchronously is reported as DOWN")
         void throwingCheck(Vertx vertx, VertxTestContext ctx) {
-            ManagementConfig config = ManagementConfig.builder().port(0).build();
+            ManagementConfig config =
+                    ManagementConfig.builder().port(0).host("127.0.0.1").build();
             ManagementVerticle verticle =
                     new ManagementVerticle(Set.of(), Set.of(new ThrowingCheck()), config, Set.of());
             deployAndRequest(vertx, verticle, "/health/ready").onComplete(ctx.succeeding(json -> {
@@ -497,7 +506,8 @@ class ManagementVerticleTest {
         @Test
         @DisplayName("contributor mounts custom route; health route still works")
         void customRouteAndHealthStillWork(Vertx vertx, VertxTestContext ctx) {
-            ManagementConfig config = ManagementConfig.builder().port(0).build();
+            ManagementConfig config =
+                    ManagementConfig.builder().port(0).host("127.0.0.1").build();
             ManagementEndpointContributor contributor = new CustomRouteContributor("/custom", "{\"ok\":true}");
             ManagementVerticle verticle = new ManagementVerticle(Set.of(), Set.of(), config, Set.of(contributor));
 
@@ -527,7 +537,8 @@ class ManagementVerticleTest {
         @Test
         @DisplayName("contributors are invoked in OrderedExtension.comparator() order")
         void contributorsInvocationOrder(Vertx vertx, VertxTestContext ctx) {
-            ManagementConfig config = ManagementConfig.builder().port(0).build();
+            ManagementConfig config =
+                    ManagementConfig.builder().port(0).host("127.0.0.1").build();
             List<String> order = new ArrayList<>();
             ManagementEndpointContributor first = new RecordingContributor("first", 1, order);
             ManagementEndpointContributor second = new RecordingContributor("second", 2, order);
@@ -545,7 +556,8 @@ class ManagementVerticleTest {
         @Test
         @DisplayName("throwing contributor fails management server startup")
         void throwingContributorFailsStartup(Vertx vertx, VertxTestContext ctx) {
-            ManagementConfig config = ManagementConfig.builder().port(0).build();
+            ManagementConfig config =
+                    ManagementConfig.builder().port(0).host("127.0.0.1").build();
             ManagementVerticle verticle =
                     new ManagementVerticle(Set.of(), Set.of(), config, Set.of(new ThrowingContributor()));
 
@@ -560,7 +572,8 @@ class ManagementVerticleTest {
         @Test
         @DisplayName("contributor mounting /health/live does not shadow the real health route")
         void contributorDoesNotShadowHealthRoute(Vertx vertx, VertxTestContext ctx) {
-            ManagementConfig config = ManagementConfig.builder().port(0).build();
+            ManagementConfig config =
+                    ManagementConfig.builder().port(0).host("127.0.0.1").build();
             ManagementVerticle verticle =
                     new ManagementVerticle(Set.of(), Set.of(), config, Set.of(new HealthPathContributor()));
 
