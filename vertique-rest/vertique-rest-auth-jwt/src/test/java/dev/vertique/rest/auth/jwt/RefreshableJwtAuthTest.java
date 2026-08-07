@@ -14,6 +14,7 @@ import io.vertx.ext.auth.jwt.JWTAuth;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -25,6 +26,16 @@ import org.junit.jupiter.api.extension.ExtendWith;
  *
  * <p>Verifies delegation behavior to the wrapped {@link JWTAuth} instance,
  * the periodic key-swap mechanism, and correct close-and-stop semantics.
+ *
+ * <p>Also guards that the refreshing path keeps the documented default clock-skew leeway: the
+ * initial fetch goes through {@link JwtAuthFactory}'s config-carrying async seam, so a change that
+ * stopped it from applying the framework defaults would silently drop the refreshing path back to a
+ * leeway of {@code 0}.
+ *
+ * <p>Finally, pins two contracts of the config-carrying refreshing surface: an explicitly supplied
+ * {@link JwtValidationConfig} reaches the initial delegate, and
+ * {@link JwtAuthFactory#fromJwksRefreshing(Vertx, String, java.time.Duration)} declares
+ * {@link RefreshableJwtAuth} rather than erasing it to {@link JWTAuth}.
  */
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 10, unit = TimeUnit.SECONDS)
@@ -114,6 +125,87 @@ class RefreshableJwtAuthTest {
                 }));
     }
 
+    // --- Clock-skew leeway guard ---
+
+    @Test
+    @DisplayName("The refreshing path applies the documented 30 s default leeway to an expired token")
+    void shouldApplyDefaultLeewayOnRefreshingPath(Vertx vertx, VertxTestContext testContext) {
+        RefreshableJwtAuth.create(vertx, "classpath:test-jwks.json", Duration.ofMinutes(5))
+                .onComplete(testContext.succeeding(refreshable -> {
+                    // Close up front so no exit path can leak the refresh timer. close() only cancels
+                    // that timer — the delegate built by the initial fetch stays usable, as
+                    // shouldNotSwapAfterClose proves — so the assertion below still exercises exactly
+                    // the JWTAuth that the initial fetch produced, via
+                    // fromJwksAsync(vertx, location, defaultValidation(), false).
+                    refreshable.close();
+
+                    // exp 10 s in the past — inside the documented 30 s default skew, so the token must
+                    // be accepted. Signing with the same instance carries the JWKS "kid" in the header.
+                    String token = refreshable.generateToken(
+                            new JsonObject().put("sub", "refresh-leeway-user").put("exp", secondsFromNow(-10)),
+                            new JWTOptions().setAlgorithm("HS256"));
+
+                    // Assert on the outcome only: Vert.x reports every time-claim rejection with the
+                    // identical message "Invalid JWT token: token expired.".
+                    refreshable.authenticate(new TokenCredentials(token)).onComplete(result -> {
+                        if (result.failed()) {
+                            testContext.failNow(result.cause());
+                        } else {
+                            assertNotNull(result.result());
+                            testContext.completeNow();
+                        }
+                    });
+                }));
+    }
+
+    @Test
+    @DisplayName("The refreshing factory overload applies an explicitly configured leeway")
+    void shouldApplyExplicitLeewayThroughRefreshingFactory(Vertx vertx, VertxTestContext testContext) {
+        JwtValidationConfig config =
+                JwtValidationConfig.builder().clockSkewSeconds(300).build();
+
+        JwtAuthFactory.fromJwksRefreshing(vertx, "classpath:test-jwks.json", Duration.ofMinutes(5), config)
+                .onComplete(testContext.succeeding(refreshable -> {
+                    // Close up front so no exit path can leak the refresh timer; the delegate built by
+                    // the initial fetch stays usable (see shouldNotSwapAfterClose).
+                    refreshable.close();
+
+                    // exp 120 s in the past — inside the configured 300 s skew, far outside the 30 s
+                    // default, so only the supplied config can make this succeed.
+                    String token = refreshable.generateToken(
+                            new JsonObject()
+                                    .put("sub", "refreshing-factory-leeway-user")
+                                    .put("exp", secondsFromNow(-120)),
+                            new JWTOptions().setAlgorithm("HS256"));
+
+                    refreshable.authenticate(new TokenCredentials(token)).onComplete(result -> {
+                        if (result.failed()) {
+                            testContext.failNow(result.cause());
+                        } else {
+                            assertNotNull(result.result());
+                            testContext.completeNow();
+                        }
+                    });
+                }));
+    }
+
+    // --- Return-type contract ---
+
+    @Test
+    @DisplayName("fromJwksRefreshing returns RefreshableJwtAuth, so close() is reachable without a cast")
+    void shouldReturnRefreshableTypeFromFactory(Vertx vertx, VertxTestContext testContext) {
+        // The declared type is the assertion: this assignment does not compile if the factory still
+        // erases its result to Future<JWTAuth>, which would hide the close() the caller must call.
+        Future<RefreshableJwtAuth> refreshing =
+                JwtAuthFactory.fromJwksRefreshing(vertx, "classpath:test-jwks.json", Duration.ofMinutes(5));
+
+        refreshing.onComplete(testContext.succeeding(refreshable -> {
+            assertNotNull(refreshable, "fromJwksRefreshing must not complete with null");
+            refreshable.close();
+            testContext.completeNow();
+        }));
+    }
+
     // --- Close behavior test ---
 
     @Test
@@ -137,5 +229,17 @@ class RefreshableJwtAuthTest {
                         }
                     });
                 }));
+    }
+
+    // --- Helpers ---
+
+    /**
+     * Returns the epoch-second value {@code offsetSeconds} away from now (negative = in the past).
+     *
+     * @param offsetSeconds the offset from now, in seconds
+     * @return the resulting epoch-second value
+     */
+    private static long secondsFromNow(long offsetSeconds) {
+        return Instant.now().getEpochSecond() + offsetSeconds;
     }
 }
