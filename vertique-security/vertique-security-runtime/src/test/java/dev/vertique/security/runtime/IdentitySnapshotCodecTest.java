@@ -24,9 +24,11 @@ import dev.vertique.security.SnapshotIntegrity;
 import dev.vertique.security.authz.AuthorityClaim;
 import dev.vertique.security.authz.AuthorityKind;
 import java.lang.reflect.Field;
+import java.lang.reflect.GenericArrayType;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.RecordComponent;
 import java.lang.reflect.Type;
+import java.lang.reflect.WildcardType;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
@@ -469,21 +471,8 @@ class IdentitySnapshotCodecTest {
                 continue;
             }
             for (RecordComponent component : record.getRecordComponents()) {
-                Class<?> raw = component.getType();
-                if (Set.class.isAssignableFrom(raw)) {
-                    assertTrue(
-                            SequencedSet.class.isAssignableFrom(raw),
-                            record.getSimpleName() + "." + component.getName()
-                                    + " is declared as an unordered " + raw.getName()
-                                    + "; every set-valued snapshot component must be declared as a "
-                                    + "java.util.SequencedSet so its stored JSON array order round-trips");
-                }
-                if (raw.isRecord()) {
-                    queue.add(raw);
-                }
-                for (Class<?> argument : recordTypeArgumentsOf(component.getGenericType())) {
-                    queue.add(argument);
-                }
+                assertNoUnorderedSetIn(record, component, component.getGenericType());
+                queue.addAll(recordTypesIn(component.getGenericType()));
             }
         }
     }
@@ -542,26 +531,97 @@ class IdentitySnapshotCodecTest {
     }
 
     /**
-     * Returns the generic type arguments of {@code type} that are Vertique records — the container
-     * elements ({@code Optional<T>}, {@code List<T>}, {@code Set<T>}, {@code Map<K,V>}) the snapshot
-     * walker must descend into.
+     * Recursively asserts that no {@code Set}-assignable raw type anywhere in {@code type}'s generic
+     * structure — the component's own type, nested type arguments ({@code Optional<Set<String>>},
+     * {@code List<Set<String>>}, {@code Map<K, Set<V>>}, arbitrarily deep), and wildcard upper
+     * bounds — escapes being {@code SequencedSet}-assignable.
+     *
+     * @param record    the record declaring the component (for the failure message)
+     * @param component the component whose generic structure is being checked
+     * @param type      the type node currently being visited
+     */
+    private static void assertNoUnorderedSetIn(Class<?> record, RecordComponent component, Type type) {
+        Class<?> raw = rawClassOf(type);
+        if (raw != null && Set.class.isAssignableFrom(raw)) {
+            assertTrue(
+                    SequencedSet.class.isAssignableFrom(raw),
+                    record.getSimpleName() + "." + component.getName()
+                            + " declares an unordered " + raw.getName() + " in its generic type "
+                            + component.getGenericType().getTypeName()
+                            + "; every set-valued snapshot component must be declared as a "
+                            + "java.util.SequencedSet so its stored JSON array order round-trips");
+        }
+        if (type instanceof ParameterizedType parameterized) {
+            for (Type argument : parameterized.getActualTypeArguments()) {
+                assertNoUnorderedSetIn(record, component, argument);
+            }
+        } else if (type instanceof WildcardType wildcard) {
+            for (Type bound : wildcard.getUpperBounds()) {
+                assertNoUnorderedSetIn(record, component, bound);
+            }
+        } else if (type instanceof GenericArrayType array) {
+            assertNoUnorderedSetIn(record, component, array.getGenericComponentType());
+        }
+    }
+
+    /**
+     * Returns every Vertique record class reachable anywhere in {@code type}'s generic structure —
+     * recursive contract: the type itself, nested {@link ParameterizedType} arguments (e.g.
+     * {@code Optional<List<SomeRecord>>}, {@code Map<String, List<SomeRecord>>}), and wildcard upper
+     * bounds ({@code List<? extends SomeRecord>}) are all descended into, so the snapshot walker
+     * visits records at any container depth.
      *
      * @param type the component's generic type
-     * @return the record type arguments, possibly empty
+     * @return the reachable record types, possibly empty
      */
-    private static List<Class<?>> recordTypeArgumentsOf(Type type) {
-        if (!(type instanceof ParameterizedType parameterized)) {
-            return List.of();
-        }
+    private static List<Class<?>> recordTypesIn(Type type) {
         List<Class<?>> records = new ArrayList<>();
-        for (Type argument : parameterized.getActualTypeArguments()) {
-            if (argument instanceof Class<?> raw
-                    && raw.isRecord()
-                    && raw.getName().startsWith("dev.vertique.")) {
-                records.add(raw);
-            }
-        }
+        collectRecordTypes(type, records);
         return records;
+    }
+
+    /**
+     * Accumulator half of {@link #recordTypesIn(Type)}: adds {@code type}'s Vertique record class
+     * (when it has one) to {@code records} and recurses into nested type arguments, wildcard upper
+     * bounds, and generic array component types.
+     *
+     * @param type    the type node currently being visited
+     * @param records the accumulator of discovered record classes
+     */
+    private static void collectRecordTypes(Type type, List<Class<?>> records) {
+        Class<?> raw = rawClassOf(type);
+        if (raw != null && raw.isRecord() && raw.getName().startsWith("dev.vertique.")) {
+            records.add(raw);
+        }
+        if (type instanceof ParameterizedType parameterized) {
+            for (Type argument : parameterized.getActualTypeArguments()) {
+                collectRecordTypes(argument, records);
+            }
+        } else if (type instanceof WildcardType wildcard) {
+            for (Type bound : wildcard.getUpperBounds()) {
+                collectRecordTypes(bound, records);
+            }
+        } else if (type instanceof GenericArrayType array) {
+            collectRecordTypes(array.getGenericComponentType(), records);
+        }
+    }
+
+    /**
+     * Resolves the raw {@link Class} of a type node: the class itself, or a parameterized type's raw
+     * type. Wildcards, type variables, and generic arrays have no raw class here and return null —
+     * their nested structure is handled by the callers' recursion.
+     *
+     * @param type the type node
+     * @return the raw class, or {@code null} when the node carries none
+     */
+    private static Class<?> rawClassOf(Type type) {
+        if (type instanceof Class<?> raw) {
+            return raw;
+        }
+        if (type instanceof ParameterizedType parameterized && parameterized.getRawType() instanceof Class<?> raw) {
+            return raw;
+        }
+        return null;
     }
 
     /**
