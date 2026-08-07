@@ -36,16 +36,26 @@ import lombok.extern.jackson.Jacksonized;
  * <h2>Where enforcement happens</h2>
  * Issuer/audience enforcement is <strong>two-layered</strong>:
  * <ul>
- *   <li>{@link io.vertx.ext.auth.jwt.JWTAuth} enforces them as {@code JWTOptions} <em>when this
- *       config is passed to {@link JwtAuthFactory}</em> (the {@code fromJwks(..., JwtValidationConfig)}
- *       overload); apps that build their {@link io.vertx.ext.auth.jwt.JWTAuth} another way do not get
- *       this layer.</li>
+ *   <li>{@link io.vertx.ext.auth.jwt.JWTAuth} enforces them as {@code JWTOptions} when this config
+ *       is passed to a {@link JwtAuthFactory} overload that takes one; apps that build their
+ *       {@link io.vertx.ext.auth.jwt.JWTAuth} another way do not get this layer.</li>
  *   <li>{@link JwtBearerSecuritySchemeHandler} additionally enforces {@link #issuer()} and
  *       {@link #audience()} post-authentication as <em>defense-in-depth</em>, so they are honored
  *       regardless of how the {@link io.vertx.ext.auth.jwt.JWTAuth} was built.</li>
  * </ul>
- * {@link #clockSkewSeconds()} applies only at {@link io.vertx.ext.auth.jwt.JWTAuth} construction
- * (leeway for the {@code exp}/{@code nbf} time-claim check); it is not re-applied in the handler.
+ *
+ * <p>{@link #clockSkewSeconds()} has <strong>no such second layer</strong>, and cannot have one:
+ * leeway is purely permissive, so once the underlying {@link io.vertx.ext.auth.jwt.JWTAuth} has
+ * rejected a token whose time claims fall outside the window, no later check can un-reject it. It
+ * therefore applies only at construction, as leeway for the {@code exp}, {@code nbf} and
+ * {@code iat} checks.
+ *
+ * <p>Every {@link JwtAuthFactory} method applies a config for exactly that reason: the overloads
+ * that take none apply {@code JwtValidationConfig.builder().build()}, so this type's documented
+ * default clock skew reaches Vert.x rather than Vert.x's own default of {@code 0}. A provider built
+ * by the factory also carries the config it applied, and {@link JwtAuthModule} fails startup when
+ * that differs from {@code jwt.validation.clockSkewSeconds} — so a value set in configuration but
+ * never passed to the factory is reported rather than silently ignored.
  *
  * @see JwtAuthFactory
  * @see JwtBearerSecuritySchemeHandler

@@ -37,30 +37,50 @@ declare `@RequiresAction` gates.
 
 ## Core Concepts
 
-### Two enforcement layers, and only one of them is automatic
+### Two enforcement layers, and why clock skew only reaches one
 
-Issuer, audience, and expiry are checked in two different places, and the difference matters:
+Signature, time claims, issuer, and audience are not all checked in the same place, and the
+difference decides what the framework can still fix after the fact:
 
 | Check | Where | When it applies |
 |---|---|---|
 | Signature | Vert.x `JWTAuth` | Always |
-| `exp` / `nbf` (with clock skew) | Vert.x `JWTAuth` | **Only** when the `JWTAuth` was built with a `JwtValidationConfig` |
-| `iss` | Vert.x `JWTAuth`, then re-checked by `JwtBearerSecuritySchemeHandler` | The handler check always applies |
-| `aud` | Vert.x `JWTAuth`, then re-checked by `JwtBearerSecuritySchemeHandler` | The handler check always applies |
+| `exp` / `nbf` / `iat` (with clock-skew leeway) | Vert.x `JWTAuth` | Always for a `JwtAuthFactory`-built provider — every overload applies a `JwtValidationConfig`, and the overloads that take none apply the defaults |
+| `iss` | Vert.x `JWTAuth` when the provider was built with an issuer, then re-checked by `JwtBearerSecuritySchemeHandler` | The handler check always applies |
+| `aud` | Vert.x `JWTAuth` when the provider was built with an audience, then re-checked by `JwtBearerSecuritySchemeHandler` | The handler check always applies |
 
 The handler's post-authentication `iss`/`aud` re-check is defense-in-depth: it reads
 `jwt.validation.issuer` and `jwt.validation.audience` from the effective config and rejects a
 mismatch with 401, **regardless of how the application built its `JWTAuth`**.
 
-**Clock skew has no such backstop.** `jwt.validation.clockSkewSeconds` is applied only when the
-application passes a `JwtValidationConfig` to `JwtAuthFactory.fromJwks(...)` /
-`fromJwksAsync(...)`. Setting it in configuration alone does nothing — the application, not this
-module, constructs the `JWTAuth`, and nothing re-applies leeway after authentication. The same is
-true of `fromJwksRefreshing`, `fromSymmetricKey`, and `fromPublicKey`, none of which accept a
-`JwtValidationConfig`.
+**Clock skew can have no such backstop, so it must be right at construction.** Leeway is
+*permissive*: once Vert.x has rejected a token as expired, not yet valid, or issued in the future,
+no later handler can un-reject it. Every `JwtAuthFactory` method therefore applies a
+`JwtValidationConfig` — the overloads that take none apply `JwtValidationConfig.builder().build()`,
+so the documented 30-second default reaches Vert.x instead of Vert.x's own leeway of `0`. The
+refreshing provider applies its config to the initial key set and to every refreshed one.
 
-If you rely on clock-skew tolerance, build the `JWTAuth` with the config overload and give the
-handler the same values:
+What the framework cannot do is *choose* the value for you: the application, not this module,
+constructs the `JWTAuth`, so `jwt.validation.clockSkewSeconds` on its own changes nothing. Keep the
+two in one place by injecting `@JwtEffective JwtAuthConfig` and passing its `validation()` to the
+factory:
+
+```java
+@Provides
+@Singleton
+static JWTAuth jwtAuth(Vertx vertx, @JwtEffective JwtAuthConfig effective) {
+    return JwtAuthFactory.fromJwks(
+            vertx, "https://auth.example.com/.well-known/jwks.json", effective.validation());
+}
+```
+
+That is the same `JwtValidationConfig` the handler enforces `iss`/`aud` from, so the two layers
+cannot drift apart. If they do drift — a factory call built with one clock skew while
+`jwt.validation.clockSkewSeconds` says another — startup fails; see
+[`JwtAuthModule`](#jwtauthmodule).
+
+A fully programmatic setup works the same way, as long as one `JwtValidationConfig` instance feeds
+both the `JwtAuthConfig` override and the factory call:
 
 ```java
 @Provides
@@ -126,11 +146,18 @@ public class AppModule {
 
     @Provides
     @Singleton
-    static JWTAuth jwtAuth(Vertx vertx) {
-        return JwtAuthFactory.fromJwks(vertx, "classpath:jwks.json");
+    static JWTAuth jwtAuth(Vertx vertx, @JwtEffective JwtAuthConfig effective) {
+        return JwtAuthFactory.fromJwks(vertx, "classpath:jwks.json", effective.validation());
     }
 }
 ```
+
+Passing `effective.validation()` is the recommended shape even before any `jwt` section exists — it
+resolves to the defaults then, and it keeps the provider aligned with configuration the day one is
+added. The two-argument `JwtAuthFactory.fromJwks(vertx, "classpath:jwks.json")` behaves identically
+only while `jwt.validation` is entirely unset: it applies the default clock skew but leaves `iss`
+and `aud` unconstrained at the Vert.x layer, and a configured `clockSkewSeconds` other than the
+default would fail startup against it.
 
 Declare the scheme on the application's OpenAPI configuration class, using the same name as
 `jwt.schemeName`:
@@ -192,6 +219,19 @@ The application must supply exactly one thing: a `JWTAuth` binding. Everything e
 The scheme handler and the route auth handler are **separate instances** built from the same
 effective config, so both paths produce identical evidence and identical rejection reason codes.
 
+Both of those bindings run the same startup check before handing out a handler. When the bound
+`JWTAuth` was built by `JwtAuthFactory` (including a `RefreshableJwtAuth`) and the clock skew it
+applied differs from the effective config's `clockSkewSeconds`, component construction fails with a
+`ConfigurationException` naming both values. Clock skew is the only field compared, because it is
+the only one the handler cannot re-enforce — a mismatched issuer or audience is already fail-closed,
+since the handler independently rejects anything the configured values do not accept. Putting the
+check on both bindings means an application that authenticates only over WebSocket (and so never
+resolves the `SecuritySchemeHandler` multibinding) still gets it.
+
+A `JWTAuth` the framework did **not** build — `JWTAuth.create(...)` called directly, or a custom
+implementation — carries no record of what it applied. It is accepted silently: no check, no
+warning, and no clock-skew enforcement from this module.
+
 ### `JwtAuthConfig`
 
 ```java
@@ -216,13 +256,13 @@ override channel that `JwtAuthModule` consumes as input.
 ### `JwtValidationConfig`
 
 A Lombok builder type with fluent accessors, used both as the handler's enforcement policy and as
-the input to `JwtAuthFactory`'s validating overloads.
+the input to `JwtAuthFactory`.
 
-| Field | Type | Default | Effect when unset |
+| Field | Type | Default | Notes |
 |---|---|---|---|
-| `issuer` | `String` | `null` | No `iss` check at either layer |
-| `audience` | `List<String>` | `null` | No `aud` check at either layer |
-| `clockSkewSeconds` | `int` | `30` | Only reaches Vert.x through `JwtAuthFactory`'s validating overloads |
+| `issuer` | `String` | `null` | Unset means no `iss` check at either layer |
+| `audience` | `List<String>` | `null` | Unset or empty means no `aud` check at either layer |
+| `clockSkewSeconds` | `int` | `30` | Leeway applied to `exp`, `nbf`, and `iat` by every `JwtAuthFactory` construction path. Must be within `[0, MAX_CLOCK_SKEW_SECONDS]` |
 
 ```java
 JwtValidationConfig config = JwtValidationConfig.builder()
@@ -232,8 +272,16 @@ JwtValidationConfig config = JwtValidationConfig.builder()
         .build();
 ```
 
-`JwtAuthFactory` logs a startup warning when `issuer` or `audience` is unset in a validating
-overload, because either omission leaves tokens open to substitution.
+`public static final int MAX_CLOCK_SKEW_SECONDS = 300` is the upper bound. A `clockSkewSeconds`
+below `0` or above it throws `dev.vertique.core.exception.ConfigurationException` from the
+constructor — which the builder and Jackson both route through, so an out-of-range
+`jwt.validation.clockSkewSeconds` fails while the `jwt` section is parsed, at startup, rather than
+widening the acceptance window silently.
+
+The overloads that **take** a `JwtValidationConfig` log a startup warning when its `issuer` or
+`audience` is unset, because either omission leaves tokens open to substitution. The overloads that
+take none stay silent — that caller never asked for issuer/audience validation — while still
+applying the default leeway.
 
 ### `JwtEffective`
 
@@ -245,21 +293,32 @@ public @interface JwtEffective {}
 ```
 
 Marks the resolved `JwtAuthConfig`. Inject `@JwtEffective JwtAuthConfig` to read the values actually
-in force; inject plain `JwtAuthConfig` only when providing an override.
+in force; inject plain `JwtAuthConfig` only when providing an override. Injecting it into the
+application's own `@Provides JWTAuth` method is the supported way to build the provider from the
+same config the handlers enforce — that binding depends only on the `jwt` section and the optional
+override, so it introduces no cycle.
 
 ### `JwtAuthFactory`
 
 Standalone utility — not Dagger-managed. Call it inside a `@Provides JWTAuth` method.
 
-| Method | Returns | Applies `JwtValidationConfig` to the `JWTAuth`? |
+| Method | Returns | Validation applied to the `JWTAuth` |
 |---|---|---|
-| `fromJwks(Vertx, String location)` | `JWTAuth` | No |
-| `fromJwks(Vertx, String location, JwtValidationConfig)` | `JWTAuth` | Yes — issuer, audience, and leeway |
-| `fromJwksAsync(Vertx, String location)` | `Future<JWTAuth>` | No |
-| `fromJwksAsync(Vertx, String location, JwtValidationConfig)` | `Future<JWTAuth>` | Yes |
-| `fromJwksRefreshing(Vertx, String location, Duration interval)` | `Future<JWTAuth>` | No — no overload accepts one |
-| `fromSymmetricKey(Vertx, String algorithm, String secret)` | `JWTAuth` | No — HS256/HS384/HS512 |
-| `fromPublicKey(Vertx, String algorithm, String pem)` | `JWTAuth` | No — RS\*, ES\*, PS\* |
+| `fromJwks(Vertx, String location)` | `JWTAuth` | Defaults |
+| `fromJwks(Vertx, String location, JwtValidationConfig)` | `JWTAuth` | Issuer, audience, and leeway |
+| `fromJwksAsync(Vertx, String location)` | `Future<JWTAuth>` | Defaults |
+| `fromJwksAsync(Vertx, String location, JwtValidationConfig)` | `Future<JWTAuth>` | Issuer, audience, and leeway |
+| `fromJwksRefreshing(Vertx, String location, Duration interval)` | `Future<RefreshableJwtAuth>` | Defaults, on the initial key set and every refreshed one |
+| `fromJwksRefreshing(Vertx, String location, Duration interval, JwtValidationConfig)` | `Future<RefreshableJwtAuth>` | Issuer, audience, and leeway, on the initial key set and every refreshed one |
+| `fromSymmetricKey(Vertx, String algorithm, String secret)` | `JWTAuth` | Defaults — HS256/HS384/HS512 |
+| `fromSymmetricKey(Vertx, String algorithm, String secret, JwtValidationConfig)` | `JWTAuth` | Issuer, audience, and leeway |
+| `fromPublicKey(Vertx, String algorithm, String pem)` | `JWTAuth` | Defaults — RS\*, ES\*, PS\* |
+| `fromPublicKey(Vertx, String algorithm, String pem, JwtValidationConfig)` | `JWTAuth` | Issuer, audience, and leeway |
+
+"Defaults" means `JwtValidationConfig.builder().build()`: 30-second `exp`/`nbf`/`iat` leeway, no
+issuer or audience constraint, and no missing-constraint warning. Every method above records the
+`JwtValidationConfig` it applied so `JwtAuthModule` can compare it against configuration at startup;
+the return type is still a plain `JWTAuth`, so no application `@Provides` signature changes.
 
 Location handling for the JWKS methods:
 
@@ -269,9 +328,10 @@ Location handling for the JWKS methods:
 | `http://` or `https://` | JDK `HttpClient`, HTTP/1.1, 10-second connect and request timeout; a non-200 response fails. Use `https://` in production — over `http://` an on-path attacker substitutes the signing keys, and the factory logs a warning saying so |
 | _(anything else)_ | Filesystem, via `vertx.fileSystem().readFileBlocking()` |
 
-`fromJwks` performs synchronous I/O. That is fine for `classpath:` and filesystem locations. For an
-HTTP location on an event-loop thread, use `fromJwksAsync` — it dispatches the fetch through
-`executeBlocking` — and compose application startup onto it, since the `JWTAuth` must exist before
+`fromJwks` performs synchronous I/O. That is fine for `classpath:` and filesystem locations. On an
+event-loop thread, use `fromJwksAsync` — it reads *every* location kind on a worker thread via
+`executeBlocking`, since classpath and filesystem reads block too — and compose application startup
+onto it, since the `JWTAuth` must exist before
 the Dagger component that consumes it is built. `VertiqueApplicationBootstrap.start(...)` resolves
 to a `Future<VertiqueApplicationHandle<AppComponent>>`; a custom host retains the handle and
 delegates shutdown to it, per `dev.vertique:vertique-application`:
@@ -308,8 +368,13 @@ public class MainVerticle extends AbstractVerticle {
 
 | Thrown | When |
 |---|---|
-| `IllegalArgumentException` | Any argument is null or blank; the document is not valid JSON; `keys` is not an array; `keys` is absent or empty |
+| `IllegalArgumentException` | `location`, `algorithm`, `secret`, or `pem` is null or blank; the document is not valid JSON; `keys` is not an array; `keys` is absent or empty |
+| `NullPointerException` | `vertx` or the supplied `JwtValidationConfig` is null |
 | `UncheckedIOException` | The classpath resource is missing, or reading/fetching the document fails (including a non-200 HTTP status, or interruption) |
+
+The `fromJwksAsync` overloads still validate their arguments **synchronously** — a blank `location`
+throws on the calling thread rather than producing a failed future. Only read failures surface as a
+failed future.
 
 ### `RefreshableJwtAuth`
 
@@ -317,9 +382,20 @@ A `JWTAuth` that periodically re-fetches its JWKS — for identity providers tha
 it from `JwtAuthFactory.fromJwksRefreshing(...)`, or directly:
 
 ```java
-RefreshableJwtAuth.create(vertx, "https://auth.example.com/.well-known/jwks.json", Duration.ofMinutes(60))
+public static Future<RefreshableJwtAuth> create(Vertx vertx, String jwksLocation, Duration refreshInterval);
+public static Future<RefreshableJwtAuth> create(Vertx vertx, String jwksLocation, Duration refreshInterval,
+                                                JwtValidationConfig config);
+```
+
+```java
+RefreshableJwtAuth.create(vertx, "https://auth.example.com/.well-known/jwks.json",
+                Duration.ofMinutes(60), effective.validation())
         .compose(jwtAuth -> { ... });
 ```
+
+Both `create` overloads and both `fromJwksRefreshing` overloads resolve to
+`Future<RefreshableJwtAuth>`, not `Future<JWTAuth>`, so `close()` stays reachable from whatever holds
+the result.
 
 - The delegate is a `volatile` field swapped atomically on each successful refresh. In-flight
   authentications complete against the key set that was current when they began.
@@ -329,9 +405,15 @@ RefreshableJwtAuth.create(vertx, "https://auth.example.com/.well-known/jwks.json
 - `close()` cancels the timer and is idempotent; a refresh still in flight afterwards completes but
   does not swap the delegate. Vert.x also cancels the timer when the owning verticle is undeployed.
 
-**It applies no `JwtValidationConfig`.** A refreshing `JWTAuth` enforces signature only at the Vert.x
-layer; `iss` and `aud` are still enforced by the handler, and `clockSkewSeconds` is not applied at
-all.
+**The `JwtValidationConfig` given at creation is applied to every delegate**, the initial one and
+each refreshed one, and is never re-read. A key rotation therefore cannot silently relax the issuer,
+audience, or `exp`/`nbf`/`iat` leeway that guarded the initial key set. The overload that takes no
+config applies `JwtValidationConfig.builder().build()`, so the 30-second default leeway holds across
+refreshes as well. `iss` and `aud` remain enforced a second time by the handler, as with any other
+provider.
+
+The missing issuer/audience warning is emitted at most once, on the initial load — refresh ticks
+never repeat it.
 
 ### `JwtBearerSecuritySchemeHandler`
 
@@ -494,7 +576,7 @@ Parsed from the `jwt` section of the application configuration into `JwtAuthConf
 | `jwt.schemeName` | String | `"bearerAuth"` | Security scheme name the handlers register under |
 | `jwt.validation.issuer` | String | _(none)_ | Expected `iss`. Unset means no issuer check |
 | `jwt.validation.audience` | List\<String\> | _(none)_ | Accepted `aud` values, any-match. Unset or empty means no audience check |
-| `jwt.validation.clockSkewSeconds` | int | `30` | Leeway for `exp`/`nbf`. Reaches Vert.x **only** through `JwtAuthFactory`'s validating overloads |
+| `jwt.validation.clockSkewSeconds` | int | `30` | Leeway for `exp`/`nbf`/`iat`, applied at `JWTAuth` construction. Must be `0`–`300`. Must equal what the application passed to `JwtAuthFactory`, or startup fails |
 
 ```json
 {
@@ -509,7 +591,8 @@ Parsed from the `jwt` section of the application configuration into `JwtAuthConf
 }
 ```
 
-An application-supplied `@Provides JwtAuthConfig` takes priority over this section entirely.
+An application-supplied `@Provides JwtAuthConfig` takes priority over this section entirely — which
+also makes it, not the `jwt` section, the value the startup clock-skew check compares against.
 
 ---
 
@@ -523,6 +606,8 @@ An application-supplied `@Provides JwtAuthConfig` takes priority over this secti
 | Two `JwtClaimsValidator` bindings | Dagger duplicate-binding error |
 | `jwt.schemeName` does not match the `@SecurityScheme` name | Any operation declaring that requirement has no collected handler and route registration fails, fail-closed, rather than mounting the operation unauthenticated |
 | A JWKS location that cannot be read, or a document with no `keys` | `IllegalArgumentException` / `UncheckedIOException` from `JwtAuthFactory`, during component construction |
+| `jwt.validation.clockSkewSeconds` outside `0`–`300` | `ConfigurationException` while the `jwt` section is parsed |
+| A `JwtAuthFactory`-built `JWTAuth` whose applied clock skew differs from `jwt.validation.clockSkewSeconds` | `ConfigurationException` naming both values, during component construction |
 
 ### Request-time outcomes
 
@@ -534,12 +619,15 @@ An application-supplied `@Provides JwtAuthConfig` takes priority over this secti
 
 ### Common mistakes
 
-- **Setting `jwt.validation.clockSkewSeconds` and expecting it to take effect.** It reaches Vert.x
-  only when the application passes a `JwtValidationConfig` to a `JwtAuthFactory` validating overload.
-  Configuration alone changes nothing about time-claim validation.
-- **Using `fromJwksRefreshing` and assuming it validates like `fromJwks(..., config)`.** It does not
-  accept a validation config. Issuer and audience are still enforced by the handler; clock skew is
-  not enforced at all.
+- **Letting `jwt.validation.clockSkewSeconds` and the value handed to `JwtAuthFactory` drift apart.**
+  Startup fails with a `ConfigurationException` naming both, because clock skew cannot be enforced
+  after construction. Inject `@JwtEffective JwtAuthConfig` into the `@Provides JWTAuth` method and
+  pass its `validation()` so there is only one value to get right.
+- **Hand-rolling the `JWTAuth` and expecting `jwt.validation.clockSkewSeconds` to apply.** A provider
+  built outside `JwtAuthFactory` — `JWTAuth.create(...)` called directly, or a custom implementation
+  — records nothing for the framework to compare, so it gets no clock-skew enforcement, no startup
+  check, and no warning. Whatever `JWTOptions` leeway you set is what runs. Build through
+  `JwtAuthFactory`, or keep the configured value aligned with the leeway you set by hand.
 - **Listing `AuthModule` and `SecurityModule` alongside `JwtAuthModule`.** `JwtAuthModule` already
   includes both.
 - **Fetching JWKS over `http://` in production.** An on-path attacker substitutes the signing keys
@@ -552,6 +640,9 @@ An application-supplied `@Provides JwtAuthConfig` takes priority over this secti
   verified user.
 - **Calling `fromJwks` with an HTTP location from an event-loop thread.** It blocks. Use
   `fromJwksAsync`.
+- **Widening `fromJwksRefreshing`'s result to `JWTAuth` and dropping the reference.** It resolves to
+  `Future<RefreshableJwtAuth>` precisely so `close()` can cancel the refresh timer at shutdown; keep
+  the concrete type somewhere reachable.
 
 ---
 
