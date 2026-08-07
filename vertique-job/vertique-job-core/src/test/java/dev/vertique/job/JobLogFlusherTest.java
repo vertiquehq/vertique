@@ -150,11 +150,11 @@ class JobLogFlusherTest {
                 .thenReturn(neverSettles.future())
                 .thenReturn(Future.succeededFuture());
         logger.error("must not be lost");
-        JobLogFlusher flusher = new JobLogFlusher(repository, executionId, logger);
+        JobLogFlusher flusher = new JobLogFlusher(repository, executionId, logger, 200L);
 
         Future<Void> first = flusher.flush();
 
-        first.toCompletionStage().toCompletableFuture().get(20, TimeUnit.SECONDS);
+        first.toCompletionStage().toCompletableFuture().get(2, TimeUnit.SECONDS);
         assertTrue(first.succeeded(), "a timed-out write must not fail the job whose logs these are");
         assertRetriedBatchIsResent(flusher, "must not be lost");
     }
@@ -172,7 +172,7 @@ class JobLogFlusherTest {
                 .thenReturn(neverSettles.future())
                 .thenReturn(Future.succeededFuture());
         logger.error("must not be lost");
-        JobLogFlusher flusher = new JobLogFlusher(repository, executionId, logger);
+        JobLogFlusher flusher = new JobLogFlusher(repository, executionId, logger, 200L);
 
         Future<Void> first = flusher.flush();
 

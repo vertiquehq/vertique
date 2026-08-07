@@ -38,7 +38,8 @@ import lombok.extern.slf4j.Slf4j;
  * throw synchronously, return {@code null}, or return a future that never settles; each of those
  * would otherwise skip both the ack and the nack and wedge the buffer's single-flight marker
  * forever. All three are converted into the ordinary nack-and-retry path, the last of them by a
- * {@value #WRITE_TIMEOUT_SECONDS}-second timeout applied to the write before the outcome handlers.
+ * write timeout ({@value #DEFAULT_WRITE_TIMEOUT_MS} ms by default) applied to the write before the
+ * outcome handlers.
  * The accepted cost is duplication: a write that times out here but commits later leaves rows that
  * the retry writes again, because {@code job_logs} has a surrogate key and no natural key to
  * deduplicate on. Duplicate log rows are preferred to a permanently stalled flush loop.
@@ -54,10 +55,10 @@ import lombok.extern.slf4j.Slf4j;
 public final class JobLogFlusher {
 
     /**
-     * Upper bound on a single {@link JobRepository#saveLogs(UUID, List)} call, after which the batch
-     * is nacked and retried by a later flush.
+     * Default upper bound, in milliseconds, on a single {@link JobRepository#saveLogs(UUID, List)}
+     * call, after which the batch is nacked and retried by a later flush.
      */
-    private static final long WRITE_TIMEOUT_SECONDS = 5L;
+    static final long DEFAULT_WRITE_TIMEOUT_MS = 5_000L;
 
     /**
      * Maximum number of write rounds one {@link #drain()} performs before giving up and reporting
@@ -73,6 +74,9 @@ public final class JobLogFlusher {
     private final JobRepository repository;
     private final UUID executionId;
     private final DefaultJobLogger logger;
+
+    /** Upper bound, in milliseconds, applied to each repository write before the outcome handlers. */
+    private final long writeTimeoutMs;
 
     /**
      * Whether this flusher may write to the repository, decided once at construction so
@@ -120,9 +124,32 @@ public final class JobLogFlusher {
      *                    no-op flusher
      */
     JobLogFlusher(JobRepository repository, UUID executionId, DefaultJobLogger logger) {
+        this(repository, executionId, logger, DEFAULT_WRITE_TIMEOUT_MS);
+    }
+
+    /**
+     * Creates a flusher with an explicit per-write timeout — the test seam bounding each repository
+     * write, so tests exercising the timeout path need not wait out the production default. The
+     * public constructor keeps the {@value #DEFAULT_WRITE_TIMEOUT_MS} ms default.
+     *
+     * @param repository     the repository that persists log entries, or {@code null} for a no-op
+     *                       flusher (in-memory-only mode)
+     * @param executionId    the execution the entries belong to, or {@code null} when the execution
+     *                       has no persisted {@code job_executions} row (untracked cron fire)
+     * @param logger         the per-execution logger whose buffer is drained, or {@code null} for a
+     *                       no-op flusher
+     * @param writeTimeoutMs upper bound, in milliseconds, on a single repository write; must be
+     *                       positive
+     * @throws IllegalArgumentException if {@code writeTimeoutMs} is not positive
+     */
+    JobLogFlusher(JobRepository repository, UUID executionId, DefaultJobLogger logger, long writeTimeoutMs) {
+        if (writeTimeoutMs <= 0) {
+            throw new IllegalArgumentException("writeTimeoutMs must be positive, was " + writeTimeoutMs);
+        }
         this.repository = repository;
         this.executionId = executionId;
         this.logger = logger;
+        this.writeTimeoutMs = writeTimeoutMs;
         this.persistable = repository != null && executionId != null && logger != null;
     }
 
@@ -163,7 +190,7 @@ public final class JobLogFlusher {
         // composed future instead would leave ack/nack bound to the pending inner one, which is
         // exactly the wedge this guards against. A late inner settle lands on an already-completed
         // wrapper and is dropped, so the batch is never both nacked and acked.
-        return written.timeout(WRITE_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+        return written.timeout(writeTimeoutMs, TimeUnit.MILLISECONDS)
                 .onSuccess(v -> logger.ack())
                 .recover(cause -> {
                     logger.nack(batch);
