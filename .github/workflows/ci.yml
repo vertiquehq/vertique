@@ -51,9 +51,10 @@ jobs:
 
       # Per-module HTML reports are skipped: the vertique-coverage-report
       # aggregate XML produced by this same invocation is the only coverage
-      # output CI consumes.
+      # output CI consumes. Reactor parallelism (-T1C) comes from
+      # .mvn/maven.config so local and CI builds share one setting.
       - name: Build and test
-        run: ./mvnw -ntp -T 1 -Djacoco.module.report.skip=true clean verify
+        run: ./mvnw -ntp -Djacoco.module.report.skip=true clean verify
 
       # Gates only the lines this PR changes (threshold = the standing 80%
       # target). No credential, no external service; locally runnable as-is.
@@ -85,4 +86,4 @@ jobs:
           if-no-files-found: error
 
       - name: Check formatting
-        run: ./mvnw -ntp -T 1 -pl '!vertique-app-parent' spotless:check
+        run: ./mvnw -ntp -pl '!vertique-app-parent' spotless:check
