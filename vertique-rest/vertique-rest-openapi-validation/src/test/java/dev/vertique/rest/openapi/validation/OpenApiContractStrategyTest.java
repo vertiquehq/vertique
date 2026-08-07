@@ -15,10 +15,7 @@ import dev.vertique.rest.core.RestValidationException;
 import dev.vertique.rest.core.ValidationErrorDetail;
 import dev.vertique.rest.core.config.JaxRsConfig;
 import dev.vertique.rest.core.router.MountMeta;
-import dev.vertique.rest.jaxrs.routing.BodyDescriptor;
-import dev.vertique.rest.jaxrs.routing.FilePartDescriptor;
 import dev.vertique.rest.jaxrs.routing.JaxRsOperationDescriptor;
-import dev.vertique.rest.jaxrs.routing.ParamDescriptor;
 import dev.vertique.rest.jaxrs.validation.OperationSchemas;
 import dev.vertique.rest.jaxrs.validation.RequestValidationStrategy;
 import dev.vertique.rest.jaxrs.validation.RequestValidationStrategySelector;
@@ -81,7 +78,7 @@ class OpenApiContractStrategyTest {
     @Test
     @DisplayName("gateFor() always produces a gate handler (the contract drives validation, not OperationSchemas)")
     void openApiContractStrategyAlwaysInstallsGate(Vertx vertx) {
-        JaxRsOperationDescriptor op = TestDescriptors.op("POST", "/widgets", "createWidget");
+        JaxRsOperationDescriptor op = op("POST", "/widgets", "createWidget");
         java.util.Optional<Handler<RoutingContext>> gate = strategy(vertx).gateFor(op, OperationSchemas.empty());
         assertTrue(gate.isPresent(), "openapi-contract strategy installs a gate for every operation");
         assertNotNull(gate.orElseThrow());
@@ -204,77 +201,12 @@ class OpenApiContractStrategyTest {
         }
     }
 
-    /** Minimal {@link JaxRsOperationDescriptor} test fixtures: only identity fields are read by the gate. */
-    static final class TestDescriptors {
-        private TestDescriptors() {}
-
-        static JaxRsOperationDescriptor op(String method, String route, String operationId) {
-            return new JaxRsOperationDescriptor() {
-                @Override
-                public String operationId() {
-                    return operationId;
-                }
-
-                @Override
-                public String httpMethod() {
-                    return method;
-                }
-
-                @Override
-                public String routeTemplate() {
-                    return route;
-                }
-
-                @Override
-                public java.util.List<String> consumes() {
-                    return java.util.List.of();
-                }
-
-                @Override
-                public java.util.List<String> produces() {
-                    return java.util.List.of();
-                }
-
-                @Override
-                public dev.vertique.rest.core.security.SecurityPolicy securityPolicy() {
-                    return new dev.vertique.rest.core.security.SecurityPolicy.None();
-                }
-
-                @Override
-                public java.util.List<dev.vertique.rest.core.routing.SecurityRequirementSet> securityRequirementSets() {
-                    return java.util.List.of();
-                }
-
-                @Override
-                public java.util.List<java.lang.annotation.Annotation> methodAnnotations() {
-                    return java.util.List.of();
-                }
-
-                @Override
-                public java.util.List<java.lang.annotation.Annotation> classAnnotations() {
-                    return java.util.List.of();
-                }
-
-                @Override
-                public <A extends java.lang.annotation.Annotation> java.util.Optional<A> findAnnotation(Class<A> type) {
-                    return java.util.Optional.empty();
-                }
-
-                @Override
-                public java.util.List<ParamDescriptor> parameters() {
-                    return java.util.List.of();
-                }
-
-                @Override
-                public java.util.List<FilePartDescriptor> fileParts() {
-                    return java.util.List.of();
-                }
-
-                @Override
-                public java.util.Optional<BodyDescriptor> body() {
-                    return java.util.Optional.empty();
-                }
-            };
-        }
+    /** Builds a minimal descriptor: only the identity fields are read by the gate. */
+    private static JaxRsOperationDescriptor op(String method, String route, String operationId) {
+        return StubDescriptors.builder()
+                .operationId(operationId)
+                .httpMethod(method)
+                .routeTemplate(route)
+                .build();
     }
 }

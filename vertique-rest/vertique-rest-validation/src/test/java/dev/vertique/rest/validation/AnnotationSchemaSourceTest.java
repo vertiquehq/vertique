@@ -8,10 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import dev.vertique.rest.core.routing.SecurityRequirementSet;
-import dev.vertique.rest.core.security.SecurityPolicy;
 import dev.vertique.rest.jaxrs.routing.BodyDescriptor;
-import dev.vertique.rest.jaxrs.routing.FilePartDescriptor;
 import dev.vertique.rest.jaxrs.routing.JaxRsOperationDescriptor;
 import dev.vertique.rest.jaxrs.routing.ParamDescriptor;
 import dev.vertique.rest.jaxrs.routing.ParamLocation;
@@ -103,72 +100,13 @@ class AnnotationSchemaSourceTest {
 
     private static JaxRsOperationDescriptor op(
             String operationId, List<ParamDescriptor> params, Optional<BodyDescriptor> body) {
-        return new JaxRsOperationDescriptor() {
-            @Override
-            public String operationId() {
-                return operationId;
-            }
-
-            @Override
-            public String httpMethod() {
-                return "POST";
-            }
-
-            @Override
-            public String routeTemplate() {
-                return "/things";
-            }
-
-            @Override
-            public List<String> consumes() {
-                return List.of();
-            }
-
-            @Override
-            public List<String> produces() {
-                return List.of();
-            }
-
-            @Override
-            public SecurityPolicy securityPolicy() {
-                return new SecurityPolicy.None();
-            }
-
-            @Override
-            public List<SecurityRequirementSet> securityRequirementSets() {
-                return List.of();
-            }
-
-            @Override
-            public List<Annotation> methodAnnotations() {
-                return List.of();
-            }
-
-            @Override
-            public List<Annotation> classAnnotations() {
-                return List.of();
-            }
-
-            @Override
-            public <A extends Annotation> Optional<A> findAnnotation(Class<A> type) {
-                return Optional.empty();
-            }
-
-            @Override
-            public List<ParamDescriptor> parameters() {
-                return params;
-            }
-
-            @Override
-            public List<FilePartDescriptor> fileParts() {
-                return List.of();
-            }
-
-            @Override
-            public Optional<BodyDescriptor> body() {
-                return body;
-            }
-        };
+        StubDescriptors.Builder builder = StubDescriptors.builder()
+                .operationId(operationId)
+                .httpMethod("POST")
+                .routeTemplate("/things")
+                .parameters(params);
+        body.ifPresent(builder::body);
+        return builder.build();
     }
 
     private static JaxRsOperationDescriptor bodyOp(String operationId, Class<?> bodyType) {
