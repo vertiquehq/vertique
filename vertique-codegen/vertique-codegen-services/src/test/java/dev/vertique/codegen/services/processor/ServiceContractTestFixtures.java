@@ -80,6 +80,14 @@ final class ServiceContractTestFixtures {
                     }
                     """);
 
+    static final JavaFileObject SERVICE_CLIENT_FACTORY_SOURCE =
+            SourceFiles.inline("dev.vertique.services.ServiceClientFactory", """
+                    package dev.vertique.services;
+                    public class ServiceClientFactory {
+                        public <T> T create(Class<T> contract) { return null; }
+                    }
+                    """);
+
     static final JavaFileObject CONTRACT_ENTRY_SOURCE =
             SourceFiles.inline("dev.vertique.services.ServiceContractRegistry", """
                     package dev.vertique.services;
@@ -222,6 +230,7 @@ final class ServiceContractTestFixtures {
         ONE_WAY_SOURCE,
         SERVICE_HANDLER_SOURCE,
         SERVICE_CONTRACT_CONTRIBUTOR_SOURCE,
+        SERVICE_CLIENT_FACTORY_SOURCE,
         CONTRACT_ENTRY_SOURCE,
         SERVICE_CONTRACT_ENTRIES_SOURCE,
         PARAM_SOURCE_ENUM_SOURCE,

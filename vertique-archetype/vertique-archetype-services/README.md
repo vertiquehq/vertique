@@ -1,7 +1,9 @@
 # Vertique Services Application Archetype
 
 `dev.vertique:vertique-archetype-services` generates a headless Vertique event-bus services
-application on the services application starter.
+application on the services application starter. The generated component exposes an injected
+`GreetingClient`, whose constructor receives `GreetingService` directly from the generated Dagger
+module; application code does not need to obtain the contract manually from `ServiceClientFactory`.
 
 ## Prerequisites
 

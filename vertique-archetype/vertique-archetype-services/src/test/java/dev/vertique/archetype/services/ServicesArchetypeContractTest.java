@@ -94,13 +94,9 @@ class ServicesArchetypeContractTest {
     /** Matches the {@code modules = { … }} member of the generated component's {@code @Component}. */
     private static final Pattern COMPONENT_MODULES = Pattern.compile("modules\\s*=\\s*\\{(.*?)}", Pattern.DOTALL);
 
-    /**
-     * Matches the generated component's abstract {@code ServiceClientFactory} provision method. The
-     * whole declaration is pinned — return type, name, empty parameter list, and abstract body — so
-     * the proof cannot be satisfied by an unrelated mention of the type.
-     */
-    private static final Pattern SERVICE_CLIENT_FACTORY_PROVISION =
-            Pattern.compile("\\bServiceClientFactory\\s+serviceClientFactory\\s*\\(\\s*\\)\\s*;");
+    /** Matches the generated component's direct typed-client consumer provision method. */
+    private static final Pattern GREETING_CLIENT_PROVISION =
+            Pattern.compile("\\bGreetingClient\\s+greetingClient\\s*\\(\\s*\\)\\s*;");
 
     /**
      * Matches a {@code return VerticleDeployment.of("id", …, LifecyclePhase.PHASE);} statement. This
@@ -336,11 +332,10 @@ class ServicesArchetypeContractTest {
         // GeneratedServicesModule.
         assertEquals(EXPECTED_COMPONENT_MODULES, componentModules);
 
-        // And it exposes the typed service-client factory the generated integration test dispatches
-        // through.
+        // And it exposes application code that receives GreetingService directly from Dagger.
         assertTrue(
-                SERVICE_CLIENT_FACTORY_PROVISION.matcher(component).find(),
-                "generated component must declare ServiceClientFactory serviceClientFactory();");
+                GREETING_CLIENT_PROVISION.matcher(component).find(),
+                "generated component must declare GreetingClient greetingClient();");
     }
 
     /**

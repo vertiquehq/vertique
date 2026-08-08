@@ -126,7 +126,7 @@ error, instead of deploying with an empty service registry.
 |---|---|---|
 | `{Contract}_ContractContributor` | The **contract interface's** package | One per contract group |
 | `{Contract}_ServiceClientProxy` | The **contract interface's** package | One per source-root `@ServiceContract` interface |
-| `GeneratedServicesModule` | Longest common prefix of the emitted contributors' packages, or the `vertique.codegen.package` option when set | One per compilation unit |
+| `GeneratedServicesModule` | Longest common prefix of the emitted contract packages, or the `vertique.codegen.package` option when set | One per compilation unit that has a contributor or eligible client |
 
 Each contributor is `public final`, annotated `@Generated` and `@Singleton`, implements
 `dev.vertique.services.ServiceContractContributor`, and takes one `jakarta.inject.Provider<Impl>` per
@@ -135,8 +135,10 @@ the `ServiceContractEntries.deployable()` builder, resolving every `java.lang.re
 resilience annotation list, and annotation list once into `private static final` fields rather than
 per call. Deployment options are read from `services.contracts.{namespace}.{name}`.
 
-`GeneratedServicesModule` is an abstract `@Module` with one
-`@Provides @IntoSet static ServiceContractContributor` method per emitted contributor:
+`GeneratedServicesModule` is an abstract `@Module` with two generated binding families. The
+server-side family has one `@Provides @IntoSet ServiceContractContributor` method per emitted
+contributor. The client-side family has one `@Provides @Singleton` method per eligible source-root
+contract:
 
 ```java
 @Generated("dev.vertique.codegen.services.processor.ServiceContractProcessor")
@@ -150,6 +152,23 @@ public abstract class GeneratedServicesModule {
     }
 }
 ```
+
+```java
+@Provides
+@Singleton
+static UserService provideUserServiceClient(ServiceClientFactory serviceClientFactory) {
+    return serviceClientFactory.create(UserService.class);
+}
+```
+
+The client binding is a typed Dagger binding, so application code can inject `UserService` directly.
+It delegates construction to `ServiceClientFactory`; it never instantiates
+`{Contract}_ServiceClientProxy` itself. This preserves generated-proxy selection, reflective
+fallback, registry/metadata validation, context propagation, and transport ownership.
+
+Client-only compilation units still receive the unified `GeneratedServicesModule`, even when the
+implementation is compiled in another application module. Provider names are deterministic and
+collision-safe across contracts and across both binding families.
 
 Applications never edit or subclass these types. They are referenced in exactly one place — the
 `@Component` modules list — and are otherwise consumed by `DispatchModule`'s
@@ -257,7 +276,7 @@ if that registration used a different mechanism than this emitter.
 | `dev.vertique.security.SecurityContext` | `vertique-security-core` | Recognized as a dispatch-context parameter on handler methods |
 | `dev.vertique.core.eventbus.DispatchContextValue` | `vertique-core` | Marks a **handler**-method parameter as a dispatch-context value. On a contract-interface method it has no effect — the parameter is classified as an ordinary payload parameter like any other |
 | `dev.vertique.core.eventbus.DispatchEnvelope` | `vertique-core` | Rejected as a contract parameter |
-| `dev.vertique.codegen.NoAutoWire` | `vertique-codegen-core` | Excludes a type from generation |
+| `dev.vertique.codegen.NoAutoWire` | `vertique-codegen-core` | Excludes an implementation from server registration, or a contract from its generated typed-client binding |
 | `dev.vertique.codegen.ConditionalOnProperty` | `vertique-codegen-core` | Config-driven implementation selection |
 
 To place `@NoAutoWire` or `@ConditionalOnProperty` on a class, the owning module needs
@@ -345,16 +364,21 @@ Client-proxy emission shares the same `emitted` guard as contributor emission: `
 
 ## Failures, Constraints, and Common Mistakes
 
-- **Omitting `GeneratedServicesModule` from `@Component` fails silently.** The
-  `Set<ServiceContractContributor>` multibinding is empty by default, the registry builds with zero
-  entries, and no service registers — no compile error, no startup exception. Step 2 of the adoption
-  recipe exists to convert this into a compile error.
+- **Omitting `GeneratedServicesModule` from `@Component` fails silently.** The generated typed
+  clients are not injectable and the `Set<ServiceContractContributor>` multibinding is empty by
+  default, so no service registers. Step 2 of the adoption recipe exists to convert this into a
+  compile error.
 - **Listing `GeneratedServicesModule` with the processor missing fails loudly**, which is the intended
   direction: the generated class does not exist and `javac` reports an unknown type at the component.
 - **Cross-module implementation collisions are not caught at compile time.** Group validation sees
   only the candidates in the current compilation unit. Two modules that each contribute an
   implementation of the same contract remain a runtime concern.
-- **`@ConditionalOnProperty` on a `@NoAutoWire` type does nothing.** Pick one.
+- **`@NoAutoWire` has separate contract and implementation meanings.** On a contract it suppresses
+  only that contract's generated typed-client binding, allowing an application-owned client
+  provider to replace it. On an implementation it retains the existing server-registration opt-out;
+  it does not suppress a valid typed-client binding for the contract. `@NoAutoWire` plus
+  `@ConditionalOnProperty` on an implementation still does nothing for generated server selection;
+  choose manual wiring or conditional generation.
 - **Conditions are evaluated against the resolved application config**, so a condition naming a key
   that no config source supplies matches only when `matchIfMissing = true`.
 - **`@CronJob` targets are unaffected.** Cron targets are resolved by address at runtime, and both the

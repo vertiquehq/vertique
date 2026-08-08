@@ -9,20 +9,26 @@ import com.palantir.javapoet.JavaFile;
 import com.palantir.javapoet.MethodSpec;
 import com.palantir.javapoet.TypeSpec;
 import dev.vertique.codegen.CodegenContext;
+import dev.vertique.codegen.services.processor.scan.ClientContractModel;
 import dev.vertique.codegen.services.processor.scan.ContractModel;
 import java.beans.Introspector;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
+import java.util.TreeSet;
 import javax.annotation.processing.Generated;
 import javax.lang.model.SourceVersion;
 import javax.lang.model.element.Modifier;
+import javax.lang.model.element.TypeElement;
 
 /**
  * Emits a single {@code GeneratedServicesModule} Dagger {@code @Module} that provides all
- * generated contributors as {@code @IntoSet ServiceContractContributor} bindings.
+ * generated contributors as {@code @IntoSet ServiceContractContributor} bindings and all eligible
+ * contract-only client models as singleton typed-client bindings.
  *
  * <p>Generated module shape:
  * <pre>{@code
@@ -33,13 +39,18 @@ import javax.lang.model.element.Modifier;
  *     static ServiceContractContributor userService(UserService_ContractContributor impl) {
  *         return impl;
  *     }
+ *
+ *     @Provides @Singleton
+ *     static UserService provideUserServiceClient(ServiceClientFactory clients) {
+ *         return clients.create(UserService.class);
+ *     }
  * }
  * }</pre>
  *
- * <p>Package resolution: uses the longest common prefix (LCP) of all generated contributor
- * packages. If all contributors reside in the same package, that package is used. If packages
- * are disjoint, falls back to {@code vertique.generated.services}. The {@code -Avertique.codegen.package}
- * option overrides the LCP resolution when set.
+ * <p>Package resolution: uses the longest common prefix (LCP) of all generated contributor and
+ * client contract packages. If all contracts reside in the same package, that package is used. If
+ * packages are disjoint, falls back to {@code vertique.generated.services}. The
+ * {@code -Avertique.codegen.package} option overrides the LCP resolution when set.
  */
 public final class ContributorModuleEmitter {
 
@@ -51,11 +62,15 @@ public final class ContributorModuleEmitter {
     private static final ClassName DAGGER_MODULE = ClassName.get("dagger", "Module");
     private static final ClassName DAGGER_PROVIDES = ClassName.get("dagger", "Provides");
     private static final ClassName DAGGER_INTO_SET = ClassName.get("dagger.multibindings", "IntoSet");
+    private static final ClassName JAKARTA_SINGLETON = ClassName.get("jakarta.inject", "Singleton");
     private static final ClassName SERVICE_CONTRACT_CONTRIBUTOR =
             ClassName.get("dev.vertique.services", "ServiceContractContributor");
+    private static final ClassName SERVICE_CLIENT_FACTORY =
+            ClassName.get("dev.vertique.services", "ServiceClientFactory");
 
     private final CodegenContext ctx;
-    private final List<ContractModel> models = new ArrayList<>();
+    private final List<ContractModel> contributorModels = new ArrayList<>();
+    private final List<ClientContractModel> clientModels = new ArrayList<>();
 
     /**
      * Constructs an emitter bound to the given codegen context.
@@ -72,7 +87,16 @@ public final class ContributorModuleEmitter {
      * @param model the validated model; must not be {@code null}
      */
     public void add(ContractModel model) {
-        models.add(model);
+        contributorModels.add(model);
+    }
+
+    /**
+     * Accumulates an eligible contract-only client model for inclusion in the generated module.
+     *
+     * @param model the validated client model; must not be {@code null}
+     */
+    public void addClient(ClientContractModel model) {
+        clientModels.add(model);
     }
 
     /**
@@ -81,7 +105,7 @@ public final class ContributorModuleEmitter {
      * @return {@code true} when there are models to emit
      */
     public boolean hasModels() {
-        return !models.isEmpty();
+        return !contributorModels.isEmpty() || !clientModels.isEmpty();
     }
 
     /**
@@ -90,7 +114,7 @@ public final class ContributorModuleEmitter {
      * <p>Must only be called when {@link #hasModels()} returns {@code true}.
      */
     public void emit() {
-        if (models.isEmpty()) {
+        if (!hasModels()) {
             return;
         }
 
@@ -103,23 +127,19 @@ public final class ContributorModuleEmitter {
                         .build())
                 .addAnnotation(AnnotationSpec.builder(DAGGER_MODULE).build());
 
-        // Dedupe by contract FQN: the processor now passes one representative model per contract
-        // group, but this guard protects against accidental duplicate models from mixed rounds.
-        Set<String> seenContracts = new LinkedHashSet<>();
-        for (ContractModel model : models) {
-            String contractFqn = model.contractType().getQualifiedName().toString();
-            if (!seenContracts.add(contractFqn)) {
-                // Already emitted a binding for this contract — skip the duplicate
-                continue;
-            }
-
+        Map<String, ContractModel> contributors = uniqueContributors();
+        Map<String, ClientContractModel> clients = uniqueClients();
+        Set<String> usedMethodNames = new LinkedHashSet<>();
+        for (Map.Entry<String, ContractModel> entry : contributors.entrySet()) {
+            ContractModel model = entry.getValue();
             String contractPkg = ctx.packageNameOf(model.contractType());
             String contributorSimpleName = model.contractType().getSimpleName() + "_ContractContributor";
             ClassName contributorClass = ClassName.get(contractPkg, contributorSimpleName);
 
-            // Method name: decapitalised contract simple name, keyword-guarded
-            String methodName =
-                    bindingMethodName(model.contractType().getSimpleName().toString());
+            String methodName = uniqueBindingMethodName(
+                    bindingMethodName(model.contractType().getSimpleName().toString()),
+                    entry.getKey(),
+                    usedMethodNames);
 
             MethodSpec provideMethod = MethodSpec.methodBuilder(methodName)
                     .addModifiers(Modifier.STATIC)
@@ -128,6 +148,25 @@ public final class ContributorModuleEmitter {
                     .returns(SERVICE_CONTRACT_CONTRIBUTOR)
                     .addParameter(contributorClass, "impl")
                     .addStatement("return impl")
+                    .build();
+
+            moduleBuilder.addMethod(provideMethod);
+        }
+
+        for (Map.Entry<String, ClientContractModel> entry : clients.entrySet()) {
+            ClientContractModel model = entry.getValue();
+            TypeElement contractType = model.contractType();
+            ClassName contractClass = ClassName.get(contractType);
+            String methodName = uniqueBindingMethodName(
+                    clientBindingMethodName(contractType.getSimpleName().toString()), entry.getKey(), usedMethodNames);
+
+            MethodSpec provideMethod = MethodSpec.methodBuilder(methodName)
+                    .addModifiers(Modifier.STATIC)
+                    .addAnnotation(AnnotationSpec.builder(DAGGER_PROVIDES).build())
+                    .addAnnotation(AnnotationSpec.builder(JAKARTA_SINGLETON).build())
+                    .returns(contractClass)
+                    .addParameter(SERVICE_CLIENT_FACTORY, "serviceClientFactory")
+                    .addStatement("return serviceClientFactory.create($T.class)", contractClass)
                     .build();
 
             moduleBuilder.addMethod(provideMethod);
@@ -145,12 +184,12 @@ public final class ContributorModuleEmitter {
     // --- Internal helpers ---
 
     /**
-     * Resolves the output package using LCP of contributor packages, with option override support.
+     * Resolves the output package using LCP of contract packages, with option override support.
      *
      * <p>Resolution order:
      * <ol>
      *   <li>{@code -Avertique.codegen.package} option if set.</li>
-     *   <li>LCP of all contributor contract packages.</li>
+     *   <li>LCP of all contributor and client contract packages.</li>
      *   <li>Fallback: {@code vertique.generated.services}.</li>
      * </ol>
      *
@@ -163,9 +202,7 @@ public final class ContributorModuleEmitter {
             return override;
         }
 
-        // LCP of all contributor packages
-        String lcp = models.stream()
-                .map(m -> ctx.packageNameOf(m.contractType()))
+        String lcp = contractPackages().stream()
                 .reduce(ContributorModuleEmitter::longestCommonPrefix)
                 .orElse(FALLBACK_PACKAGE);
 
@@ -213,5 +250,52 @@ public final class ContributorModuleEmitter {
     public static String bindingMethodName(String simpleName) {
         String name = Introspector.decapitalize(simpleName);
         return SourceVersion.isName(name) ? name : name + "_";
+    }
+
+    /**
+     * Produces the conventional typed-client provider name.
+     *
+     * @param simpleName the contract simple name; must not be empty
+     * @return a valid Java identifier base name
+     */
+    public static String clientBindingMethodName(String simpleName) {
+        return "provide" + simpleName + "Client";
+    }
+
+    private Map<String, ContractModel> uniqueContributors() {
+        Map<String, ContractModel> result = new TreeMap<>();
+        for (ContractModel model : contributorModels) {
+            result.putIfAbsent(model.contractType().getQualifiedName().toString(), model);
+        }
+        return result;
+    }
+
+    private Map<String, ClientContractModel> uniqueClients() {
+        Map<String, ClientContractModel> result = new TreeMap<>();
+        for (ClientContractModel model : clientModels) {
+            result.putIfAbsent(model.contractType().getQualifiedName().toString(), model);
+        }
+        return result;
+    }
+
+    private Set<String> contractPackages() {
+        Set<String> result = new TreeSet<>();
+        uniqueContributors().values().forEach(model -> result.add(ctx.packageNameOf(model.contractType())));
+        uniqueClients().values().forEach(model -> result.add(ctx.packageNameOf(model.contractType())));
+        return result;
+    }
+
+    private static String uniqueBindingMethodName(String baseName, String contractFqn, Set<String> usedNames) {
+        if (usedNames.add(baseName)) {
+            return baseName;
+        }
+
+        String suffix = contractFqn.replace('.', '_');
+        String candidate = baseName + "_" + suffix;
+        int ordinal = 2;
+        while (!usedNames.add(candidate)) {
+            candidate = baseName + "_" + suffix + "_" + ordinal++;
+        }
+        return candidate;
     }
 }

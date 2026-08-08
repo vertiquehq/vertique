@@ -76,8 +76,9 @@ The starter deliberately stops at composition. Applications remain responsible f
   aggregate builds a complete graph but exposes no management port. Service verticles themselves
   are deployed by the `SERVICES`-phase startup step `DispatchModule` contributes, not by an
   application deployment entry.
-- **Generated services modules** — the annotation-processor output module carrying the service
-  implementation and contract bindings is named explicitly in the component.
+- **Generated services module** — the annotation-processor output module carrying server contributor
+  bindings and injectable typed-client bindings is named explicitly in the component. The generated
+  client provider still delegates to `ServiceClientFactory`; the starter does not create proxies.
 - **Launcher choice** — `vertique-launcher` is not a dependency of this module.
 - **Test libraries** — `vertique-application-test` and JUnit stay explicit test-scope dependencies
   of the application.
@@ -102,7 +103,7 @@ downstream components name the class, and neither Dagger nor application code in
             GeneratedServicesModule.class
         })
 interface AppComponent extends VertiqueApplicationComponent {
-    ServiceClientFactory serviceClientFactory();
+    GreetingService greetingService();
 }
 ```
 
@@ -137,7 +138,8 @@ module.
   empty deployment set and exposes no management port. Service verticles are deployed by the
   `SERVICES`-phase startup step, which is contributed.
 - **Expecting the generated module to be included.** The annotation-processor output module is
-  never reachable from a framework aggregate; it must be listed in the component explicitly.
+  never reachable from a framework aggregate; it must be listed in the component explicitly. Once
+  included, eligible service contracts are injectable without an application-owned provider.
 - **Naming `CoreApplicationModule` alongside this aggregate.** The core starter is already reached
   transitively; listing it again adds nothing.
 - **Marking services as workers by default.** Worker opt-in is per contract and only for genuinely

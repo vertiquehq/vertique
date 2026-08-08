@@ -3,9 +3,9 @@ package ${package};
 import dagger.Component;
 import dev.vertique.application.VertiqueApp;
 import dev.vertique.application.VertiqueApplicationComponent;
-import dev.vertique.services.ServiceClientFactory;
 import dev.vertique.starter.services.ServicesApplicationModule;
 import ${package}.service.GeneratedServicesModule;
+import ${package}.service.GreetingClient;
 import jakarta.inject.Singleton;
 
 @VertiqueApp
@@ -18,5 +18,5 @@ import jakarta.inject.Singleton;
         })
 interface AppComponent extends VertiqueApplicationComponent {
 
-    ServiceClientFactory serviceClientFactory();
+    GreetingClient greetingClient();
 }

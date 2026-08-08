@@ -3,6 +3,7 @@
 
 package dev.vertique.codegen.services.processor;
 
+import dev.vertique.codegen.AnnotationMirrors;
 import dev.vertique.codegen.CodegenContext;
 import dev.vertique.codegen.services.processor.emit.ClientProxyEmitter;
 import dev.vertique.codegen.services.processor.emit.ContributorEmitter;
@@ -66,8 +67,9 @@ import javax.lang.model.element.TypeElement;
  *
  * <p>The processor runs whenever {@code vertique-codegen-services} is on the
  * {@code <annotationProcessorPaths>} of the consuming module. There is no opt-in flag;
- * the presence of the processor on the path is the opt-in. Per-impl opt-out is via
- * {@code @NoAutoWire} (handled by {@link ImplCandidateScanner}).
+ * the presence of the processor on the path is the opt-in. Implementation registration opt-out
+ * is via {@code @NoAutoWire} on an implementation (handled by {@link ImplCandidateScanner}); the
+ * same annotation on a contract suppresses only that contract's generated typed-client binding.
  *
  * <p>Processor options:
  * <ul>
@@ -253,14 +255,20 @@ public final class ServiceContractProcessor extends AbstractProcessor {
 
         // Run group-level validators; exclude groups that fail from emission.
         List<List<ContractModel>> emittableGroups = new ArrayList<>();
-        for (List<ContractModel> group : groups.values()) {
-            // Use & (not &&) so both validators run and each emits its own diagnostics.
-            boolean groupValid = multipleUnconditionalImplValidator.validate(group)
-                    & conditionalRequiredOnNonDefaultValidator.validate(group);
-            if (groupValid) {
-                emittableGroups.add(group);
-            }
-        }
+        groups.values().stream()
+                .sorted(Comparator.comparing(group ->
+                        group.getFirst().contractType().getQualifiedName().toString()))
+                .forEach(group -> {
+                    // Use & (not &&) so both validators run and each emits its own diagnostics.
+                    boolean groupValid = multipleUnconditionalImplValidator.validate(group)
+                            & conditionalRequiredOnNonDefaultValidator.validate(group);
+                    if (groupValid) {
+                        emittableGroups.add(group.stream()
+                                .sorted(Comparator.comparing(model ->
+                                        model.implType().getQualifiedName().toString()))
+                                .toList());
+                    }
+                });
 
         // Emit one contributor per contract group; add one representative to the module emitter.
         for (List<ContractModel> group : emittableGroups) {
@@ -268,11 +276,11 @@ public final class ServiceContractProcessor extends AbstractProcessor {
             moduleEmitter.add(group.get(0));
         }
 
+        emitClientProxies(roundEnv, contractShapeFailedFqns);
+
         if (moduleEmitter.hasModels()) {
             moduleEmitter.emit();
         }
-
-        emitClientProxies(roundEnv, contractShapeFailedFqns);
 
         emitted = true;
         return false;
@@ -355,6 +363,9 @@ public final class ServiceContractProcessor extends AbstractProcessor {
             }
 
             clientProxyEmitter.emit(model);
+            if (!AnnotationMirrors.isPresent(contractType, ServiceAnnotations.NO_AUTO_WIRE)) {
+                moduleEmitter.addClient(model);
+            }
         }
     }
 

@@ -12,7 +12,6 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.concurrent.TimeUnit;
-import ${package}.service.GreetingService;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.RegisterExtension;
@@ -27,9 +26,8 @@ class ApplicationIT {
     @Test
     void invokesGreetingThroughTypedProxy() throws Exception {
         AppComponent component = app.component();
-        GreetingService greetings = component.serviceClientFactory().create(GreetingService.class);
 
-        String greeting = greetings.greet("Vertique")
+        String greeting = component.greetingClient().greet("Vertique")
                 .toCompletionStage()
                 .toCompletableFuture()
                 .get(10, TimeUnit.SECONDS);

@@ -67,15 +67,30 @@ implementation and a handler for the same contract.
 ### Generated registration and typed clients
 
 The services annotation processor discovers service implementations and generates
-`GeneratedServicesModule`, which contributes compile-time-validated contract metadata and
-implementation providers. Add that generated module and `DispatchModule` to the application
+`GeneratedServicesModule`. Its contributor bindings register compile-time-validated contract
+metadata and implementation providers; its typed-client bindings make each eligible source-root
+contract directly injectable. Add that generated module and `DispatchModule` to the application
 component.
 
-Callers obtain a typed client from `ServiceClientFactory.create(Contract.class)`. `create()` selects
+Application code normally injects the contract directly:
+
+```java
+@Inject
+OrderCoordinator(FulfilmentService fulfilmentService) {
+    this.fulfilmentService = fulfilmentService;
+}
+```
+
+The generated provider delegates to `ServiceClientFactory.create(Contract.class)`. `create()` selects
 a generated `{Contract}_ServiceClientProxy` companion when one is on the classpath — emitted by
 `vertique-codegen-services` for every source-root `@ServiceContract` interface — and falls back to a
 JDK dynamic proxy otherwise. Either way, the client captures dispatch context, resolves operation
 metadata, and delegates transport concerns to the framework.
+
+`ServiceClientFactory` remains available for deliberate dynamic or manual wiring. A contract
+annotated `@NoAutoWire` suppresses only its generated typed-client binding, so an application-owned
+`@Provides` method can bind it explicitly. `@NoAutoWire` on an implementation keeps its existing
+server-registration semantics and does not suppress a valid client binding for the contract.
 
 ### Delivery semantics
 
@@ -221,7 +236,7 @@ annotate the implementation with `@NoAutoWire` and contribute it manually to
 also declare `dev.vertique:vertique-codegen-core` with `provided` scope as documented in
 `docs/packaging.md`.
 
-### 4. Bind and use a client
+### 4. Inject and use a client
 
 ```java
 package com.example.users;
@@ -231,21 +246,19 @@ import dagger.Provides;
 import dev.vertique.services.ServiceClientFactory;
 import jakarta.inject.Singleton;
 
-@Module
-public final class UserClientModule {
+public final class UserCoordinator {
 
-    private UserClientModule() {}
+    private final UserService users;
 
-    @Provides
-    @Singleton
-    static UserService userService(ServiceClientFactory factory) {
-        return factory.create(UserService.class);
+    @Inject
+    public UserCoordinator(UserService users) {
+        this.users = users;
     }
 }
 ```
 
 Inject and call `UserService` like any other asynchronous dependency. Do not construct event-bus
-addresses in application code.
+addresses or generated proxy classes in application code.
 
 ---
 
