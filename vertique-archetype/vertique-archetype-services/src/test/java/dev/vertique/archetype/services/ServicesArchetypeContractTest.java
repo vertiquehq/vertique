@@ -423,7 +423,8 @@ class ServicesArchetypeContractTest {
 
         // Then it states the non-blocking event-loop default.
         assertTrue(
-                threading.contains("non-blocking Vert.x event loop by default"),
+                threading.contains(
+                        "Each service verticle instance runs on its own Vert.x event loop, which is non-blocking by default."),
                 "README Threading section must state the non-blocking event-loop default");
 
         // And it documents the exact blocking-work opt-in property, exactly once in the whole document.
