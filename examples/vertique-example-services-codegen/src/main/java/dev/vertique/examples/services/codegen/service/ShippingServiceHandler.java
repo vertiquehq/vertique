@@ -23,7 +23,8 @@ import lombok.extern.slf4j.Slf4j;
  * <p>The {@code vertique-codegen-services} processor discovers this handler at compile time,
  * resolves the {@code ShippingService} type argument, and generates a
  * {@code ShippingService_ContractContributor} that wires it into the event bus dispatch
- * infrastructure without any manual module code.
+ * infrastructure. The same {@code GeneratedServicesModule} provides the singleton
+ * {@link ShippingService} typed client without a manual Dagger provider.
  *
  * <p>This is a stub implementation for demonstration; a real shipping service would integrate
  * with a fulfilment provider.

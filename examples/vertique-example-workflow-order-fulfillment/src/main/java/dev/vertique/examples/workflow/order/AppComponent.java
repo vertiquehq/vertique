@@ -76,7 +76,7 @@ import jakarta.inject.Singleton;
  * {@code SERVICES} stub services + signal contributor + timer pollers + outbox relay, the latter
  * brought up by the {@code ServiceDeploymentStartupStep} contributed by {@link DispatchModule}).
  *
- * <p>This is a <strong>headless</strong> example — it deploys no HTTP/EDGE verticle.
+ * <p>This is a <strong>non-HTTP</strong> example — it deploys no HTTP/EDGE verticle.
  *
  * <p>Wires the full graph required for the durable saga pattern:
  * <ul>

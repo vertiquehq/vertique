@@ -1,8 +1,8 @@
 # ${artifactId}
 
-A headless Vertique event-bus services application. It exposes no HTTP edge — application code
-injects `GreetingService` directly, and the generated Dagger module creates its typed event-bus
-client through `ServiceClientFactory`.
+A Vertique contract-based services application. Application code injects `GreetingService`
+directly; the generated services Dagger module provides its singleton typed client, and Vertique
+handles registered context propagation and event-bus dispatch.
 
 ## Prerequisites
 
@@ -49,8 +49,8 @@ mvn -ntp jib:dockerBuild
 
 ## Threading
 
-Service implementations run on the non-blocking Vert.x event loop by default, and
-`GreetingServiceImpl` is written for it: it returns an already-completed `Future` and never
+Each service verticle instance runs on its own Vert.x event loop, which is non-blocking by default.
+`GreetingServiceImpl` is written for that model: it returns an already-completed `Future` and never
 blocks. Keep that default.
 
 Set `services.contracts.sample.greeting.worker=true` in `config/application.json` only if the

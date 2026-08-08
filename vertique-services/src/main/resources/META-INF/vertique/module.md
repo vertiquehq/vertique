@@ -10,14 +10,20 @@ SPDX-License-Identifier: EUPL-1.2
 > **Artifact:** `vertique-services`
 > **Depends on:** core, context, correlation, deploy, logging, security-core, security-runtime
 
-`vertique-services` provides typed, in-process service calls over the Vert.x event bus. Applications
-define annotated Java interfaces, implement them as ordinary injectable classes, and call them
-through typed clients — a generated `{Contract}_ServiceClientProxy` companion when
-`vertique-codegen-services` is on the build path, otherwise a JDK dynamic proxy — while Vertique owns
-addressing, dispatch context, lifecycle, failure transport, and declarative resilience.
+`vertique-services` is Vertique's contract-based execution model. Applications define typed
+operations as annotated Java interfaces, implement them as ordinary injectable classes, and inject
+the contract itself wherever an operation must be called. The generated services Dagger module
+provides a singleton typed client for each eligible contract. Vertique captures registered dispatch
+context, routes the invocation over the Vert.x event bus, restores that context on receipt, and owns
+service lifecycle, supervision, authorization, resilience, failure transport, and observability.
 
-Use services as an application boundary, not as a remote-service protocol. The current transport is
-the local Vert.x event bus and therefore assumes one application process.
+Each contract runs on one or more independently configurable `ServiceVerticle` instances. Every
+instance has its own Vert.x event loop and registers consumers at the contract's operation
+addresses, so instance count scales consumers and concurrent execution. The instances share the
+single selected implementation object stored in the contract entry; scaling does not create isolated
+handler state, so implementations must remain safe for concurrent calls. Kafka listeners, cron
+schedules, delayed jobs, workflows, and outbox relays can resolve and invoke explicitly identified
+operations through their stable target ids.
 
 ---
 
@@ -29,7 +35,8 @@ Use this module when an application needs:
 - asynchronous `Future<T>` request/reply without exposing event-bus addresses to callers;
 - service-level timeout, retry, circuit-breaker, authorization, or observability policies;
 - isolated service deployment and supervision within one Vert.x application; or
-- a durable service-operation identity for workflows, outbox delivery, or scheduled work.
+- a durable service-operation identity for Kafka, cron, delayed jobs, workflows, or outbox
+  delivery.
 
 For a simple function call within one cohesive component, prefer a normal injected Java interface.
 For communication between processes, use a network or broker integration with an explicit
@@ -38,6 +45,12 @@ serialization and compatibility contract.
 ---
 
 ## Core Concepts
+
+![Vertique Services execution model](../../../../../../docs/diagrams/services-execution-model.svg)
+
+The Java interface is both the caller's dependency and the framework contract. Generated Dagger
+wiring supplies the typed client; service integrations use the same operation metadata through a
+stable identity. Both paths converge on the dispatch runtime and the managed service verticles.
 
 ### Contracts and operations
 
@@ -66,11 +79,12 @@ implementation and a handler for the same contract.
 
 ### Generated registration and typed clients
 
-The services annotation processor discovers service implementations and generates
-`GeneratedServicesModule`. Its contributor bindings register compile-time-validated contract
-metadata and implementation providers; its typed-client bindings make each eligible source-root
-contract directly injectable. Add that generated module and `DispatchModule` to the application
-component.
+The services annotation processor discovers service implementations and source-root service
+contracts, then generates `GeneratedServicesModule`. Its `@Provides @IntoSet` contributor bindings
+register compile-time-validated contract metadata and implementation providers. Its
+`@Provides @Singleton` typed-client bindings call `ServiceClientFactory.create(Contract.class)`,
+making each eligible contract directly injectable. Add that generated module and `DispatchModule`
+to the application component.
 
 Application code normally injects the contract directly:
 
@@ -130,9 +144,11 @@ uses:
 
 ### Execution and lifecycle
 
-Each registered service contract is deployed as an isolated Vert.x verticle. Operations run on the
-event loop by default; blocking handlers must use worker deployment (`worker: true`) or move blocking
-work behind an appropriate asynchronous boundary.
+Each registered service contract is deployed as one or more `ServiceVerticle` instances according
+to `services.contracts.<namespace>.<name>.instances`. Vert.x deploys every configured instance on
+its own event loop; the instances register consumers for the same operation addresses and share
+the work. Operations run on the event loop by default; blocking handlers must use worker deployment
+(`worker: true`) or move blocking work behind an appropriate asynchronous boundary.
 
 `DispatchModule` contributes service startup and shutdown steps. Applications using the standard
 Vertique lifecycle do not call a deployment manager directly.
@@ -241,10 +257,7 @@ also declare `dev.vertique:vertique-codegen-core` with `provided` scope as docum
 ```java
 package com.example.users;
 
-import dagger.Module;
-import dagger.Provides;
-import dev.vertique.services.ServiceClientFactory;
-import jakarta.inject.Singleton;
+import jakarta.inject.Inject;
 
 public final class UserCoordinator {
 

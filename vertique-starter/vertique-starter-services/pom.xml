@@ -18,7 +18,7 @@ SPDX-License-Identifier: EUPL-1.2
 
     <artifactId>vertique-starter-services</artifactId>
     <name>Vertique Starter Services</name>
-    <description>Headless event-bus services application starter composing the core starter with service dispatch and management</description>
+    <description>Contract-based services application starter composing the core starter with service dispatch and management</description>
 
     <dependencies>
         <dependency>

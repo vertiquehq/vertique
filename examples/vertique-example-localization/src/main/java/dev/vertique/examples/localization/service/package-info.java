@@ -9,5 +9,7 @@
  * {@link dev.vertique.examples.localization.service.LocaleEchoServiceHandler}, which reads the
  * propagated {@link dev.vertique.localization.context.LocalizationContext} via
  * {@link dev.vertique.services.dispatch.DispatchContext} and echoes back the locale information.
+ * The generated {@code GeneratedServicesModule} contributes the handler registration and an
+ * injectable singleton {@code LocaleEchoService} typed client.
  */
 package dev.vertique.examples.localization.service;

@@ -18,7 +18,8 @@
  *   <li>{@link dev.vertique.examples.localization.AppComponent} — root Dagger
  *       {@code @Component} that wires together {@code VertxModule}, {@code RestModule},
  *       {@code RestLocalizationModule}, {@code DispatchModule}, {@code CoreLifecycleStepsModule},
- *       {@code AppModule}, and {@code ServiceModule}</li>
+ *       {@code AppModule}, and {@code GeneratedServicesModule}; the generated services module
+ *       contributes both service registrations and injectable singleton typed clients</li>
  *   <li>{@link dev.vertique.examples.localization.QueryParamLocaleSource} — custom
  *       {@link dev.vertique.rest.localization.LocaleSource} contributed at priority {@code 0}
  *       (before the built-in {@code Accept-Language} source at priority {@code 1000}),

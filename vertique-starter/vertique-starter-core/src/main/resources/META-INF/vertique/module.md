@@ -24,7 +24,7 @@ includes already provide.
 ## When To Use It
 
 Install `vertique-starter-core` in any application whose Dagger component needs the framework
-lifecycle foundation but no HTTP, event-bus, or persistence layer — for example a headless job
+lifecycle foundation but no HTTP, event-bus, or persistence layer — for example a background job
 runner or a host bridge fixture.
 
 Applications that additionally need REST or event-bus service capabilities install the matching

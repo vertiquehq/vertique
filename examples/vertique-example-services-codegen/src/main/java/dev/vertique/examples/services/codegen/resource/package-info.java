@@ -12,9 +12,9 @@
  *       {@code POST /shipping/ship}, {@code POST /shipping/notify}</li>
  * </ul>
  *
- * <p>Each resource injects the corresponding service contract proxy provided by
- * {@link dev.vertique.examples.services.codegen.ServiceModule}.
- * {@code AutoWireProcessor} generates {@code GeneratedJaxRsResourcesModule} in this package
- * at compile time to wire the resources into the {@code @JaxRsResources} multibinding.
+ * <p>Each resource injects the corresponding service contract through the typed-client binding in
+ * {@code GeneratedServicesModule}. {@code AutoWireProcessor} generates
+ * {@code GeneratedJaxRsResourcesModule} in this package at compile time to wire the resources into
+ * the {@code @JaxRsResources} multibinding.
  */
 package dev.vertique.examples.services.codegen.resource;

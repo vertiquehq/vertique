@@ -89,10 +89,10 @@ class ServicesStarterConsumerTest {
     // --- Generated factory and graph ---
 
     @Test
-    void generatedFactoryBuildsHeadlessServicesApplicationGraph() throws Exception {
+    void generatedFactoryBuildsServicesApplicationGraph() throws Exception {
         withComponent(component -> assertNotNull(
                 component,
-                "Generated factory must build the complete headless services graph from the aggregate, with no REST module present"));
+                "Generated factory must build the complete service execution graph from the aggregate"));
     }
 
     @Test
