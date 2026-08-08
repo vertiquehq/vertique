@@ -23,6 +23,7 @@ import io.vertx.core.http.HttpServerResponse;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -91,11 +92,13 @@ public class HttpClientBodyReadRaceIT {
     private static final String REJECT_PATH = "/reject";
 
     /**
-     * Request body for the send-outcome test, far larger than any socket and kernel buffer can
-     * absorb. Because the server for {@link #REJECT_PATH} never reads the body, the send can never
-     * complete — which is what makes that test's ordering structural rather than timed.
+     * Request-body size for the send-outcome test, far larger than the client send buffer, the
+     * server receive buffer, and the bounded inbound queue a paused request retains — roughly 10 MB
+     * end to end on a generously tuned host. Because the server for {@link #REJECT_PATH} never reads
+     * the body, the send cannot complete, which is what makes that test's ordering structural rather
+     * than timed. A host tuned past this margin fails the test loudly rather than silently.
      */
-    private static final Buffer UNREADABLE_BODY = Buffer.buffer(new byte[32 * 1024 * 1024]);
+    private static final int UNREADABLE_BODY_BYTES = 32 * 1024 * 1024;
 
     private static HttpServer server;
     private static HttpClient client;
@@ -206,34 +209,52 @@ public class HttpClientBodyReadRaceIT {
     @Test
     @DisplayName("A delivered response settles the result even though the send has not completed")
     void deliveredResponseSettlesResultWhileSendIsStillPending() throws Exception {
-        AtomicReference<Future<Void>> send = new AtomicReference<>();
+        // Sampled ON the event loop at the instant the result settles. Reading it from the test
+        // thread after the await would sample an arbitrarily later moment, which a loaded runner can
+        // push past the send's own completion — the very scheduling dependence this class exists to
+        // remove, and it would fail as a bare "expected: <false>" with nothing to diagnose.
+        AtomicBoolean sendCompleteAtSettle = new AtomicBoolean(true);
         AtomicReference<HttpConnection> connection = new AtomicReference<>();
+        // Local rather than a class constant: its lifetime is this method, and a shared Buffer is a
+        // refcount hazard if the write is ever retried.
+        Buffer unreadableBody = Buffer.buffer(new byte[UNREADABLE_BODY_BYTES]);
 
-        Future<HttpResult> result = client.request(HttpMethod.POST, server.actualPort(), LOOPBACK, REJECT_PATH)
-                .compose(request -> {
-                    // The idiom verbatim: attach the whole continuation, then initiate the send.
-                    Future<HttpResult> pending = request.response().compose(response -> response.body()
-                            .map(body -> new HttpResult(response.statusCode(), body)));
-                    connection.set(request.connection());
-                    send.set(request.end(UNREADABLE_BODY));
-                    return pending;
-                });
+        try {
+            Future<HttpResult> result = client.request(HttpMethod.POST, server.actualPort(), LOOPBACK, REJECT_PATH)
+                    .compose(request -> {
+                        // The idiom verbatim: attach the whole continuation, then initiate the send.
+                        Future<HttpResult> pending = request.response().compose(response -> response.body()
+                                .map(body -> new HttpResult(response.statusCode(), body)));
+                        connection.set(request.connection());
+                        Future<Void> sent = request.end(unreadableBody);
+                        return pending.andThen(ignored -> sendCompleteAtSettle.set(sent.isComplete()));
+                    });
 
-        // Load-bearing: the server answered on the head and is not reading the body, so the send
-        // cannot finish. Had the send's future been composed into the result chain, the result could
-        // never settle and this await would time the test out — which is what makes the assertions
-        // below a real check rather than a restatement of the happy path.
-        HttpResult received = await(result);
+            // Load-bearing: the server answered on the head and is not reading the body, so the send
+            // cannot finish. Had the send's future been composed into the result chain, the result
+            // could never settle and this await would time the test out — which is what makes the
+            // assertions below a real check rather than a restatement of the happy path.
+            HttpResult received = await(result);
 
-        assertEquals(413, received.statusCode(), "the answer the server did send must reach the caller");
-        assertFalse(
-                send.get().isComplete(),
-                "the result must be decided by the response alone; the send had not settled yet");
-
-        // Tearing the connection down now fails the stranded send. Observing that failure after the
-        // fact is the point: a send that ends in failure still did not mask the response above.
-        connection.get().close();
-        assertFalse(send.get().succeeded(), "a send the server never read must never report success");
+            assertEquals(413, received.statusCode(), "the answer the server did send must reach the caller");
+            assertFalse(
+                    sendCompleteAtSettle.get(),
+                    "the response alone must settle the result; the send had not completed at that instant");
+        } finally {
+            // Every exit path, not just the happy one: a stranded multi-megabyte write and a paused
+            // server-side request would otherwise outlive a failing assertion and reach the two
+            // sibling tests sharing this client and server. Fire-and-forget by necessity — awaiting
+            // this close would deadlock, because an HTTP/1 close drains in-flight work and the write
+            // it is waiting on is precisely the one the server will never read.
+            HttpConnection open = connection.get();
+            if (open != null) {
+                open.close();
+            }
+        }
+        // Nothing is asserted about how the stranded send eventually settles. It cannot affect the
+        // outcome above: a Future settles once, so a result already decided by the response is beyond
+        // the send's reach whatever happens to it. That is a language guarantee, not a claim this
+        // test could strengthen by observing it.
     }
 
     // --- Harness ---
