@@ -43,15 +43,18 @@ import java.util.Set;
  * <p>Claim parsing is delegated to {@link JwtClaimExtractor} for consistent behaviour with
  * {@link dev.vertique.rest.security.DefaultSecurityClaimMapper}.
  *
- * <p><strong>These authorizations are not what {@code @RolesAllowed} and
- * {@code @Authorized(scopes = ...)} enforce.</strong> The framework's decision point evaluates
- * directly from the {@code SecurityContext}'s {@code AuthorizationClaims}, populated by
- * {@link dev.vertique.rest.security.SecurityClaimMapper}, and does not consult the Vert.x
- * {@code AuthorizationProvider} chain at all — so this provider populates the Vert.x user's
- * authorization cache for interoperability with code that reads it, not for annotation
- * enforcement. To change what {@code @RolesAllowed} or {@code @Authorized} decide, replace the
- * {@code SecurityClaimMapper}; contributing another {@code AuthorizationProvider} has no effect.
- * Whether that should remain so is GitHub issue #165.
+ * <p><strong>This provider does not run today, and these authorizations enforce nothing.</strong>
+ * The framework accepts the {@code Set<AuthorizationProvider>} multibinding but never calls
+ * {@link #getAuthorizations(User)}, so the Vert.x authorization cache this class targets stays
+ * empty. {@code @RolesAllowed} and {@code @Authorized(scopes = ...)} are decided from the
+ * {@code SecurityContext}'s {@code AuthorizationClaims}, populated by
+ * {@link dev.vertique.rest.security.SecurityClaimMapper} — replace that mapper to change what they
+ * decide.
+ *
+ * <p>Vert.x-native authorization support is intended, not declined: the adapter that would invoke
+ * contributed providers at identity-resolution time and import {@code user.authorizations()} into
+ * the typed claims model is unimplemented. This class is the worked example of the contribution
+ * shape it will consume, which is why it is kept rather than removed. Tracked as GitHub issue #165.
  */
 public class JwtClaimAuthorizationProvider implements AuthorizationProvider {
 

@@ -114,9 +114,14 @@ the request's `SecurityContext`. Those are produced during identity resolution i
 `scope`, `scp`, and `permissions` claims from the verified token principal.
 
 This module also contributes a Vert.x `AuthorizationProvider` (`JwtClaimAuthorizationProvider`) that
-populates the Vert.x `User`'s own authorization cache from the same claims. That cache is available
-to code that asks Vert.x directly — but the framework's authorization decision does **not** read it.
-Adding another `AuthorizationProvider` to the multibinding will not change an authorization outcome;
+would populate the Vert.x `User`'s own authorization cache from the same claims. **Nothing invokes
+it today.** The framework accepts the `Set<AuthorizationProvider>` multibinding but never calls
+`getAuthorizations`, so the Vert.x cache is never populated and no contributed provider — including
+this one — affects an authorization outcome. Vert.x-native authorization support is intended, and
+the adapter that would import `user.authorizations()` into the framework's typed claims is
+unimplemented; see issue #165.
+
+Until then, adding another `AuthorizationProvider` to the multibinding will not change an outcome;
 replace the `SecurityClaimMapper` instead.
 
 ### Every rejection is reported before the request fails
@@ -480,8 +485,14 @@ token with no `aud` is rejected when an audience list is configured.
 
 ### `JwtClaimAuthorizationProvider`
 
-A Vert.x `AuthorizationProvider` with id `"jwt-claims"` that populates the Vert.x `User`'s
-authorization cache from the token claims.
+A Vert.x `AuthorizationProvider` with id `"jwt-claims"` that maps token claims to Vert.x
+authorizations for the Vert.x `User`'s authorization cache.
+
+> **Inert today.** Nothing in the framework calls `getAuthorizations`, so this provider does not run
+> and the cache it targets stays empty. It is the worked example of the contribution shape that
+> Vert.x-native authorization support will use once the adapter in issue #165 lands; the table below
+> describes the mapping it will perform, not behaviour you can observe today. `@RolesAllowed` and
+> `@Authorized` are decided from `AuthorizationClaims`, never from this cache.
 
 | Claim | Vert.x authorization | Convention |
 |---|---|---|
@@ -646,8 +657,11 @@ also makes it, not the `jwt` section, the value the startup clock-skew check com
   and mints accepted tokens. The factory warns; treat the warning as an error.
 - **Leaving `issuer` and `audience` unset in production.** Any validly signed token from any issuer
   reachable through the configured keys is accepted.
-- **Contributing another `AuthorizationProvider` to change `@RolesAllowed` outcomes.** The framework
-  decides from the `SecurityContext`'s claims; replace the `SecurityClaimMapper` instead.
+- **Contributing another `AuthorizationProvider` and expecting any effect.** Nothing calls
+  `getAuthorizations`, so a contributed provider never runs — it changes no outcome and reports no
+  error. `@RolesAllowed` and `@Authorized` are decided from the `SecurityContext`'s
+  `AuthorizationClaims`; replace the `SecurityClaimMapper` instead. Vert.x-native support is
+  intended but unimplemented (issue #165).
 - **Expecting `JwtClaimsValidator` to run on unauthenticated routes.** It is skipped when there is no
   verified user.
 - **Calling `fromJwks` with an HTTP location from an event-loop thread.** It blocks. Use

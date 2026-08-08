@@ -5,9 +5,13 @@ package dev.vertique.rest.auth.jwt;
 
 import static com.github.tomakehurst.wiremock.client.WireMock.*;
 import static com.github.tomakehurst.wiremock.core.WireMockConfiguration.wireMockConfig;
+import static dev.vertique.rest.auth.jwt.JwtAuthTestSupport.awaitReady;
+import static dev.vertique.rest.auth.jwt.JwtAuthTestSupport.closeThenAssertAuthenticationSucceeds;
+import static dev.vertique.rest.auth.jwt.JwtAuthTestSupport.secondsFromNow;
 import static org.junit.jupiter.api.Assertions.*;
 
-import com.github.tomakehurst.wiremock.WireMockServer;
+import com.github.tomakehurst.wiremock.junit5.WireMockExtension;
+import io.vertx.core.Future;
 import io.vertx.core.Handler;
 import io.vertx.core.Vertx;
 import io.vertx.core.json.JsonArray;
@@ -18,11 +22,13 @@ import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
-import java.time.Instant;
 import java.util.Base64;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.*;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.api.extension.RegisterExtension;
 
 /**
  * Integration tests for {@link RefreshableJwtAuth} that exercise the full key-rotation lifecycle
@@ -49,7 +55,19 @@ public class RefreshableJwtAuthIT {
 
     // --- Shared WireMock server ---
 
-    private static WireMockServer wireMock;
+    /**
+     * One server for the whole class, per the project's WireMock lifecycle rule. The extension
+     * clears both the stub registry and the request journal before every test method, so each test
+     * still starts from the empty-journal baseline the request-count gates below assume — the
+     * guarantee the previous {@code @BeforeEach resetAll()} provided.
+     *
+     * <p>The bind address is pinned to {@code 127.0.0.1} so the server cannot land on a loopback
+     * port another process already holds.
+     */
+    @RegisterExtension
+    static WireMockExtension wireMock = WireMockExtension.newInstance()
+            .options(wireMockConfig().dynamicPort().bindAddress("127.0.0.1"))
+            .build();
 
     /** Two distinct HS256 secrets used to generate separate JWKS key sets for rotation tests. */
     private static final String SECRET_A = "secret-key-A-for-testing-must-be-at-least-256-bits!";
@@ -58,50 +76,20 @@ public class RefreshableJwtAuthIT {
 
     private static final String JWKS_PATH = "/.well-known/jwks.json";
 
-    /** How long a JWKS request-count gate waits before failing the test. */
-    private static final long GATE_TIMEOUT_MILLIS = 10_000;
-
-    /** How often a JWKS request-count gate re-reads the WireMock request journal. */
-    private static final long GATE_POLL_INTERVAL_MILLIS = 50;
-
-    @BeforeAll
-    static void startWireMock() {
-        wireMock = new WireMockServer(wireMockConfig().dynamicPort().bindAddress("127.0.0.1"));
-        wireMock.start();
-    }
-
-    @AfterAll
-    static void stopWireMock() {
-        wireMock.stop();
-    }
-
-    @BeforeEach
-    void resetStubs() {
-        wireMock.resetAll();
-    }
-
     // --- Tests ---
 
     @Test
     @DisplayName("Should authenticate tokens signed with the initial JWKS key set")
     void shouldAuthenticateWithInitialKeys(Vertx vertx, VertxTestContext testContext) {
         stubJwks(jwksJson(SECRET_A));
-        String jwksUrl = "http://127.0.0.1:" + wireMock.port() + JWKS_PATH;
+        String jwksUrl = jwksUrl();
 
         RefreshableJwtAuth.create(vertx, jwksUrl, Duration.ofMinutes(5))
                 .onComplete(testContext.succeeding(refreshable -> {
                     JWTAuth signerA = signerForSecret(vertx, SECRET_A);
                     String token = signerA.generateToken(new JsonObject().put("sub", "it-user-initial"));
 
-                    refreshable.authenticate(new TokenCredentials(token)).onComplete(authResult -> {
-                        refreshable.close();
-                        if (authResult.failed()) {
-                            testContext.failNow(authResult.cause());
-                        } else {
-                            assertNotNull(authResult.result());
-                            testContext.completeNow();
-                        }
-                    });
+                    closeThenAssertAuthenticationSucceeds(refreshable, token, testContext);
                 }));
     }
 
@@ -109,7 +97,7 @@ public class RefreshableJwtAuthIT {
     @DisplayName("After key rotation, tokens signed with the new key should be accepted")
     void shouldRotateKeysTransparently(Vertx vertx, VertxTestContext testContext) {
         stubJwks(jwksJson(SECRET_A));
-        String jwksUrl = "http://127.0.0.1:" + wireMock.port() + JWKS_PATH;
+        String jwksUrl = jwksUrl();
 
         // Use a short refresh interval so the rotation is picked up quickly.
         Duration refreshInterval = Duration.ofMillis(200);
@@ -149,7 +137,7 @@ public class RefreshableJwtAuthIT {
     @DisplayName("On refresh failure, existing keys should be preserved")
     void shouldPreserveExistingKeysOnRefreshFailure(Vertx vertx, VertxTestContext testContext) {
         stubJwks(jwksJson(SECRET_A));
-        String jwksUrl = "http://127.0.0.1:" + wireMock.port() + JWKS_PATH;
+        String jwksUrl = jwksUrl();
 
         Duration refreshInterval = Duration.ofMillis(200);
 
@@ -170,15 +158,7 @@ public class RefreshableJwtAuthIT {
                         JWTAuth signerA = signerForSecret(vertx, SECRET_A);
                         String token = signerA.generateToken(new JsonObject().put("sub", "it-user-failure-resilience"));
 
-                        refreshable.authenticate(new TokenCredentials(token)).onComplete(authResult -> {
-                            refreshable.close();
-                            if (authResult.failed()) {
-                                testContext.failNow(authResult.cause());
-                            } else {
-                                assertNotNull(authResult.result());
-                                testContext.completeNow();
-                            }
-                        });
+                        closeThenAssertAuthenticationSucceeds(refreshable, token, testContext);
                     },
                     cause -> {
                         refreshable.close();
@@ -191,22 +171,20 @@ public class RefreshableJwtAuthIT {
     @DisplayName("After close(), no further JWKS refresh requests should be made")
     void shouldStopRefreshingAfterClose(Vertx vertx, VertxTestContext testContext) {
         stubJwks(jwksJson(SECRET_A));
-        String jwksUrl = "http://127.0.0.1:" + wireMock.port() + JWKS_PATH;
+        String jwksUrl = jwksUrl();
 
         Duration refreshInterval = Duration.ofMillis(200);
 
         RefreshableJwtAuth.create(vertx, jwksUrl, refreshInterval).onComplete(testContext.succeeding(refreshable -> {
-            // Gate on the second JWKS request rather than sleeping: @BeforeEach empties the journal,
-            // so request 1 is the initial fetch and request 2 can only come from a periodic tick.
-            // That is the premise this test needs — proving close() stops the ticks is worthless
-            // unless a tick actually fired first.
+            // Gate on the second JWKS request rather than sleeping: the extension empties the journal
+            // before each test, so request 1 is the initial fetch and request 2 can only come from a
+            // periodic tick. That is the premise this test needs — proving close() stops the ticks is
+            // worthless unless a tick actually fired first.
             awaitJwksRequests(
                     vertx,
                     2,
                     () -> {
-                        int countBeforeClose = wireMock.countRequestsMatching(
-                                        getRequestedFor(urlEqualTo(JWKS_PATH)).build())
-                                .getCount();
+                        int countBeforeClose = jwksRequestCount();
                         assertTrue(
                                 countBeforeClose >= 2,
                                 "Expected the initial JWKS fetch plus at least one periodic refresh before close");
@@ -217,9 +195,7 @@ public class RefreshableJwtAuthIT {
                         // shortcut this one: it proves an ABSENCE of further requests, so the only
                         // evidence is elapsed time with the count unchanged.
                         vertx.setTimer(500, ignored2 -> {
-                            int countAfterClose = wireMock.countRequestsMatching(getRequestedFor(urlEqualTo(JWKS_PATH))
-                                            .build())
-                                    .getCount();
+                            int countAfterClose = jwksRequestCount();
 
                             // Allow at most one in-flight request that was already in progress at
                             // close() time; beyond that the timer must have stopped.
@@ -241,7 +217,7 @@ public class RefreshableJwtAuthIT {
     @DisplayName("After a refresh tick, the default clock-skew leeway is still applied")
     void shouldRetainDefaultLeewayAfterRefreshTick(Vertx vertx, VertxTestContext testContext) {
         stubJwks(jwksJson(SECRET_A));
-        String jwksUrl = wireMock.baseUrl() + JWKS_PATH;
+        String jwksUrl = jwksUrl();
 
         Duration refreshInterval = Duration.ofMillis(200);
 
@@ -268,19 +244,9 @@ public class RefreshableJwtAuthIT {
                         // time-claim rejection carries the identical "token expired" message.
                         String expiredToken = signerB.generateToken(new JsonObject()
                                 .put("sub", "it-user-post-tick-leeway")
-                                .put("exp", Instant.now().getEpochSecond() - 10));
+                                .put("exp", secondsFromNow(-10)));
 
-                        refreshable
-                                .authenticate(new TokenCredentials(expiredToken))
-                                .onComplete(authResult -> {
-                                    refreshable.close();
-                                    if (authResult.failed()) {
-                                        testContext.failNow(authResult.cause());
-                                    } else {
-                                        assertNotNull(authResult.result());
-                                        testContext.completeNow();
-                                    }
-                                });
+                        closeThenAssertAuthenticationSucceeds(refreshable, expiredToken, testContext);
                     },
                     cause -> {
                         refreshable.close();
@@ -293,7 +259,7 @@ public class RefreshableJwtAuthIT {
     @DisplayName("After a refresh tick, an explicitly configured clock-skew leeway is still applied")
     void shouldRetainExplicitLeewayAfterRefreshTick(Vertx vertx, VertxTestContext testContext) {
         stubJwks(jwksJson(SECRET_A));
-        String jwksUrl = wireMock.baseUrl() + JWKS_PATH;
+        String jwksUrl = jwksUrl();
 
         // 300 s is an order of magnitude above the 30 s default, so a delegate that silently fell back
         // to the defaults cannot satisfy the assertion below.
@@ -323,19 +289,9 @@ public class RefreshableJwtAuthIT {
                                 // rejection carries the identical "token expired" message.
                                 String expiredToken = signerB.generateToken(new JsonObject()
                                         .put("sub", "it-user-post-tick-explicit-leeway")
-                                        .put("exp", Instant.now().getEpochSecond() - 120));
+                                        .put("exp", secondsFromNow(-120)));
 
-                                refreshable
-                                        .authenticate(new TokenCredentials(expiredToken))
-                                        .onComplete(authResult -> {
-                                            refreshable.close();
-                                            if (authResult.failed()) {
-                                                testContext.failNow(authResult.cause());
-                                            } else {
-                                                assertNotNull(authResult.result());
-                                                testContext.completeNow();
-                                            }
-                                        });
+                                closeThenAssertAuthenticationSucceeds(refreshable, expiredToken, testContext);
                             },
                             cause -> {
                                 refreshable.close();
@@ -361,48 +317,26 @@ public class RefreshableJwtAuthIT {
      */
     private static void awaitAuthenticationSuccess(
             Vertx vertx, RefreshableJwtAuth auth, String token, Runnable onReady, Handler<Throwable> onTimeout) {
-        awaitAuthenticationSuccess(
-                vertx, auth, token, System.currentTimeMillis() + GATE_TIMEOUT_MILLIS, onReady, onTimeout);
-    }
-
-    /**
-     * Recursive body of the swap gate above; re-schedules itself on the Vert.x timer rather than
-     * blocking a thread. Gives up after the deadline, which stays well inside the class-level 20 s
-     * timeout so a stalled refresh reports as an assertion failure rather than a hang.
-     *
-     * @param vertx     the Vert.x instance used to schedule the poll
-     * @param auth      the instance under test
-     * @param token     a token signed with the rotated-in key
-     * @param deadline  the absolute {@link System#currentTimeMillis()} value at which to give up
-     * @param onReady   run once authentication succeeds
-     * @param onTimeout invoked with an {@link AssertionError} once the deadline passes
-     */
-    private static void awaitAuthenticationSuccess(
-            Vertx vertx,
-            RefreshableJwtAuth auth,
-            String token,
-            long deadline,
-            Runnable onReady,
-            Handler<Throwable> onTimeout) {
-        auth.authenticate(new TokenCredentials(token)).onComplete(result -> {
-            if (result.succeeded()) {
-                onReady.run();
-            } else if (System.currentTimeMillis() >= deadline) {
-                onTimeout.handle(new AssertionError(
-                        "Timed out waiting for a refresh tick to install the rotated key set", result.cause()));
-            } else {
-                vertx.setTimer(
-                        GATE_POLL_INTERVAL_MILLIS,
-                        ignored -> awaitAuthenticationSuccess(vertx, auth, token, deadline, onReady, onTimeout));
-            }
-        });
+        // Carries the most recent rejection into the timeout message, which is the only diagnostic
+        // available when a swap never lands.
+        AtomicReference<Throwable> lastRejection = new AtomicReference<>();
+        awaitReady(
+                vertx,
+                () -> auth.authenticate(new TokenCredentials(token))
+                        .map(user -> true)
+                        .otherwise(cause -> {
+                            lastRejection.set(cause);
+                            return false;
+                        }),
+                () -> new AssertionError(
+                        "Timed out waiting for a refresh tick to install the rotated key set", lastRejection.get()),
+                onReady,
+                onTimeout);
     }
 
     /**
      * Polls the WireMock request journal until at least {@code minRequests} JWKS fetches have been
-     * served, then runs {@code onReady}. Gives up after {@link #GATE_TIMEOUT_MILLIS}, which stays
-     * well inside the class-level 20 s timeout so a stalled refresh reports as an assertion failure
-     * rather than a hang.
+     * served, then runs {@code onReady}.
      *
      * @param vertx       the Vert.x instance used to schedule the poll
      * @param minRequests the JWKS request count to wait for
@@ -411,34 +345,42 @@ public class RefreshableJwtAuthIT {
      */
     private static void awaitJwksRequests(
             Vertx vertx, int minRequests, Runnable onReady, Handler<Throwable> onTimeout) {
-        awaitJwksRequests(vertx, minRequests, System.currentTimeMillis() + GATE_TIMEOUT_MILLIS, onReady, onTimeout);
+        // Records the count each poll observed so the timeout message can name it; re-reading the
+        // journal when the message is built could report a count that contradicts the failure.
+        AtomicInteger observed = new AtomicInteger();
+        awaitReady(
+                vertx,
+                () -> {
+                    int count = jwksRequestCount();
+                    observed.set(count);
+                    return Future.succeededFuture(count >= minRequests);
+                },
+                () -> new AssertionError(
+                        "Timed out waiting for " + minRequests + " JWKS requests; observed " + observed.get()),
+                onReady,
+                onTimeout);
     }
 
     /**
-     * Recursive body of the gate above; re-schedules itself on the Vert.x timer rather than blocking
-     * a thread, so the poll never occupies the event loop between checks.
+     * Reads the number of JWKS fetches WireMock has journaled for the current test.
      *
-     * @param vertx       the Vert.x instance used to schedule the poll
-     * @param minRequests the JWKS request count to wait for
-     * @param deadline    the absolute {@link System#currentTimeMillis()} value at which to give up
-     * @param onReady     run once the count is reached
-     * @param onTimeout   invoked with an {@link AssertionError} once the deadline passes
+     * @return the journaled {@code GET JWKS_PATH} count
      */
-    private static void awaitJwksRequests(
-            Vertx vertx, int minRequests, long deadline, Runnable onReady, Handler<Throwable> onTimeout) {
-        int count = wireMock.countRequestsMatching(
+    private static int jwksRequestCount() {
+        return wireMock.countRequestsMatching(
                         getRequestedFor(urlEqualTo(JWKS_PATH)).build())
                 .getCount();
-        if (count >= minRequests) {
-            onReady.run();
-        } else if (System.currentTimeMillis() >= deadline) {
-            onTimeout.handle(
-                    new AssertionError("Timed out waiting for " + minRequests + " JWKS requests; observed " + count));
-        } else {
-            vertx.setTimer(
-                    GATE_POLL_INTERVAL_MILLIS,
-                    ignored -> awaitJwksRequests(vertx, minRequests, deadline, onReady, onTimeout));
-        }
+    }
+
+    /**
+     * Builds the JWKS URL for the running WireMock server, pinned to the literal loopback address
+     * the server binds to. Resolving {@code localhost} instead can select a different loopback
+     * interface than the one bound, which surfaces as a connection failure rather than a JWKS error.
+     *
+     * @return the absolute JWKS URL
+     */
+    private static String jwksUrl() {
+        return "http://127.0.0.1:" + wireMock.getPort() + JWKS_PATH;
     }
 
     /**
