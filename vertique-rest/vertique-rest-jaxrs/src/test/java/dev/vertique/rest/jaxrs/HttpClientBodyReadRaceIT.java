@@ -4,6 +4,7 @@
 package dev.vertique.rest.jaxrs;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 
 import io.vertx.core.Context;
@@ -14,6 +15,7 @@ import io.vertx.core.buffer.Buffer;
 import io.vertx.core.http.HttpClient;
 import io.vertx.core.http.HttpClientRequest;
 import io.vertx.core.http.HttpClientResponse;
+import io.vertx.core.http.HttpConnection;
 import io.vertx.core.http.HttpMethod;
 import io.vertx.core.http.HttpServer;
 import io.vertx.core.http.HttpServerRequest;
@@ -55,7 +57,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * delete this test in the upgrade change and relax the testing rule it pins. Its failure is
  * information about the runtime, never a reason to hold back an upgrade.
  * {@link #preAttachedReadDeliversFullBodyUnderWorkerParking()} asserts the idiom's guarantee and
- * stays valid on any runtime.
+ * stays valid on any runtime, as does
+ * {@link #deliveredResponseSettlesResultWhileSendIsStillPending()}.
  */
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
@@ -84,6 +87,16 @@ public class HttpClientBodyReadRaceIT {
     /** Caller-thread park, standing in for a test worker descheduled on a loaded CI runner. */
     private static final long PARK_MILLIS = 2;
 
+    /** Path answered with an immediate final rejection, for the send-outcome test. */
+    private static final String REJECT_PATH = "/reject";
+
+    /**
+     * Request body for the send-outcome test, far larger than any socket and kernel buffer can
+     * absorb. Because the server for {@link #REJECT_PATH} never reads the body, the send can never
+     * complete — which is what makes that test's ordering structural rather than timed.
+     */
+    private static final Buffer UNREADABLE_BODY = Buffer.buffer(new byte[32 * 1024 * 1024]);
+
     private static HttpServer server;
     private static HttpClient client;
 
@@ -96,7 +109,7 @@ public class HttpClientBodyReadRaceIT {
     @BeforeAll
     static void setUp(Vertx vertx, VertxTestContext ctx) {
         vertx.createHttpServer()
-                .requestHandler(HttpClientBodyReadRaceIT::respondInChunks)
+                .requestHandler(HttpClientBodyReadRaceIT::respond)
                 .listen(0, LOOPBACK)
                 .onComplete(ctx.succeeding(listening -> {
                     server = listening;
@@ -118,11 +131,20 @@ public class HttpClientBodyReadRaceIT {
     }
 
     /**
-     * Answers every request with {@link #FULL_BODY} written as three chunks.
+     * Answers {@link #REJECT_PATH} with an immediate final rejection whose body is never read, and
+     * every other request with {@link #FULL_BODY} written as three chunks.
      *
      * @param request the incoming request
      */
-    private static void respondInChunks(HttpServerRequest request) {
+    private static void respond(HttpServerRequest request) {
+        if (REJECT_PATH.equals(request.path())) {
+            // Decide on the head alone and never drain the body: pausing the request stream is what
+            // strands the client's send, and answering without closing is what keeps the response
+            // intact. Closing here instead would race the client's read of this very response.
+            request.pause();
+            request.response().setStatusCode(413).end("rejected");
+            return;
+        }
         HttpServerResponse response = request.response();
         response.setChunked(true);
         response.write(CHUNK_ONE);
@@ -177,6 +199,41 @@ public class HttpClientBodyReadRaceIT {
             assertEquals(200, received.statusCode(), "iteration " + iteration + " lost the status");
             assertEquals(FULL_BODY, received.body().toString(), "iteration " + iteration + " lost body bytes");
         }
+    }
+
+    // --- The send's outcome must not decide the result ---
+
+    @Test
+    @DisplayName("A delivered response settles the result even though the send has not completed")
+    void deliveredResponseSettlesResultWhileSendIsStillPending() throws Exception {
+        AtomicReference<Future<Void>> send = new AtomicReference<>();
+        AtomicReference<HttpConnection> connection = new AtomicReference<>();
+
+        Future<HttpResult> result = client.request(HttpMethod.POST, server.actualPort(), LOOPBACK, REJECT_PATH)
+                .compose(request -> {
+                    // The idiom verbatim: attach the whole continuation, then initiate the send.
+                    Future<HttpResult> pending = request.response().compose(response -> response.body()
+                            .map(body -> new HttpResult(response.statusCode(), body)));
+                    connection.set(request.connection());
+                    send.set(request.end(UNREADABLE_BODY));
+                    return pending;
+                });
+
+        // Load-bearing: the server answered on the head and is not reading the body, so the send
+        // cannot finish. Had the send's future been composed into the result chain, the result could
+        // never settle and this await would time the test out — which is what makes the assertions
+        // below a real check rather than a restatement of the happy path.
+        HttpResult received = await(result);
+
+        assertEquals(413, received.statusCode(), "the answer the server did send must reach the caller");
+        assertFalse(
+                send.get().isComplete(),
+                "the result must be decided by the response alone; the send had not settled yet");
+
+        // Tearing the connection down now fails the stranded send. Observing that failure after the
+        // fact is the point: a send that ends in failure still did not mask the response above.
+        connection.get().close();
+        assertFalse(send.get().succeeded(), "a send the server never read must never report success");
     }
 
     // --- Harness ---
