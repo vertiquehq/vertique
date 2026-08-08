@@ -79,9 +79,10 @@ import lombok.extern.slf4j.Slf4j;
  *   <li>App-provided {@link AuthorizationPolicy} (sync, core SPI), wrapped as a
  *       {@link SyncPolicyDecisionPoint}</li>
  *   <li>Default {@link VertxProviderDecisionPoint} (evaluates role/scope/permission requirements
- *       from the request's {@link dev.vertique.security.authz.AuthorizationClaims}; the injected
- *       Vert.x {@link AuthorizationProvider} set is retained for compatibility / future adapters and
- *       is not consulted in v1 — GitHub issue #165)</li>
+ *       from the request's {@link dev.vertique.security.authz.AuthorizationClaims}). Vert.x
+ *       {@link AuthorizationProvider}s are consulted only via the opt-in identity-resolution import
+ *       ({@link VertxAuthorizationImportModule}), which merges their grants into those claims
+ *       upstream; this decision point itself still evaluates claims only.</li>
  * </ol>
  *
  * <p>Used by both {@link AuthorizationContributor} (JAX-RS routes) and the WebSocket module

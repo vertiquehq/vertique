@@ -270,6 +270,34 @@ public class AuthSecurityIT {
     }
 
     @Test
+    @DisplayName("GET /hello/team grants access via provider-granted 'team-lead' role")
+    void shouldAllowAccessWithProviderGrantedRole() {
+        // No team-lead role in the JWT claims — the grant must come from the
+        // contributed Vert.x AuthorizationProvider (id "teams") for subject team-alice.
+        String token = generateToken("team-alice", null, null);
+
+        given().header("Authorization", "Bearer " + token)
+                .when()
+                .get("/hello/team")
+                .then()
+                .statusCode(200)
+                .contentType("application/json")
+                .body("message", containsString("team-alice"));
+    }
+
+    @Test
+    @DisplayName("GET /hello/team rejects subjects the provider does not grant 'team-lead'")
+    void shouldRejectTeamRouteWithoutProviderGrant() {
+        String token = generateToken("testuser", List.of("user"), "read");
+
+        given().header("Authorization", "Bearer " + token)
+                .when()
+                .get("/hello/team")
+                .then()
+                .statusCode(403);
+    }
+
+    @Test
     @DisplayName("GET /hello/jaxrs-context returns JAX-RS SecurityContext without admin role")
     void jaxRsSecurityContextNonAdmin() {
         String token = generateToken("user123", List.of("user"), "read");

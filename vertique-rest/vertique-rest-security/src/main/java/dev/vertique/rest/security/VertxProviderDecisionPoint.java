@@ -34,10 +34,13 @@ import lombok.extern.slf4j.Slf4j;
  *       composite.</li>
  * </ul>
  *
- * <p>The {@link io.vertx.ext.auth.authorization.AuthorizationProvider} set is still injected for
- * forward-compatibility (future providers may populate authorizations on the Vert.x {@code User}),
- * but the current implementation evaluates decisions directly from {@code AuthorizationClaims}
- * without invoking the provider chain — there is no async I/O in the happy path.
+ * <p>The injected {@link io.vertx.ext.auth.authorization.AuthorizationProvider} set is superseded by
+ * the identity-resolution import: when the application includes {@link VertxAuthorizationImportModule},
+ * {@link IdentityResolutionMiddleware} runs the provider chain once per authenticated request and
+ * merges the grants into the {@code AuthorizationClaims} this class evaluates. The field is retained
+ * only for constructor compatibility and is never read; its removal is tracked as a next-major
+ * cleanup. This implementation therefore evaluates decisions directly from
+ * {@code AuthorizationClaims} — there is no async I/O in the happy path.
  *
  * <p>This is a <strong>pure evaluator</strong>: {@link #decide(AuthorizationRequest)} returns the
  * {@link AuthorizationDecision} and emits nothing. The enforcement layer
@@ -93,8 +96,10 @@ public final class VertxProviderDecisionPoint implements AuthorizationDecisionPo
     /**
      * Creates a new decision point.
      *
-     * @param providers set of Vert.x authorization providers; kept for forward-compatibility;
-     *                  must not be {@code null}
+     * @param providers set of Vert.x authorization providers; superseded by the opt-in
+     *                  identity-resolution import ({@link VertxAuthorizationImportModule}) and never
+     *                  read here — retained for constructor compatibility, with removal tracked as a
+     *                  next-major cleanup; must not be {@code null}
      */
     @Inject
     public VertxProviderDecisionPoint(Set<AuthorizationProvider> providers) {

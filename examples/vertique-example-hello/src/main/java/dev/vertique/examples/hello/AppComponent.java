@@ -16,6 +16,7 @@ import dev.vertique.management.ManagementModule;
 import dev.vertique.rest.auth.jwt.JwtAuthModule;
 import dev.vertique.rest.jaxrs.RestModule;
 import dev.vertique.rest.openapi.validation.OpenApiContractValidationModule;
+import dev.vertique.rest.security.VertxAuthorizationImportModule;
 import dev.vertique.rest.validation.RestValidationModule;
 import dev.vertique.security.runtime.authz.SecurityAuthzModule;
 import jakarta.inject.Singleton;
@@ -43,6 +44,9 @@ import jakarta.inject.Singleton;
  *       against the generated {@code openapi.json} (required for the {@code vertique-strict}
  *       decimal-string request wire form; see {@code JsonProfilesDemoResource})</li>
  *   <li>{@link JwtAuthModule} — JWT bearer authentication, authorization, and security context</li>
+ *   <li>{@link VertxAuthorizationImportModule} — opt-in import of Vert.x
+ *       {@code AuthorizationProvider} grants (e.g. {@link ExampleTeamAuthorizationProvider},
+ *       contributed by {@link AppModule}) into the framework's authorization claims</li>
  *   <li>{@link ManagementModule} — Health check endpoints on management port</li>
  *   <li>{@link DeployerModule} — Verticle deployment multibinding</li>
  *   <li>{@link CoreLifecycleStepsModule} — framework {@code CONFIGURE}/{@code VALIDATE} lifecycle
@@ -65,6 +69,7 @@ import jakarta.inject.Singleton;
             RestValidationModule.class,
             OpenApiContractValidationModule.class,
             JwtAuthModule.class,
+            VertxAuthorizationImportModule.class,
             ManagementModule.class,
             DeployerModule.class,
             CoreLifecycleStepsModule.class,

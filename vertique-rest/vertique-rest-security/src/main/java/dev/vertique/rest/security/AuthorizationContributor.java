@@ -32,7 +32,8 @@ import lombok.extern.slf4j.Slf4j;
  *   <li>{@link SecurityPolicy.None} — no handler added
  * </ul>
  *
- * <p>Priority: 100 (runs before SecurityContext bridge at 200).
+ * <p>Priority: 100 (runs after identity resolution at 80, which binds the
+ * {@code SecurityContext} this contributor's handlers evaluate).
  */
 @Slf4j
 @Singleton

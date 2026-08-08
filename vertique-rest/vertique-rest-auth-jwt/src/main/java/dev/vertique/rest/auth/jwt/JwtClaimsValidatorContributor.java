@@ -69,7 +69,7 @@ public class JwtClaimsValidatorContributor implements OperationHandlerContributo
 
     /**
      * Returns the priority of this contributor.
-     * Runs at priority 50 — before authorization (100) and SecurityContext bridging (200).
+     * Runs at priority 50 — before identity resolution (80) and authorization (100).
      *
      * @return {@code 50}
      */

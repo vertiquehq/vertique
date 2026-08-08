@@ -15,6 +15,7 @@ import dev.vertique.rest.security.AuthorizationDecisionPoint;
 import dev.vertique.rest.security.IdentityResolutionMiddleware;
 import dev.vertique.rest.security.SecurityClaimMapper;
 import dev.vertique.rest.security.SecurityPolicyEnforcer;
+import dev.vertique.rest.security.VertxAuthorizationImporter;
 import dev.vertique.security.authz.ActionRegistry;
 import dev.vertique.security.authz.AuthorizationPolicy;
 import dev.vertique.security.authz.Authorizer;
@@ -202,11 +203,84 @@ public class WebSocketMount implements RouterMount {
         final @Nullable Authorizer authorizer;
 
         /**
-         * Creates the factory with all shared framework services. The security components
-         * ({@link SecurityPolicyEnforcer}, {@link IdentityResolutionMiddleware}) are constructed
-         * only when the security module is present ({@code securityRuntime} is non-empty).
-         * The validation and sanitization components are only present when the respective
-         * optional modules are included in the Dagger component.
+         * Creates the factory without a Vert.x authorization importer.
+         *
+         * <p>Convenience delegate equivalent to passing {@link Optional#empty()} as the importer to
+         * the canonical injected constructor below, i.e. the authorization-import step is skipped
+         * during identity resolution at upgrade time.
+         *
+         * @param messageCodec                   codec for JSON message serialization/deserialization
+         * @param authorizationProviders         set of authorization providers; empty when security
+         *                                       module is absent
+         * @param identityResolvers              set of identity resolvers; empty when security
+         *                                       module is absent
+         * @param securityRuntime                optional security runtime; present when the security
+         *                                       module is included
+         * @param claimMapper                    optional custom claim mapper for token claim
+         *                                       extraction
+         * @param contextHolder                  the context holder for reading ambient correlation
+         * @param securityEventEmitter           the security event emitter for lifecycle events
+         * @param authorizationDecisionPoint     optional app-provided async authorization decision
+         *                                       point; takes precedence over the sync policy
+         * @param authorizationPolicy            optional app-provided sync authorization policy
+         * @param routeAuthHandlers              set of registered route-level authentication handlers
+         * @param requestInterceptors            HTTP-level request interceptors
+         * @param beanValidator                  optional Bean Validation engine
+         * @param objectProcessor                optional canonicalization/sanitization processor
+         * @param channelIdentityManager         optional channel identity manager
+         * @param authorizer                     optional core action {@link Authorizer}
+         * @param actionRegistry                 optional framework {@link ActionRegistry}
+         */
+        public Factory(
+                WebSocketMessageCodec messageCodec,
+                Set<AuthorizationProvider> authorizationProviders,
+                Set<dev.vertique.security.resolver.SecurityIdentityResolver> identityResolvers,
+                Optional<SecurityRuntime> securityRuntime,
+                Optional<SecurityClaimMapper> claimMapper,
+                dev.vertique.core.context.ContextHolder contextHolder,
+                dev.vertique.security.runtime.events.SecurityEventEmitter securityEventEmitter,
+                Optional<AuthorizationDecisionPoint> authorizationDecisionPoint,
+                Optional<AuthorizationPolicy> authorizationPolicy,
+                Set<RouteAuthHandler> routeAuthHandlers,
+                Set<RequestInterceptor> requestInterceptors,
+                Optional<BeanValidator> beanValidator,
+                Optional<InputObjectProcessor> objectProcessor,
+                Optional<ChannelIdentityManager> channelIdentityManager,
+                Optional<Authorizer> authorizer,
+                Optional<ActionRegistry> actionRegistry) {
+            this(
+                    messageCodec,
+                    authorizationProviders,
+                    identityResolvers,
+                    securityRuntime,
+                    claimMapper,
+                    contextHolder,
+                    securityEventEmitter,
+                    authorizationDecisionPoint,
+                    authorizationPolicy,
+                    routeAuthHandlers,
+                    requestInterceptors,
+                    beanValidator,
+                    objectProcessor,
+                    channelIdentityManager,
+                    authorizer,
+                    actionRegistry,
+                    Optional.empty());
+        }
+
+        /**
+         * Creates the factory with all shared framework services — the canonical constructor, and
+         * the one Dagger injects. The security components ({@link SecurityPolicyEnforcer},
+         * {@link IdentityResolutionMiddleware}) are constructed only when the security module is
+         * present ({@code securityRuntime} is non-empty). The validation and sanitization
+         * components are only present when the respective optional modules are included in the
+         * Dagger component.
+         *
+         * <p>The {@code vertxAuthorizationImporter} parameter mirrors the seam
+         * {@link IdentityResolutionMiddleware}'s canonical constructor exposes, so WebSocket
+         * upgrades participate in the Vert.x authorization import the same way OpenAPI routes do
+         * when the application opts in via
+         * {@link dev.vertique.rest.security.VertxAuthorizationImportModule}.
          *
          * @param messageCodec                   codec for JSON message serialization/deserialization
          * @param authorizationProviders         set of authorization providers; empty when security
@@ -248,6 +322,13 @@ public class WebSocketMount implements RouterMount {
          *                                       {@code @RequiresAction} at startup; present when the
          *                                       authorization engine is in the graph. Absent → any
          *                                       {@code @RequiresAction} endpoint fails startup (fail-closed).
+         * @param vertxAuthorizationImporter     optional Vert.x authorization importer; present only
+         *                                       when the application opts in by including
+         *                                       {@link dev.vertique.rest.security.VertxAuthorizationImportModule}.
+         *                                       Threaded into the {@link IdentityResolutionMiddleware}
+         *                                       so contributed providers are consulted during identity
+         *                                       resolution at upgrade time. Absent → the import step
+         *                                       is skipped.
          */
         @Inject
         public Factory(
@@ -266,7 +347,8 @@ public class WebSocketMount implements RouterMount {
                 Optional<InputObjectProcessor> objectProcessor,
                 Optional<ChannelIdentityManager> channelIdentityManager,
                 Optional<Authorizer> authorizer,
-                Optional<ActionRegistry> actionRegistry) {
+                Optional<ActionRegistry> actionRegistry,
+                Optional<VertxAuthorizationImporter> vertxAuthorizationImporter) {
             this.messageCodec = messageCodec;
             this.routeAuthHandlers = routeAuthHandlers;
             this.sortedInterceptors = requestInterceptors.stream()
@@ -292,7 +374,17 @@ public class WebSocketMount implements RouterMount {
                         // scanner's startup validation, so the enforcer never reads it.
                         authorizer);
                 this.identityResolutionMiddleware = new IdentityResolutionMiddleware(
-                        identityResolvers, claimMapper, securityEventEmitter, this.securityRuntime, contextHolder);
+                        identityResolvers,
+                        claimMapper,
+                        securityEventEmitter,
+                        this.securityRuntime,
+                        contextHolder,
+                        // No identity snapshot capture at WebSocket upgrade — unchanged behavior.
+                        Optional.empty(),
+                        // Thread the importer so contributed Vert.x AuthorizationProviders change
+                        // authorization outcomes at upgrade time when the app opts in via
+                        // VertxAuthorizationImportModule — parity with OpenAPI routes.
+                        vertxAuthorizationImporter);
                 // Build the channel adapter only when both manager and runtime are present.
                 // ChannelIdentityManager is optional because it is only bound by AuthModule.
                 this.channelAdapter = channelIdentityManager

@@ -114,15 +114,14 @@ the request's `SecurityContext`. Those are produced during identity resolution i
 `scope`, `scp`, and `permissions` claims from the verified token principal.
 
 This module also contributes a Vert.x `AuthorizationProvider` (`JwtClaimAuthorizationProvider`) that
-would populate the Vert.x `User`'s own authorization cache from the same claims. **Nothing invokes
-it today.** The framework accepts the `Set<AuthorizationProvider>` multibinding but never calls
-`getAuthorizations`, so the Vert.x cache is never populated and no contributed provider — including
-this one — affects an authorization outcome. Vert.x-native authorization support is intended, and
-the adapter that would import `user.authorizations()` into the framework's typed claims is
-unimplemented; see issue #165.
-
-Until then, adding another `AuthorizationProvider` to the multibinding will not change an outcome;
-replace the `SecurityClaimMapper` instead.
+populates the Vert.x `User`'s own authorization cache from the same claims. That cache is available
+to code that asks Vert.x directly. Contributed `AuthorizationProvider`s reach the framework's
+`AuthorizationClaims` only when the application includes the opt-in `VertxAuthorizationImportModule`
+from `dev.vertique:vertique-rest-security`, which consults them at identity-resolution time — and
+that import deliberately excludes this provider's `"jwt-claims"` bucket, because its
+scope→permission projection is lossy (a `scope` claim would come back as a `PERMISSION` authority).
+JWT claims already reach `AuthorizationClaims` with full kind fidelity through the
+`SecurityClaimMapper`; to shape JWT-derived claims, replace or extend the `SecurityClaimMapper`.
 
 ### Every rejection is reported before the request fails
 
@@ -215,7 +214,7 @@ The application must supply exactly one thing: a `JWTAuth` binding. Everything e
 |---|---|---|
 | `Set<SecuritySchemeHandler>` | `@IntoSet` | A `JwtBearerSecuritySchemeHandler` registered under the effective scheme name, for OpenAPI-described operations |
 | `Set<RouteAuthHandler>` | `@IntoSet` | A route-level handler under the same scheme name, for transports with no OpenAPI description (WebSocket upgrades, action-only routes) |
-| `Set<AuthorizationProvider>` | `@IntoSet` | `JwtClaimAuthorizationProvider` |
+| `Set<AuthorizationProvider>` | `@IntoSet` | `JwtClaimAuthorizationProvider` — feeds the Vert.x cache; the opt-in `VertxAuthorizationImportModule` import always excludes it |
 | `Set<OperationHandlerContributor>` | `@IntoSet` | `JwtClaimsValidatorContributor` at priority 50 when a `JwtClaimsValidator` is bound; otherwise a no-op contributor |
 | `JwtAuthConfig` | `@BindsOptionalOf` | The application's optional whole-config override |
 | `JwtClaimsValidator` | `@BindsOptionalOf` | The application's optional custom claim check |
@@ -485,14 +484,8 @@ token with no `aud` is rejected when an audience list is configured.
 
 ### `JwtClaimAuthorizationProvider`
 
-A Vert.x `AuthorizationProvider` with id `"jwt-claims"` that maps token claims to Vert.x
-authorizations for the Vert.x `User`'s authorization cache.
-
-> **Inert today.** Nothing in the framework calls `getAuthorizations`, so this provider does not run
-> and the cache it targets stays empty. It is the worked example of the contribution shape that
-> Vert.x-native authorization support will use once the adapter in issue #165 lands; the table below
-> describes the mapping it will perform, not behaviour you can observe today. `@RolesAllowed` and
-> `@Authorized` are decided from `AuthorizationClaims`, never from this cache.
+A Vert.x `AuthorizationProvider` with id `"jwt-claims"` that populates the Vert.x `User`'s
+authorization cache from the token claims.
 
 | Claim | Vert.x authorization | Convention |
 |---|---|---|
@@ -505,9 +498,13 @@ Each claim accepts either a JSON array (`["read", "write"]`) or a space-delimite
 (`"read write"`). Non-string array elements and blank values are skipped. A `null` user or a user
 with no principal is a no-op.
 
-Framework authorization does not consult this cache — see
+The cache is there for application code that queries the Vert.x authorization API directly. The
+framework's opt-in import path — `VertxAuthorizationImportModule` in
+`dev.vertique:vertique-rest-security` — excludes this provider's `"jwt-claims"` bucket by design:
+collapsing OAuth scopes into `PermissionBasedAuthorization` loses the scope/permission distinction,
+which the `SecurityClaimMapper` already preserves when mapping the same claims into
+`AuthorizationClaims`. See
 [Claims become framework authorization claims](#claims-become-framework-authorization-claims-not-vertx-authorizations).
-The cache is there for application code that queries Vert.x directly.
 
 ---
 
@@ -657,11 +654,12 @@ also makes it, not the `jwt` section, the value the startup clock-skew check com
   and mints accepted tokens. The factory warns; treat the warning as an error.
 - **Leaving `issuer` and `audience` unset in production.** Any validly signed token from any issuer
   reachable through the configured keys is accepted.
-- **Contributing another `AuthorizationProvider` and expecting any effect.** Nothing calls
-  `getAuthorizations`, so a contributed provider never runs — it changes no outcome and reports no
-  error. `@RolesAllowed` and `@Authorized` are decided from the `SecurityContext`'s
-  `AuthorizationClaims`; replace the `SecurityClaimMapper` instead. Vert.x-native support is
-  intended but unimplemented (issue #165).
+- **Contributing another `AuthorizationProvider` and expecting it to change `@RolesAllowed` outcomes
+  by itself.** The multibinding is inert unless the application also includes the opt-in
+  `VertxAuthorizationImportModule` from `dev.vertique:vertique-rest-security`; with it included,
+  contributed providers are imported into `AuthorizationClaims` — except
+  `JwtClaimAuthorizationProvider`, which is never imported regardless. To shape JWT-derived claims,
+  replace the `SecurityClaimMapper`.
 - **Expecting `JwtClaimsValidator` to run on unauthenticated routes.** It is skipped when there is no
   verified user.
 - **Calling `fromJwks` with an HTTP location from an event-loop thread.** It blocks. Use

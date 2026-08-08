@@ -51,7 +51,11 @@ Every request passes three separately-owned stages. Only the last two belong to 
    sets `ctx.user()` and appends `AuthenticationEvidence`. On failure it calls
    `CredentialRejectionReporter.report(...)` and then `ctx.fail(...)`, which short-circuits
    everything below.
-2. **Identity resolution** (priority 80) — runs the `SecurityIdentityResolver` chain, assembles the
+2. **Identity resolution** (priority 80) — runs the `SecurityIdentityResolver` chain, maps the
+   Vert.x `User` principal to `AuthorizationClaims`, and — only when the opt-in
+   `VertxAuthorizationImportModule` is included and the request is authenticated — imports the
+   grants of every contributed Vert.x `AuthorizationProvider` into those claims (see
+   [Vert.x authorization import](#vertx-authorization-import-opt-in)); then assembles the
    `SecurityContext`, binds it for the rest of the request, and emits `CredentialAcceptedEvent`.
 3. **Authorization** (priority 100) — evaluates the effective `SecurityPolicy` and any
    `@RequiresAction` gate, and emits exactly one `AuthorizationDecisionEvent`.
@@ -79,7 +83,7 @@ emitted event carry the caller's address even when authentication fails.
 |---|---|
 | `identity()` | the first `SecurityIdentityResolver` returning a non-empty result; `SecurityIdentity.anonymous()` when the chain is exhausted |
 | `authentication()` | the accumulated `AuthenticationEvidence` list; `primaryMethod()` is the first entry's method, or `DefaultAuthMethod.none()` when there is no evidence |
-| `authorization()` | `SecurityClaimMapper` applied to `ctx.user().principal()`; `AuthorizationClaims.empty()` when no Vert.x `User` is present |
+| `authorization()` | `SecurityClaimMapper` applied to `ctx.user().principal()`, plus any grants imported through the opt-in [Vert.x authorization import](#vertx-authorization-import-opt-in); `AuthorizationClaims.empty()` when no Vert.x `User` is present |
 | `origin()` | the `RequestOrigin` captured pre-authentication |
 
 Inject it into any resource method (see [JAX-RS integration](#jax-rs-integration)), or read it
@@ -304,9 +308,11 @@ AuthorizationDecisionPoint remoteDecisionPoint(MyPdpClient client) {
 }
 ```
 
-Vert.x `AuthorizationProvider` bindings are accepted by the multibinding but are **not** consulted:
-authorization is evaluated from the resolved `AuthorizationClaims`. Move authorization data onto the
-`SecurityClaimMapper` → `AuthorizationClaims` path.
+Contributed Vert.x `AuthorizationProvider` bindings are consulted at identity-resolution time —
+and only when the opt-in `VertxAuthorizationImportModule` is included (see
+[Vert.x authorization import](#vertx-authorization-import-opt-in)); their grants are merged into the
+resolved `AuthorizationClaims` before authorization runs. Decisions themselves are always evaluated
+from `AuthorizationClaims` — no decision point talks to a provider.
 
 ### `SecurityPolicyEnforcer`
 
@@ -495,6 +501,65 @@ AuthorizationPolicy myPolicy() {
 }
 ```
 
+### Vert.x authorization import (opt-in)
+
+Feed the grants of contributed Vert.x `AuthorizationProvider`s into the request's
+`AuthorizationClaims`. The `AuthorizationProvider` multibinding declared by `AuthModule` is inert on
+its own; including `VertxAuthorizationImportModule` in the component installs the importer that
+identity resolution runs on every authenticated request, between claim mapping and `SecurityContext`
+binding. Anonymous requests, and applications without the module, skip the step entirely.
+
+```java
+@Singleton
+@Component(modules = {VertxModule.class, RestModule.class,
+                      AuthModule.class, SecurityModule.class,
+                      VertxAuthorizationImportModule.class,
+                      AppModule.class, ResourceModule.class})
+interface AppComponent { ... }
+```
+
+```java
+@Provides @IntoSet
+static AuthorizationProvider entitlementProvider(EntitlementDirectory directory) {
+    // any io.vertx.ext.auth.authorization.AuthorizationProvider with a stable, unique id
+    return directory.asAuthorizationProvider();
+}
+```
+
+Execution contract:
+
+- **Sequential and deterministic.** Providers run one at a time, in ascending `getId()` order, so
+  the observable claim set never depends on registration order. Every provider id must be non-blank
+  and unique across the set; a violation fails Dagger graph construction, not the first request.
+- **Request-local user.** Providers never see the caller's Vert.x `User`. They share one
+  request-local `User` built per import from deep copies of the caller's principal and attributes.
+- **All-or-nothing.** Claims are merged only after every provider has succeeded. Any provider
+  failure — a failed future, a synchronous throw, or a `null` future — fails the request with 503;
+  no partially imported claim is ever observable.
+- **Generic client detail, provider id server-side.** The `UnavailableException` behind that 503
+  carries the fixed detail `Authorization is temporarily unavailable`, so the response never
+  discloses which provider failed. The failing provider id and its cause are recorded instead in
+  exactly one ERROR log event per failed import, emitted by the importer.
+- **Same-instance return on an empty import.** When the import contributes no claim — every
+  provider excluded, or providers ran but granted nothing mappable — the base `AuthorizationClaims`
+  instance is carried through unchanged rather than copied.
+- **No importer-level timeout.** Providers must not block the event loop and own their own
+  timeouts; a provider whose future never completes stalls that request's authorization.
+
+Mapping is fail-closed. Only these grants become claims:
+
+| Vert.x authorization | Imported as |
+|---|---|
+| `RoleBasedAuthorization` with no resource | `AuthorityKind.ROLE` |
+| `PermissionBasedAuthorization` with no resource | `AuthorityKind.PERMISSION` |
+
+Imported claims carry `source = "vertx-provider:<providerId>"` and empty issuer, audience, and
+attributes. Everything else — wildcard permissions, `And`/`Or`/`Not` composites, resource-scoped
+grants, and blank values — is dropped and logged once per `(provider, authorization type)` pair at
+WARN; the authorization value is never logged. The Vert.x `jwt-claims` provider bucket is always
+excluded: its scope→permission projection is lossy, and the JWT principal already reaches
+`AuthorizationClaims` with full kind fidelity through `SecurityClaimMapper`.
+
 ### Replaceable bindings
 
 | Binding | Default | Override with |
@@ -615,10 +680,13 @@ There is no warn-only mode. Every validation failure stops startup.
 | 403 | `DENY_ALL` | `@DenyAll` |
 | 403 | the decision's own code | The decision point denied |
 | 403 | `INTERNAL_AUTHZ_ERROR` | The decision point or `Authorizer` threw, returned a `null` future, or resolved to a `null` decision — fail-closed |
+| 503 | — | A provider failed during the opt-in [Vert.x authorization import](#vertx-authorization-import-opt-in) — fail-closed: the `SecurityContext` is never bound and no partially imported claim is observable. The problem detail is the generic `Authorization is temporarily unavailable`; the failing provider id is logged, never returned |
 | — | `PERMITTED` | Both gates passed |
 
 A failed (rather than denied) decision future propagates its cause through the error pipeline after
-the deny event is emitted. Every one of these paths emits exactly one `AuthorizationDecisionEvent`.
+the deny event is emitted. Every path that reaches authorization emits exactly one
+`AuthorizationDecisionEvent`; the credential-failure 401 and the import-failure 503 short-circuit
+the request before authorization runs, so no decision event is emitted for them.
 
 With a `@RequiresAction` gate, the role/scope gate is evaluated first and the action gate only if it
 permits. The single emitted decision carries the **first failing predicate** as its top-level reason
@@ -633,7 +701,12 @@ code, plus `rolesSatisfied`, `actionSatisfied`, and `actionEvaluated` in `safeAt
   also skipped, with a warning, when no `CorrelationContext` is bound.
 - **Expecting identity resolution to report rejections.** `CredentialRejectedEvent` comes from the
   failing authentication handler before `ctx.fail(...)`; identity resolution never runs on that path.
-- **Relying on Vert.x `AuthorizationProvider` bindings.** They are accepted but never consulted.
+- **Contributing a Vert.x `AuthorizationProvider` without including `VertxAuthorizationImportModule`.**
+  The multibinding set is inert on its own — no provider is ever consulted until the opt-in import
+  module is wired into the component.
+- **Expecting resource-scoped, wildcard, or composite Vert.x authorizations to import.** The import
+  maps only resource-free role and permission grants; everything else is dropped fail-closed with a
+  throttled WARN.
 - **Trusting forwarded headers without `trustedProxyCidrs`.** `trustForwardedScheme` and
   `trustForwardedHost` do nothing while the trusted-proxy set is empty.
 - **Reading roles straight off `AuthorizationClaims` for a JAX-RS check.** `isUserInRole` deliberately
