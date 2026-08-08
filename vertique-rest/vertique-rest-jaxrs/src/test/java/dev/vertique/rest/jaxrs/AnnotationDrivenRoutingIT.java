@@ -1293,12 +1293,6 @@ public class AnnotationDrivenRoutingIT {
     }
 
     /**
-     * One observed HTTP response: the status code plus the fully-read body.
-     *
-     * @param statusCode the response status code
-     * @param body       the complete response body
-     */
-    /**
      * Runs {@code assertion}, re-throwing any failure with the response's wire evidence appended.
      *
      * <p>The flake this guards against reports only the mismatched value — an empty body under a
@@ -1317,6 +1311,14 @@ public class AnnotationDrivenRoutingIT {
         }
     }
 
+    /**
+     * One observed HTTP response, captured as evidence rather than as a bare assertion subject.
+     *
+     * @param statusCode the response status code
+     * @param headers    a copy of the response headers, safe to read after the exchange is recycled
+     * @param version    the HTTP version the response was framed with
+     * @param body       the complete response body
+     */
     private record HttpResult(int statusCode, MultiMap headers, HttpVersion version, Buffer body) {
 
         /**

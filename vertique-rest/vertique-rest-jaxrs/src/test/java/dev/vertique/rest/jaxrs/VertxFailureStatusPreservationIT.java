@@ -304,6 +304,14 @@ public class VertxFailureStatusPreservationIT {
         return hint == null ? "<pipeline never ran>" : hint.map(String::valueOf).orElse("<absent>");
     }
 
+    /**
+     * One observed HTTP response, captured as evidence rather than as a bare assertion subject.
+     *
+     * @param statusCode the response status code
+     * @param headers    a copy of the response headers, safe to read after the exchange is recycled
+     * @param version    the HTTP version the response was framed with
+     * @param body       the complete response body
+     */
     private record HttpResult(int statusCode, MultiMap headers, HttpVersion version, Buffer body) {
 
         JsonObject problem() {

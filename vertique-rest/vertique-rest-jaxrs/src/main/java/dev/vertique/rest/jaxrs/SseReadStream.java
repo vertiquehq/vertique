@@ -301,13 +301,6 @@ class SseReadStream implements ReadStream<Buffer> {
     }
 
     /**
-     * Serializes the event data to a string. {@link String} values are returned as-is;
-     * structured objects are JSON-serialized via {@link DatabindCodec#mapper()}.
-     *
-     * @param data the data value to serialize; must not be {@code null}
-     * @return the string representation of the data
-     */
-    /**
      * Strips newline and carriage-return characters from a single-line SSE field value.
      * The SSE specification requires {@code id} and {@code event} fields to be single-line.
      *
@@ -321,6 +314,13 @@ class SseReadStream implements ReadStream<Buffer> {
         return value.replace("\n", "").replace("\r", "");
     }
 
+    /**
+     * Serializes the event data to a string. {@link String} values are returned as-is;
+     * structured objects are JSON-serialized via {@link DatabindCodec#mapper()}.
+     *
+     * @param data the data value to serialize; must not be {@code null}
+     * @return the string representation of the data
+     */
     private static String serializeData(Object data) {
         if (data instanceof String s) {
             return s;
