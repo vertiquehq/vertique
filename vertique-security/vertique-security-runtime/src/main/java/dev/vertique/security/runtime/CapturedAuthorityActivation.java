@@ -7,7 +7,6 @@ import dev.vertique.core.context.DurableCarrierDescriptor;
 import dev.vertique.core.correlation.CorrelationContext;
 import dev.vertique.security.CapturedAuthorityReconstruction;
 import dev.vertique.security.IdentitySnapshot;
-import dev.vertique.security.PrincipalRef;
 import dev.vertique.security.SecurityContext;
 import dev.vertique.security.SecurityIdentity;
 import dev.vertique.security.events.CapturedAuthorityActivatedEvent;
@@ -16,6 +15,7 @@ import dev.vertique.security.runtime.events.SecurityEventEmitter;
 import io.vertx.core.Future;
 import java.time.Instant;
 import java.util.Objects;
+import java.util.UUID;
 
 /**
  * The sanctioned Mode-3 activation entry point (PRD identity-002 §14.3 Phase-2 Appendix, §14.6
@@ -96,7 +96,7 @@ public final class CapturedAuthorityActivation {
     public Future<SecurityContext> activateResume(IdentitySnapshot snapshot, DurableCarrierDescriptor expectedCarrier) {
         return Future.succeededFuture().compose(v -> {
             SecurityContext ctx = reconstruction.resumeWithCapturedAuthority(snapshot, expectedCarrier);
-            return activate(ctx, snapshot);
+            return activate(ctx, snapshot, CapturedAuthorityActivatedEvent.Mode.RESUME);
         });
     }
 
@@ -122,7 +122,7 @@ public final class CapturedAuthorityActivation {
         return Future.succeededFuture().compose(v -> {
             SecurityContext ctx = reconstruction.deferredExecutionWithCapturedAuthority(
                     executingServiceIdentity, snapshot, expectedCarrier);
-            return activate(ctx, snapshot);
+            return activate(ctx, snapshot, CapturedAuthorityActivatedEvent.Mode.DEFERRED);
         });
     }
 
@@ -130,24 +130,39 @@ public final class CapturedAuthorityActivation {
      * Builds and emits the {@link CapturedAuthorityActivatedEvent} for a freshly reconstructed
      * context, awaiting full observer delivery before resolving to {@code ctx}.
      *
+     * <p>The reconstructed {@link SecurityIdentity} is carried <strong>uncollapsed</strong>: actor,
+     * subject-of-record, delegation, and client all reach the observer as distinct facts, so an
+     * audit consumer can attribute a privileged activation correctly instead of receiving one
+     * pre-merged principal. The context's {@link SecurityContext#authorization()} — the captured
+     * claim set Mode-3 reconstruction installs as <em>current</em> authority — is carried alongside
+     * it, so an audit record can state which privileges the activation granted, not merely that one
+     * occurred.
+     *
      * <p>The event's correlation is always {@link CorrelationContext#unbound()} — Mode-3
      * activation is not necessarily tied to a live inbound request (e.g. a scheduled job or
      * workflow resume) — and its {@code origin} mirrors {@code ctx.origin()}, which a Mode-3
-     * reconstruction always leaves {@link java.util.Optional#empty()}.
+     * reconstruction always leaves {@link java.util.Optional#empty()}. Each activation mints its
+     * own {@code activationId}, so two activations of the same carrier row stay distinguishable as
+     * audit source events.
      *
-     * @param ctx      the reconstructed context whose subject-of-record becomes the event's
-     *                 activated principal
-     * @param snapshot the snapshot whose carrier target becomes the event's durable target
+     * @param ctx      the reconstructed context whose identity, authentication state, activated
+     *                 authorization claims, and origin the event carries
+     * @param snapshot the snapshot whose signed carrier binding the event carries
+     * @param mode     the activation entry point that put the captured authority into effect
      * @return a {@link Future} resolving to {@code ctx} once every observer has settled
      */
-    private Future<SecurityContext> activate(SecurityContext ctx, IdentitySnapshot snapshot) {
-        PrincipalRef principal = ctx.identity().subject().orElse(ctx.identity().actor());
+    private Future<SecurityContext> activate(
+            SecurityContext ctx, IdentitySnapshot snapshot, CapturedAuthorityActivatedEvent.Mode mode) {
         CapturedAuthorityActivatedEvent event = new CapturedAuthorityActivatedEvent(
                 Instant.now(),
                 CorrelationContext.unbound(),
                 ctx.origin(),
-                principal,
-                snapshot.carrier().target());
+                ctx.authentication(),
+                ctx.identity(),
+                ctx.authorization(),
+                mode,
+                UUID.randomUUID(),
+                snapshot.carrier());
         return emitter.emit(event).map(v -> ctx);
     }
 }

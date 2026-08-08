@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
@@ -52,6 +53,7 @@ import io.vertx.core.Future;
 import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
 import io.vertx.core.eventbus.DeliveryOptions;
+import io.vertx.junit5.Checkpoint;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
 import java.time.Instant;
@@ -235,7 +237,14 @@ class DelayedJobPollerTest {
             when(repository.claimNextJob(anyString(), anyInt()))
                     .thenReturn(Future.succeededFuture(List.of(execution)))
                     .thenReturn(Future.succeededFuture(List.of()));
-            when(completionHandler.handleCompletion(any(), any(), any())).thenReturn(Future.succeededFuture());
+
+            // Causal terminal signal: the poller invokes the completion handler only after the
+            // handler's reply has settled the dispatch, so reaching this answer at all IS the
+            // proof that the dispatch completed and the completion handler was called.
+            when(completionHandler.handleCompletion(any(), any(), any())).thenAnswer(invocation -> {
+                ctx.completeNow();
+                return Future.succeededFuture();
+            });
 
             // Register a handler that simulates ServiceMethodInvoker fire-and-report:
             // reads the replyAddress from the DispatchEnvelope and sends the Result there
@@ -263,16 +272,6 @@ class DelayedJobPollerTest {
                     noOpPropagator());
 
             vertx.deployVerticle(poller).onFailure(ctx::failNow);
-
-            // Wait for the completion handler to be invoked
-            vertx.setTimer(3000, id -> {
-                try {
-                    verify(completionHandler, atLeastOnce()).handleCompletion(any(), any(), any());
-                    ctx.completeNow();
-                } catch (Exception e) {
-                    ctx.failNow(e);
-                }
-            });
         }
 
         @Test
@@ -440,8 +439,32 @@ class DelayedJobPollerTest {
                     .thenReturn(Future.succeededFuture(List.of(execution)))
                     .thenReturn(Future.succeededFuture(List.of()));
 
-            // Handler that never replies — we only need dispatch() to run decodeToDispatchContext.
-            vertx.eventBus().consumer(handlerAddress, msg -> {});
+            // Causal terminal signal: consumer receipt. dispatch() threads the carrier through
+            // decodeToDispatchContext before it sends the envelope, so by the time this message
+            // arrives the recording decoder has already observed its DurableDecodeContext. The
+            // handler never replies — we only need dispatch() to run decodeToDispatchContext.
+            vertx.eventBus()
+                    .consumer(
+                            handlerAddress,
+                            msg -> ctx.verify(() -> {
+                                DurableDecodeContext decodeContext = observed.get();
+                                assertNotNull(decodeContext, "decoder must have been invoked during dispatch");
+                                assertTrue(
+                                        decodeContext.carrier().isPresent(),
+                                        "dispatch must thread the row's carrier into the decode context");
+                                DurableCarrierDescriptor carrier =
+                                        decodeContext.carrier().orElseThrow();
+                                assertEquals(
+                                        execution.id().toString(),
+                                        carrier.carrierId(),
+                                        "carrierId == executing row id");
+                                assertEquals("delayed-job", carrier.target().kind());
+                                assertEquals(
+                                        handlerAddress,
+                                        carrier.target().address(),
+                                        "target address == executing row handler");
+                                ctx.completeNow();
+                            }));
 
             DelayedJobPoller poller = new DelayedJobPoller(
                     "default",
@@ -454,23 +477,6 @@ class DelayedJobPollerTest {
                     propagator);
 
             vertx.deployVerticle(poller).onFailure(ctx::failNow);
-
-            vertx.setTimer(
-                    1500,
-                    id -> ctx.verify(() -> {
-                        DurableDecodeContext decodeContext = observed.get();
-                        assertNotNull(decodeContext, "decoder must have been invoked during dispatch");
-                        assertTrue(
-                                decodeContext.carrier().isPresent(),
-                                "dispatch must thread the row's carrier into the decode context");
-                        DurableCarrierDescriptor carrier =
-                                decodeContext.carrier().orElseThrow();
-                        assertEquals(execution.id().toString(), carrier.carrierId(), "carrierId == executing row id");
-                        assertEquals("delayed-job", carrier.target().kind());
-                        assertEquals(
-                                handlerAddress, carrier.target().address(), "target address == executing row handler");
-                        ctx.completeNow();
-                    }));
         }
     }
 
@@ -511,18 +517,22 @@ class DelayedJobPollerTest {
                     .thenReturn(Future.succeededFuture(List.of()));
             when(completionHandler.handleCompletion(any(), any(), any())).thenReturn(Future.succeededFuture());
 
-            AtomicInteger dispatchCount = new AtomicInteger();
-            AtomicInteger completeCount = new AtomicInteger();
+            // One lax checkpoint per interceptor callback: the context completes only once both
+            // callbacks have fired (lax preserves the original "at least once" tolerance). A
+            // callback that never fires leaves its checkpoint unflagged and the test times out.
+            Checkpoint dispatchFired = ctx.laxCheckpoint();
+            Checkpoint completeFired = ctx.laxCheckpoint();
 
             JobInterceptor interceptor = new JobInterceptor() {
                 @Override
-                public void onDispatch(JobDispatchContext ctx) {
-                    dispatchCount.incrementAndGet();
+                public void onDispatch(JobDispatchContext dispatchCtx) {
+                    dispatchFired.flag();
                 }
 
                 @Override
-                public void onComplete(JobDispatchContext ctx, Result<?> result, Instant startTime, Instant endTime) {
-                    completeCount.incrementAndGet();
+                public void onComplete(
+                        JobDispatchContext dispatchCtx, Result<?> result, Instant startTime, Instant endTime) {
+                    completeFired.flag();
                 }
             };
 
@@ -551,14 +561,6 @@ class DelayedJobPollerTest {
                     noOpPropagator());
 
             vertx.deployVerticle(poller).onFailure(ctx::failNow);
-
-            vertx.setTimer(2000, id -> {
-                ctx.verify(() -> {
-                    assertTrue(dispatchCount.get() >= 1, "Expected at least 1 dispatch interceptor call");
-                    assertTrue(completeCount.get() >= 1, "Expected at least 1 complete interceptor call");
-                });
-                ctx.completeNow();
-            });
         }
     }
 
@@ -689,25 +691,23 @@ class DelayedJobPollerTest {
 
             vertx.deployVerticle(poller).onFailure(ctx::failNow);
 
-            vertx.setTimer(2500, id -> {
-                try {
-                    // abandonAndScheduleRetry must be called — one atomic operation for timeout+retry
-                    verify(repository, timeout(1000).atLeastOnce())
-                            .abandonAndScheduleRetry(
-                                    eq(execution.id()), anyString(), anyString(), any(), any(Instant.class), eq(1));
-                    // completeExecution(ABANDONED) must never be called — replaced by atomic op
-                    verify(repository, never())
-                            .completeExecution(
-                                    eq(execution.id()), eq(JobState.ABANDONED), anyString(), anyString(), any());
-                    // scheduleRetry must never be called separately — replaced by atomic op
-                    verify(repository, never()).scheduleRetry(any(), any(), anyInt());
-                    // handleCompletion is not called from the timeout path
-                    verify(completionHandler, never()).handleCompletion(any(), any(), any());
-                    ctx.completeNow();
-                } catch (Exception e) {
-                    ctx.failNow(e);
-                }
-            });
+            // Causal terminal signal: abandonAndScheduleRetry is the terminal write of the
+            // retryable-timeout branch, which is mutually exclusive with the forbidden calls
+            // below — once it is recorded the never() checks are conclusive without a quiet
+            // window. Mockito's timeout verify blocks this JUnit worker thread, never a Vert.x
+            // event-loop thread.
+            // abandonAndScheduleRetry must be called — one atomic operation for timeout+retry
+            verify(repository, timeout(2000).atLeastOnce())
+                    .abandonAndScheduleRetry(
+                            eq(execution.id()), anyString(), anyString(), any(), any(Instant.class), eq(1));
+            // completeExecution(ABANDONED) must never be called — replaced by atomic op
+            verify(repository, never())
+                    .completeExecution(eq(execution.id()), eq(JobState.ABANDONED), anyString(), anyString(), any());
+            // scheduleRetry must never be called separately — replaced by atomic op
+            verify(repository, never()).scheduleRetry(any(), any(), anyInt());
+            // handleCompletion is not called from the timeout path
+            verify(completionHandler, never()).handleCompletion(any(), any(), any());
+            ctx.completeNow();
         }
 
         @Test
@@ -763,24 +763,22 @@ class DelayedJobPollerTest {
 
             vertx.deployVerticle(poller).onFailure(ctx::failNow);
 
-            vertx.setTimer(2500, id -> {
-                try {
-                    // DEAD_LETTER must be written directly — one record, no ABANDONED step
-                    verify(repository, timeout(1000).atLeastOnce())
-                            .completeExecution(
-                                    eq(execution.id()), eq(JobState.DEAD_LETTER), anyString(), anyString(), any());
-                    // scheduleRetry must never be called — exhausted
-                    verify(repository, never()).scheduleRetry(any(), any(), anyInt());
-                    // abandonAndScheduleRetry must never be called — exhausted path goes to DEAD_LETTER
-                    verify(repository, never())
-                            .abandonAndScheduleRetry(any(), any(), any(), any(), any(Instant.class), anyInt());
-                    // handleCompletion is not called from the timeout path
-                    verify(completionHandler, never()).handleCompletion(any(), any(), any());
-                    ctx.completeNow();
-                } catch (Exception e) {
-                    ctx.failNow(e);
-                }
-            });
+            // Causal terminal signal: the direct DEAD_LETTER write is the terminal write of the
+            // exhausted-timeout branch, which is mutually exclusive with the forbidden calls
+            // below — once it is recorded the never() checks are conclusive without a quiet
+            // window. Mockito's timeout verify blocks this JUnit worker thread, never a Vert.x
+            // event-loop thread.
+            // DEAD_LETTER must be written directly — one record, no ABANDONED step
+            verify(repository, timeout(2000).atLeastOnce())
+                    .completeExecution(eq(execution.id()), eq(JobState.DEAD_LETTER), anyString(), anyString(), any());
+            // scheduleRetry must never be called — exhausted
+            verify(repository, never()).scheduleRetry(any(), any(), anyInt());
+            // abandonAndScheduleRetry must never be called — exhausted path goes to DEAD_LETTER
+            verify(repository, never())
+                    .abandonAndScheduleRetry(any(), any(), any(), any(), any(Instant.class), anyInt());
+            // handleCompletion is not called from the timeout path
+            verify(completionHandler, never()).handleCompletion(any(), any(), any());
+            ctx.completeNow();
         }
     }
 
@@ -802,8 +800,6 @@ class DelayedJobPollerTest {
                     .thenReturn(Future.succeededFuture(List.of()));
             when(completionHandler.handleCompletion(any(), any(), any())).thenReturn(Future.succeededFuture());
 
-            AtomicBoolean cancelObserved = new AtomicBoolean(false);
-
             // Handler that captures JobContext, publishes cancel, then checks the flag
             vertx.eventBus().consumer(handlerAddress, msg -> {
                 if (msg.body() instanceof DispatchEnvelope<?> body) {
@@ -815,7 +811,9 @@ class DelayedJobPollerTest {
                         vertx.eventBus().publish("job.cancel." + jobCtx.executionId(), "cancel");
                         // Give the cancel message time to be delivered before checking
                         vertx.setTimer(100, id -> {
-                            cancelObserved.set(jobCtx.isCancelled());
+                            // Causal terminal signal: this is the point where the flag transition
+                            // becomes observable — assert and complete here, no outer deadline.
+                            boolean cancelled = jobCtx.isCancelled();
                             // Reply to unblock the poller
                             if (body.replyAddress().isPresent()) {
                                 vertx.eventBus()
@@ -826,6 +824,9 @@ class DelayedJobPollerTest {
                                                         dev.vertique.core.eventbus.DispatchMetadata.empty()),
                                                 new DeliveryOptions().setCodecName("dispatch.envelope"));
                             }
+                            ctx.verify(() -> assertTrue(
+                                    cancelled, "JobContext should have isCancelled=true after cancel signal"));
+                            ctx.completeNow();
                         });
                     }
                 }
@@ -842,13 +843,6 @@ class DelayedJobPollerTest {
                     noOpPropagator());
 
             vertx.deployVerticle(poller).onFailure(ctx::failNow);
-
-            vertx.setTimer(
-                    3000,
-                    id -> ctx.verify(() -> {
-                        assertTrue(cancelObserved.get(), "JobContext should have isCancelled=true after cancel signal");
-                        ctx.completeNow();
-                    }));
         }
     }
 
@@ -1187,6 +1181,7 @@ class DelayedJobPollerTest {
 
         @Test
         @DisplayName("stop() completes even when the cutoff flush never settles")
+        @Timeout(value = 2, unit = TimeUnit.SECONDS)
         void stopCompletesEvenWhenTheCutoffFlushNeverSettles(Vertx vertx, VertxTestContext ctx) {
             String handlerAddress = "test.logflush.stop.wedged.handler";
             JobExecution execution = sampleExecution("log-stop-wedged-job", handlerAddress);
@@ -1223,13 +1218,55 @@ class DelayedJobPollerTest {
                     0L,
                     0L,
                     DispatchEnvelopeBuilder.forTesting(),
-                    noOpPropagator());
+                    noOpPropagator(),
+                    200L);
 
             vertx.deployVerticle(poller)
                     .compose(deploymentId -> handlerLogged.future().map(deploymentId))
                     .compose(vertx::undeploy)
                     .onSuccess(v -> ctx.completeNow())
                     .onFailure(ctx::failNow);
+        }
+
+        @Test
+        @DisplayName("rejects a non-positive shutdown flush timeout at construction")
+        void rejectsNonPositiveShutdownFlushTimeout() {
+            // A zero or negative bound would make stop()'s cutoff-drain timeout fire immediately,
+            // silently dropping every buffered log line — the misconfiguration must surface at
+            // construction rather than at shutdown.
+            IllegalArgumentException zero =
+                    assertThrows(IllegalArgumentException.class, () -> pollerWithShutdownFlushTimeout(0L));
+            assertTrue(
+                    zero.getMessage().contains("shutdownFlushTimeoutMs"),
+                    "the rejection must name the offending parameter, was: " + zero.getMessage());
+
+            IllegalArgumentException negative =
+                    assertThrows(IllegalArgumentException.class, () -> pollerWithShutdownFlushTimeout(-1L));
+            assertTrue(
+                    negative.getMessage().contains("shutdownFlushTimeoutMs"),
+                    "the rejection must name the offending parameter, was: " + negative.getMessage());
+        }
+
+        /**
+         * Constructs a poller through the package-private test seam with the given shutdown flush
+         * timeout. Construction only — nothing is deployed, so this stays sleep-free.
+         *
+         * @param shutdownFlushTimeoutMs the bound under test
+         * @return the constructed poller (never reached for a non-positive bound)
+         */
+        private DelayedJobPoller pollerWithShutdownFlushTimeout(long shutdownFlushTimeoutMs) {
+            return new DelayedJobPoller(
+                    "default",
+                    fastConfig(),
+                    repository,
+                    completionHandler,
+                    Set.of(),
+                    null,
+                    0L,
+                    0L,
+                    DispatchEnvelopeBuilder.forTesting(),
+                    noOpPropagator(),
+                    shutdownFlushTimeoutMs);
         }
     }
 }

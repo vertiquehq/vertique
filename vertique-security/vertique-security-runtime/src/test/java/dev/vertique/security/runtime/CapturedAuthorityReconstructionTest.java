@@ -79,8 +79,9 @@ class CapturedAuthorityReconstructionTest {
             new SnapshotCarrierBinding("carrier-2", new DurableTarget(DISALLOWED_KIND, "nightly", Optional.empty()));
 
     @Test
-    @DisplayName("DefaultCapturedAuthorityReconstruction is not publicly instantiable — the audited "
-            + "CapturedAuthorityActivation seam is the only route, so audit cannot be bypassed (review)")
+    @DisplayName("DefaultCapturedAuthorityReconstruction is not publicly instantiable — no Dagger binding can "
+            + "bypass the audited CapturedAuthorityActivation seam, though a deliberate hand-wired "
+            + "CapturedAuthorityReconstruction implementation can (review)")
     void reconstructionImplNotPubliclyInstantiable() {
         assertFalse(
                 java.lang.reflect.Modifier.isPublic(DefaultCapturedAuthorityReconstruction.class.getModifiers()),

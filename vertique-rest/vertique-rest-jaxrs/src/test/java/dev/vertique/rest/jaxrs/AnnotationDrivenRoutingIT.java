@@ -13,10 +13,14 @@ import dev.vertique.rest.core.router.OperationHandlerContributor;
 import dev.vertique.rest.core.router.OperationRegistrationContext;
 import io.swagger.v3.oas.annotations.Operation;
 import io.vertx.core.Future;
+import io.vertx.core.MultiMap;
 import io.vertx.core.Vertx;
+import io.vertx.core.buffer.Buffer;
 import io.vertx.core.http.HttpClient;
+import io.vertx.core.http.HttpClientRequest;
 import io.vertx.core.http.HttpMethod;
 import io.vertx.core.http.HttpServer;
+import io.vertx.core.http.HttpVersion;
 import io.vertx.ext.web.Router;
 import io.vertx.ext.web.RoutingContext;
 import io.vertx.junit5.VertxExtension;
@@ -34,7 +38,9 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
@@ -66,6 +72,17 @@ import org.junit.jupiter.api.extension.ExtendWith;
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
 public class AnnotationDrivenRoutingIT {
+
+    /**
+     * Response header stamped on every answer this class's own servers write, and the value it
+     * carries. It makes one question answerable from a CI log alone: did our server answer at all?
+     * An empty body under a correct status has two unrelated causes — the framework pipeline writing
+     * no entity, or another process answering on the port — and the failure text has been unable to
+     * tell them apart.
+     */
+    private static final String SERVER_MARKER_HEADER = "X-Vertique-Test-Server";
+
+    private static final String SERVER_ID = UUID.randomUUID().toString();
 
     // --- Class-scoped resources (shared across all @Test methods) ---
 
@@ -294,24 +311,21 @@ public class AnnotationDrivenRoutingIT {
     @Test
     @DisplayName("JAX-RS {id:\\d+} translates to a regex route whose param binds by name; non-digits 404")
     void javaxPathTemplateWithRegexTranslates(VertxTestContext ctx) {
-        deploy(vertx, ctx, Set.of(new NumericResource()), port -> client.request(
-                        HttpMethod.GET, port, "127.0.0.1", "/num/42")
-                .compose(req -> req.send())
-                .compose(resp -> {
-                    int status = resp.statusCode();
-                    return resp.body().map(b -> status + "|" + b.toString());
-                })
-                .compose(statusAndBody -> {
-                    ctx.verify(() -> {
+        deploy(vertx, ctx, Set.of(new NumericResource()), port -> exchange(HttpMethod.GET, port, "/num/42", null, null)
+                .compose(first -> {
+                    ctx.verify(() -> withDiagnostic(first, () -> {
                         // Binding by NAME: the named capture group (?<id>\d+) populates pathParams("id"),
                         // which DefaultBoundRequest reads by name, so the coerced int reaches the method.
-                        assertEquals("200|num=42", statusAndBody, "regex-constrained param must bind by name");
-                    });
-                    return client.request(HttpMethod.GET, port, "127.0.0.1", "/num/abc");
+                        assertEquals(
+                                "200|num=42",
+                                first.statusCode() + "|" + first.body().toString(),
+                                "regex-constrained param must bind by name");
+                    }));
+                    return exchange(HttpMethod.GET, port, "/num/abc", null, null);
                 })
-                .compose(req -> req.send())
-                .onComplete(ctx.succeeding(resp -> {
-                    ctx.verify(() -> assertEquals(404, resp.statusCode(), "non-digit path must not match"));
+                .onComplete(ctx.succeeding(result -> {
+                    ctx.verify(() -> withDiagnostic(
+                            result, () -> assertEquals(404, result.statusCode(), "non-digit path must not match")));
                     ctx.completeNow();
                 })));
     }
@@ -350,11 +364,11 @@ public class AnnotationDrivenRoutingIT {
     @DisplayName("Undeclared header param is still bound, case-insensitively")
     void undeclaredHeaderParamStillBound(VertxTestContext ctx) {
         deploy(vertx, ctx, Set.of(new BindingResource()), port -> {
-            client.request(HttpMethod.GET, port, "127.0.0.1", "/bind/header")
-                    .compose(req -> req.putHeader("x-custom", "value").send())
-                    .compose(resp -> resp.body())
-                    .onComplete(ctx.succeeding(body -> {
-                        ctx.verify(() -> assertEquals("custom=value", body.toString()));
+            exchange(HttpMethod.GET, port, "/bind/header", req -> req.putHeader("x-custom", "value"), null)
+                    .onComplete(ctx.succeeding(result -> {
+                        ctx.verify(() -> withDiagnostic(
+                                result,
+                                () -> assertEquals("custom=value", result.body().toString())));
                         ctx.completeNow();
                     }));
         });
@@ -364,11 +378,11 @@ public class AnnotationDrivenRoutingIT {
     @DisplayName("Undeclared cookie param is still bound")
     void undeclaredCookieParamStillBound(VertxTestContext ctx) {
         deploy(vertx, ctx, Set.of(new BindingResource()), port -> {
-            client.request(HttpMethod.GET, port, "127.0.0.1", "/bind/cookie")
-                    .compose(req -> req.putHeader("Cookie", "session=abc").send())
-                    .compose(resp -> resp.body())
-                    .onComplete(ctx.succeeding(body -> {
-                        ctx.verify(() -> assertEquals("session=abc", body.toString()));
+            exchange(HttpMethod.GET, port, "/bind/cookie", req -> req.putHeader("Cookie", "session=abc"), null)
+                    .onComplete(ctx.succeeding(result -> {
+                        ctx.verify(() -> withDiagnostic(
+                                result,
+                                () -> assertEquals("session=abc", result.body().toString())));
                         ctx.completeNow();
                     }));
         });
@@ -501,7 +515,7 @@ public class AnnotationDrivenRoutingIT {
                 ctx,
                 "/body/text",
                 MediaType.TEXT_PLAIN,
-                io.vertx.core.buffer.Buffer.buffer("hello world"),
+                Buffer.buffer("hello world"),
                 statusAndBody -> assertEquals("200|text=hello world", statusAndBody));
     }
 
@@ -513,7 +527,7 @@ public class AnnotationDrivenRoutingIT {
                 ctx,
                 "/body/bytes",
                 MediaType.APPLICATION_OCTET_STREAM,
-                io.vertx.core.buffer.Buffer.buffer(new byte[] {1, 2, 3, 4, 5}),
+                Buffer.buffer(new byte[] {1, 2, 3, 4, 5}),
                 statusAndBody -> assertEquals("200|bytes=5", statusAndBody));
     }
 
@@ -525,7 +539,7 @@ public class AnnotationDrivenRoutingIT {
                 ctx,
                 "/body/list",
                 MediaType.APPLICATION_JSON,
-                io.vertx.core.buffer.Buffer.buffer("[{\"name\":\"a\"},{\"name\":\"b\"}]"),
+                Buffer.buffer("[{\"name\":\"a\"},{\"name\":\"b\"}]"),
                 statusAndBody -> assertEquals("200|names=a,b", statusAndBody));
     }
 
@@ -546,8 +560,8 @@ public class AnnotationDrivenRoutingIT {
             VertxTestContext ctx,
             String path,
             String contentType,
-            io.vertx.core.buffer.Buffer body,
-            java.util.function.Consumer<String> assertion) {
+            Buffer body,
+            Consumer<String> assertion) {
         // Wire the text + binary decoders alongside JSON so the non-object body paths resolve a decoder
         // the way the production dispatch ITs do (default factory only wires the JSON decoder).
         JaxRsRouterMount.Factory factory = TestFactories.builder()
@@ -559,19 +573,26 @@ public class AnnotationDrivenRoutingIT {
                 .compose(apiRouter -> {
                     Router root = Router.router(vertx);
                     root.route("/*").subRouter(apiRouter);
-                    return vertx.createHttpServer().requestHandler(root).listen(0, "127.0.0.1");
+                    return vertx.createHttpServer()
+                            .requestHandler(request -> {
+                                request.response().putHeader(SERVER_MARKER_HEADER, SERVER_ID);
+                                root.handle(request);
+                            })
+                            .listen(0, "127.0.0.1");
                 })
                 .onComplete(ctx.succeeding(s -> {
                     server = s;
-                    client.request(HttpMethod.POST, s.actualPort(), "127.0.0.1", path)
-                            .compose(req ->
-                                    req.putHeader("Content-Type", contentType).send(body))
-                            .compose(resp -> {
-                                int status = resp.statusCode();
-                                return resp.body().map(b -> status + "|" + b.toString());
-                            })
-                            .onComplete(ctx.succeeding(statusAndBody -> {
-                                ctx.verify(() -> assertion.accept(statusAndBody));
+                    exchange(
+                                    HttpMethod.POST,
+                                    s.actualPort(),
+                                    path,
+                                    req -> req.putHeader("Content-Type", contentType),
+                                    body)
+                            .onComplete(ctx.succeeding(result -> {
+                                ctx.verify(() -> withDiagnostic(
+                                        result,
+                                        () -> assertion.accept(result.statusCode() + "|"
+                                                + result.body().toString())));
                                 ctx.completeNow();
                             }));
                 }));
@@ -598,18 +619,25 @@ public class AnnotationDrivenRoutingIT {
                 .compose(apiRouter -> {
                     Router root = Router.router(vertx);
                     root.route("/*").subRouter(apiRouter);
-                    return vertx.createHttpServer().requestHandler(root).listen(0, "127.0.0.1");
+                    return vertx.createHttpServer()
+                            .requestHandler(request -> {
+                                request.response().putHeader(SERVER_MARKER_HEADER, SERVER_ID);
+                                root.handle(request);
+                            })
+                            .listen(0, "127.0.0.1");
                 })
                 .onComplete(ctx.succeeding(s -> {
                     server = s;
-                    client.request(HttpMethod.POST, s.actualPort(), "127.0.0.1", "/echo")
-                            .compose(req -> req.putHeader("Content-Type", "application/json")
-                                    .send("{\"name\":\"Alice\"}"))
-                            .compose(resp -> resp.body())
-                            .onComplete(ctx.succeeding(body -> {
+                    exchange(
+                                    HttpMethod.POST,
+                                    s.actualPort(),
+                                    "/echo",
+                                    req -> req.putHeader("Content-Type", "application/json"),
+                                    Buffer.buffer("{\"name\":\"Alice\"}"))
+                            .onComplete(ctx.succeeding(result -> {
                                 ctx.verify(() -> {
                                     // Body materialised correctly through the reused bound request.
-                                    assertEquals("name=Alice", body.toString());
+                                    assertEquals("name=Alice", result.body().toString());
                                     // The gate recorded one identity; the invoker recorded the same one.
                                     assertEquals(2, identities.size(), "gate and invoker each record once");
                                     assertEquals(
@@ -724,14 +752,17 @@ public class AnnotationDrivenRoutingIT {
                 .compose(apiRouter -> {
                     Router root = Router.router(vertx);
                     root.route("/*").subRouter(apiRouter);
-                    return vertx.createHttpServer().requestHandler(root).listen(0, "127.0.0.1");
+                    return vertx.createHttpServer()
+                            .requestHandler(request -> {
+                                request.response().putHeader(SERVER_MARKER_HEADER, SERVER_ID);
+                                root.handle(request);
+                            })
+                            .listen(0, "127.0.0.1");
                 })
                 .onComplete(ctx.succeeding(s -> {
                     server = s;
-                    client.request(HttpMethod.GET, s.actualPort(), "127.0.0.1", "/secured")
-                            .compose(req -> req.send())
-                            .compose(resp -> resp.body())
-                            .onComplete(ctx.succeeding(body -> {
+                    exchange(HttpMethod.GET, s.actualPort(), "/secured", null, null)
+                            .onComplete(ctx.succeeding(result -> {
                                 ctx.verify(() -> assertEquals(
                                         List.of("auth", "gate", "identity", "authz", "invoker"),
                                         log,
@@ -904,31 +935,31 @@ public class AnnotationDrivenRoutingIT {
                 .compose(apiRouter -> {
                     Router root = Router.router(vertx);
                     root.route("/*").subRouter(apiRouter);
-                    return vertx.createHttpServer().requestHandler(root).listen(0, "127.0.0.1");
+                    return vertx.createHttpServer()
+                            .requestHandler(request -> {
+                                request.response().putHeader(SERVER_MARKER_HEADER, SERVER_ID);
+                                root.handle(request);
+                            })
+                            .listen(0, "127.0.0.1");
                 })
                 .onComplete(ctx.succeeding(s -> {
                     server = s;
                     // No Authorization header → the secured route's auth handler must reject with 401.
                     // If /r/{name} shadowed it, the response would be 200 "name=secured".
-                    client.request(HttpMethod.GET, s.actualPort(), "127.0.0.1", "/r/secured")
-                            .compose(req -> req.send())
-                            .compose(resp -> {
-                                int status = resp.statusCode();
-                                return resp.body().map(b -> status + "|" + b.toString());
-                            })
+                    exchange(HttpMethod.GET, s.actualPort(), "/r/secured", null, null)
+                            .map(result ->
+                                    result.statusCode() + "|" + result.body().toString())
                             .onComplete(ctx.succeeding(statusAndBody -> {
                                 ctx.verify(() -> assertTrue(
                                         statusAndBody.startsWith("401"),
                                         "/r/secured must hit the secured route's auth handler (401), not be"
                                                 + " shadowed onto /r/{name} (was: " + statusAndBody + ")"));
                                 // And the unsecured /r/{name} route still works for a non-shadowed name.
-                                client.request(HttpMethod.GET, s.actualPort(), "127.0.0.1", "/r/alice")
-                                        .compose(req -> req.send())
-                                        .compose(resp -> resp.body())
-                                        .onComplete(ctx.succeeding(body -> {
+                                exchange(HttpMethod.GET, s.actualPort(), "/r/alice", null, null)
+                                        .onComplete(ctx.succeeding(result -> {
                                             ctx.verify(() -> assertEquals(
                                                     "name=alice",
-                                                    body.toString(),
+                                                    result.body().toString(),
                                                     "the plain /r/{name} route must still match a non-shadowed name"));
                                             ctx.completeNow();
                                         }));
@@ -1046,7 +1077,12 @@ public class AnnotationDrivenRoutingIT {
                 .compose(apiRouter -> {
                     Router root = Router.router(vertx);
                     root.route("/*").subRouter(apiRouter);
-                    return vertx.createHttpServer().requestHandler(root).listen(0, "127.0.0.1");
+                    return vertx.createHttpServer()
+                            .requestHandler(request -> {
+                                request.response().putHeader(SERVER_MARKER_HEADER, SERVER_ID);
+                                root.handle(request);
+                            })
+                            .listen(0, "127.0.0.1");
                 })
                 .onComplete(ctx.succeeding(s -> {
                     server = s;
@@ -1082,9 +1118,8 @@ public class AnnotationDrivenRoutingIT {
      * @return a future of the response status code
      */
     private Future<Integer> statusFor(int port, String credential) {
-        return client.request(HttpMethod.GET, port, "127.0.0.1", "/or-secured")
-                .compose(req -> req.putHeader("X-Credential", credential).send())
-                .compose(resp -> resp.body().map(b -> resp.statusCode()));
+        return exchange(HttpMethod.GET, port, "/or-secured", req -> req.putHeader("X-Credential", credential), null)
+                .map(HttpResult::statusCode);
     }
 
     // --- Fail-fast on unknown strategy ---
@@ -1174,12 +1209,11 @@ public class AnnotationDrivenRoutingIT {
             Set<Object> resources,
             HttpMethod method,
             String path,
-            java.util.function.Consumer<String> assertion) {
-        deploy(vertx, ctx, resources, port -> client.request(method, port, "127.0.0.1", path)
-                .compose(req -> req.send())
-                .compose(resp -> resp.body())
-                .onComplete(ctx.succeeding(body -> {
-                    ctx.verify(() -> assertion.accept(body.toString()));
+            Consumer<String> assertion) {
+        deploy(vertx, ctx, resources, port -> exchange(method, port, path, null, null)
+                .onComplete(ctx.succeeding(result -> {
+                    ctx.verify(() -> withDiagnostic(
+                            result, () -> assertion.accept(result.body().toString())));
                     ctx.completeNow();
                 })));
     }
@@ -1201,11 +1235,113 @@ public class AnnotationDrivenRoutingIT {
                 .compose(apiRouter -> {
                     Router root = Router.router(vertx);
                     root.route("/*").subRouter(apiRouter);
-                    return vertx.createHttpServer().requestHandler(root).listen(0, "127.0.0.1");
+                    return vertx.createHttpServer()
+                            .requestHandler(request -> {
+                                request.response().putHeader(SERVER_MARKER_HEADER, SERVER_ID);
+                                root.handle(request);
+                            })
+                            .listen(0, "127.0.0.1");
                 })
                 .onComplete(ctx.succeeding(s -> {
                     server = s;
                     afterListen.accept(s.actualPort());
                 }));
+    }
+
+    /**
+     * Performs one exchange against the shared {@link HttpClient} with the response continuation —
+     * <em>including</em> the body read — attached before the send is initiated.
+     *
+     * <p>This ordering is load-bearing rather than stylistic. Vert.x discards response body buffers
+     * delivered before a body handler is attached, so a {@code send()} followed by a body read in a
+     * later {@code compose} step loses the entire body whenever the calling thread is descheduled in
+     * between: {@code body()} then completes <em>successfully</em> with zero bytes under an otherwise
+     * correct status. Attaching the continuation to {@link HttpClientRequest#response()} first, and
+     * only then calling {@code end()}, removes that window. See {@code HttpClientBodyReadRaceIT}.
+     *
+     * <p>The future returned by {@code end()} is deliberately not composed into the result chain: a
+     * response the server did send must not be masked by a write-side failure.
+     *
+     * @param method     the HTTP method
+     * @param port       the bound server port
+     * @param path       the request path
+     * @param customizer applied to the request before the send is initiated, or {@code null} for none
+     * @param body       the request body to send, or {@code null} to send no body
+     * @return a future of the response status code and fully-read body
+     */
+    private static Future<HttpResult> exchange(
+            HttpMethod method, int port, String path, Consumer<HttpClientRequest> customizer, Buffer body) {
+        return client.request(method, port, "127.0.0.1", path).compose(request -> {
+            Future<HttpResult> result = request.response().compose(response -> response.body()
+                    .map(b -> new HttpResult(
+                            response.statusCode(),
+                            // Copied: the response's headers are not guaranteed to stay readable
+                            // once the exchange is recycled.
+                            MultiMap.caseInsensitiveMultiMap().addAll(response.headers()),
+                            response.version(),
+                            b)));
+            if (customizer != null) {
+                customizer.accept(request);
+            }
+            if (body == null) {
+                request.end();
+            } else {
+                request.end(body);
+            }
+            return result;
+        });
+    }
+
+    /**
+     * One observed HTTP response: the status code plus the fully-read body.
+     *
+     * @param statusCode the response status code
+     * @param body       the complete response body
+     */
+    /**
+     * Runs {@code assertion}, re-throwing any failure with the response's wire evidence appended.
+     *
+     * <p>The flake this guards against reports only the mismatched value — an empty body under a
+     * correct status — which is consistent with several unrelated causes. Appending
+     * {@link HttpResult#diagnostic()} makes a single CI failure sufficient to tell them apart,
+     * without changing what any assertion actually asserts.
+     *
+     * @param result    the response the assertion is about
+     * @param assertion the assertion to run
+     */
+    private static void withDiagnostic(HttpResult result, Runnable assertion) {
+        try {
+            assertion.run();
+        } catch (AssertionError failure) {
+            throw new AssertionError(failure.getMessage() + " " + result.diagnostic(), failure);
+        }
+    }
+
+    private record HttpResult(int statusCode, MultiMap headers, HttpVersion version, Buffer body) {
+
+        /**
+         * Describes the response as it came off the wire, for a failure whose cause is not local.
+         *
+         * <p>The decisive field is {@code marker}: our servers stamp {@link #SERVER_MARKER_HEADER}
+         * on every response they write, so {@code marker=ABSENT} means the answer did not come from
+         * our server at all, while a matching marker with an empty body means our own pipeline wrote
+         * no entity. Those are unrelated defects and the failure text has so far been unable to
+         * separate them. Content-Length and the HTTP version distinguish a body that was never
+         * written from one that was announced and then lost.
+         *
+         * @return a single-line description of status, marker, framing headers and body length
+         */
+        String diagnostic() {
+            String marker = headers.get(SERVER_MARKER_HEADER);
+            return "[status=" + statusCode
+                    + " marker=" + (marker == null ? "ABSENT" : (SERVER_ID.equals(marker) ? "ours" : marker))
+                    + " httpVersion=" + version
+                    + " contentLength=" + headers.get("Content-Length")
+                    + " transferEncoding=" + headers.get("Transfer-Encoding")
+                    + " connection=" + headers.get("Connection")
+                    + " contentType=" + headers.get("Content-Type")
+                    + " bodyLength=" + body.length()
+                    + " headers=" + headers.entries() + "]";
+        }
     }
 }
