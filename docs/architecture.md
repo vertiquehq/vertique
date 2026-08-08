@@ -76,7 +76,7 @@ Application code calls a generated, injectable typed client through the service 
 cron, delayed jobs, workflows, and outbox delivery resolve stable operation identities. Both paths
 enter the same dispatch runtime, which captures registered context, sends over the Vert.x event
 bus, and returns the result or transported failure. The receiving side restores the dispatch
-context and invokes one of the configured service verticle instances on its own Vert.x context.
+context and invokes one of the configured service verticle instances on its own Vert.x event loop.
 
 ## Starter aggregates
 

@@ -64,20 +64,20 @@ text{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Ar
 
 <g><rect class="fill-gray" x="58" y="430" width="220" height="82" rx="8" stroke-width="0.5"/>
 <text class="title gray-t" x="168" y="454" text-anchor="middle" dominant-baseline="central">ServiceVerticle 1</text>
-<text class="sub gray-s" x="168" y="476" text-anchor="middle" dominant-baseline="central">one Vert.x context</text>
+<text class="sub gray-s" x="168" y="476" text-anchor="middle" dominant-baseline="central">one event loop</text>
 <text class="sub gray-s" x="168" y="494" text-anchor="middle" dominant-baseline="central">consumer per operation</text></g>
 
 <g><rect class="fill-gray" x="300" y="430" width="220" height="82" rx="8" stroke-width="0.5"/>
 <text class="title gray-t" x="410" y="454" text-anchor="middle" dominant-baseline="central">ServiceVerticle 2</text>
-<text class="sub gray-s" x="410" y="476" text-anchor="middle" dominant-baseline="central">one Vert.x context</text>
+<text class="sub gray-s" x="410" y="476" text-anchor="middle" dominant-baseline="central">one event loop</text>
 <text class="sub gray-s" x="410" y="494" text-anchor="middle" dominant-baseline="central">consumer per operation</text></g>
 
 <g><rect class="fill-gray" x="542" y="430" width="220" height="82" rx="8" stroke-width="0.5"/>
 <text class="title gray-t" x="652" y="454" text-anchor="middle" dominant-baseline="central">ServiceVerticle N</text>
-<text class="sub gray-s" x="652" y="476" text-anchor="middle" dominant-baseline="central">one Vert.x context</text>
+<text class="sub gray-s" x="652" y="476" text-anchor="middle" dominant-baseline="central">one event loop</text>
 <text class="sub gray-s" x="652" y="494" text-anchor="middle" dominant-baseline="central">consumer per operation</text></g>
 
 <text class="cap" x="410" y="538" text-anchor="middle">Vert.x distributes calls across consumers registered at the same operation address</text>
 <text class="cap" x="410" y="558" text-anchor="middle">Contract identity remains stable while deployment instance counts change</text>
-<text class="cap" x="410" y="578" text-anchor="middle">Contexts and consumers scale; the selected implementation object is shared</text>
+<text class="cap" x="410" y="578" text-anchor="middle">Event loops and consumers scale; the selected implementation object is shared</text>
 </svg>

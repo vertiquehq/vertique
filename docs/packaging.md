@@ -189,7 +189,7 @@ All examples in this repository use `@VertiqueApp`. Examples with a **standalone
 use Jib + `exec-maven-plugin` for container and local-JVM packaging. The reference implementations
 are `vertique-example-hello` and `vertique-example-services` in the `examples/` directory.
 
-> The **headless test-only** `vertique-example-workflow-order-fulfillment` example has an
+> The **integration-test-only** `vertique-example-workflow-order-fulfillment` example has an
 > `@VertiqueApp` component but **no Jib or exec packaging**. It has no standalone entry point and
 > is exercised exclusively through its integration tests.
 

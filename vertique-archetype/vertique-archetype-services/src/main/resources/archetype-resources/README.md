@@ -49,9 +49,9 @@ mvn -ntp jib:dockerBuild
 
 ## Threading
 
-Each service verticle instance runs on its own Vert.x context and uses the non-blocking Vert.x
-event loop by default. `GreetingServiceImpl` is written for that model: it returns an
-already-completed `Future` and never blocks. Keep that default.
+Each service verticle instance runs on its own Vert.x event loop, which is non-blocking by default.
+`GreetingServiceImpl` is written for that model: it returns an already-completed `Future` and never
+blocks. Keep that default.
 
 Set `services.contracts.sample.greeting.worker=true` in `config/application.json` only if the
 implementation is changed to perform genuinely blocking work — a JDBC call, a filesystem read, or

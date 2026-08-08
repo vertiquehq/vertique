@@ -18,9 +18,9 @@ context, routes the invocation over the Vert.x event bus, restores that context 
 service lifecycle, supervision, authorization, resilience, failure transport, and observability.
 
 Each contract runs on one or more independently configurable `ServiceVerticle` instances. Every
-instance has its own Vert.x context and registers consumers at the contract's operation addresses,
-so instance count scales consumers and concurrent execution. The instances share the single
-selected implementation object stored in the contract entry; scaling does not create isolated
+instance has its own Vert.x event loop and registers consumers at the contract's operation
+addresses, so instance count scales consumers and concurrent execution. The instances share the
+single selected implementation object stored in the contract entry; scaling does not create isolated
 handler state, so implementations must remain safe for concurrent calls. Kafka listeners, cron
 schedules, delayed jobs, workflows, and outbox relays can resolve and invoke explicitly identified
 operations through their stable target ids.
@@ -145,8 +145,8 @@ uses:
 ### Execution and lifecycle
 
 Each registered service contract is deployed as one or more `ServiceVerticle` instances according
-to `services.contracts.<namespace>.<name>.instances`. Vert.x creates a fresh verticle and context per
-configured instance; the instances register consumers for the same operation addresses and share
+to `services.contracts.<namespace>.<name>.instances`. Vert.x deploys every configured instance on
+its own event loop; the instances register consumers for the same operation addresses and share
 the work. Operations run on the event loop by default; blocking handlers must use worker deployment
 (`worker: true`) or move blocking work behind an appropriate asynchronous boundary.
 
