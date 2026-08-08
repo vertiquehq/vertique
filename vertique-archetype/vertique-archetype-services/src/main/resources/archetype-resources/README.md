@@ -1,7 +1,8 @@
 # ${artifactId}
 
-A headless Vertique event-bus services application. It exposes no HTTP edge — callers reach
-`GreetingService` through the typed event bus proxy created by `ServiceClientFactory`.
+A headless Vertique event-bus services application. It exposes no HTTP edge — application code
+injects `GreetingService` directly, and the generated Dagger module creates its typed event-bus
+client through `ServiceClientFactory`.
 
 ## Prerequisites
 
