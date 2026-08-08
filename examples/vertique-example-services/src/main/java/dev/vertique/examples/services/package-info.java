@@ -21,8 +21,9 @@
  * preserving the {@code INFRA} &rarr; service-dispatch-deploy &rarr; {@code EDGE} ordering.
  *
  * <p>{@link dev.vertique.examples.services.AppComponent} wires together {@code VertxModule},
- * {@code RestModule}, {@code DispatchModule}, {@code AppModule}, {@code ServiceModule}, and the
- * generated resource/service modules. This module serves as a reference implementation for building
- * Vert.x REST APIs backed by event bus services with resilience policies.
+ * {@code RestModule}, {@code DispatchModule}, {@code AppModule}, and the generated resource and
+ * services modules. {@code GeneratedServicesModule} contributes both the service registrations and
+ * injectable singleton typed clients. This module serves as a reference implementation for building
+ * contract-based services with event-bus dispatch and resilience policies.
  */
 package dev.vertique.examples.services;

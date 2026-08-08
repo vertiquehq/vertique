@@ -7,9 +7,11 @@ SPDX-License-Identifier: EUPL-1.2
 
 Vertique is a Vert.x-native Java 21 framework for teams building services that must coordinate
 durable work without giving up an explicit, non-blocking architecture. It combines compile-time
-application assembly and diagnostics with typed event-bus services and a PostgreSQL-backed
-durability stack for workflows, jobs, and transactional inbox/outbox messaging. REST, security,
-configuration, observability, and Kafka integration compose around that foundation.
+application assembly and diagnostics with a contract-based service execution model and a
+PostgreSQL-backed durability stack for workflows, jobs, and transactional inbox/outbox messaging.
+Application code calls typed Java interfaces while Vertique handles event-bus dispatch and context
+propagation. REST, security, configuration, observability, and Kafka integration compose around
+that foundation.
 
 ## Build
 
@@ -68,8 +70,8 @@ framework capabilities behind one class name. An application names the starter i
   mechanism-neutral REST composition on top of the core starter: JAX-RS routing, request
   validation, the security runtime, and management.
 - **[`vertique-starter-services`](vertique-starter/vertique-starter-services/src/main/resources/META-INF/vertique/module.md)** —
-  headless event-bus services on top of the core starter: the dispatch runtime and management, with
-  no HTTP surface.
+  contract-based service execution on top of the core starter: typed clients, event-bus dispatch,
+  managed service verticles, and management.
 - **[`vertique-starter-postgresql`](vertique-starter/vertique-starter-postgresql/src/main/resources/META-INF/vertique/module.md)** —
   independent PostgreSQL pooling and application-owned Flyway migration wiring, composed alongside
   an application starter rather than in place of one.
@@ -87,7 +89,7 @@ modules via `mvn archetype:generate`; the generated project documents its own `e
 - **[`vertique-archetype-rest`](vertique-archetype/vertique-archetype-rest/README.md)** — a REST API
   application on `vertique-starter-rest`.
 - **[`vertique-archetype-services`](vertique-archetype/vertique-archetype-services/README.md)** — a
-  headless event-bus services application on `vertique-starter-services`.
+  contract-based services application on `vertique-starter-services`.
 - **[`vertique-archetype-rest-postgresql`](vertique-archetype/vertique-archetype-rest-postgresql/README.md)** —
   a PostgreSQL-backed REST application on `vertique-starter-rest` and `vertique-starter-postgresql`.
   Generation needs no Docker; running the generated project's `mvn verify` requires a reachable

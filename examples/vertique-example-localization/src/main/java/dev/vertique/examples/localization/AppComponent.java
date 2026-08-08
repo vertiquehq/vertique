@@ -55,9 +55,9 @@ import jakarta.inject.Singleton;
  *       {@link QueryParamLocaleSource} contribution</li>
  *   <li>{@link GeneratedJaxRsResourcesModule} — auto-generated {@code @JaxRsResources} bindings
  *       produced by {@code vertique-codegen-jaxrs} at compile time</li>
- *   <li>{@link GeneratedServicesModule} — auto-generated {@code ServiceContractContributor}
- *       bindings produced by {@code vertique-codegen-services} at compile time</li>
- *   <li>{@link ServiceModule} — typed service client proxy binding</li>
+ *   <li>{@link GeneratedServicesModule} — auto-generated singleton typed-client and
+ *       {@code ServiceContractContributor} bindings produced by {@code vertique-codegen-services}
+ *       at compile time</li>
  * </ul>
  *
  * <p>Security modules ({@code AuthModule}, {@code SecurityModule}) are
@@ -77,7 +77,6 @@ import jakarta.inject.Singleton;
             CoreLifecycleStepsModule.class,
             AppModule.class,
             GeneratedJaxRsResourcesModule.class,
-            GeneratedServicesModule.class,
-            ServiceModule.class
+            GeneratedServicesModule.class
         })
 interface AppComponent extends VertiqueApplicationComponent {}

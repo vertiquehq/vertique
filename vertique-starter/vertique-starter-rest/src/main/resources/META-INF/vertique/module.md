@@ -28,8 +28,7 @@ Install `vertique-starter-rest` in any application that serves an HTTP API throu
 resources. It already includes `CoreApplicationModule`, so an application that names this aggregate
 does not also name the core starter.
 
-Applications that serve no HTTP surface install `vertique-starter-core` (or the headless services
-starter) instead.
+Applications select the starter aggregate that matches the capabilities in their component.
 
 ---
 

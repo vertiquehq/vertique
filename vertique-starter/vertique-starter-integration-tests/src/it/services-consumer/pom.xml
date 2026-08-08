@@ -20,7 +20,7 @@ SPDX-License-Identifier: EUPL-1.2
     <version>1.0.0</version>
 
     <dependencies>
-        <!-- The one and only production dependency: the headless services application starter. -->
+        <!-- The one and only production dependency: the contract-based services application starter. -->
         <dependency>
             <groupId>dev.vertique</groupId>
             <artifactId>vertique-starter-services</artifactId>

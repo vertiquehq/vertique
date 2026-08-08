@@ -1,0 +1,83 @@
+<!--
+SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
+SPDX-License-Identifier: EUPL-1.2
+-->
+
+<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 820 592" role="img">
+<title>Vertique Services runtime architecture</title>
+<desc>Typed service clients and framework integrations target service operations. Typed clients call through contract metadata while Kafka, cron jobs, delayed jobs, workflow, and inbox and outbox use stable operation identities. Dispatch sends requests over the Vert.x event bus to Vertique Services below it. Services restores context, applies policies, and distributes work across independently configured service verticle instances. Instances have separate contexts and consumers but share the selected implementation object. Results return through the event bus.</desc>
+<defs>
+<style>
+text{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;}
+.title{font-size:14px;font-weight:500;}.sub{font-size:12px;font-weight:400;}.cap{font-size:12px;font-weight:400;fill:#5F5E5A;}.arrow{stroke:#888780;stroke-width:1.2;fill:none;}
+.fill-gray{fill:#F1EFE8;stroke:#5F5E5A;}.gray-t{fill:#2C2C2A;}.gray-s{fill:#5F5E5A;}
+.fill-teal{fill:#E1F5EE;stroke:#0F6E56;}.teal-t{fill:#085041;}.teal-s{fill:#0F6E56;}
+.fill-purple{fill:#EEEDFE;stroke:#534AB7;}.purple-t{fill:#3C3489;}.purple-s{fill:#534AB7;}
+@media (prefers-color-scheme:dark){
+.cap{fill:#B4B2A9;}.arrow{stroke:#888780;}
+.fill-gray{fill:#2C2C2A;stroke:#B4B2A9;}.gray-t{fill:#F1EFE8;}.gray-s{fill:#D3D1C7;}
+.fill-teal{fill:#085041;stroke:#5DCAA5;}.teal-t{fill:#E1F5EE;}.teal-s{fill:#9FE1CB;}
+.fill-purple{fill:#3C3489;stroke:#AFA9EC;}.purple-t{fill:#EEEDFE;}.purple-s{fill:#CECBF6;}
+}
+</style>
+<marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker>
+</defs>
+
+<text class="cap" x="410" y="24" text-anchor="middle">Callers target typed contracts or stable operation identities</text>
+
+<g><rect class="fill-teal" x="28" y="42" width="118" height="52" rx="8" stroke-width="0.5"/><text class="title teal-t" x="87" y="68" text-anchor="middle" dominant-baseline="central">Typed client</text></g>
+<g><rect class="fill-teal" x="157" y="42" width="118" height="52" rx="8" stroke-width="0.5"/><text class="title teal-t" x="216" y="68" text-anchor="middle" dominant-baseline="central">Kafka</text></g>
+<g><rect class="fill-teal" x="286" y="42" width="118" height="52" rx="8" stroke-width="0.5"/><text class="title teal-t" x="345" y="68" text-anchor="middle" dominant-baseline="central">Cron jobs</text></g>
+<g><rect class="fill-teal" x="415" y="42" width="118" height="52" rx="8" stroke-width="0.5"/><text class="title teal-t" x="474" y="68" text-anchor="middle" dominant-baseline="central">Delayed jobs</text></g>
+<g><rect class="fill-teal" x="544" y="42" width="118" height="52" rx="8" stroke-width="0.5"/><text class="title teal-t" x="603" y="68" text-anchor="middle" dominant-baseline="central">Workflow</text></g>
+<g><rect class="fill-teal" x="673" y="42" width="118" height="52" rx="8" stroke-width="0.5"/><text class="title teal-t" x="732" y="68" text-anchor="middle" dominant-baseline="central">Inbox/Outbox</text></g>
+
+<path class="arrow" d="M87 94 L87 116 L410 116 L410 136" marker-end="url(#arrow)"/>
+<path class="arrow" d="M216 94 L216 116 L410 116"/>
+<path class="arrow" d="M345 94 L345 116 L410 116"/>
+<path class="arrow" d="M474 94 L474 116 L410 116"/>
+<path class="arrow" d="M603 94 L603 116 L410 116"/>
+<path class="arrow" d="M732 94 L732 116 L410 116"/>
+
+<g><rect class="fill-teal" x="86" y="138" width="648" height="62" rx="10" stroke-width="0.8"/>
+<text class="title teal-t" x="410" y="158" text-anchor="middle" dominant-baseline="central">Typed service dispatch</text>
+<text class="sub teal-s" x="410" y="180" text-anchor="middle" dominant-baseline="central">resolve target · capture registered context · build DispatchEnvelope</text></g>
+
+<line class="arrow" x1="410" y1="200" x2="410" y2="230" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+<text class="cap" x="422" y="216" dominant-baseline="central">request · result</text>
+
+<g><rect class="fill-purple" x="28" y="232" width="764" height="54" rx="8" stroke-width="0.5"/>
+<text class="title purple-t" x="410" y="252" text-anchor="middle" dominant-baseline="central">Vert.x event bus</text>
+<text class="sub purple-s" x="410" y="271" text-anchor="middle" dominant-baseline="central">operation address · async delivery</text></g>
+
+<line class="arrow" x1="410" y1="286" x2="410" y2="316" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+<text class="cap" x="422" y="302" dominant-baseline="central">request · result</text>
+
+<g><rect class="fill-teal" x="28" y="318" width="764" height="66" rx="10" stroke-width="0.8"/>
+<text class="title teal-t" x="410" y="339" text-anchor="middle" dominant-baseline="central">Services — managed contract execution</text>
+<text class="sub teal-s" x="410" y="360" text-anchor="middle" dominant-baseline="central">restore context · authorize · resilience · failure transport · observability</text>
+<text class="sub teal-s" x="410" y="377" text-anchor="middle" dominant-baseline="central">lifecycle · readiness · supervision</text></g>
+
+<path class="arrow" d="M410 384 L410 408 L168 408 L168 428" marker-end="url(#arrow)"/>
+<path class="arrow" d="M410 384 L410 428" marker-end="url(#arrow)"/>
+<path class="arrow" d="M410 384 L410 408 L652 408 L652 428" marker-end="url(#arrow)"/>
+
+<g><rect class="fill-gray" x="58" y="430" width="220" height="82" rx="8" stroke-width="0.5"/>
+<text class="title gray-t" x="168" y="454" text-anchor="middle" dominant-baseline="central">ServiceVerticle 1</text>
+<text class="sub gray-s" x="168" y="476" text-anchor="middle" dominant-baseline="central">one Vert.x context</text>
+<text class="sub gray-s" x="168" y="494" text-anchor="middle" dominant-baseline="central">consumer per operation</text></g>
+
+<g><rect class="fill-gray" x="300" y="430" width="220" height="82" rx="8" stroke-width="0.5"/>
+<text class="title gray-t" x="410" y="454" text-anchor="middle" dominant-baseline="central">ServiceVerticle 2</text>
+<text class="sub gray-s" x="410" y="476" text-anchor="middle" dominant-baseline="central">one Vert.x context</text>
+<text class="sub gray-s" x="410" y="494" text-anchor="middle" dominant-baseline="central">consumer per operation</text></g>
+
+<g><rect class="fill-gray" x="542" y="430" width="220" height="82" rx="8" stroke-width="0.5"/>
+<text class="title gray-t" x="652" y="454" text-anchor="middle" dominant-baseline="central">ServiceVerticle N</text>
+<text class="sub gray-s" x="652" y="476" text-anchor="middle" dominant-baseline="central">one Vert.x context</text>
+<text class="sub gray-s" x="652" y="494" text-anchor="middle" dominant-baseline="central">consumer per operation</text></g>
+
+<text class="cap" x="410" y="538" text-anchor="middle">Vert.x distributes calls across consumers registered at the same operation address</text>
+<text class="cap" x="410" y="558" text-anchor="middle">Contract identity remains stable while deployment instance counts change</text>
+<text class="cap" x="410" y="578" text-anchor="middle">Contexts and consumers scale; the selected implementation object is shared</text>
+</svg>

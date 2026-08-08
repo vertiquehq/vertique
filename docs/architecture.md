@@ -9,6 +9,15 @@ Vertique is a Java 21 multi-module Maven framework built around Vert.x. It uses
 compile-time code generation and Dagger dependency injection to keep application
 wiring explicit and reflection-light.
 
+## Platform overview
+
+![Vertique platform architecture](diagrams/architecture-overview.svg)
+
+The overview keeps the main capabilities at the same level: Services supplies typed contract
+execution, while workflows, Kafka, cron, delayed jobs, and inbox/outbox compose with it where they
+need to invoke an operation. The event-bus and service-verticle mechanics are shown separately
+below so the platform view stays readable.
+
 ## Dependency direction
 
 Dependencies flow from application-facing capabilities toward smaller foundation
@@ -59,6 +68,16 @@ Cross-cutting behavior uses neutral, ordered extension points. Producer modules 
 their events and SPIs, while metrics, tracing, logging, and application extensions
 contribute adapters without reversing dependency direction.
 
+### Services runtime detail
+
+![Services runtime architecture](diagrams/services-runtime-architecture.svg)
+
+Application code calls a generated, injectable typed client through the service contract. Kafka,
+cron, delayed jobs, workflows, and outbox delivery resolve stable operation identities. Both paths
+enter the same dispatch runtime, which captures registered context, sends over the Vert.x event
+bus, and returns the result or transported failure. The receiving side restores the dispatch
+context and invokes one of the configured service verticle instances on its own Vert.x context.
+
 ## Starter aggregates
 
 The `vertique-starter` family publishes static Dagger aggregate modules that compose a fixed set of
@@ -94,7 +113,7 @@ README.
 | Archetype | Persona | Starters composed |
 |---|---|---|
 | `vertique-archetype-rest` | REST API application | `vertique-starter-rest` |
-| `vertique-archetype-services` | Headless event-bus services application | `vertique-starter-services` |
+| `vertique-archetype-services` | Contract-based services application | `vertique-starter-services` |
 | `vertique-archetype-rest-postgresql` | PostgreSQL-backed REST application | `vertique-starter-rest`, `vertique-starter-postgresql` |
 
 Each archetype's own README documents its exact `archetype:generate` command; the generated

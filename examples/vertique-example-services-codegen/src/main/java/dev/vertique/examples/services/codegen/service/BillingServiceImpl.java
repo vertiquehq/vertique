@@ -16,7 +16,9 @@ import lombok.extern.slf4j.Slf4j;
  * {@code implements BillingService}, has exactly one {@code @Inject} constructor, and is
  * annotated with {@code @Singleton}. The {@code vertique-codegen-services} processor discovers
  * it at compile time and generates a {@code BillingService_ContractContributor} that registers
- * it with the event bus dispatch infrastructure — no manual {@code ServiceModule} wiring required.
+ * it with the event bus dispatch infrastructure. The same {@code GeneratedServicesModule} also
+ * provides the singleton {@link BillingService} typed client, so neither binding requires a manual
+ * Dagger module.
  *
  * <p>This is a stub implementation for demonstration; a real billing service would integrate
  * with a payment gateway.

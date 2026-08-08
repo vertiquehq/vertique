@@ -17,8 +17,8 @@ import jakarta.inject.Singleton;
  *
  * <p>This fixture is the load-bearing proof of the services starter's composition contract: the
  * component names no dispatch or management module directly, yet Dagger must resolve the complete
- * headless services application graph from the aggregate alone — with no REST module anywhere in
- * the component's module graph or on its classpath.
+ * service execution graph from the aggregate alone. The fixture also verifies the starter's bounded
+ * dependency closure.
  *
  * <p>{@link #serviceClientFactory()} is the provision method the plan's services component contract
  * mandates: application code obtains typed event-bus clients through it. The remaining methods

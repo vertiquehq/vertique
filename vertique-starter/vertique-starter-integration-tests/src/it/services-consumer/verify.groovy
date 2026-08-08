@@ -119,7 +119,7 @@ List<String> tokenMechanismOnClasspath =
 assert tokenMechanismOnClasspath.isEmpty():
         "Starter leaks JWT/JOSE token-mechanism artifacts onto the compile/runtime classpath: ${tokenMechanismOnClasspath}"
 
-// No database test infrastructure may reach a headless services application either.
+// No database test infrastructure may reach the bounded services starter closure either.
 List<String> testcontainersOnClasspath =
         classpath.findAll { it.groupId.startsWith("org.testcontainers") }
                 .collect { "${it.groupId}:${it.artifactId}".toString() }

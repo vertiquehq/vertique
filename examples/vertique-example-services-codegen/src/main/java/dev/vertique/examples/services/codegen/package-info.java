@@ -6,7 +6,8 @@
  *
  * <p>Demonstrates end-to-end use of {@code vertique-codegen-services}: two commerce service
  * contracts are registered at compile time via generated {@code ServiceContractContributor}
- * implementations, eliminating manual {@code @IntoSet} wiring.
+ * implementations, and their singleton typed clients are provided by the same generated Dagger
+ * module. This eliminates both manual {@code @IntoSet} wiring and manual client providers.
  *
  * <p>The application is bootstrapped via the {@code @VertiqueApp}-annotated
  * {@link dev.vertique.examples.services.codegen.AppComponent} — the annotation processor generates
@@ -21,7 +22,7 @@
  * <ul>
  *   <li>{@link dev.vertique.examples.services.codegen.AppComponent} — Dagger root component</li>
  *   <li>{@link dev.vertique.examples.services.codegen.AppModule} — security stubs and verticle registrations</li>
- *   <li>{@link dev.vertique.examples.services.codegen.ServiceModule} — event bus client proxies</li>
+ *   <li>{@code GeneratedServicesModule} — generated service registrations and typed clients</li>
  * </ul>
  */
 package dev.vertique.examples.services.codegen;

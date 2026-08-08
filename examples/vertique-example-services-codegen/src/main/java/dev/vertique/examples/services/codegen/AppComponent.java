@@ -51,12 +51,11 @@ import jakarta.inject.Singleton;
  *   <li>{@link AppModule} — Application-specific configuration bindings</li>
  *   <li>{@link GeneratedJaxRsResourcesModule} — auto-generated {@code @JaxRsResources} bindings
  *       produced by {@code AutoWireProcessor} at compile time</li>
- *   <li>{@link ServiceModule} — Service client proxy bindings for REST resources</li>
  *   <li>{@link GeneratedServicesModule} — auto-generated
- *       {@code ServiceContractContributor} bindings produced by {@code ServiceContractProcessor}
- *       at compile time; explicit inclusion here guards against misconfiguration —
- *       if the processor is not on the annotation processor path, this import causes a
- *       compile error rather than a silent empty-registry boot</li>
+ *       {@code ServiceContractContributor} bindings and singleton typed-client bindings produced by
+ *       {@code ServiceContractProcessor} at compile time; explicit inclusion here guards against
+ *       misconfiguration — if the processor is not on the annotation processor path, this import
+ *       causes a compile error rather than a silent empty-registry boot</li>
  * </ul>
  *
  * <p>Security modules ({@code AuthModule}, {@code SecurityModule}) are
@@ -75,24 +74,25 @@ import jakarta.inject.Singleton;
             CoreLifecycleStepsModule.class,
             AppModule.class,
             GeneratedJaxRsResourcesModule.class,
-            ServiceModule.class,
             GeneratedServicesModule.class
         })
 interface AppComponent extends VertiqueApplicationComponent {
 
     /**
-     * Returns the singleton {@link BillingService} client proxy bound by {@link ServiceModule},
-     * exposed so tests can assert on the concrete client instance the factory selected.
+     * Returns the singleton {@link BillingService} typed client provided by
+     * {@link GeneratedServicesModule}, exposed so tests can assert on the concrete client instance
+     * the factory selected.
      *
-     * @return the {@link BillingService} event bus client proxy
+     * @return the singleton {@link BillingService} typed client
      */
     BillingService billingService();
 
     /**
-     * Returns the singleton {@link ShippingService} client proxy bound by {@link ServiceModule},
-     * exposed so tests can assert on the concrete client instance the factory selected.
+     * Returns the singleton {@link ShippingService} typed client provided by
+     * {@link GeneratedServicesModule}, exposed so tests can assert on the concrete client instance
+     * the factory selected.
      *
-     * @return the {@link ShippingService} event bus client proxy
+     * @return the singleton {@link ShippingService} typed client
      */
     ShippingService shippingService();
 }

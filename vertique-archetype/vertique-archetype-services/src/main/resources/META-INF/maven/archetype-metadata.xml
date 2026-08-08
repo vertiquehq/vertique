@@ -37,6 +37,7 @@ SPDX-License-Identifier: EUPL-1.2
                 <include>AppComponent.java</include>
                 <include>AppModule.java</include>
                 <include>package-info.java</include>
+                <include>service/GreetingClient.java</include>
                 <include>service/GreetingService.java</include>
                 <include>service/GreetingServiceImpl.java</include>
                 <include>service/package-info.java</include>

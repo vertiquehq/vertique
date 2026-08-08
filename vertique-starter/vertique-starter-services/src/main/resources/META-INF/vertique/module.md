@@ -11,9 +11,9 @@ SPDX-License-Identifier: EUPL-1.2
 > **Depends on:** starter-core, management, services
 
 The `vertique-starter-services` module publishes one public Dagger aggregate,
-`ServicesApplicationModule`, that composes the headless event-bus services foundation on top of the
-core application starter. An application names the aggregate in its `@Component` instead of
-repeating the dispatch and management module list in every generated application.
+`ServicesApplicationModule`, that composes Vertique's contract-based service execution foundation
+on top of the core application starter. An application names the aggregate in its `@Component`
+instead of repeating the dispatch and management module list in every generated application.
 
 This module is a composition surface only. It declares no bindings of its own, contributes no
 deployment entry, transport, test, or generated code, and adds no runtime behavior beyond what the
@@ -23,14 +23,10 @@ modules it includes already provide.
 
 ## When To Use It
 
-Install `vertique-starter-services` in any application whose surface is the event bus rather than
-HTTP: services declared with `@ServiceContract` and dispatched through `ServiceClientFactory`. It
-already includes `CoreApplicationModule`, so an application that names this aggregate does not also
-name the core starter.
-
-The starter is headless — it brings no HTTP server, no JAX-RS routing, and no REST security. An
-application that also serves an HTTP API installs `vertique-starter-rest` instead; a service
-application that needs nothing beyond the lifecycle foundation installs `vertique-starter-core`.
+Install `vertique-starter-services` when an application defines typed `@ServiceContract`
+interfaces and wants Vertique to manage their event-bus dispatch, service verticle lifecycle,
+supervision, and management wiring. It already includes `CoreApplicationModule`, so an application
+that names this aggregate does not also name the core starter.
 
 ---
 
@@ -109,8 +105,8 @@ interface AppComponent extends VertiqueApplicationComponent {
 
 `AppModule` is the application-owned module contributing its management deployment entry;
 `GeneratedServicesModule` stands for whichever module the Vertique annotation processors generate
-for that application. The `serviceClientFactory()` provision method is how application code obtains
-typed event-bus clients.
+for that application. It contributes the server registrations and provides each eligible service
+contract as a singleton typed client, so application classes inject `GreetingService` directly.
 
 ---
 
@@ -130,9 +126,6 @@ module.
 
 ## Common Mistakes
 
-- **Expecting an HTTP surface.** The aggregate is headless. No JAX-RS routing, HTTP verticle, or
-  REST security binding exists in a graph composed from this starter alone; an application that
-  needs one installs the REST starter.
 - **Expecting the starter to deploy the management endpoint.** No `VerticleDeployment` is
   contributed here, so an application that names only `ServicesApplicationModule` starts with an
   empty deployment set and exposes no management port. Service verticles are deployed by the
@@ -157,8 +150,9 @@ module.
 - **`dev.vertique:vertique-services`** — `DispatchModule`
 - **`com.google.dagger:dagger`** — the `@Module` annotation itself
 
-The ledger above is exact: the module declares no other direct dependency, and in particular no
-REST, database, launcher, test, or code-generation artifact.
+The ledger above is exact: the module declares no other direct dependency. Database, launcher,
+test, code-generation, and other capability artifacts remain application-owned composition
+choices.
 
 ---
 
@@ -166,8 +160,7 @@ REST, database, launcher, test, or code-generation artifact.
 
 `ServicesApplicationModule` is proven by the starter family's integration-test harness, which
 compiles a real `@VertiqueApp` component naming only this aggregate, builds it through the
-generated application factory without any REST module present, and asserts that the
-`ServiceClientFactory`, the paired service deployment lifecycle steps, and the management binding
-resolve. A dependency fixture materializes the compile and runtime classpaths and fails when the
-direct ledger drifts or a REST, database, launcher, test, code-generation, or Testcontainers
-artifact leaks in.
+generated application factory, and asserts that the `ServiceClientFactory`, paired service
+deployment lifecycle steps, and management binding resolve. A dependency fixture materializes the
+compile and runtime classpaths, enforces the exact framework-artifact ledger, and applies targeted
+forbidden-category checks so the bounded starter dependency closure cannot drift silently.

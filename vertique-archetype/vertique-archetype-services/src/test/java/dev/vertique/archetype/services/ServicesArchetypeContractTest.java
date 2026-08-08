@@ -26,7 +26,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Source-template contract proof for the headless services archetype.
+ * Source-template contract proof for the contract-based services archetype.
  *
  * <p>Verifies that the archetype coordinate, the generated project's dependency contract, the
  * archetype module's own staging set, the generated Dagger component's module set and
@@ -211,7 +211,7 @@ class ServicesArchetypeContractTest {
      * Artifact identifiers the generated project must never declare, matched against every {@code
      * <artifactId>} in the template POM rather than only its project dependencies. A REST runtime or
      * REST Assured arriving through a plugin, a profile, or a managed block is as much a violation of
-     * the headless contract as a declared dependency would be.
+     * the services starter contract as a declared dependency would be.
      */
     private static final Pattern FORBIDDEN_ARTIFACT = Pattern.compile("^(vertique-rest-.*|rest-assured)$");
 

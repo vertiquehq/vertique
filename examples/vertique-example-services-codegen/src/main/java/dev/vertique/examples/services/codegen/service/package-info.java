@@ -16,7 +16,7 @@
  *
  * <p>{@code vertique-codegen-services} generates {@code BillingService_ContractContributor}
  * and {@code ShippingService_ContractContributor} in this package, plus a single
- * {@code GeneratedServicesModule} that wires both contributors into
- * the Dagger {@code @IntoSet} multibinding.
+ * {@code GeneratedServicesModule} that wires both contributors into the Dagger {@code @IntoSet}
+ * multibinding and provides an injectable singleton typed client for each contract.
  */
 package dev.vertique.examples.services.codegen.service;

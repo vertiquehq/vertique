@@ -52,12 +52,12 @@ import jakarta.inject.Singleton;
  *   <li>{@link AppModule} — Application-specific configuration bindings</li>
  *   <li>{@link GeneratedJaxRsResourcesModule} — auto-generated {@code @JaxRsResources} bindings
  *       produced by {@code vertique-codegen-jaxrs} at compile time</li>
- *   <li>{@link GeneratedServicesModule} — auto-generated {@code ServiceContractContributor}
- *       bindings produced by {@code vertique-codegen-services} at compile time. Drives
- *       {@code @ConditionalOnProperty}-based selection between
+ *   <li>{@link GeneratedServicesModule} — auto-generated singleton typed-client and
+ *       {@code ServiceContractContributor} bindings produced by
+ *       {@code vertique-codegen-services} at compile time. Drives
+ *       {@code @ConditionalOnProperty}-based implementation selection between
  *       {@link dev.vertique.examples.services.service.UserServiceHandler} (default) and
  *       {@link dev.vertique.examples.services.service.UserServiceSandbox} (sandbox override)</li>
- *   <li>{@link ServiceModule} — typed service client proxy binding</li>
  *   <li>{@link AuthzModule} — programmatic action/policy/role wiring and a capturing
  *       {@link dev.vertique.security.events.SecurityEventObserver} for the
  *       {@code @RequiresAction} dispatch proof
@@ -86,7 +86,6 @@ import jakarta.inject.Singleton;
             AppModule.class,
             GeneratedJaxRsResourcesModule.class,
             GeneratedServicesModule.class,
-            ServiceModule.class,
             SecurityAuthzModule.class,
             SecurityEventsModule.class,
             AuthzModule.class
