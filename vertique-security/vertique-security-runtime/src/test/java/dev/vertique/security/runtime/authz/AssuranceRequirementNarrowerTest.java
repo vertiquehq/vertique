@@ -30,10 +30,10 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -280,8 +280,8 @@ class AssuranceRequirementNarrowerTest {
             AssuranceRequirement requirement = new AssuranceRequirement(1, Duration.ofMinutes(5));
             AssuranceRequirementConfig config = configWith(ACTION.value(), requirement);
             AssuranceRequirementNarrower narrower = new AssuranceRequirementNarrower(config, fixedAt(NOW));
-            AuthenticationAssurance assurance =
-                    new AuthenticationAssurance(Optional.empty(), Set.of(), Optional.empty(), Optional.of(5));
+            AuthenticationAssurance assurance = new AuthenticationAssurance(
+                    Optional.empty(), new LinkedHashSet<>(), Optional.empty(), Optional.of(5));
             SecurityContext ctx = liveCtxWithAssurance(Optional.of(assurance));
 
             AuthorizationDecision result =
@@ -340,7 +340,7 @@ class AssuranceRequirementNarrowerTest {
 
     private static AuthenticationAssurance assuranceOf(int providerLevel, Instant authTime) {
         return new AuthenticationAssurance(
-                Optional.empty(), Set.of(), Optional.of(authTime), Optional.of(providerLevel));
+                Optional.empty(), new LinkedHashSet<>(), Optional.of(authTime), Optional.of(providerLevel));
     }
 
     private static Clock fixedAt(Instant instant) {

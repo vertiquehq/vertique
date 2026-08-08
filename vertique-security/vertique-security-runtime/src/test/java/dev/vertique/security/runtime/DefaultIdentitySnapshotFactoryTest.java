@@ -32,6 +32,7 @@ import dev.vertique.security.authz.AuthorizationClaims;
 import dev.vertique.security.verification.CustomVerificationSource;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -129,8 +130,8 @@ class DefaultIdentitySnapshotFactoryTest {
                 Optional.empty(),
                 new CustomVerificationSource("test", Map.of()),
                 Map.of());
-        AuthenticationAssurance assurance =
-                new AuthenticationAssurance(Optional.empty(), Set.of(), Optional.of(authTime), Optional.empty());
+        AuthenticationAssurance assurance = new AuthenticationAssurance(
+                Optional.empty(), new LinkedHashSet<>(), Optional.of(authTime), Optional.empty());
         AuthenticationState auth = new AuthenticationState(
                 DefaultAuthMethod.custom("password"),
                 List.of(evidence),
@@ -204,8 +205,8 @@ class DefaultIdentitySnapshotFactoryTest {
 
         Instant authTime = Instant.parse("2026-02-02T00:00:00Z");
         Instant markerAuthenticatedAt = Instant.parse("2026-01-01T00:00:00Z");
-        AuthenticationAssurance assurance =
-                new AuthenticationAssurance(Optional.empty(), Set.of(), Optional.of(authTime), Optional.empty());
+        AuthenticationAssurance assurance = new AuthenticationAssurance(
+                Optional.empty(), new LinkedHashSet<>(), Optional.of(authTime), Optional.empty());
         AuthenticationState auth = new AuthenticationState(
                 DefaultAuthMethod.custom("jwt"),
                 List.of(),

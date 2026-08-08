@@ -210,6 +210,10 @@ public class IdentitySnapshotCodec {
         // Verify the MAC over the parsed tree (the exact stored representation), then bind the same
         // tree to the typed model for the caller — the model is never re-serialized to recompute the
         // canonical bytes, so lossy Object-bound attribute values cannot invalidate a legitimate tag.
+        // A validly-signed stored row carrying duplicate amr elements passes this tree-level check,
+        // but the typed model's set semantics dedupe it, so such a row permanently fails the
+        // verifyIntegrity/verifyForUse re-serialization — deny-direction by design; the framework
+        // encoder cannot produce duplicates.
         verifyTree(root);
         IdentitySnapshot snapshot = treeToSnapshot(root);
 
