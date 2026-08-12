@@ -1,0 +1,83 @@
+<!--
+SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
+SPDX-License-Identifier: EUPL-1.2
+-->
+
+<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 820 536" role="img">
+<title>Vertique application wiring ownership</title>
+<desc>The application-owned AppModule, the starter-supplied RestApplicationModule, and the compile-time-generated GeneratedJaxRsResourcesModule compose into the application's own AppComponent, annotated with VertiqueApp. The component extends the framework's passive VertiqueApplicationComponent contract, which exposes startup steps, shutdown steps, and the verticle deployment manager. The framework's lifecycle runner, VertiqueApplicationBootstrap, drives that contract; the component never starts itself.</desc>
+<defs>
+<style>
+text{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;}
+.title{font-size:14px;font-weight:500;}
+.sub{font-size:12px;font-weight:400;}
+.cap{font-size:12px;font-weight:400;fill:#5F5E5A;}
+.arrow{stroke:#888780;stroke-width:1.2;fill:none;}
+.fill-gray{fill:#F1EFE8;stroke:#5F5E5A;}.gray-t{fill:#2C2C2A;}.gray-s{fill:#5F5E5A;}
+.fill-blue{fill:#E6F1FB;stroke:#185FA5;}.blue-t{fill:#0C447C;}.blue-s{fill:#185FA5;}
+.fill-coral{fill:#FAECE7;stroke:#993C1D;}.coral-t{fill:#712B13;}.coral-s{fill:#993C1D;}
+.fill-teal{fill:#E1F5EE;stroke:#0F6E56;}.teal-t{fill:#085041;}.teal-s{fill:#0F6E56;}
+.fill-purple{fill:#EEEDFE;stroke:#534AB7;}.purple-t{fill:#3C3489;}.purple-s{fill:#534AB7;}
+@media (prefers-color-scheme:dark){
+.cap{fill:#B4B2A9;}.arrow{stroke:#888780;}
+.fill-gray{fill:#2C2C2A;stroke:#B4B2A9;}.gray-t{fill:#F1EFE8;}.gray-s{fill:#D3D1C7;}
+.fill-blue{fill:#0C447C;stroke:#85B7EB;}.blue-t{fill:#E6F1FB;}.blue-s{fill:#B5D4F4;}
+.fill-coral{fill:#712B13;stroke:#F0997B;}.coral-t{fill:#FAECE7;}.coral-s{fill:#F5C4B3;}
+.fill-teal{fill:#085041;stroke:#5DCAA5;}.teal-t{fill:#E1F5EE;}.teal-s{fill:#9FE1CB;}
+.fill-purple{fill:#3C3489;stroke:#AFA9EC;}.purple-t{fill:#EEEDFE;}.purple-s{fill:#CECBF6;}
+}
+</style>
+<marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker>
+</defs>
+
+<text class="cap" x="410" y="24" text-anchor="middle">Every piece of the Dagger wiring has exactly one owner</text>
+
+<text class="cap" x="162" y="50" text-anchor="middle">you write this</text>
+<text class="cap" x="410" y="50" text-anchor="middle">a starter supplies this</text>
+<text class="cap" x="658" y="50" text-anchor="middle">the compiler generates this</text>
+
+<g><rect class="fill-gray" x="42" y="60" width="240" height="94" rx="8" stroke-width="0.5"/>
+<text class="title gray-t" x="162" y="82" text-anchor="middle" dominant-baseline="central">AppModule</text>
+<text class="sub gray-s" x="162" y="102" text-anchor="middle" dominant-baseline="central">application-owned @Module</text>
+<text class="sub gray-s" x="162" y="119" text-anchor="middle" dominant-baseline="central">management verticle → INFRA</text>
+<text class="sub gray-s" x="162" y="136" text-anchor="middle" dominant-baseline="central">http verticle → EDGE</text></g>
+
+<g><rect class="fill-blue" x="290" y="60" width="240" height="94" rx="8" stroke-width="0.5"/>
+<text class="title blue-t" x="410" y="82" text-anchor="middle" dominant-baseline="central">RestApplicationModule</text>
+<text class="sub blue-s" x="410" y="102" text-anchor="middle" dominant-baseline="central">starter aggregate — framework-owned</text>
+<text class="sub blue-s" x="410" y="119" text-anchor="middle" dominant-baseline="central">from vertique-starter-rest</text>
+<text class="sub blue-s" x="410" y="136" text-anchor="middle" dominant-baseline="central">includes CoreApplicationModule</text></g>
+
+<g><rect class="fill-purple" x="538" y="60" width="240" height="94" rx="8" stroke-width="0.5"/>
+<text class="title purple-t" x="658" y="82" text-anchor="middle" dominant-baseline="central">GeneratedJaxRsResourcesModule</text>
+<text class="sub purple-s" x="658" y="102" text-anchor="middle" dominant-baseline="central">annotation-processor output</text>
+<text class="sub purple-s" x="658" y="119" text-anchor="middle" dominant-baseline="central">bindings for your JAX-RS resources</text>
+<text class="sub purple-s" x="658" y="136" text-anchor="middle" dominant-baseline="central">never reachable via a starter</text></g>
+
+<path class="arrow" d="M162 154 L162 168 L410 168 L410 178" marker-end="url(#arrow)"/>
+<path class="arrow" d="M410 154 L410 178" marker-end="url(#arrow)"/>
+<path class="arrow" d="M658 154 L658 168 L410 168 L410 178" marker-end="url(#arrow)"/>
+
+<g><rect class="fill-gray" x="145" y="180" width="530" height="76" rx="10" stroke-width="0.8"/>
+<text class="title gray-t" x="410" y="202" text-anchor="middle" dominant-baseline="central">AppComponent</text>
+<text class="sub gray-s" x="410" y="222" text-anchor="middle" dominant-baseline="central">@VertiqueApp @Singleton @Component</text>
+<text class="sub gray-s" x="410" y="239" text-anchor="middle" dominant-baseline="central">names every module it composes — nothing is wired implicitly</text></g>
+
+<line class="arrow" x1="410" y1="256" x2="410" y2="284" marker-end="url(#arrow)"/>
+<text class="cap" x="422" y="270" dominant-baseline="central">extends</text>
+
+<g><rect class="fill-teal" x="145" y="286" width="530" height="76" rx="10" stroke-width="0.8"/>
+<text class="title teal-t" x="410" y="308" text-anchor="middle" dominant-baseline="central">VertiqueApplicationComponent</text>
+<text class="sub teal-s" x="410" y="328" text-anchor="middle" dominant-baseline="central">the passive DI boundary — it never starts itself</text>
+<text class="sub teal-s" x="410" y="345" text-anchor="middle" dominant-baseline="central">exposes startup steps · shutdown steps · verticle deployment manager</text></g>
+
+<line class="arrow" x1="410" y1="362" x2="410" y2="390" marker-end="url(#arrow)"/>
+<text class="cap" x="422" y="376" dominant-baseline="central">driven by</text>
+
+<g><rect class="fill-coral" x="145" y="392" width="530" height="64" rx="10" stroke-width="0.8"/>
+<text class="title coral-t" x="410" y="414" text-anchor="middle" dominant-baseline="central">VertiqueApplicationBootstrap — the lifecycle runner</text>
+<text class="sub coral-s" x="410" y="436" text-anchor="middle" dominant-baseline="central">host-neutral choreography: phase order, fail-fast, reverse-order teardown</text></g>
+
+<text class="cap" x="410" y="492" text-anchor="middle">Gray — application-owned · Blue — starter-supplied · Purple — generated at compile time</text>
+<text class="cap" x="410" y="514" text-anchor="middle">Teal — the framework contract your component extends · Coral — the framework runtime that drives it</text>
+</svg>
