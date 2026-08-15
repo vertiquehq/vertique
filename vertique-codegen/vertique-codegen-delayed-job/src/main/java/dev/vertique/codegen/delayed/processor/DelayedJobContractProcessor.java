@@ -4,6 +4,7 @@
 package dev.vertique.codegen.delayed.processor;
 
 import dev.vertique.codegen.CodegenContext;
+import dev.vertique.codegen.delayed.processor.emit.DelayedJobClientsModuleEmitter;
 import dev.vertique.codegen.delayed.processor.emit.DelayedJobProxyEmitter;
 import dev.vertique.codegen.delayed.processor.scan.DelayedJobContractScanner;
 import dev.vertique.codegen.delayed.processor.validate.DelayedJobValidator;
@@ -23,10 +24,12 @@ import javax.lang.model.element.TypeElement;
 /**
  * Annotation processor that generates a static {@code {Contract}_DelayedJobProxy} for each
  * {@code @DelayedJobContract} interface, replacing the per-call JDK dynamic proxy built by
- * {@code DelayedJobClientFactory}, and validates contract/executor shape at compile time.
+ * {@code DelayedJobClientFactory}, plus a {@code GeneratedDelayedJobClientsModule} Dagger module,
+ * and validates contract/executor shape at compile time.
  *
  * <p>The runtime reflective proxy ({@code DelayedJobClientProxy}) is preserved as a fallback; an app
- * opts in by adding this leaf to {@code annotationProcessorPaths}.
+ * opts in by adding this leaf to {@code annotationProcessorPaths}, and binds the contracts by
+ * including the generated module in its {@code @Component}.
  *
  * <p>This class is registered via {@code META-INF/services/javax.annotation.processing.Processor}.
  */
@@ -47,6 +50,7 @@ public final class DelayedJobContractProcessor extends AbstractProcessor {
     private DelayedJobContractScanner scanner;
     private DelayedJobValidator validator;
     private DelayedJobProxyEmitter emitter;
+    private DelayedJobClientsModuleEmitter moduleEmitter;
     private boolean emitted;
 
     @Override
@@ -57,6 +61,7 @@ public final class DelayedJobContractProcessor extends AbstractProcessor {
         boolean requireExecutor = "true".equals(env.getOptions().get(OPTION_REQUIRE_EXECUTOR));
         validator = new DelayedJobValidator(ctx, requireExecutor);
         emitter = new DelayedJobProxyEmitter(ctx);
+        moduleEmitter = new DelayedJobClientsModuleEmitter(ctx);
         emitted = false;
     }
 
@@ -81,6 +86,7 @@ public final class DelayedJobContractProcessor extends AbstractProcessor {
         for (DelayedJobContractModel model : validModels) {
             emitter.emit(model);
         }
+        moduleEmitter.emit(validModels);
 
         emitted = true;
         return false;
