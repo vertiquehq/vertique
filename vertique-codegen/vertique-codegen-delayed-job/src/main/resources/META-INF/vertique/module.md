@@ -12,7 +12,9 @@ SPDX-License-Identifier: EUPL-1.2
 
 Annotation processor that eliminates per-call reflection in the delayed-job enqueue hot path. For each `@DelayedJobContract` interface it generates a static `{Contract}_DelayedJobProxy` class that replaces the JDK dynamic proxy built by `DelayedJobClientFactory`, removing `InvocationHandler` dispatch and baking the six enqueue overloads directly into concrete methods.
 
-Runtime selection is transparent: `DelayedJobClientFactory.create` tries `Class.forName` for the generated proxy first, falls back to the JDK `DelayedJobClientProxy` on `ClassNotFoundException`, and throws `IllegalStateException` when a generated class is present but broken. No Dagger graph changes are required.
+Runtime selection is transparent: `DelayedJobClientFactory.create` tries `Class.forName` for the generated proxy first, falls back to the JDK `DelayedJobClientProxy` on `ClassNotFoundException`, and throws `IllegalStateException` when a generated class is present but broken.
+
+The processor also generates a single aggregate `GeneratedDelayedJobClientsModule` Dagger module whose `@Provides @Singleton` bindings each delegate to `DelayedJobClientFactory.create({Contract}.class)`, so an application binds every typed client by listing one module in its `@Component` instead of hand-writing a provider per contract.
 
 In addition to the performance win, the processor lifts contract-shape validation to compile time: an unresolvable payload type, duplicate contract names, or extra instance methods on the contract all surface as build errors rather than startup failures or silent misbehavior.
 
@@ -28,16 +30,17 @@ In addition to the performance win, the processor lifts contract-shape validatio
 @SupportedAnnotationTypes("dev.vertique.job.delayed.DelayedJobContract")
 @SupportedSourceVersion(SourceVersion.RELEASE_21)
 @SupportedOptions({
-    "vertique.codegen.package",                          // inherited from codegen-core; ignored for proxy placement (see below)
+    "vertique.codegen.package",                          // package for GeneratedDelayedJobClientsModule; ignored for proxy placement (see below)
     "vertique.codegen.delayedjob.requireExecutor"        // default: false
 })
 ```
 
 Lifecycle:
-1. `init(env)` — instantiates `CodegenContext`, `DelayedJobContractScanner`, `DelayedJobValidator`, `DelayedJobProxyEmitter`.
+1. `init(env)` — instantiates `CodegenContext`, `DelayedJobContractScanner`, `DelayedJobValidator`, `DelayedJobProxyEmitter`, `DelayedJobClientsModuleEmitter`.
 2. `process(annotations, round)`:
    - Collects `@DelayedJobContract`-annotated `TypeElement`s.
    - For each: scans into `DelayedJobContractModel`, runs all validators, emits proxy for valid models.
+   - Emits one `GeneratedDelayedJobClientsModule` covering all valid models in the unit.
 3. Returns `false` so other processors (Dagger, Lombok) see the same elements.
 
 ### `DelayedJobContractScanner` / `DelayedJobContractModel`
@@ -126,6 +129,35 @@ public final class DeliverWebhookJob_DelayedJobProxy implements DeliverWebhookJo
 }
 ```
 
+### `DelayedJobClientsModuleEmitter`
+
+Generates a single `GeneratedDelayedJobClientsModule` covering all valid contracts in the compilation unit. Nothing is emitted when the unit has no valid contract, so an application without delayed jobs has no empty module to install.
+
+**Delegate to the factory, never return the proxy directly.** Every generated binding is:
+
+```java
+@Generated("dev.vertique.codegen.delayed.processor.DelayedJobContractProcessor")
+@Module
+public class GeneratedDelayedJobClientsModule {
+    @Provides
+    @Singleton
+    static DeliverWebhookJob provideDeliverWebhookJobClient(DelayedJobClientFactory factory) {
+        return factory.create(DeliverWebhookJob.class);
+    }
+}
+```
+
+The body delegates to `DelayedJobClientFactory.create({Contract}.class)` and never constructs the generated proxy directly. The factory owns the contract checks and the per-contract config merge (annotation defaults overlaid with `delayedJob.contracts.{name}.*`); a binding that constructed the proxy directly would bypass both. The factory selects the generated proxy internally via `Class.forName`, so the injected instance is still the zero-reflection proxy.
+
+**Package resolution order:**
+1. `-Avertique.codegen.package` when set and non-blank.
+2. Longest-common-package-prefix of all contract packages.
+3. `vertique.generated.delayedjob` when the LCP is empty.
+
+This option moves the module only — proxies stay pinned to their contract's package (see [Origin-Package Pinning](#origin-package-pinning)).
+
+**Simple-name disambiguation.** Two contracts with the same simple name in different packages would produce two `provide{Name}Client` methods differing only in return type, which does not compile. The second and later bindings are suffixed with the contract's flattened fully-qualified name (`provideJobClient_com_foo_Job`) instead, so the collision never fails the build. Bindings are emitted in contract-FQN order, making the suffixes stable across builds.
+
 ---
 
 ## Runtime Integration
@@ -156,7 +188,7 @@ The one-time `Class.forName` is the only reflective call in the optimized path. 
 
 ### Origin-Package Pinning
 
-The generated proxy is always emitted into the contract's own package (`ctx.packageNameOf(contract)`), never the `-Avertique.codegen.package` override. The runtime lookup derives the class name from the contract's binary name, so relocating the proxy would break discovery without a corresponding change to the lookup logic. Do not set `-Avertique.codegen.package` expecting it to control proxy placement for this processor.
+The generated proxy is always emitted into the contract's own package (`ctx.packageNameOf(contract)`), never the `-Avertique.codegen.package` override. The runtime lookup derives the class name from the contract's binary name, so relocating the proxy would break discovery without a corresponding change to the lookup logic. Do not set `-Avertique.codegen.package` expecting it to control proxy placement — it controls only where `GeneratedDelayedJobClientsModule` is written, which is safe because that module is referenced by name from the application `@Component` rather than discovered reflectively.
 
 ### Nested-Contract FQN Translation
 
@@ -180,12 +212,28 @@ The generated proxy is always emitted into the contract's own package (`ctx.pack
 
 ## Adoption
 
+### Step 1 — use the application processor boundary
+
 Applications inheriting `vertique-app-parent` declare `vertique-job-delayed` as a runtime
 dependency and receive the complete processor facade automatically. Custom-parent applications
 import `vertique-bom` and configure only the versionless Dagger and `vertique-codegen-all`
 processor paths. See `docs/packaging.md`.
 
-No `@Component` changes are required. Removing the processor reverts all contracts to the JDK reflective proxy — the existing `DelayedJobClientProxy` is retained and is not deprecated.
+### Step 2 — include the generated module
+
+Add `GeneratedDelayedJobClientsModule` to the application `@Component`. It provides one `@Singleton` binding per `@DelayedJobContract` in the compilation unit:
+
+```java
+@Component(modules = {
+    // ... existing modules ...
+    GeneratedDelayedJobClientsModule.class
+})
+interface AppComponent { ... }
+```
+
+Remove any hand-written `@Provides` for a contract when adopting the module — keeping both makes the binding a Dagger duplicate and fails graph validation. Skipping this step leaves the generated proxies on the classpath unbound, so every `@Inject` site for a contract fails Dagger's compile-time graph validation rather than silently resolving to something unexpected.
+
+Both steps are individually reversible: removing the processor reverts all contracts to the JDK reflective proxy — the existing `DelayedJobClientProxy` is retained and is not deprecated — and removing the module from the `@Component` means contracts must be provided manually again.
 
 ### `requireExecutor` Option
 
@@ -203,13 +251,15 @@ Promotes the "no same-unit executor" diagnostic from WARNING to ERROR.
 
 ## Module Dagger Bindings
 
-None. The processor emits no Dagger binding modules. Generated proxies are discovered at runtime via `Class.forName` in `DelayedJobClientFactory` and do not require any Dagger graph participation.
+The processor emits one Dagger module: `GeneratedDelayedJobClientsModule` (placed in the package determined by package-resolution order). Each `@Provides @Singleton` method returns `factory.create({Contract}.class)`. The application must add this module to its `@Component` for the bindings to take effect.
+
+Generated proxies themselves are discovered at runtime via `Class.forName` in `DelayedJobClientFactory` and require no further Dagger graph participation beyond that binding. The server-side executor bindings are a separate concern owned by `vertique-codegen-dagger`'s `GeneratedDelayedJobsModule`.
 
 ---
 
 ## Dependencies
 
-- `dev.vertique:vertique-codegen-core` — `CodegenContext`, `TypeResolver`, `AnnotationMirrors`, `Diagnostics`, `Identifiers`, `PackageResolver`
-- `dev.vertique:vertique-job-delayed` — `@DelayedJobContract`, `DelayedJobClient`, `DelayedJobExecutor`, `DelayedJobService`, `DelayedJobOptions` (processor classpath only; not on runtime classpath)
+- `dev.vertique:vertique-codegen-core` — `CodegenContext`, `TypeResolver`, `AnnotationMirrors`, `Diagnostics`, `DaggerModuleWriter`, `Identifiers`, `PackageResolver`
+- `dev.vertique:vertique-job-delayed` — `@DelayedJobContract`, `DelayedJobClient`, `DelayedJobClientFactory`, `DelayedJobExecutor`, `DelayedJobService`, `DelayedJobOptions` (processor classpath only; not on runtime classpath). A **consuming application** already carries `vertique-job-delayed` on its normal compile/runtime classpath — it owns the contract annotation the app authors against — so the generated module's reference to `DelayedJobClientFactory` introduces no new runtime dependency.
 - `com.palantir.javapoet:javapoet` — source generation (compile-only; not on runtime classpath)
 - `javax.annotation.processing` APIs — part of the JDK; not a separate Maven dependency
