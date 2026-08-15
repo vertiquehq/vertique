@@ -6,15 +6,19 @@ package dev.vertique.examples.webhook.webhook;
 import dagger.Module;
 import dagger.Provides;
 import dagger.multibindings.IntoSet;
-import dev.vertique.job.delayed.DelayedJobClientFactory;
 import dev.vertique.job.delayed.dagger.DelayedJobs;
 import dev.vertique.rest.client.RestClientFactory;
 import jakarta.inject.Singleton;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Dagger module providing webhook infrastructure: the REST client, the delayed job executor
- * (server-side), and the delayed job client proxy (client-side).
+ * Dagger module providing webhook infrastructure: the REST client and the delayed job executor
+ * (server-side).
+ *
+ * <p>The client-side {@link DeliverWebhookJob} proxy is <em>not</em> bound here — the
+ * {@code vertique-codegen-delayed-job} processor emits {@code GeneratedDelayedJobClientsModule} with
+ * a factory-delegating binding per {@code @DelayedJobContract}, and {@code AppComponent} installs
+ * it. Adding a hand-written provider back would make the binding a Dagger duplicate.
  */
 @Module
 public class WebhookModule {
@@ -31,19 +35,6 @@ public class WebhookModule {
     @DelayedJobs
     static Object deliverWebhookExecutor(DeliverWebhookJobImpl impl) {
         return impl;
-    }
-
-    /**
-     * Provides the {@link DeliverWebhookJob} client proxy created by the framework's
-     * {@link DelayedJobClientFactory}.
-     *
-     * @param factory the delayed job client factory
-     * @return the singleton proxy implementing {@link DeliverWebhookJob}
-     */
-    @Provides
-    @Singleton
-    static DeliverWebhookJob deliverWebhookClient(DelayedJobClientFactory factory) {
-        return factory.create(DeliverWebhookJob.class);
     }
 
     /**

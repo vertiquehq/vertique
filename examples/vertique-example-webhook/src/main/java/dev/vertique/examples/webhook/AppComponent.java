@@ -12,6 +12,7 @@ import dev.vertique.core.lifecycle.CoreLifecycleStepsModule;
 import dev.vertique.db.DbModule;
 import dev.vertique.db.flyway.DbFlywayModule;
 import dev.vertique.db.postgresql.DbPostgresqlModule;
+import dev.vertique.examples.webhook.webhook.GeneratedDelayedJobClientsModule;
 import dev.vertique.examples.webhook.webhook.WebhookModule;
 import dev.vertique.job.delayed.dagger.DelayedJobModule;
 import dev.vertique.management.ManagementModule;
@@ -68,7 +69,12 @@ import jakarta.inject.Singleton;
  *   <li>{@link CoreLifecycleStepsModule} — framework {@code CONFIGURE}/{@code VALIDATE} lifecycle
  *       steps (Jackson configuration + compose-validator harness)</li>
  *   <li>{@link AppModule} — application-specific configuration and security stub bindings</li>
- *   <li>{@link WebhookModule} — webhook REST client, executor, and client proxy</li>
+ *   <li>{@link WebhookModule} — webhook REST client and delayed job executor</li>
+ *   <li>{@link GeneratedDelayedJobClientsModule} — APT-generated module that provides one
+ *       {@code @Singleton} binding per {@code @DelayedJobContract} (here {@code DeliverWebhookJob}),
+ *       each delegating to {@code DelayedJobClientFactory.create(…)}. Without it the generated
+ *       proxies would sit on the classpath unbound, and every {@code @Inject} site for a contract
+ *       would fail Dagger's compile-time graph validation</li>
  * </ul>
  *
  * <p>Security modules ({@code AuthModule}, {@code SecurityModule}) are intentionally excluded
@@ -92,6 +98,7 @@ import jakarta.inject.Singleton;
             ManagementModule.class,
             CoreLifecycleStepsModule.class,
             AppModule.class,
-            WebhookModule.class
+            WebhookModule.class,
+            GeneratedDelayedJobClientsModule.class
         })
 interface AppComponent extends VertiqueApplicationComponent {}
