@@ -8,10 +8,10 @@ import com.palantir.javapoet.CodeBlock;
 import com.palantir.javapoet.JavaFile;
 import com.palantir.javapoet.ParameterSpec;
 import dev.vertique.codegen.CodegenContext;
+import dev.vertique.codegen.PackageResolver;
 import dev.vertique.codegen.dagger.DaggerModuleWriter;
 import dev.vertique.codegen.delayed.processor.DelayedJobContractModel;
 import java.io.IOException;
-import java.util.Arrays;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -148,6 +148,14 @@ public final class DelayedJobClientsModuleEmitter {
     /**
      * Resolves the output package for the generated module.
      *
+     * <p>The longest-common-prefix arithmetic is
+     * {@link PackageResolver#longestCommonPrefix(String, String)} from codegen-core. The surrounding
+     * policy is deliberately not {@code PackageResolver.resolve} — that method reports disjoint
+     * contract packages as a compiler error, whereas this module family falls back to
+     * {@link #DEFAULT_PACKAGE}, matching the services and workflow clients modules. A generated
+     * module is named explicitly in the application {@code @Component}, so an unusual package is a
+     * cosmetic surprise rather than a broken build.
+     *
      * @param contracts the deduplicated validated contracts; must not be empty
      * @return the resolved package name; never {@code null}
      */
@@ -160,36 +168,10 @@ public final class DelayedJobClientsModuleEmitter {
         String lcp = null;
         for (DelayedJobContractModel contract : contracts) {
             String pkg = ctx.packageNameOf(contract.contractType());
-            lcp = lcp == null ? pkg : longestCommonPackagePrefix(lcp, pkg);
+            lcp = lcp == null ? pkg : PackageResolver.longestCommonPrefix(lcp, pkg);
         }
 
         return lcp == null || lcp.isEmpty() ? DEFAULT_PACKAGE : lcp;
-    }
-
-    /**
-     * Computes the longest common package prefix of two package names by comparing dot-separated
-     * segments.
-     *
-     * <p>For example, {@code "com.example.orders"} and {@code "com.example.payments"} share the
-     * prefix {@code "com.example"}; {@code "com.foo"} and {@code "org.bar"} share no common prefix
-     * and return an empty string.
-     *
-     * @param a the first package name; must not be {@code null}
-     * @param b the second package name; must not be {@code null}
-     * @return the longest common prefix, or an empty string when there is none
-     */
-    static String longestCommonPackagePrefix(String a, String b) {
-        String[] segA = a.isEmpty() ? new String[0] : a.split("\\.");
-        String[] segB = b.isEmpty() ? new String[0] : b.split("\\.");
-        int common = 0;
-        int limit = Math.min(segA.length, segB.length);
-        while (common < limit && segA[common].equals(segB[common])) {
-            common++;
-        }
-        if (common == 0) {
-            return "";
-        }
-        return String.join(".", Arrays.copyOf(segA, common));
     }
 
     /**

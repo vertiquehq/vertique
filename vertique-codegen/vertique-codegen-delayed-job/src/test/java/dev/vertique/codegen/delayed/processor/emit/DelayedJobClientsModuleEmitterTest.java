@@ -114,6 +114,22 @@ class DelayedJobClientsModuleEmitterTest {
     }
 
     @Test
+    @DisplayName("contracts in disjoint top-level packages fall back to the default package")
+    void disjointPackagesFallBackToDefaultPackage() {
+        // Unlike PackageResolver.resolve, which reports disjoint packages as a compiler error, the
+        // clients-module family falls back rather than failing the build.
+        ProcessorTestHarness.run(
+                        new DelayedJobContractProcessor(),
+                        contract("com.foo", "DeliverJob", "deliver"),
+                        contract("org.bar", "EmailJob", "email"))
+                .assertSuccess()
+                .assertGeneratedSourceContains(
+                        "vertique.generated.delayedjob.GeneratedDelayedJobClientsModule", "provideDeliverJobClient")
+                .assertGeneratedSourceContains(
+                        "vertique.generated.delayedjob.GeneratedDelayedJobClientsModule", "provideEmailJobClient");
+    }
+
+    @Test
     @DisplayName("a compilation unit with no @DelayedJobContract emits no module")
     void noContractsEmitsNoModule() {
         var result = ProcessorTestHarness.run(
