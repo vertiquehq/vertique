@@ -378,6 +378,24 @@ public final class Diagnostics {
     }
 
     /**
+     * Returns the standard compile-time error message when a {@code @DelayedJobContract} interface
+     * declares type parameters.
+     *
+     * <p>A type parameter on a delayed-job contract carries no meaning — the payload type comes from
+     * {@code DelayedJobClient<P>} — and it breaks both generated companions: the static proxy fails
+     * to implement the erased {@code enqueue} overloads, and the aggregate clients module can only
+     * bind the raw type.
+     *
+     * @param contractFqn the fully-qualified name of the contract interface
+     * @return the formatted error message
+     */
+    public static String delayedJobMustNotBeGeneric(String contractFqn) {
+        return ("%s must not declare type parameters — a @DelayedJobContract takes its payload type from"
+                        + " DelayedJobClient<P>")
+                .formatted(contractFqn);
+    }
+
+    /**
      * Returns the standard compile-time error message when the payload type {@code P} of a
      * {@code @DelayedJobContract} interface cannot be resolved (e.g. raw {@code DelayedJobClient} or a
      * forwarding type variable).

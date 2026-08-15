@@ -17,7 +17,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
-import javax.lang.model.SourceVersion;
+import javax.lang.model.element.Element;
+import javax.lang.model.element.Modifier;
+import javax.lang.model.element.TypeElement;
 
 /**
  * Emitter that generates an aggregate Dagger {@code @Module}
@@ -96,7 +98,14 @@ public final class DelayedJobClientsModuleEmitter {
         }
 
         Map<String, DelayedJobContractModel> unique = uniqueByQualifiedName(contracts);
+        // The package is resolved from every valid contract before any is filtered out, so the
+        // module's location does not shift as a side effect of skipping an unbindable contract.
         String pkg = resolvePackage(unique.values());
+        Map<String, DelayedJobContractModel> bindable = bindableFrom(unique, pkg);
+        if (bindable.isEmpty()) {
+            return;
+        }
+
         ClassName moduleName = ClassName.get(pkg, MODULE_SIMPLE_NAME);
         DaggerModuleWriter writer =
                 DaggerModuleWriter.named(moduleName).generatedBy(PROCESSOR_FQN).concrete();
@@ -105,7 +114,7 @@ public final class DelayedJobClientsModuleEmitter {
                 ParameterSpec.builder(DELAYED_JOB_CLIENT_FACTORY, "factory").build();
         Set<String> usedMethodNames = new LinkedHashSet<>();
 
-        for (Map.Entry<String, DelayedJobContractModel> entry : unique.entrySet()) {
+        for (Map.Entry<String, DelayedJobContractModel> entry : bindable.entrySet()) {
             ClassName contractType = ClassName.get(entry.getValue().contractType());
             String methodName = uniqueBindingMethodName(
                     clientBindingMethodName(contractType.simpleName()), entry.getKey(), usedMethodNames);
@@ -146,6 +155,72 @@ public final class DelayedJobClientsModuleEmitter {
     }
 
     /**
+     * Filters the contracts down to those the generated module can actually reference, warning once
+     * per skipped contract.
+     *
+     * <p>A contract the module cannot name is skipped rather than bound, because emitting the
+     * binding produces a module that does not compile — and that is worse than no binding: javac
+     * compiles generated sources in the same task, so the application's build would break merely by
+     * putting this processor on the path, whether or not it installs the module. Skipping leaves
+     * such a contract to a hand-written provider.
+     *
+     * <p>This covers a package-private contract (or one nested in a non-public type) outside the
+     * module's own package, and a contract in the unnamed package, which a named package can never
+     * reference. Generic contracts are rejected earlier, by {@code DelayedJobValidator}, so they
+     * never reach this method.
+     *
+     * @param contracts   the deduplicated validated contracts, keyed by fully-qualified name
+     * @param modulePackage the already-resolved package the module will be written to
+     * @return the subset that can be bound, in the same order; possibly empty
+     */
+    private Map<String, DelayedJobContractModel> bindableFrom(
+            Map<String, DelayedJobContractModel> contracts, String modulePackage) {
+        Map<String, DelayedJobContractModel> bindable = new TreeMap<>();
+        for (Map.Entry<String, DelayedJobContractModel> entry : contracts.entrySet()) {
+            TypeElement contract = entry.getValue().contractType();
+            if (!isVisibleFrom(contract, modulePackage)) {
+                ctx.diagnostics()
+                        .warning(
+                                contract,
+                                "@DelayedJobContract %s is not accessible from package '%s', where %s is"
+                                        + " generated, so it is left unbound. Make the contract (and any"
+                                        + " enclosing type) public, set -A%s to a package it is visible from,"
+                                        + " or provide it with a hand-written @Provides method.",
+                                entry.getKey(),
+                                modulePackage,
+                                MODULE_SIMPLE_NAME,
+                                CodegenContext.OPTION_OUTPUT_PACKAGE);
+                continue;
+            }
+            bindable.put(entry.getKey(), entry.getValue());
+        }
+        return bindable;
+    }
+
+    /**
+     * Returns whether {@code contract} can be named from source in {@code modulePackage}.
+     *
+     * <p>Within its own package any access level works. From any other package the contract and
+     * every type enclosing it must be {@code public} — a {@code public} interface nested in a
+     * package-private class is still unreachable.
+     *
+     * @param contract      the contract interface element
+     * @param modulePackage the package the generated module lives in
+     * @return {@code true} when the module can reference the contract
+     */
+    private boolean isVisibleFrom(TypeElement contract, String modulePackage) {
+        if (ctx.packageNameOf(contract).equals(modulePackage)) {
+            return true;
+        }
+        for (Element e = contract; e instanceof TypeElement type; e = e.getEnclosingElement()) {
+            if (!type.getModifiers().contains(Modifier.PUBLIC)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
      * Resolves the output package for the generated module.
      *
      * <p>The longest-common-prefix arithmetic is
@@ -178,12 +253,16 @@ public final class DelayedJobClientsModuleEmitter {
      * Derives the conventional typed-client provider name — {@code "DeliverWebhookJob"} becomes
      * {@code "provideDeliverWebhookJobClient"} — matching the services processor's client bindings.
      *
+     * <p>No keyword guard is needed here: a simple name is by construction a Java identifier, and
+     * wrapping it in {@code provide…Client} can never yield a keyword. (The services emitter's
+     * sibling helper does need one, because it decapitalizes the simple name, which can produce
+     * {@code class} from {@code Class}.)
+     *
      * @param simpleName the simple name of the contract interface; must not be empty
-     * @return the derived method name, suffixed with {@code _} if it would not be a valid identifier
+     * @return the derived method name
      */
     static String clientBindingMethodName(String simpleName) {
-        String name = "provide" + simpleName + "Client";
-        return SourceVersion.isName(name) ? name : name + "_";
+        return "provide" + simpleName + "Client";
     }
 
     /**

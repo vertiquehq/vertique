@@ -148,6 +148,13 @@ public final class DelayedJobValidator {
             ctx.diagnostics().error(contract, Diagnostics.delayedJobMustBeInterface(fqn(contract)));
             return false;
         }
+        if (!contract.getTypeParameters().isEmpty()) {
+            // Both generated companions are broken by a generic contract: the static proxy does not
+            // implement the erased enqueue overloads, and the clients module could bind only the raw
+            // type. Rejecting here turns a wall of javac errors into one actionable diagnostic.
+            ctx.diagnostics().error(contract, Diagnostics.delayedJobMustNotBeGeneric(fqn(contract)));
+            return false;
+        }
         if (clientErasure == null || !ctx.types().isAssignable(ctx.types().erasure(contract.asType()), clientErasure)) {
             ctx.diagnostics().error(contract, Diagnostics.delayedJobMustExtendClient(fqn(contract)));
             return false;

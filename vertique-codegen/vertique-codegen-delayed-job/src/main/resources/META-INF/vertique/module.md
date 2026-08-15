@@ -64,6 +64,7 @@ Enforces contract shape within a single compilation unit.
 
 | Check | Diagnostic | Effect on emission |
 |-------|-----------|-------------------|
+| Contract must not declare type parameters | `ERROR` | Blocks emission |
 | Contract must extend `DelayedJobClient<P>` | `ERROR` | Blocks emission |
 | Payload type `P` must be resolvable | `ERROR` | Blocks emission |
 | Duplicate `@DelayedJobContract.name()` in one compilation unit | `ERROR` | Blocks emission of the duplicate |
@@ -156,7 +157,19 @@ The body delegates to `DelayedJobClientFactory.create({Contract}.class)` and nev
 
 This option moves the module only — proxies stay pinned to their contract's package (see [Origin-Package Pinning](#origin-package-pinning)).
 
-**Simple-name disambiguation.** Two contracts with the same simple name in different packages would produce two `provide{Name}Client` methods differing only in return type, which does not compile. The second and later bindings are suffixed with the contract's flattened fully-qualified name (`provideJobClient_com_foo_Job`) instead, so the collision never fails the build. Bindings are emitted in contract-FQN order, making the suffixes stable across builds.
+**Simple-name disambiguation.** Two contracts with the same simple name in different packages would produce two `provide{Name}Client` methods differing only in return type, which does not compile. The second and later bindings are suffixed with the contract's flattened fully-qualified name (`provideJobClient_com_foo_Job`) instead, so the collision never fails the build. Bindings are emitted in contract-FQN order, so for a given set of contracts the names are stable; adding a contract that sorts earlier moves the unsuffixed name to it and renames the incumbent's method. Nothing references these names by hand, so that is cosmetic.
+
+**Unreferenceable contracts are skipped, not bound.** A contract the module's package cannot name — a package-private contract (or one nested in a non-public type) outside the module's own package, or a contract in the unnamed package — is left unbound with a compiler *warning* naming the reason. Emitting the binding anyway would produce a module that does not compile, and because javac compiles generated sources in the same task, that would break the application's build merely by putting the processor on the annotation-processor path, whether or not the application installs the module. A skipped contract keeps working through a hand-written `@Provides`; make the contract and its enclosing types public, or point `-Avertique.codegen.package` at a package it is visible from, to have it bound.
+
+**One module per compilation unit — pin the package in multi-module builds.** The module's simple name is fixed, so two Maven modules whose contracts resolve to the same longest common prefix each emit `{lcp}.GeneratedDelayedJobClientsModule` into their own jar, and only one survives on the application's classpath. The symptom is a Dagger `MissingBinding` error for the shadowed module's contracts — fail-closed, never a wrong binding, but the error is far from the cause. Give each such module its own output package:
+
+```xml
+<compilerArgs>
+    <arg>-Avertique.codegen.package=com.acme.orders.generated</arg>
+</compilerArgs>
+```
+
+Relatedly, the module is regenerated from whatever contracts the current compilation unit contains. An IDE compiling a single changed file can therefore rewrite it from a subset; a full module rebuild (which Maven always does) restores the complete set.
 
 ---
 
@@ -200,6 +213,8 @@ The generated proxy is always emitted into the contract's own package (`ctx.pack
 
 | Violation | Level | Example message |
 |-----------|-------|----------------|
+| Contract declares type parameters | ERROR | `DeliverWebhookJob must not declare type parameters — a @DelayedJobContract takes its payload type from DelayedJobClient<P>` |
+| Contract not referenceable from the generated module's package | WARNING | `@DelayedJobContract com.foo.HiddenJob is not accessible from package 'com', where GeneratedDelayedJobClientsModule is generated, so it is left unbound` |
 | Contract does not extend `DelayedJobClient<P>` | ERROR | `DeliverWebhookJob must extend DelayedJobClient<P>` |
 | Payload type `P` cannot be resolved | ERROR | `DeliverWebhookJob: could not resolve DelayedJobClient<P> payload type` |
 | Duplicate contract `name()` in same unit | ERROR | `Duplicate @DelayedJobContract name "deliver-webhook": ... and ...` |

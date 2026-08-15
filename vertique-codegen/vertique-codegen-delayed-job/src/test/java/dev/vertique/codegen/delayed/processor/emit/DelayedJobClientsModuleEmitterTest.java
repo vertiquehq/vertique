@@ -28,6 +28,12 @@ import org.junit.jupiter.api.Test;
  *       to their origin package.</li>
  *   <li>Two contracts sharing a simple name across packages get distinct binding method names, so the
  *       module still compiles.</li>
+ *   <li>A contract the module's package cannot reference is skipped with a warning rather than
+ *       emitted into a module that would not compile; the same contract is bound normally when the
+ *       module lands in its own package.</li>
+ *   <li>A nested contract binds under its own simple name, unlike the proxy's flattened name.</li>
+ *   <li>A generic contract is rejected up front by the validator.</li>
+ *   <li>Contracts in disjoint top-level packages fall back to the default package.</li>
  *   <li>A compilation unit with no {@code @DelayedJobContract} emits no module at all.</li>
  * </ul>
  */
@@ -62,7 +68,17 @@ class DelayedJobClientsModuleEmitterTest {
                 .assertGeneratedSourceContains(
                         MODULE_FQN,
                         "@Generated(\"dev.vertique.codegen.delayed.processor.DelayedJobContractProcessor\")")
-                .assertGeneratedSourceContains(MODULE_FQN, "@Singleton")
+                // Asserted per binding, not file-scoped: the harness compiles without Dagger on the
+                // classpath, so a module that silently lost @Provides — or scoped only its first
+                // binding — would still compile and pass a file-scoped check.
+                .assertGeneratedSourceContains(MODULE_FQN, """
+                        @Provides
+                          @Singleton
+                          static DeliverJob provideDeliverJobClient(DelayedJobClientFactory factory) {""")
+                .assertGeneratedSourceContains(MODULE_FQN, """
+                        @Provides
+                          @Singleton
+                          static EmailJob provideEmailJobClient(DelayedJobClientFactory factory) {""")
                 .assertGeneratedSourceContains(MODULE_FQN, "DelayedJobClientFactory factory")
                 .assertGeneratedSourceContains(MODULE_FQN, "provideDeliverJobClient")
                 .assertGeneratedSourceContains(MODULE_FQN, "provideEmailJobClient")
@@ -111,6 +127,83 @@ class DelayedJobClientsModuleEmitterTest {
                 .assertSuccess()
                 .assertGeneratedSourceContains("com.GeneratedDelayedJobClientsModule", "provideJobClient(")
                 .assertGeneratedSourceContains("com.GeneratedDelayedJobClientsModule", "provideJobClient_com_foo_Job(");
+    }
+
+    @Test
+    @DisplayName("a contract not visible from the module package is skipped, not emitted into a broken module")
+    void contractInvisibleFromModulePackageIsSkipped() {
+        // com.foo + com.bar resolve the module to package "com", from which a package-private
+        // com.foo.HiddenJob is unreferenceable. Emitting a binding for it would produce a module that
+        // does not compile — and generated sources are compiled whether or not the application
+        // installs the module, so that would break the build on processor upgrade alone.
+        JavaFileObject hidden = SourceFiles.inline("com.foo.HiddenJob", """
+                package com.foo;
+                import dev.vertique.job.delayed.DelayedJobClient;
+                import dev.vertique.job.delayed.DelayedJobContract;
+                @DelayedJobContract(name = "hidden")
+                interface HiddenJob extends DelayedJobClient<String> {}
+                """);
+
+        ProcessorTestHarness.run(new DelayedJobContractProcessor(), hidden, contract("com.bar", "EmailJob", "email"))
+                .assertSuccess()
+                .assertGeneratedSourceContains("com.GeneratedDelayedJobClientsModule", "provideEmailJobClient")
+                .assertGeneratedSourceDoesNotContain("com.GeneratedDelayedJobClientsModule", "HiddenJob");
+    }
+
+    @Test
+    @DisplayName("a package-private contract is still bound when the module lands in its own package")
+    void packagePrivateContractIsBoundWithinItsOwnPackage() {
+        JavaFileObject hidden = SourceFiles.inline("com.foo.HiddenJob", """
+                package com.foo;
+                import dev.vertique.job.delayed.DelayedJobClient;
+                import dev.vertique.job.delayed.DelayedJobContract;
+                @DelayedJobContract(name = "hidden")
+                interface HiddenJob extends DelayedJobClient<String> {}
+                """);
+
+        ProcessorTestHarness.run(new DelayedJobContractProcessor(), hidden)
+                .assertSuccess()
+                .assertGeneratedSourceContains("com.foo.GeneratedDelayedJobClientsModule", "provideHiddenJobClient");
+    }
+
+    @Test
+    @DisplayName("a nested contract binds under its own simple name")
+    void nestedContractBindsUnderSimpleName() {
+        JavaFileObject nested = SourceFiles.inline("com.example.Outer", """
+                package com.example;
+                import dev.vertique.job.delayed.DelayedJobClient;
+                import dev.vertique.job.delayed.DelayedJobContract;
+                public class Outer {
+                    @DelayedJobContract(name = "inner")
+                    public interface Inner extends DelayedJobClient<String> {}
+                }
+                """);
+
+        // Unlike the proxy, which flattens to Outer_Inner_DelayedJobProxy, the binding uses the
+        // contract's simple name and its nested type literal.
+        ProcessorTestHarness.run(new DelayedJobContractProcessor(), nested)
+                .assertSuccess()
+                .assertGeneratedSourceContains(MODULE_FQN, "provideInnerClient")
+                .assertGeneratedSourceContains(MODULE_FQN, "return factory.create(Outer.Inner.class);");
+    }
+
+    @Test
+    @DisplayName("a generic contract is rejected with one diagnostic instead of broken generated code")
+    void genericContractIsRejected() {
+        // A generic contract breaks both companions: the proxy fails to implement the erased enqueue
+        // overloads, and a binding could only be the raw type. The validator rejects it up front so
+        // the build reports one actionable error rather than a wall of javac override errors.
+        JavaFileObject generic = SourceFiles.inline("com.example.GenericJob", """
+                package com.example;
+                import dev.vertique.job.delayed.DelayedJobClient;
+                import dev.vertique.job.delayed.DelayedJobContract;
+                @DelayedJobContract(name = "generic")
+                public interface GenericJob<T> extends DelayedJobClient<String> {}
+                """);
+
+        ProcessorTestHarness.run(new DelayedJobContractProcessor(), generic)
+                .assertFailed()
+                .assertErrorMessage("must not declare type parameters");
     }
 
     @Test
