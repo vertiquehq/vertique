@@ -77,7 +77,8 @@ import java.util.function.Supplier;
  *
  * <p><strong>The walk is deliberately broader than Victools' own container notion, and deliberately
  * position-unaware.</strong> It is <em>not</em> a mirror of {@code TypeContext.getContainerItemType},
- * which answers {@code null} unless {@code isContainerType} holds (an array or a {@link Iterable}) —
+ * which answers {@code null} unless {@code isContainerType} holds (an array or a {@link
+ * java.util.Collection}, whose item binding is then resolved via {@link Iterable}) —
  * and it must not be narrowed to match it. This guard decides only whether an override <em>could</em>
  * be reachable under a redirect; being fail-closed, it prefers a false rejection, which a developer
  * sees and can resolve by declaring the wire shape once, over a silent drop, which nobody sees. That
@@ -95,7 +96,8 @@ import java.util.function.Supplier;
  *   <li>the array element type;
  *   <li>the inherited {@link Iterable} binding, index 0;
  *   <li>the inherited {@link Map} binding, <em>value</em> position only (index 1);
- *   <li>the inherited {@link Optional} binding, index 0;
+ *   <li>the {@link Optional} payload — always reached via item 1, because {@link Optional} is
+ *       {@code final};
  *   <li>the inherited {@link Supplier} binding, index 0.
  * </ol>
  *
