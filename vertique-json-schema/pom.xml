@@ -64,5 +64,15 @@ SPDX-License-Identifier: EUPL-1.2
             <artifactId>junit-jupiter</artifactId>
             <scope>test</scope>
         </dependency>
+        <!--
+          Test scope only: the proof tests exercise the real built-in `vertique-strict` profile and
+          its declared BigDecimal schema override, obtained through DefaultJsonMapperProfileRegistry.
+          This module's production code depends on vertique-core alone for the profile contracts.
+        -->
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-json</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 </project>
