@@ -11,10 +11,10 @@ import dev.vertique.codegen.test.ProcessorTestHarness;
 import dev.vertique.codegen.test.ProcessorTestHarness.Result;
 import dev.vertique.codegen.test.fixtures.SourceFiles;
 import dev.vertique.core.sanitization.InputLocation;
-import dev.vertique.rest.core.request.ChainResolver;
-import dev.vertique.rest.core.request.EffectiveInputPolicies;
-import dev.vertique.rest.core.request.GeneratedInputProcessor;
-import dev.vertique.rest.core.request.GeneratedInputProcessorDispatcher;
+import dev.vertique.input.processing.ChainResolver;
+import dev.vertique.input.processing.EffectiveInputPolicies;
+import dev.vertique.input.processing.GeneratedInputProcessor;
+import dev.vertique.input.processing.GeneratedInputProcessorDispatcher;
 import dev.vertique.sanitization.canonicalize.TrimCanonicalizer;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -503,7 +503,7 @@ class SanitizationProcessorRoundtripTest {
                         public Object continueAt(
                                 Object inter,
                                 Class<?> type,
-                                dev.vertique.rest.core.request.InputTraversalContext ctx,
+                                dev.vertique.input.processing.InputTraversalContext ctx,
                                 InputLocation location,
                                 String fieldPath,
                                 Class<?> ownerType) {
@@ -513,7 +513,7 @@ class SanitizationProcessorRoundtripTest {
                         @Override
                         public Object walkUnknown(
                                 Object inter,
-                                dev.vertique.rest.core.request.InputTraversalContext ctx,
+                                dev.vertique.input.processing.InputTraversalContext ctx,
                                 InputLocation location,
                                 String fieldPath,
                                 Class<?> ownerType) {

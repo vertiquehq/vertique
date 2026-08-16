@@ -8,9 +8,9 @@ SPDX-License-Identifier: EUPL-1.2
 > **Status:** Implemented (CG-008)
 > **Package:** `dev.vertique.codegen.sanitization.processor`
 > **Artifact:** `vertique-codegen-sanitization`
-> **Depends on:** `vertique-codegen-core` (compile)
+> **Depends on:** `vertique-codegen-core`, `vertique-input-processing`, `vertique-rest-core` (compile)
 
-`vertique-codegen-sanitization` is an annotation processor that generates `{DTO}_InputProcessor` walker classes for REST request body DTOs whose type tree carries `@Sanitize` or `@Canonicalize` annotations. The generated walkers replace the reflective `Map`/`List` traversal in `DefaultInputObjectProcessor` with a direct field-name `switch` and pre-composed per-field chain constants, eliminating per-call metadata lookup and `descend()` allocation on the hot path.
+`vertique-codegen-sanitization` is an annotation processor that generates `{DTO}_InputProcessor` walker classes for REST request body DTOs whose type tree carries `@Sanitize` or `@Canonicalize` annotations. The generated walkers replace the reflective `Map`/`List` traversal of the neutral input processing engine in `vertique-input-processing` with a direct field-name `switch` and pre-composed per-field chain constants, eliminating per-call metadata lookup and `descend()` allocation on the hot path.
 
 Discovery is anchored on `@Path`-annotated resource methods in the current compilation unit. The emitted set is the **transitive closure** of participating DTO types reachable from those roots. No Dagger module is emitted — runtime registration self-populates via classloader lookup (`Class.forName`), mirroring `BeanParamAccessorRegistry`. The `@BindsOptionalOf InputObjectProcessor` wiring and the `SanitizationModule` binding are unchanged.
 
@@ -76,9 +76,9 @@ Without this normalization `Optional` would classify as a nested DTO and emit `d
 
 ---
 
-## Runtime SPI Types (in `vertique-rest-core`)
+## Runtime SPI Types (in `vertique-input-processing`)
 
-The following types were added to `dev.vertique.rest.core.request` as the stable public SPI. They are available at runtime regardless of whether `vertique-codegen-sanitization` is on the processor path.
+The following types live in `dev.vertique.input.processing` (artifact `vertique-input-processing`) as the stable public SPI. They are available at runtime regardless of whether `vertique-codegen-sanitization` is on the processor path.
 
 ### `GeneratedInputProcessor<T>`
 
@@ -93,11 +93,12 @@ public interface GeneratedInputProcessor<T> {
                    InputLocation location,
                    ChainResolver resolver,
                    GeneratedInputProcessorDispatcher dispatcher,
-                   @Nullable InputTraversalContext parent);
+                   @Nullable InputTraversalContext parent,
+                   String parentPath);
 }
 ```
 
-`parent == null` signals that this is the top-level entry; the generated class seeds from `InputTraversalContext.fromRoute(policies)`. A non-null `parent` means the caller has already accumulated traversal state (nested dispatch).
+`parent == null` signals that this is the top-level entry; the generated class seeds from `InputTraversalContext.fromPolicies(policies)`. A non-null `parent` means the caller has already accumulated traversal state (nested dispatch). `parentPath` is the dot-separated path prefix of the field this DTO is nested under — an empty string at the top level — and is composed into the `path` of every `InputValueContext` the processor builds.
 
 ### `ChainResolver`
 
@@ -113,19 +114,19 @@ public interface ChainResolver {
 }
 ```
 
-Built once by `DefaultInputObjectProcessor` from the existing `Function<Class, Canonicalizer>` / `Function<Class, Sanitizer>` factories and threaded into generated `process(...)` calls.
+Built once by the default engine (`InputObjectProcessor.createDefault(...)`) from the `Function<Class, Canonicalizer>` / `Function<Class, Sanitizer>` factories and threaded into generated `process(...)` calls.
 
 ### `InputTraversalContext`
 
-Public final class (not a record) that carries traversal state across generated and reflective dispatch. Two `descend(...)` overloads preserve the metadata-shape for the reflective walker and provide a primitive-shape for generated callers (avoiding `InputPolicyMetadata` allocation on the hot path).
+Public final class (not a record) that carries traversal state across generated and reflective dispatch. Two `descend(...)` overloads preserve the metadata-shape for the reflective walker (package-private — the walker shares the package) and provide a public primitive-shape for generated callers (avoiding metadata allocation on the hot path).
 
 ```java
 public final class InputTraversalContext {
-    public static InputTraversalContext fromRoute(EffectiveInputPolicies policies) { ... }
+    public static InputTraversalContext fromPolicies(EffectiveInputPolicies policies) { ... }
 
-    // Reflective-walker overload
-    public InputTraversalContext descend(InputPolicyMetadata parentMeta,
-                                         @Nullable FieldPolicyMetadata fieldMeta) { ... }
+    // Reflective-walker overload (package-private)
+    InputTraversalContext descend(InputPolicyMetadata parentMeta,
+                                  @Nullable FieldPolicyMetadata fieldMeta) { ... }
 
     // Generated-caller overload — no metadata allocation
     public InputTraversalContext descend(
@@ -145,45 +146,50 @@ public final class InputTraversalContext {
 
 ### `GeneratedInputProcessorDispatcher`
 
-Owns lookup and the reflective continuation. `DefaultInputObjectProcessor` constructs one dispatcher in its existing 3-arg constructor and self-bootstraps it with a `ReflectiveContinuation` lambda that calls back into the existing reflective walker, preserving `InputTraversalContext` across the codegen↔reflection boundary.
+Owns lookup and the reflective continuation. The default engine created by `InputObjectProcessor.createDefault(...)` constructs one dispatcher and self-bootstraps it with a `ReflectiveContinuation` that calls back into the reflective walker, preserving `InputTraversalContext` across the codegen↔reflection boundary.
 
 ```java
 public final class GeneratedInputProcessorDispatcher {
     public GeneratedInputProcessorDispatcher(ReflectiveContinuation continuation);
 
-    public <T> Optional<GeneratedInputProcessor<T>> resolve(Class<T> type);
+    public <T> void register(Class<T> type, GeneratedInputProcessor<T> instance);
 
     public Object dispatchNested(Object intermediate, Class<?> nestedType,
                                   EffectiveInputPolicies policies, InputLocation location,
                                   ChainResolver resolver, InputTraversalContext parentCtx,
-                                  String fieldPath, Class<?> ownerType);
+                                  String parentPath, Class<?> ownerType);
 
-    @FunctionalInterface
+    public static GeneratedInputProcessorDispatcher withoutContinuation();
+
+    // Deliberately NOT @FunctionalInterface — two methods
     public interface ReflectiveContinuation {
         Object continueAt(Object intermediate, Class<?> targetType,
                           InputTraversalContext ctx, InputLocation location,
                           String fieldPath, Class<?> ownerType);
+
+        Object walkUnknown(Object intermediate, InputTraversalContext ctx,
+                           InputLocation location, String fieldPath, Class<?> ownerType);
     }
 }
 ```
 
-`resolve(type)` uses a `ClassValue` cache. On miss it attempts `Class.forName(generatedName(type), true, type.getClassLoader())` where `generatedName` mirrors the emitter's `Identifiers.generatedClassName(...)`. Only `ClassNotFoundException` is cached as `Optional.empty()` — other instantiation failures (broken generated code) propagate as errors.
+Lookup checks explicit `register(...)` entries first, then a `ClassValue` cache. On cache miss it attempts `Class.forName(generatedName(type), true, type.getClassLoader())` where `generatedName` mirrors the emitter's `Identifiers.generatedClassName(...)`. Only `ClassNotFoundException` is cached as a miss — other instantiation failures (broken generated code) propagate as errors.
 
-`dispatchNested(...)` tries the generated processor first; on miss, hands off to the `ReflectiveContinuation` with the current `InputTraversalContext`, enabling the reflective→generated handoff direction (a nested type that was added to the generated set after the parent type was compiled reflectively).
+`dispatchNested(...)` tries the generated processor first; on miss, hands off to the `ReflectiveContinuation` with the current `InputTraversalContext`, enabling the reflective→generated handoff direction (a nested type that was added to the generated set after the parent type was compiled reflectively). `withoutContinuation()` builds a dispatcher whose continuation throws — useful in tests to prove no reflective fallback occurs — and `register(...)` supports explicit registration where classloader lookup cannot see the generated class.
 
 ### `GeneratedSupport`
 
-Public class with public static helpers imported via `import static` in generated code. Public visibility is required because generated processors live in application DTO packages (e.g., `com.example.dto`), not `dev.vertique.rest.core.request`.
+Public class with public static helpers imported via `import static` in generated code. Public visibility is required because generated processors live in application DTO packages (e.g., `com.example.dto`), not `dev.vertique.input.processing`.
 
 | Method | Description |
 |--------|-------------|
 | `applyString(...)` | Apply canonicalizer+sanitizer chain to a single string value |
 | `applyStringCollection(...)` | Map `applyString` over a `Collection` or passthrough non-collection |
 | `dispatchObjectCollection(...)` | Map `dispatcher.dispatchNested(...)` over a `Collection` of structured objects |
-| `applyDefault(...)` | Passthrough for non-string, non-collection, non-nested fields |
+| `applyDefault(...)` | Default-arm handler for unknown keys and annotated `OTHER`-kind fields: composes inherited + object + field chains for strings, resumes the reflective walker (`walkUnknown`) for nested maps/lists, passes other scalars through |
 | `childPath(String, String)` | Build `parent.field` dotted path string for `InputValueContext` |
 
-`GeneratedSupport` is documented as a **stable SPI**. Its method signatures must not change without a major version bump.
+`GeneratedSupport` is documented as a **stable SPI**: its helper signatures must not change in a way that breaks already-emitted `_InputProcessor` bytecode without a major version bump of `vertique-input-processing`.
 
 ---
 
@@ -233,7 +239,7 @@ applications import `vertique-bom` and configure only the versionless Dagger and
 `vertique-codegen-all` processor paths. The facade supplies `vertique-codegen-core` transitively.
 See `docs/packaging.md`.
 
-No `@Component` changes are required. The dispatcher self-bootstraps inside `DefaultInputObjectProcessor`'s existing 3-arg constructor; the `SanitizationModule` binding remains unchanged.
+No `@Component` changes are required. The dispatcher self-bootstraps inside the default engine created by `InputObjectProcessor.createDefault(...)`; the `SanitizationModule` binding remains unchanged.
 
 ---
 
@@ -248,9 +254,11 @@ None. `vertique-codegen-sanitization` is a compile-time annotation processor wit
 | Artifact | Scope | Purpose |
 |----------|-------|---------|
 | `vertique-codegen-core` | compile | `CodegenContext`, `TypeResolver`, `AnnotationMirrors`, `Diagnostics`, `Identifiers` |
-| `com.squareup:javapoet` | compile | Source generation (not on runtime classpath) |
+| `vertique-input-processing` | compile | Runtime SPI the emitted source references (`GeneratedInputProcessor`, `GeneratedSupport`, `GeneratedInputProcessorDispatcher`, `ChainResolver`, `EffectiveInputPolicies`, `InputTraversalContext`) |
+| `vertique-rest-core` | compile | REST-rooted discovery: `RestBodyDiscovery` uses `RestContextTypes` and the `RequestPreconditions`/`RequestParams` FQNs to classify resource-method parameters |
+| `com.palantir.javapoet:javapoet` | compile | Source generation (not on runtime classpath) |
 
-Test-only dependencies: `vertique-codegen-test`, `vertique-rest-core` (for `GeneratedInputProcessor`/`GeneratedSupport` fixture compilation).
+Test-only dependencies: `vertique-codegen-test` (compilation harness), `vertique-sanitization` (built-in canonicalizers/sanitizers for fixtures), `jakarta.ws.rs-api` (resource fixtures).
 
 ---
 

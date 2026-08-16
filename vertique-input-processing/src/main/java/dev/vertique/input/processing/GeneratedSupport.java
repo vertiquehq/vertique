@@ -24,7 +24,7 @@ import java.util.List;
  * already-emitted {@code _InputProcessor} class bytecode produced by older codegen versions.
  * Hand-written callers are supported but unusual — most usage is from generated source. New
  * helpers may be added; existing helpers may not be renamed or have their parameter list
- * altered without a corresponding major version bump of {@code vertique-rest-core}.
+ * altered without a corresponding major version bump of {@code vertique-input-processing}.
  */
 public final class GeneratedSupport {
 

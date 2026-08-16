@@ -27,7 +27,7 @@ import javax.lang.model.type.WildcardType;
 import javax.tools.Diagnostic;
 
 /**
- * Mirrors {@link dev.vertique.rest.core.request.InputPolicyMetadataResolver} at APT time:
+ * Mirrors {@code dev.vertique.input.processing.InputPolicyMetadataResolver} at APT time:
  * collects per-type and per-field annotation chains from {@link TypeElement} mirrors instead of
  * reflection.
  *
