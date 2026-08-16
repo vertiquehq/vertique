@@ -33,13 +33,16 @@ public interface JsonMapperProfile {
     ObjectMapper mapper();
 
     /**
-     * Returns the schema type overrides this profile declares.
+     * Returns the JSON Schema overrides this profile declares for the schema generator — the wire
+     * contract the profile's mapper actually produces or accepts for specific Java classes.
      *
-     * <p>Skeleton: behavior is added in the green step of this slice.
+     * <p>Implementations return the same stable, non-null, unmodifiable list on each call and must
+     * defensively copy any caller-supplied collection. The empty default preserves every profile
+     * implementation written before overrides existed.
      *
-     * @return the overrides
+     * @return the non-null, unmodifiable list of declared overrides; empty by default
      */
     default List<JsonSchemaTypeOverride> jsonSchemaTypeOverrides() {
-        return null;
+        return List.of();
     }
 }
