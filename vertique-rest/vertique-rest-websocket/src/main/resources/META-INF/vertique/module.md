@@ -425,6 +425,8 @@ silently — nothing fails.
 Canonicalizers and sanitizers see the value's provenance in their `InputValueContext`:
 `@OnMessage` values — both a raw `String` payload and the decoded intermediate of a typed
 message — report `InputLocation.PAYLOAD`, and `@PathParam` values report `InputLocation.PATH`.
+Message values reported `BODY` before `PAYLOAD` existed: a custom processor that branches on
+`InputLocation.BODY` must also handle `PAYLOAD` to keep covering messages.
 
 Bean Validation runs after deserialization (and after sanitization when both are installed). A
 violation raises `BeanValidationException`, which is routed to `@OnError`; the message is discarded.
