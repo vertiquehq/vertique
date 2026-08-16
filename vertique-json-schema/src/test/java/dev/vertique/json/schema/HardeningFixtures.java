@@ -429,6 +429,32 @@ final class HardeningFixtures {
     }
 
     /**
+     * Builds a fragment declaring numeric bounds and deliberately <em>no</em> {@code type}, so it is
+     * conjoinable with any type a property contributes.
+     *
+     * @return the parsed fragment
+     */
+    static JsonSchemaFragment boundedNumberFragment() {
+        return JsonSchemaFragment.parse("{\"minimum\":0,\"maximum\":1000}");
+    }
+
+    /**
+     * DTO whose two properties share one generated definition for the overridden class, and only the
+     * <em>first</em> of which conjoins an object-shaped schema with it. Whatever that first property's
+     * effective type causes must stay local to that property: the second property's contract is not
+     * the first one's to narrow.
+     */
+    static final class SharedDefinitionAllOfDto {
+
+        /** Conjoins an object-shaped branch with the shared definition. */
+        @Schema(allOf = {ReplacementPojo.class})
+        public BigDecimal constrained;
+
+        /** Carries no property-level metadata at all; sees the shared definition unchanged. */
+        public BigDecimal plain;
+    }
+
+    /**
      * Property whose {@code nullable} metadata produces an {@code anyOf} alternation rather than a
      * conjunction, so its {@code "null"} and {@code "string"} branches are not in conflict.
      */

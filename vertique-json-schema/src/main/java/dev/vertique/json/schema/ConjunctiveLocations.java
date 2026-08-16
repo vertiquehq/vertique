@@ -80,6 +80,37 @@ final class ConjunctiveLocations {
     }
 
     /**
+     * Computes the subset of a location's closure that belongs to the location's head alone: the head
+     * itself plus its {@code allOf} branches, expanded transitively through {@code allOf} only and
+     * <strong>never</strong> through {@code $ref}.
+     *
+     * <p>This is the only part of a location a caller may safely <em>mutate</em>. A {@code $ref}
+     * target — typically a {@code $defs} entry — is shared: every other member referencing it sees the
+     * same node, while a policy decided from one referrer's conjoined keywords holds for that referrer
+     * only. Reading the whole {@link #closure(JsonNode, JsonNode) closure} and writing only the local
+     * branches keeps a per-referrer decision from silently rewriting another member's contract.
+     *
+     * @param start the node heading the location
+     * @return the head and its transitively conjoined {@code allOf} branches, in BFS visit order
+     */
+    static List<JsonNode> localBranches(JsonNode start) {
+        List<JsonNode> branches = new ArrayList<>();
+        Map<JsonNode, Boolean> visited = new IdentityHashMap<>();
+        Deque<JsonNode> pending = new ArrayDeque<>();
+        pending.add(start);
+
+        while (!pending.isEmpty()) {
+            JsonNode node = pending.poll();
+            if (!node.isObject() || visited.put(node, Boolean.TRUE) != null) {
+                continue;
+            }
+            branches.add(node);
+            enqueueAllOfBranches(node, pending);
+        }
+        return branches;
+    }
+
+    /**
      * Adds a node's direct {@code allOf} branches and its locally resolvable {@code $ref} target to
      * the location's pending queue.
      *

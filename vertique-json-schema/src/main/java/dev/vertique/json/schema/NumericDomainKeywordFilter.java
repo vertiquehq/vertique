@@ -30,9 +30,17 @@ import java.util.Set;
  * ask which contributor supplied a numeric-domain keyword or which override is in effect. It
  * computes, per {@link ConjunctiveLocations conjunctive location}, the intersection of explicit
  * {@code type} declarations found there. When that intersection is non-empty and excludes both
- * {@code number} and {@code integer}, the four keywords are removed from every branch in the closure.
- * A location that declares no explicit {@code type} at all is left untouched: with nothing to reason
- * about, suppressing would risk dropping a keyword that legitimately applies.
+ * {@code number} and {@code integer}, the four keywords are removed from the location's
+ * {@link ConjunctiveLocations#localBranches(JsonNode) local branches} — the head and its {@code allOf}
+ * branches — and never from a {@code $ref} target, which other members share and whose own effective
+ * type may still admit them. A location that declares no explicit {@code type} at all is left
+ * untouched: with nothing to reason about, suppressing would risk dropping a keyword that legitimately
+ * applies.
+ *
+ * <p>Wire-honesty (FR-JSON-089) survives that confinement, because every node a keyword can legally be
+ * suppressed from is reachable as a local branch of some location: a Jakarta constraint lands as a
+ * sibling of the {@code $ref} at member scope — the location's own head — and a {@code $defs} entry is
+ * itself visited as a location head, where its own conjoined keywords decide its own contents.
  *
  * <p>Applied only by the profile-aware construction modes ({@code forInputProfile}/{@code
  * forOutputProfile}) when at least one override is in effect for that direction; {@code
@@ -91,8 +99,16 @@ final class NumericDomainKeywordFilter {
 
     /**
      * Computes one conjunctive location's effective explicit type intersection and, when it excludes
-     * both {@code number} and {@code integer}, strips the numeric-domain keywords from every branch in
-     * the location.
+     * both {@code number} and {@code integer}, strips the numeric-domain keywords from the location's
+     * local branches.
+     *
+     * <p>The two sets are deliberately different. The intersection is read from the whole
+     * {@link ConjunctiveLocations#closure(JsonNode, JsonNode) closure}, because every conjoined node —
+     * including a {@code $ref} target — contributes to the member's effective type. The suppression is
+     * written only to the location's
+     * {@link ConjunctiveLocations#localBranches(JsonNode) local branches}, because a {@code $defs}
+     * entry is shared by every member referencing it: rewriting it from one referrer's effective type
+     * would strip keywords from members whose own effective type still admits them.
      *
      * @param document the whole document, used to resolve {@code $ref} pointers
      * @param start    the object node heading the location
@@ -114,7 +130,7 @@ final class NumericDomainKeywordFilter {
         }
 
         if (intersection != null && !intersection.isEmpty() && Collections.disjoint(intersection, NUMERIC_TYPES)) {
-            for (JsonNode member : closure) {
+            for (JsonNode member : ConjunctiveLocations.localBranches(start)) {
                 ObjectNode objectMember = (ObjectNode) member;
                 for (String keyword : NUMERIC_DOMAIN_KEYWORDS) {
                     objectMember.remove(keyword);

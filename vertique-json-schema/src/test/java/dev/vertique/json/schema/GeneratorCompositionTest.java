@@ -4,6 +4,7 @@
 package dev.vertique.json.schema;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -14,7 +15,10 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.vertique.core.json.JsonMapperProfile;
+import dev.vertique.core.json.JsonSchemaTypeOverride;
+import java.math.BigDecimal;
 import java.time.Duration;
+import java.util.List;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -184,6 +188,38 @@ class GeneratorCompositionTest {
                 "the conflict message must stay within " + Diagnostics.MAX_MESSAGE_LENGTH + " code units; was "
                         + message.length());
         assertTrue(message.contains("type"), "the message must name the conflicting keyword; was: " + message);
+    }
+
+    @Test
+    @DisplayName("A sibling property's object type must not strip a shared definition's numeric bounds")
+    void siblingPropertyTypeMustNotStripSharedDefinitionBounds() {
+        // Given: a profile whose BigDecimal override declares numeric bounds and no type, and a DTO
+        // whose two BigDecimal properties therefore share one generated definition — only the first of
+        // which conjoins an object-shaped schema through @Schema(allOf = ...).
+        JsonMapperProfile bounded = HardeningFixtures.profile(
+                "shared-definition-bounds",
+                List.of(JsonSchemaTypeOverride.both(BigDecimal.class, HardeningFixtures.boundedNumberFragment())));
+
+        // When: the document is generated.
+        String canonical = AnnotationJsonSchemaGenerator.forInputProfile(bounded)
+                .generateCanonical(HardeningFixtures.SharedDefinitionAllOfDto.class);
+        JsonNode document = SchemaAssertions.assertCanonicalForm(canonical);
+
+        // Then: the shared definition still carries the profile's declared bounds. Numeric-keyword
+        // suppression is decided from one referrer's effective type, so it may only ever rewrite that
+        // referrer's own local branches — never a node other properties also reference.
+        JsonNode definition = document.at("/$defs/BigDecimal");
+        assertFalse(
+                definition.isMissingNode(),
+                "the fixture must exercise a shared $defs entry for the overridden class; was: " + canonical);
+        assertEquals(
+                "0",
+                String.valueOf(definition.get("minimum")),
+                "the shared definition must keep the profile's declared minimum; was: " + canonical);
+        assertEquals(
+                "1000",
+                String.valueOf(definition.get("maximum")),
+                "the shared definition must keep the profile's declared maximum; was: " + canonical);
     }
 
     @Test
