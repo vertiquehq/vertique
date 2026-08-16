@@ -10,9 +10,9 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 
 import dev.vertique.codegen.test.ProcessorTestHarness;
 import dev.vertique.codegen.test.fixtures.SourceFiles;
+import dev.vertique.input.processing.EffectiveInputPolicies;
 import dev.vertique.rest.core.convert.ConversionContext;
 import dev.vertique.rest.core.convert.ParamConversionResolver;
-import dev.vertique.rest.core.request.EffectiveInputPolicies;
 import dev.vertique.rest.core.request.RequestValue;
 import dev.vertique.rest.jaxrs.JaxRsRouteRegistrar;
 import dev.vertique.rest.jaxrs.ResourceMethodMeta;

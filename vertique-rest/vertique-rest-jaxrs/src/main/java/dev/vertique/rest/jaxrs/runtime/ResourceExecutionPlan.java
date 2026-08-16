@@ -15,7 +15,7 @@ import io.vertx.ext.web.RoutingContext;
  *   <li>{@link #extractArguments(RoutingContext, BoundRequest, GeneratedJaxRsSupport)} —
  *       replaces {@code ParameterExtractor.extractArguments(ctx, req)}. The plan calls the
  *       strongly-typed helper overloads on {@code support} (passing precomputed
- *       {@link dev.vertique.rest.core.request.EffectiveInputPolicies}) instead of
+ *       {@link dev.vertique.input.processing.EffectiveInputPolicies}) instead of
  *       re-deriving them from {@link dev.vertique.rest.jaxrs.ResourceMethodMeta.ParamMeta#annotations()}
  *       on every request.</li>
  *   <li>{@link #invoke(Object, Object[])} — replaces
@@ -54,7 +54,7 @@ public interface ResourceExecutionPlan {
      * <p>Implementations call the typed helper overloads on {@code support} (such as
      * {@link GeneratedJaxRsSupport#extractScalarParam} or
      * {@link GeneratedJaxRsSupport#deserializeBody}) with precomputed
-     * {@link dev.vertique.rest.core.request.EffectiveInputPolicies} instead of re-resolving
+     * {@link dev.vertique.input.processing.EffectiveInputPolicies} instead of re-resolving
      * policies from raw annotations on every request.
      *
      * @param ctx     the current routing context; must not be {@code null}

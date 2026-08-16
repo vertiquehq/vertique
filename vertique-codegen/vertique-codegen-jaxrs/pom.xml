@@ -40,6 +40,12 @@ SPDX-License-Identifier: EUPL-1.2
             <artifactId>vertique-rest-core</artifactId>
         </dependency>
 
+        <!-- Compile: generated ExecutionPlans reference EffectiveInputPolicies -->
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-input-processing</artifactId>
+        </dependency>
+
         <!-- Jakarta security annotations: @PermitAll, @RolesAllowed, @DenyAll -->
         <dependency>
             <groupId>jakarta.annotation</groupId>

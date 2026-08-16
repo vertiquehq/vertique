@@ -14,7 +14,7 @@ import dev.vertique.core.sanitization.Sanitizer;
 import dev.vertique.core.sanitization.SkipCanonicalization;
 import dev.vertique.core.sanitization.SkipSanitization;
 import dev.vertique.core.util.AnnotationResolver;
-import dev.vertique.rest.core.request.EffectiveInputPolicies;
+import dev.vertique.input.processing.EffectiveInputPolicies;
 import jakarta.annotation.security.PermitAll;
 import jakarta.ws.rs.GET;
 import jakarta.ws.rs.Path;
@@ -225,9 +225,9 @@ class InputPolicyRuntimeParityTest {
             EffectiveInputPolicies policies = deriveParamPolicies(meta);
             assertEquals(
                     List.of(CanonA.class),
-                    policies.routeCanonicalizers(),
+                    policies.canonicalizers(),
                     "Class-level @Canonicalize must produce [CanonA] in param chain");
-            assertEquals(List.of(), policies.routeSanitizers(), "No @Sanitize: sanitizer chain must be empty");
+            assertEquals(List.of(), policies.sanitizers(), "No @Sanitize: sanitizer chain must be empty");
         }
     }
 
@@ -242,7 +242,7 @@ class InputPolicyRuntimeParityTest {
             EffectiveInputPolicies policies = deriveParamPolicies(meta);
             assertEquals(
                     List.of(CanonB.class),
-                    policies.routeCanonicalizers(),
+                    policies.canonicalizers(),
                     "Method-level @Canonicalize must override class-level");
         }
     }
@@ -258,7 +258,7 @@ class InputPolicyRuntimeParityTest {
             EffectiveInputPolicies policies = deriveParamPolicies(meta);
             assertEquals(
                     List.of(),
-                    policies.routeCanonicalizers(),
+                    policies.canonicalizers(),
                     "@SkipCanonicalization on route must produce empty param canonicalizer chain");
         }
     }
@@ -274,10 +274,9 @@ class InputPolicyRuntimeParityTest {
             EffectiveInputPolicies policies = deriveParamPolicies(meta);
             assertEquals(
                     List.of(SanitA.class),
-                    policies.routeSanitizers(),
+                    policies.sanitizers(),
                     "Class-level @Sanitize must produce [SanitA] in param sanitizer chain");
-            assertEquals(
-                    List.of(), policies.routeCanonicalizers(), "No @Canonicalize: canonicalizer chain must be empty");
+            assertEquals(List.of(), policies.canonicalizers(), "No @Canonicalize: canonicalizer chain must be empty");
         }
     }
 
@@ -292,7 +291,7 @@ class InputPolicyRuntimeParityTest {
             EffectiveInputPolicies policies = deriveParamPolicies(meta);
             assertEquals(
                     List.of(),
-                    policies.routeSanitizers(),
+                    policies.sanitizers(),
                     "@SkipSanitization on route must produce empty param sanitizer chain");
         }
     }

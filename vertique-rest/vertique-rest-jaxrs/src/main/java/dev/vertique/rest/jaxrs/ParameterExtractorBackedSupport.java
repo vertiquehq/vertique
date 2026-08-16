@@ -3,7 +3,7 @@
 
 package dev.vertique.rest.jaxrs;
 
-import dev.vertique.rest.core.request.EffectiveInputPolicies;
+import dev.vertique.input.processing.EffectiveInputPolicies;
 import dev.vertique.rest.core.request.RequestValue;
 import dev.vertique.rest.jaxrs.request.BoundRequest;
 import dev.vertique.rest.jaxrs.runtime.BeanParamFieldMeta;

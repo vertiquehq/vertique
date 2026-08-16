@@ -6,12 +6,12 @@ package dev.vertique.rest.jaxrs;
 import static org.mockito.Mockito.mock;
 
 import dev.vertique.core.validation.BeanValidator;
+import dev.vertique.input.processing.InputObjectProcessor;
 import dev.vertique.json.DefaultJsonMapperProfileRegistry;
 import dev.vertique.json.JsonConfig;
 import dev.vertique.rest.core.config.JaxRsConfig;
 import dev.vertique.rest.core.context.RestContextResolution;
 import dev.vertique.rest.core.interceptor.OperationInterceptor;
-import dev.vertique.rest.core.request.InputObjectProcessor;
 import dev.vertique.rest.core.request.RequestBodyDecoder;
 import dev.vertique.rest.core.response.ResponseBodyEncoder;
 import dev.vertique.rest.core.router.OperationHandlerContributor;

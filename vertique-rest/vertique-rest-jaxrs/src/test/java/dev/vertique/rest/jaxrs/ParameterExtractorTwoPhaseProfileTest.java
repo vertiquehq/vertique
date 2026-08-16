@@ -15,10 +15,10 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.json.JsonMapper;
 import dev.vertique.core.exception.ValidationException;
 import dev.vertique.core.sanitization.InputLocation;
+import dev.vertique.input.processing.EffectiveInputPolicies;
+import dev.vertique.input.processing.InputObjectProcessor;
 import dev.vertique.json.VertxJsonSupport;
 import dev.vertique.rest.core.context.RestContextResolution;
-import dev.vertique.rest.core.request.EffectiveInputPolicies;
-import dev.vertique.rest.core.request.InputObjectProcessor;
 import dev.vertique.rest.core.request.RequestBodyDecoder;
 import dev.vertique.rest.core.request.RequestValue;
 import dev.vertique.rest.jaxrs.request.BoundRequest;
@@ -68,7 +68,7 @@ class ParameterExtractorTwoPhaseProfileTest {
     /** Pass-through {@link InputObjectProcessor} that returns the intermediate body unchanged. */
     private static final class PassThroughProcessor implements InputObjectProcessor {
         @Override
-        public Object processStructuredBody(
+        public Object processInput(
                 Object intermediateBody, Type targetType, EffectiveInputPolicies policies, InputLocation location) {
             return intermediateBody;
         }

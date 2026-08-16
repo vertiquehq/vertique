@@ -104,7 +104,7 @@ public final class ExecutionPlanEmitter {
     private static final ClassName PARAM_SOURCE =
             ClassName.get("dev.vertique.rest.jaxrs", "ResourceMethodMeta", "ParamSource");
     private static final ClassName EFFECTIVE_INPUT_POLICIES =
-            ClassName.get("dev.vertique.rest.core.request", "EffectiveInputPolicies");
+            ClassName.get("dev.vertique.input.processing", "EffectiveInputPolicies");
     private static final ClassName REQUEST_PRECONDITIONS =
             ClassName.get("dev.vertique.rest.core.request", "RequestPreconditions");
     private static final ClassName ROUTING_CONTEXT = ClassName.get("io.vertx.ext.web", "RoutingContext");
@@ -436,7 +436,7 @@ public final class ExecutionPlanEmitter {
     /**
      * Builds {@code private static final EffectiveInputPolicies POL{n}} field specs for each
      * parameter that uses a typed support-helper call requiring an
-     * {@link dev.vertique.rest.core.request.EffectiveInputPolicies} argument
+     * {@link dev.vertique.input.processing.EffectiveInputPolicies} argument
      * ({@code PATH}, {@code QUERY}, {@code HEADER}, {@code COOKIE}, {@code FORM}, {@code BODY}).
      *
      * <p>Each constant is built from the pre-computed per-parameter policy chains in
@@ -912,7 +912,7 @@ public final class ExecutionPlanEmitter {
 
     /**
      * Returns {@code true} for parameter sources whose support-helper call requires an
-     * {@link dev.vertique.rest.core.request.EffectiveInputPolicies} argument — implying that a
+     * {@link dev.vertique.input.processing.EffectiveInputPolicies} argument — implying that a
      * {@code POL{n}} constant must also be emitted.
      *
      * @param source the parameter source

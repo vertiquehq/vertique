@@ -17,9 +17,9 @@ import dev.vertique.core.sanitization.Canonicalizer;
 import dev.vertique.core.sanitization.InputLocation;
 import dev.vertique.core.sanitization.InputValueContext;
 import dev.vertique.core.sanitization.Sanitizer;
+import dev.vertique.input.processing.EffectiveInputPolicies;
+import dev.vertique.input.processing.InputObjectProcessor;
 import dev.vertique.rest.core.context.RestContextResolution;
-import dev.vertique.rest.core.request.EffectiveInputPolicies;
-import dev.vertique.rest.core.request.InputObjectProcessor;
 import dev.vertique.rest.core.request.RequestValue;
 import dev.vertique.rest.core.security.SecurityPolicy;
 import dev.vertique.rest.jaxrs.request.BoundRequest;
@@ -195,7 +195,7 @@ class FormParamCollectionBindTest {
      */
     static final class UppercasingProcessor implements InputObjectProcessor {
         @Override
-        public Object processStructuredBody(
+        public Object processInput(
                 Object intermediateBody, Type targetType, EffectiveInputPolicies policies, InputLocation location) {
             if (intermediateBody instanceof String s) {
                 return s.toUpperCase(Locale.ROOT);
@@ -212,7 +212,7 @@ class FormParamCollectionBindTest {
      */
     static final class TrimmingProcessor implements InputObjectProcessor {
         @Override
-        public Object processStructuredBody(
+        public Object processInput(
                 Object intermediateBody, Type targetType, EffectiveInputPolicies policies, InputLocation location) {
             if (intermediateBody instanceof String s) {
                 return s.strip();

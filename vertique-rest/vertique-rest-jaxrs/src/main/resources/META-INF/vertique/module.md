@@ -89,8 +89,8 @@ serializer owns the body only.
 ```
 1. Validate      RequestValidationStrategy gate (annotation-synthesized schema by default)
 2. Decode        RequestBodyDecoder chain → intermediate Map/List
-3. Canonicalize  InputObjectProcessor: route-level → object-level → field-level canonicalizers,
-   + Sanitize    then route-level → object-level → field-level sanitizers
+3. Canonicalize  InputObjectProcessor (dev.vertique.input.processing): route-level → object-level
+   + Sanitize    → field-level canonicalizers, then route-level → object-level → field-level sanitizers
 4. Validate      BeanValidator.validateParameters()   (only when ValidationModule is present)
 5. Invoke        the resource method, with processed and validated arguments
 ```
@@ -1009,7 +1009,7 @@ Beyond what `RestCoreModule` and `JsonRuntimeModule` contribute:
 | `Set<RestExceptionMapperCustomizer>` | `@Multibinds`, empty by default |
 | `Set<RouterMount>` | `@ElementsIntoSet`: the default `JaxRsRouterMount` at `jaxrs.basePath`; empty when `@JaxRsResources` is empty |
 | `ComposeValidator` (`JaxRsDefaultProfileValidator`) | `@IntoSet`; fails the `VALIDATE` phase on an unknown `jaxrs.jsonProfile` |
-| `OperationSchemaSource`, `BeanValidator`, `InputObjectProcessor`, `ActionRegistry`, `Authorizer` | `@BindsOptionalOf`; satisfied by `rest-validation`, `validation`, `sanitization`, and `rest-security` respectively |
+| `OperationSchemaSource`, `BeanValidator`, `InputObjectProcessor` (`dev.vertique.input.processing.InputObjectProcessor`), `ActionRegistry`, `Authorizer` | `@BindsOptionalOf`; satisfied by `rest-validation`, `validation`, `sanitization`, and `rest-security` respectively |
 
 `dev.vertique.rest.jaxrs.runtime.MagicBytesVerifierModule` is a separate opt-in `@Module` that
 contributes the built-in magic-byte `FileContentVerifier`.
@@ -1021,6 +1021,7 @@ contributes the built-in magic-byte `FileContentVerifier`.
 | Dependency | Why |
 |---|---|
 | `dev.vertique:vertique-rest-core` | every extension SPI this runtime consumes, the `http`/`jaxrs` config objects, `ProblemDetail`, `BoundRequest`'s `RequestValue`, the parameter-conversion stack, and `RestCoreModule` |
+| `dev.vertique:vertique-input-processing` | the neutral `InputObjectProcessor` / `EffectiveInputPolicies` contracts the body pipeline and the optional sanitization binding are typed against |
 | `dev.vertique:vertique-security-core` | `SecurityContext` and the authorization references the security policy resolves against |
 | `dev.vertique:vertique-json` | `JsonMapperProfileRegistry`, `JsonConfig`, and `JsonRuntimeModule` for per-method profile resolution |
 | `io.swagger.core.v3:swagger-annotations-jakarta` | `@Operation` / `@ApiResponse` read at scan time for the operationId and, at build time, by the spec generator |
