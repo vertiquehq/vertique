@@ -402,6 +402,52 @@ expect "char-literal-quote-does-not-hide-a-violation" 1 \
     "$(make_fixture strip_char "$std_path" "$char_literal_fixture")" \
     "issue #167"
 
+# --- The sanctioned WebClient.wrap idiom -----------------------------------
+#
+# A test that owns its Vertx needs an awaitable close handle, which WebClient
+# cannot give it. The prescribed idiom is to wrap a raw HttpClient and join the
+# raw client's close. Such a file holds a raw client that never issues a
+# request, so scoping on the import alone false-positives on the very shape the
+# rules tell people to write.
+
+expect "wrap-idiom-with-webclient-send-is-accepted" 0 \
+    "$(make_fixture wrap_ok "$std_path" '
+import io.vertx.core.http.HttpClient;
+import io.vertx.ext.web.client.WebClient;
+public class SampleIT {
+    private HttpClient rawClient;
+    private WebClient client;
+    void setUp() {
+        rawClient = ownedVertx.createHttpClient();
+        client = WebClient.wrap(rawClient, new WebClientOptions().setFollowRedirects(false));
+    }
+    void exercise() {
+        client.get(port, "127.0.0.1", "/").send().map(response -> response.statusCode());
+    }
+    void tearDown() {
+        Future.join(server.close(), rawClient.close()).onComplete(ar -> ownedVertx.close());
+    }
+}')"
+
+# The exemption must not become a smuggling route: once the raw client issues a
+# request, the file is back in scope and its send( calls are judged normally.
+expect "wrap-idiom-with-raw-request-is-still-in-scope" 1 \
+    "$(make_fixture wrap_abused "$std_path" '
+import io.vertx.core.http.HttpClient;
+import io.vertx.ext.web.client.WebClient;
+public class SampleIT {
+    private HttpClient rawClient;
+    private WebClient client;
+    void setUp() {
+        rawClient = ownedVertx.createHttpClient();
+        client = WebClient.wrap(rawClient);
+    }
+    void exercise() {
+        rawClient.request(GET, port, "127.0.0.1", "/").compose(req -> req.send());
+    }
+}')" \
+    "issue #167"
+
 # --- Summary ---------------------------------------------------------------
 
 printf '\n'
