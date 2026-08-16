@@ -42,6 +42,12 @@ SPDX-License-Identifier: EUPL-1.2
             <artifactId>vertx-json-schema</artifactId>
         </dependency>
 
+        <!-- Shared transport-neutral annotation -> JSON Schema generator (body-type synthesis) -->
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-json-schema</artifactId>
+        </dependency>
+
         <!-- victools: annotation -> JSON Schema synthesis -->
         <dependency>
             <groupId>com.github.victools</groupId>
