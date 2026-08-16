@@ -42,8 +42,14 @@ final class ConjunctiveLocations {
     /** The reference keyword whose local target is conjoined with the referring node. */
     static final String REF = "$ref";
 
-    /** The keyword both callers intersect explicit values of. */
+    /** The keyword both callers refine explicit values of. */
     static final String TYPE = "type";
+
+    /** The JSON Schema type whose instances are the integral subset of {@link #NUMBER}'s. */
+    private static final String INTEGER = "integer";
+
+    /** The JSON Schema type whose instance set strictly contains {@link #INTEGER}'s. */
+    private static final String NUMBER = "number";
 
     /** The only reference form this class resolves: the whole document. */
     private static final String SELF_REFERENCE = "#";
@@ -160,11 +166,46 @@ final class ConjunctiveLocations {
     }
 
     /**
+     * Narrows one conjunctive accumulator of explicit {@code type} names against the next node's
+     * declaration, yielding the types an instance may still have at that location.
+     *
+     * <p>This is a raw set intersection for every type name but two. JSON Schema defines
+     * {@code integer} as the <em>integral subset</em> of {@code number} rather than a sibling of it,
+     * so {@code number ∧ integer} is the satisfiable narrowing {@code integer} — never the empty set.
+     * A plain {@link Set#retainAll(java.util.Collection)} would report that pair as a contradiction
+     * and reject a document the generator is perfectly able to publish: {@code @Schema(allOf =
+     * {Integer.class})} on a {@code double} property emits exactly that conjunction.
+     *
+     * <p>Both callers share this one primitive deliberately. The two post-generation walks reason
+     * about the same documents, so a subtype relation known to only one of them would let them
+     * disagree about a single location's effective type.
+     *
+     * <p>An empty result is still a genuine conflict: no type name survived, so no instance can
+     * satisfy the conjunction. The accumulator's iteration order is preserved.
+     *
+     * @param accumulator the types still admissible before this node, never {@code null}
+     * @param declared    the explicit types this node declares, never {@code null}
+     * @return a fresh, mutable set of the types admissible after this node
+     */
+    static Set<String> refine(Set<String> accumulator, Set<String> declared) {
+        Set<String> refined = new LinkedHashSet<>();
+        for (String type : accumulator) {
+            if (declared.contains(type)) {
+                refined.add(type);
+            } else if (NUMBER.equals(type) && declared.contains(INTEGER)) {
+                refined.add(INTEGER);
+            } else if (INTEGER.equals(type) && declared.contains(NUMBER)) {
+                refined.add(INTEGER);
+            }
+        }
+        return refined;
+    }
+
+    /**
      * Reads one node's explicit {@code type} declaration as a value set.
      *
      * <p>The returned set is always freshly allocated and unshared: a caller may retain it as an
-     * accumulator and mutate it directly (e.g. via {@link Set#retainAll(java.util.Collection)})
-     * without defensively copying it first.
+     * accumulator and hand it to {@link #refine(Set, Set)} without defensively copying it first.
      *
      * @param type the {@code type} member's value, possibly {@code null}
      * @return a fresh, mutable set of the declared type names, or {@code null} when the node declares

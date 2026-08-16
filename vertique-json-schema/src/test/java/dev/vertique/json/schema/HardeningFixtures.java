@@ -429,6 +429,27 @@ final class HardeningFixtures {
     }
 
     /**
+     * DTO whose properties conjoin {@code number} with {@code integer} in both directions through
+     * {@code @Schema(allOf = ...)}. JSON Schema defines {@code integer} as the integral subset of
+     * {@code number}, so each conjunction narrows to {@code integer} rather than emptying: none of
+     * these properties is a structural conflict, and every one of them must still generate.
+     */
+    static final class NumericRefinementDto {
+
+        /** {@code number} (the Java {@code double}) conjoined with {@code integer}. */
+        @Schema(allOf = {Integer.class})
+        public double narrowedDouble;
+
+        /** {@code number} (the Java {@link BigDecimal}) conjoined with {@code integer}. */
+        @Schema(allOf = {Integer.class})
+        public BigDecimal narrowedDecimal;
+
+        /** {@code integer} (the Java {@code int}) conjoined with {@code number}. */
+        @Schema(allOf = {Double.class})
+        public int widenedInt;
+    }
+
+    /**
      * Builds a fragment declaring numeric bounds and deliberately <em>no</em> {@code type}, so it is
      * conjoinable with any type a property contributes.
      *

@@ -27,9 +27,11 @@ import java.util.Set;
  * keyword is suppressed.
  *
  * <p>The check is deliberately provenance-free, mirroring {@link DisjointTypeDetector}: it does not
- * ask which contributor supplied a numeric-domain keyword or which override is in effect. It
- * computes, per {@link ConjunctiveLocations conjunctive location}, the intersection of explicit
- * {@code type} declarations found there. When that intersection is non-empty and excludes both
+ * ask which contributor supplied a numeric-domain keyword or which override is in effect. It folds,
+ * per {@link ConjunctiveLocations conjunctive location}, the explicit {@code type} declarations found
+ * there through {@link ConjunctiveLocations#refine(Set, Set)} — the same subtype-aware narrowing
+ * {@link DisjointTypeDetector} applies, so the two walks never disagree about one location's
+ * effective type. When that effective type is non-empty and excludes both
  * {@code number} and {@code integer}, the four keywords are removed from the location's
  * {@link ConjunctiveLocations#localBranches(JsonNode) local branches} — the head and its {@code allOf}
  * branches — and never from a {@code $ref} target, which other members share and whose own effective
@@ -98,11 +100,11 @@ final class NumericDomainKeywordFilter {
     }
 
     /**
-     * Computes one conjunctive location's effective explicit type intersection and, when it excludes
-     * both {@code number} and {@code integer}, strips the numeric-domain keywords from the location's
-     * local branches.
+     * Refines one conjunctive location's explicit type declarations into its effective type and, when
+     * that type excludes both {@code number} and {@code integer}, strips the numeric-domain keywords
+     * from the location's local branches.
      *
-     * <p>The two sets are deliberately different. The intersection is read from the whole
+     * <p>The two sets are deliberately different. The effective type is read from the whole
      * {@link ConjunctiveLocations#closure(JsonNode, JsonNode) closure}, because every conjoined node —
      * including a {@code $ref} target — contributes to the member's effective type. The suppression is
      * written only to the location's
@@ -125,7 +127,7 @@ final class NumericDomainKeywordFilter {
             if (intersection == null) {
                 intersection = declared;
             } else {
-                intersection.retainAll(declared);
+                intersection = ConjunctiveLocations.refine(intersection, declared);
             }
         }
 

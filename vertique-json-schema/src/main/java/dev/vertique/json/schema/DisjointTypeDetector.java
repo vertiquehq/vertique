@@ -14,9 +14,14 @@ import java.util.Set;
  *
  * <p>The check is deliberately narrow and provenance-free. It does not attempt schema satisfiability
  * analysis, and it does not care which contributor — a profile fragment, Swagger property metadata, a
- * Jakarta constraint — supplied which keyword. It computes, per {@link ConjunctiveLocations conjunctive
- * location}, the intersection of the explicit {@code type} value sets found there; an empty
- * intersection is a failure. A location that declares no explicit {@code type} at all always passes.
+ * Jakarta constraint — supplied which keyword. It folds, per {@link ConjunctiveLocations conjunctive
+ * location}, the explicit {@code type} value sets found there through
+ * {@link ConjunctiveLocations#refine(Set, Set)}; an empty result is a failure. A location that
+ * declares no explicit {@code type} at all always passes.
+ *
+ * <p>The fold is a set intersection refined by the one subtype relation JSON Schema's type vocabulary
+ * carries: {@code integer} is the integral subset of {@code number}, so conjoining the two narrows to
+ * {@code integer} rather than emptying. Every other pair of distinct type names is genuinely disjoint.
  *
  * <p>The closure deliberately does <strong>not</strong> descend through {@code properties},
  * {@code items}, {@code anyOf}, or {@code oneOf}. Those are not unconditional conjunctions: a
@@ -80,12 +85,13 @@ final class DisjointTypeDetector {
     }
 
     /**
-     * Intersects the explicit {@code type} value sets across one conjunctive location.
+     * Refines the explicit {@code type} value sets across one conjunctive location into the types an
+     * instance may still have there.
      *
      * @param document the whole document, used to resolve {@code $ref} pointers
      * @param start    the object node heading the location
      * @param path     the location's path, used in failure messages
-     * @throws JsonSchemaGenerationException if the intersection is empty
+     * @throws JsonSchemaGenerationException if the refined set is empty
      */
     private static void requireSatisfiableTypes(JsonNode document, JsonNode start, String path) {
         Set<String> intersection = null;
@@ -97,7 +103,7 @@ final class DisjointTypeDetector {
             if (intersection == null) {
                 intersection = declared;
             } else {
-                intersection.retainAll(declared);
+                intersection = ConjunctiveLocations.refine(intersection, declared);
             }
             if (intersection.isEmpty()) {
                 throw conflict(path, declared);

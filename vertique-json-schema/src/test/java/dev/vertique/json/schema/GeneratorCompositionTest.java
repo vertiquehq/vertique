@@ -191,6 +191,29 @@ class GeneratorCompositionTest {
     }
 
     @Test
+    @DisplayName("An integer branch conjoined with a numeric property still generates")
+    void integerAllOfOnNumericPropertyStillGenerates() {
+        // Given: the REST body path's construction mode — no profile, no override — and properties
+        // whose Swagger allOf contribution declares the integral subset of their own numeric type.
+        AnnotationJsonSchemaGenerator generator = AnnotationJsonSchemaGenerator.withVictoolsDefaults();
+
+        // When: the document is generated.
+        String canonical = assertDoesNotThrow(
+                () -> generator.generateCanonical(HardeningFixtures.NumericRefinementDto.class),
+                "number conjoined with integer is the satisfiable narrowing integer, not a conflict");
+
+        // Then: a document is emitted, and every conjunction survives into it — the walk narrows the
+        // effective type rather than refusing the document.
+        JsonNode document = SchemaAssertions.assertCanonicalForm(canonical);
+        for (String property : List.of("narrowedDouble", "narrowedDecimal", "widenedInt")) {
+            assertFalse(
+                    document.at("/properties/" + property).isMissingNode(),
+                    "the property " + property + " must be published; was: " + canonical);
+        }
+        assertTrue(canonical.contains("\"allOf\""), "the fixture must exercise a conjunction; was: " + canonical);
+    }
+
+    @Test
     @DisplayName("A sibling property's object type must not strip a shared definition's numeric bounds")
     void siblingPropertyTypeMustNotStripSharedDefinitionBounds() {
         // Given: a profile whose BigDecimal override declares numeric bounds and no type, and a DTO
@@ -298,6 +321,19 @@ class GeneratorCompositionTest {
             assertNoConflict("{\"type\":\"array\",\"items\":{\"type\":\"string\"}}");
             // A document declaring no explicit type keyword at all.
             assertNoConflict("{\"allOf\":[{\"maxLength\":3},{\"pattern\":\"^a$\"}]}");
+            // integer is the integral subset of number, so conjoining them narrows to integer.
+            assertNoConflict("{\"type\":\"number\",\"allOf\":[{\"type\":\"integer\"}]}");
+            assertNoConflict("{\"type\":\"integer\",\"allOf\":[{\"type\":\"number\"}]}");
+        }
+
+        @Test
+        @DisplayName("The numeric narrowing does not admit a genuinely disjoint conjunction")
+        void numericNarrowingStillRejectsDisjointTypes() {
+            // Neither numeric type is satisfiable together with a string or an object...
+            assertConflict("{\"type\":\"number\",\"allOf\":[{\"type\":\"string\"}]}");
+            assertConflict("{\"type\":\"integer\",\"allOf\":[{\"type\":\"object\"}]}");
+            // ...and the narrowing to integer stays disjoint from everything number was.
+            assertConflict("{\"type\":\"number\",\"allOf\":[{\"type\":\"integer\"},{\"type\":\"string\"}]}");
         }
 
         /**

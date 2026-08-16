@@ -115,9 +115,13 @@ misdescribes the wire:
   past that bound the absence of an override has not been proven.
 - **A conjunction of disjoint explicit `type` keywords.** After generation, every conjunctive
   location — an object node, its direct `allOf` branches, and its locally resolved `$ref`
-  targets — must have a non-empty intersection of the explicit `type` sets declared there. An
-  empty intersection is an unsatisfiable contract and fails generation. `anyOf` and `oneOf`
-  branches are alternatives, not conjunctions, so a nullable overridden property remains valid.
+  targets — must admit at least one explicit `type` across the declarations found there. The
+  types are intersected, refined by the one subtype relation JSON Schema's type vocabulary
+  carries: `integer` is the integral subset of `number`, so conjoining the two narrows to
+  `integer` rather than emptying — `@Schema(allOf = {Integer.class})` on a `double` property
+  generates normally. An empty result is an unsatisfiable contract and fails generation. `anyOf`
+  and `oneOf` branches are alternatives, not conjunctions, so a nullable overridden property
+  remains valid.
   Only a `$ref` this module can resolve inside the document itself — `"#"` or a `"#/"`-rooted JSON
   pointer — is followed; a `$anchor` reference such as `@Schema(ref = "#anchorName")`, an external
   URI, or an unresolvable pointer is skipped, so it never fails generation.
