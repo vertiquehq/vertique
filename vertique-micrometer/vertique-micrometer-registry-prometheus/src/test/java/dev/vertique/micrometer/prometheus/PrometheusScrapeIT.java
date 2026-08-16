@@ -9,14 +9,12 @@ import dev.vertique.management.ManagementConfig;
 import dev.vertique.management.ManagementVerticle;
 import dev.vertique.micrometer.MicrometerMetricsContributor;
 import io.micrometer.core.instrument.Gauge;
-import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.core.VertxBuilder;
 import io.vertx.core.VertxOptions;
-import io.vertx.core.http.HttpClient;
-import io.vertx.core.http.HttpMethod;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.Router;
+import io.vertx.ext.web.client.WebClient;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
 import java.util.Optional;
@@ -50,6 +48,14 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * {@link #setUp(VertxTestContext)} and torn down in {@link #tearDown(VertxTestContext)}.
  * This is necessary because {@link PrometheusBackend} is a JVM-wide static — failsafe forks one
  * JVM per module, so all tests in this class share one process lifetime.
+ *
+ * <p>Scrapes are issued through a {@link WebClient} rather than a raw {@code HttpClient}
+ * deliberately: a raw {@code HttpClientResponse} discards body buffers that arrive before a body
+ * handler is attached, so under load a body read can succeed with zero bytes while the status code is
+ * correct (issue #167). This class reads the scrape body in nearly every test — the {@code # EOF}
+ * assertion and the {@code vertx_http}/{@code jvm_} polls all inspect it — so the raw idiom was a live
+ * hazard here, not a latent one: a silently emptied body would have looked like a missing meter. A
+ * {@link WebClient} aggregates the body into its {@code HttpResponse} before completing the send.
  */
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
@@ -63,7 +69,7 @@ public class PrometheusScrapeIT {
      * per request would leak a netty connection pool per call — the recursive
      * {@link #doPoll(String, int, long, VertxTestContext)} alone would create one per poll attempt.
      */
-    private static HttpClient client;
+    private static WebClient client;
 
     private static int managementPort;
     private static int appServerPort;
@@ -95,7 +101,7 @@ public class PrometheusScrapeIT {
         contributor.contribute(builder, fakeBootstrapContext(config, options));
 
         vertx = builder.build();
-        client = vertx.createHttpClient();
+        client = WebClient.create(vertx);
 
         // Start a Router-based application HTTP server on port 0.
         // A Router returns 404 for paths not explicitly registered (NFR-TEL-005).
@@ -108,9 +114,7 @@ public class PrometheusScrapeIT {
                 .compose(server -> {
                     appServerPort = server.actualPort();
                     // Fire one request to / to seed HTTP server metrics
-                    return client.request(HttpMethod.GET, appServerPort, "127.0.0.1", "/")
-                            .compose(req -> req.send())
-                            .mapEmpty();
+                    return client.get(appServerPort, "127.0.0.1", "/").send().mapEmpty();
                 })
                 // Deploy ManagementVerticle on port 0 with the scrape endpoint
                 .compose(ignored -> {
@@ -135,6 +139,10 @@ public class PrometheusScrapeIT {
     /**
      * Tears down the shared stack.
      *
+     * <p>{@link WebClient#close()} is {@code void}, unlike {@code HttpClient.close()}: it returns once
+     * the underlying client has been asked to close, so the close is a statement here rather than a
+     * future to await, and the Vert.x close alone carries the completion.
+     *
      * @param ctx the Vert.x test context
      */
     @AfterAll
@@ -142,18 +150,17 @@ public class PrometheusScrapeIT {
         if (contributor != null) {
             contributor.onShutdown();
         }
-        // Close the shared client while vertx's event loop is still alive (the close resolves on
-        // it), then close Vert.x last, from the callback. Closing Vert.x first tears down the netty
-        // connection pools underneath requests that are still in flight, which surfaces under
-        // parallel CI load as VertxException: Pool closed.
-        Future<?> clientClose = client != null ? client.close() : Future.succeededFuture();
-        clientClose.onComplete(ar -> {
-            if (vertx != null) {
-                vertx.close().onComplete(ignored -> ctx.completeNow());
-            } else {
-                ctx.completeNow();
-            }
-        });
+        // Close the shared client while vertx's event loop is still alive, then close Vert.x last.
+        // Closing Vert.x first tears down the netty connection pools underneath requests that are
+        // still in flight, which surfaces under parallel CI load as VertxException: Pool closed.
+        if (client != null) {
+            client.close();
+        }
+        if (vertx != null) {
+            vertx.close().onComplete(ignored -> ctx.completeNow());
+        } else {
+            ctx.completeNow();
+        }
     }
 
     // --- Tests ---
@@ -173,12 +180,11 @@ public class PrometheusScrapeIT {
     @Test
     @DisplayName("GET /metrics with Accept: application/openmetrics-text → openmetrics content-type and '# EOF'")
     void openmetricsAcceptHeader(VertxTestContext ctx) {
-        client.request(HttpMethod.GET, managementPort, "127.0.0.1", "/metrics")
-                .compose(req -> {
-                    req.putHeader("Accept", "application/openmetrics-text; version=1.0.0");
-                    return req.send();
-                })
-                .compose(resp -> resp.body().map(body -> {
+        client.get(managementPort, "127.0.0.1", "/metrics")
+                .putHeader("Accept", "application/openmetrics-text; version=1.0.0")
+                .send()
+                .map(resp -> {
+                    String body = String.valueOf(resp.bodyAsString());
                     ctx.verify(() -> {
                         assertEquals(200, resp.statusCode());
                         String ct = resp.getHeader("Content-Type");
@@ -189,7 +195,7 @@ public class PrometheusScrapeIT {
                         assertTrue(body.toString().contains("# EOF"), "OpenMetrics body must contain '# EOF'");
                     });
                     return body;
-                }))
+                })
                 .onSuccess(ignored -> ctx.completeNow())
                 .onFailure(ctx::failNow);
     }
@@ -197,8 +203,8 @@ public class PrometheusScrapeIT {
     @Test
     @DisplayName("GET /health/live → 200 (health endpoint still works alongside /metrics)")
     void healthLiveStillWorks(VertxTestContext ctx) {
-        client.request(HttpMethod.GET, managementPort, "127.0.0.1", "/health/live")
-                .compose(req -> req.send())
+        client.get(managementPort, "127.0.0.1", "/health/live")
+                .send()
                 .onSuccess(resp -> {
                     ctx.verify(() -> assertEquals(200, resp.statusCode()));
                     ctx.completeNow();
@@ -209,8 +215,8 @@ public class PrometheusScrapeIT {
     @Test
     @DisplayName("NFR-TEL-005: GET /metrics on application port → 404 (Router-based app server)")
     void metricsNotOnApplicationPort(VertxTestContext ctx) {
-        client.request(HttpMethod.GET, appServerPort, "127.0.0.1", "/metrics")
-                .compose(req -> req.send())
+        client.get(appServerPort, "127.0.0.1", "/metrics")
+                .send()
                 .onSuccess(resp -> {
                     ctx.verify(() -> assertEquals(404, resp.statusCode(), "app server must return 404 for /metrics"));
                     ctx.completeNow();
@@ -232,11 +238,12 @@ public class PrometheusScrapeIT {
                                 .register(registry),
                         () -> ctx.failNow(new AssertionError("Prometheus registry must be present")));
 
-        client.request(HttpMethod.GET, managementPort, "127.0.0.1", "/metrics")
-                .compose(req -> req.send())
-                .compose(resp -> resp.body())
-                // Small delay to ensure the gauge supplier has been invoked
-                .compose(body -> io.vertx.core.Future.<Void>future(p -> vertx.setTimer(50, id -> p.complete())))
+        client.get(managementPort, "127.0.0.1", "/metrics")
+                .send()
+                // The aggregated response already carries the scrape body, so the exchange is complete
+                // here; only the small delay below is still needed, to ensure the gauge supplier has
+                // been invoked.
+                .compose(resp -> io.vertx.core.Future.<Void>future(p -> vertx.setTimer(50, id -> p.complete())))
                 .onSuccess(ignored -> {
                     ctx.verify(() -> {
                         String threadName = capturedThread.get();
@@ -284,9 +291,9 @@ public class PrometheusScrapeIT {
             ctx.failNow(new AssertionError("Timed out waiting for '" + substring + "' in /metrics body"));
             return;
         }
-        client.request(HttpMethod.GET, managementPort, "127.0.0.1", "/metrics")
-                .compose(req -> req.send())
-                .compose(resp -> resp.body())
+        client.get(managementPort, "127.0.0.1", "/metrics")
+                .send()
+                .map(resp -> String.valueOf(resp.bodyAsString()))
                 .onSuccess(body -> {
                     if (body.toString().contains(substring)) {
                         ctx.completeNow();

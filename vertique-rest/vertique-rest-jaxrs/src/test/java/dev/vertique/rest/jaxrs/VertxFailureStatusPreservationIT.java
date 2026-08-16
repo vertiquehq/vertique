@@ -72,6 +72,13 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * <p>Two tests also assert the routing-context hint under {@link VertxFailureStatus#KEY}, observed
  * through an {@link ErrorInterceptor} before mapping. Asserting the status alone would prove only that
  * <em>some</em> branch answered; asserting the hint proves <em>which</em> branch produced it.
+ *
+ * <p><strong>Raw {@link HttpClient} exemption — reference implementation of the pre-attach idiom.</strong>
+ * {@code testing.md} cites this class as the canonical example of that idiom, so it stays on the raw
+ * client deliberately. Its exchanges attach the whole response continuation — body read included — to
+ * {@code request.response()} <em>before</em> {@code request.end()} initiates the send, rather than
+ * reading the body off a {@code send()} that has already started, so no already-delivered buffer can
+ * be dropped.
  */
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 20, unit = TimeUnit.SECONDS)

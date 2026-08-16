@@ -14,11 +14,10 @@ import io.vertx.core.Future;
 import io.vertx.core.Handler;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
-import io.vertx.core.http.HttpClient;
-import io.vertx.core.http.HttpMethod;
 import io.vertx.core.http.HttpServer;
 import io.vertx.ext.web.Router;
 import io.vertx.ext.web.RoutingContext;
+import io.vertx.ext.web.client.WebClient;
 import io.vertx.ext.web.handler.BodyHandler;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
@@ -51,6 +50,18 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * {@link RestValidationException} as a 400; the production REST error pipeline does the same. Non-
  * {@link RestValidationException} failures are rendered as 500 by the same handler, mirroring the
  * production pipeline's behaviour for server/config errors.
+ *
+ * <p>Requests are issued through a {@link WebClient} rather than a raw {@code HttpClient}
+ * deliberately: a raw {@code HttpClientResponse} discards body buffers that arrive before a body
+ * handler is attached, so under load a body read can succeed with zero bytes while the status code is
+ * correct (issue #167). These cases assert on the status code alone, so the raw idiom was latent
+ * rather than actively broken here — but a {@link WebClient} aggregates the response before completing
+ * the send, which removes the trap for whoever next asserts on a problem-detail body.
+ *
+ * <p>The request body and its {@code content-type} are the subject under test, so every request goes
+ * out via {@code sendBuffer}, which — unlike {@code sendJson} — sets no {@code Content-Type} of its
+ * own and writes exactly the bytes given: the contract gate sees precisely the request the test
+ * authored.
  */
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
@@ -60,13 +71,13 @@ public class OpenApiContractStrategyIT {
 
     private static Vertx vertx;
     private static HttpServer server;
-    private static HttpClient client;
+    private static WebClient client;
     private static int port;
 
     @BeforeAll
     static void setUp(Vertx v, VertxTestContext ctx) {
         vertx = v;
-        client = vertx.createHttpClient();
+        client = WebClient.create(vertx);
 
         OpenApiContractValidationStrategy strategy = new OpenApiContractValidationStrategy(
                 vertx, JaxRsConfig.builder().openapiPath(CONTRACT_PATH).build());
@@ -111,12 +122,25 @@ public class OpenApiContractStrategyIT {
                 .onFailure(ctx::failNow);
     }
 
+    /**
+     * Closes the server first and the {@link WebClient} afterwards, preserving the order the raw-client
+     * teardown used.
+     *
+     * <p>{@link WebClient#close()} is {@code void}, unlike {@code HttpClient.close()}: it returns once
+     * the underlying client has been asked to close, so there is no future to chain here and the server
+     * close alone carries the completion.
+     *
+     * @param ctx the test context used to signal teardown completion
+     */
     @AfterAll
     static void tearDown(VertxTestContext ctx) {
         Future<Void> closeServer = server != null ? server.close() : Future.succeededFuture();
-        closeServer
-                .eventually(() -> client != null ? client.close() : Future.succeededFuture())
-                .onComplete(ar -> ctx.completeNow());
+        closeServer.onComplete(ar -> {
+            if (client != null) {
+                client.close();
+            }
+            ctx.completeNow();
+        });
     }
 
     @Test
@@ -181,11 +205,9 @@ public class OpenApiContractStrategyIT {
     // --- helpers ---
 
     private Future<Integer> post(String path, String jsonBody) {
-        return client.request(HttpMethod.POST, port, "127.0.0.1", path)
-                .compose(req -> {
-                    req.putHeader("content-type", "application/json");
-                    return req.send(Buffer.buffer(jsonBody));
-                })
+        return client.post(port, "127.0.0.1", path)
+                .putHeader("content-type", "application/json")
+                .sendBuffer(Buffer.buffer(jsonBody))
                 .map(resp -> resp.statusCode());
     }
 
