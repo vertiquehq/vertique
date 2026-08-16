@@ -167,6 +167,10 @@ public final class InputTraversalContext {
      * nested DTO has no object- or field-level chain — every nested call inherits the parent's
      * chain unmutated.
      *
+     * <p>Package-private because it is the single chain-composition implementation shared by
+     * {@link DefaultInputObjectProcessor} and {@link GeneratedSupport}; callers that always have a
+     * field chain simply pass a non-{@code null} list.
+     *
      * @param inherited accumulated chain from ancestors; never {@code null}
      * @param object    object-level chain from the parent type; never {@code null}
      * @param field     field-level chain from the enclosing field, or {@code null} when descending
@@ -174,7 +178,7 @@ public final class InputTraversalContext {
      * @param <T>       the chain class element type
      * @return a composed list, or {@code inherited} unchanged when no new entries are added
      */
-    private static <T> List<T> compose(List<T> inherited, List<T> object, @Nullable List<T> field) {
+    static <T> List<T> compose(List<T> inherited, List<T> object, @Nullable List<T> field) {
         boolean fieldEmpty = field == null || field.isEmpty();
         if (object.isEmpty() && fieldEmpty) {
             return inherited;

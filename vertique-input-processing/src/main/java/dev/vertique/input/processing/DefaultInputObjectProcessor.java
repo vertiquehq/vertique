@@ -642,7 +642,7 @@ class DefaultInputObjectProcessor implements InputObjectProcessor {
         if (typeMeta.skipCanonicalization() && !fieldHasOwnChain) {
             return List.of();
         }
-        return compose(
+        return InputTraversalContext.compose(
                 ctx.inheritedCanonicalizerChain(),
                 typeMeta.objectCanonicalizerChain(),
                 fieldMeta != null ? fieldMeta.canonicalizerChain() : List.of());
@@ -672,7 +672,7 @@ class DefaultInputObjectProcessor implements InputObjectProcessor {
         if (typeMeta.skipSanitization() && !fieldHasOwnChain) {
             return List.of();
         }
-        return compose(
+        return InputTraversalContext.compose(
                 ctx.inheritedSanitizerChain(),
                 typeMeta.objectSanitizerChain(),
                 fieldMeta != null ? fieldMeta.sanitizerChain() : List.of());
@@ -770,30 +770,5 @@ class DefaultInputObjectProcessor implements InputObjectProcessor {
     @SuppressWarnings("unchecked")
     private static Class<Object> asObjectClass(Class<?> c) {
         return (Class<Object>) c;
-    }
-
-    // --- List concatenation helper ---
-
-    /**
-     * Composes inherited + object + field chains, reusing the {@code inherited} reference
-     * unchanged when both {@code object} and {@code field} are empty — eliminating an
-     * {@code ArrayList} allocation per nested DTO/string field on the common no-extra-layer
-     * hot path.
-     *
-     * @param inherited accumulated chain from ancestors; never {@code null}
-     * @param object    object-level chain from the current type; never {@code null}
-     * @param field     field-level chain; never {@code null} (callers pass {@code List.of()})
-     * @param <T>       chain element type
-     * @return a composed list, or {@code inherited} unchanged when no new entries are added
-     */
-    private static <T> List<T> compose(List<T> inherited, List<T> object, List<T> field) {
-        if (object.isEmpty() && field.isEmpty()) {
-            return inherited;
-        }
-        List<T> result = new ArrayList<>(inherited.size() + object.size() + field.size());
-        result.addAll(inherited);
-        result.addAll(object);
-        result.addAll(field);
-        return result;
     }
 }
