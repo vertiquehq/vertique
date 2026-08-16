@@ -304,6 +304,8 @@ public class AllowedCharactersObjectValidator implements ConstraintValidator<All
      */
     private boolean validateString(
             String value, CharacterPolicy policy, ConstraintValidatorContext context, String path) {
+        // Synthetic location: the traversal path is real, but BODY is a placeholder — Bean
+        // Validation has no accurate provenance for the value. See CharacterPolicy#validate.
         InputValueContext inputCtx = new InputValueContext(InputLocation.BODY, path, path, Object.class);
         CharacterPolicyResult result = policy.validate(value, inputCtx);
         if (!result.valid()) {

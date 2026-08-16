@@ -77,6 +77,9 @@ public class AllowedCharactersValidator implements ConstraintValidator<AllowedCh
             return true;
         }
         CharacterPolicy policy = resolvePolicy(policyClass);
+        // Synthetic context: Bean Validation sees the value after it has been separated from its
+        // transport provenance, and one pass can cover values from several locations, so BODY is a
+        // placeholder rather than a claim about origin. See CharacterPolicy#validate.
         InputValueContext inputCtx = new InputValueContext(InputLocation.BODY, "", "", Object.class);
         CharacterPolicyResult result = policy.validate(value.toString(), inputCtx);
         if (!result.valid()) {
