@@ -136,6 +136,13 @@ misdescribes the wire:
   fragment would have applied, because a rejection is visible and resolvable while a dropped
   fragment is neither. A declared type graph nesting deeper than 64 levels also fails, because
   past that bound the absence of an override has not been proven.
+  The search follows the declared type's own parameterization — its type arguments, array element,
+  and inherited container or wrapper bindings — and does **not** descend into the *members* of the
+  types it finds. A redirect on a property whose declared type is a DTO therefore succeeds even when
+  that DTO's own fields carry profile-overridden types: the redirect replaces the DTO's schema
+  wholesale, exactly as asked, and no fragment the profile publishes elsewhere is contradicted. Use
+  `implementation` only where you intend the declared type's schema — including anything nested
+  inside it — to be replaced.
 - **A conjunction of disjoint explicit `type` keywords.** After generation, every conjunctive
   location — an object node, its direct `allOf` branches, and its locally resolved `$ref`
   targets — must admit at least one explicit `type` across the declarations found there. The

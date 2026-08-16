@@ -39,7 +39,9 @@ import java.util.function.Supplier;
  * <ul>
  *   <li><strong>Reach.</strong> Victools visits the members of every type it generates, so a
  *       member-scope hook covers nested DTOs, collection element types, and inherited members for
- *       free. A root-only reflective walk would silently miss all of them.
+ *       free — for every type Victools actually generates. A member whose type is redirected away is
+ *       never generated, so its own members are never visited. A root-only reflective walk would
+ *       silently miss all of them.
  *   <li><strong>Timing.</strong> This provider is consulted at exactly the moment the member's schema
  *       is about to be produced — the moment the fragment would otherwise be dropped — and it is the
  *       one member-scope hook that could legitimately <em>supply</em> the conjoined definition should
@@ -107,6 +109,12 @@ import java.util.function.Supplier;
  * {@code class DecimalSupplier implements Supplier<BigDecimal>}. This enumeration is pinned to
  * Victools 4.38.0; a version bump must re-verify it against the wrapper modules {@code Option} builds
  * and the option set {@code OptionPreset.PLAIN_JSON} enables.
+ *
+ * <p>The enumeration is closed over the <em>type</em> graph only. Members are deliberately not
+ * resolved: a nested DTO's fields are reached through member resolution, not through
+ * {@code ResolvedType}, and are outside the contract this guard enforces. A redirect over a
+ * DTO-typed property whose fields carry overridden types is accepted — the profile made no statement
+ * about the DTO, so no fragment is contradicted; the developer replaced the whole subtree explicitly.
  *
  * <p><strong>Map key positions are excluded</strong> in both descents: for a {@link Map} with two
  * type parameters the key parameter is skipped, and only index 1 of an inherited
