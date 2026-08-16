@@ -39,7 +39,6 @@ import dev.vertique.security.runtime.IdentitySnapshotContext;
 import dev.vertique.security.runtime.events.SecurityEventEmitter;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
-import io.vertx.core.http.HttpClient;
 import io.vertx.core.http.HttpServer;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.auth.User;
@@ -47,6 +46,7 @@ import io.vertx.ext.auth.authorization.AuthorizationProvider;
 import io.vertx.ext.auth.authorization.PermissionBasedAuthorization;
 import io.vertx.ext.auth.authorization.RoleBasedAuthorization;
 import io.vertx.ext.web.Router;
+import io.vertx.ext.web.client.WebClient;
 import io.vertx.ext.web.impl.UserContextInternal;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
@@ -71,12 +71,19 @@ import org.slf4j.LoggerFactory;
  *
  * <p>All tests use a minimal in-process Vert.x HTTP server to exercise the handler in a real
  * routing context, including the {@link RequestContextLifecycle} dependency.
+ *
+ * <p>The client is a {@link WebClient} rather than a raw {@code HttpClient} deliberately: a raw
+ * {@code HttpClientResponse} discards body buffers that arrive before a body handler is attached, so
+ * under load a body read can succeed with zero bytes while the status code is correct (issue #167).
+ * The blank-{@code sub} test asserts that the failure body does NOT leak an internal validation
+ * message — an assertion an emptied body would satisfy vacuously — so aggregating the body before the
+ * send completes is what keeps that proof honest. A {@link WebClient} does exactly that.
  */
 @ExtendWith(VertxExtension.class)
 class IdentityResolutionMiddlewareTest {
 
     private HttpServer server;
-    private HttpClient client;
+    private WebClient client;
 
     // --- Test-local SecurityRuntime ---
 
@@ -109,11 +116,22 @@ class IdentityResolutionMiddlewareTest {
         }
     }
 
+    /**
+     * Closes the {@link WebClient} and then the server started by the test that just ran.
+     *
+     * <p>{@link WebClient#close()} is {@code void}, unlike {@code HttpClient.close()}: it returns once
+     * the underlying client has been asked to close, so there is no future to join here and the server
+     * close alone carries the completion.
+     *
+     * @param ctx the test context used to signal teardown completion
+     */
     @AfterEach
     void tearDown(VertxTestContext ctx) {
-        Future<?> sc = server != null ? server.close() : Future.succeededFuture();
-        Future<?> cc = client != null ? client.close() : Future.succeededFuture();
-        Future.join(sc, cc).onComplete(ar -> ctx.completeNow());
+        if (client != null) {
+            client.close();
+        }
+        Future<Void> sc = server != null ? server.close() : Future.succeededFuture();
+        sc.onComplete(ar -> ctx.completeNow());
     }
 
     // --- Helpers ---
@@ -1291,16 +1309,16 @@ class IdentityResolutionMiddlewareTest {
                     .listen(0, "127.0.0.1")
                     .onComplete(ctx.succeeding(s -> {
                         server = s;
-                        (client = vertx.createHttpClient())
-                                .request(io.vertx.core.http.HttpMethod.GET, s.actualPort(), "127.0.0.1", "/test")
-                                .compose(req -> req.send())
-                                .compose(resp -> {
+                        client = WebClient.create(vertx);
+                        client.get(s.actualPort(), "127.0.0.1", "/test")
+                                .send()
+                                .map(resp -> {
                                     assertEquals(
                                             500,
                                             resp.statusCode(),
                                             "blank sub must fail resolution the same way as an underivable id "
                                                     + "(500), not surface as a 400 validation error");
-                                    return resp.body().map(Object::toString);
+                                    return String.valueOf(resp.bodyAsString());
                                 })
                                 .onComplete(ctx.succeeding(body -> {
                                     assertFalse(
@@ -1348,14 +1366,14 @@ class IdentityResolutionMiddlewareTest {
     private void startAndSend(Vertx vertx, VertxTestContext ctx, Router router, int expectedStatus) {
         vertx.createHttpServer().requestHandler(router).listen(0, "127.0.0.1").onComplete(ctx.succeeding(s -> {
             server = s;
-            (client = vertx.createHttpClient())
-                    .request(io.vertx.core.http.HttpMethod.GET, s.actualPort(), "127.0.0.1", "/test")
-                    .compose(req -> req.send())
-                    .compose(resp -> {
+            client = WebClient.create(vertx);
+            client.get(s.actualPort(), "127.0.0.1", "/test")
+                    .send()
+                    .map(resp -> {
                         assertEquals(expectedStatus, resp.statusCode());
-                        return resp.body();
+                        return resp.statusCode();
                     })
-                    .onComplete(ctx.succeeding(body -> ctx.completeNow()));
+                    .onComplete(ctx.succeeding(status -> ctx.completeNow()));
         }));
     }
 }

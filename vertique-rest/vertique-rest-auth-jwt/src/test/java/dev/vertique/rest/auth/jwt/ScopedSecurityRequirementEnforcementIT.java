@@ -38,7 +38,6 @@ import dev.vertique.security.verification.CustomVerificationSource;
 import io.vertx.core.Future;
 import io.vertx.core.Handler;
 import io.vertx.core.Vertx;
-import io.vertx.core.http.HttpClient;
 import io.vertx.core.http.HttpMethod;
 import io.vertx.core.http.HttpServer;
 import io.vertx.core.json.JsonObject;
@@ -46,6 +45,7 @@ import io.vertx.ext.auth.User;
 import io.vertx.ext.web.Route;
 import io.vertx.ext.web.Router;
 import io.vertx.ext.web.RoutingContext;
+import io.vertx.ext.web.client.WebClient;
 import io.vertx.ext.web.impl.UserContextInternal;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
@@ -96,6 +96,13 @@ import org.junit.jupiter.api.extension.ExtendWith;
  *       RED before the fix (returns {@code 200}, scopes ignored);</li>
  *   <li><b>scopeless op</b> → no scope gate, authorized regardless of token scopes ({@code 200}).</li>
  * </ul>
+ *
+ * <p>The client is a {@link WebClient} rather than a raw {@code HttpClient} deliberately: a raw
+ * {@code HttpClientResponse} discards body buffers that arrive before a body handler is attached, so
+ * under load a body read can succeed with zero bytes while the status code is correct (issue #167).
+ * These tests assert on the status code alone, so the raw idiom is latent rather than actively broken
+ * here — but a {@link WebClient} aggregates the response before completing the send, which removes
+ * the trap for whoever next adds a body assertion.
  */
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
@@ -103,20 +110,20 @@ public class ScopedSecurityRequirementEnforcementIT {
 
     private static int port;
     private static HttpServer server;
-    private static HttpClient client;
+    private static WebClient client;
 
     /**
      * Builds and starts the shared HTTP server with two routes wired through the real, priority-sorted
      * security contributor chain: {@code /secured} (a scoped single-scheme {@code @SecurityRequirement}
      * folded into a scope-enforcing policy) and {@code /open} (a scopeless single-scheme requirement,
-     * no scope gate). One {@link HttpClient} is shared across all tests.
+     * no scope gate). One {@link WebClient} is shared across all tests.
      *
      * @param vertx the Vert.x instance injected by {@link VertxExtension}
      * @param ctx   the test context used for async startup assertion
      */
     @BeforeAll
     static void setUp(Vertx vertx, VertxTestContext ctx) {
-        client = vertx.createHttpClient();
+        client = WebClient.create(vertx);
 
         HolderBackedSecurityRuntime securityRuntime = new HolderBackedSecurityRuntime((sc, secure) -> null);
         SecurityEventEmitter emitter = new SecurityEventEmitter(Set.of());
@@ -225,15 +232,21 @@ public class ScopedSecurityRequirementEnforcementIT {
     }
 
     /**
-     * Closes the shared HTTP server and {@link HttpClient}.
+     * Closes the shared {@link WebClient} and then the shared HTTP server.
+     *
+     * <p>{@link WebClient#close()} is {@code void}, unlike {@code HttpClient.close()}: it returns once
+     * the underlying client has been asked to close, so there is no future to join here and the server
+     * close alone carries the completion.
      *
      * @param ctx the test context used for async teardown assertion
      */
     @AfterAll
     static void tearDown(VertxTestContext ctx) {
-        Future<?> s = server != null ? server.close() : Future.succeededFuture();
-        Future<?> c = client != null ? client.close() : Future.succeededFuture();
-        Future.join(s, c).onComplete(ar -> ctx.completeNow());
+        if (client != null) {
+            client.close();
+        }
+        Future<Void> s = server != null ? server.close() : Future.succeededFuture();
+        s.onComplete(ar -> ctx.completeNow());
     }
 
     // --- Tests ---
@@ -302,10 +315,10 @@ public class ScopedSecurityRequirementEnforcementIT {
      * @return a future resolving with the response status code
      */
     private Future<Integer> get(String path, String token) {
-        return client.request(HttpMethod.GET, port, "127.0.0.1", path).compose(req -> {
-            req.putHeader("Authorization", "Bearer " + token);
-            return req.send().map(resp -> resp.statusCode());
-        });
+        return client.get(port, "127.0.0.1", path)
+                .putHeader("Authorization", "Bearer " + token)
+                .send()
+                .map(resp -> resp.statusCode());
     }
 
     // --- Test doubles ---

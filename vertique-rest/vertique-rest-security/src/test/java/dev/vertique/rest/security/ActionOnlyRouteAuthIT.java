@@ -36,13 +36,14 @@ import dev.vertique.security.verification.CustomVerificationSource;
 import io.vertx.core.Future;
 import io.vertx.core.Handler;
 import io.vertx.core.Vertx;
-import io.vertx.core.http.HttpClient;
-import io.vertx.core.http.HttpMethod;
+import io.vertx.core.buffer.Buffer;
 import io.vertx.core.http.HttpServer;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.auth.User;
 import io.vertx.ext.web.Router;
 import io.vertx.ext.web.RoutingContext;
+import io.vertx.ext.web.client.HttpRequest;
+import io.vertx.ext.web.client.WebClient;
 import io.vertx.ext.web.impl.UserContextInternal;
 import io.vertx.ext.web.openapi.router.OpenAPIRoute;
 import io.vertx.ext.web.openapi.router.RequestExtractor;
@@ -94,6 +95,15 @@ import org.junit.jupiter.api.extension.ExtendWith;
  *   <li><b>deny (no token)</b> — no {@code Authorization} header: the auth handler rejects (401), so an
  *       unauthenticated caller is denied rather than silently passed through as anonymous.</li>
  * </ul>
+ *
+ * <p>The client is a {@link WebClient} rather than a raw {@code HttpClient} deliberately: a raw
+ * {@code HttpClientResponse} discards body buffers that arrive before a body handler is attached, so
+ * under load a body read can succeed with zero bytes while the status code is correct (issue #167).
+ * These tests assert on the status code plus the marker header, so the raw idiom is latent rather
+ * than actively broken here — but a {@link WebClient} aggregates the response before completing the
+ * send, which removes the trap for whoever next adds a body assertion. The response is consequently
+ * projected to its status and marker header alone: the previous body read existed only to complete
+ * the exchange, and the aggregation makes it redundant.
  */
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
@@ -103,18 +113,18 @@ public class ActionOnlyRouteAuthIT {
 
     private static int port;
     private static HttpServer server;
-    private static HttpClient client;
+    private static WebClient client;
 
     /**
      * Builds and starts the shared HTTP server with the action-only {@code /content} route wired
-     * through the real security contributor chain. One {@link HttpClient} is shared across all tests.
+     * through the real security contributor chain. One {@link WebClient} is shared across all tests.
      *
      * @param vertx the Vert.x instance injected by {@link VertxExtension}
      * @param ctx   the test context used for async startup assertion
      */
     @BeforeAll
     static void setUp(Vertx vertx, VertxTestContext ctx) {
-        client = vertx.createHttpClient();
+        client = WebClient.create(vertx);
 
         HolderBackedSecurityRuntime securityRuntime = new HolderBackedSecurityRuntime((sc, secure) -> null);
         SecurityEventEmitter emitter = new SecurityEventEmitter(Set.of());
@@ -209,15 +219,21 @@ public class ActionOnlyRouteAuthIT {
     }
 
     /**
-     * Closes the shared HTTP server and {@link HttpClient}.
+     * Closes the shared {@link WebClient} and then the shared HTTP server.
+     *
+     * <p>{@link WebClient#close()} is {@code void}, unlike {@code HttpClient.close()}: it returns once
+     * the underlying client has been asked to close, so there is no future to join here and the server
+     * close alone carries the completion.
      *
      * @param ctx the test context used for async teardown assertion
      */
     @AfterAll
     static void tearDown(VertxTestContext ctx) {
-        Future<?> s = server != null ? server.close() : Future.succeededFuture();
-        Future<?> c = client != null ? client.close() : Future.succeededFuture();
-        Future.join(s, c).onComplete(ar -> ctx.completeNow());
+        if (client != null) {
+            client.close();
+        }
+        Future<Void> s = server != null ? server.close() : Future.succeededFuture();
+        s.onComplete(ar -> ctx.completeNow());
     }
 
     // --- Tests ---
@@ -290,7 +306,10 @@ public class ActionOnlyRouteAuthIT {
 
     /**
      * Issues a {@code GET} to the given path, optionally with an {@code Authorization: Bearer} header,
-     * drains the response body, and resolves with the response status plus marker-header presence.
+     * and resolves with the response status plus marker-header presence.
+     *
+     * <p>The request is bound to a local so the {@code Authorization} header stays conditional: the
+     * no-token case must send no such header at all, which is exactly what the 401 scenario proves.
      *
      * @param path  the request path
      * @param token the bearer token value (format {@code <sub>|<csv-roles>}), or {@code null} to send
@@ -298,13 +317,11 @@ public class ActionOnlyRouteAuthIT {
      * @return a future resolving with the {@link Resp}
      */
     private Future<Resp> get(String path, String token) {
-        return client.request(HttpMethod.GET, port, "127.0.0.1", path).compose(req -> {
-            if (token != null) {
-                req.putHeader("Authorization", "Bearer " + token);
-            }
-            return req.send().compose(resp -> resp.body()
-                    .map(body -> new Resp(resp.statusCode(), resp.getHeader("x-vq-test-server") != null)));
-        });
+        HttpRequest<Buffer> request = client.get(port, "127.0.0.1", path);
+        if (token != null) {
+            request.putHeader("Authorization", "Bearer " + token);
+        }
+        return request.send().map(resp -> new Resp(resp.statusCode(), resp.getHeader("x-vq-test-server") != null));
     }
 
     /**
