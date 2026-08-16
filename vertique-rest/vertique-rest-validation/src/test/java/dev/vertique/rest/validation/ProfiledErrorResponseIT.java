@@ -28,13 +28,13 @@ import dev.vertique.rest.test.RestTestMounts;
 import io.swagger.v3.oas.annotations.Operation;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
-import io.vertx.core.http.HttpClient;
-import io.vertx.core.http.HttpClientResponse;
-import io.vertx.core.http.HttpMethod;
+import io.vertx.core.buffer.Buffer;
 import io.vertx.core.http.HttpServer;
 import io.vertx.core.json.Json;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.RoutingContext;
+import io.vertx.ext.web.client.HttpResponse;
+import io.vertx.ext.web.client.WebClient;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
 import jakarta.ws.rs.Consumes;
@@ -95,6 +95,15 @@ import org.junit.jupiter.api.extension.ExtendWith;
  *   <li><em>vertx error path unchanged</em> — PASSES today (invariant): no profile, no default, so the
  *       error body is byte-for-byte {@code Json.encode} (null present).</li>
  * </ul>
+ *
+ * <p><strong>Why a {@link WebClient} and not a raw {@code HttpClient}.</strong> A raw
+ * {@code HttpClientResponse} discards body buffers that arrive before a body handler is attached, so
+ * under load {@code body()} can succeed with zero bytes while the status code is correct (issue #167).
+ * Every assertion in this class is about the <em>bytes of the error body</em> — whether the null field
+ * is present or omitted, and in three tests a byte-for-byte comparison against {@code Json.encode} — so
+ * a silently emptied body would report a profile-selection defect that did not happen. A
+ * {@link WebClient} aggregates the body into its {@code HttpResponse} before completing the send, so
+ * the race is closed by construction rather than by every author remembering an idiom.
  */
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
@@ -105,13 +114,24 @@ public class ProfiledErrorResponseIT {
     private static final String VERTX_PROFILE = "vertx";
 
     private HttpServer server;
-    private HttpClient client;
+    private WebClient client;
 
+    /**
+     * Closes the {@link WebClient} and then the server started by the test that just ran.
+     *
+     * <p>{@link WebClient#close()} is {@code void}, unlike {@code HttpClient.close()}: it returns once
+     * the underlying client has been asked to close, so there is no future to join here and the server
+     * close alone carries the completion.
+     *
+     * @param ctx the test context used for async teardown assertion
+     */
     @AfterEach
     void tearDown(VertxTestContext ctx) {
-        Future<?> serverClose = server != null ? server.close() : Future.succeededFuture();
-        Future<?> clientClose = client != null ? client.close() : Future.succeededFuture();
-        Future.join(serverClose, clientClose).onComplete(ar -> ctx.completeNow());
+        if (client != null) {
+            client.close();
+        }
+        Future<Void> serverClose = server != null ? server.close() : Future.succeededFuture();
+        serverClose.onComplete(ar -> ctx.completeNow());
     }
 
     // --- Profile fixtures ---
@@ -439,10 +459,10 @@ public class ProfiledErrorResponseIT {
         // KEY_RESOLVED_BODY_MAPPER ahead of dispatch. The method throws MappedFailure -> mapped to a 422
         // ErrorEntity body (application/problem+json). The error body reads the stash and OMITS the null
         // "missing" field. Status (422) and media type must be unchanged. PASSES today (slice 3.1).
-        deploy(vertx, ctx, Set.of(new ProfiledErrorResource()), Set.of(), (port, c) -> c.request(
-                        HttpMethod.GET, port, "127.0.0.1", "/profiled-error")
-                .compose(req -> req.send())
-                .compose(resp -> bodyWithMeta(resp))
+        deploy(vertx, ctx, Set.of(new ProfiledErrorResource()), Set.of(), (port, c) -> c.get(
+                        port, "127.0.0.1", "/profiled-error")
+                .send()
+                .map(ProfiledErrorResponseIT::bodyWithMeta)
                 .onComplete(ctx.succeeding(r -> {
                     ctx.verify(() -> {
                         assertEquals(422, r.status, "the mapped error status must be preserved");
@@ -476,9 +496,9 @@ public class ProfiledErrorResponseIT {
                 Set.of(new RejectBeforeMatchMiddleware()),
                 boundaryDefaultConfig(),
                 Set.of(opinionatedErrorProfile()),
-                (port, c) -> c.request(HttpMethod.GET, port, "127.0.0.1", "/anything")
-                        .compose(req -> req.send())
-                        .compose(resp -> bodyWithMeta(resp))
+                (port, c) -> c.get(port, "127.0.0.1", "/anything")
+                        .send()
+                        .map(ProfiledErrorResponseIT::bodyWithMeta)
                         .onComplete(ctx.succeeding(r -> {
                             ctx.verify(() -> {
                                 assertEquals(404, r.status, "the no-method error status must be preserved");
@@ -510,10 +530,10 @@ public class ProfiledErrorResponseIT {
         // this test TIMES OUT (the RED signal — the un-failed-open throw leaves the client hanging). The
         // slice-3.2 fail-open completes the response via the vertx mapper, making the assertions below
         // pass fast. The fail-open body is the vertx rendering of ErrorEntity ("name":"boom").
-        deploy(vertx, ctx, Set.of(new ThrowingErrorResource()), Set.of(), (port, c) -> c.request(
-                        HttpMethod.GET, port, "127.0.0.1", "/throwing-error")
-                .compose(req -> req.send())
-                .compose(resp -> bodyWithMeta(resp))
+        deploy(vertx, ctx, Set.of(new ThrowingErrorResource()), Set.of(), (port, c) -> c.get(
+                        port, "127.0.0.1", "/throwing-error")
+                .send()
+                .map(ProfiledErrorResponseIT::bodyWithMeta)
                 .onComplete(ctx.succeeding(r -> {
                     ctx.verify(() -> {
                         assertEquals(
@@ -542,10 +562,10 @@ public class ProfiledErrorResponseIT {
         // be byte-for-byte Json.encode (null "missing" PRESENT). PASSES today, guarding FR-JSON-057 for
         // the error leg.
         String expectedBody = Json.encode(ErrorEntity.boom());
-        deploy(vertx, ctx, Set.of(new PlainErrorResource()), Set.of(), (port, c) -> c.request(
-                        HttpMethod.GET, port, "127.0.0.1", "/plain-error")
-                .compose(req -> req.send())
-                .compose(resp -> bodyWithMeta(resp))
+        deploy(vertx, ctx, Set.of(new PlainErrorResource()), Set.of(), (port, c) -> c.get(
+                        port, "127.0.0.1", "/plain-error")
+                .send()
+                .map(ProfiledErrorResponseIT::bodyWithMeta)
                 .onComplete(ctx.succeeding(r -> {
                     ctx.verify(() -> {
                         assertEquals(422, r.status, "the mapped error status must be preserved");
@@ -578,10 +598,10 @@ public class ProfiledErrorResponseIT {
                 Set.of(),
                 boundaryDefaultConfig(),
                 Set.of(opinionatedErrorProfile()),
-                (port, c) -> c.request(HttpMethod.POST, port, "127.0.0.1", "/vertx-consumes")
-                        .compose(req ->
-                                req.putHeader("Content-Type", "text/plain").send("not json"))
-                        .compose(resp -> bodyWithMeta(resp))
+                (port, c) -> c.post(port, "127.0.0.1", "/vertx-consumes")
+                        .putHeader("Content-Type", "text/plain")
+                        .sendBuffer(Buffer.buffer("not json"))
+                        .map(ProfiledErrorResponseIT::bodyWithMeta)
                         .onComplete(ctx.succeeding(r -> {
                             ctx.verify(() -> {
                                 assertEquals(415, r.status, "the 415 status must be preserved");
@@ -610,10 +630,11 @@ public class ProfiledErrorResponseIT {
         // route's per-route failure handler stashes the route's error-profile mapper, so the 415 body
         // OMITS the null "missing" field. No boundary default is configured here, isolating the
         // before-stash gap.
-        deploy(vertx, ctx, Set.of(new ProfiledConsumesResource()), Set.of(), (port, c) -> c.request(
-                        HttpMethod.POST, port, "127.0.0.1", "/profiled-consumes")
-                .compose(req -> req.putHeader("Content-Type", "text/plain").send("not json"))
-                .compose(resp -> bodyWithMeta(resp))
+        deploy(vertx, ctx, Set.of(new ProfiledConsumesResource()), Set.of(), (port, c) -> c.post(
+                        port, "127.0.0.1", "/profiled-consumes")
+                .putHeader("Content-Type", "text/plain")
+                .sendBuffer(Buffer.buffer("not json"))
+                .map(ProfiledErrorResponseIT::bodyWithMeta)
                 .onComplete(ctx.succeeding(r -> {
                     ctx.verify(() -> {
                         assertEquals(415, r.status, "the 415 status must be preserved");
@@ -656,10 +677,10 @@ public class ProfiledErrorResponseIT {
                 Set.of(),
                 boundaryDefaultConfig(),
                 Set.of(opinionatedErrorProfile()),
-                (port, c) -> c.request(HttpMethod.POST, port, "127.0.0.1", "/overlap/fixed")
-                        .compose(req ->
-                                req.putHeader("Content-Type", "text/plain").send("not json"))
-                        .compose(resp -> bodyWithMeta(resp))
+                (port, c) -> c.post(port, "127.0.0.1", "/overlap/fixed")
+                        .putHeader("Content-Type", "text/plain")
+                        .sendBuffer(Buffer.buffer("not json"))
+                        .map(ProfiledErrorResponseIT::bodyWithMeta)
                         .onComplete(ctx.succeeding(r -> {
                             ctx.verify(() -> {
                                 assertEquals(415, r.status, "the 415 status must be preserved");
@@ -683,15 +704,20 @@ public class ProfiledErrorResponseIT {
     private record ResponseMeta(int status, String contentType, String body) {}
 
     /**
-     * Reads the full body of {@code resp} and pairs it with the response status and Content-Type.
+     * Pairs the already-aggregated body of {@code response} with its status and Content-Type.
      *
-     * @param resp the client response
-     * @return a future of the status + Content-Type + body string
+     * <p>The body is read through {@code bodyAsString()} and wrapped in {@code String.valueOf}: a
+     * {@link WebClient} reports an empty body as {@code null} where the raw client reported a
+     * zero-length buffer. No error response asserted on here is legitimately empty — every one carries
+     * a mapped {@code ErrorEntity} — so the wrapper only keeps an unexpected empty body a legible
+     * assertion failure instead of an NPE inside {@code ctx.verify}.
+     *
+     * @param response the aggregated client response
+     * @return the status + Content-Type + body string
      */
-    private static Future<ResponseMeta> bodyWithMeta(HttpClientResponse resp) {
-        int status = resp.statusCode();
-        String contentType = resp.getHeader("Content-Type");
-        return resp.body().map(b -> new ResponseMeta(status, contentType, b.toString()));
+    private static ResponseMeta bodyWithMeta(HttpResponse<Buffer> response) {
+        return new ResponseMeta(
+                response.statusCode(), response.getHeader("Content-Type"), String.valueOf(response.bodyAsString()));
     }
 
     /**
@@ -721,7 +747,7 @@ public class ProfiledErrorResponseIT {
             VertxTestContext ctx,
             Set<Object> resources,
             Set<Middleware> middlewares,
-            BiConsumer<Integer, HttpClient> afterListen) {
+            BiConsumer<Integer, WebClient> afterListen) {
         deploy(
                 vertx,
                 ctx,
@@ -735,7 +761,8 @@ public class ProfiledErrorResponseIT {
     /**
      * Deploys {@code resources} and {@code middlewares} under the {@code web-validation} strategy with the
      * given configuration and profile registry, starts an HTTP server, and invokes {@code afterListen}
-     * with the bound port and a shared {@link HttpClient}.
+     * with the bound port and a shared {@link WebClient}. The client is bound to a field so
+     * {@link #tearDown} can close it; an unbound client can never be closed at all.
      *
      * <p>Built through {@link MountFixtures} over {@link ValidationMountComponent}, so the graph carries
      * every real production collaborator (including the production {@code JsonBodyEncoder} — the
@@ -757,7 +784,7 @@ public class ProfiledErrorResponseIT {
             Set<Middleware> middlewares,
             JsonObject config,
             Set<JsonMapperProfile> profiles,
-            BiConsumer<Integer, HttpClient> afterListen) {
+            BiConsumer<Integer, WebClient> afterListen) {
         RestTestContributions.Builder contributions = RestTestContributions.builder()
                 // Maps @Consumes 415 (raised as NotSupportedException by JaxRsRouteRegistrar's
                 // per-route 415 check) to an observable ErrorEntity body so the vertx-vs-profile
@@ -772,7 +799,7 @@ public class ProfiledErrorResponseIT {
         RestTestMounts.startServer(vertx, MountFixtures.mount(vertx, config, contributions.build()), resources)
                 .onComplete(ctx.succeeding(s -> {
                     server = s;
-                    client = vertx.createHttpClient();
+                    client = WebClient.create(vertx);
                     afterListen.accept(s.actualPort(), client);
                 }));
     }

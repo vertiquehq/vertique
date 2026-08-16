@@ -13,9 +13,10 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.media.Schema;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
-import io.vertx.core.http.HttpClient;
-import io.vertx.core.http.HttpMethod;
+import io.vertx.core.buffer.Buffer;
 import io.vertx.core.http.HttpServer;
+import io.vertx.ext.web.client.HttpRequest;
+import io.vertx.ext.web.client.WebClient;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
 import jakarta.ws.rs.Consumes;
@@ -51,19 +52,37 @@ import org.junit.jupiter.api.extension.ExtendWith;
  *   <li>repeated header values for a {@code List<String>} header param bind end-to-end under the gate
  *       (the all-values rule), proving binding still runs after the gate.</li>
  * </ul>
+ *
+ * <p>Requests are issued through a {@link WebClient} rather than a raw {@code HttpClient}
+ * deliberately: a raw {@code HttpClientResponse} discards body buffers that arrive before a body
+ * handler is attached, so under load {@code body()} can succeed with zero bytes while the status code
+ * is correct (issue #167). The repeated-header test asserts on the echoed body alone, so a silently
+ * emptied body would fail it for a reason unrelated to the binding rule under test. A
+ * {@link WebClient} aggregates the body into its {@code HttpResponse} before completing the send.
  */
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
 public class WebValidationGateIT {
 
     private HttpServer server;
-    private HttpClient client;
+    private WebClient client;
 
+    /**
+     * Closes the {@link WebClient} and then the server started by the test that just ran.
+     *
+     * <p>{@link WebClient#close()} is {@code void}, unlike {@code HttpClient.close()}: it returns once
+     * the underlying client has been asked to close, so there is no future to join here and the server
+     * close alone carries the completion.
+     *
+     * @param ctx the test context used for async teardown assertion
+     */
     @AfterEach
     void tearDown(VertxTestContext ctx) {
-        Future<?> serverClose = server != null ? server.close() : Future.succeededFuture();
-        Future<?> clientClose = client != null ? client.close() : Future.succeededFuture();
-        Future.join(serverClose, clientClose).onComplete(ar -> ctx.completeNow());
+        if (client != null) {
+            client.close();
+        }
+        Future<Void> serverClose = server != null ? server.close() : Future.succeededFuture();
+        serverClose.onComplete(ar -> ctx.completeNow());
     }
 
     // --- Test 4: web-validation gate rejects a body violating minLength ---
@@ -109,12 +128,15 @@ public class WebValidationGateIT {
                         Set.of(new CreateResource(invoked)))
                 .onComplete(ctx.succeeding(s -> {
                     server = s;
-                    client = vertx.createHttpClient();
-                    client.request(HttpMethod.POST, s.actualPort(), "127.0.0.1", "/create")
-                            .compose(req -> req.putHeader("Content-Type", "application/json")
-                                    .send("{\"name\":\"AB\"}"))
-                            .compose(resp -> resp.body().map(b ->
-                                    new Object[] {resp.statusCode(), resp.getHeader("Content-Type"), b.toString()}))
+                    client = WebClient.create(vertx);
+                    client.post(s.actualPort(), "127.0.0.1", "/create")
+                            .putHeader("Content-Type", "application/json")
+                            .sendBuffer(Buffer.buffer("{\"name\":\"AB\"}"))
+                            .map(response -> new Object[] {
+                                response.statusCode(),
+                                response.getHeader("Content-Type"),
+                                String.valueOf(response.bodyAsString())
+                            })
                             .onComplete(ctx.succeeding(arr -> {
                                 ctx.verify(() -> {
                                     assertEquals(400, arr[0], "minLength violation must be a 400");
@@ -156,14 +178,13 @@ public class WebValidationGateIT {
                         vertx, MountFixtures.mount(vertx, RestTestContributions.none()), Set.of(new TagsResource()))
                 .onComplete(ctx.succeeding(s -> {
                     server = s;
-                    client = vertx.createHttpClient();
-                    client.request(HttpMethod.GET, s.actualPort(), "127.0.0.1", "/tags")
-                            .compose(req -> {
-                                req.headers().add("X-Tag", "a");
-                                req.headers().add("X-Tag", "b");
-                                return req.send();
-                            })
-                            .compose(resp -> resp.body())
+                    client = WebClient.create(vertx);
+                    HttpRequest<Buffer> request = client.get(s.actualPort(), "127.0.0.1", "/tags");
+                    // headers().add (not putHeader, which replaces) is what sends X-Tag twice.
+                    request.headers().add("X-Tag", "a");
+                    request.headers().add("X-Tag", "b");
+                    request.send()
+                            .map(response -> String.valueOf(response.bodyAsString()))
                             .onComplete(ctx.succeeding(body -> {
                                 ctx.verify(() -> assertEquals("tags=[a, b]", body.toString()));
                                 ctx.completeNow();
