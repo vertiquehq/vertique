@@ -236,4 +236,26 @@ class DelayedJobClientsModuleEmitterTest {
                 result.compilation().generatedSourceFile(MODULE_FQN).isEmpty(),
                 "no @DelayedJobContract in the unit must emit no GeneratedDelayedJobClientsModule");
     }
+
+    @Test
+    @DisplayName("a contract in the unnamed package is skipped rather than named from a named package")
+    void unnamedPackageContractIsSkipped() {
+        // Every contract in the unnamed package makes the LCP empty, which resolves to the named
+        // fallback package — from which an unnamed-package type can neither be imported nor named.
+        JavaFileObject unnamed = SourceFiles.inline("UnnamedJob", """
+                import dev.vertique.job.delayed.DelayedJobClient;
+                import dev.vertique.job.delayed.DelayedJobContract;
+                @DelayedJobContract(name = "unnamed")
+                public interface UnnamedJob extends DelayedJobClient<String> {}
+                """);
+
+        var result = ProcessorTestHarness.run(new DelayedJobContractProcessor(), unnamed)
+                .assertSuccess();
+
+        assertTrue(
+                result.compilation()
+                        .generatedSourceFile("vertique.generated.delayedjob.GeneratedDelayedJobClientsModule")
+                        .isEmpty(),
+                "an unnamed-package contract is the only contract, so no module should be emitted");
+    }
 }

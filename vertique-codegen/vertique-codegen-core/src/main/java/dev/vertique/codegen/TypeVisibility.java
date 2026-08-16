@@ -26,10 +26,20 @@ public final class TypeVisibility {
     /**
      * Returns whether {@code type} can be named from source declared in {@code fromPackage}.
      *
-     * <p>Within its own package any access level works. From any other package the type and every
-     * type enclosing it must be {@code public} — a {@code public} interface nested inside a
-     * package-private class is still unreachable. A type in the unnamed package is reachable only
-     * from the unnamed package, which follows from the same equality check.
+     * <p>Within its own package every access level works <em>except</em> {@code private}: a
+     * {@code private} nested type is in scope only inside the body of its enclosing top-level class
+     * (JLS 6.6.1), and generated source is always a separate compilation unit.
+     *
+     * <p>Across packages the type and every type enclosing it must be {@code public} — a
+     * {@code public} interface nested inside a package-private class is still unreachable.
+     *
+     * <p>The unnamed package cannot be crossed in either direction: a type in the unnamed package
+     * can neither be imported nor named by its simple name from a named package (JLS 7.4.2, 6.5),
+     * so no access level makes it referenceable. This case does <em>not</em> follow from the
+     * same-package check — a {@code public} top-level type in the unnamed package would otherwise
+     * pass the modifier walk — and it is reachable in practice, because a compilation unit whose
+     * contracts all sit in the unnamed package resolves an empty longest-common-prefix, which
+     * emitters map to a named fallback package.
      *
      * @param type        the type the generated source wants to reference; must not be {@code null}
      * @param typePackage the package {@code type} is declared in, as
@@ -39,13 +49,43 @@ public final class TypeVisibility {
      */
     public static boolean isReferenceableFrom(TypeElement type, String typePackage, String fromPackage) {
         if (typePackage.equals(fromPackage)) {
-            return true;
+            return !hasEnclosureWith(type, Modifier.PRIVATE);
         }
+        if (typePackage.isEmpty() || fromPackage.isEmpty()) {
+            return false;
+        }
+        return !hasEnclosureWithout(type, Modifier.PUBLIC);
+    }
+
+    /**
+     * Returns whether {@code type} or any type enclosing it carries {@code modifier}.
+     *
+     * @param type     the type to inspect
+     * @param modifier the modifier to look for
+     * @return {@code true} when the modifier is present on the type or any enclosing type
+     */
+    private static boolean hasEnclosureWith(TypeElement type, Modifier modifier) {
         for (Element e = type; e instanceof TypeElement enclosing; e = e.getEnclosingElement()) {
-            if (!enclosing.getModifiers().contains(Modifier.PUBLIC)) {
-                return false;
+            if (enclosing.getModifiers().contains(modifier)) {
+                return true;
             }
         }
-        return true;
+        return false;
+    }
+
+    /**
+     * Returns whether {@code type} or any type enclosing it lacks {@code modifier}.
+     *
+     * @param type     the type to inspect
+     * @param modifier the modifier every enclosing type must carry
+     * @return {@code true} when the modifier is missing from the type or any enclosing type
+     */
+    private static boolean hasEnclosureWithout(TypeElement type, Modifier modifier) {
+        for (Element e = type; e instanceof TypeElement enclosing; e = e.getEnclosingElement()) {
+            if (!enclosing.getModifiers().contains(modifier)) {
+                return true;
+            }
+        }
+        return false;
     }
 }

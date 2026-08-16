@@ -193,7 +193,7 @@ public final class WorkflowClientsModuleEmitter {
                 continue;
             }
             ctx.diagnostics()
-                    .warning(
+                    .mandatoryWarning(
                             contractType,
                             "@WorkflowContract %s is not accessible from package '%s', where %s is"
                                     + " generated, so it is left unbound. Make the contract (and any enclosing"

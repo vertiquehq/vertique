@@ -60,6 +60,22 @@ public final class Diagnostics {
     }
 
     /**
+     * Emits a compiler warning that survives {@code -nowarn} and {@code -Xlint:none}.
+     *
+     * <p>Use this when the warning is the <em>only</em> signal that generated output was silently
+     * reduced — for example a binding an emitter had to skip. An ordinary
+     * {@link Diagnostic.Kind#WARNING} is dropped under those flags, which are common in large
+     * reactors, turning a deliberate degradation into a silent one.
+     *
+     * @param source  the element that caused the warning; may be {@code null}
+     * @param message the format string; must not be {@code null}
+     * @param args    optional format arguments
+     */
+    public void mandatoryWarning(Element source, String message, Object... args) {
+        emit(Diagnostic.Kind.MANDATORY_WARNING, source, message, args);
+    }
+
+    /**
      * Emits a compiler note (informational) diagnostic attributed to the given source element.
      *
      * @param source  the element to attribute the note to; may be {@code null}

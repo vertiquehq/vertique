@@ -179,7 +179,7 @@ public final class DelayedJobClientsModuleEmitter {
             TypeElement contract = entry.getValue().contractType();
             if (!TypeVisibility.isReferenceableFrom(contract, ctx.packageNameOf(contract), modulePackage)) {
                 ctx.diagnostics()
-                        .warning(
+                        .mandatoryWarning(
                                 contract,
                                 "@DelayedJobContract %s is not accessible from package '%s', where %s is"
                                         + " generated, so it is left unbound. Make the contract (and any"

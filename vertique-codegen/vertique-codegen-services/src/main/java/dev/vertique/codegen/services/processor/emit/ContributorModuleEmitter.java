@@ -134,6 +134,23 @@ public final class ContributorModuleEmitter {
         for (Map.Entry<String, ContractModel> entry : contributors.entrySet()) {
             ContractModel model = entry.getValue();
             String contractPkg = ctx.packageNameOf(model.contractType());
+            // The contributor itself is always public and lands in the contract's own package, so
+            // contract visibility never blocks this binding. The unnamed package is the one
+            // exception: it cannot be named from the named package the module resolves to. That is
+            // an error rather than a skip — dropping a contributor unregisters the service, which
+            // fails at runtime instead of at Dagger's compile-time graph validation.
+            if (contractPkg.isEmpty() && !packageName.isEmpty()) {
+                ctx.diagnostics()
+                        .error(
+                                model.contractType(),
+                                "@ServiceContract %s is in the unnamed package, so its generated"
+                                        + " contributor cannot be referenced from package '%s', where %s is"
+                                        + " generated. Move the contract into a named package.",
+                                entry.getKey(),
+                                packageName,
+                                MODULE_SIMPLE_NAME);
+                continue;
+            }
             String contributorSimpleName = model.contractType().getSimpleName() + "_ContractContributor";
             ClassName contributorClass = ClassName.get(contractPkg, contributorSimpleName);
 
@@ -164,7 +181,7 @@ public final class ContributorModuleEmitter {
             // does not compile — breaking the build even without installing it in a @Component.
             if (!TypeVisibility.isReferenceableFrom(contractType, ctx.packageNameOf(contractType), packageName)) {
                 ctx.diagnostics()
-                        .warning(
+                        .mandatoryWarning(
                                 contractType,
                                 "@ServiceContract %s is not accessible from package '%s', where %s is"
                                         + " generated, so no typed client is bound for it. Make the contract"

@@ -173,9 +173,14 @@ emitting the binding would produce a module that does not compile. Since javac c
 sources in the same task, that would break the application's build merely by putting the processor
 on `annotationProcessorPaths`, whether or not the module is installed in a `@Component`. Make the
 contract and its enclosing types public, point `-Avertique.codegen.package` at a package it is
-visible from, or bind it with a hand-written `@Provides`. Contributor bindings are unaffected: they
-reference the generated `public {Contract}_ContractContributor`, which always sits in the contract's
-own package.
+visible from, or bind it with a hand-written `@Provides`.
+
+Contributor bindings are unaffected by contract *visibility*: they reference the generated
+`public {Contract}_ContractContributor`, which always sits in the contract's own package. The one
+exception is a contract in the **unnamed package** — its contributor is generated there too, and a
+named package can never reference it. That is a compile **error**, not a skip: dropping a
+contributor unregisters the service, which would fail at runtime rather than at Dagger's
+compile-time graph validation. Move such a contract into a named package.
 
 Client-only compilation units still receive the unified `GeneratedServicesModule`, even when the
 implementation is compiled in another application module. Provider names are deterministic and
