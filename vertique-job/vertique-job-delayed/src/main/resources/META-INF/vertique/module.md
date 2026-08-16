@@ -401,9 +401,36 @@ startup, before any poller is deployed.
 
 ### Registering a typed job
 
+Both sides of a typed job — the server-side executor and the client-side proxy — are generated for
+applications using the annotation-processor facade. Applications inheriting `vertique-app-parent`
+get it automatically; custom-parent applications follow the BOM plus `vertique-codegen-all` recipe
+in `docs/packaging.md`. Include both generated modules in the `@Component`:
+
+```java
+@Component(modules = {
+    // ... existing modules ...
+    GeneratedDelayedJobsModule.class,            // server side — from vertique-codegen-dagger
+    GeneratedDelayedJobClientsModule.class       // client side — from vertique-codegen-delayed-job
+})
+interface AppComponent { ... }
+```
+
+- `dev.vertique:vertique-codegen-dagger` emits the `@Provides @IntoSet @DelayedJobs Object` binding
+  for every class implementing `DelayedJobExecutor<P, C>` with a single `@Inject` constructor.
+  Annotate an executor with `@NoAutoWire` to keep a hand-written binding canonical; because
+  `@NoAutoWire` is source-retained, applications using that opt-out also declare
+  `vertique-codegen-core` at `provided` scope.
+- `dev.vertique:vertique-codegen-delayed-job` emits the `@Provides @Singleton` client binding for
+  every `@DelayedJobContract` interface, each delegating to `DelayedJobClientFactory.create(…)`.
+
+Either binding can still be hand-written when the generated one does not apply — for example when a
+contract lives in a module the processor does not see. Write only the side you need, and do not
+duplicate a binding an installed generated module already provides (Dagger rejects the duplicate at
+compile time):
+
 ```java
 @Module
-public class WebhookModule {
+public class ManualWiringModule {
 
     // Server side — the executor joins the @DelayedJobs multibinding
     @Provides @IntoSet @DelayedJobs
@@ -411,22 +438,13 @@ public class WebhookModule {
         return impl;
     }
 
-    // Client side — the typed proxy
+    // Client side — the typed proxy, the same shape the generated module emits
     @Provides @Singleton
-    static DeliverWebhookJob deliverWebhookClient(DelayedJobClientFactory factory) {
+    static DeliverWebhookJob deliverWebhookJobClient(DelayedJobClientFactory factory) {
         return factory.create(DeliverWebhookJob.class);
     }
 }
 ```
-
-The executor binding can also be generated. Applications inheriting `vertique-app-parent` get the
-annotation-processor facade automatically; custom-parent applications follow the BOM plus
-`vertique-codegen-all` recipe in `docs/packaging.md`. `dev.vertique:vertique-codegen-dagger` then
-emits the `@Provides @IntoSet @DelayedJobs Object` binding for every class implementing
-`DelayedJobExecutor<P, C>` with a single `@Inject` constructor — include
-`GeneratedDelayedJobsModule.class` in the `@Component`, and annotate an executor with `@NoAutoWire`
-to keep a hand-written binding canonical. Because `@NoAutoWire` is source-retained, applications
-using that opt-out also declare `vertique-codegen-core` at `provided` scope.
 
 ---
 
