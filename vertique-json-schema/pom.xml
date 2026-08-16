@@ -74,5 +74,16 @@ SPDX-License-Identifier: EUPL-1.2
             <artifactId>vertique-json</artifactId>
             <scope>test</scope>
         </dependency>
+        <!--
+          Test scope only: SchemaFixtureMatrixTest compiles a generated schema through the real
+          vertx-json-schema validator to pin its pattern-matching semantics (find vs. match) against
+          the anchored strict-decimal pattern (S6, PRD §6.2/§2 finding 12). Production code never
+          depends on a validator — a generated schema document is transport-neutral.
+        -->
+        <dependency>
+            <groupId>io.vertx</groupId>
+            <artifactId>vertx-json-schema</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 </project>
