@@ -1341,6 +1341,27 @@ class RestRequestCompletionEmitterTest {
                     "the marker's cause must win over the end-handler failure, regardless of either message");
         }
 
+        /**
+         * Pins the connection-close normalization, and doubles as the upgrade tripwire for it.
+         *
+         * <p>{@code io.vertx.core.impl.NoStackTraceThrowable} is Vert.x internal API, deprecated and
+         * marked for removal. The production predicate in {@code normalizeWireFailureCause} is
+         * already written to survive that — it compares {@code getClass().getName()} against the
+         * class name as a <em>string</em> and never imports the type — because this is a
+         * catch-and-inspect case: Vert.x throws the exception at us and the framework only has to
+         * recognize it, matching on class name <em>and</em> message so an unrelated exception
+         * carrying "Connection closed" cannot collide.
+         *
+         * <p>This test is the one place that imports the type, and that is deliberate. When the
+         * upgrade lands that removes it, this test stops compiling — which is the signal to revisit
+         * the predicate. Without it the predicate would silently stop matching and the metric label
+         * would regress from {@code ConnectionClosed} to whatever the replacement class is called,
+         * with nothing failing to say so.
+         *
+         * <p>So on that compile error: do not delete this test to make it go away. Find what Vert.x
+         * throws for a closed connection now, update the predicate and this test together, and
+         * confirm the label still comes out {@code ConnectionClosed}.
+         */
         @Test
         @DisplayName("NoStackTraceThrowable+\"Connection closed\" normalizes to ConnectionClosed; "
                 + "StreamResetException and an unrelated same-message exception do not")
