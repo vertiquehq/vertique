@@ -16,13 +16,14 @@ import io.vertx.core.Future;
 import io.vertx.core.MultiMap;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
-import io.vertx.core.http.HttpClient;
-import io.vertx.core.http.HttpClientRequest;
 import io.vertx.core.http.HttpMethod;
 import io.vertx.core.http.HttpServer;
 import io.vertx.core.http.HttpVersion;
 import io.vertx.ext.web.Router;
 import io.vertx.ext.web.RoutingContext;
+import io.vertx.ext.web.client.HttpRequest;
+import io.vertx.ext.web.client.WebClient;
+import io.vertx.ext.web.client.WebClientOptions;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
 import jakarta.ws.rs.BeanParam;
@@ -69,12 +70,13 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * test, and the mount no longer loads one. Body-read-once is verified by counting reads of a single
  * shared {@code BoundRequest} stashed on the routing context.
  *
- * <p><strong>Raw {@link HttpClient} exemption — reference implementation of the pre-attach idiom.</strong>
- * {@code testing.md} cites this class as the canonical example of that idiom, so it stays on the raw
- * client deliberately. Its exchanges attach the whole response continuation — body read included — to
- * {@code request.response()} <em>before</em> {@code request.end()} initiates the send, rather than
- * reading the body off a {@code send()} that has already started, so no already-delivered buffer can
- * be dropped.
+ * <p>Requests are issued through a {@link WebClient} rather than a raw {@code HttpClient} deliberately:
+ * a raw {@code HttpClientResponse} discards body buffers that arrive before a body handler is attached,
+ * so under load {@code body()} can succeed with zero bytes while the status code is correct (issue
+ * #167). Nearly every case here asserts on the response body — the echoed binding <em>is</em> the
+ * load-bearing signal — so a silently emptied body would fail a binding assertion for a reason
+ * unrelated to routing. A {@link WebClient} aggregates the body into its {@code HttpResponse} before
+ * completing the send.
  */
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
@@ -94,14 +96,14 @@ public class AnnotationDrivenRoutingIT {
     // --- Class-scoped resources (shared across all @Test methods) ---
 
     private static Vertx vertx;
-    private static HttpClient client;
+    private static WebClient client;
 
     // --- Per-test resources ---
 
     private HttpServer server;
 
     /**
-     * Creates the class-scoped {@link Vertx} instance and shared {@link HttpClient} once for the
+     * Creates the class-scoped {@link Vertx} instance and shared {@link WebClient} once for the
      * entire test class. Allocating a fresh client per test accumulates netty channel pools that
      * surface under full-reactor load as connection failures.
      *
@@ -111,12 +113,13 @@ public class AnnotationDrivenRoutingIT {
     @BeforeAll
     static void setUpClass(Vertx v, VertxTestContext ctx) {
         vertx = v;
-        client = v.createHttpClient();
+        // Redirects off: parity with the raw client; WebClient forwards Authorization across 3xx.
+        client = WebClient.create(v, new WebClientOptions().setFollowRedirects(false));
         ctx.completeNow();
     }
 
     /**
-     * Closes the per-test {@link HttpServer}. The shared {@link HttpClient} is closed only in
+     * Closes the per-test {@link HttpServer}. The shared {@link WebClient} is closed only in
      * {@link #tearDownClass(VertxTestContext)}.
      *
      * @param ctx the test context used to signal teardown completion
@@ -128,17 +131,19 @@ public class AnnotationDrivenRoutingIT {
     }
 
     /**
-     * Closes the shared {@link HttpClient} after all tests in the class have run.
+     * Closes the shared {@link WebClient} after all tests in the class have run.
+     *
+     * <p>{@link WebClient#close()} is {@code void}, unlike {@code HttpClient.close()}: it returns once
+     * the underlying client has been asked to close, so there is no future to await here.
      *
      * @param ctx the test context used to signal teardown completion
      */
     @AfterAll
     static void tearDownClass(VertxTestContext ctx) {
         if (client != null) {
-            client.close().onComplete(ar -> ctx.completeNow());
-        } else {
-            ctx.completeNow();
+            client.close();
         }
+        ctx.completeNow();
     }
 
     // --- Resource fixtures ---
@@ -1256,18 +1261,21 @@ public class AnnotationDrivenRoutingIT {
     }
 
     /**
-     * Performs one exchange against the shared {@link HttpClient} with the response continuation —
-     * <em>including</em> the body read — attached before the send is initiated.
+     * Performs one exchange against the shared {@link WebClient}, whose response future resolves only
+     * once the whole body has been aggregated.
      *
-     * <p>This ordering is load-bearing rather than stylistic. Vert.x discards response body buffers
-     * delivered before a body handler is attached, so a {@code send()} followed by a body read in a
-     * later {@code compose} step loses the entire body whenever the calling thread is descheduled in
-     * between: {@code body()} then completes <em>successfully</em> with zero bytes under an otherwise
-     * correct status. Attaching the continuation to {@link HttpClientRequest#response()} first, and
-     * only then calling {@code end()}, removes that window. See {@code HttpClientBodyReadRaceIT}.
+     * <p>That aggregation is why this helper cannot lose a body. A raw {@code HttpClientResponse}
+     * discards buffers delivered before a body handler is attached, so a {@code send()} followed by a
+     * body read in a later {@code compose} step loses the entire body whenever the calling thread is
+     * descheduled in between: the read then completes <em>successfully</em> with zero bytes under an
+     * otherwise correct status. See {@code HttpClientBodyReadRaceIT}.
      *
-     * <p>The future returned by {@code end()} is deliberately not composed into the result chain: a
-     * response the server did send must not be masked by a write-side failure.
+     * <p>A body-less response arrives as a {@code null} buffer here, where the raw client reported a
+     * zero-length one. It is normalised back to an empty buffer so every projection below — including
+     * {@link HttpResult#diagnostic()}'s {@code bodyLength} — reads exactly as it did before.
+     *
+     * <p>{@code sendBuffer} is used rather than {@code sendJson}: it sets no {@code Content-Type} of
+     * its own, so each caller's declared content type reaches the server verbatim.
      *
      * @param method     the HTTP method
      * @param port       the bound server port
@@ -1277,26 +1285,19 @@ public class AnnotationDrivenRoutingIT {
      * @return a future of the response status code and fully-read body
      */
     private static Future<HttpResult> exchange(
-            HttpMethod method, int port, String path, Consumer<HttpClientRequest> customizer, Buffer body) {
-        return client.request(method, port, "127.0.0.1", path).compose(request -> {
-            Future<HttpResult> result = request.response().compose(response -> response.body()
-                    .map(b -> new HttpResult(
-                            response.statusCode(),
-                            // Copied: the response's headers are not guaranteed to stay readable
-                            // once the exchange is recycled.
-                            MultiMap.caseInsensitiveMultiMap().addAll(response.headers()),
-                            response.version(),
-                            b)));
-            if (customizer != null) {
-                customizer.accept(request);
-            }
-            if (body == null) {
-                request.end();
-            } else {
-                request.end(body);
-            }
-            return result;
-        });
+            HttpMethod method, int port, String path, Consumer<HttpRequest<Buffer>> customizer, Buffer body) {
+        HttpRequest<Buffer> request = client.request(method, port, "127.0.0.1", path);
+        if (customizer != null) {
+            customizer.accept(request);
+        }
+        return (body == null ? request.send() : request.sendBuffer(body))
+                .map(response -> new HttpResult(
+                        response.statusCode(),
+                        // Copied: the response's headers are not guaranteed to stay readable
+                        // once the exchange is recycled.
+                        MultiMap.caseInsensitiveMultiMap().addAll(response.headers()),
+                        response.version(),
+                        response.body() == null ? Buffer.buffer() : response.body()));
     }
 
     /**
