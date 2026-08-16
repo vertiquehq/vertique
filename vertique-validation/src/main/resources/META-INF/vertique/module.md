@@ -228,6 +228,11 @@ Object-level traversal skips an element that carries its own `@AllowedCharacters
 itself at field level) or `dev.vertique.core.validation.SkipAllowedCharacters`. Static fields are
 never traversed. Meta-annotations composed from either annotation are recognised.
 
+The `InputValueContext` handed to a policy from this constraint is synthetic: `location()` is
+always `BODY` and `ownerType()` is always `Object.class` (object traversal does supply a real
+`path`). Bean Validation has no accurate provenance for a value, so a policy must not branch on
+`location()` — see the `vertique-core` reference for the full contract.
+
 ```java
 @AllowedCharacters(policy = UnicodeCommonTextPolicy.class)
 public record Article(

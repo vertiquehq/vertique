@@ -31,7 +31,16 @@ public interface CharacterPolicy {
      *
      * @param value   the string value to validate; may be {@code null} (implementations should
      *                treat {@code null} as valid and return {@link CharacterPolicyResult#passed()})
-     * @param context contextual metadata about the value's origin within the request
+     * @param context contextual metadata about the value's origin within the request. When a policy
+     *                is invoked from Bean Validation (the {@code @AllowedCharacters} constraint),
+     *                this context is <strong>synthetic</strong>: {@code location()} is always
+     *                {@code BODY} regardless of the value's real origin, and {@code ownerType()}
+     *                is always {@code Object.class}. Bean Validation runs after the value has been
+     *                separated from its transport provenance, and a single validation pass can
+     *                cover values from several locations at once, so no accurate location exists to
+     *                report. Implementations invoked through that path MUST NOT branch on
+     *                {@code location()}. Canonicalizers and sanitizers, which run earlier in the
+     *                input-processing pipeline, do receive accurate provenance.
      * @return {@link CharacterPolicyResult#valid()} if all characters are permitted,
      *         or a failed result identifying the first offending character
      */

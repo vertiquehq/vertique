@@ -680,6 +680,13 @@ Return `CharacterPolicyResult.passed()` or
 `CharacterPolicyResult.failed(index, codePoint, reason)` naming the first offending character.
 `@SkipAllowedCharacters` opts an element out of character validation inherited from its type.
 
+When a policy runs from Bean Validation (the `@AllowedCharacters` constraint), its
+`InputValueContext` is synthetic: `location()` is always `BODY` whatever the value's real origin,
+and `ownerType()` is always `Object.class`. Validation sees the value after it has been separated
+from its transport provenance, and one validation pass can cover values from several locations at
+once, so no accurate location exists to report. Do not branch on `location()` in a policy.
+Canonicalizers and sanitizers run earlier and do receive accurate provenance.
+
 ### `BackoffStrategy`
 
 Computes the delay before each retry attempt, given the zero-based retry count.
