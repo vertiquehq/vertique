@@ -12,7 +12,7 @@ import io.vertx.core.json.jackson.DatabindCodec;
  * {@link DatabindCodec} for consistency with the REST pipeline.
  *
  * <p>Supports two-phase deserialization for pre-materialization processing by
- * {@link dev.vertique.rest.core.request.InputObjectProcessor}: first decode to an intermediate
+ * {@link dev.vertique.input.processing.InputObjectProcessor}: first decode to an intermediate
  * map/list structure, apply canonicalization and sanitization, then materialize to the target type.
  */
 public class WebSocketMessageCodec {
@@ -33,7 +33,7 @@ public class WebSocketMessageCodec {
     /**
      * Decodes JSON text to an intermediate representation ({@code Map}, {@code List}, or scalar)
      * suitable for pre-materialization processing by
-     * {@link dev.vertique.rest.core.request.InputObjectProcessor}.
+     * {@link dev.vertique.input.processing.InputObjectProcessor}.
      *
      * @param text the JSON text to decode; must not be {@code null}
      * @return the intermediate structure; never {@code null} for valid non-null JSON
