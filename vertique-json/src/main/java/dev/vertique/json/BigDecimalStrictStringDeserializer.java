@@ -84,6 +84,23 @@ public final class BigDecimalStrictStringDeserializer extends JsonDeserializer<B
      */
     private static final Pattern PLAIN_DECIMAL = Pattern.compile("-?[0-9]+(\\.[0-9]+)?");
 
+    /**
+     * The JSON Schema {@code pattern} form of {@link #PLAIN_DECIMAL}'s grammar, anchored with a
+     * leading {@code ^} and a trailing {@code $}.
+     *
+     * <p>Anchoring is required because JSON Schema {@code pattern} evaluation is an
+     * <strong>unanchored search</strong> (ECMA-262 {@code RegExp.test} semantics), unlike
+     * {@link java.util.regex.Matcher#matches()}, which this deserializer itself uses. Without the
+     * anchors, a schema validator would accept a string merely <em>containing</em> a plain decimal
+     * substring rather than requiring the whole string to be one.
+     *
+     * <p>Package-private (not {@code private}) so the {@code vertique-strict} profile's declared
+     * {@link dev.vertique.core.json.JsonSchemaTypeOverride} fragment (FR-JSON-089) is built directly
+     * from this derivation — never from a second, independently maintained copy of the grammar — so
+     * the published schema and the serde's accepted grammar cannot drift apart.
+     */
+    static final String ANCHORED_PLAIN_DECIMAL_PATTERN = "^" + PLAIN_DECIMAL.pattern() + "$";
+
     // --- Deserialization ---
 
     /**

@@ -6,6 +6,10 @@ package dev.vertique.json;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.vertique.core.json.JsonMapperProfile;
 import dev.vertique.core.json.JsonProfileId;
+import dev.vertique.core.json.JsonSchemaTypeOverride;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.List;
 import java.util.Objects;
 
 /**
@@ -36,15 +40,44 @@ public final class JsonMapperProfiles {
     public static JsonMapperProfile of(JsonProfileId id, ObjectMapper mapper) {
         Objects.requireNonNull(id, "JsonMapperProfile id must not be null");
         Objects.requireNonNull(mapper, "JsonMapperProfile mapper must not be null");
-        return new RecordedProfile(id, mapper);
+        // TODO(red): temporary incomplete stub — no defensive copy / unmodifiable wrap yet.
+        return new RecordedProfile(id, mapper, new ArrayList<>());
     }
 
     /**
-     * Immutable {@link JsonMapperProfile} that returns its id and mapper exactly as supplied to
-     * {@link #of(JsonProfileId, ObjectMapper)}, without any copy or mutation.
+     * Creates a {@link JsonMapperProfile} pairing {@code id} with {@code mapper}, additionally
+     * declaring {@code overrides} as the profile's JSON Schema type overrides (FR-JSON-088).
+     *
+     * @param id the non-null profile id
+     * @param mapper the non-null, pre-configured mapper the returned profile exposes as-is
+     * @param overrides the non-null collection of overrides; must not contain a {@code null} element
+     * @return a non-null {@link JsonMapperProfile}
+     * @throws NullPointerException if {@code id}, {@code mapper}, {@code overrides}, or any element
+     *     of {@code overrides} is {@code null}
+     */
+    public static JsonMapperProfile of(
+            JsonProfileId id, ObjectMapper mapper, Collection<JsonSchemaTypeOverride> overrides) {
+        Objects.requireNonNull(id, "JsonMapperProfile id must not be null");
+        Objects.requireNonNull(mapper, "JsonMapperProfile mapper must not be null");
+        // TODO(red): temporary incomplete stub — no null-check on overrides/elements, no defensive
+        // copy, no unmodifiable wrap. Deliberately wrong pending the green implementation.
+        return new RecordedProfile(id, mapper, overrides == null ? new ArrayList<>() : new ArrayList<>(overrides));
+    }
+
+    /**
+     * {@link JsonMapperProfile} that returns its id and mapper exactly as supplied, without any copy
+     * or mutation, and exposes the given schema overrides.
      *
      * @param id the profile id
      * @param mapper the mapper instance, exposed as-is
+     * @param overrides the declared JSON Schema type overrides
      */
-    private record RecordedProfile(JsonProfileId id, ObjectMapper mapper) implements JsonMapperProfile {}
+    private record RecordedProfile(JsonProfileId id, ObjectMapper mapper, List<JsonSchemaTypeOverride> overrides)
+            implements JsonMapperProfile {
+
+        @Override
+        public List<JsonSchemaTypeOverride> jsonSchemaTypeOverrides() {
+            return overrides;
+        }
+    }
 }
