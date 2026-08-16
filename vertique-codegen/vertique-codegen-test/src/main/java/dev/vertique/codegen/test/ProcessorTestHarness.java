@@ -405,6 +405,35 @@ public final class ProcessorTestHarness {
         }
 
         /**
+         * Asserts that at least one diagnostic of kind {@link Diagnostic.Kind#WARNING} or
+         * {@link Diagnostic.Kind#MANDATORY_WARNING} has a message containing the given substring.
+         *
+         * <p>Use this when a warning is the user-facing contract for a deliberate degradation —
+         * for example an emitter that skips a binding it cannot legally write. Asserting only that
+         * the output is absent leaves the explanation untested, so silently dropping the diagnostic
+         * would keep such a test green.
+         *
+         * @param substring the expected substring in at least one warning diagnostic message; must
+         *                  not be {@code null}
+         * @return this result for chaining
+         * @throws AssertionFailedError if no warning diagnostic contains the given substring
+         */
+        public Result assertWarningMessage(String substring) {
+            boolean found = compilation.diagnostics().stream()
+                    .filter(d ->
+                            d.getKind() == Diagnostic.Kind.WARNING || d.getKind() == Diagnostic.Kind.MANDATORY_WARNING)
+                    .map(d -> d.getMessage(null))
+                    .anyMatch(msg -> msg != null && msg.contains(substring));
+
+            if (!found) {
+                throw new AssertionFailedError(
+                        "Expected a warning diagnostic containing '%s' but none was found.".formatted(substring)
+                                + diagnosticSummary());
+            }
+            return this;
+        }
+
+        /**
          * Asserts that the compilation produced no diagnostics of kind
          * {@link Diagnostic.Kind#WARNING} or {@link Diagnostic.Kind#MANDATORY_WARNING}.
          *

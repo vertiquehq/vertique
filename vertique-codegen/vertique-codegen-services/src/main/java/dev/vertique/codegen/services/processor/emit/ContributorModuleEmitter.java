@@ -179,7 +179,7 @@ public final class ContributorModuleEmitter {
             // the generated public {Contract}_ContractContributor, not the contract. A client binding
             // returns the contract itself, so an unreferenceable contract would emit a module that
             // does not compile — breaking the build even without installing it in a @Component.
-            if (!TypeVisibility.isReferenceableFrom(contractType, ctx.packageNameOf(contractType), packageName)) {
+            if (!TypeVisibility.isReferenceableFrom(contractType, packageName)) {
                 ctx.diagnostics()
                         .mandatoryWarning(
                                 contractType,

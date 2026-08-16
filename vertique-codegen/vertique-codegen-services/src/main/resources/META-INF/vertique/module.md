@@ -167,8 +167,9 @@ It delegates construction to `ServiceClientFactory`; it never instantiates
 fallback, registry/metadata validation, context propagation, and transport ownership.
 
 **A contract the module's package cannot name gets no client binding.** A contract that is not
-`public` (or is nested in a non-public type) and lives outside the module's resolved package — or
-one in the unnamed package — is skipped with a compiler *warning* naming the reason, because
+`public` (or is nested in a non-public type) and lives outside the module's resolved package, a
+`private` nested contract even within it, or one in the unnamed package — is skipped with a
+*mandatory* compiler warning naming the reason (mandatory so `-nowarn` cannot turn the skip silent), because
 emitting the binding would produce a module that does not compile. Since javac compiles generated
 sources in the same task, that would break the application's build merely by putting the processor
 on `annotationProcessorPaths`, whether or not the module is installed in a `@Component`. Make the

@@ -177,7 +177,7 @@ public final class DelayedJobClientsModuleEmitter {
         Map<String, DelayedJobContractModel> bindable = new TreeMap<>();
         for (Map.Entry<String, DelayedJobContractModel> entry : contracts.entrySet()) {
             TypeElement contract = entry.getValue().contractType();
-            if (!TypeVisibility.isReferenceableFrom(contract, ctx.packageNameOf(contract), modulePackage)) {
+            if (!TypeVisibility.isReferenceableFrom(contract, modulePackage)) {
                 ctx.diagnostics()
                         .mandatoryWarning(
                                 contract,

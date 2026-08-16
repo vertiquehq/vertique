@@ -5,6 +5,7 @@ package dev.vertique.codegen;
 
 import javax.lang.model.element.Element;
 import javax.lang.model.element.Modifier;
+import javax.lang.model.element.PackageElement;
 import javax.lang.model.element.TypeElement;
 
 /**
@@ -33,28 +34,47 @@ public final class TypeVisibility {
      * <p>Across packages the type and every type enclosing it must be {@code public} — a
      * {@code public} interface nested inside a package-private class is still unreachable.
      *
-     * <p>The unnamed package cannot be crossed in either direction: a type in the unnamed package
-     * can neither be imported nor named by its simple name from a named package (JLS 7.4.2, 6.5),
-     * so no access level makes it referenceable. This case does <em>not</em> follow from the
-     * same-package check — a {@code public} top-level type in the unnamed package would otherwise
-     * pass the modifier walk — and it is reachable in practice, because a compilation unit whose
-     * contracts all sit in the unnamed package resolves an empty longest-common-prefix, which
-     * emitters map to a named fallback package.
+     * <p>A type in the unnamed package can never be referenced from a named one: it can neither be
+     * imported nor named by its simple name there (JLS 7.4.2, 6.5), so no access level helps. This
+     * case does <em>not</em> follow from the same-package check — a {@code public} top-level type in
+     * the unnamed package would otherwise pass the modifier walk — and it is reachable in practice,
+     * because a compilation unit whose contracts all sit in the unnamed package resolves an empty
+     * longest-common-prefix, which emitters map to a named fallback package. The reverse direction
+     * is fine and is treated as such: source in the unnamed package may import a public type from a
+     * named package (JLS 7.5).
      *
-     * @param type        the type the generated source wants to reference; must not be {@code null}
-     * @param typePackage the package {@code type} is declared in, as
-     *                    {@link CodegenContext#packageNameOf} returns it
-     * @param fromPackage the package the generated source will be written to
+     * @param type the type the generated source wants to reference; must not be {@code null}
+     * @param fromPackage the package the generated source will be written to; {@code ""} for the
+     *                    unnamed package
      * @return {@code true} when the generated source may reference {@code type}
      */
-    public static boolean isReferenceableFrom(TypeElement type, String typePackage, String fromPackage) {
+    public static boolean isReferenceableFrom(TypeElement type, String fromPackage) {
+        String typePackage = packageNameOf(type);
         if (typePackage.equals(fromPackage)) {
             return !hasEnclosureWith(type, Modifier.PRIVATE);
         }
-        if (typePackage.isEmpty() || fromPackage.isEmpty()) {
+        if (typePackage.isEmpty()) {
             return false;
         }
         return !hasEnclosureWithout(type, Modifier.PUBLIC);
+    }
+
+    /**
+     * Returns the package {@code type} is declared in, derived from its enclosing elements.
+     *
+     * <p>Deriving this rather than accepting it as a parameter removes the one way a caller could
+     * silently get a wrong answer — passing the module's package where the type's was meant.
+     *
+     * @param type the type to inspect; must not be {@code null}
+     * @return the package name, or {@code ""} for the unnamed package
+     */
+    private static String packageNameOf(TypeElement type) {
+        for (Element e = type; e != null; e = e.getEnclosingElement()) {
+            if (e instanceof PackageElement pkg) {
+                return pkg.getQualifiedName().toString();
+            }
+        }
+        return "";
     }
 
     /**

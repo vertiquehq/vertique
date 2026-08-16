@@ -259,8 +259,11 @@ class ServiceClientDaggerBindingTest {
 
         ProcessorTestHarness.run(new ServiceContractProcessor(), concat(FRAMEWORK_SOURCES, hidden, visible))
                 .assertSuccess()
+                .assertWarningMessage("com.foo.HiddenService is not accessible from package 'com'")
                 .assertGeneratedSourceContains("com.GeneratedServicesModule", "provideVisibleServiceClient")
-                .assertGeneratedSourceDoesNotContain("com.GeneratedServicesModule", "HiddenService");
+                // Assert the provider method, not the bare type name: "HiddenService" also matches
+                // HiddenService_ContractContributor, which is a legitimate binding.
+                .assertGeneratedSourceDoesNotContain("com.GeneratedServicesModule", "provideHiddenServiceClient");
     }
 
     @Test

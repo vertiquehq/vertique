@@ -146,8 +146,9 @@ class DelayedJobClientsModuleEmitterTest {
 
         ProcessorTestHarness.run(new DelayedJobContractProcessor(), hidden, contract("com.bar", "EmailJob", "email"))
                 .assertSuccess()
+                .assertWarningMessage("com.foo.HiddenJob is not accessible from package 'com'")
                 .assertGeneratedSourceContains("com.GeneratedDelayedJobClientsModule", "provideEmailJobClient")
-                .assertGeneratedSourceDoesNotContain("com.GeneratedDelayedJobClientsModule", "HiddenJob");
+                .assertGeneratedSourceDoesNotContain("com.GeneratedDelayedJobClientsModule", "provideHiddenJobClient");
     }
 
     @Test

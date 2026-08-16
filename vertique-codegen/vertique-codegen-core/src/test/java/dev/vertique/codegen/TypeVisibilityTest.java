@@ -11,6 +11,7 @@ import static org.mockito.Mockito.when;
 import java.util.Set;
 import javax.lang.model.element.Element;
 import javax.lang.model.element.Modifier;
+import javax.lang.model.element.Name;
 import javax.lang.model.element.PackageElement;
 import javax.lang.model.element.TypeElement;
 import org.junit.jupiter.api.DisplayName;
@@ -30,11 +31,16 @@ class TypeVisibilityTest {
 
     // --- Fixtures ---
 
-    /** Builds a top-level type element with the given modifiers. */
-    private static TypeElement topLevel(Modifier... modifiers) {
+    /** Builds a top-level type element declared in {@code pkg} with the given modifiers. */
+    private static TypeElement topLevel(String pkg, Modifier... modifiers) {
+        Name name = mock(Name.class);
+        when(name.toString()).thenReturn(pkg);
+        PackageElement packageElement = mock(PackageElement.class);
+        when(packageElement.getQualifiedName()).thenReturn(name);
+
         TypeElement type = mock(TypeElement.class);
         when(type.getModifiers()).thenReturn(Set.of(modifiers));
-        when(type.getEnclosingElement()).thenReturn(mock(PackageElement.class));
+        when(type.getEnclosingElement()).thenReturn(packageElement);
         return type;
     }
 
@@ -53,31 +59,31 @@ class TypeVisibilityTest {
         @Test
         @DisplayName("any access level except private is referenceable")
         void nonPrivateAccessLevelsAreReferenceable() {
-            assertTrue(TypeVisibility.isReferenceableFrom(topLevel(Modifier.PUBLIC), "com.foo", "com.foo"));
-            assertTrue(TypeVisibility.isReferenceableFrom(topLevel(), "com.foo", "com.foo"));
+            assertTrue(TypeVisibility.isReferenceableFrom(topLevel("com.foo", Modifier.PUBLIC), "com.foo"));
+            assertTrue(TypeVisibility.isReferenceableFrom(topLevel("com.foo"), "com.foo"));
             assertTrue(TypeVisibility.isReferenceableFrom(
-                    nestedIn(topLevel(Modifier.PUBLIC), Modifier.PROTECTED), "com.foo", "com.foo"));
+                    nestedIn(topLevel("com.foo", Modifier.PUBLIC), Modifier.PROTECTED), "com.foo"));
         }
 
         @Test
         @DisplayName("a private nested type is not referenceable — generated source is a separate unit")
         void privateNestedTypeIsNotReferenceable() {
-            TypeElement outer = topLevel(Modifier.PUBLIC);
-            assertFalse(TypeVisibility.isReferenceableFrom(nestedIn(outer, Modifier.PRIVATE), "com.foo", "com.foo"));
+            TypeElement outer = topLevel("com.foo", Modifier.PUBLIC);
+            assertFalse(TypeVisibility.isReferenceableFrom(nestedIn(outer, Modifier.PRIVATE), "com.foo"));
         }
 
         @Test
         @DisplayName("a type enclosed by a private type is not referenceable")
         void typeInsidePrivateEnclosureIsNotReferenceable() {
-            TypeElement outer = topLevel(Modifier.PUBLIC);
+            TypeElement outer = topLevel("com.foo", Modifier.PUBLIC);
             TypeElement middle = nestedIn(outer, Modifier.PRIVATE);
-            assertFalse(TypeVisibility.isReferenceableFrom(nestedIn(middle, Modifier.PUBLIC), "com.foo", "com.foo"));
+            assertFalse(TypeVisibility.isReferenceableFrom(nestedIn(middle, Modifier.PUBLIC), "com.foo"));
         }
 
         @Test
         @DisplayName("the unnamed package can reference its own types")
         void unnamedPackageCanReferenceItself() {
-            assertTrue(TypeVisibility.isReferenceableFrom(topLevel(Modifier.PUBLIC), "", ""));
+            assertTrue(TypeVisibility.isReferenceableFrom(topLevel("", Modifier.PUBLIC), ""));
         }
     }
 
@@ -88,27 +94,26 @@ class TypeVisibilityTest {
         @Test
         @DisplayName("a public top-level type is referenceable")
         void publicTopLevelIsReferenceable() {
-            assertTrue(TypeVisibility.isReferenceableFrom(topLevel(Modifier.PUBLIC), "com.foo", "com.bar"));
+            assertTrue(TypeVisibility.isReferenceableFrom(topLevel("com.foo", Modifier.PUBLIC), "com.bar"));
         }
 
         @Test
         @DisplayName("a package-private type is not referenceable")
         void packagePrivateIsNotReferenceable() {
-            assertFalse(TypeVisibility.isReferenceableFrom(topLevel(), "com.foo", "com.bar"));
+            assertFalse(TypeVisibility.isReferenceableFrom(topLevel("com.foo"), "com.bar"));
         }
 
         @Test
         @DisplayName("a public type nested in a non-public type is not referenceable")
         void publicNestedInNonPublicIsNotReferenceable() {
-            assertFalse(
-                    TypeVisibility.isReferenceableFrom(nestedIn(topLevel(), Modifier.PUBLIC), "com.foo", "com.bar"));
+            assertFalse(TypeVisibility.isReferenceableFrom(nestedIn(topLevel("com.foo"), Modifier.PUBLIC), "com.bar"));
         }
 
         @Test
         @DisplayName("a public type nested in a public type is referenceable")
         void publicNestedInPublicIsReferenceable() {
             assertTrue(TypeVisibility.isReferenceableFrom(
-                    nestedIn(topLevel(Modifier.PUBLIC), Modifier.PUBLIC), "com.foo", "com.bar"));
+                    nestedIn(topLevel("com.foo", Modifier.PUBLIC), Modifier.PUBLIC), "com.bar"));
         }
 
         @Test
@@ -117,13 +122,15 @@ class TypeVisibilityTest {
             // The original bug: this fell through to the modifier walk, which a public type passes,
             // so a binding was emitted that could not resolve the simple name.
             assertFalse(
-                    TypeVisibility.isReferenceableFrom(topLevel(Modifier.PUBLIC), "", "vertique.generated.delayedjob"));
+                    TypeVisibility.isReferenceableFrom(topLevel("", Modifier.PUBLIC), "vertique.generated.delayedjob"));
         }
 
         @Test
-        @DisplayName("a named-package type is not referenceable from the unnamed package")
-        void namedPackageTypeIsNotReferenceableFromUnnamed() {
-            assertFalse(TypeVisibility.isReferenceableFrom(topLevel(Modifier.PUBLIC), "com.foo", ""));
+        @DisplayName("a public named-package type IS referenceable from the unnamed package")
+        void namedPackageTypeIsReferenceableFromUnnamed() {
+            // Only unnamed -> named is impossible. Source in the unnamed package may import a
+            // public type from a named one (JLS 7.5), so the guard must not be symmetric.
+            assertTrue(TypeVisibility.isReferenceableFrom(topLevel("com.foo", Modifier.PUBLIC), ""));
         }
     }
 }

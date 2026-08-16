@@ -95,15 +95,17 @@ public final class WorkflowClientsModuleEmitter {
         if (contracts.isEmpty()) {
             return;
         }
-        if (hasSimpleNameCollisions(contracts)) {
-            return;
-        }
-
         // Resolved from every valid contract before any is filtered out, so skipping an
         // unreferenceable contract never relocates the module.
         String pkg = resolvePackage(contracts);
         List<ContractModel> bindable = referenceableFrom(contracts, pkg);
         if (bindable.isEmpty()) {
+            return;
+        }
+        // Collisions are checked on the contracts that actually get bindings. Checking the
+        // unfiltered list would hard-fail on a clash with a contract that is about to be skipped —
+        // a collision that never reaches the generated source.
+        if (hasSimpleNameCollisions(bindable)) {
             return;
         }
 
@@ -188,7 +190,7 @@ public final class WorkflowClientsModuleEmitter {
         List<ContractModel> bindable = new ArrayList<>(contracts.size());
         for (ContractModel contract : contracts) {
             TypeElement contractType = contract.contractType();
-            if (TypeVisibility.isReferenceableFrom(contractType, ctx.packageNameOf(contractType), modulePackage)) {
+            if (TypeVisibility.isReferenceableFrom(contractType, modulePackage)) {
                 bindable.add(contract);
                 continue;
             }
