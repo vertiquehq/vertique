@@ -26,6 +26,7 @@ import io.vertx.core.Vertx;
 import io.vertx.core.VertxBuilder;
 import io.vertx.core.VertxOptions;
 import io.vertx.core.http.HttpClient;
+import io.vertx.core.http.HttpClientResponse;
 import io.vertx.core.http.HttpMethod;
 import io.vertx.core.http.HttpServer;
 import io.vertx.ext.web.Router;
@@ -49,6 +50,13 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * <p>Both the manual parent span and the Vert.x-instrumented spans are created from the SAME
  * {@link OpenTelemetrySdk} and share the same {@link InMemorySpanExporter} — this is required so
  * that all spans appear in the same exporter for assertion.
+ *
+ * <p><strong>Raw {@link HttpClient} exemption — the raw client is the instrumented subject.</strong>
+ * The CLIENT span under assertion is emitted by {@link HttpClient} itself, so the test must drive
+ * that client directly; a {@code WebClient} would interpose another layer between the parent scope
+ * and the span being proved. The exchange is status-only and uses the raw-client idiom pinned by
+ * {@code HttpClientBodyReadRaceIT}: the response continuation is attached before {@code end()}
+ * initiates the send.
  */
 @ExtendWith(io.vertx.junit5.VertxExtension.class)
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
@@ -167,7 +175,16 @@ public class HttpClientServerParentageIT {
                         Scope scope = parentSpan.makeCurrent();
                         httpClient
                                 .request(HttpMethod.GET, port, "127.0.0.1", "/ping")
-                                .compose(req -> req.send())
+                                .compose(request -> {
+                                    // Status-only exchange: the response continuation is attached
+                                    // before end() initiates the send, per HttpClientBodyReadRaceIT.
+                                    // The send's own outcome is deliberately not composed in — the
+                                    // exchange completes on the response, exactly as before.
+                                    Future<Integer> responded =
+                                            request.response().map(HttpClientResponse::statusCode);
+                                    request.end();
+                                    return responded;
+                                })
                                 .onComplete(ar -> {
                                     scope.close();
                                     parentSpan.end();

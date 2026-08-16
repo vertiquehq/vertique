@@ -21,6 +21,7 @@ import io.vertx.core.Handler;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.http.HttpClient;
+import io.vertx.core.http.HttpClientResponse;
 import io.vertx.core.http.HttpMethod;
 import io.vertx.core.http.HttpServer;
 import io.vertx.core.json.JsonObject;
@@ -60,6 +61,14 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * <p>Every test uses its own uploads directory. {@link UploadPathCapture} runs immediately after
  * the mount's {@code BodyHandler}, so it records the exact path created by Vert.x even when the
  * validation gate rejects the request before resource invocation.
+ *
+ * <p><strong>Raw {@link HttpClient} exemption — mid-stream observation and wire-level control.</strong>
+ * The lifecycle these tests pin is only observable while a response is still streaming (the upload
+ * must still exist between the first body byte and the last), and one test must abort the
+ * connection with {@code SO_LINGER(0)} through a raw {@link Socket}; a buffered {@code WebClient}
+ * exchange can express neither. Every exchange below therefore uses the raw-client idiom pinned by
+ * {@code HttpClientBodyReadRaceIT}: the whole response continuation — including the body read — is
+ * attached before {@code end()} initiates the send.
  */
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 30, unit = TimeUnit.SECONDS)
@@ -210,11 +219,19 @@ public class UploadTempFileCleanupIT {
     private HttpResult postMultipart(String path, String declaredType, byte[] content) throws Exception {
         Buffer body = multipart(declaredType, content);
         return client.request(HttpMethod.POST, server.actualPort(), "127.0.0.1", path)
-                .compose(request -> request.putHeader("Content-Type", MultipartBodies.contentType())
-                        .send(body))
-                .compose(response -> {
-                    int statusCode = response.statusCode();
-                    return response.body().map(responseBody -> new HttpResult(statusCode, responseBody));
+                .compose(request -> {
+                    // The continuation — including the body read — is attached before end() initiates
+                    // the send: Vert.x discards body buffers delivered before a handler is attached, so
+                    // a read attached after the send loses the whole body whenever this thread is
+                    // descheduled in between, reporting success with zero bytes under a correct status.
+                    // See HttpClientBodyReadRaceIT.
+                    Future<HttpResult> result = request.response().compose(response -> {
+                        int statusCode = response.statusCode();
+                        return response.body().map(responseBody -> new HttpResult(statusCode, responseBody));
+                    });
+                    request.putHeader("Content-Type", MultipartBodies.contentType());
+                    request.end(body);
+                    return result;
                 })
                 .toCompletionStage()
                 .toCompletableFuture()
@@ -223,13 +240,21 @@ public class UploadTempFileCleanupIT {
 
     private StreamingResponse postStreamingMultipart(String path, byte[] content) throws Exception {
         Buffer body = multipart("application/octet-stream", content);
-        io.vertx.core.http.HttpClientResponse response = client.request(
-                        HttpMethod.POST, server.actualPort(), "127.0.0.1", path)
-                .compose(request -> request.putHeader("Content-Type", MultipartBodies.contentType())
-                        .send(body))
-                .map(pausedResponse -> {
-                    pausedResponse.pause();
-                    return pausedResponse;
+        HttpClientResponse response = client.request(HttpMethod.POST, server.actualPort(), "127.0.0.1", path)
+                .compose(request -> {
+                    // The pause is reached through a continuation attached to response() BEFORE end()
+                    // initiates the send. A continuation attached after the send sits in the same
+                    // window the send does — chunks dispatched before it runs are already discarded and
+                    // no pause() can recall them. Attached first, the pause runs on the tick that
+                    // delivers the head and then holds the stream across the blocking get() below,
+                    // until the handlers are registered. See HttpClientBodyReadRaceIT.
+                    Future<HttpClientResponse> paused = request.response().map(pausedResponse -> {
+                        pausedResponse.pause();
+                        return pausedResponse;
+                    });
+                    request.putHeader("Content-Type", MultipartBodies.contentType());
+                    request.end(body);
+                    return paused;
                 })
                 .toCompletionStage()
                 .toCompletableFuture()

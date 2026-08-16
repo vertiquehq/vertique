@@ -21,9 +21,9 @@ import io.swagger.v3.oas.annotations.media.Schema;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
-import io.vertx.core.http.HttpClient;
-import io.vertx.core.http.HttpMethod;
 import io.vertx.core.http.HttpServer;
+import io.vertx.ext.web.client.WebClient;
+import io.vertx.ext.web.client.WebClientOptions;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
 import jakarta.ws.rs.Consumes;
@@ -69,19 +69,37 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * dev.vertique.rest.jaxrs.request.NoContentTypeProfiledBodyBindingTest} (module {@code
  * vertique-rest-jaxrs}), which exercises {@code DefaultBoundRequest.bindBody}'s missing-content-type
  * branch directly, with no HTTP and no middleware in the path.
+ *
+ * <p>Requests are issued through a {@link WebClient} rather than a raw {@code HttpClient}
+ * deliberately: a raw {@code HttpClientResponse} discards body buffers that arrive before a body
+ * handler is attached, so under load {@code body()} can succeed with zero bytes while the status code
+ * is correct (issue #167). The vertx-unchanged test pairs the status with the echoed body, so a
+ * silently emptied body would fail it for a reason unrelated to the parse path under test. A
+ * {@link WebClient} aggregates the body into its {@code HttpResponse} before completing the send.
  */
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
 public class ProfiledBodyParseUnderGateIT {
 
     private HttpServer server;
-    private HttpClient client;
+    private WebClient client;
 
+    /**
+     * Closes the {@link WebClient} and then the server started by the test that just ran.
+     *
+     * <p>{@link WebClient#close()} is {@code void}, unlike {@code HttpClient.close()}: it returns once
+     * the underlying client has been asked to close, so there is no future to join here and the server
+     * close alone carries the completion.
+     *
+     * @param ctx the test context used for async teardown assertion
+     */
     @AfterEach
     void tearDown(VertxTestContext ctx) {
-        Future<?> serverClose = server != null ? server.close() : Future.succeededFuture();
-        Future<?> clientClose = client != null ? client.close() : Future.succeededFuture();
-        Future.join(serverClose, clientClose).onComplete(ar -> ctx.completeNow());
+        if (client != null) {
+            client.close();
+        }
+        Future<Void> serverClose = server != null ? server.close() : Future.succeededFuture();
+        serverClose.onComplete(ar -> ctx.completeNow());
     }
 
     // --- Strict profile fixture ---
@@ -219,11 +237,10 @@ public class ProfiledBodyParseUnderGateIT {
         // The /plain resource has the same body schema (gate active) but no @JsonProfile, so the
         // effective profile is vertx and the body is parsed by today's default path — a normal body must
         // dispatch to 200, proving the gate-active vertx path is unchanged.
-        deploy(vertx, ctx, Set.of(new PlainResource()), (port, c) -> c.request(
-                        HttpMethod.POST, port, "127.0.0.1", "/plain")
-                .compose(req ->
-                        req.putHeader("Content-Type", "application/json").send(Buffer.buffer("{\"name\":\"alice\"}")))
-                .compose(resp -> resp.body().map(b -> resp.statusCode() + "|" + b.toString()))
+        deploy(vertx, ctx, Set.of(new PlainResource()), (port, c) -> c.post(port, "127.0.0.1", "/plain")
+                .putHeader("Content-Type", "application/json")
+                .sendBuffer(Buffer.buffer("{\"name\":\"alice\"}"))
+                .map(response -> response.statusCode() + "|" + response.bodyAsString())
                 .onComplete(ctx.succeeding(result -> {
                     ctx.verify(() -> assertEquals(
                             "200|name=alice", result, "the gate-active vertx path must accept a normal body"));
@@ -243,11 +260,10 @@ public class ProfiledBodyParseUnderGateIT {
      * @param assertion the assertion on the response status code
      */
     private void postStrict(Vertx vertx, VertxTestContext ctx, Buffer body, IntConsumer assertion) {
-        deploy(vertx, ctx, Set.of(new StrictResource()), (port, c) -> c.request(
-                        HttpMethod.POST, port, "127.0.0.1", "/strict")
-                .compose(
-                        req -> req.putHeader("Content-Type", "application/json").send(body))
-                .compose(resp -> resp.body().map(b -> resp.statusCode()))
+        deploy(vertx, ctx, Set.of(new StrictResource()), (port, c) -> c.post(port, "127.0.0.1", "/strict")
+                .putHeader("Content-Type", "application/json")
+                .sendBuffer(body)
+                .map(response -> response.statusCode())
                 .onComplete(ctx.succeeding(status -> {
                     ctx.verify(() -> assertion.accept(status));
                     ctx.completeNow();
@@ -259,7 +275,8 @@ public class ProfiledBodyParseUnderGateIT {
      * ValidationMountComponent}, which wires the real injected {@link WebValidationStrategy} and {@link
      * AnnotationSchemaSource}) with a profile registry carrying the {@code strict-test} profile, starts
      * an HTTP server, and invokes {@code afterListen} with the bound port and a shared {@link
-     * HttpClient}.
+     * WebClient}. The client is bound to a field so {@link #tearDown} can close it; an unbound client
+     * can never be closed at all.
      *
      * @param vertx       the Vert.x instance
      * @param ctx         the test context
@@ -267,14 +284,15 @@ public class ProfiledBodyParseUnderGateIT {
      * @param afterListen callback invoked with the server port and the shared HTTP client
      */
     private void deploy(
-            Vertx vertx, VertxTestContext ctx, Set<Object> resources, BiConsumer<Integer, HttpClient> afterListen) {
+            Vertx vertx, VertxTestContext ctx, Set<Object> resources, BiConsumer<Integer, WebClient> afterListen) {
         RestTestContributions contributions = RestTestContributions.builder()
                 .addJsonMapperProfile(strictTestProfile())
                 .build();
         RestTestMounts.startServer(vertx, MountFixtures.mount(vertx, contributions), resources)
                 .onComplete(ctx.succeeding(s -> {
                     server = s;
-                    client = vertx.createHttpClient();
+                    // Redirects off: parity with the raw client; WebClient forwards Authorization across 3xx.
+                    client = WebClient.create(vertx, new WebClientOptions().setFollowRedirects(false));
                     afterListen.accept(s.actualPort(), client);
                 }));
     }

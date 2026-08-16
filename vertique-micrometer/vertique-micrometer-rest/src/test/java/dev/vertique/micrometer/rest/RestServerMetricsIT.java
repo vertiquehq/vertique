@@ -16,10 +16,10 @@ import io.micrometer.prometheusmetrics.PrometheusConfig;
 import io.micrometer.prometheusmetrics.PrometheusMeterRegistry;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
-import io.vertx.core.http.HttpClient;
-import io.vertx.core.http.HttpMethod;
 import io.vertx.core.http.HttpServer;
 import io.vertx.ext.web.Router;
+import io.vertx.ext.web.client.WebClient;
+import io.vertx.ext.web.client.WebClientOptions;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
 import java.util.Optional;
@@ -56,6 +56,14 @@ import org.junit.jupiter.api.extension.ExtendWith;
  *   <li>(no route for {@code GET /nope}) — 404 with null route/operation</li>
  * </ul>
  *
+ * <p>Requests are issued through a {@link WebClient} rather than a raw {@code HttpClient}: a raw
+ * {@code HttpClientResponse} discards body buffers that arrive before a body handler is attached, so
+ * under load {@code body()} can succeed with zero bytes while the status code is correct (issue
+ * #167). Nothing here asserts on a body today, but the racy idiom would become a live race the
+ * moment someone added a body assertion, with no diff to explain why. No route answers 3xx, so
+ * {@link WebClient}'s follow-redirects default (a raw {@code HttpClient} follows none) never
+ * engages.
+ *
  * <p>All tests are class-level timeout-guarded at 20 s to prevent hangs on CI.
  *
  * <p>Deviation note: {@code RestServerActiveRequestsInterceptor} does not have a natural invocation
@@ -71,13 +79,24 @@ public class RestServerMetricsIT {
     // --- Shared server/client state (per test) ---
 
     private HttpServer server;
-    private HttpClient client;
+    private WebClient client;
 
+    /**
+     * Closes the {@link WebClient} and then the server started by the test that just ran.
+     *
+     * <p>{@link WebClient#close()} is {@code void}, unlike {@code HttpClient.close()}: it returns
+     * once the underlying client has been asked to close, so there is no future to join here and the
+     * server close alone carries the completion.
+     *
+     * @param ctx the test context used to signal teardown completion
+     */
     @AfterEach
     void tearDown(VertxTestContext ctx) {
+        if (client != null) {
+            client.close();
+        }
         Future<?> serverClose = server != null ? server.close() : Future.succeededFuture();
-        Future<?> clientClose = client != null ? client.close() : Future.succeededFuture();
-        Future.join(serverClose, clientClose).onComplete(ar -> ctx.completeNow());
+        serverClose.onComplete(ar -> ctx.completeNow());
     }
 
     // --- Server builder ---
@@ -147,7 +166,8 @@ public class RestServerMetricsIT {
                 .listen(0, "127.0.0.1")
                 .map(s -> {
                     this.server = s;
-                    this.client = vertx.createHttpClient();
+                    // Redirects off: parity with the raw client; WebClient forwards Authorization across 3xx.
+                    this.client = WebClient.create(vertx, new WebClientOptions().setFollowRedirects(false));
                     return s.actualPort();
                 });
     }
@@ -160,9 +180,7 @@ public class RestServerMetricsIT {
      * @return a future resolving to the HTTP status code
      */
     private Future<Integer> get(int port, String path) {
-        return client.request(HttpMethod.GET, port, "127.0.0.1", path)
-                .compose(req -> req.send())
-                .map(resp -> resp.statusCode());
+        return client.get(port, "127.0.0.1", path).send().map(resp -> resp.statusCode());
     }
 
     // =========================================================================

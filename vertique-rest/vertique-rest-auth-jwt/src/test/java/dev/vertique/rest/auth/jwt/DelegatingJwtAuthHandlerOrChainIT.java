@@ -29,12 +29,12 @@ import dev.vertique.security.resolver.SecurityIdentityResolutionContext;
 import dev.vertique.security.runtime.events.SecurityEventEmitter;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
-import io.vertx.core.http.HttpClient;
-import io.vertx.core.http.HttpMethod;
 import io.vertx.core.http.HttpServer;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.auth.jwt.JWTAuth;
 import io.vertx.ext.web.Router;
+import io.vertx.ext.web.client.WebClient;
+import io.vertx.ext.web.client.WebClientOptions;
 import io.vertx.ext.web.handler.AuthenticationHandler;
 import io.vertx.ext.web.handler.ChainAuthHandler;
 import io.vertx.junit5.VertxExtension;
@@ -79,6 +79,14 @@ import org.mockito.Mockito;
  * <p>Each handler enforces its own issuer via {@link JwtValidationConfig}; the distinct signing keys
  * already make only the matching {@link JWTAuth} able to verify a given token, so the OR chain
  * discriminates by both signature and issuer.
+ *
+ * <p>Requests are issued through a {@link WebClient} rather than a raw {@code HttpClient}
+ * deliberately: a raw {@code HttpClientResponse} discards body buffers that arrive before a body
+ * handler is attached, so under load {@code body()} can succeed with zero bytes while the status
+ * code is correct. This class read the identity JSON that way and failed exactly so in CI — the
+ * status assertion passed while every body-derived field read {@code null} (issue #167). A
+ * {@link WebClient} aggregates the body into its {@code HttpResponse} before completing the send,
+ * so the race is closed by construction rather than by every author remembering an idiom.
  */
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
@@ -91,7 +99,7 @@ public class DelegatingJwtAuthHandlerOrChainIT {
 
     private static int port;
     private static HttpServer server;
-    private static HttpClient client;
+    private static WebClient client;
     private static JWTAuth jwtAuthA;
     private static JWTAuth jwtAuthB;
 
@@ -113,14 +121,17 @@ public class DelegatingJwtAuthHandlerOrChainIT {
      * Builds the two real JWT scheme handlers, composes their registered handlers into a
      * {@code ChainAuthHandler.any()} OR chain (mirroring {@code applySecurity}), mounts the chain plus a
      * terminal 200 handler on {@code /or-secured}, and starts a shared HTTP server. One
-     * {@link HttpClient} is shared across all tests.
+     * {@link WebClient} is bound to a static field and shared across all tests: a client per
+     * request accumulates netty channel pools that are never reclaimed, and an unbound client can
+     * never be closed at all.
      *
      * @param vertx the Vert.x instance injected by {@link VertxExtension}
      * @param ctx   the test context used for async startup assertion
      */
     @BeforeAll
     static void setUp(Vertx vertx, VertxTestContext ctx) {
-        client = vertx.createHttpClient();
+        // Redirects off: parity with the raw client; WebClient forwards Authorization across 3xx.
+        client = WebClient.create(vertx, new WebClientOptions().setFollowRedirects(false));
 
         jwtAuthA = JwtAuthFactory.fromSymmetricKey(vertx, "HS256", KEY_A);
         jwtAuthB = JwtAuthFactory.fromSymmetricKey(vertx, "HS256", KEY_B);
@@ -209,15 +220,21 @@ public class DelegatingJwtAuthHandlerOrChainIT {
     }
 
     /**
-     * Closes the shared HTTP server and {@link HttpClient}.
+     * Closes the shared {@link WebClient} and then the shared HTTP server, before the
+     * extension-owned {@link Vertx} instance is closed.
+     *
+     * <p>{@link WebClient#close()} is {@code void}, unlike {@code HttpClient.close()}: it returns
+     * once the underlying client has been asked to close, so there is no future to join here.
      *
      * @param ctx the test context used for async teardown assertion
      */
     @AfterAll
     static void tearDown(VertxTestContext ctx) {
-        Future<?> s = server != null ? server.close() : Future.succeededFuture();
-        Future<?> c = client != null ? client.close() : Future.succeededFuture();
-        Future.join(s, c).onComplete(ar -> ctx.completeNow());
+        if (client != null) {
+            client.close();
+        }
+        Future<Void> serverClose = server != null ? server.close() : Future.succeededFuture();
+        serverClose.onComplete(ar -> ctx.completeNow());
     }
 
     /**
@@ -364,9 +381,9 @@ public class DelegatingJwtAuthHandlerOrChainIT {
     @Test
     @DisplayName("Missing Authorization header is rejected by the OR chain (401)")
     void missingToken_rejected(VertxTestContext ctx) {
-        client.request(HttpMethod.GET, port, "127.0.0.1", "/or-secured")
-                .compose(req -> req.send())
-                .compose(resp -> resp.body().map(b -> resp.statusCode()))
+        client.get(port, "127.0.0.1", "/or-secured")
+                .send()
+                .map(response -> response.statusCode())
                 .onComplete(ctx.succeeding(status -> ctx.verify(() -> {
                     assertEquals(401, status, "a request with no Authorization header must be rejected");
                     ctx.completeNow();
@@ -518,17 +535,18 @@ public class DelegatingJwtAuthHandlerOrChainIT {
 
     /**
      * Issues a {@code GET} against the given path carrying the bearer token and resolves with the
-     * response status code, draining the body so the connection is released.
+     * response status code. The {@link WebClient} aggregates the body before completing the send,
+     * so the connection is released without a separate drain step.
      *
      * @param path  the request path
      * @param token the raw JWT to send after {@code "Bearer "}
      * @return a future of the response status code
      */
     private Future<Integer> statusFor(String path, String token) {
-        return client.request(HttpMethod.GET, port, "127.0.0.1", path)
-                .compose(
-                        req -> req.putHeader("Authorization", "Bearer " + token).send())
-                .compose(resp -> resp.body().map(b -> resp.statusCode()));
+        return client.get(port, "127.0.0.1", path)
+                .putHeader("Authorization", "Bearer " + token)
+                .send()
+                .map(response -> response.statusCode());
     }
 
     /**
@@ -547,16 +565,16 @@ public class DelegatingJwtAuthHandlerOrChainIT {
 
     /**
      * Issues a {@code GET /or-secured} carrying the given bearer token and resolves with the response
-     * status code, draining the body so the connection is released.
+     * status code.
      *
      * @param token the raw JWT to send after {@code "Bearer "}
      * @return a future of the response status code
      */
     private Future<Integer> statusFor(String token) {
-        return client.request(HttpMethod.GET, port, "127.0.0.1", "/or-secured")
-                .compose(
-                        req -> req.putHeader("Authorization", "Bearer " + token).send())
-                .compose(resp -> resp.body().map(b -> resp.statusCode()));
+        return client.get(port, "127.0.0.1", "/or-secured")
+                .putHeader("Authorization", "Bearer " + token)
+                .send()
+                .map(response -> response.statusCode());
     }
 
     /**
@@ -564,17 +582,24 @@ public class DelegatingJwtAuthHandlerOrChainIT {
      * body the {@link #resolveIdentity(io.vertx.ext.web.RoutingContext)} terminal handler produced —
      * the HTTP status, accumulated framework-evidence count, and the resolved actor type/id.
      *
+     * <p>The empty-body fallback is kept as it was: {@link WebClient#get} reports an empty body as
+     * {@code null} where the raw client reported a zero-length buffer, and both collapse to an
+     * empty {@link JsonObject} carrying only the status. It is now unreachable for a body the
+     * server actually sent — aggregating the body inside the send is what removed the race that
+     * made this fallback fire in CI and turned every body-derived assertion into {@code null}.
+     *
      * @param token the raw JWT to send after {@code "Bearer "}
      * @return a future of the resolved-identity JSON body
      */
     private Future<JsonObject> identityFor(String token) {
-        return client.request(HttpMethod.GET, port, "127.0.0.1", "/or-identity")
-                .compose(
-                        req -> req.putHeader("Authorization", "Bearer " + token).send())
-                .compose(resp -> resp.body().map(b -> {
-                    JsonObject json = b.length() > 0 ? new JsonObject(b) : new JsonObject();
-                    return json.put("status", resp.statusCode());
-                }));
+        return client.get(port, "127.0.0.1", "/or-identity")
+                .putHeader("Authorization", "Bearer " + token)
+                .send()
+                .map(response -> {
+                    String body = response.bodyAsString();
+                    JsonObject json = body != null && !body.isEmpty() ? new JsonObject(body) : new JsonObject();
+                    return json.put("status", response.statusCode());
+                });
     }
 
     /**

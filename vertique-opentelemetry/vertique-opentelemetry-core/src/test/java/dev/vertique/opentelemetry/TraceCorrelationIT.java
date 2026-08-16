@@ -34,6 +34,7 @@ import io.vertx.core.Vertx;
 import io.vertx.core.VertxBuilder;
 import io.vertx.core.VertxOptions;
 import io.vertx.core.http.HttpClient;
+import io.vertx.core.http.HttpClientResponse;
 import io.vertx.core.http.HttpMethod;
 import io.vertx.core.http.HttpServer;
 import io.vertx.ext.web.Router;
@@ -73,6 +74,13 @@ import org.slf4j.LoggerFactory;
  * <p>The logback {@link ListAppender} is installed in {@link #setUp()} and removed in
  * {@link #tearDown(io.vertx.junit5.VertxTestContext)} so that its lifecycle is tied to the async
  * test lifecycle rather than the synchronous method body.
+ *
+ * <p><strong>Raw {@link HttpClient} exemption — the raw client is the instrumented subject.</strong>
+ * These tests observe what Vert.x's own tracing does around a raw client/server exchange (span
+ * creation, propagation, and the scope the MDC is read from); interposing a {@code WebClient} would
+ * change the instrumented path under assertion. Every exchange is status-only and goes through
+ * {@link #getStatus(HttpClient, int, String)}, which uses the raw-client idiom pinned by
+ * {@code HttpClientBodyReadRaceIT}.
  */
 @ExtendWith(io.vertx.junit5.VertxExtension.class)
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
@@ -188,6 +196,26 @@ public class TraceCorrelationIT {
     }
 
     /**
+     * Issues a status-only GET through the raw-client idiom: the response continuation is attached
+     * to the request's {@code response()} future <em>before</em> {@code end()} initiates the send,
+     * because Vert.x discards response data delivered before a handler is attached. The send's own
+     * outcome is deliberately not composed in — the exchange settles on the response, exactly as
+     * {@code send()} did. See {@code HttpClientBodyReadRaceIT}.
+     *
+     * @param client the client issuing the request
+     * @param port   the bound server port
+     * @param path   the request path
+     * @return a future of the response status code
+     */
+    private static Future<Integer> getStatus(HttpClient client, int port, String path) {
+        return client.request(HttpMethod.GET, port, "127.0.0.1", path).compose(request -> {
+            Future<Integer> responded = request.response().map(HttpClientResponse::statusCode);
+            request.end();
+            return responded;
+        });
+    }
+
+    /**
      * Polls the exporter until at least one span is available, or fails after maxAttempts.
      *
      * @param vertx       the Vert.x instance to use for timers
@@ -234,10 +262,9 @@ public class TraceCorrelationIT {
         });
 
         startServer(vertx, router)
-                .compose(port -> client.request(HttpMethod.GET, port, "127.0.0.1", "/test")
-                        .compose(req -> req.send()))
+                .compose(port -> getStatus(client, port, "/test"))
                 // Wait for the SERVER span to be exported
-                .compose(resp -> pollUntilSpanPresent(vertx, exporter, 30, 50))
+                .compose(status -> pollUntilSpanPresent(vertx, exporter, 30, 50))
                 .onComplete(ctx.succeeding(v -> {
                     ctx.verify(() -> {
                         // MDC captured during handler
@@ -302,11 +329,9 @@ public class TraceCorrelationIT {
         });
 
         startServer(vertx, router)
-                .compose(port -> client.request(HttpMethod.GET, port, "127.0.0.1", "/test")
-                        .compose(req -> req.send())
-                        .compose(resp1 -> client.request(HttpMethod.GET, port, "127.0.0.1", "/test")
-                                .compose(req -> req.send())))
-                .compose(resp2 -> pollUntilSpanPresent(vertx, exporter, 30, 50))
+                .compose(port ->
+                        getStatus(client, port, "/test").compose(firstStatus -> getStatus(client, port, "/test")))
+                .compose(secondStatus -> pollUntilSpanPresent(vertx, exporter, 30, 50))
                 .onComplete(ctx.succeeding(v -> {
                     ctx.verify(() -> {
                         assertNotNull(firstSpanId.get(), "first request must have a spanId");
@@ -339,10 +364,9 @@ public class TraceCorrelationIT {
         });
 
         startServer(vertx, router)
-                .compose(port -> client.request(HttpMethod.GET, port, "127.0.0.1", "/test")
-                        .compose(req -> req.send()))
+                .compose(port -> getStatus(client, port, "/test"))
                 // Wait a bit for the response to be processed
-                .compose(resp -> Future.<Void>future(p -> vertx.setTimer(100, id -> p.complete())))
+                .compose(status -> Future.<Void>future(p -> vertx.setTimer(100, id -> p.complete())))
                 .onComplete(ctx.succeeding(v -> {
                     ctx.verify(() -> {
                         // NOTE: Vert.x server tracing with alwaysOff sampler:
@@ -397,10 +421,9 @@ public class TraceCorrelationIT {
                 .compose(s -> {
                     this.server = s;
                     this.client = vertx.createHttpClient();
-                    return client.request(HttpMethod.GET, s.actualPort(), "127.0.0.1", "/test")
-                            .compose(req -> req.send());
+                    return getStatus(client, s.actualPort(), "/test");
                 })
-                .onComplete(ctx.succeeding(resp -> {
+                .onComplete(ctx.succeeding(status -> {
                     ctx.verify(() -> {
                         assertNull(capturedTraceId.get(), "traceId must be absent when no tracer is wired");
                         assertNull(capturedSpanId.get(), "spanId must be absent when no tracer is wired");

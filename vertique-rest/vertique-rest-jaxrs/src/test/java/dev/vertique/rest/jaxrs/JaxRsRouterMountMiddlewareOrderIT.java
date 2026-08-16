@@ -16,11 +16,11 @@ import dev.vertique.rest.jaxrs.validation.NoneValidationStrategy;
 import io.swagger.v3.oas.annotations.Operation;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
-import io.vertx.core.http.HttpClient;
-import io.vertx.core.http.HttpMethod;
 import io.vertx.core.http.HttpServer;
 import io.vertx.ext.web.Router;
 import io.vertx.ext.web.RoutingContext;
+import io.vertx.ext.web.client.WebClient;
+import io.vertx.ext.web.client.WebClientOptions;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
 import jakarta.ws.rs.GET;
@@ -60,7 +60,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
  *       ({@code jaxrs-middleware-order-test-openapi.json}).</li>
  *   <li>{@code createRouter()} loads the contract, runs {@link JaxRsRouteRegistrar}, builds the
  *       API router, and mounts the sorted middlewares with their index-derived route orders.</li>
- *   <li>The API router is attached to an HTTP server on port 0; a {@link HttpClient} issues a
+ *   <li>The API router is attached to an HTTP server on port 0; a {@link WebClient} issues a
  *       {@code GET /ping} request.</li>
  *   <li>Each middleware appends its name to a shared {@code List<String>} when invoked, and then
  *       calls {@code ctx.next()} so both fire before the operation handler ends the response.</li>
@@ -70,6 +70,15 @@ import org.junit.jupiter.api.extension.ExtendWith;
  *
  * <p>See also {@link dev.vertique.rest.core.MiddlewareOrderTest} which covers the comparator
  * in isolation.
+ *
+ * <p>The client is a {@link WebClient} rather than a raw {@code HttpClient} deliberately: a raw
+ * {@code HttpClientResponse} discards body buffers that arrive before a body handler is attached, so
+ * under load a body read can succeed with zero bytes while the status code is correct (issue #167).
+ * This test asserts on the server-side {@code executionLog} rather than on the body, so the raw idiom
+ * is latent rather than actively broken here — but a {@link WebClient} aggregates the response before
+ * completing the send, which removes the trap for whoever next adds a body assertion. The response is
+ * consequently projected to its status code alone: the previous body read existed only to complete the
+ * exchange, and the aggregation makes it redundant.
  */
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
@@ -78,20 +87,26 @@ public class JaxRsRouterMountMiddlewareOrderIT {
     // --- Test state ---
 
     private HttpServer server;
-    private HttpClient client;
+    private WebClient client;
 
     // --- Teardown ---
 
     /**
-     * Closes any server and client created during the test.
+     * Closes any client and server created during the test.
+     *
+     * <p>{@link WebClient#close()} is {@code void}, unlike {@code HttpClient.close()}: it returns once
+     * the underlying client has been asked to close, so there is no future to join here and the server
+     * close alone carries the completion.
      *
      * @param ctx the Vert.x test context used to signal async completion
      */
     @AfterEach
     void tearDown(VertxTestContext ctx) {
-        Future<?> serverClose = server != null ? server.close() : Future.succeededFuture();
-        Future<?> clientClose = client != null ? client.close() : Future.succeededFuture();
-        Future.join(serverClose, clientClose).onComplete(ar -> ctx.completeNow());
+        if (client != null) {
+            client.close();
+        }
+        Future<Void> serverClose = server != null ? server.close() : Future.succeededFuture();
+        serverClose.onComplete(ar -> ctx.completeNow());
     }
 
     // --- Minimal JAX-RS resource fixture ---
@@ -219,12 +234,13 @@ public class JaxRsRouterMountMiddlewareOrderIT {
                 })
                 .onComplete(ctx.succeeding(s -> {
                     server = s;
-                    client = vertx.createHttpClient();
+                    // Redirects off: parity with the raw client; WebClient forwards Authorization across 3xx.
+                    client = WebClient.create(vertx, new WebClientOptions().setFollowRedirects(false));
 
-                    client.request(HttpMethod.GET, s.actualPort(), "127.0.0.1", "/ping")
-                            .compose(req -> req.send())
-                            .compose(resp -> resp.body())
-                            .onComplete(ctx.succeeding(body -> {
+                    client.get(s.actualPort(), "127.0.0.1", "/ping")
+                            .send()
+                            .map(resp -> resp.statusCode())
+                            .onComplete(ctx.succeeding(status -> {
                                 ctx.verify(() -> {
                                     assertNotNull(executionLog, "Execution log must not be null");
                                     assertEquals(

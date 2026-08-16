@@ -13,11 +13,11 @@ import dev.vertique.rest.core.convert.ParamConverterRegistry;
 import io.swagger.v3.oas.annotations.Operation;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
-import io.vertx.core.http.HttpClient;
-import io.vertx.core.http.HttpMethod;
 import io.vertx.core.http.HttpServer;
 import io.vertx.ext.web.FileUpload;
 import io.vertx.ext.web.Router;
+import io.vertx.ext.web.client.WebClient;
+import io.vertx.ext.web.client.WebClientOptions;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
 import jakarta.ws.rs.BeanParam;
@@ -62,19 +62,37 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * <p>This class mirrors {@link AnnotationDrivenRoutingIT}'s {@code unknownStrategyFailsFast}: the
  * config-error path of {@code createRouter} throws synchronously, so the assertion is a direct
  * {@code assertThrows} around {@code mount.createRouter(vertx)}.
+ *
+ * <p>The one request-time case uses a {@link WebClient} rather than a raw {@code HttpClient}
+ * deliberately: a raw {@code HttpClientResponse} discards body buffers that arrive before a body
+ * handler is attached, so under load {@code body()} can succeed with zero bytes while the status code
+ * is correct (issue #167). That case asserts on the echoed element count in the body, so a silently
+ * emptied body would fail it for a reason unrelated to the strict provider. A {@link WebClient}
+ * aggregates the body into its {@code HttpResponse} before completing the send.
  */
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
 public class RouteStartupValidationTest {
 
     private HttpServer server;
-    private HttpClient client;
+    private WebClient client;
 
+    /**
+     * Closes the {@link WebClient} and then the server started by the test that just ran.
+     *
+     * <p>{@link WebClient#close()} is {@code void}, unlike {@code HttpClient.close()}: it returns once
+     * the underlying client has been asked to close, so there is no future to join here and the server
+     * close alone carries the completion.
+     *
+     * @param ctx the test context used to signal teardown completion
+     */
     @AfterEach
     void tearDown(VertxTestContext ctx) {
-        Future<?> serverClose = server != null ? server.close() : Future.succeededFuture();
-        Future<?> clientClose = client != null ? client.close() : Future.succeededFuture();
-        Future.join(serverClose, clientClose).onComplete(ar -> ctx.completeNow());
+        if (client != null) {
+            client.close();
+        }
+        Future<Void> serverClose = server != null ? server.close() : Future.succeededFuture();
+        serverClose.onComplete(ar -> ctx.completeNow());
     }
 
     /** A custom domain type with no built-in converter and no app binding/provider. */
@@ -428,10 +446,11 @@ public class RouteStartupValidationTest {
                 })
                 .onComplete(ctx.succeeding(s -> {
                     server = s;
-                    client = vertx.createHttpClient();
-                    client.request(HttpMethod.GET, s.actualPort(), "127.0.0.1", "/strict/values?v=a&v=b")
-                            .compose(req -> req.send())
-                            .compose(resp -> resp.body().map(b -> resp.statusCode() + "|" + b.toString()))
+                    // Redirects off: parity with the raw client; WebClient forwards Authorization across 3xx.
+                    client = WebClient.create(vertx, new WebClientOptions().setFollowRedirects(false));
+                    client.get(s.actualPort(), "127.0.0.1", "/strict/values?v=a&v=b")
+                            .send()
+                            .map(resp -> resp.statusCode() + "|" + String.valueOf(resp.bodyAsString()))
                             .onComplete(ctx.succeeding(statusAndBody -> {
                                 ctx.verify(() -> assertEquals(
                                         "200|MyType,size=2",

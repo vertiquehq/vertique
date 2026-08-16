@@ -11,6 +11,8 @@ import io.vertx.core.Vertx;
 import io.vertx.core.VertxBuilder;
 import io.vertx.core.VertxOptions;
 import io.vertx.core.json.JsonObject;
+import io.vertx.ext.web.client.WebClient;
+import io.vertx.ext.web.client.WebClientOptions;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
 import java.util.List;
@@ -28,18 +30,54 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * <p>Verifies that when the contributor is used with a real {@link VertxBuilder}, HTTP server
  * metrics are reported to the contributed {@link io.micrometer.core.instrument.MeterRegistry}, and
  * that the zero-backend path is genuinely inert.
+ *
+ * <p>Requests are issued through a {@link WebClient} rather than a raw {@code HttpClient}
+ * deliberately: a raw {@code HttpClientResponse} discards body buffers that arrive before a body
+ * handler is attached, so under load a body read can succeed with zero bytes while the status code is
+ * correct (issue #167). These tests assert on the status code and on the resulting meters rather than
+ * on a body, so the raw idiom was latent rather than actively broken here — but a {@link WebClient}
+ * aggregates the response before completing the send, which removes the trap for whoever next asserts
+ * on a body. The exchange still exercises the same instrumented server path, which is what produces
+ * the {@code vertx.http.} meters under test.
  */
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
 public class MicrometerVertxIT {
 
+    /**
+     * The Vert.x instance built by the test method itself — each test needs a different contributor
+     * configuration, so it cannot be shared across the class.
+     */
     private Vertx vertx;
 
+    /**
+     * The HTTP client used by the running test. Bound to a field (rather than created inline) so
+     * {@link #tearDown(VertxTestContext)} can close it before {@link #vertx} goes away.
+     */
+    private WebClient client;
+
+    /**
+     * Closes the per-test client before the Vert.x instance that owns it.
+     *
+     * <p>The client is closed while {@link #vertx}'s event loop is still alive and the Vert.x
+     * instance is closed last. Closing Vert.x first tears down the netty connection pools underneath
+     * requests that are still in flight, which surfaces under parallel CI load as
+     * {@code VertxException: Pool closed}.
+     *
+     * <p>{@link WebClient#close()} is {@code void}, unlike {@code HttpClient.close()}: it returns once
+     * the underlying client has been asked to close, so the close is a statement here rather than a
+     * future to await, and the Vert.x close alone carries the completion.
+     *
+     * @param ctx the Vert.x test context
+     */
     @AfterEach
     void tearDown(VertxTestContext ctx) {
         MeterRegistryHolder.resetForTests();
+        if (client != null) {
+            client.close();
+        }
         if (vertx != null) {
-            vertx.close().onComplete(ar -> ctx.completeNow());
+            vertx.close().onComplete(ignored -> ctx.completeNow());
         } else {
             ctx.completeNow();
         }
@@ -71,10 +109,13 @@ public class MicrometerVertxIT {
                 .listen(0, "127.0.0.1")
                 .compose(server -> {
                     int port = server.actualPort();
-                    // Issue one HTTP request using the vertx web client
-                    return vertx.createHttpClient()
-                            .request(io.vertx.core.http.HttpMethod.GET, port, "127.0.0.1", "/")
-                            .compose(req -> req.send())
+                    // Issue one HTTP request using a client bound to the instance field, so that
+                    // @AfterEach closes it before the owning Vert.x instance.
+                    // Redirects off: parity with the raw client; WebClient forwards Authorization across 3xx.
+                    client = WebClient.create(vertx, new WebClientOptions().setFollowRedirects(false));
+                    return client.get(port, "127.0.0.1", "/")
+                            // The response is aggregated before this future resolves.
+                            .send()
                             .compose(resp -> {
                                 assertEquals(200, resp.statusCode());
                                 return io.vertx.core.Future.succeededFuture();
@@ -109,9 +150,13 @@ public class MicrometerVertxIT {
                 .listen(0, "127.0.0.1")
                 .compose(server -> {
                     int port = server.actualPort();
-                    return vertx.createHttpClient()
-                            .request(io.vertx.core.http.HttpMethod.GET, port, "127.0.0.1", "/")
-                            .compose(req -> req.send())
+                    // Client bound to the instance field, so that @AfterEach closes it before the
+                    // owning Vert.x instance.
+                    // Redirects off: parity with the raw client; WebClient forwards Authorization across 3xx.
+                    client = WebClient.create(vertx, new WebClientOptions().setFollowRedirects(false));
+                    return client.get(port, "127.0.0.1", "/")
+                            // The response is aggregated before this future resolves.
+                            .send()
                             .compose(resp -> {
                                 assertEquals(200, resp.statusCode());
                                 return io.vertx.core.Future.succeededFuture();

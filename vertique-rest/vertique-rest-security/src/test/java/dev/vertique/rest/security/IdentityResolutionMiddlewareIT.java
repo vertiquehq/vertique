@@ -19,12 +19,12 @@ import dev.vertique.security.runtime.events.SecurityEventEmitter;
 import dev.vertique.security.verification.CustomVerificationSource;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
-import io.vertx.core.http.HttpClient;
-import io.vertx.core.http.HttpMethod;
 import io.vertx.core.http.HttpServer;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.auth.User;
 import io.vertx.ext.web.Router;
+import io.vertx.ext.web.client.WebClient;
+import io.vertx.ext.web.client.WebClientOptions;
 import io.vertx.ext.web.impl.UserContextInternal;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
@@ -59,13 +59,23 @@ import org.junit.jupiter.api.extension.ExtendWith;
  *   <li>The {@code authMethod} MDC key is absent for an anonymous request where
  *       evidence is empty ({@code normalizedKind() == AuthMethodKind.NONE}).</li>
  * </ul>
+ *
+ * <p>The client is a {@link WebClient} rather than a raw {@code HttpClient} deliberately: a raw
+ * {@code HttpClientResponse} discards body buffers that arrive before a body handler is attached, so
+ * under load a body read can succeed with zero bytes while the status code is correct (issue #167).
+ * Every test here asserts on server-side captured state (the bound {@link SecurityContext}, the MDC
+ * copy) rather than on the body, so the raw idiom is latent rather than actively broken here — but a
+ * {@link WebClient} aggregates the response before completing the send, which removes the trap for
+ * whoever next adds a body assertion. The responses are consequently projected to their status codes:
+ * the previous body reads existed only to complete the exchange, and the aggregation makes them
+ * redundant.
  */
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
 public class IdentityResolutionMiddlewareIT {
 
     private HttpServer server;
-    private HttpClient client;
+    private WebClient client;
     private HolderBackedSecurityRuntime runtime;
 
     @BeforeEach
@@ -73,11 +83,22 @@ public class IdentityResolutionMiddlewareIT {
         runtime = new HolderBackedSecurityRuntime((sc, secure) -> null);
     }
 
+    /**
+     * Closes the {@link WebClient} and then the server started by the test that just ran.
+     *
+     * <p>{@link WebClient#close()} is {@code void}, unlike {@code HttpClient.close()}: it returns once
+     * the underlying client has been asked to close, so there is no future to join here and the server
+     * close alone carries the completion.
+     *
+     * @param ctx the test context used to signal teardown completion
+     */
     @AfterEach
     void tearDown(VertxTestContext ctx) {
-        Future<?> serverClose = server != null ? server.close() : Future.succeededFuture();
-        Future<?> clientClose = client != null ? client.close() : Future.succeededFuture();
-        Future.join(serverClose, clientClose).onComplete(ar -> ctx.completeNow());
+        if (client != null) {
+            client.close();
+        }
+        Future<Void> serverClose = server != null ? server.close() : Future.succeededFuture();
+        serverClose.onComplete(ar -> ctx.completeNow());
     }
 
     // --- Helpers ---
@@ -152,14 +173,15 @@ public class IdentityResolutionMiddlewareIT {
 
         vertx.createHttpServer().requestHandler(router).listen(0, "127.0.0.1").onComplete(ctx.succeeding(s -> {
             server = s;
-            client = vertx.createHttpClient();
-            client.request(HttpMethod.GET, s.actualPort(), "127.0.0.1", "/secure")
-                    .compose(req -> req.send())
-                    .compose(resp -> {
+            // Redirects off: parity with the raw client; WebClient forwards Authorization across 3xx.
+            client = WebClient.create(vertx, new WebClientOptions().setFollowRedirects(false));
+            client.get(s.actualPort(), "127.0.0.1", "/secure")
+                    .send()
+                    .map(resp -> {
                         assertEquals(200, resp.statusCode());
-                        return resp.body();
+                        return resp.statusCode();
                     })
-                    .onComplete(ctx.succeeding(body -> {
+                    .onComplete(ctx.succeeding(status -> {
                         SecurityContext sc = capturedViaRuntime.get();
                         assertNotNull(sc, "runtime.current() must return the bound SC");
                         assertEquals(PrincipalType.USER, sc.identity().actor().type());
@@ -210,17 +232,15 @@ public class IdentityResolutionMiddlewareIT {
 
         vertx.createHttpServer().requestHandler(router).listen(0, "127.0.0.1").onComplete(ctx.succeeding(s -> {
             server = s;
-            client = vertx.createHttpClient();
+            // Redirects off: parity with the raw client; WebClient forwards Authorization across 3xx.
+            client = WebClient.create(vertx, new WebClientOptions().setFollowRedirects(false));
             int port = s.actualPort();
 
-            client.request(HttpMethod.GET, port, "127.0.0.1", "/first")
-                    .compose(req -> req.send())
-                    .compose(resp -> resp.body())
-                    .compose(body -> Future.<Void>future(p -> vertx.setTimer(50, id -> p.complete(null))))
-                    .compose(ignored -> client.request(HttpMethod.GET, port, "127.0.0.1", "/second"))
-                    .compose(req -> req.send())
-                    .compose(resp -> resp.body())
-                    .onComplete(ctx.succeeding(body -> {
+            client.get(port, "127.0.0.1", "/first")
+                    .send()
+                    .compose(first -> Future.<Void>future(p -> vertx.setTimer(50, id -> p.complete(null))))
+                    .compose(ignored -> client.get(port, "127.0.0.1", "/second").send())
+                    .onComplete(ctx.succeeding(second -> {
                         assertNull(
                                 secondRequestSc.get(),
                                 "runtime.current() must be null inside the second request "
@@ -268,17 +288,15 @@ public class IdentityResolutionMiddlewareIT {
 
         vertx.createHttpServer().requestHandler(router).listen(0, "127.0.0.1").onComplete(ctx.succeeding(s -> {
             server = s;
-            client = vertx.createHttpClient();
+            // Redirects off: parity with the raw client; WebClient forwards Authorization across 3xx.
+            client = WebClient.create(vertx, new WebClientOptions().setFollowRedirects(false));
             int port = s.actualPort();
 
-            client.request(HttpMethod.GET, port, "127.0.0.1", "/first")
-                    .compose(req -> req.send())
-                    .compose(resp -> resp.body())
-                    .compose(body -> Future.<Void>future(p -> vertx.setTimer(50, id -> p.complete(null))))
-                    .compose(ignored -> client.request(HttpMethod.GET, port, "127.0.0.1", "/second"))
-                    .compose(req -> req.send())
-                    .compose(resp -> resp.body())
-                    .onComplete(ctx.succeeding(body -> {
+            client.get(port, "127.0.0.1", "/first")
+                    .send()
+                    .compose(first -> Future.<Void>future(p -> vertx.setTimer(50, id -> p.complete(null))))
+                    .compose(ignored -> client.get(port, "127.0.0.1", "/second").send())
+                    .onComplete(ctx.succeeding(second -> {
                         Map<String, String> firstMdc = duringFirst.get();
                         assertNotNull(firstMdc);
                         assertEquals(
@@ -317,11 +335,12 @@ public class IdentityResolutionMiddlewareIT {
 
         vertx.createHttpServer().requestHandler(router).listen(0, "127.0.0.1").onComplete(ctx.succeeding(s -> {
             server = s;
-            client = vertx.createHttpClient();
-            client.request(HttpMethod.GET, s.actualPort(), "127.0.0.1", "/anon")
-                    .compose(req -> req.send())
-                    .compose(resp -> resp.body())
-                    .onComplete(ctx.succeeding(body -> {
+            // Redirects off: parity with the raw client; WebClient forwards Authorization across 3xx.
+            client = WebClient.create(vertx, new WebClientOptions().setFollowRedirects(false));
+            client.get(s.actualPort(), "127.0.0.1", "/anon")
+                    .send()
+                    .map(resp -> resp.statusCode())
+                    .onComplete(ctx.succeeding(status -> {
                         assertFalse(
                                 authMethodPresent.get(), "authMethod MDC key must be absent for anonymous requests");
                         ctx.completeNow();

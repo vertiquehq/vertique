@@ -30,14 +30,14 @@ import dev.vertique.security.verification.VerificationSource;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
-import io.vertx.core.http.HttpClient;
-import io.vertx.core.http.HttpMethod;
 import io.vertx.core.http.HttpServer;
 import io.vertx.core.json.Json;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.auth.User;
 import io.vertx.ext.web.Router;
 import io.vertx.ext.web.RoutingContext;
+import io.vertx.ext.web.client.WebClient;
+import io.vertx.ext.web.client.WebClientOptions;
 import io.vertx.ext.web.impl.UserContextInternal;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
@@ -94,6 +94,13 @@ import org.junit.jupiter.api.extension.ExtendWith;
  *
  * <p>The resource method carries no {@code @Operation}: the operationId falls back to the method
  * name, and operationId derivation is not part of the seam under test.
+ *
+ * <p>Requests go through a {@link WebClient} rather than a raw {@code HttpClient} deliberately: a
+ * raw {@code HttpClientResponse} discards body buffers that arrive before a body handler is
+ * attached, so under load {@code body()} can succeed with zero bytes while the status code is
+ * correct (issue #167). Every assertion here reads the rendered problem body, so a silently
+ * emptied body would decode-fail on one test and let the no-leak test pass for the wrong reason. A
+ * {@link WebClient} aggregates the body into its {@code HttpResponse} before completing the send.
  */
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
@@ -120,11 +127,12 @@ public class JwtClaimsRejectionStatusIT {
     private static final ConcurrentLinkedQueue<String> REPORTED_REASON_CODES = new ConcurrentLinkedQueue<>();
 
     private static HttpServer server;
-    private static HttpClient client;
+    private static WebClient client;
 
     /**
      * Mounts the JAX-RS router with the claims-validator contributor wired in and starts the shared
-     * server and {@link HttpClient}.
+     * server and {@link WebClient}. The client is bound to a static field so {@link #tearDown} can
+     * close it; an unbound client can never be closed at all.
      *
      * @param vertx the Vert.x instance injected by {@link VertxExtension}
      * @param ctx   the test context used for async startup assertion
@@ -141,21 +149,28 @@ public class JwtClaimsRejectionStatusIT {
                 })
                 .onComplete(ctx.succeeding(listeningServer -> {
                     server = listeningServer;
-                    client = vertx.createHttpClient();
+                    // Redirects off: parity with the raw client; WebClient forwards Authorization across 3xx.
+                    client = WebClient.create(vertx, new WebClientOptions().setFollowRedirects(false));
                     ctx.completeNow();
                 }));
     }
 
     /**
-     * Closes the shared server and {@link HttpClient}.
+     * Closes the shared {@link WebClient} and then the shared server, before the extension-owned
+     * {@link Vertx} instance is closed.
+     *
+     * <p>{@link WebClient#close()} is {@code void}, unlike {@code HttpClient.close()}: it returns
+     * once the underlying client has been asked to close, so there is no future to join here.
      *
      * @param ctx the test context used for async teardown assertion
      */
     @AfterAll
     static void tearDown(VertxTestContext ctx) {
-        Future<?> serverClose = server != null ? server.close() : Future.succeededFuture();
-        Future<?> clientClose = client != null ? client.close() : Future.succeededFuture();
-        Future.join(serverClose, clientClose).onComplete(ctx.succeeding(v -> ctx.completeNow()));
+        if (client != null) {
+            client.close();
+        }
+        Future<Void> serverClose = server != null ? server.close() : Future.succeededFuture();
+        serverClose.onComplete(ctx.succeeding(v -> ctx.completeNow()));
     }
 
     // --- Tests ---
@@ -222,14 +237,11 @@ public class JwtClaimsRejectionStatusIT {
      * @throws Exception if the request does not complete within {@link #ASYNC_TIMEOUT_SECONDS}
      */
     private static HttpResult get() throws Exception {
-        return client.request(HttpMethod.GET, server.actualPort(), "127.0.0.1", "/secure")
-                .compose(request -> request.putHeader("Authorization", "Bearer " + VALID_TOKEN)
-                        .send())
-                .compose(response -> {
-                    int statusCode = response.statusCode();
-                    String contentType = response.getHeader("Content-Type");
-                    return response.body().map(body -> new HttpResult(statusCode, contentType, body));
-                })
+        return client.get(server.actualPort(), "127.0.0.1", "/secure")
+                .putHeader("Authorization", "Bearer " + VALID_TOKEN)
+                .send()
+                .map(response -> new HttpResult(
+                        response.statusCode(), response.getHeader("Content-Type"), response.bodyAsString()))
                 .toCompletionStage()
                 .toCompletableFuture()
                 .get(ASYNC_TIMEOUT_SECONDS, TimeUnit.SECONDS);
@@ -238,18 +250,23 @@ public class JwtClaimsRejectionStatusIT {
     /**
      * One observed HTTP response.
      *
+     * <p>The body is captured as text through {@code bodyAsString()} rather than as a
+     * {@link Buffer}: a {@link WebClient} reports an empty body as {@code null} where the raw
+     * client reported a zero-length buffer, and every assertion here reads a rendered problem
+     * body, so an empty one is a failure to surface rather than a value to decode.
+     *
      * @param statusCode  the response status code
      * @param contentType the raw {@code Content-Type} header, or {@code null} when absent
-     * @param body        the raw response body
+     * @param body        the raw response body as text, or {@code null} when the response had none
      */
-    private record HttpResult(int statusCode, String contentType, Buffer body) {
+    private record HttpResult(int statusCode, String contentType, String body) {
 
         JsonObject problem() {
-            return body.toJsonObject();
+            return new JsonObject(body);
         }
 
         String bodyText() {
-            return body.toString();
+            return String.valueOf(body);
         }
     }
 

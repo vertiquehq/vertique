@@ -16,6 +16,7 @@ import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.core.json.jackson.DatabindCodec;
 import io.vertx.ext.web.client.WebClient;
+import io.vertx.ext.web.client.WebClientOptions;
 import jakarta.ws.rs.DefaultValue;
 import jakarta.ws.rs.GET;
 import jakarta.ws.rs.HeaderParam;
@@ -107,18 +108,34 @@ class RestClientRequestFactoryDefaultValueTest {
 
     private static Vertx vertx;
 
+    /**
+     * One {@link WebClient} for the whole class instead of one per {@code newDispatcher(...)} call.
+     * The dispatcher only reads from it (it never closes it), and the client used to be left
+     * unclosed, so {@link Vertx#close()} reclaimed its netty pools out from under it.
+     */
+    private static WebClient webClient;
+
     @BeforeAll
     static void startVertx() {
         vertx = Vertx.vertx();
+        // Redirects off: parity with the raw client; WebClient forwards Authorization across 3xx.
+        webClient = WebClient.create(vertx, new WebClientOptions().setFollowRedirects(false));
     }
 
+    /**
+     * Closes the shared {@link WebClient} before {@link Vertx#close()} tears down the event loops it
+     * runs on. {@link WebClient#close()} is {@code void}, so it cannot be chained — the
+     * {@link Vertx} close that follows carries the completion.
+     */
     @AfterAll
     static void stopVertx() {
+        if (webClient != null) {
+            webClient.close();
+        }
         vertx.close();
     }
 
     private static DefaultRestClientDispatcher newDispatcher(ParamConversionResolver resolver) {
-        WebClient webClient = WebClient.create(vertx);
         return new DefaultRestClientDispatcher(
                 webClient,
                 "http://localhost",

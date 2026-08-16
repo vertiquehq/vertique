@@ -14,12 +14,15 @@ import io.vertx.core.Handler;
 import io.vertx.core.Vertx;
 import io.vertx.ext.web.Router;
 import io.vertx.ext.web.RoutingContext;
+import io.vertx.ext.web.client.WebClient;
+import io.vertx.ext.web.client.WebClientOptions;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -41,12 +44,41 @@ import org.junit.jupiter.api.extension.ExtendWith;
  *   <li>Fail-fast: late registration after completion throws {@link IllegalStateException}.
  *   <li>End-to-end: end handler on a real Vert.x {@link RoutingContext} drives the same ordering.
  * </ul>
+ *
+ * <p>The end-to-end case dials through a {@link WebClient} bound to the per-test {@link Vertx}
+ * instance rather than a fresh inline {@code HttpClient}. Two reasons: an inline client is
+ * unclosable by construction — the {@code close()} in that test's success path belongs to the
+ * server, not the client — so {@code Vertx} teardown reclaims its netty pools while the request may
+ * still be in flight; and a raw {@code HttpClientResponse} discards body buffers that arrive before
+ * a body handler is attached, which the drain step there existed to work around (issues #167,
+ * #330). A {@link WebClient} has already aggregated the body by the time its send future resolves.
+ * Nothing here answers 3xx, so the follow-redirects default never engages.
  */
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
 class RequestContextLifecycleTest {
 
     private final RequestContextLifecycle middleware = new RequestContextLifecycle();
+
+    /**
+     * The request client, bound by the one test that issues HTTP so it can be closed; stays
+     * {@code null} for the mock-driven tests, which never create a {@link Vertx} instance at all.
+     */
+    private WebClient client;
+
+    /**
+     * Closes the {@link WebClient} the test that just ran created, before the extension closes the
+     * {@link Vertx} instance it was created on.
+     *
+     * <p>{@link WebClient#close()} is {@code void}, unlike {@code HttpClient.close()}: it returns
+     * once the underlying client has been asked to close, so there is no future to await here.
+     */
+    @AfterEach
+    void closeClient() {
+        if (client != null) {
+            client.close();
+        }
+    }
 
     // --- Middleware contract ---
 
@@ -364,6 +396,8 @@ class RequestContextLifecycleTest {
     @DisplayName("End handler on real RoutingContext should drive LIFO onClose then FIFO afterClose")
     void endHandlerOnRealRoutingContextShouldDriveCorrectOrdering(Vertx vertx, VertxTestContext ctx) {
         List<String> order = new ArrayList<>();
+        // Redirects off: parity with the raw client; WebClient forwards Authorization across 3xx.
+        client = WebClient.create(vertx, new WebClientOptions().setFollowRedirects(false));
         Router router = Router.router(vertx);
 
         // Mount the middleware
@@ -383,15 +417,13 @@ class RequestContextLifecycleTest {
                 .listen(0, "127.0.0.1")
                 .compose(server -> {
                     int port = server.actualPort();
-                    return vertx.createHttpClient()
-                            .request(io.vertx.core.http.HttpMethod.GET, port, "127.0.0.1", "/test")
-                            .compose(req -> req.send())
+                    return client.get(port, "127.0.0.1", "/test")
+                            .send()
                             .compose(resp -> {
                                 ctx.verify(() -> assertEquals(200, resp.statusCode()));
-                                return resp.body();
-                            })
-                            .compose(body -> {
-                                // Allow end handlers to complete before asserting
+                                // Allow end handlers to complete before asserting. The separate body
+                                // drain the raw client needed is gone: a WebClient response is
+                                // already aggregated when its send future resolves.
                                 return Future.<Void>future(p -> vertx.setTimer(50, id -> p.complete(null)));
                             })
                             .onSuccess(v -> {

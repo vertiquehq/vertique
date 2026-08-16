@@ -18,12 +18,12 @@ import dev.vertique.security.runtime.events.SecurityEventEmitter;
 import dev.vertique.security.verification.CustomVerificationSource;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
-import io.vertx.core.http.HttpClient;
-import io.vertx.core.http.HttpMethod;
 import io.vertx.core.http.HttpServer;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.auth.User;
 import io.vertx.ext.web.Router;
+import io.vertx.ext.web.client.WebClient;
+import io.vertx.ext.web.client.WebClientOptions;
 import io.vertx.ext.web.impl.UserContextInternal;
 import io.vertx.ext.web.openapi.router.OpenAPIRoute;
 import io.vertx.ext.web.openapi.router.RequestExtractor;
@@ -62,9 +62,17 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * <p>{@link RequestContextLifecycle} is installed on the main router so that
  * {@link IdentityResolutionMiddleware} can register its scope closes via the lifecycle handle.
  *
- * <p>A single {@link HttpClient} is shared across all test methods via {@code @BeforeAll} to
+ * <p>A single {@link WebClient} is shared across all test methods via {@code @BeforeAll} to
  * avoid netty channel-pool churn under full-reactor load. Each test still creates its own
  * {@link HttpServer} (torn down in {@code @AfterEach}) because server wiring differs per test.
+ *
+ * <p>The client is a {@link WebClient} rather than a raw {@code HttpClient} deliberately: a raw
+ * {@code HttpClientResponse} discards body buffers that arrive before a body handler is attached, so
+ * under load a body read can succeed with zero bytes while the status code is correct (issue #167).
+ * Every test here asserts on the response body — the marker string the operation handler writes is
+ * the only evidence of whether the middleware ran and what identity it bound — so a silently emptied
+ * body would fail these tests for a reason unrelated to the handler chain. A {@link WebClient}
+ * aggregates the body into its {@code HttpResponse} before completing the send.
  */
 @ExtendWith(VertxExtension.class)
 class AuthSecurityLifecycleHookTest {
@@ -72,7 +80,7 @@ class AuthSecurityLifecycleHookTest {
     // --- Class-scoped resources (shared across all @Test methods) ---
 
     private static Vertx vertx;
-    private static HttpClient client;
+    private static WebClient client;
 
     // --- Per-test resources ---
 
@@ -109,7 +117,7 @@ class AuthSecurityLifecycleHookTest {
     }
 
     /**
-     * Creates the class-scoped {@link Vertx} instance and shared {@link HttpClient} once for
+     * Creates the class-scoped {@link Vertx} instance and shared {@link WebClient} once for
      * the entire test class. vertx-junit5 injects a class-scoped {@link Vertx} into
      * {@code @BeforeAll} and keeps it alive for all test methods.
      *
@@ -119,12 +127,13 @@ class AuthSecurityLifecycleHookTest {
     @BeforeAll
     static void setUpClass(Vertx v, VertxTestContext ctx) {
         vertx = v;
-        client = v.createHttpClient();
+        // Redirects off: parity with the raw client; WebClient forwards Authorization across 3xx.
+        client = WebClient.create(v, new WebClientOptions().setFollowRedirects(false));
         ctx.completeNow();
     }
 
     /**
-     * Closes the per-test {@link HttpServer}. The shared {@link HttpClient} is left open and
+     * Closes the per-test {@link HttpServer}. The shared {@link WebClient} is left open and
      * closed only in {@link #tearDownClass(VertxTestContext)}.
      *
      * @param ctx the test context used to signal teardown completion
@@ -136,17 +145,20 @@ class AuthSecurityLifecycleHookTest {
     }
 
     /**
-     * Closes the shared {@link HttpClient} after all tests in the class have run.
+     * Closes the shared {@link WebClient} after all tests in the class have run.
+     *
+     * <p>{@link WebClient#close()} is {@code void}, unlike {@code HttpClient.close()}: it returns once
+     * the underlying client has been asked to close, so there is no future to chain the context
+     * completion off.
      *
      * @param ctx the test context used to signal teardown completion
      */
     @AfterAll
     static void tearDownClass(VertxTestContext ctx) {
         if (client != null) {
-            client.close().onComplete(ar -> ctx.completeNow());
-        } else {
-            ctx.completeNow();
+            client.close();
         }
+        ctx.completeNow();
     }
 
     // --- Helpers ---
@@ -232,11 +244,11 @@ class AuthSecurityLifecycleHookTest {
                 })
                 .onComplete(ctx.succeeding(s -> {
                     server = s;
-                    client.request(HttpMethod.GET, s.actualPort(), "127.0.0.1", "/test")
-                            .compose(req -> req.send())
-                            .compose(resp -> {
+                    client.get(s.actualPort(), "127.0.0.1", "/test")
+                            .send()
+                            .map(resp -> {
                                 assertEquals(200, resp.statusCode());
-                                return resp.body();
+                                return String.valueOf(resp.bodyAsString());
                             })
                             .onComplete(ctx.succeeding(body -> {
                                 assertEquals("userId=testuser", body.toString());
@@ -283,9 +295,9 @@ class AuthSecurityLifecycleHookTest {
                 })
                 .onComplete(ctx.succeeding(s -> {
                     server = s;
-                    client.request(HttpMethod.GET, s.actualPort(), "127.0.0.1", "/test")
-                            .compose(req -> req.send())
-                            .compose(resp -> resp.body())
+                    client.get(s.actualPort(), "127.0.0.1", "/test")
+                            .send()
+                            .map(resp -> String.valueOf(resp.bodyAsString()))
                             .onComplete(ctx.succeeding(body -> {
                                 assertEquals("null-as-expected", body.toString());
                                 ctx.completeNow();
@@ -343,9 +355,9 @@ class AuthSecurityLifecycleHookTest {
                 })
                 .onComplete(ctx.succeeding(s -> {
                     server = s;
-                    client.request(HttpMethod.GET, s.actualPort(), "127.0.0.1", "/test")
-                            .compose(req -> req.send())
-                            .compose(resp -> resp.body())
+                    client.get(s.actualPort(), "127.0.0.1", "/test")
+                            .send()
+                            .map(resp -> String.valueOf(resp.bodyAsString()))
                             .onComplete(ctx.succeeding(body -> {
                                 assertEquals("middleware-did-not-run", body.toString());
                                 ctx.completeNow();

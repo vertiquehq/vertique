@@ -19,12 +19,13 @@ import io.vertx.core.Context;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
-import io.vertx.core.http.HttpClient;
-import io.vertx.core.http.HttpMethod;
 import io.vertx.core.http.HttpServer;
 import io.vertx.core.internal.ContextInternal;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.RoutingContext;
+import io.vertx.ext.web.client.HttpRequest;
+import io.vertx.ext.web.client.WebClient;
+import io.vertx.ext.web.client.WebClientOptions;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
 import jakarta.ws.rs.GET;
@@ -74,6 +75,15 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * only through a {@code RestRequestCompletedListener}, for which {@link RestTestContributions} has no
  * seam, and {@code ContextualLoggingMiddleware} writes only to MDC, which is a no-op with no SLF4J
  * provider on this module's test classpath.
+ *
+ * <p>Requests are issued through a {@link WebClient} rather than a raw {@code HttpClient}
+ * deliberately: a raw {@code HttpClientResponse} discards body buffers that arrive before a body
+ * handler is attached, so under load {@code body()} can succeed with zero bytes while the status code
+ * is correct (issue #167). Three tests here assert on the response body — the production encoder's
+ * raw string, the shouting encoder's output, and the mapped problem detail — so a silently emptied
+ * body would be reported as an encoder or exception-mapper defect that did not happen. A
+ * {@link WebClient} aggregates the body into its {@code HttpResponse} before completing the send, so
+ * the race is closed by construction rather than by every author remembering an idiom.
  */
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
@@ -99,20 +109,37 @@ public class RestTestMountsIT {
     private static final String REQUEST_ID_HEADER = "X-Request-Id";
 
     private static Vertx vertx;
-    private static HttpClient client;
+    private static WebClient client;
 
     private HttpServer server;
 
+    /**
+     * Creates the class-scoped {@link WebClient}. It is bound to a static field so
+     * {@link #tearDownClient} can close it; an unbound client can never be closed at all.
+     *
+     * @param injectedVertx the class-scoped Vert.x instance injected by vertx-junit5
+     */
     @BeforeAll
     static void setUpClient(Vertx injectedVertx) {
         vertx = injectedVertx;
-        client = vertx.createHttpClient();
+        // Redirects off: parity with the raw client; WebClient forwards Authorization across 3xx.
+        client = WebClient.create(vertx, new WebClientOptions().setFollowRedirects(false));
     }
 
+    /**
+     * Closes the shared {@link WebClient} before the extension-owned {@link Vertx} instance is closed.
+     *
+     * <p>{@link WebClient#close()} is {@code void}, unlike {@code HttpClient.close()}: it returns once
+     * the underlying client has been asked to close, so there is no future to await here.
+     *
+     * @param ctx the test context used for async teardown assertion
+     */
     @AfterAll
     static void tearDownClient(VertxTestContext ctx) {
-        Future<?> close = client != null ? client.close() : Future.succeededFuture();
-        close.onComplete(ctx.succeeding(v -> ctx.completeNow()));
+        if (client != null) {
+            client.close();
+        }
+        ctx.completeNow();
     }
 
     @AfterEach
@@ -321,22 +348,24 @@ public class RestTestMountsIT {
     /**
      * Issues a GET against the running server and awaits the full response.
      *
+     * <p>{@code putHeader} is the right call here even though {@link HttpRequest} makes it REPLACE
+     * rather than append: {@code headers} carries at most one value per name, so no caller depends on
+     * a repeated header reaching the server.
+     *
      * @param path    the request path
      * @param headers the request headers to send
      * @return the status, headers, and body of the response
      * @throws Exception when the round trip fails or times out
      */
     private HttpResult get(String path, Map<String, String> headers) throws Exception {
-        return client.request(HttpMethod.GET, server.actualPort(), "127.0.0.1", path)
-                .compose(request -> {
-                    headers.forEach(request::putHeader);
-                    return request.send();
-                })
-                .compose(response -> {
-                    int statusCode = response.statusCode();
+        HttpRequest<Buffer> request = client.get(server.actualPort(), "127.0.0.1", path);
+        headers.forEach(request::putHeader);
+        return request.send()
+                .map(response -> {
                     Map<String, String> responseHeaders = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
                     response.headers().forEach(entry -> responseHeaders.put(entry.getKey(), entry.getValue()));
-                    return response.body().map(body -> new HttpResult(statusCode, responseHeaders, body.toString()));
+                    return new HttpResult(
+                            response.statusCode(), responseHeaders, String.valueOf(response.bodyAsString()));
                 })
                 .toCompletionStage()
                 .toCompletableFuture()
@@ -356,9 +385,15 @@ public class RestTestMountsIT {
     /**
      * The parts of an HTTP response these tests assert on.
      *
+     * <p>The body is read through {@code bodyAsString()} and wrapped in {@code String.valueOf}: a
+     * {@link WebClient} reports an empty body as {@code null} where the raw client reported a
+     * zero-length buffer. No response asserted on here is legitimately empty — every one carries the
+     * fixture resource's text or a mapped problem detail — so the wrapper only keeps an unexpected
+     * empty body a legible assertion failure instead of an NPE.
+     *
      * @param statusCode the response status code
      * @param headers    the response headers, keyed case-insensitively as HTTP requires
-     * @param body       the response body decoded as a string
+     * @param body       the response body decoded as a string, or {@code "null"} when there was none
      */
     private record HttpResult(int statusCode, Map<String, String> headers, String body) {
 

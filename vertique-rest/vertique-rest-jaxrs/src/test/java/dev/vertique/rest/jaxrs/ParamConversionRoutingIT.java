@@ -7,10 +7,10 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import io.swagger.v3.oas.annotations.Operation;
 import io.vertx.core.Future;
-import io.vertx.core.http.HttpClient;
-import io.vertx.core.http.HttpMethod;
 import io.vertx.core.http.HttpServer;
 import io.vertx.ext.web.Router;
+import io.vertx.ext.web.client.WebClient;
+import io.vertx.ext.web.client.WebClientOptions;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
 import jakarta.ws.rs.GET;
@@ -50,21 +50,40 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * as 400, so the load-bearing RED signal is the success-case typed echo, not the 400s.
  *
  * <p>This class mirrors {@link AnnotationDrivenRoutingIT} exactly (Vert.x {@link VertxExtension},
- * {@code listen(0)}, a per-test {@link HttpClient}, and {@code status|body} projections) for
- * determinism and uses JUnit 5 assertions because AssertJ is not on this module's test classpath.
+ * {@code listen(0)}, a per-test client, and {@code status|body} projections) for determinism and uses
+ * JUnit 5 assertions because AssertJ is not on this module's test classpath.
+ *
+ * <p>The client is a {@link WebClient} rather than a raw {@code HttpClient} deliberately: a raw
+ * {@code HttpClientResponse} discards body buffers that arrive before a body handler is attached, so
+ * under load {@code body()} can succeed with zero bytes while the status code is correct (issue #167).
+ * Every case here asserts on a {@code status|body} projection whose body carries the typed echo that is
+ * the load-bearing signal, so a silently emptied body would fail the conversion assertion for a reason
+ * unrelated to param conversion. A {@link WebClient} aggregates the body into its {@code HttpResponse}
+ * before completing the send.
  */
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
 public class ParamConversionRoutingIT {
 
     private HttpServer server;
-    private HttpClient client;
+    private WebClient client;
 
+    /**
+     * Closes the {@link WebClient} and then the server started by the test that just ran.
+     *
+     * <p>{@link WebClient#close()} is {@code void}, unlike {@code HttpClient.close()}: it returns once
+     * the underlying client has been asked to close, so there is no future to join here and the server
+     * close alone carries the completion.
+     *
+     * @param ctx the test context used to signal teardown completion
+     */
     @AfterEach
     void tearDown(VertxTestContext ctx) {
-        Future<?> serverClose = server != null ? server.close() : Future.succeededFuture();
-        Future<?> clientClose = client != null ? client.close() : Future.succeededFuture();
-        Future.join(serverClose, clientClose).onComplete(ar -> ctx.completeNow());
+        if (client != null) {
+            client.close();
+        }
+        Future<Void> serverClose = server != null ? server.close() : Future.succeededFuture();
+        serverClose.onComplete(ar -> ctx.completeNow());
     }
 
     // --- Fixtures ---
@@ -201,12 +220,10 @@ public class ParamConversionRoutingIT {
     @Test
     @DisplayName("A valid @HeaderParam enum converts to the enum constant and the resource returns 200")
     void enumHeaderParamConverts(io.vertx.core.Vertx vertx, VertxTestContext ctx) {
-        deploy(vertx, ctx, port -> client.request(HttpMethod.GET, port, "127.0.0.1", "/convert/mode")
-                .compose(req -> req.putHeader("X-Mode", "VALUE_A").send())
-                .compose(resp -> {
-                    int status = resp.statusCode();
-                    return resp.body().map(b -> status + "|" + b.toString());
-                })
+        deploy(vertx, ctx, port -> client.get(port, "127.0.0.1", "/convert/mode")
+                .putHeader("X-Mode", "VALUE_A")
+                .send()
+                .map(resp -> resp.statusCode() + "|" + String.valueOf(resp.bodyAsString()))
                 .onComplete(ctx.succeeding(statusAndBody -> {
                     ctx.verify(() -> assertEquals("200|Mode=VALUE_A", statusAndBody));
                     ctx.completeNow();
@@ -270,12 +287,9 @@ public class ParamConversionRoutingIT {
             VertxTestContext ctx,
             String path,
             java.util.function.Consumer<String> assertion) {
-        deploy(vertx, ctx, port -> client.request(HttpMethod.GET, port, "127.0.0.1", path)
-                .compose(req -> req.send())
-                .compose(resp -> {
-                    int status = resp.statusCode();
-                    return resp.body().map(b -> status + "|" + b.toString());
-                })
+        deploy(vertx, ctx, port -> client.get(port, "127.0.0.1", path)
+                .send()
+                .map(resp -> resp.statusCode() + "|" + String.valueOf(resp.bodyAsString()))
                 .onComplete(ctx.succeeding(statusAndBody -> {
                     ctx.verify(() -> assertion.accept(statusAndBody));
                     ctx.completeNow();
@@ -301,7 +315,8 @@ public class ParamConversionRoutingIT {
                 })
                 .onComplete(ctx.succeeding(s -> {
                     server = s;
-                    client = vertx.createHttpClient();
+                    // Redirects off: parity with the raw client; WebClient forwards Authorization across 3xx.
+                    client = WebClient.create(vertx, new WebClientOptions().setFollowRedirects(false));
                     afterListen.accept(s.actualPort());
                 }));
     }

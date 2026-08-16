@@ -8,12 +8,13 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
-import io.vertx.core.http.HttpClient;
 import io.vertx.core.http.HttpMethod;
 import io.vertx.core.http.HttpServer;
 import io.vertx.ext.auth.authentication.AuthenticationProvider;
 import io.vertx.ext.web.Route;
 import io.vertx.ext.web.Router;
+import io.vertx.ext.web.client.WebClient;
+import io.vertx.ext.web.client.WebClientOptions;
 import io.vertx.ext.web.handler.AuthenticationHandler;
 import io.vertx.ext.web.handler.BasicAuthHandler;
 import io.vertx.ext.web.handler.BodyHandler;
@@ -53,13 +54,22 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * per-route failure handler that records the tag it can read from {@code ctx.currentRoute()} when it
  * fires. The router-level catch-all records what IT can recover. The test then reports, per case,
  * which mechanism recovered the tag.
+ *
+ * <p>The client is a {@link WebClient} rather than a raw {@code HttpClient} deliberately: a raw
+ * {@code HttpClientResponse} discards body buffers that arrive before a body handler is attached, so
+ * under load a body read can succeed with zero bytes while the status code is correct (issue #167).
+ * This characterization asserts on the server-side {@link Observation} records rather than on the body,
+ * so the raw idiom is latent rather than actively broken here — but a {@link WebClient} aggregates the
+ * response before completing the send, which removes the trap for whoever next adds a body assertion.
+ * The response is consequently projected to its status code alone: the previous body read existed only
+ * to complete the exchange, and the aggregation makes it redundant.
  */
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
 public class FailureHandlerRouteIdentityCharacterizationIT {
 
     private HttpServer server;
-    private static HttpClient client;
+    private static WebClient client;
 
     /** Per-request record keyed by request path. */
     private final ConcurrentHashMap<String, Observation> observations = new ConcurrentHashMap<>();
@@ -81,23 +91,31 @@ public class FailureHandlerRouteIdentityCharacterizationIT {
             String catchAllTag) {}
 
     /**
-     * Creates the {@link HttpClient} shared across every test in this class.
+     * Creates the {@link WebClient} shared across every test in this class.
      *
      * @param vertx the Vert.x instance injected by {@link VertxExtension}
      */
     @BeforeAll
     static void setUpClient(Vertx vertx) {
-        client = vertx.createHttpClient();
+        // Redirects off: parity with the raw client; WebClient forwards Authorization across 3xx.
+        client = WebClient.create(vertx, new WebClientOptions().setFollowRedirects(false));
     }
 
     /**
-     * Closes the shared {@link HttpClient}.
+     * Closes the shared {@link WebClient} — before the extension-owned {@link Vertx} instance is
+     * closed, which happens only once every {@code @AfterAll} method has run.
+     *
+     * <p>{@link WebClient#close()} is {@code void}, unlike {@code HttpClient.close()}: it returns once
+     * the underlying client has been asked to close, so there is no future to await here.
      *
      * @param ctx the test context used for async teardown assertion
      */
     @AfterAll
     static void tearDownClient(VertxTestContext ctx) {
-        (client != null ? client.close() : Future.succeededFuture()).onComplete(ar -> ctx.completeNow());
+        if (client != null) {
+            client.close();
+        }
+        ctx.completeNow();
     }
 
     @AfterEach
@@ -199,10 +217,10 @@ public class FailureHandlerRouteIdentityCharacterizationIT {
                 .listen(0, "127.0.0.1")
                 .onSuccess(s -> server = s);
         listenFuture
-                .compose(s -> client.request(method, s.actualPort(), "127.0.0.1", path))
-                .compose(req -> req.send())
-                .compose(resp -> resp.body().map(b -> b.toString()))
-                .onComplete(ctx.succeeding(body -> {
+                .compose(s -> client.request(method, s.actualPort(), "127.0.0.1", path)
+                        .send())
+                .map(resp -> resp.statusCode())
+                .onComplete(ctx.succeeding(status -> {
                     ctx.verify(asserts::run);
                     ctx.completeNow();
                 }));

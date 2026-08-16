@@ -82,6 +82,14 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * the bind; a single {@link HttpClient} is shared by the class; every socket and server is closed on
  * every exit path; and all synchronization is latch-based ({@link CompletableFuture} completed by
  * the response handlers, the resource, and the completion listener) — there are no fixed sleeps.
+ *
+ * <p><strong>Raw {@link HttpClient} exemption — mid-stream failure and wire-level control.</strong>
+ * These tests observe a response <em>while it is still streaming</em> (the first chunk must be in
+ * the client's hands before the source is failed) and abort a live connection with
+ * {@code SO_LINGER(0)} through a raw {@link Socket}; a buffered {@code WebClient} exchange can
+ * express neither. The exchange below therefore uses the raw-client idiom pinned by
+ * {@code HttpClientBodyReadRaceIT}: the whole response continuation is attached before
+ * {@code end()} initiates the send.
  */
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
@@ -159,11 +167,21 @@ public class StreamingWireFailureIT {
         int port = startServer(streamCreated, completed);
 
         HttpClientResponse response = client.request(HttpMethod.GET, port, LOOPBACK, STREAM_PATH)
-                .compose(request -> request.send())
-                .map(pausedResponse -> {
-                    // Pause before handlers are attached so no already-delivered chunk is dropped.
-                    pausedResponse.pause();
-                    return pausedResponse;
+                .compose(request -> {
+                    // The pause is reached through a continuation attached to response() BEFORE end()
+                    // initiates the send. Both halves of that are load-bearing. Vert.x discards body
+                    // buffers delivered before a handler is attached, so a continuation attached after
+                    // the send sits in the same window the send does: chunks dispatched before it runs
+                    // are already gone, and no pause() can recall them. Attached first, the pause runs
+                    // on the tick that delivers the head — ahead of any body data — and then holds the
+                    // stream across the blocking get() below until the handlers are registered.
+                    // See HttpClientBodyReadRaceIT.
+                    Future<HttpClientResponse> paused = request.response().map(pausedResponse -> {
+                        pausedResponse.pause();
+                        return pausedResponse;
+                    });
+                    request.end();
+                    return paused;
                 })
                 .toCompletionStage()
                 .toCompletableFuture()

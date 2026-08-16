@@ -26,11 +26,12 @@ import dev.vertique.logging.MDCContexts;
 import dev.vertique.rest.core.middleware.RequestContextLifecycle;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
-import io.vertx.core.http.HttpClient;
-import io.vertx.core.http.HttpClientResponse;
-import io.vertx.core.http.HttpMethod;
+import io.vertx.core.buffer.Buffer;
 import io.vertx.core.http.HttpServer;
 import io.vertx.ext.web.Router;
+import io.vertx.ext.web.client.HttpResponse;
+import io.vertx.ext.web.client.WebClient;
+import io.vertx.ext.web.client.WebClientOptions;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
 import java.util.List;
@@ -60,10 +61,23 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * {@link TraceReferenceResolver} integration (trace ids in MDC when present, warn-on-error, no
  * change when absent or resolver throws).
  *
- * <p>Per the repo's testing rules a single {@link HttpClient} is shared across all test methods
+ * <p>Per the repo's testing rules a single {@link WebClient} is shared across all test methods
  * via {@code @BeforeAll} to avoid netty channel-pool churn under full-reactor load. Each test
  * still creates its own {@link HttpServer}, closed in {@code @AfterEach}, because the router
  * wiring differs per test. Server bind and client connect both use the loopback literal.
+ *
+ * <p>The client is a {@link WebClient} rather than a raw {@code HttpClient} deliberately: a raw
+ * {@code HttpClientResponse} discards body buffers that arrive before a body handler is attached, so
+ * under load a body read can succeed with zero bytes while the status code is correct (issue #167).
+ * Every assertion here reads the response status, a response header, or state captured inside the
+ * handler — never the body — so these tests cannot flake on that today; the raw idiom was latent, and
+ * would become a live race the moment anyone asserted on the body, with no diff to hint why. A
+ * {@link WebClient} aggregates the body into its {@code HttpResponse} before completing the send, and
+ * the aggregated {@code HttpResponse} exposes the response headers through the same
+ * {@code io.vertx.core.http.HttpResponseHead#getHeader(String)} contract the raw response did, so
+ * the header assertions read exactly the same values. No route in this class ever answers with a
+ * 3xx, so the {@link WebClient}'s redirect-following default never engages and every assertion still
+ * sees the first (and only) response.
  */
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
@@ -72,14 +86,14 @@ class CorrelationIngressMiddlewareTest {
     // --- Class-scoped resources (shared across all @Test methods) ---
 
     private static Vertx vertx;
-    private static HttpClient client;
+    private static WebClient client;
 
     // --- Per-test resources ---
 
     private HttpServer server;
 
     /**
-     * Creates the class-scoped {@link Vertx} instance and shared {@link HttpClient} once for the
+     * Creates the class-scoped {@link Vertx} instance and shared {@link WebClient} once for the
      * entire test class. Allocating a fresh client per test accumulates netty channel pools that
      * surface under full-reactor load as connection timeouts.
      *
@@ -89,12 +103,13 @@ class CorrelationIngressMiddlewareTest {
     @BeforeAll
     static void setUpClass(Vertx v, VertxTestContext ctx) {
         vertx = v;
-        client = v.createHttpClient();
+        // Redirects off: parity with the raw client; WebClient forwards Authorization across 3xx.
+        client = WebClient.create(v, new WebClientOptions().setFollowRedirects(false));
         ctx.completeNow();
     }
 
     /**
-     * Closes the per-test {@link HttpServer}. The shared {@link HttpClient} is left open and closed
+     * Closes the per-test {@link HttpServer}. The shared {@link WebClient} is left open and closed
      * only in {@link #tearDownClass(VertxTestContext)}.
      *
      * @param ctx the test context used to signal teardown completion
@@ -106,17 +121,20 @@ class CorrelationIngressMiddlewareTest {
     }
 
     /**
-     * Closes the shared {@link HttpClient} after all tests in the class have run.
+     * Closes the shared {@link WebClient} after all tests in the class have run.
+     *
+     * <p>{@link WebClient#close()} is {@code void}, unlike {@code HttpClient.close()}: it returns once
+     * the underlying client has been asked to close, so there is no future to chain the context
+     * completion off.
      *
      * @param ctx the test context used to signal teardown completion
      */
     @AfterAll
     static void tearDownClass(VertxTestContext ctx) {
         if (client != null) {
-            client.close().onComplete(ar -> ctx.completeNow());
-        } else {
-            ctx.completeNow();
+            client.close();
         }
+        ctx.completeNow();
     }
 
     // --- Helpers ---
@@ -162,7 +180,7 @@ class CorrelationIngressMiddlewareTest {
 
     /**
      * Boots the server on the loopback interface, stores it on the test instance for
-     * {@code @AfterEach} cleanup, and returns the listening port. The shared {@link HttpClient}
+     * {@code @AfterEach} cleanup, and returns the listening port. The shared {@link WebClient}
      * is used for all requests.
      */
     private Future<Integer> startServer(Vertx vertx, Router router) {
@@ -197,9 +215,8 @@ class CorrelationIngressMiddlewareTest {
                         .orElse(null)));
 
         startServer(vertx, router)
-                .compose(port -> client.request(HttpMethod.GET, port, "127.0.0.1", "/test")
-                        .compose(req -> req.send()))
-                .onComplete(ctx.succeeding((HttpClientResponse resp) -> {
+                .compose(port -> client.get(port, "127.0.0.1", "/test").send())
+                .onComplete(ctx.succeeding((HttpResponse<Buffer> resp) -> {
                     String echoed = resp.getHeader("X-Request-Id");
                     assertNotNull(echoed);
                     CorrelationIdentifier bound = captured.get();
@@ -224,12 +241,10 @@ class CorrelationIngressMiddlewareTest {
                 rc -> captured.set(holder.current(CorrelationContext.class).orElse(null)));
 
         startServer(vertx, router)
-                .compose(port -> client.request(HttpMethod.GET, port, "127.0.0.1", "/test")
-                        .compose(req -> {
-                            req.putHeader("X-Request-Id", "explicit-id-1");
-                            return req.send();
-                        }))
-                .onComplete(ctx.succeeding((HttpClientResponse resp) -> {
+                .compose(port -> client.get(port, "127.0.0.1", "/test")
+                        .putHeader("X-Request-Id", "explicit-id-1")
+                        .send())
+                .onComplete(ctx.succeeding((HttpResponse<Buffer> resp) -> {
                     assertEquals("explicit-id-1", resp.getHeader("X-Request-Id"));
                     CorrelationContext live = captured.get();
                     assertNotNull(live);
@@ -252,8 +267,7 @@ class CorrelationIngressMiddlewareTest {
                 rc -> captured.set(holder.current(CorrelationContext.class).orElse(null)));
 
         startServer(vertx, router)
-                .compose(port -> client.request(HttpMethod.GET, port, "127.0.0.1", "/test")
-                        .compose(req -> req.send()))
+                .compose(port -> client.get(port, "127.0.0.1", "/test").send())
                 .onComplete(ctx.succeeding(resp -> {
                     CorrelationContext live = captured.get();
                     assertNotNull(live);
@@ -277,8 +291,7 @@ class CorrelationIngressMiddlewareTest {
         });
 
         startServer(vertx, router)
-                .compose(port -> client.request(HttpMethod.GET, port, "127.0.0.1", "/test")
-                        .compose(req -> req.send()))
+                .compose(port -> client.get(port, "127.0.0.1", "/test").send())
                 .onComplete(ctx.succeeding(resp -> {
                     assertNotNull(capturedRequestId.get(), "requestId MDC must be bound in handler");
                     assertNotNull(capturedCorrelationId.get(), "correlationId MDC must be bound in handler");
@@ -295,12 +308,14 @@ class CorrelationIngressMiddlewareTest {
         Router router = router(vertx, middleware, rc -> {});
 
         startServer(vertx, router)
-                .compose(port -> client.request(HttpMethod.GET, port, "127.0.0.1", "/test")
-                        .compose(req -> req.send())
+                .compose(port -> client.get(port, "127.0.0.1", "/test")
+                        // First request: capture the id the middleware generated for it.
+                        .send()
                         .compose(resp -> {
                             String first = resp.getHeader("X-Request-Id");
-                            return client.request(HttpMethod.GET, port, "127.0.0.1", "/test")
-                                    .compose(req2 -> req2.send())
+                            return client.get(port, "127.0.0.1", "/test")
+                                    // Second request on the same port must get its own id.
+                                    .send()
                                     .map(resp2 -> {
                                         assertNotEquals(first, resp2.getHeader("X-Request-Id"));
                                         return null;
@@ -325,13 +340,11 @@ class CorrelationIngressMiddlewareTest {
         Router router = router(vertx, middleware, rc -> handlerReached.set(true));
 
         startServer(vertx, router)
-                .compose(port -> client.request(HttpMethod.GET, port, "127.0.0.1", "/test")
-                        .compose(req -> {
-                            // "@" is not in the validator's allow-list — REJECT fires.
-                            req.putHeader("X-Request-Id", "bad@value");
-                            return req.send();
-                        }))
-                .onComplete(ctx.succeeding((HttpClientResponse resp) -> {
+                .compose(port -> client.get(port, "127.0.0.1", "/test")
+                        // "@" is not in the validator's allow-list — REJECT fires.
+                        .putHeader("X-Request-Id", "bad@value")
+                        .send())
+                .onComplete(ctx.succeeding((HttpResponse<Buffer> resp) -> {
                     assertEquals(400, resp.statusCode());
                     assertFalse(handlerReached.get(), "handler must not run when REJECT short-circuits");
                     String generated = resp.getHeader("X-Request-Id");
@@ -357,12 +370,10 @@ class CorrelationIngressMiddlewareTest {
         Router router = router(vertx, middleware, rc -> handlerReached.set(true));
 
         startServer(vertx, router)
-                .compose(port -> client.request(HttpMethod.GET, port, "127.0.0.1", "/test")
-                        .compose(req -> {
-                            req.putHeader("X-Request-Id", "");
-                            return req.send();
-                        }))
-                .onComplete(ctx.succeeding((HttpClientResponse resp) -> {
+                .compose(port -> client.get(port, "127.0.0.1", "/test")
+                        .putHeader("X-Request-Id", "")
+                        .send())
+                .onComplete(ctx.succeeding((HttpResponse<Buffer> resp) -> {
                     assertEquals(400, resp.statusCode());
                     assertFalse(handlerReached.get());
                     ctx.completeNow();
@@ -385,12 +396,10 @@ class CorrelationIngressMiddlewareTest {
         Router router = router(vertx, middleware, rc -> handlerReached.set(true));
 
         startServer(vertx, router)
-                .compose(port -> client.request(HttpMethod.GET, port, "127.0.0.1", "/test")
-                        .compose(req -> {
-                            req.putHeader("X-Correlation-Id", "");
-                            return req.send();
-                        }))
-                .onComplete(ctx.succeeding((HttpClientResponse resp) -> {
+                .compose(port -> client.get(port, "127.0.0.1", "/test")
+                        .putHeader("X-Correlation-Id", "")
+                        .send())
+                .onComplete(ctx.succeeding((HttpResponse<Buffer> resp) -> {
                     assertEquals(400, resp.statusCode());
                     assertFalse(handlerReached.get());
                     ctx.completeNow();
@@ -413,12 +422,10 @@ class CorrelationIngressMiddlewareTest {
         Router router = router(vertx, middleware, rc -> handlerReached.set(true));
 
         startServer(vertx, router)
-                .compose(port -> client.request(HttpMethod.GET, port, "127.0.0.1", "/test")
-                        .compose(req -> {
-                            req.putHeader("X-Causation-Id", "");
-                            return req.send();
-                        }))
-                .onComplete(ctx.succeeding((HttpClientResponse resp) -> {
+                .compose(port -> client.get(port, "127.0.0.1", "/test")
+                        .putHeader("X-Causation-Id", "")
+                        .send())
+                .onComplete(ctx.succeeding((HttpResponse<Buffer> resp) -> {
                     assertEquals(400, resp.statusCode());
                     assertFalse(handlerReached.get());
                     ctx.completeNow();
@@ -434,12 +441,10 @@ class CorrelationIngressMiddlewareTest {
         Router router = router(vertx, middleware, rc -> handlerReached.set(true));
 
         startServer(vertx, router)
-                .compose(port -> client.request(HttpMethod.GET, port, "127.0.0.1", "/test")
-                        .compose(req -> {
-                            req.putHeader("X-Request-Id", "bad@value");
-                            return req.send();
-                        }))
-                .onComplete(ctx.succeeding((HttpClientResponse resp) -> {
+                .compose(port -> client.get(port, "127.0.0.1", "/test")
+                        .putHeader("X-Request-Id", "bad@value")
+                        .send())
+                .onComplete(ctx.succeeding((HttpResponse<Buffer> resp) -> {
                     assertEquals(200, resp.statusCode());
                     assertTrue(handlerReached.get(), "handler must run under REPLACE policy");
                     String echoed = resp.getHeader("X-Request-Id");
@@ -461,12 +466,10 @@ class CorrelationIngressMiddlewareTest {
                 .ifPresent(seen::set));
 
         startServer(vertx, router)
-                .compose(port -> client.request(HttpMethod.GET, port, "127.0.0.1", "/test")
-                        .compose(req -> {
-                            req.putHeader("X-Correlation-Id", "cor-upstream-1");
-                            return req.send();
-                        }))
-                .onComplete(ctx.succeeding((HttpClientResponse resp) -> {
+                .compose(port -> client.get(port, "127.0.0.1", "/test")
+                        .putHeader("X-Correlation-Id", "cor-upstream-1")
+                        .send())
+                .onComplete(ctx.succeeding((HttpResponse<Buffer> resp) -> {
                     assertEquals(200, resp.statusCode());
                     assertNotNull(seen.get());
                     assertEquals("cor-upstream-1", seen.get().correlationId().value());
@@ -486,13 +489,11 @@ class CorrelationIngressMiddlewareTest {
                 .ifPresent(seen::set));
 
         startServer(vertx, router)
-                .compose(port -> client.request(HttpMethod.GET, port, "127.0.0.1", "/test")
-                        .compose(req -> {
-                            req.putHeader("X-Request-Id", "req-good");
-                            req.putHeader("X-Correlation-Id", "bad@value");
-                            return req.send();
-                        }))
-                .onComplete(ctx.succeeding((HttpClientResponse resp) -> {
+                .compose(port -> client.get(port, "127.0.0.1", "/test")
+                        .putHeader("X-Request-Id", "req-good")
+                        .putHeader("X-Correlation-Id", "bad@value")
+                        .send())
+                .onComplete(ctx.succeeding((HttpResponse<Buffer> resp) -> {
                     assertEquals(200, resp.statusCode());
                     assertNotNull(seen.get());
                     // Fall back: correlation id derived from the (preserved) request id.
@@ -524,12 +525,10 @@ class CorrelationIngressMiddlewareTest {
         });
 
         startServer(vertx, router)
-                .compose(port -> client.request(HttpMethod.GET, port, "127.0.0.1", "/test")
-                        .compose(req -> {
-                            req.putHeader("X-Causation-Id", "cause-1");
-                            return req.send();
-                        }))
-                .onComplete(ctx.succeeding((HttpClientResponse resp) -> {
+                .compose(port -> client.get(port, "127.0.0.1", "/test")
+                        .putHeader("X-Causation-Id", "cause-1")
+                        .send())
+                .onComplete(ctx.succeeding((HttpResponse<Buffer> resp) -> {
                     assertEquals(200, resp.statusCode());
                     assertNotNull(seen.get());
                     assertNotNull(seen.get().causationId());
@@ -559,12 +558,10 @@ class CorrelationIngressMiddlewareTest {
                 .ifPresent(seen::set));
 
         startServer(vertx, router)
-                .compose(port -> client.request(HttpMethod.GET, port, "127.0.0.1", "/test")
-                        .compose(req -> {
-                            req.putHeader("X-Causation-Id", "bad@value");
-                            return req.send();
-                        }))
-                .onComplete(ctx.succeeding((HttpClientResponse resp) -> {
+                .compose(port -> client.get(port, "127.0.0.1", "/test")
+                        .putHeader("X-Causation-Id", "bad@value")
+                        .send())
+                .onComplete(ctx.succeeding((HttpResponse<Buffer> resp) -> {
                     assertEquals(200, resp.statusCode());
                     assertNotNull(seen.get());
                     // Invalid causation header is dropped under REPLACE policy — no causation
@@ -589,12 +586,10 @@ class CorrelationIngressMiddlewareTest {
         Router router = router(vertx, middleware, rc -> {});
 
         startServer(vertx, router)
-                .compose(port -> client.request(HttpMethod.GET, port, "127.0.0.1", "/test")
-                        .compose(req -> {
-                            req.putHeader("X-Correlation-Id", "cor-upstream");
-                            return req.send();
-                        }))
-                .onComplete(ctx.succeeding((HttpClientResponse resp) -> {
+                .compose(port -> client.get(port, "127.0.0.1", "/test")
+                        .putHeader("X-Correlation-Id", "cor-upstream")
+                        .send())
+                .onComplete(ctx.succeeding((HttpResponse<Buffer> resp) -> {
                     assertEquals(200, resp.statusCode());
                     assertEquals("cor-upstream", resp.getHeader("X-Correlation-Id"));
                     ctx.completeNow();
@@ -640,12 +635,10 @@ class CorrelationIngressMiddlewareTest {
                 .ifPresent(c -> seen.set(c.protocolCorrelations())));
 
         startServer(vertx, router)
-                .compose(port -> client.request(HttpMethod.GET, port, "127.0.0.1", "/test")
-                        .compose(req -> {
-                            req.putHeader("X-Test-Trace-Id", "trace-abc-123");
-                            return req.send();
-                        }))
-                .onComplete(ctx.succeeding((HttpClientResponse resp) -> {
+                .compose(port -> client.get(port, "127.0.0.1", "/test")
+                        .putHeader("X-Test-Trace-Id", "trace-abc-123")
+                        .send())
+                .onComplete(ctx.succeeding((HttpResponse<Buffer> resp) -> {
                     assertEquals(200, resp.statusCode());
                     assertEquals("trace-abc-123", resp.getHeader("X-Test-Trace-Id"));
                     assertNotNull(seen.get());
@@ -703,9 +696,8 @@ class CorrelationIngressMiddlewareTest {
         Router router = router(vertx, middleware, rc -> {});
 
         startServer(vertx, router)
-                .compose(port -> client.request(HttpMethod.GET, port, "127.0.0.1", "/test")
-                        .flatMap(req -> req.send()))
-                .onComplete(ctx.succeeding((HttpClientResponse resp) -> {
+                .compose(port -> client.get(port, "127.0.0.1", "/test").send())
+                .onComplete(ctx.succeeding((HttpResponse<Buffer> resp) -> {
                     assertEquals(200, resp.statusCode());
                     assertEquals("00000000-0000-4000-8000-000000000001", resp.getHeader("X-Test-Interaction-Id"));
                     ctx.completeNow();
@@ -750,9 +742,8 @@ class CorrelationIngressMiddlewareTest {
                 .ifPresent(c -> seen.set(c.protocolCorrelations())));
 
         startServer(vertx, router)
-                .compose(port -> client.request(HttpMethod.GET, port, "127.0.0.1", "/test")
-                        .flatMap(req -> req.send()))
-                .onComplete(ctx.succeeding((HttpClientResponse resp) -> {
+                .compose(port -> client.get(port, "127.0.0.1", "/test").send())
+                .onComplete(ctx.succeeding((HttpResponse<Buffer> resp) -> {
                     assertEquals(200, resp.statusCode());
                     org.junit.jupiter.api.Assertions.assertNull(resp.getHeader("X-Optional-Tag"));
                     assertNotNull(seen.get());
@@ -780,9 +771,8 @@ class CorrelationIngressMiddlewareTest {
                 .ifPresent(c -> seen.set(c.protocolCorrelations())));
 
         startServer(vertx, router)
-                .compose(port -> client.request(HttpMethod.GET, port, "127.0.0.1", "/test")
-                        .flatMap(req -> req.send()))
-                .onComplete(ctx.succeeding((HttpClientResponse resp) -> {
+                .compose(port -> client.get(port, "127.0.0.1", "/test").send())
+                .onComplete(ctx.succeeding((HttpResponse<Buffer> resp) -> {
                     assertEquals(200, resp.statusCode());
                     assertEquals("from-contributor", resp.getHeader("X-Custom-Resolve"));
                     assertNotNull(seen.get());
@@ -810,8 +800,7 @@ class CorrelationIngressMiddlewareTest {
         });
 
         startServer(vertx, router)
-                .compose(port -> client.request(HttpMethod.GET, port, "127.0.0.1", "/test")
-                        .compose(req -> req.send()))
+                .compose(port -> client.get(port, "127.0.0.1", "/test").send())
                 .onComplete(ctx.succeeding(resp -> {
                     // Inside the request the trace ids must be visible in MDC.
                     assertEquals("trace-1", capturedTraceId.get(), "traceId must be in MDC during request");
@@ -843,8 +832,7 @@ class CorrelationIngressMiddlewareTest {
         });
 
         startServer(vertx, router)
-                .compose(port -> client.request(HttpMethod.GET, port, "127.0.0.1", "/test")
-                        .compose(req -> req.send()))
+                .compose(port -> client.get(port, "127.0.0.1", "/test").send())
                 .onComplete(ctx.succeeding(resp -> {
                     assertNull(capturedTraceId.get(), "traceId must not be in MDC when resolver returns empty");
                     assertNull(capturedSpanId.get(), "spanId must not be in MDC when resolver returns empty");
@@ -870,9 +858,8 @@ class CorrelationIngressMiddlewareTest {
         });
 
         startServer(vertx, router)
-                .compose(port -> client.request(HttpMethod.GET, port, "127.0.0.1", "/test")
-                        .compose(req -> req.send()))
-                .onComplete(ctx.succeeding((HttpClientResponse resp) -> {
+                .compose(port -> client.get(port, "127.0.0.1", "/test").send())
+                .onComplete(ctx.succeeding((HttpResponse<Buffer> resp) -> {
                     assertEquals(200, resp.statusCode(), "request must complete normally when resolver throws");
                     assertTrue(handlerReached.get(), "handler must still run when resolver throws");
                     assertNull(capturedTraceId.get(), "no traceId in MDC when resolver threw");
@@ -893,9 +880,8 @@ class CorrelationIngressMiddlewareTest {
         });
 
         startServer(vertx, router)
-                .compose(port -> client.request(HttpMethod.GET, port, "127.0.0.1", "/test")
-                        .compose(req -> req.send()))
-                .onComplete(ctx.succeeding((HttpClientResponse resp) -> {
+                .compose(port -> client.get(port, "127.0.0.1", "/test").send())
+                .onComplete(ctx.succeeding((HttpResponse<Buffer> resp) -> {
                     assertEquals(200, resp.statusCode());
                     // No resolver means no trace enrichment — traceId must not appear in MDC.
                     assertNull(capturedTraceId.get(), "traceId must not be in MDC when no resolver is wired");

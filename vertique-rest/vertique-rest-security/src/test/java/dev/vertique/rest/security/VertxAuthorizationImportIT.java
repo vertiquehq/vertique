@@ -23,8 +23,6 @@ import dev.vertique.security.runtime.events.SecurityEventEmitter;
 import dev.vertique.security.verification.CustomVerificationSource;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
-import io.vertx.core.http.HttpClient;
-import io.vertx.core.http.HttpMethod;
 import io.vertx.core.http.HttpServer;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.auth.User;
@@ -33,6 +31,8 @@ import io.vertx.ext.auth.authorization.AuthorizationProvider;
 import io.vertx.ext.auth.authorization.RoleBasedAuthorization;
 import io.vertx.ext.web.Router;
 import io.vertx.ext.web.RoutingContext;
+import io.vertx.ext.web.client.WebClient;
+import io.vertx.ext.web.client.WebClientOptions;
 import io.vertx.ext.web.impl.UserContextInternal;
 import io.vertx.ext.web.openapi.router.OpenAPIRoute;
 import io.vertx.ext.web.openapi.router.RequestExtractor;
@@ -78,6 +78,14 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * <p>The root failure handler mirrors the production error pipeline's core semantic mapping
  * ({@code UnavailableException} → 503, per {@code DefaultExceptionMapper}); vertique-rest-security
  * has no dependency on the rest-jaxrs module that owns the real pipeline.
+ *
+ * <p>The client is a {@link WebClient} rather than a raw {@code HttpClient} deliberately: a raw
+ * {@code HttpClientResponse} discards body buffers that arrive before a body handler is attached, so
+ * under load a body read can succeed with zero bytes while the status code is correct (issue #167).
+ * The 503 scenario asserts on the ProblemDetail body — both that it carries the generic detail and
+ * that it never names the failing provider — and the second of those is an assertion an emptied body
+ * would satisfy vacuously. A {@link WebClient} aggregates the body into its {@code HttpResponse}
+ * before completing the send, so the body under assertion is the one the server actually wrote.
  */
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
@@ -88,18 +96,19 @@ public class VertxAuthorizationImportIT {
 
     private static int port;
     private static HttpServer server;
-    private static HttpClient client;
+    private static WebClient client;
 
     /**
      * Builds and starts the shared HTTP server with the three constrained routes, each wired with a
-     * different middleware assembly. One {@link HttpClient} is shared across all tests.
+     * different middleware assembly. One {@link WebClient} is shared across all tests.
      *
      * @param vertx the Vert.x instance injected by {@link VertxExtension}
      * @param ctx   the test context used for async startup assertion
      */
     @BeforeAll
     static void setUp(Vertx vertx, VertxTestContext ctx) {
-        client = vertx.createHttpClient();
+        // Redirects off: parity with the raw client; WebClient forwards Authorization across 3xx.
+        client = WebClient.create(vertx, new WebClientOptions().setFollowRedirects(false));
 
         HolderBackedSecurityRuntime securityRuntime = new HolderBackedSecurityRuntime((sc, secure) -> null);
         SecurityEventEmitter emitter = new SecurityEventEmitter(Set.of());
@@ -196,15 +205,21 @@ public class VertxAuthorizationImportIT {
     }
 
     /**
-     * Closes the shared HTTP server and {@link HttpClient}.
+     * Closes the shared {@link WebClient} and then the shared HTTP server.
+     *
+     * <p>{@link WebClient#close()} is {@code void}, unlike {@code HttpClient.close()}: it returns once
+     * the underlying client has been asked to close, so there is no future to join here and the server
+     * close alone carries the completion.
      *
      * @param ctx the test context used for async teardown assertion
      */
     @AfterAll
     static void tearDown(VertxTestContext ctx) {
-        Future<?> s = server != null ? server.close() : Future.succeededFuture();
-        Future<?> c = client != null ? client.close() : Future.succeededFuture();
-        Future.join(s, c).onComplete(ar -> ctx.completeNow());
+        if (client != null) {
+            client.close();
+        }
+        Future<Void> s = server != null ? server.close() : Future.succeededFuture();
+        s.onComplete(ar -> ctx.completeNow());
     }
 
     // --- Tests ---
@@ -415,20 +430,27 @@ public class VertxAuthorizationImportIT {
     // --- Client helpers ---
 
     /**
-     * Issues a {@code GET} to the given path with an {@code Authorization: Bearer} header, drains
-     * the response body, and resolves with the response status, body, and marker-header presence.
+     * Issues a {@code GET} to the given path with an {@code Authorization: Bearer} header and resolves
+     * with the response status, body, and marker-header presence.
+     *
+     * <p>The {@link WebClient} aggregates the body into its {@code HttpResponse} before completing the
+     * send, so no explicit drain is needed. An empty body yields {@code null} from
+     * {@code bodyAsString()} where the raw client yielded an empty {@code Buffer};
+     * {@link String#valueOf(Object)} keeps {@link Resp#body()} never-null exactly as
+     * {@code Buffer.toString()} did.
      *
      * @param path  the request path
      * @param token the bearer token value (format {@code <sub>|<csv-roles>})
      * @return a future resolving with the {@link Resp}
      */
     private Future<Resp> get(String path, String token) {
-        return client.request(HttpMethod.GET, port, "127.0.0.1", path).compose(req -> {
-            req.putHeader("Authorization", "Bearer " + token);
-            return req.send().compose(resp -> resp.body()
-                    .map(body ->
-                            new Resp(resp.statusCode(), body.toString(), resp.getHeader("x-vq-test-server") != null)));
-        });
+        return client.get(port, "127.0.0.1", path)
+                .putHeader("Authorization", "Bearer " + token)
+                .send()
+                .map(resp -> new Resp(
+                        resp.statusCode(),
+                        String.valueOf(resp.bodyAsString()),
+                        resp.getHeader("x-vq-test-server") != null));
     }
 
     /**

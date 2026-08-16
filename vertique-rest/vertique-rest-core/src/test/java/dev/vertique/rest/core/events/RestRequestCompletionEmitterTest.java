@@ -33,14 +33,15 @@ import io.vertx.core.Future;
 import io.vertx.core.Handler;
 import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
-import io.vertx.core.http.HttpClient;
-import io.vertx.core.http.HttpClientResponse;
-import io.vertx.core.http.HttpMethod;
+import io.vertx.core.buffer.Buffer;
 import io.vertx.core.http.HttpServer;
 import io.vertx.core.http.StreamResetException;
 import io.vertx.core.impl.NoStackTraceThrowable;
 import io.vertx.ext.web.Router;
 import io.vertx.ext.web.RoutingContext;
+import io.vertx.ext.web.client.HttpResponse;
+import io.vertx.ext.web.client.WebClient;
+import io.vertx.ext.web.client.WebClientOptions;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
 import java.util.ArrayList;
@@ -80,9 +81,18 @@ import org.junit.jupiter.api.extension.ExtendWith;
  *   <li>{@link SecurityContext} and {@link CorrelationContext} are captured when bound.</li>
  * </ul>
  *
- * <p>A single {@link HttpClient} is shared across all test methods via {@code @BeforeAll} to
+ * <p>A single {@link WebClient} is shared across all test methods via {@code @BeforeAll} to
  * avoid netty channel-pool churn under full-reactor load. Each test still creates its own
  * {@link HttpServer} (torn down in {@code @AfterEach}) because server wiring differs per test.
+ *
+ * <p>The client is a {@link WebClient} rather than a raw {@code HttpClient} deliberately: a raw
+ * {@code HttpClientResponse} discards body buffers that arrive before a body handler is attached, so
+ * under load a body read can succeed with zero bytes while the status code is correct (issue #167).
+ * Every assertion here reads the response status or the emitted event, never the body, so these
+ * tests cannot flake on that today — the raw idiom was latent, and would become a live race the
+ * moment anyone asserted on the body, with no diff to hint why. A {@link WebClient} aggregates the
+ * body into its {@code HttpResponse} before completing the send, so the hazard is removed by
+ * construction rather than by every author remembering an idiom.
  */
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
@@ -91,14 +101,14 @@ class RestRequestCompletionEmitterTest {
     // --- Class-scoped resources (shared across all @Test methods) ---
 
     private static Vertx vertx;
-    private static HttpClient client;
+    private static WebClient client;
 
     // --- Per-test resources ---
 
     private HttpServer server;
 
     /**
-     * Creates the class-scoped {@link Vertx} instance and shared {@link HttpClient} once for
+     * Creates the class-scoped {@link Vertx} instance and shared {@link WebClient} once for
      * the entire test class. vertx-junit5 injects a class-scoped {@link Vertx} into
      * {@code @BeforeAll} and keeps it alive for all test methods.
      *
@@ -108,12 +118,13 @@ class RestRequestCompletionEmitterTest {
     @BeforeAll
     static void setUpClass(Vertx v, VertxTestContext ctx) {
         vertx = v;
-        client = v.createHttpClient();
+        // Redirects off: parity with the raw client; WebClient forwards Authorization across 3xx.
+        client = WebClient.create(v, new WebClientOptions().setFollowRedirects(false));
         ctx.completeNow();
     }
 
     /**
-     * Closes the per-test {@link HttpServer}. The shared {@link HttpClient} is left open and
+     * Closes the per-test {@link HttpServer}. The shared {@link WebClient} is left open and
      * closed only in {@link #tearDownClass(VertxTestContext)}.
      *
      * @param ctx the test context used to signal teardown completion
@@ -125,17 +136,20 @@ class RestRequestCompletionEmitterTest {
     }
 
     /**
-     * Closes the shared {@link HttpClient} after all tests in the class have run.
+     * Closes the shared {@link WebClient} after all tests in the class have run.
+     *
+     * <p>{@link WebClient#close()} is {@code void}, unlike {@code HttpClient.close()}: it returns once
+     * the underlying client has been asked to close, so there is no future to chain the context
+     * completion off.
      *
      * @param ctx the test context used to signal teardown completion
      */
     @AfterAll
     static void tearDownClass(VertxTestContext ctx) {
         if (client != null) {
-            client.close().onComplete(ar -> ctx.completeNow());
-        } else {
-            ctx.completeNow();
+            client.close();
         }
+        ctx.completeNow();
     }
 
     // --- Helpers ---
@@ -235,7 +249,7 @@ class RestRequestCompletionEmitterTest {
 
     /**
      * Starts an HTTP server on a dynamic port, stores it on the test instance for
-     * {@code @AfterEach} cleanup, and returns the listening port. The shared {@link HttpClient}
+     * {@code @AfterEach} cleanup, and returns the listening port. The shared {@link WebClient}
      * is used for all requests.
      *
      * @param router the router to attach
@@ -356,8 +370,7 @@ class RestRequestCompletionEmitterTest {
             RouterWithBarrier rb = routerWithBarrier(vertx, em, rc -> {});
 
             startServer(rb.router())
-                    .compose(port -> client.request(HttpMethod.GET, port, "127.0.0.1", "/test")
-                            .compose(req -> req.send()))
+                    .compose(port -> client.get(port, "127.0.0.1", "/test").send())
                     .compose(resp -> {
                         ctx.verify(() -> assertEquals(200, resp.statusCode()));
                         return awaitBarrier(vertx, rb.barrier());
@@ -391,8 +404,7 @@ class RestRequestCompletionEmitterTest {
                     routerWithBarrier(vertx, em, rc -> rc.fail(500, new IllegalStateException("secret detail")));
 
             startServer(rb.router())
-                    .compose(port -> client.request(HttpMethod.POST, port, "127.0.0.1", "/test")
-                            .compose(req -> req.send()))
+                    .compose(port -> client.post(port, "127.0.0.1", "/test").send())
                     .compose(resp -> {
                         ctx.verify(() -> assertEquals(500, resp.statusCode()));
                         return awaitBarrier(vertx, rb.barrier());
@@ -450,8 +462,7 @@ class RestRequestCompletionEmitterTest {
                     vertx, em, rc -> rc.response().setStatusCode(400).end());
 
             startServer(rb.router())
-                    .compose(port -> client.request(HttpMethod.GET, port, "127.0.0.1", "/test")
-                            .compose(req -> req.send()))
+                    .compose(port -> client.get(port, "127.0.0.1", "/test").send())
                     .compose(resp -> {
                         ctx.verify(() -> assertEquals(400, resp.statusCode()));
                         return awaitBarrier(vertx, rb.barrier());
@@ -496,8 +507,7 @@ class RestRequestCompletionEmitterTest {
             router.route("/test").handler(rc -> rc.response().setStatusCode(200).end());
 
             startServer(router)
-                    .compose(port -> client.request(HttpMethod.GET, port, "127.0.0.1", "/test")
-                            .compose(req -> req.send()))
+                    .compose(port -> client.get(port, "127.0.0.1", "/test").send())
                     .compose(resp -> {
                         ctx.verify(() -> assertEquals(200, resp.statusCode()));
                         return awaitBarrier(vertx, barrier.future());
@@ -529,8 +539,7 @@ class RestRequestCompletionEmitterTest {
             RouterWithBarrier rb = routerWithBarrier(vertx, em, rc -> {});
 
             startServer(rb.router())
-                    .compose(port -> client.request(HttpMethod.GET, port, "127.0.0.1", "/test")
-                            .compose(req -> req.send()))
+                    .compose(port -> client.get(port, "127.0.0.1", "/test").send())
                     .compose(resp -> {
                         ctx.verify(() -> assertEquals(200, resp.statusCode()));
                         return awaitBarrier(vertx, rb.barrier());
@@ -550,12 +559,12 @@ class RestRequestCompletionEmitterTest {
             RouterWithBarrier rb = routerWithBarrier(vertx, em, rc -> {});
 
             startServer(rb.router())
-                    .compose(port -> client.request(HttpMethod.GET, port, "127.0.0.1", "/test")
-                            .compose(req -> req.send()))
-                    .compose((HttpClientResponse resp) -> {
+                    .compose(port -> client.get(port, "127.0.0.1", "/test").send())
+                    .map((HttpResponse<Buffer> resp) -> {
                         ctx.verify(() -> assertEquals(200, resp.statusCode()));
-                        // Drain the response body so the shared client's pooled connection isn't
-                        // left with an unread response.
+                        // No explicit drain: the WebClient has already aggregated the response body
+                        // by the time send() completes, so the shared client's pooled connection is
+                        // never left with an unread response.
                         return resp.body();
                     })
                     .onComplete(ctx.succeeding(body -> ctx.completeNow()));
@@ -615,8 +624,7 @@ class RestRequestCompletionEmitterTest {
             });
 
             startServer(rb.router())
-                    .compose(port -> client.request(HttpMethod.GET, port, "127.0.0.1", "/test")
-                            .compose(req -> req.send()))
+                    .compose(port -> client.get(port, "127.0.0.1", "/test").send())
                     .compose(resp -> {
                         ctx.verify(() -> assertEquals(200, resp.statusCode()));
                         return awaitBarrier(vertx, rb.barrier());
@@ -662,8 +670,7 @@ class RestRequestCompletionEmitterTest {
             });
 
             startServer(rb.router())
-                    .compose(port -> client.request(HttpMethod.GET, port, "127.0.0.1", "/test")
-                            .compose(req -> req.send()))
+                    .compose(port -> client.get(port, "127.0.0.1", "/test").send())
                     .compose(resp -> {
                         ctx.verify(() -> assertEquals(200, resp.statusCode()));
                         return awaitBarrier(vertx, rb.barrier());
@@ -775,8 +782,7 @@ class RestRequestCompletionEmitterTest {
             });
 
             startServer(router)
-                    .compose(port -> client.request(HttpMethod.GET, port, "127.0.0.1", "/test")
-                            .compose(req -> req.send()))
+                    .compose(port -> client.get(port, "127.0.0.1", "/test").send())
                     .compose(resp -> {
                         ctx.verify(() -> assertEquals(200, resp.statusCode()));
                         return awaitBarrier(vertx, sentinel.future(), "sentinel end handler");
@@ -813,8 +819,7 @@ class RestRequestCompletionEmitterTest {
             RouterWithBarrier rb = routerWithBarrier(vertx, em, rc -> {});
 
             startServer(rb.router())
-                    .compose(port -> client.request(HttpMethod.GET, port, "127.0.0.1", "/test")
-                            .compose(req -> req.send()))
+                    .compose(port -> client.get(port, "127.0.0.1", "/test").send())
                     .compose(resp -> {
                         ctx.verify(() -> assertEquals(200, resp.statusCode()));
                         return awaitBarrier(vertx, rb.barrier());
@@ -846,8 +851,7 @@ class RestRequestCompletionEmitterTest {
             RouterWithBarrier rb = routerWithBarrier(vertx, em, rc -> {});
 
             startServer(rb.router())
-                    .compose(port -> client.request(HttpMethod.GET, port, "127.0.0.1", "/test")
-                            .compose(req -> req.send()))
+                    .compose(port -> client.get(port, "127.0.0.1", "/test").send())
                     .compose(resp -> {
                         // response must still complete normally despite the coordinator throwing
                         ctx.verify(() -> assertEquals(200, resp.statusCode()));
@@ -868,8 +872,7 @@ class RestRequestCompletionEmitterTest {
             RouterWithBarrier rb = routerWithBarrier(vertx, em, rc -> {});
 
             startServer(rb.router())
-                    .compose(port -> client.request(HttpMethod.GET, port, "127.0.0.1", "/test")
-                            .compose(req -> req.send()))
+                    .compose(port -> client.get(port, "127.0.0.1", "/test").send())
                     .compose(resp -> {
                         ctx.verify(() -> assertEquals(200, resp.statusCode()));
                         return awaitBarrier(vertx, rb.barrier());
@@ -893,8 +896,7 @@ class RestRequestCompletionEmitterTest {
             RouterWithBarrier rb = routerWithBarrier(vertx, em, rc -> {});
 
             startServer(rb.router())
-                    .compose(port -> client.request(HttpMethod.GET, port, "127.0.0.1", "/test")
-                            .compose(req -> req.send()))
+                    .compose(port -> client.get(port, "127.0.0.1", "/test").send())
                     .compose(resp -> {
                         ctx.verify(() -> assertEquals(200, resp.statusCode()));
                         return awaitBarrier(vertx, rb.barrier());
@@ -967,8 +969,7 @@ class RestRequestCompletionEmitterTest {
             RouterWithBarrier rb = routerWithBarrier(vertx, em, rc -> {});
 
             startServer(rb.router())
-                    .compose(port -> client.request(HttpMethod.GET, port, "127.0.0.1", "/test")
-                            .compose(req -> req.send()))
+                    .compose(port -> client.get(port, "127.0.0.1", "/test").send())
                     .compose(resp -> {
                         ctx.verify(() -> assertEquals(200, resp.statusCode()));
                         return awaitBarrier(vertx, rb.barrier());
@@ -996,8 +997,7 @@ class RestRequestCompletionEmitterTest {
             RouterWithBarrier rb = routerWithBarrier(vertx, em, rc -> {});
 
             startServer(rb.router())
-                    .compose(port -> client.request(HttpMethod.GET, port, "127.0.0.1", "/test")
-                            .compose(req -> req.send()))
+                    .compose(port -> client.get(port, "127.0.0.1", "/test").send())
                     .compose(resp -> {
                         ctx.verify(() -> assertEquals(200, resp.statusCode()));
                         return awaitBarrier(vertx, rb.barrier());
@@ -1022,8 +1022,7 @@ class RestRequestCompletionEmitterTest {
             RouterWithBarrier rb = routerWithBarrier(vertx, em, rc -> {});
 
             startServer(rb.router())
-                    .compose(port -> client.request(HttpMethod.GET, port, "127.0.0.1", "/test")
-                            .compose(req -> req.send()))
+                    .compose(port -> client.get(port, "127.0.0.1", "/test").send())
                     .compose(resp -> {
                         ctx.verify(() -> assertEquals(200, resp.statusCode()));
                         return awaitBarrier(vertx, rb.barrier());
@@ -1050,8 +1049,7 @@ class RestRequestCompletionEmitterTest {
             RouterWithBarrier rb = routerWithBarrier(vertx, em, rc -> {});
 
             startServer(rb.router())
-                    .compose(port -> client.request(HttpMethod.GET, port, "127.0.0.1", "/test")
-                            .compose(req -> req.send()))
+                    .compose(port -> client.get(port, "127.0.0.1", "/test").send())
                     .compose(resp -> {
                         ctx.verify(() -> assertEquals(200, resp.statusCode()));
                         return awaitBarrier(vertx, rb.barrier());
@@ -1121,8 +1119,7 @@ class RestRequestCompletionEmitterTest {
             RouterWithBarrier rb = routerWithBarrier(vertx, em, rc -> {});
 
             startServer(rb.router())
-                    .compose(port -> client.request(HttpMethod.GET, port, "127.0.0.1", "/test")
-                            .compose(req -> req.send()))
+                    .compose(port -> client.get(port, "127.0.0.1", "/test").send())
                     .compose(resp -> {
                         ctx.verify(() -> assertEquals(200, resp.statusCode()));
                         return awaitBarrier(vertx, rb.barrier());
@@ -1206,8 +1203,7 @@ class RestRequestCompletionEmitterTest {
             RouterWithBarrier rb = routerWithBarrier(vertx, em, rc -> {});
 
             startServer(rb.router())
-                    .compose(port -> client.request(HttpMethod.GET, port, "127.0.0.1", "/test")
-                            .compose(req -> req.send()))
+                    .compose(port -> client.get(port, "127.0.0.1", "/test").send())
                     .compose(resp -> {
                         ctx.verify(() -> assertEquals(200, resp.statusCode()));
                         return awaitBarrier(vertx, rb.barrier());
@@ -1252,8 +1248,7 @@ class RestRequestCompletionEmitterTest {
             RouterWithBarrier rb = routerWithBarrier(vertx, em, rc -> {});
 
             startServer(rb.router())
-                    .compose(port -> client.request(HttpMethod.GET, port, "127.0.0.1", "/test")
-                            .compose(req -> req.send()))
+                    .compose(port -> client.get(port, "127.0.0.1", "/test").send())
                     .compose(resp -> {
                         ctx.verify(() -> assertEquals(200, resp.statusCode()));
                         return awaitBarrier(vertx, rb.barrier());
@@ -1285,8 +1280,7 @@ class RestRequestCompletionEmitterTest {
             });
 
             startServer(rb.router())
-                    .compose(port -> client.request(HttpMethod.GET, port, "127.0.0.1", "/test")
-                            .compose(req -> req.send()))
+                    .compose(port -> client.get(port, "127.0.0.1", "/test").send())
                     .compose(resp -> {
                         ctx.verify(() -> assertEquals(200, resp.statusCode()));
                         return awaitBarrier(vertx, rb.barrier());
@@ -1311,8 +1305,7 @@ class RestRequestCompletionEmitterTest {
             RouterWithBarrier rb = routerWithBarrier(vertx, em, rc -> {});
 
             startServer(rb.router())
-                    .compose(port -> client.request(HttpMethod.GET, port, "127.0.0.1", "/test")
-                            .compose(req -> req.send()))
+                    .compose(port -> client.get(port, "127.0.0.1", "/test").send())
                     .compose(resp -> {
                         ctx.verify(() -> assertEquals(200, resp.statusCode()));
                         return awaitBarrier(vertx, rb.barrier());
@@ -1382,8 +1375,7 @@ class RestRequestCompletionEmitterTest {
                     vertx, em, rc -> em.emit(rc, Future.failedFuture(new RuntimeException("client vanished"))));
 
             startServer(rb.router())
-                    .compose(port -> client.request(HttpMethod.GET, port, "127.0.0.1", "/test")
-                            .compose(req -> req.send()))
+                    .compose(port -> client.get(port, "127.0.0.1", "/test").send())
                     .compose(resp -> {
                         ctx.verify(() -> assertEquals(200, resp.statusCode()));
                         return awaitBarrier(vertx, rb.barrier());

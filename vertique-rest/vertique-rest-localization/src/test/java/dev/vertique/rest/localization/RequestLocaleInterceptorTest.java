@@ -16,13 +16,13 @@ import dev.vertique.localization.context.LocalizationContext;
 import dev.vertique.localization.locale.DefaultLocaleResolver;
 import dev.vertique.rest.core.middleware.RequestContextLifecycle;
 import io.vertx.core.Vertx;
-import io.vertx.core.http.HttpClient;
 import io.vertx.core.http.HttpHeaders;
-import io.vertx.core.http.HttpMethod;
 import io.vertx.core.http.HttpServerRequest;
 import io.vertx.core.internal.ContextInternal;
 import io.vertx.ext.web.Router;
 import io.vertx.ext.web.RoutingContext;
+import io.vertx.ext.web.client.WebClient;
+import io.vertx.ext.web.client.WebClientOptions;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
 import java.time.ZoneId;
@@ -33,6 +33,7 @@ import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -42,6 +43,15 @@ import org.junit.jupiter.api.extension.ExtendWith;
 /**
  * Verifies {@link RequestLocaleInterceptor}: the ordered chain selection ({@code resolve}) and the
  * end-to-end binding of {@link LocalizationContext} plus scope cleanup in {@code beforeRequest}.
+ *
+ * <p>The one request-driven case uses a {@link WebClient} rather than a raw {@code HttpClient}
+ * deliberately: a raw {@code HttpClientResponse} discards body buffers that arrive before a body
+ * handler is attached, so under load a body read can succeed with zero bytes while the status code is
+ * correct (issue #167). That case only drains the response to sequence the post-request assertions,
+ * so it cannot flake on that today — the raw idiom is latent here, and would become a live race the
+ * moment anyone asserted on the body, with no diff to hint why. A {@link WebClient} aggregates the
+ * body into its {@code HttpResponse} before completing the send, so the hazard is removed by
+ * construction rather than by every author remembering an idiom.
  */
 class RequestLocaleInterceptorTest {
 
@@ -189,6 +199,23 @@ class RequestLocaleInterceptorTest {
     @Timeout(value = 20, unit = TimeUnit.SECONDS)
     class BeforeRequest {
 
+        /** Bound on its own statement (never inlined into a chain) so teardown can always close it. */
+        private WebClient client;
+
+        /**
+         * Closes the {@link WebClient} created by the test that just ran.
+         *
+         * <p>{@link WebClient#close()} is {@code void}, unlike {@code HttpClient.close()}: it returns
+         * once the underlying client has been asked to close, so there is no future to chain off and
+         * no reason to keep the close inside the request chain where a failed request would skip it.
+         */
+        @AfterEach
+        void closeClient() {
+            if (client != null) {
+                client.close();
+            }
+        }
+
         @Test
         @DisplayName("binds the resolved locale and closes the scope at request end")
         void bindsAndCleansUp(Vertx vertx, VertxTestContext testContext) {
@@ -213,18 +240,17 @@ class RequestLocaleInterceptorTest {
                 });
             });
 
-            HttpClient client = vertx.createHttpClient();
+            // Redirects off: parity with the raw client; WebClient forwards Authorization across 3xx.
+            client = WebClient.create(vertx, new WebClientOptions().setFollowRedirects(false));
             vertx.createHttpServer()
                     .requestHandler(router)
                     .listen(0, "127.0.0.1")
-                    .compose(server -> client.request(HttpMethod.GET, server.actualPort(), "127.0.0.1", "/test")
-                            .compose(req -> req.putHeader(HttpHeaders.ACCEPT_LANGUAGE.toString(), "sv-SE")
-                                    .send())
-                            .compose(resp -> resp.body())
-                            .compose(body ->
+                    .compose(server -> client.get(server.actualPort(), "127.0.0.1", "/test")
+                            .putHeader(HttpHeaders.ACCEPT_LANGUAGE.toString(), "sv-SE")
+                            .send()
+                            .compose(resp ->
                                     io.vertx.core.Future.<Void>future(p -> vertx.setTimer(50, id -> p.complete())))
                             .eventually(() -> server.close()))
-                    .eventually(() -> client.close())
                     .onComplete(testContext.succeeding(v -> testContext.verify(() -> {
                         assertEquals(FI, boundDuringRequest.get(), "app source (priority 0) wins over Accept-Language");
                         assertTrue(clearedAfterEnd.get(), "scope closed at request end (binding cleared)");

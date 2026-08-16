@@ -14,12 +14,12 @@ import dev.vertique.deploy.VerticleDeployment;
 import dev.vertique.deploy.VerticleDeploymentManager;
 import io.vertx.core.AbstractVerticle;
 import io.vertx.core.DeploymentOptions;
+import io.vertx.core.Future;
 import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
-import io.vertx.core.http.HttpClient;
-import io.vertx.core.http.HttpClientOptions;
-import io.vertx.core.http.HttpMethod;
 import io.vertx.core.json.JsonObject;
+import io.vertx.ext.web.client.WebClient;
+import io.vertx.ext.web.client.WebClientOptions;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
 import java.util.Set;
@@ -102,6 +102,14 @@ public class VertiqueBootstrapVerticleIT {
      * <p>Port allocation: the HTTP verticle binds on port 0 and publishes the actual port to
      * {@link Vertx#sharedData()} under {@code "vertique"/"http.port"} after a successful bind. The
      * test reads the actual port from shared data after the bootstrap verticle starts.
+     *
+     * <p>The GET goes through a {@link WebClient} rather than a raw {@code HttpClient}: a raw
+     * {@code HttpClientResponse} discards body buffers that arrive before a body handler is
+     * attached, so under load {@code body()} can succeed with zero bytes while the status code is
+     * correct (issue #167). Only the status is asserted here, but the racy idiom would become a live
+     * race the moment someone added a body assertion. The server answers 200 to every request, so
+     * {@link WebClient}'s follow-redirects default (a raw {@code HttpClient} follows none) never
+     * engages.
      */
     @Test
     @DisplayName("AC-1 HTTP: verticleSupplier → VertiqueBootstrapVerticle → runner → live HTTP verticle serves 200")
@@ -135,13 +143,25 @@ public class VertiqueBootstrapVerticleIT {
                     assertTrue(port > 0, "HTTP server must have bound on an ephemeral port, got: " + port);
 
                     // Issue an HTTP GET to the live server and assert 200.
-                    HttpClient client = vertx.createHttpClient(
-                            new HttpClientOptions().setDefaultPort(port).setDefaultHost("127.0.0.1"));
-                    return client.request(HttpMethod.GET, "/")
-                            .compose(req -> req.send())
-                            .compose(response -> {
+                    // Redirects off: parity with the raw client; WebClient forwards Authorization across 3xx.
+                    WebClient client = WebClient.create(
+                            vertx,
+                            new WebClientOptions()
+                                    .setDefaultPort(port)
+                                    .setDefaultHost("127.0.0.1")
+                                    .setFollowRedirects(false));
+                    return client.get("/")
+                            .send()
+                            .map(response -> {
                                 assertEquals(200, response.statusCode(), "HTTP server must return 200");
-                                return client.close().map(deploymentId);
+                                return deploymentId;
+                            })
+                            // eventually(...) runs on the failure path too. The close used to sit
+                            // inside the success compose, so a failed request leaked the client and
+                            // left Vert.x tearing down its pools with the request still in flight.
+                            .eventually(() -> {
+                                client.close();
+                                return Future.succeededFuture();
                             });
                 })
                 .compose(deploymentId -> vertx.undeploy(deploymentId))

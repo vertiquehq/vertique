@@ -32,6 +32,7 @@ import io.vertx.core.Vertx;
 import io.vertx.core.VertxBuilder;
 import io.vertx.core.VertxOptions;
 import io.vertx.core.http.HttpClient;
+import io.vertx.core.http.HttpClientResponse;
 import io.vertx.core.http.HttpMethod;
 import io.vertx.core.http.HttpServer;
 import io.vertx.ext.web.Router;
@@ -72,6 +73,13 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * {@link RouteRegistration#addHandler}.
  *
  * <p>All tests use class-level 20-second timeout and port 0 for deterministic port allocation.
+ *
+ * <p><strong>Raw {@link HttpClient} exemption — the raw client/server pair is the instrumented
+ * subject.</strong> The tests assert on the SERVER span Vert.x's own tracer produces for a raw
+ * exchange, including the {@code traceparent} the client puts on the wire verbatim; a
+ * {@code WebClient} would interpose another layer over exactly that path. Both exchanges are
+ * status-only and use the raw-client idiom pinned by {@code HttpClientBodyReadRaceIT}: the response
+ * continuation is attached before {@code end()} initiates the send.
  */
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
@@ -234,11 +242,17 @@ public class RestServerSpanEnrichmentIT {
         startServer(vertx, router)
                 .compose(port -> httpClient
                         .request(HttpMethod.GET, port, "127.0.0.1", "/orders/42")
-                        .compose(req -> {
-                            req.putHeader("traceparent", traceparent);
-                            return req.send();
+                        .compose(request -> {
+                            // Status-only exchange: the response continuation is attached before
+                            // end() initiates the send, and the send's own outcome is not composed
+                            // in — the exchange settles on the response, exactly as send() did.
+                            // See HttpClientBodyReadRaceIT.
+                            Future<Integer> responded = request.response().map(HttpClientResponse::statusCode);
+                            request.putHeader("traceparent", traceparent);
+                            request.end();
+                            return responded;
                         }))
-                .compose(resp -> pollUntilSpanPresent(vertx, exporter, 40, 50))
+                .compose(status -> pollUntilSpanPresent(vertx, exporter, 40, 50))
                 .onComplete(ctx.succeeding(v -> {
                     ctx.verify(() -> {
                         List<SpanData> spans = exporter.getFinishedSpanItems();
@@ -307,10 +321,15 @@ public class RestServerSpanEnrichmentIT {
                     this.httpClient = vertx.createHttpClient();
                     return httpClient
                             .request(HttpMethod.GET, s.actualPort(), "127.0.0.1", "/orders/99")
-                            .compose(req -> req.send());
+                            .compose(request -> {
+                                // Status-only exchange through the pre-attach idiom — see the note in
+                                // tracedRequestEnrichesServerSpan.
+                                Future<Integer> responded = request.response().map(HttpClientResponse::statusCode);
+                                request.end();
+                                return responded;
+                            });
                 })
-                .compose(resp -> {
-                    int statusCode = resp.statusCode();
+                .compose(statusCode -> {
                     // Brief wait to confirm no async span export happens
                     return Future.<Integer>future(p -> vertx.setTimer(100, id -> p.complete(statusCode)));
                 })
