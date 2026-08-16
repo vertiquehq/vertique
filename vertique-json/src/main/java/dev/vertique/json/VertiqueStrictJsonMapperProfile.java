@@ -4,7 +4,6 @@
 package dev.vertique.json;
 
 import com.fasterxml.jackson.core.JsonGenerator;
-import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.DeserializationContext;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonMappingException;
@@ -13,6 +12,7 @@ import com.fasterxml.jackson.databind.KeyDeserializer;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializerProvider;
 import com.fasterxml.jackson.databind.module.SimpleModule;
+import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import dev.vertique.core.json.JsonMapperProfile;
 import dev.vertique.core.json.JsonProfileId;
@@ -131,19 +131,12 @@ final class VertiqueStrictJsonMapperProfile implements JsonMapperProfile {
      *     form
      */
     private static JsonSchemaFragment buildBigDecimalFragment() {
-        ObjectMapper fragmentMapper = new ObjectMapper();
-        ObjectNode node = fragmentMapper.createObjectNode();
+        ObjectNode node = JsonNodeFactory.instance.objectNode();
         node.put("type", "string");
         node.put("format", "decimal");
         node.put("maxLength", BigDecimalStrictStringDeserializer.MAX_LENGTH);
         node.put("pattern", BigDecimalStrictStringDeserializer.ANCHORED_PLAIN_DECIMAL_PATTERN);
-        try {
-            return JsonSchemaFragment.parse(fragmentMapper.writeValueAsString(node));
-        } catch (JsonProcessingException e) {
-            // The node above is built entirely from string/int literals and constants — this branch
-            // is unreachable in practice, but IOException is checked on writeValueAsString.
-            throw new IllegalStateException("failed to build the vertique-strict BigDecimal schema fragment", e);
-        }
+        return JsonSchemaFragment.parse(node.toString());
     }
 
     /**
