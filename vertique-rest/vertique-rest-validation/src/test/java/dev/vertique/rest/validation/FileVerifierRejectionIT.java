@@ -22,6 +22,7 @@ import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.FileUpload;
 import io.vertx.ext.web.client.WebClient;
+import io.vertx.ext.web.client.WebClientOptions;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
 import jakarta.ws.rs.Consumes;
@@ -76,7 +77,8 @@ public class FileVerifierRejectionIT {
     @BeforeAll
     static void setUpClient(Vertx injectedVertx) {
         vertx = injectedVertx;
-        client = WebClient.create(vertx);
+        // Redirects off: parity with the raw client; WebClient forwards Authorization across 3xx.
+        client = WebClient.create(vertx, new WebClientOptions().setFollowRedirects(false));
     }
 
     @AfterEach

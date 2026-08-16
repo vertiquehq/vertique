@@ -16,6 +16,7 @@ import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.core.json.jackson.DatabindCodec;
 import io.vertx.ext.web.client.WebClient;
+import io.vertx.ext.web.client.WebClientOptions;
 import jakarta.ws.rs.DefaultValue;
 import jakarta.ws.rs.GET;
 import jakarta.ws.rs.HeaderParam;
@@ -117,7 +118,8 @@ class RestClientRequestFactoryDefaultValueTest {
     @BeforeAll
     static void startVertx() {
         vertx = Vertx.vertx();
-        webClient = WebClient.create(vertx);
+        // Redirects off: parity with the raw client; WebClient forwards Authorization across 3xx.
+        webClient = WebClient.create(vertx, new WebClientOptions().setFollowRedirects(false));
     }
 
     /**

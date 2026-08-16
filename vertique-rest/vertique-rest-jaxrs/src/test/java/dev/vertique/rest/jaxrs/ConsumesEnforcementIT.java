@@ -14,6 +14,7 @@ import io.vertx.core.buffer.Buffer;
 import io.vertx.core.http.HttpServer;
 import io.vertx.ext.web.Router;
 import io.vertx.ext.web.client.WebClient;
+import io.vertx.ext.web.client.WebClientOptions;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
 import jakarta.ws.rs.Consumes;
@@ -170,7 +171,7 @@ public class ConsumesEnforcementIT {
                                     ct.startsWith("application/problem+json"),
                                     "415 Content-Type must be application/problem+json but was: " + ct);
                             assertTrue(
-                                    body != null && body.contains("415"),
+                                    body.contains("415"),
                                     "415 body must be a non-empty problem+json with status; got: " + body);
                         });
                         ctx.completeNow();
@@ -245,7 +246,7 @@ public class ConsumesEnforcementIT {
                                     ct.startsWith("application/problem+json"),
                                     "415 Content-Type must be application/problem+json but was: " + ct);
                             assertTrue(
-                                    body != null && body.contains("415"),
+                                    body.contains("415"),
                                     "415 body must be a non-empty problem+json with status; got: " + body);
                         });
                         ctx.completeNow();
@@ -389,7 +390,8 @@ public class ConsumesEnforcementIT {
                 })
                 .onComplete(ctx.succeeding(s -> {
                     server = s;
-                    client = WebClient.create(vertx);
+                    // Redirects off: parity with the raw client; WebClient forwards Authorization across 3xx.
+                    client = WebClient.create(vertx, new WebClientOptions().setFollowRedirects(false));
                     afterListen.accept(s.actualPort(), client);
                 }));
     }

@@ -15,6 +15,7 @@ import io.vertx.core.Vertx;
 import io.vertx.ext.web.Router;
 import io.vertx.ext.web.RoutingContext;
 import io.vertx.ext.web.client.WebClient;
+import io.vertx.ext.web.client.WebClientOptions;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
 import java.util.ArrayList;
@@ -395,7 +396,8 @@ class RequestContextLifecycleTest {
     @DisplayName("End handler on real RoutingContext should drive LIFO onClose then FIFO afterClose")
     void endHandlerOnRealRoutingContextShouldDriveCorrectOrdering(Vertx vertx, VertxTestContext ctx) {
         List<String> order = new ArrayList<>();
-        client = WebClient.create(vertx);
+        // Redirects off: parity with the raw client; WebClient forwards Authorization across 3xx.
+        client = WebClient.create(vertx, new WebClientOptions().setFollowRedirects(false));
         Router router = Router.router(vertx);
 
         // Mount the middleware

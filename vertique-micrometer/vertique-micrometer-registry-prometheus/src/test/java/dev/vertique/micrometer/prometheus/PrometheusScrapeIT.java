@@ -15,6 +15,7 @@ import io.vertx.core.VertxOptions;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.Router;
 import io.vertx.ext.web.client.WebClient;
+import io.vertx.ext.web.client.WebClientOptions;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
 import java.util.Optional;
@@ -101,7 +102,8 @@ public class PrometheusScrapeIT {
         contributor.contribute(builder, fakeBootstrapContext(config, options));
 
         vertx = builder.build();
-        client = WebClient.create(vertx);
+        // Redirects off: parity with the raw client; WebClient forwards Authorization across 3xx.
+        client = WebClient.create(vertx, new WebClientOptions().setFollowRedirects(false));
 
         // Start a Router-based application HTTP server on port 0.
         // A Router returns 404 for paths not explicitly registered (NFR-TEL-005).

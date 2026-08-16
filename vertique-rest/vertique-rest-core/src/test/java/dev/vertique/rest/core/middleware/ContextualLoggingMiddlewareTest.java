@@ -11,6 +11,7 @@ import dev.vertique.logging.MDCContexts;
 import io.vertx.core.Vertx;
 import io.vertx.ext.web.Router;
 import io.vertx.ext.web.client.WebClient;
+import io.vertx.ext.web.client.WebClientOptions;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
 import java.util.Map;
@@ -79,7 +80,8 @@ class ContextualLoggingMiddlewareTest {
     @DisplayName("method and path MDC keys are bound inside the request handler")
     void mdcMethodAndPathBoundInsideHandler(Vertx vertx, VertxTestContext ctx) {
         AtomicReference<Map<String, String>> capturedMdc = new AtomicReference<>();
-        client = WebClient.create(vertx);
+        // Redirects off: parity with the raw client; WebClient forwards Authorization across 3xx.
+        client = WebClient.create(vertx, new WebClientOptions().setFollowRedirects(false));
 
         Router router = Router.router(vertx);
         router.route().order(RequestContextLifecycle.ORDER).handler(new RequestContextLifecycle());

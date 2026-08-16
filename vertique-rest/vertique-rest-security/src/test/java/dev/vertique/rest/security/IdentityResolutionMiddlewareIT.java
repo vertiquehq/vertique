@@ -24,6 +24,7 @@ import io.vertx.core.json.JsonObject;
 import io.vertx.ext.auth.User;
 import io.vertx.ext.web.Router;
 import io.vertx.ext.web.client.WebClient;
+import io.vertx.ext.web.client.WebClientOptions;
 import io.vertx.ext.web.impl.UserContextInternal;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
@@ -172,7 +173,8 @@ public class IdentityResolutionMiddlewareIT {
 
         vertx.createHttpServer().requestHandler(router).listen(0, "127.0.0.1").onComplete(ctx.succeeding(s -> {
             server = s;
-            client = WebClient.create(vertx);
+            // Redirects off: parity with the raw client; WebClient forwards Authorization across 3xx.
+            client = WebClient.create(vertx, new WebClientOptions().setFollowRedirects(false));
             client.get(s.actualPort(), "127.0.0.1", "/secure")
                     .send()
                     .map(resp -> {
@@ -230,7 +232,8 @@ public class IdentityResolutionMiddlewareIT {
 
         vertx.createHttpServer().requestHandler(router).listen(0, "127.0.0.1").onComplete(ctx.succeeding(s -> {
             server = s;
-            client = WebClient.create(vertx);
+            // Redirects off: parity with the raw client; WebClient forwards Authorization across 3xx.
+            client = WebClient.create(vertx, new WebClientOptions().setFollowRedirects(false));
             int port = s.actualPort();
 
             client.get(port, "127.0.0.1", "/first")
@@ -285,7 +288,8 @@ public class IdentityResolutionMiddlewareIT {
 
         vertx.createHttpServer().requestHandler(router).listen(0, "127.0.0.1").onComplete(ctx.succeeding(s -> {
             server = s;
-            client = WebClient.create(vertx);
+            // Redirects off: parity with the raw client; WebClient forwards Authorization across 3xx.
+            client = WebClient.create(vertx, new WebClientOptions().setFollowRedirects(false));
             int port = s.actualPort();
 
             client.get(port, "127.0.0.1", "/first")
@@ -331,7 +335,8 @@ public class IdentityResolutionMiddlewareIT {
 
         vertx.createHttpServer().requestHandler(router).listen(0, "127.0.0.1").onComplete(ctx.succeeding(s -> {
             server = s;
-            client = WebClient.create(vertx);
+            // Redirects off: parity with the raw client; WebClient forwards Authorization across 3xx.
+            client = WebClient.create(vertx, new WebClientOptions().setFollowRedirects(false));
             client.get(s.actualPort(), "127.0.0.1", "/anon")
                     .send()
                     .map(resp -> resp.statusCode())

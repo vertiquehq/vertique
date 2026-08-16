@@ -12,6 +12,7 @@ import io.vertx.core.http.HttpServer;
 import io.vertx.ext.web.Route;
 import io.vertx.ext.web.Router;
 import io.vertx.ext.web.client.WebClient;
+import io.vertx.ext.web.client.WebClientOptions;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
 import java.util.List;
@@ -86,7 +87,8 @@ public class FailureHandlerChainProbeIT {
                 .listen(0, "127.0.0.1")
                 .compose(s -> {
                     server = s;
-                    client = WebClient.create(vertx);
+                    // Redirects off: parity with the raw client; WebClient forwards Authorization across 3xx.
+                    client = WebClient.create(vertx, new WebClientOptions().setFollowRedirects(false));
                     return client.get(s.actualPort(), "127.0.0.1", "/op").send().map(resp -> resp.statusCode());
                 })
                 .onComplete(ctx.succeeding(status -> {

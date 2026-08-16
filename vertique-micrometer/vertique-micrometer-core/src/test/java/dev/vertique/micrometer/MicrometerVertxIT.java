@@ -12,6 +12,7 @@ import io.vertx.core.VertxBuilder;
 import io.vertx.core.VertxOptions;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.client.WebClient;
+import io.vertx.ext.web.client.WebClientOptions;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
 import java.util.List;
@@ -110,7 +111,8 @@ public class MicrometerVertxIT {
                     int port = server.actualPort();
                     // Issue one HTTP request using a client bound to the instance field, so that
                     // @AfterEach closes it before the owning Vert.x instance.
-                    client = WebClient.create(vertx);
+                    // Redirects off: parity with the raw client; WebClient forwards Authorization across 3xx.
+                    client = WebClient.create(vertx, new WebClientOptions().setFollowRedirects(false));
                     return client.get(port, "127.0.0.1", "/")
                             // The response is aggregated before this future resolves.
                             .send()
@@ -150,7 +152,8 @@ public class MicrometerVertxIT {
                     int port = server.actualPort();
                     // Client bound to the instance field, so that @AfterEach closes it before the
                     // owning Vert.x instance.
-                    client = WebClient.create(vertx);
+                    // Redirects off: parity with the raw client; WebClient forwards Authorization across 3xx.
+                    client = WebClient.create(vertx, new WebClientOptions().setFollowRedirects(false));
                     return client.get(port, "127.0.0.1", "/")
                             // The response is aggregated before this future resolves.
                             .send()

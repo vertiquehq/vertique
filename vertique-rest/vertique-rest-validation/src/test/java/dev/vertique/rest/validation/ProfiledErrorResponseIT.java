@@ -35,6 +35,7 @@ import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.RoutingContext;
 import io.vertx.ext.web.client.HttpResponse;
 import io.vertx.ext.web.client.WebClient;
+import io.vertx.ext.web.client.WebClientOptions;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
 import jakarta.ws.rs.Consumes;
@@ -799,7 +800,8 @@ public class ProfiledErrorResponseIT {
         RestTestMounts.startServer(vertx, MountFixtures.mount(vertx, config, contributions.build()), resources)
                 .onComplete(ctx.succeeding(s -> {
                     server = s;
-                    client = WebClient.create(vertx);
+                    // Redirects off: parity with the raw client; WebClient forwards Authorization across 3xx.
+                    client = WebClient.create(vertx, new WebClientOptions().setFollowRedirects(false));
                     afterListen.accept(s.actualPort(), client);
                 }));
     }

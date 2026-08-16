@@ -13,6 +13,7 @@ import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.Router;
 import io.vertx.ext.web.client.WebClient;
+import io.vertx.ext.web.client.WebClientOptions;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
 import java.util.ArrayList;
@@ -61,7 +62,8 @@ class ManagementVerticleTest {
      */
     @BeforeEach
     void setUpClient(Vertx vertx) {
-        client = WebClient.create(vertx);
+        // Redirects off: parity with the raw client; WebClient forwards Authorization across 3xx.
+        client = WebClient.create(vertx, new WebClientOptions().setFollowRedirects(false));
     }
 
     /**
@@ -172,7 +174,7 @@ class ManagementVerticleTest {
     private Future<JsonObject> deployAndRequest(Vertx vertx, ManagementVerticle verticle, String path) {
         return vertx.deployVerticle(verticle).compose(id -> {
             int boundPort = (int) vertx.sharedData().getLocalMap("vertique").get("management.port");
-            return request(vertx, boundPort, path);
+            return request(boundPort, path);
         });
     }
 
@@ -180,26 +182,24 @@ class ManagementVerticleTest {
      * Sends a GET request to the management server and returns a JsonObject
      * with an extra {@code _statusCode} field carrying the HTTP response status.
      *
-     * @param vertx the Vert.x instance
-     * @param port  the management server port
-     * @param path  the request path
+     * @param port the management server port
+     * @param path the request path
      * @return a future completing with the parsed response body
      */
-    private Future<JsonObject> request(Vertx vertx, int port, String path) {
-        return request(vertx, port, "127.0.0.1", path);
+    private Future<JsonObject> request(int port, String path) {
+        return request(port, "127.0.0.1", path);
     }
 
     /**
      * Sends a GET request to the management server on an explicit host and returns a JsonObject
      * with an extra {@code _statusCode} field carrying the HTTP response status.
      *
-     * @param vertx the Vert.x instance
-     * @param port  the management server port
-     * @param host  the host to connect to
-     * @param path  the request path
+     * @param port the management server port
+     * @param host the host to connect to
+     * @param path the request path
      * @return a future completing with the parsed response body
      */
-    private Future<JsonObject> request(Vertx vertx, int port, String host, String path) {
+    private Future<JsonObject> request(int port, String host, String path) {
         return client.get(port, host, path).send().map(response -> {
             JsonObject json = new JsonObject(response.body());
             json.put("_statusCode", response.statusCode());
@@ -453,7 +453,7 @@ class ManagementVerticleTest {
                     .compose(id -> {
                         int boundPort =
                                 (int) vertx.sharedData().getLocalMap("vertique").get("management.port");
-                        return request(vertx, boundPort, "127.0.0.1", "/health/live");
+                        return request(boundPort, "127.0.0.1", "/health/live");
                     })
                     .onComplete(ctx.succeeding(json -> {
                         ctx.verify(() -> {
@@ -596,13 +596,13 @@ class ManagementVerticleTest {
                     .compose(id -> {
                         int port =
                                 (int) vertx.sharedData().getLocalMap("vertique").get("management.port");
-                        return request(vertx, port, "/custom")
+                        return request(port, "/custom")
                                 .compose(customResp -> {
                                     ctx.verify(() -> {
                                         assertEquals(200, customResp.getInteger("_statusCode"));
                                         assertTrue(customResp.getBoolean("ok"));
                                     });
-                                    return request(vertx, port, "/health/live");
+                                    return request(port, "/health/live");
                                 })
                                 .map(healthResp -> {
                                     ctx.verify(() -> {
@@ -662,7 +662,7 @@ class ManagementVerticleTest {
                     .compose(id -> {
                         int port =
                                 (int) vertx.sharedData().getLocalMap("vertique").get("management.port");
-                        return request(vertx, port, "/health/live");
+                        return request(port, "/health/live");
                     })
                     .onComplete(ctx.succeeding(json -> {
                         ctx.verify(() -> {

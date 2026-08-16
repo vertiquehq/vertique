@@ -37,6 +37,7 @@ import io.vertx.ext.auth.User;
 import io.vertx.ext.web.Router;
 import io.vertx.ext.web.RoutingContext;
 import io.vertx.ext.web.client.WebClient;
+import io.vertx.ext.web.client.WebClientOptions;
 import io.vertx.ext.web.impl.UserContextInternal;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
@@ -148,7 +149,8 @@ public class JwtClaimsRejectionStatusIT {
                 })
                 .onComplete(ctx.succeeding(listeningServer -> {
                     server = listeningServer;
-                    client = WebClient.create(vertx);
+                    // Redirects off: parity with the raw client; WebClient forwards Authorization across 3xx.
+                    client = WebClient.create(vertx, new WebClientOptions().setFollowRedirects(false));
                     ctx.completeNow();
                 }));
     }

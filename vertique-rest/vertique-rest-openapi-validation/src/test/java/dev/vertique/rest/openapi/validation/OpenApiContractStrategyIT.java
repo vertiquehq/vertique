@@ -18,6 +18,7 @@ import io.vertx.core.http.HttpServer;
 import io.vertx.ext.web.Router;
 import io.vertx.ext.web.RoutingContext;
 import io.vertx.ext.web.client.WebClient;
+import io.vertx.ext.web.client.WebClientOptions;
 import io.vertx.ext.web.handler.BodyHandler;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
@@ -77,7 +78,8 @@ public class OpenApiContractStrategyIT {
     @BeforeAll
     static void setUp(Vertx v, VertxTestContext ctx) {
         vertx = v;
-        client = WebClient.create(vertx);
+        // Redirects off: parity with the raw client; WebClient forwards Authorization across 3xx.
+        client = WebClient.create(vertx, new WebClientOptions().setFollowRedirects(false));
 
         OpenApiContractValidationStrategy strategy = new OpenApiContractValidationStrategy(
                 vertx, JaxRsConfig.builder().openapiPath(CONTRACT_PATH).build());

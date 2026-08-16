@@ -17,6 +17,7 @@ import io.vertx.core.buffer.Buffer;
 import io.vertx.core.http.HttpServer;
 import io.vertx.ext.web.client.HttpRequest;
 import io.vertx.ext.web.client.WebClient;
+import io.vertx.ext.web.client.WebClientOptions;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
 import jakarta.ws.rs.Consumes;
@@ -128,7 +129,8 @@ public class WebValidationGateIT {
                         Set.of(new CreateResource(invoked)))
                 .onComplete(ctx.succeeding(s -> {
                     server = s;
-                    client = WebClient.create(vertx);
+                    // Redirects off: parity with the raw client; WebClient forwards Authorization across 3xx.
+                    client = WebClient.create(vertx, new WebClientOptions().setFollowRedirects(false));
                     client.post(s.actualPort(), "127.0.0.1", "/create")
                             .putHeader("Content-Type", "application/json")
                             .sendBuffer(Buffer.buffer("{\"name\":\"AB\"}"))
@@ -178,7 +180,8 @@ public class WebValidationGateIT {
                         vertx, MountFixtures.mount(vertx, RestTestContributions.none()), Set.of(new TagsResource()))
                 .onComplete(ctx.succeeding(s -> {
                     server = s;
-                    client = WebClient.create(vertx);
+                    // Redirects off: parity with the raw client; WebClient forwards Authorization across 3xx.
+                    client = WebClient.create(vertx, new WebClientOptions().setFollowRedirects(false));
                     HttpRequest<Buffer> request = client.get(s.actualPort(), "127.0.0.1", "/tags");
                     // headers().add (not putHeader, which replaces) is what sends X-Tag twice.
                     request.headers().add("X-Tag", "a");

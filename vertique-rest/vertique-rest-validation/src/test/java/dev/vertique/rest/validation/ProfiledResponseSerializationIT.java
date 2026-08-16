@@ -25,6 +25,7 @@ import io.vertx.core.Vertx;
 import io.vertx.core.http.HttpServer;
 import io.vertx.core.json.Json;
 import io.vertx.ext.web.client.WebClient;
+import io.vertx.ext.web.client.WebClientOptions;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
 import jakarta.ws.rs.GET;
@@ -280,7 +281,8 @@ public class ProfiledResponseSerializationIT {
         RestTestMounts.startServer(vertx, MountFixtures.mount(vertx, contributions), Set.of(resource))
                 .compose(s -> {
                     server = s;
-                    client = WebClient.create(vertx);
+                    // Redirects off: parity with the raw client; WebClient forwards Authorization across 3xx.
+                    client = WebClient.create(vertx, new WebClientOptions().setFollowRedirects(false));
                     return client.get(s.actualPort(), "127.0.0.1", path)
                             .send()
                             .map(response -> String.valueOf(response.bodyAsString()));

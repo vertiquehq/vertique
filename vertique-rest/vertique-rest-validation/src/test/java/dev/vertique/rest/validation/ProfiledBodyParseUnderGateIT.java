@@ -23,6 +23,7 @@ import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.http.HttpServer;
 import io.vertx.ext.web.client.WebClient;
+import io.vertx.ext.web.client.WebClientOptions;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
 import jakarta.ws.rs.Consumes;
@@ -290,7 +291,8 @@ public class ProfiledBodyParseUnderGateIT {
         RestTestMounts.startServer(vertx, MountFixtures.mount(vertx, contributions), resources)
                 .onComplete(ctx.succeeding(s -> {
                     server = s;
-                    client = WebClient.create(vertx);
+                    // Redirects off: parity with the raw client; WebClient forwards Authorization across 3xx.
+                    client = WebClient.create(vertx, new WebClientOptions().setFollowRedirects(false));
                     afterListen.accept(s.actualPort(), client);
                 }));
     }

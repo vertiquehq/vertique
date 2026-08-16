@@ -22,6 +22,7 @@ import io.vertx.core.buffer.Buffer;
 import io.vertx.core.http.HttpServer;
 import io.vertx.ext.web.Router;
 import io.vertx.ext.web.client.WebClient;
+import io.vertx.ext.web.client.WebClientOptions;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
 import jakarta.ws.rs.Consumes;
@@ -95,7 +96,8 @@ public class ProfiledBodyParseIT {
     @BeforeAll
     static void setUpClass(Vertx v, VertxTestContext ctx) {
         vertx = v;
-        client = WebClient.create(v);
+        // Redirects off: parity with the raw client; WebClient forwards Authorization across 3xx.
+        client = WebClient.create(v, new WebClientOptions().setFollowRedirects(false));
         ctx.completeNow();
     }
 

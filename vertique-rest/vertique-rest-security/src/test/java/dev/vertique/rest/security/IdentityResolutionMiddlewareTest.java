@@ -47,6 +47,7 @@ import io.vertx.ext.auth.authorization.PermissionBasedAuthorization;
 import io.vertx.ext.auth.authorization.RoleBasedAuthorization;
 import io.vertx.ext.web.Router;
 import io.vertx.ext.web.client.WebClient;
+import io.vertx.ext.web.client.WebClientOptions;
 import io.vertx.ext.web.impl.UserContextInternal;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
@@ -1309,7 +1310,8 @@ class IdentityResolutionMiddlewareTest {
                     .listen(0, "127.0.0.1")
                     .onComplete(ctx.succeeding(s -> {
                         server = s;
-                        client = WebClient.create(vertx);
+                        // Redirects off: parity with the raw client; WebClient forwards Authorization across 3xx.
+                        client = WebClient.create(vertx, new WebClientOptions().setFollowRedirects(false));
                         client.get(s.actualPort(), "127.0.0.1", "/test")
                                 .send()
                                 .map(resp -> {
@@ -1366,7 +1368,8 @@ class IdentityResolutionMiddlewareTest {
     private void startAndSend(Vertx vertx, VertxTestContext ctx, Router router, int expectedStatus) {
         vertx.createHttpServer().requestHandler(router).listen(0, "127.0.0.1").onComplete(ctx.succeeding(s -> {
             server = s;
-            client = WebClient.create(vertx);
+            // Redirects off: parity with the raw client; WebClient forwards Authorization across 3xx.
+            client = WebClient.create(vertx, new WebClientOptions().setFollowRedirects(false));
             client.get(s.actualPort(), "127.0.0.1", "/test")
                     .send()
                     .map(resp -> {

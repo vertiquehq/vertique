@@ -143,8 +143,13 @@ public class VertiqueBootstrapVerticleIT {
                     assertTrue(port > 0, "HTTP server must have bound on an ephemeral port, got: " + port);
 
                     // Issue an HTTP GET to the live server and assert 200.
+                    // Redirects off: parity with the raw client; WebClient forwards Authorization across 3xx.
                     WebClient client = WebClient.create(
-                            vertx, new WebClientOptions().setDefaultPort(port).setDefaultHost("127.0.0.1"));
+                            vertx,
+                            new WebClientOptions()
+                                    .setDefaultPort(port)
+                                    .setDefaultHost("127.0.0.1")
+                                    .setFollowRedirects(false));
                     return client.get("/")
                             .send()
                             .map(response -> {
