@@ -358,7 +358,7 @@ public final class GeneratedSupport {
         if (objectSkipCanon && fieldCanon.isEmpty()) {
             return List.of();
         }
-        return compose(ctx.inheritedCanonicalizerChain(), objectCanon, fieldCanon);
+        return InputTraversalContext.compose(ctx.inheritedCanonicalizerChain(), objectCanon, fieldCanon);
     }
 
     private static List<Class<? extends Sanitizer>> effectiveSanitChain(
@@ -374,22 +374,6 @@ public final class GeneratedSupport {
         if (objectSkipSanit && fieldSanit.isEmpty()) {
             return List.of();
         }
-        return compose(ctx.inheritedSanitizerChain(), objectSanit, fieldSanit);
-    }
-
-    /**
-     * Composes inherited + object + field chains, reusing the {@code inherited} reference
-     * unchanged when both {@code object} and {@code field} are empty — eliminating an
-     * {@code ArrayList} allocation per string field on the common no-extra-layer hot path.
-     */
-    private static <T> List<T> compose(List<T> inherited, List<T> object, List<T> field) {
-        if (object.isEmpty() && field.isEmpty()) {
-            return inherited;
-        }
-        List<T> result = new ArrayList<>(inherited.size() + object.size() + field.size());
-        result.addAll(inherited);
-        result.addAll(object);
-        result.addAll(field);
-        return result;
+        return InputTraversalContext.compose(ctx.inheritedSanitizerChain(), objectSanit, fieldSanit);
     }
 }
