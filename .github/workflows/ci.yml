@@ -81,6 +81,11 @@ jobs:
           bash scripts/test-verify-test-bind-policy.sh
           bash scripts/verify-test-bind-policy.sh
 
+      - name: Verify test HTTP client policy
+        run: |
+          bash scripts/test-verify-test-client-policy.sh
+          bash scripts/verify-test-client-policy.sh
+
       # Per-module HTML reports are skipped: the vertique-coverage-report
       # aggregate XML produced by this same invocation is the only coverage
       # output CI consumes. Reactor parallelism (-T1C) comes from
