@@ -33,6 +33,14 @@ security, configuration, persistence, context propagation
 core and JSON foundations
 ```
 
+`vertique-json-schema` owns transport-neutral Java `Type` -> JSON Schema 2020-12
+generation, built on Victools. It depends only on `vertique-core` plus Jackson,
+Victools, Jakarta Validation, and Swagger annotations — it has no dependency on
+REST, MCP, Vert.x, or Dagger. `vertique-rest-validation` consumes it for body-type
+schema synthesis while keeping REST-owned loose-parameter assembly to itself.
+Dependency direction stays one-way into the schema module: neither `vertique-core`
+nor `vertique-json` depends on it.
+
 Foundation modules do not import higher-level capabilities. Adapter modules depend
 on the neutral API or SPI owned by the producer module they observe or extend.
 The internal reactor parent, `vertique-parent`, enforces this repository boundary
