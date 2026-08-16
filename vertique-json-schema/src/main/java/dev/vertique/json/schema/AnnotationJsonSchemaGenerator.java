@@ -284,13 +284,24 @@ public final class AnnotationJsonSchemaGenerator {
                 throw Diagnostics.failure(
                         "JSON Schema generation failed for " + Diagnostics.typeIdentity(type), failed);
             }
-            // Structural safety net: a document that conjoins disjoint explicit types is unsatisfiable,
-            // and is refused before it can be canonicalized and handed to a consumer.
-            DisjointTypeDetector.requireNoDisjointTypes(generated);
-            if (suppressInapplicableNumericKeywords) {
-                // PRD §6.2 wire-honesty: a Jakarta numeric-domain constraint (e.g. @DecimalMin) must
-                // not be advertised against a wire type an override has replaced with a non-number.
-                NumericDomainKeywordFilter.suppressInapplicableNumericKeywords(generated);
+            try {
+                // Structural safety net: a document that conjoins disjoint explicit types is
+                // unsatisfiable, and is refused before it can be canonicalized and handed to a consumer.
+                DisjointTypeDetector.requireNoDisjointTypes(generated);
+                if (suppressInapplicableNumericKeywords) {
+                    // PRD §6.2 wire-honesty: a Jakarta numeric-domain constraint (e.g. @DecimalMin)
+                    // must not be advertised against a wire type an override replaced with a non-number.
+                    NumericDomainKeywordFilter.suppressInapplicableNumericKeywords(generated);
+                }
+            } catch (JsonSchemaGenerationException alreadyBounded) {
+                throw alreadyBounded;
+            } catch (RuntimeException failed) {
+                // A walk failure is still a generation failure: it normalizes to the module's bounded
+                // type rather than escaping as raw, unbounded third-party text (FR-JSON-075/076).
+                throw Diagnostics.failure(
+                        "post-generation validation of the generated JSON Schema failed for "
+                                + Diagnostics.typeIdentity(type),
+                        failed);
             }
             try {
                 return SchemaCanonicalizer.canonicalize(generated);

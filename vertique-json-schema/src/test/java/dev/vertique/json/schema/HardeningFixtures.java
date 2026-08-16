@@ -439,6 +439,23 @@ final class HardeningFixtures {
         public BigDecimal amount;
     }
 
+    // --- Post-generation walk fixtures ---
+
+    /**
+     * An {@code $anchor}-style reference: {@code #}-rooted, but not a JSON pointer. The Swagger module
+     * publishes a {@code @Schema(ref = ...)} value verbatim, so this reaches the generated document
+     * unchanged and any walk that treats it as a pointer would fail on it.
+     */
+    static final String ANCHOR_REF = "#anchorName";
+
+    /** Property whose Swagger metadata publishes an {@code $anchor}-style reference. */
+    static final class AnchorRefDto {
+
+        /** Carries the {@code $anchor}-style reference into the generated document. */
+        @Schema(ref = ANCHOR_REF)
+        public String label;
+    }
+
     // --- Map position fixtures ---
 
     /** DTO whose map declares the overridden class as its key type. */

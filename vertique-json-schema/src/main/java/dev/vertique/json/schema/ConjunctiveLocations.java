@@ -25,6 +25,14 @@ import java.util.Set;
  * JSON pointer, typically into {@code $defs}), expanded transitively. The expansion deliberately does
  * <strong>not</strong> descend through {@code properties}, {@code items}, {@code anyOf}, or
  * {@code oneOf} — those are not unconditional conjunctions.
+ *
+ * <p>The closure is <strong>best-effort over locally resolvable, {@code "#/"}-rooted pointers</strong>:
+ * a reference this class cannot resolve within the document itself — a JSON Schema {@code $anchor}
+ * such as {@code "#anchorName"}, an external URI, an unresolvable pointer — is skipped rather than
+ * followed, so the fold a caller performs simply sees fewer conjoined nodes. Skipping is the only
+ * sound choice: the referenced subschema's keywords are not available to reason about, and a walk
+ * that treated an anchor as a pointer would fail generation on a document the generator is otherwise
+ * perfectly able to publish.
  */
 final class ConjunctiveLocations {
 
@@ -36,6 +44,12 @@ final class ConjunctiveLocations {
 
     /** The keyword both callers intersect explicit values of. */
     static final String TYPE = "type";
+
+    /** The only reference form this class resolves: the whole document. */
+    private static final String SELF_REFERENCE = "#";
+
+    /** Prefix of the only other reference form this class resolves: a document-rooted JSON pointer. */
+    private static final String LOCAL_POINTER_PREFIX = "#/";
 
     private ConjunctiveLocations() {}
 
@@ -74,18 +88,44 @@ final class ConjunctiveLocations {
      * @param pending  the queue of nodes still to visit in this location
      */
     private static void enqueueConjoined(JsonNode document, JsonNode node, Deque<JsonNode> pending) {
-        JsonNode allOf = node.get(ALL_OF);
-        if (allOf != null && allOf.isArray()) {
-            allOf.forEach(pending::add);
-        }
+        enqueueAllOfBranches(node, pending);
 
         JsonNode reference = node.get(REF);
-        if (reference != null && reference.isTextual() && reference.textValue().startsWith("#")) {
+        if (reference != null && reference.isTextual() && isLocalPointer(reference.textValue())) {
             JsonNode target = document.at(reference.textValue().substring(1));
             if (!target.isMissingNode()) {
                 pending.add(target);
             }
         }
+    }
+
+    /**
+     * Adds a node's direct {@code allOf} branches to a pending queue.
+     *
+     * @param node    the node being expanded
+     * @param pending the queue of nodes still to visit
+     */
+    private static void enqueueAllOfBranches(JsonNode node, Deque<JsonNode> pending) {
+        JsonNode allOf = node.get(ALL_OF);
+        if (allOf != null && allOf.isArray()) {
+            allOf.forEach(pending::add);
+        }
+    }
+
+    /**
+     * Decides whether a {@code $ref} value is a pointer this class can resolve inside the document.
+     *
+     * <p>Only the whole-document reference {@code "#"} and a document-rooted JSON pointer
+     * ({@code "#/..."}) qualify. Every other {@code #}-rooted form is a JSON Schema {@code $anchor},
+     * whose fragment is a plain name rather than a pointer expression; handing such a value to
+     * {@link JsonNode#at(String)} would raise an unbounded {@code IllegalArgumentException} quoting
+     * the annotation text verbatim.
+     *
+     * @param reference the raw {@code $ref} text
+     * @return {@code true} when the reference is a locally resolvable pointer
+     */
+    private static boolean isLocalPointer(String reference) {
+        return SELF_REFERENCE.equals(reference) || reference.startsWith(LOCAL_POINTER_PREFIX);
     }
 
     /**

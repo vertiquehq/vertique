@@ -118,6 +118,9 @@ misdescribes the wire:
   targets — must have a non-empty intersection of the explicit `type` sets declared there. An
   empty intersection is an unsatisfiable contract and fails generation. `anyOf` and `oneOf`
   branches are alternatives, not conjunctions, so a nullable overridden property remains valid.
+  Only a `$ref` this module can resolve inside the document itself — `"#"` or a `"#/"`-rooted JSON
+  pointer — is followed; a `$anchor` reference such as `@Schema(ref = "#anchorName")`, an external
+  URI, or an unresolvable pointer is skipped, so it never fails generation.
 
 `@Schema(type = ...)` has no effect in this module; `implementation` is the supported way for a
 property to contribute a type shape.
