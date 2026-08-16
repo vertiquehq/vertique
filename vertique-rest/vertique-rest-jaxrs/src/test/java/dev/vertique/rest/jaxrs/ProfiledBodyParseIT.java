@@ -19,10 +19,9 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
-import io.vertx.core.http.HttpClient;
-import io.vertx.core.http.HttpMethod;
 import io.vertx.core.http.HttpServer;
 import io.vertx.ext.web.Router;
+import io.vertx.ext.web.client.WebClient;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
 import jakarta.ws.rs.Consumes;
@@ -59,6 +58,16 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * {@link TestFactories} under the default {@code none} validation strategy, wired with a
  * {@link DefaultJsonMapperProfileRegistry} that carries the {@code strict-test} profile so the
  * per-method resolver can resolve it at router-build time.
+ *
+ * <p>The client is a {@link WebClient} rather than a raw {@code HttpClient} deliberately: a raw
+ * {@code HttpClientResponse} discards body buffers that arrive before a body handler is attached, so
+ * under load {@code body()} can succeed with zero bytes while the status code is correct (issue #167).
+ * A {@link WebClient} aggregates the body into its {@code HttpResponse} before completing the send.
+ *
+ * <p>Every request body goes out via {@code sendBuffer} with an explicit
+ * {@code Content-Type: application/json} header rather than {@code sendJson}, so the exact bytes under
+ * test — a duplicate key, a trailing token, a coerced scalar — reach the server unmodified and the
+ * declared media type stays what the {@code @Consumes} declaration expects.
  */
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
@@ -67,7 +76,7 @@ public class ProfiledBodyParseIT {
     // --- Class-scoped resources (shared across all @Test methods) ---
 
     private static Vertx vertx;
-    private static HttpClient client;
+    private static WebClient client;
 
     // --- Per-test resources ---
 
@@ -76,7 +85,7 @@ public class ProfiledBodyParseIT {
     // --- Setup / teardown ---
 
     /**
-     * Creates the class-scoped {@link Vertx} instance and shared {@link HttpClient} once for the
+     * Creates the class-scoped {@link Vertx} instance and shared {@link WebClient} once for the
      * entire test class. Allocating a fresh client per test accumulates netty channel pools that
      * surface under full-reactor load as connection failures.
      *
@@ -86,12 +95,12 @@ public class ProfiledBodyParseIT {
     @BeforeAll
     static void setUpClass(Vertx v, VertxTestContext ctx) {
         vertx = v;
-        client = v.createHttpClient();
+        client = WebClient.create(v);
         ctx.completeNow();
     }
 
     /**
-     * Closes the per-test {@link HttpServer}. The shared {@link HttpClient} is closed only in
+     * Closes the per-test {@link HttpServer}. The shared {@link WebClient} is closed only in
      * {@link #tearDownClass(VertxTestContext)}.
      *
      * @param ctx the test context used to signal teardown completion
@@ -103,17 +112,21 @@ public class ProfiledBodyParseIT {
     }
 
     /**
-     * Closes the shared {@link HttpClient} after all tests in the class have run.
+     * Closes the shared {@link WebClient} after all tests in the class have run — before the
+     * extension-owned {@link Vertx} instance is closed, which happens only once every
+     * {@code @AfterAll} method has run.
+     *
+     * <p>{@link WebClient#close()} is {@code void}, unlike {@code HttpClient.close()}: it returns once
+     * the underlying client has been asked to close, so there is no future to await here.
      *
      * @param ctx the test context used to signal teardown completion
      */
     @AfterAll
     static void tearDownClass(VertxTestContext ctx) {
         if (client != null) {
-            client.close().onComplete(ar -> ctx.completeNow());
-        } else {
-            ctx.completeNow();
+            client.close();
         }
+        ctx.completeNow();
     }
 
     // --- Strict profile fixture ---
@@ -299,10 +312,10 @@ public class ProfiledBodyParseIT {
         // parsed by today's default path — a normal body must dispatch to 200, proving the strict
         // parse change does not touch the vertx path.
         deploy(vertx, ctx, Set.of(new PlainResource()), (port, c) -> {
-            c.request(HttpMethod.POST, port, "127.0.0.1", "/plain")
-                    .compose(req -> req.putHeader("Content-Type", "application/json")
-                            .send(Buffer.buffer("{\"name\":\"alice\"}")))
-                    .compose(resp -> resp.body().map(b -> resp.statusCode() + "|" + b.toString()))
+            c.post(port, "127.0.0.1", "/plain")
+                    .putHeader("Content-Type", "application/json")
+                    .sendBuffer(Buffer.buffer("{\"name\":\"alice\"}"))
+                    .map(resp -> resp.statusCode() + "|" + String.valueOf(resp.bodyAsString()))
                     .onComplete(ctx.succeeding(result -> {
                         ctx.verify(() ->
                                 assertEquals("200|name=alice", result, "the vertx path must accept a normal body"));
@@ -404,7 +417,7 @@ public class ProfiledBodyParseIT {
      * asserts on the response status code, then completes the test context.
      *
      * @param ctx       the test context
-     * @param client    the shared HTTP client
+     * @param client    the shared web client
      * @param port      the bound server port
      * @param path      the request path
      * @param body      the raw request body buffer
@@ -412,15 +425,15 @@ public class ProfiledBodyParseIT {
      */
     private static void postJson(
             VertxTestContext ctx,
-            HttpClient client,
+            WebClient client,
             int port,
             String path,
             Buffer body,
             java.util.function.IntConsumer assertion) {
-        client.request(HttpMethod.POST, port, "127.0.0.1", path)
-                .compose(
-                        req -> req.putHeader("Content-Type", "application/json").send(body))
-                .compose(resp -> resp.body().map(b -> resp.statusCode()))
+        client.post(port, "127.0.0.1", path)
+                .putHeader("Content-Type", "application/json")
+                .sendBuffer(body)
+                .map(resp -> resp.statusCode())
                 .onComplete(ctx.succeeding(status -> {
                     ctx.verify(() -> assertion.accept(status));
                     ctx.completeNow();
@@ -430,18 +443,18 @@ public class ProfiledBodyParseIT {
     /**
      * Deploys the given resources under the default {@code none} validation strategy with a profile
      * registry carrying the {@code strict-test} profile, starts an HTTP server, and invokes
-     * {@code afterListen} with the bound port and the shared {@link HttpClient}.
+     * {@code afterListen} with the bound port and the shared {@link WebClient}.
      *
      * @param vertx       the Vert.x instance
      * @param ctx         the test context
      * @param resources   the JAX-RS resources to mount
-     * @param afterListen callback invoked with the server port and the shared HTTP client
+     * @param afterListen callback invoked with the server port and the shared web client
      */
     private void deploy(
             Vertx vertx,
             VertxTestContext ctx,
             Set<Object> resources,
-            java.util.function.BiConsumer<Integer, HttpClient> afterListen) {
+            java.util.function.BiConsumer<Integer, WebClient> afterListen) {
         DefaultJsonMapperProfileRegistry registry =
                 new DefaultJsonMapperProfileRegistry(Set.of(strictTestProfile(), noCoercionProfile()));
         JaxRsRouterMount.Factory factory =

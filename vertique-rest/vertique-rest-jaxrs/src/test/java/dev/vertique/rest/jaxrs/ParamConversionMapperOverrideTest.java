@@ -11,10 +11,9 @@ import dev.vertique.rest.core.convert.ParamSource;
 import io.swagger.v3.oas.annotations.Operation;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
-import io.vertx.core.http.HttpClient;
-import io.vertx.core.http.HttpMethod;
 import io.vertx.core.http.HttpServer;
 import io.vertx.ext.web.Router;
+import io.vertx.ext.web.client.WebClient;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
 import jakarta.ws.rs.GET;
@@ -45,19 +44,35 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * {@link ParamConversionException} on a malformed value. It is written against the <em>intended</em>
  * wiring so it compile-fails today; once slice 1.3 lands the {@code exceptionMapperRegistry} hook and
  * threads conversion through the resolver, it becomes a behavior assertion (custom 422 returned).
+ *
+ * <p>The client is a {@link WebClient} rather than a raw {@code HttpClient} deliberately: a raw
+ * {@code HttpClientResponse} discards body buffers that arrive before a body handler is attached, so
+ * under load {@code body()} can succeed with zero bytes while the status code is correct (issue #167).
+ * A {@link WebClient} aggregates the body into its {@code HttpResponse} before completing the send.
  */
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
 public class ParamConversionMapperOverrideTest {
 
     private HttpServer server;
-    private HttpClient client;
+    private WebClient client;
 
+    /**
+     * Closes the {@link WebClient} and then the server started by the test that just ran.
+     *
+     * <p>{@link WebClient#close()} is {@code void}, unlike {@code HttpClient.close()}: it returns once
+     * the underlying client has been asked to close, so there is no future to join here and the server
+     * close alone carries the completion.
+     *
+     * @param ctx the test context used to signal teardown completion
+     */
     @AfterEach
     void tearDown(VertxTestContext ctx) {
-        Future<?> serverClose = server != null ? server.close() : Future.succeededFuture();
-        Future<?> clientClose = client != null ? client.close() : Future.succeededFuture();
-        Future.join(serverClose, clientClose).onComplete(ar -> ctx.completeNow());
+        if (client != null) {
+            client.close();
+        }
+        Future<Void> serverClose = server != null ? server.close() : Future.succeededFuture();
+        serverClose.onComplete(ar -> ctx.completeNow());
     }
 
     /** Resource with a single {@code @PathParam UUID} that must convert on dispatch. */
@@ -128,10 +143,10 @@ public class ParamConversionMapperOverrideTest {
                 })
                 .onComplete(ctx.succeeding(s -> {
                     server = s;
-                    client = vertx.createHttpClient();
-                    client.request(HttpMethod.GET, s.actualPort(), "127.0.0.1", "/conv/not-a-uuid")
-                            .compose(req -> req.send())
-                            .compose(resp -> resp.body().map(b -> resp.statusCode() + "|" + b.toString()))
+                    client = WebClient.create(vertx);
+                    client.get(s.actualPort(), "127.0.0.1", "/conv/not-a-uuid")
+                            .send()
+                            .map(resp -> resp.statusCode() + "|" + String.valueOf(resp.bodyAsString()))
                             .onComplete(ctx.succeeding(statusAndBody -> {
                                 ctx.verify(() -> {
                                     assertEquals(

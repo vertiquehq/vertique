@@ -10,10 +10,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import io.swagger.v3.oas.annotations.Operation;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
-import io.vertx.core.http.HttpClient;
-import io.vertx.core.http.HttpMethod;
+import io.vertx.core.buffer.Buffer;
 import io.vertx.core.http.HttpServer;
 import io.vertx.ext.web.Router;
+import io.vertx.ext.web.client.WebClient;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
 import jakarta.ws.rs.Consumes;
@@ -65,21 +65,44 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * the mapped status agree and the fallback must leave the representation alone. The fallback clears
  * {@code detail} only when it <em>overrides</em> the mapped status — a message authored for the status
  * that survives is a deliberate diagnostic, not a foreign one.
+ *
+ * <p>Requests are issued through a {@link WebClient} rather than a raw {@code HttpClient} deliberately:
+ * a raw {@code HttpClientResponse} discards body buffers that arrive before a body handler is attached,
+ * so under load {@code body()} can succeed with zero bytes while the status code is correct (issue
+ * #167). Every 415 case here asserts on the {@code problem+json} body the error pipeline produced — a
+ * silently emptied body would fail them for a reason unrelated to {@code @Consumes} enforcement. A
+ * {@link WebClient} aggregates the body into its {@code HttpResponse} before completing the send.
+ *
+ * <p>Media types stay exactly what each case intends: every request body goes out via
+ * {@code sendBuffer}, which — unlike {@code sendJson}/{@code sendForm} — sets no {@code Content-Type} of
+ * its own, so the deliberately Content-Type-less case below still reaches the server with no
+ * {@code Content-Type} header at all.
  */
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
 public class ConsumesEnforcementIT {
 
     private HttpServer server;
-    private HttpClient client;
+    private WebClient client;
 
     // --- Teardown ---
 
+    /**
+     * Closes the {@link WebClient} and then the server started by the test that just ran.
+     *
+     * <p>{@link WebClient#close()} is {@code void}, unlike {@code HttpClient.close()}: it returns once
+     * the underlying client has been asked to close, so there is no future to join here and the server
+     * close alone carries the completion.
+     *
+     * @param ctx the test context used to signal teardown completion
+     */
     @AfterEach
     void tearDown(VertxTestContext ctx) {
-        Future<?> serverClose = server != null ? server.close() : Future.succeededFuture();
-        Future<?> clientClose = client != null ? client.close() : Future.succeededFuture();
-        Future.join(serverClose, clientClose).onComplete(ar -> ctx.completeNow());
+        if (client != null) {
+            client.close();
+        }
+        Future<Void> serverClose = server != null ? server.close() : Future.succeededFuture();
+        serverClose.onComplete(ar -> ctx.completeNow());
     }
 
     // --- Resource fixtures ---
@@ -131,14 +154,12 @@ public class ConsumesEnforcementIT {
     @DisplayName("PostWithMismatchedContentTypeReturns415 — @Consumes('application/json'), request 'text/xml' → 415")
     void postWithMismatchedContentTypeReturns415(Vertx vertx, VertxTestContext ctx) {
         deploy(vertx, ctx, Set.of(new JsonOnlyResource()), (port, c) -> {
-            c.request(HttpMethod.POST, port, "127.0.0.1", "/echo")
-                    .compose(req -> req.putHeader("Content-Type", "text/xml")
-                            .putHeader("Content-Length", "5")
-                            .send("hello"))
-                    .compose(resp -> resp.body().map(body -> new Object[] {resp, body.toString()}))
-                    .onComplete(ctx.succeeding(pair -> {
-                        io.vertx.core.http.HttpClientResponse resp = (io.vertx.core.http.HttpClientResponse) pair[0];
-                        String body = (String) pair[1];
+            c.post(port, "127.0.0.1", "/echo")
+                    .putHeader("Content-Type", "text/xml")
+                    .putHeader("Content-Length", "5")
+                    .sendBuffer(Buffer.buffer("hello"))
+                    .onComplete(ctx.succeeding(resp -> {
+                        String body = String.valueOf(resp.bodyAsString());
                         ctx.verify(() -> {
                             assertEquals(415, resp.statusCode(), "mismatched Content-Type must be rejected with 415");
                             // The 415 must be produced by the error pipeline, not a bespoke direct-write path.
@@ -163,11 +184,11 @@ public class ConsumesEnforcementIT {
     @DisplayName("PostWithMatchingContentTypePasses — @Consumes('application/json'), request 'application/json' → 200")
     void postWithMatchingContentTypePasses(Vertx vertx, VertxTestContext ctx) {
         deploy(vertx, ctx, Set.of(new JsonOnlyResource()), (port, c) -> {
-            c.request(HttpMethod.POST, port, "127.0.0.1", "/echo")
-                    .compose(req -> req.putHeader("Content-Type", "application/json")
-                            .putHeader("Content-Length", "2")
-                            .send("{}"))
-                    .compose(resp -> resp.body().map(b -> resp.statusCode() + "|" + b.toString()))
+            c.post(port, "127.0.0.1", "/echo")
+                    .putHeader("Content-Type", "application/json")
+                    .putHeader("Content-Length", "2")
+                    .sendBuffer(Buffer.buffer("{}"))
+                    .map(resp -> resp.statusCode() + "|" + String.valueOf(resp.bodyAsString()))
                     .onComplete(ctx.succeeding(result -> {
                         ctx.verify(() -> assertEquals("200|ok", result, "matching Content-Type must pass through"));
                         ctx.completeNow();
@@ -185,11 +206,11 @@ public class ConsumesEnforcementIT {
         // error on the body content (the body has no param binding, but the body is eagerly parsed).
         // The purpose of this test is solely to assert no per-route 415 is added for no-@Consumes ops.
         deploy(vertx, ctx, Set.of(new NoConsumesResource()), (port, c) -> {
-            c.request(HttpMethod.POST, port, "127.0.0.1", "/open")
-                    .compose(req -> req.putHeader("Content-Type", "application/cbor")
-                            .putHeader("Content-Length", "2")
-                            .send("{}"))
-                    .compose(resp -> resp.body().map(b -> resp.statusCode() + "|" + b.toString()))
+            c.post(port, "127.0.0.1", "/open")
+                    .putHeader("Content-Type", "application/cbor")
+                    .putHeader("Content-Length", "2")
+                    .sendBuffer(Buffer.buffer("{}"))
+                    .map(resp -> resp.statusCode() + "|" + String.valueOf(resp.bodyAsString()))
                     .onComplete(ctx.succeeding(result -> {
                         ctx.verify(() ->
                                 assertEquals("200|ok", result, "no-consumes op must not 415 via per-route check"));
@@ -205,14 +226,13 @@ public class ConsumesEnforcementIT {
             "RequestWithBodyAndNoContentTypeAgainstConsumesOperation — @Consumes present, no Content-Type header → 415")
     void requestWithBodyAndNoContentTypeAgainstConsumesOperation(Vertx vertx, VertxTestContext ctx) {
         deploy(vertx, ctx, Set.of(new JsonOnlyResource()), (port, c) -> {
-            c.request(HttpMethod.POST, port, "127.0.0.1", "/echo")
-                    .compose(req -> req.putHeader("Content-Length", "5")
-                            // No Content-Type header set
-                            .send("hello"))
-                    .compose(resp -> resp.body().map(body -> new Object[] {resp, body.toString()}))
-                    .onComplete(ctx.succeeding(pair -> {
-                        io.vertx.core.http.HttpClientResponse resp = (io.vertx.core.http.HttpClientResponse) pair[0];
-                        String body = (String) pair[1];
+            c.post(port, "127.0.0.1", "/echo")
+                    .putHeader("Content-Length", "5")
+                    // No Content-Type header set — sendBuffer adds none of its own (unlike sendJson),
+                    // so the request still reaches the server with no Content-Type at all.
+                    .sendBuffer(Buffer.buffer("hello"))
+                    .onComplete(ctx.succeeding(resp -> {
+                        String body = String.valueOf(resp.bodyAsString());
                         ctx.verify(() -> {
                             assertEquals(
                                     415,
@@ -244,11 +264,11 @@ public class ConsumesEnforcementIT {
         // Content-Length: 0 to have no body, so the middleware also skips validation. The test
         // proves no additional per-route 415 is added for the no-consumes operation.
         deploy(vertx, ctx, Set.of(new NoConsumesResource()), (port, c) -> {
-            c.request(HttpMethod.POST, port, "127.0.0.1", "/open")
-                    .compose(req -> req.putHeader("Content-Length", "0")
-                            // No Content-Type header; empty body → no middleware 415 either
-                            .send())
-                    .compose(resp -> resp.body().map(b -> resp.statusCode() + "|" + b.toString()))
+            c.post(port, "127.0.0.1", "/open")
+                    .putHeader("Content-Length", "0")
+                    // No Content-Type header; empty body → no middleware 415 either
+                    .send()
+                    .map(resp -> resp.statusCode() + "|" + String.valueOf(resp.bodyAsString()))
                     .onComplete(ctx.succeeding(result -> {
                         ctx.verify(() ->
                                 assertEquals("200|ok", result, "no-consumes op must not 415 via per-route check"));
@@ -266,11 +286,11 @@ public class ConsumesEnforcementIT {
         // to 415, so the status is not overridden — the framework authored both the status and the
         // message, and the diagnostic it deliberately wrote must survive to the client.
         deploy(vertx, ctx, Set.of(new JsonOnlyResource()), (port, c) -> {
-            c.request(HttpMethod.POST, port, "127.0.0.1", "/echo")
-                    .compose(req -> req.putHeader("Content-Type", "text/xml")
-                            .putHeader("Content-Length", "5")
-                            .send("hello"))
-                    .compose(resp -> resp.body().map(body -> new Object[] {resp.statusCode(), body.toString()}))
+            c.post(port, "127.0.0.1", "/echo")
+                    .putHeader("Content-Type", "text/xml")
+                    .putHeader("Content-Length", "5")
+                    .sendBuffer(Buffer.buffer("hello"))
+                    .map(resp -> new Object[] {resp.statusCode(), String.valueOf(resp.bodyAsString())})
                     .onComplete(ctx.succeeding(pair -> {
                         String body = (String) pair[1];
                         ctx.verify(() -> {
@@ -299,11 +319,11 @@ public class ConsumesEnforcementIT {
                 Set.of(new NoConsumesResource()),
                 Set.of(new dev.vertique.rest.core.middleware.ContentTypeValidationMiddleware()),
                 (port, c) -> {
-                    c.request(HttpMethod.POST, port, "127.0.0.1", "/open")
-                            .compose(req -> req.putHeader("Content-Type", "image/png")
-                                    .putHeader("Content-Length", "5")
-                                    .send("hello"))
-                            .compose(resp -> resp.body().map(body -> new Object[] {resp.statusCode(), body.toString()}))
+                    c.post(port, "127.0.0.1", "/open")
+                            .putHeader("Content-Type", "image/png")
+                            .putHeader("Content-Length", "5")
+                            .sendBuffer(Buffer.buffer("hello"))
+                            .map(resp -> new Object[] {resp.statusCode(), String.valueOf(resp.bodyAsString())})
                             .onComplete(ctx.succeeding(pair -> {
                                 String body = (String) pair[1];
                                 ctx.verify(() -> {
@@ -326,7 +346,7 @@ public class ConsumesEnforcementIT {
     /**
      * Deploys the given resources under the default {@code none} validation strategy, starts an
      * HTTP server, and invokes {@code afterListen} with the bound port and the shared
-     * {@link HttpClient}.
+     * {@link WebClient}.
      *
      * @param vertx       the Vert.x instance
      * @param ctx         the test context
@@ -337,14 +357,14 @@ public class ConsumesEnforcementIT {
             Vertx vertx,
             VertxTestContext ctx,
             Set<Object> resources,
-            java.util.function.BiConsumer<Integer, HttpClient> afterListen) {
+            java.util.function.BiConsumer<Integer, WebClient> afterListen) {
         deploy(vertx, ctx, resources, Set.of(), afterListen);
     }
 
     /**
      * Deploys the given resources and router-level middlewares under the default {@code none}
      * validation strategy, starts an HTTP server, and invokes {@code afterListen} with the bound port
-     * and the shared {@link HttpClient}.
+     * and the shared {@link WebClient}.
      *
      * @param vertx       the Vert.x instance
      * @param ctx         the test context
@@ -357,7 +377,7 @@ public class ConsumesEnforcementIT {
             VertxTestContext ctx,
             Set<Object> resources,
             Set<dev.vertique.rest.core.middleware.Middleware> middlewares,
-            java.util.function.BiConsumer<Integer, HttpClient> afterListen) {
+            java.util.function.BiConsumer<Integer, WebClient> afterListen) {
         JaxRsRouterMount.Factory factory =
                 TestFactories.builder().middlewares(middlewares).build();
         JaxRsRouterMount mount = factory.create("/*", "openapi.json", resources);
@@ -369,7 +389,7 @@ public class ConsumesEnforcementIT {
                 })
                 .onComplete(ctx.succeeding(s -> {
                     server = s;
-                    client = vertx.createHttpClient();
+                    client = WebClient.create(vertx);
                     afterListen.accept(s.actualPort(), client);
                 }));
     }

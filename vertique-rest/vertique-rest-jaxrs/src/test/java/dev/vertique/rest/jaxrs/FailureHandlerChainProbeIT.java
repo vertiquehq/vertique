@@ -7,11 +7,11 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
-import io.vertx.core.http.HttpClient;
 import io.vertx.core.http.HttpMethod;
 import io.vertx.core.http.HttpServer;
 import io.vertx.ext.web.Route;
 import io.vertx.ext.web.Router;
+import io.vertx.ext.web.client.WebClient;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
 import java.util.List;
@@ -28,20 +28,40 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * {@code ctx.next()} CHAINS to the router-level catch-all failure handler in Vert.x 5.1.2 — the
  * pattern the production fix relies on (per-route handler stashes the route's decision, then defers
  * to the existing catch-all {@code handleFailure} to serialize the error body).
+ *
+ * <p>The client is a {@link WebClient} rather than a raw {@code HttpClient} deliberately: a raw
+ * {@code HttpClientResponse} discards body buffers that arrive before a body handler is attached, so
+ * under load a body read can succeed with zero bytes while the status code is correct (issue #167).
+ * This probe asserts on the server-side {@code order} list rather than on the body, so the raw idiom is
+ * latent rather than actively broken here — but a {@link WebClient} aggregates the response before
+ * completing the send, which removes the trap for whoever next adds a body assertion. The response is
+ * consequently projected to its status code alone: the previous body read existed only to complete the
+ * exchange, and the aggregation makes it redundant.
  */
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
 public class FailureHandlerChainProbeIT {
 
     private HttpServer server;
-    private HttpClient client;
+    private WebClient client;
     private final List<String> order = new CopyOnWriteArrayList<>();
 
+    /**
+     * Closes the {@link WebClient} and then the server started by the test that just ran.
+     *
+     * <p>{@link WebClient#close()} is {@code void}, unlike {@code HttpClient.close()}: it returns once
+     * the underlying client has been asked to close, so there is no future to join here and the server
+     * close alone carries the completion.
+     *
+     * @param ctx the test context used to signal teardown completion
+     */
     @AfterEach
     void tearDown(VertxTestContext ctx) {
-        Future<?> serverClose = server != null ? server.close() : Future.succeededFuture();
-        Future<?> clientClose = client != null ? client.close() : Future.succeededFuture();
-        Future.join(serverClose, clientClose).onComplete(ar -> ctx.completeNow());
+        if (client != null) {
+            client.close();
+        }
+        Future<Void> serverClose = server != null ? server.close() : Future.succeededFuture();
+        serverClose.onComplete(ar -> ctx.completeNow());
     }
 
     @Test
@@ -66,12 +86,10 @@ public class FailureHandlerChainProbeIT {
                 .listen(0, "127.0.0.1")
                 .compose(s -> {
                     server = s;
-                    client = vertx.createHttpClient();
-                    return client.request(HttpMethod.GET, s.actualPort(), "127.0.0.1", "/op")
-                            .compose(req -> req.send())
-                            .compose(resp -> resp.body().map(b -> b.toString()));
+                    client = WebClient.create(vertx);
+                    return client.get(s.actualPort(), "127.0.0.1", "/op").send().map(resp -> resp.statusCode());
                 })
-                .onComplete(ctx.succeeding(body -> {
+                .onComplete(ctx.succeeding(status -> {
                     ctx.verify(() -> {
                         System.out.println("[CHAIN] order=" + order);
                         assertEquals(
