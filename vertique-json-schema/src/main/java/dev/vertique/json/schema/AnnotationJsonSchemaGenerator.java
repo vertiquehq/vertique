@@ -89,7 +89,19 @@ public final class AnnotationJsonSchemaGenerator {
      */
     private final Object lock = new Object();
 
-    private AnnotationJsonSchemaGenerator(SchemaGenerator generator) {
+    /**
+     * Wraps an already-configured Victools generator.
+     *
+     * <p>Package-private on purpose: it is the seam a same-package test uses to inject an
+     * instrumented {@link SchemaGenerator} subclass — for instance one that blocks inside {@code
+     * generateSchema} — so the per-instance serialization contract can be proven without exposing a
+     * Victools type on the public surface. Application code constructs generators exclusively
+     * through {@link #withVictoolsDefaults()}, {@link #forInputProfile(JsonMapperProfile)}, and
+     * {@link #forOutputProfile(JsonMapperProfile)}, all of which delegate here.
+     *
+     * @param generator the configured Victools generator this instance owns for its lifetime
+     */
+    AnnotationJsonSchemaGenerator(SchemaGenerator generator) {
         this.generator = generator;
     }
 
