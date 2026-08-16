@@ -17,11 +17,11 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
-import io.vertx.core.http.HttpClient;
-import io.vertx.core.http.HttpMethod;
 import io.vertx.core.http.HttpServer;
 import io.vertx.core.json.JsonArray;
+import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.FileUpload;
+import io.vertx.ext.web.client.WebClient;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
 import jakarta.ws.rs.Consumes;
@@ -45,7 +45,17 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
 
-/** End-to-end proof of verifier rejection mapping and the empty-verifier baseline. */
+/**
+ * End-to-end proof of verifier rejection mapping and the empty-verifier baseline.
+ *
+ * <p>Requests are issued through a {@link WebClient} rather than a raw {@code HttpClient}
+ * deliberately: a raw {@code HttpClientResponse} discards body buffers that arrive before a body
+ * handler is attached, so under load {@code body()} can succeed with zero bytes while the status code
+ * is correct (issue #167). Both tests here decode the response body as the problem-detail JSON, so a
+ * silently emptied body would surface as a decode failure blamed on the verifier pipeline. A
+ * {@link WebClient} aggregates the body into its {@code HttpResponse} before completing the send, so
+ * the race is closed by construction rather than by every author remembering an idiom.
+ */
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
 public class FileVerifierRejectionIT {
@@ -53,14 +63,20 @@ public class FileVerifierRejectionIT {
     private static final Map<String, Object> REJECTION_ARGS = Map.of("policy", "strict", "rule", "test-signature");
 
     private static Vertx vertx;
-    private static HttpClient client;
+    private static WebClient client;
 
     private HttpServer server;
 
+    /**
+     * Creates the class-scoped {@link WebClient}. It is bound to a static field so
+     * {@link #tearDownClient} can close it; an unbound client can never be closed at all.
+     *
+     * @param injectedVertx the class-scoped Vert.x instance injected by vertx-junit5
+     */
     @BeforeAll
     static void setUpClient(Vertx injectedVertx) {
         vertx = injectedVertx;
-        client = vertx.createHttpClient();
+        client = WebClient.create(vertx);
     }
 
     @AfterEach
@@ -69,10 +85,20 @@ public class FileVerifierRejectionIT {
         close.onComplete(ctx.succeeding(v -> ctx.completeNow()));
     }
 
+    /**
+     * Closes the shared {@link WebClient} before the extension-owned {@link Vertx} instance is closed.
+     *
+     * <p>{@link WebClient#close()} is {@code void}, unlike {@code HttpClient.close()}: it returns once
+     * the underlying client has been asked to close, so there is no future to await here.
+     *
+     * @param ctx the test context used for async teardown assertion
+     */
     @AfterAll
     static void tearDownClient(VertxTestContext ctx) {
-        Future<?> close = client != null ? client.close() : Future.succeededFuture();
-        close.onComplete(ctx.succeeding(v -> ctx.completeNow()));
+        if (client != null) {
+            client.close();
+        }
+        ctx.completeNow();
     }
 
     @Test
@@ -90,7 +116,7 @@ public class FileVerifierRejectionIT {
                     ctx.verify(() -> {
                         assertEquals(400, result.statusCode());
                         assertTrue(result.contentType().contains("application/problem+json"));
-                        JsonArray errors = result.body().toJsonObject().getJsonArray("errors");
+                        JsonArray errors = new JsonObject(result.body()).getJsonArray("errors");
                         assertEquals(1, errors.size());
                         assertEquals(
                                 new ValidationErrorDetail(
@@ -121,7 +147,7 @@ public class FileVerifierRejectionIT {
                 .onComplete(ctx.succeeding(result -> {
                     ctx.verify(() -> {
                         assertEquals(400, result.statusCode());
-                        JsonArray errors = result.body().toJsonObject().getJsonArray("errors");
+                        JsonArray errors = new JsonObject(result.body()).getJsonArray("errors");
                         assertEquals(1, errors.size(), "an empty verifier set must add no errors beyond baseline");
                         assertEquals(
                                 new ValidationErrorDetail(
@@ -143,15 +169,24 @@ public class FileVerifierRejectionIT {
         return RestTestMounts.startServer(vertx, MountFixtures.mount(vertx, contributions.build()), Set.of(resource));
     }
 
+    /**
+     * POSTs the pre-encoded multipart body to {@code /files}.
+     *
+     * <p>The {@link Buffer} is sent verbatim through {@code sendBuffer} rather than re-expressed as a
+     * {@code MultipartForm}: the exact bytes assembled here are what the upload path is exercised
+     * against.
+     *
+     * @param body the pre-encoded multipart body
+     * @return a future of the response status, Content-Type, and body text
+     */
     private Future<HttpResult> postMultipart(Buffer body) {
-        return client.request(HttpMethod.POST, server.actualPort(), "127.0.0.1", "/files")
-                .compose(request -> request.putHeader("Content-Type", MultipartBodies.contentType())
-                        .send(body))
-                .compose(response -> {
-                    int statusCode = response.statusCode();
-                    String contentType = response.getHeader("Content-Type");
-                    return response.body().map(responseBody -> new HttpResult(statusCode, contentType, responseBody));
-                });
+        return client.post(server.actualPort(), "127.0.0.1", "/files")
+                .putHeader("Content-Type", MultipartBodies.contentType())
+                .sendBuffer(body)
+                .map(response -> new HttpResult(
+                        response.statusCode(),
+                        response.getHeader("Content-Type"),
+                        String.valueOf(response.bodyAsString())));
     }
 
     private static Buffer twoSameNamePngFiles() {
@@ -174,7 +209,20 @@ public class FileVerifierRejectionIT {
         body.appendBytes(value.getBytes(StandardCharsets.US_ASCII));
     }
 
-    private record HttpResult(int statusCode, String contentType, Buffer body) {}
+    /**
+     * One observed HTTP response.
+     *
+     * <p>The body is captured as text rather than as a {@link Buffer} because a {@link WebClient}
+     * reports an empty body as {@code null} where the raw client reported a zero-length buffer. It is
+     * wrapped through {@code String.valueOf} so an unexpected empty body stays a legible failure
+     * instead of an NPE. No response asserted on here is legitimately empty — every one carries either
+     * a problem detail or the resource's own text.
+     *
+     * @param statusCode  the response status code
+     * @param contentType the raw {@code Content-Type} header, or {@code null} when absent
+     * @param body        the response body as text, or {@code "null"} when the response carried none
+     */
+    private record HttpResult(int statusCode, String contentType, String body) {}
 
     /** Resource with baseline type constraints that accepts every PNG-declared physical upload. */
     @Path("/files")

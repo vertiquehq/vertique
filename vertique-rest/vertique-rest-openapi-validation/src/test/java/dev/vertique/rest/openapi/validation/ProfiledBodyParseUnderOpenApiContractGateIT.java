@@ -22,11 +22,10 @@ import io.vertx.core.Future;
 import io.vertx.core.Handler;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
-import io.vertx.core.http.HttpClient;
-import io.vertx.core.http.HttpMethod;
 import io.vertx.core.http.HttpServer;
 import io.vertx.ext.web.Router;
 import io.vertx.ext.web.RoutingContext;
+import io.vertx.ext.web.client.WebClient;
 import io.vertx.ext.web.handler.BodyHandler;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
@@ -69,6 +68,15 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * (body-read-once). The {@link BoundRequest#KEY_RESOLVED_BODY_MAPPER} stash handler is installed ahead
  * of the gate, mirroring {@code JaxRsRouteRegistrar}, which installs that stash unconditionally for
  * every validation strategy.
+ *
+ * <p>Requests are issued through a {@link WebClient} rather than a raw {@code HttpClient}
+ * deliberately: a raw {@code HttpClientResponse} discards body buffers that arrive before a body
+ * handler is attached, so under load {@code body()} can succeed with zero bytes while the status code
+ * is correct (issue #167). The rejection test asserts on the rendered rejection message and on the
+ * absence of the request values from it, so a silently emptied body would let the value-free
+ * assertion pass for the wrong reason while the message assertion failed. A {@link WebClient}
+ * aggregates the body into its {@code HttpResponse} before completing the send, so the race is closed
+ * by construction rather than by every author remembering an idiom.
  */
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
@@ -81,7 +89,7 @@ public class ProfiledBodyParseUnderOpenApiContractGateIT {
 
     private static Vertx vertx;
     private static HttpServer server;
-    private static HttpClient client;
+    private static WebClient client;
     private static int port;
 
     /**
@@ -103,7 +111,7 @@ public class ProfiledBodyParseUnderOpenApiContractGateIT {
     @BeforeAll
     static void setUp(Vertx v, VertxTestContext ctx) {
         vertx = v;
-        client = vertx.createHttpClient();
+        client = WebClient.create(vertx);
 
         OpenApiContractValidationStrategy strategy = new OpenApiContractValidationStrategy(
                 vertx, JaxRsConfig.builder().openapiPath(CONTRACT_PATH).build());
@@ -148,12 +156,23 @@ public class ProfiledBodyParseUnderOpenApiContractGateIT {
                 .onFailure(ctx::failNow);
     }
 
+    /**
+     * Closes the shared {@link WebClient} and then the shared server, before the extension-owned
+     * {@link Vertx} instance is closed.
+     *
+     * <p>{@link WebClient#close()} is {@code void}, unlike {@code HttpClient.close()}: it returns once
+     * the underlying client has been asked to close, so there is nothing to chain the server close off
+     * and the server close alone carries the completion.
+     *
+     * @param ctx the test context used for async teardown assertion
+     */
     @AfterAll
     static void tearDown(VertxTestContext ctx) {
+        if (client != null) {
+            client.close();
+        }
         Future<Void> closeServer = server != null ? server.close() : Future.succeededFuture();
-        closeServer
-                .eventually(() -> client != null ? client.close() : Future.succeededFuture())
-                .onComplete(ar -> ctx.completeNow());
+        closeServer.onComplete(ar -> ctx.completeNow());
     }
 
     @Test
@@ -163,12 +182,10 @@ public class ProfiledBodyParseUnderOpenApiContractGateIT {
         // minLength + additionalProperties:false), so without the profile first parse the openapi-contract
         // RequestValidator accepts it and dispatch returns 201. With the fix, the strict profile mapper's
         // FIRST PARSE rejects the duplicate key -> ValidationException -> 400, before OpenAPI validation.
-        client.request(HttpMethod.POST, port, "127.0.0.1", "/widgets")
-                .compose(req -> {
-                    req.putHeader("content-type", "application/json");
-                    return req.send(Buffer.buffer("{\"name\":\"a\",\"name\":\"b\"}"));
-                })
-                .compose(resp -> resp.body().map(body -> resp.statusCode() + "|" + body.toString()))
+        client.post(port, "127.0.0.1", "/widgets")
+                .putHeader("content-type", "application/json")
+                .sendBuffer(Buffer.buffer("{\"name\":\"a\",\"name\":\"b\"}"))
+                .map(response -> response.statusCode() + "|" + response.bodyAsString())
                 .onComplete(ctx.succeeding(result -> ctx.verify(() -> {
                     String[] parts = result.split("\\|", 2);
                     int status = Integer.parseInt(parts[0]);
@@ -195,12 +212,10 @@ public class ProfiledBodyParseUnderOpenApiContractGateIT {
         // A single-key conforming body passes the profile first parse AND the OpenAPI schema, proving the
         // profiled openapi-contract path does not reject valid bodies — the strict parse only adds the
         // duplicate-key/trailing-token rejection, it does not break the happy path.
-        client.request(HttpMethod.POST, port, "127.0.0.1", "/widgets")
-                .compose(req -> {
-                    req.putHeader("content-type", "application/json");
-                    return req.send(Buffer.buffer("{\"name\":\"gizmo\"}"));
-                })
-                .map(io.vertx.core.http.HttpClientResponse::statusCode)
+        client.post(port, "127.0.0.1", "/widgets")
+                .putHeader("content-type", "application/json")
+                .sendBuffer(Buffer.buffer("{\"name\":\"gizmo\"}"))
+                .map(response -> response.statusCode())
                 .onComplete(ctx.succeeding(status -> ctx.verify(() -> {
                     assertTrue(
                             status == 201,

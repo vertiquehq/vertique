@@ -30,13 +30,12 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
-import io.vertx.core.http.HttpClient;
-import io.vertx.core.http.HttpMethod;
 import io.vertx.core.http.HttpServer;
 import io.vertx.core.json.Json;
 import io.vertx.ext.web.FileUpload;
 import io.vertx.ext.web.Router;
 import io.vertx.ext.web.RoutingContext;
+import io.vertx.ext.web.client.WebClient;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
 import jakarta.ws.rs.Consumes;
@@ -73,6 +72,14 @@ import org.junit.jupiter.api.extension.ExtendWith;
  *
  * <p>Every test gets its own server and its own uploads directory, so a spooled-file assertion can
  * only ever see files this test's own request produced.
+ *
+ * <p>Requests are issued through a {@link WebClient} rather than a raw {@code HttpClient}
+ * deliberately: a raw {@code HttpClientResponse} discards body buffers that arrive before a body
+ * handler is attached, so under load {@code body()} can succeed with zero bytes while the status code
+ * is correct (issue #167). The two acceptance tests pair the status with the resource's echoed part
+ * count, so a silently emptied body would report a binding defect that did not happen. A
+ * {@link WebClient} aggregates the body into its {@code HttpResponse} before completing the send, so
+ * the race is closed by construction rather than by every author remembering an idiom.
  */
 @ExtendWith(VertxExtension.class)
 // 30s rather than testing.md's 20s default, deliberately: each of the seven tests below starts and
@@ -95,23 +102,39 @@ public class MultipartPartCountLimitIT {
     private static final long ASYNC_TIMEOUT_SECONDS = 10;
 
     private static Vertx vertx;
-    private static HttpClient client;
+    private static WebClient client;
 
     private HttpServer server;
     private java.nio.file.Path uploadsDirectory;
     private PartCountCapture capture;
     private FailureCapture failureCapture;
 
+    /**
+     * Creates the class-scoped {@link WebClient}. It is bound to a static field so
+     * {@link #tearDownClient} can close it; an unbound client can never be closed at all.
+     *
+     * @param injectedVertx the class-scoped Vert.x instance injected by vertx-junit5
+     */
     @BeforeAll
     static void setUpClient(Vertx injectedVertx) {
         vertx = injectedVertx;
-        client = vertx.createHttpClient();
+        client = WebClient.create(vertx);
     }
 
+    /**
+     * Closes the shared {@link WebClient} before the extension-owned {@link Vertx} instance is closed.
+     *
+     * <p>{@link WebClient#close()} is {@code void}, unlike {@code HttpClient.close()}: it returns once
+     * the underlying client has been asked to close, so there is no future to await here.
+     *
+     * @param ctx the test context used for async teardown assertion
+     */
     @AfterAll
     static void tearDownClient(VertxTestContext ctx) {
-        Future<?> close = client != null ? client.close() : Future.succeededFuture();
-        close.onComplete(ctx.succeeding(v -> ctx.completeNow()));
+        if (client != null) {
+            client.close();
+        }
+        ctx.completeNow();
     }
 
     @AfterEach
@@ -265,14 +288,22 @@ public class MultipartPartCountLimitIT {
                 .get(ASYNC_TIMEOUT_SECONDS, TimeUnit.SECONDS);
     }
 
+    /**
+     * POSTs the pre-encoded multipart body to {@code /parts} and awaits the full response.
+     *
+     * <p>The {@link Buffer} {@link MultipartBodies} pre-encodes is sent verbatim through
+     * {@code sendBuffer} rather than re-expressed as a {@code MultipartForm}: the exact part count and
+     * part sizes are what the decoder's limits are being probed with.
+     *
+     * @param body the pre-encoded multipart body
+     * @return the response status and body text
+     * @throws Exception when the round trip fails or times out
+     */
     private HttpResult postMultipart(Buffer body) throws Exception {
-        return client.request(HttpMethod.POST, server.actualPort(), "127.0.0.1", "/parts")
-                .compose(request -> request.putHeader("Content-Type", MultipartBodies.contentType())
-                        .send(body))
-                .compose(response -> {
-                    int statusCode = response.statusCode();
-                    return response.body().map(responseBody -> new HttpResult(statusCode, responseBody));
-                })
+        return client.post(server.actualPort(), "127.0.0.1", "/parts")
+                .putHeader("Content-Type", MultipartBodies.contentType())
+                .sendBuffer(body)
+                .map(response -> new HttpResult(response.statusCode(), String.valueOf(response.bodyAsString())))
                 .toCompletionStage()
                 .toCompletableFuture()
                 .get(ASYNC_TIMEOUT_SECONDS, TimeUnit.SECONDS);
@@ -404,7 +435,19 @@ public class MultipartPartCountLimitIT {
 
     private record Observation(int fileUploads, int formAttributes) {}
 
-    private record HttpResult(int statusCode, Buffer body) {}
+    /**
+     * One observed HTTP response.
+     *
+     * <p>The body is captured as text rather than as a {@link Buffer} because a {@link WebClient}
+     * reports an empty body as {@code null} where the raw client reported a zero-length buffer. It is
+     * wrapped through {@code String.valueOf} so an unexpected empty body stays a legible assertion
+     * failure instead of an NPE. The two accepted responses asserted on here carry the resource's
+     * echoed part count; the rejections' bodies are not read.
+     *
+     * @param statusCode the response status code
+     * @param body       the response body as text, or {@code "null"} when the response carried none
+     */
+    private record HttpResult(int statusCode, String body) {}
 
     /**
      * Builds the mount factory these tests post against, wired to the framework's real exception

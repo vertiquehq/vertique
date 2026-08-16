@@ -17,12 +17,11 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
-import io.vertx.core.http.HttpClient;
-import io.vertx.core.http.HttpMethod;
 import io.vertx.core.http.HttpServer;
 import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.FileUpload;
+import io.vertx.ext.web.client.WebClient;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
 import jakarta.ws.rs.Consumes;
@@ -44,7 +43,18 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
 
-/** End-to-end proof that the opt-in magic-bytes module participates in the validation gate. */
+/**
+ * End-to-end proof that the opt-in magic-bytes module participates in the validation gate.
+ *
+ * <p>Requests are issued through a {@link WebClient} rather than a raw {@code HttpClient}
+ * deliberately: a raw {@code HttpClientResponse} discards body buffers that arrive before a body
+ * handler is attached, so under load {@code body()} can succeed with zero bytes while the status code
+ * is correct (issue #167). The rejection test decodes the body as the problem-detail JSON and the
+ * acceptance test compares it to {@code "accepted"}, so a silently emptied body would be reported as a
+ * magic-bytes verdict that never happened. A {@link WebClient} aggregates the body into its
+ * {@code HttpResponse} before completing the send, so the race is closed by construction rather than
+ * by every author remembering an idiom.
+ */
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
 public class MagicBytesVerifierRouteIT {
@@ -54,25 +64,42 @@ public class MagicBytesVerifierRouteIT {
             .decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=");
 
     private static Vertx vertx;
-    private static HttpClient client;
+    private static WebClient client;
     private static Set<FileContentVerifier> verifiers;
 
     private HttpServer server;
     private java.nio.file.Path uploadsDirectory;
 
+    /**
+     * Creates the class-scoped {@link WebClient} and resolves the opt-in magic-bytes verifiers. The
+     * client is bound to a static field so {@link #tearDownClient} can close it; an unbound client can
+     * never be closed at all.
+     *
+     * @param injectedVertx the class-scoped Vert.x instance injected by vertx-junit5
+     */
     @BeforeAll
     static void setUpClient(Vertx injectedVertx) {
         vertx = injectedVertx;
-        client = vertx.createHttpClient();
+        client = WebClient.create(vertx);
         verifiers = DaggerValidationMountComponent_MagicBytesVerifierComponent.factory()
                 .create(vertx)
                 .fileContentVerifiers();
     }
 
+    /**
+     * Closes the shared {@link WebClient} before the extension-owned {@link Vertx} instance is closed.
+     *
+     * <p>{@link WebClient#close()} is {@code void}, unlike {@code HttpClient.close()}: it returns once
+     * the underlying client has been asked to close, so there is no future to await here.
+     *
+     * @param ctx the test context used for async teardown assertion
+     */
     @AfterAll
     static void tearDownClient(VertxTestContext ctx) {
-        Future<?> close = client != null ? client.close() : Future.succeededFuture();
-        close.onComplete(ctx.succeeding(v -> ctx.completeNow()));
+        if (client != null) {
+            client.close();
+        }
+        ctx.completeNow();
     }
 
     @AfterEach
@@ -98,7 +125,7 @@ public class MagicBytesVerifierRouteIT {
                     ctx.verify(() -> {
                         assertEquals(400, result.statusCode());
                         assertTrue(result.contentType().contains("application/problem+json"));
-                        JsonArray errors = result.body().toJsonObject().getJsonArray("errors");
+                        JsonArray errors = new JsonObject(result.body()).getJsonArray("errors");
                         assertEquals(1, errors.size());
                         assertEquals(
                                 new ValidationErrorDetail(
@@ -139,16 +166,25 @@ public class MagicBytesVerifierRouteIT {
         return RestTestMounts.startServer(vertx, buildMount(), Set.of(resource));
     }
 
+    /**
+     * POSTs {@code content} to {@code /files} as a single PNG-declared multipart file part.
+     *
+     * <p>The {@link Buffer} {@link MultipartBodies} pre-encodes is sent verbatim through
+     * {@code sendBuffer} rather than re-expressed as a {@code MultipartForm}: the exact bytes are what
+     * the magic-bytes verifier is being exercised against.
+     *
+     * @param content the raw file-part content
+     * @return a future of the response status, Content-Type, and body text
+     */
     private Future<HttpResult> postMultipart(byte[] content) {
         Buffer body = MultipartBodies.singleFile("upload", "payload.png", "image/png", content);
-        return client.request(HttpMethod.POST, server.actualPort(), "127.0.0.1", "/files")
-                .compose(request -> request.putHeader("Content-Type", MultipartBodies.contentType())
-                        .send(body))
-                .compose(response -> {
-                    int statusCode = response.statusCode();
-                    String contentType = response.getHeader("Content-Type");
-                    return response.body().map(responseBody -> new HttpResult(statusCode, contentType, responseBody));
-                });
+        return client.post(server.actualPort(), "127.0.0.1", "/files")
+                .putHeader("Content-Type", MultipartBodies.contentType())
+                .sendBuffer(body)
+                .map(response -> new HttpResult(
+                        response.statusCode(),
+                        response.getHeader("Content-Type"),
+                        String.valueOf(response.bodyAsString())));
     }
 
     /**
@@ -173,7 +209,20 @@ public class MagicBytesVerifierRouteIT {
                 "target", "file-uploads", "MagicBytesVerifierRouteIT", testName + "-" + UUID.randomUUID());
     }
 
-    private record HttpResult(int statusCode, String contentType, Buffer body) {}
+    /**
+     * One observed HTTP response.
+     *
+     * <p>The body is captured as text rather than as a {@link Buffer} because a {@link WebClient}
+     * reports an empty body as {@code null} where the raw client reported a zero-length buffer. It is
+     * wrapped through {@code String.valueOf} so an unexpected empty body stays a legible failure
+     * instead of an NPE. Neither response asserted on here is legitimately empty — the rejection
+     * carries a problem detail and the acceptance carries {@code "accepted"}.
+     *
+     * @param statusCode  the response status code
+     * @param contentType the raw {@code Content-Type} header, or {@code null} when absent
+     * @param body        the response body as text, or {@code "null"} when the response carried none
+     */
+    private record HttpResult(int statusCode, String contentType, String body) {}
 
     /** Resource accepting only PNG-declared uploads before the magic-bytes check. */
     @Path("/files")
