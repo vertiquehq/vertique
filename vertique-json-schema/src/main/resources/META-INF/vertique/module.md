@@ -99,15 +99,20 @@ type.
 Two annotation combinations fail generation rather than producing a schema that quietly
 misdescribes the wire:
 
-- **`@Schema(implementation = ...)` on a property whose declared type graph carries a profile
+- **An `implementation = ...` redirect on a property whose declared type graph carries a profile
   override.** The Swagger module redirects the property's resolved type before the profile's
   override is consulted, so the override fragment would be dropped without a trace. Generation
   therefore fails with a bounded `JsonSchemaGenerationException` naming the property. Declare the
-  wire shape through the profile override *or* through `implementation`, not both. The detection
-  reads the property's declared type plus, recursively, its type arguments and array component
-  types; a map **key** position is excluded, since a map key is never fragment-bearing. A
-  `@Schema` on either the field or its accessor counts, matching how the Swagger module resolves
-  the annotation.
+  wire shape through the profile override *or* through `implementation`, not both. Every form the
+  Swagger module reads the redirect from is covered: a direct `@Schema(implementation = ...)`,
+  `@ArraySchema(schema = @Schema(implementation = ...))` on a container's element, and
+  `@ArraySchema(arraySchema = @Schema(implementation = ...))`. An annotation on either the field or
+  its accessor counts, matching how the Swagger module resolves it. The detection reads the
+  property's declared type — resolved against its declaring context, so a member inherited from a
+  generic supertype is checked against the binding subtype's actual class — plus, recursively, its
+  type arguments and array element types; a map **key** position is excluded, since a map key is
+  never fragment-bearing. A declared type graph nesting deeper than 64 levels also fails, because
+  past that bound the absence of an override has not been proven.
 - **A conjunction of disjoint explicit `type` keywords.** After generation, every conjunctive
   location — an object node, its direct `allOf` branches, and its locally resolved `$ref`
   targets — must have a non-empty intersection of the explicit `type` sets declared there. An

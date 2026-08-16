@@ -51,6 +51,87 @@ class GeneratorCompositionTest {
     }
 
     @Test
+    @DisplayName("@ArraySchema(schema = @Schema(implementation)) over an overridden element fails generation")
+    void arraySchemaItemImplementationOnOverriddenElementFailsGeneration() {
+        // Given: the strict profile, whose BigDecimal override applies in both directions.
+        AnnotationJsonSchemaGenerator generator =
+                AnnotationJsonSchemaGenerator.forInputProfile(HardeningFixtures.strictProfile());
+
+        // When/Then: the element redirect — resolved by the Swagger module only in a fake container
+        // item scope — is caught, and the message names the overridden class.
+        String message = assertFailsNamingProperty(
+                generator, HardeningFixtures.ArraySchemaItemImplementationDto.class, "amounts");
+        assertTrue(
+                message.contains("java.math.BigDecimal"),
+                "the message must name the overridden class; was: " + message);
+    }
+
+    @Test
+    @DisplayName("@ArraySchema(arraySchema = @Schema(implementation)) over an overridden type fails generation")
+    void arraySchemaContainerImplementationOnOverriddenTypeFailsGeneration() {
+        // Given: the strict profile and a non-container property whose only redirect is declared
+        // through the @ArraySchema container fallback the Swagger module reads when no direct
+        // @Schema is present.
+        AnnotationJsonSchemaGenerator generator =
+                AnnotationJsonSchemaGenerator.forInputProfile(HardeningFixtures.strictProfile());
+
+        // When/Then: the fallback redirect is caught exactly like a direct one.
+        String message = assertFailsNamingProperty(
+                generator, HardeningFixtures.ArraySchemaContainerImplementationDto.class, "amount");
+        assertTrue(
+                message.contains("java.math.BigDecimal"),
+                "the message must name the overridden class; was: " + message);
+    }
+
+    @Test
+    @DisplayName("@ArraySchema over a non-overridden element type redirects normally")
+    void arraySchemaWithoutOverriddenDeclaredTypeRedirectsNormally() {
+        // Given: the strict profile and an element redirect whose element type carries no override.
+        AnnotationJsonSchemaGenerator generator =
+                AnnotationJsonSchemaGenerator.forInputProfile(HardeningFixtures.strictProfile());
+
+        // When: the document is generated.
+        String canonical = generator.generateCanonical(HardeningFixtures.ArraySchemaWithoutOverrideDto.class);
+
+        // Then: the redirect took effect — the guard must not over-fire on an @ArraySchema alone.
+        assertTrue(
+                canonical.contains("replacementMarker"),
+                "the element redirect must replace the item schema; was: " + canonical);
+    }
+
+    @Test
+    @DisplayName("An inherited generic member bound to an overridden class fails generation")
+    void inheritedGenericMemberWithImplementationRedirectFailsGeneration() {
+        // Given: the strict profile and a redirected property declared as a type variable in a
+        // supertype, which only a declaring-context resolution can bind to BigDecimal.
+        AnnotationJsonSchemaGenerator generator =
+                AnnotationJsonSchemaGenerator.forInputProfile(HardeningFixtures.strictProfile());
+
+        // When/Then: the binding subtype's member resolves to the overridden class and fails.
+        String message =
+                assertFailsNamingProperty(generator, HardeningFixtures.InheritedImplementationDto.class, "amount");
+        assertTrue(
+                message.contains("java.math.BigDecimal"),
+                "the message must name the overridden class; was: " + message);
+    }
+
+    @Test
+    @DisplayName("A declared type graph nested past the supported depth fails closed")
+    void deeplyNestedMemberTypeGraphFailsClosed() {
+        // Given: the strict profile and a redirected property whose declared type graph nests the
+        // overridden class deeper than the guard can walk.
+        AnnotationJsonSchemaGenerator generator =
+                AnnotationJsonSchemaGenerator.forInputProfile(HardeningFixtures.strictProfile());
+
+        // When/Then: the depth bound refuses the member rather than resolving to "no override found".
+        String message =
+                assertFailsNamingProperty(generator, HardeningFixtures.DeeplyNestedImplementationDto.class, "deep");
+        assertTrue(
+                message.contains(String.valueOf(TypeGrammar.MAX_DEPTH)),
+                "the message must name the supported depth; was: " + message);
+    }
+
+    @Test
     @DisplayName("@Schema(implementation) without an overridden declared type redirects normally")
     void schemaImplementationWithoutOverriddenDeclaredTypeRedirectsNormally() {
         // Given: the strict profile and a property whose declared type carries no override.
@@ -231,8 +312,9 @@ class GeneratorCompositionTest {
      * @param generator the generator under test
      * @param type      the body type to generate
      * @param property  the property the message must name
+     * @return the bounded failure message, so a caller can assert further on its content
      */
-    private static void assertFailsNamingProperty(
+    private static String assertFailsNamingProperty(
             AnnotationJsonSchemaGenerator generator, Class<?> type, String property) {
         JsonSchemaGenerationException failure = assertThrows(
                 JsonSchemaGenerationException.class,
@@ -249,5 +331,6 @@ class GeneratorCompositionTest {
                 message.contains(property), "the message must name the property '" + property + "'; was: " + message);
         assertFalse(
                 message.contains(HardeningFixtures.SENTINEL_VALUE), "the guard message must not echo a fixture value");
+        return message;
     }
 }

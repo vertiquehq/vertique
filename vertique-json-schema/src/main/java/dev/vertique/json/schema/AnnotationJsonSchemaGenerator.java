@@ -54,10 +54,13 @@ import java.util.Objects;
  * same single-valued keyword, generation represents their conjunction explicitly rather than
  * relying on registration or keyword-merge order; a detectable structural conflict fails
  * generation with {@link JsonSchemaGenerationException} instead of producing an unsatisfiable
- * contract. A non-default {@code @Schema(implementation = ...)} on a property whose declared type
+ * contract. A non-default {@code implementation = ...} redirect on a property whose declared type
  * graph carries an effective override also fails generation, because the pinned Victools version
  * silently drops the override fragment once {@code implementation} redirects the member's
- * resolved type.
+ * resolved type. Every form the Swagger module reads that redirect from is covered — a direct
+ * {@code @Schema}, {@code @ArraySchema(schema = ...)}, and {@code @ArraySchema(arraySchema = ...)} —
+ * and the declared type is resolved against its declaring context, so a member inherited from a
+ * generic supertype is checked against the class the subtype binds it to.
  *
  * <p>A Jakarta constraint still targets the <em>materialized Java value</em>: a numeric-domain
  * keyword ({@code minimum}, {@code maximum}, {@code exclusiveMinimum}, {@code exclusiveMaximum}) that

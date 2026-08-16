@@ -9,6 +9,7 @@ import dev.vertique.core.json.JsonProfileId;
 import dev.vertique.core.json.JsonSchemaFragment;
 import dev.vertique.core.json.JsonSchemaTypeOverride;
 import dev.vertique.json.DefaultJsonMapperProfileRegistry;
+import io.swagger.v3.oas.annotations.media.ArraySchema;
 import io.swagger.v3.oas.annotations.media.Schema;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
@@ -271,6 +272,147 @@ final class HardeningFixtures {
         /** Overridden class in the excluded key position only. */
         @Schema(implementation = String.class)
         public Map<BigDecimal, String> byAmount;
+    }
+
+    /**
+     * Property whose element redirect is declared through {@code @ArraySchema(schema = ...)}, the
+     * form the Swagger module resolves only in a fake container item scope.
+     */
+    static final class ArraySchemaItemImplementationDto {
+
+        /** Element redirect over an overridden element type. */
+        @ArraySchema(schema = @Schema(implementation = Number.class))
+        public List<BigDecimal> amounts;
+    }
+
+    /**
+     * Property whose redirect is declared through {@code @ArraySchema(arraySchema = ...)} on a
+     * non-container declared type, the form the Swagger module falls back to when no direct
+     * {@code @Schema} is present.
+     */
+    static final class ArraySchemaContainerImplementationDto {
+
+        /** Container-level redirect over an overridden declared type. */
+        @ArraySchema(arraySchema = @Schema(implementation = String.class))
+        public BigDecimal amount;
+    }
+
+    /** Property whose {@code @ArraySchema} element redirect targets an element carrying no override. */
+    static final class ArraySchemaWithoutOverrideDto {
+
+        /** Element redirect over a non-overridden element type; must redirect, not fail. */
+        @ArraySchema(schema = @Schema(implementation = ReplacementPojo.class))
+        public List<String> labels;
+    }
+
+    /**
+     * Declares the redirected property as an unresolved type variable, so plain JDK reflection reads
+     * a {@code TypeVariable} and only a declaring-context resolution recovers the actual class.
+     *
+     * @param <T> the parameter a subtype binds to the overridden class
+     */
+    static class InheritedImplementationBase<T> {
+
+        /** Redirected property whose declared class is known only through the binding subtype. */
+        @Schema(implementation = Number.class)
+        public T amount;
+    }
+
+    /** Binds {@link InheritedImplementationBase}'s parameter to the overridden class. */
+    static final class InheritedImplementationDto extends InheritedImplementationBase<BigDecimal> {}
+
+    /**
+     * Single-parameter holder used to nest a declared type past
+     * {@code TypeGrammar.MAX_DEPTH} without hand-writing one class per level.
+     *
+     * @param <T> the carried type
+     */
+    static final class Nest<T> {
+
+        /** The carried value. */
+        public T value;
+    }
+
+    /**
+     * Property whose declared type graph nests the overridden class deeper than the guard's supported
+     * walk depth, so the bound — not the override — decides the outcome.
+     */
+    static final class DeeplyNestedImplementationDto {
+
+        /** Overridden class at nesting depth 70, past the supported walk depth of 64. */
+        @Schema(implementation = String.class)
+        public Nest<
+                        Nest<
+                                Nest<
+                                        Nest<
+                                                Nest<
+                                                        Nest<
+                                                                Nest<
+                                                                        Nest<
+                                                                                Nest<
+                                                                                        Nest<
+                                                                                                Nest<
+                                                                                                        Nest<
+                                                                                                                Nest<
+                                                                                                                        Nest<
+                                                                                                                                Nest<
+                                                                                                                                        Nest<
+                                                                                                                                                Nest<
+                                                                                                                                                        Nest<
+                                                                                                                                                                Nest<
+                                                                                                                                                                        Nest<
+                                                                                                                                                                                Nest<
+                                                                                                                                                                                        Nest<
+                                                                                                                                                                                                Nest<
+                                                                                                                                                                                                        Nest<
+                                                                                                                                                                                                                Nest<
+                                                                                                                                                                                                                        Nest<
+                                                                                                                                                                                                                                Nest<
+                                                                                                                                                                                                                                        Nest<
+                                                                                                                                                                                                                                                Nest<
+                                                                                                                                                                                                                                                        Nest<
+                                                                                                                                                                                                                                                                Nest<
+                                                                                                                                                                                                                                                                        Nest<
+                                                                                                                                                                                                                                                                                Nest<
+                                                                                                                                                                                                                                                                                        Nest<
+                                                                                                                                                                                                                                                                                                Nest<
+                                                                                                                                                                                                                                                                                                        Nest<
+                                                                                                                                                                                                                                                                                                                Nest<
+                                                                                                                                                                                                                                                                                                                        Nest<
+                                                                                                                                                                                                                                                                                                                                Nest<
+                                                                                                                                                                                                                                                                                                                                        Nest<
+                                                                                                                                                                                                                                                                                                                                                Nest<
+                                                                                                                                                                                                                                                                                                                                                        Nest<
+                                                                                                                                                                                                                                                                                                                                                                Nest<
+                                                                                                                                                                                                                                                                                                                                                                        Nest<
+                                                                                                                                                                                                                                                                                                                                                                                Nest<
+                                                                                                                                                                                                                                                                                                                                                                                        Nest<
+                                                                                                                                                                                                                                                                                                                                                                                                Nest<
+                                                                                                                                                                                                                                                                                                                                                                                                        Nest<
+                                                                                                                                                                                                                                                                                                                                                                                                                Nest<
+                                                                                                                                                                                                                                                                                                                                                                                                                        Nest<
+                                                                                                                                                                                                                                                                                                                                                                                                                                Nest<
+                                                                                                                                                                                                                                                                                                                                                                                                                                        Nest<
+                                                                                                                                                                                                                                                                                                                                                                                                                                                Nest<
+                                                                                                                                                                                                                                                                                                                                                                                                                                                        Nest<
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                Nest<
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                        Nest<
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                Nest<
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        Nest<
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                Nest<
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        Nest<
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                Nest<
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        Nest<
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                Nest<
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        Nest<
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                Nest<
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        Nest<
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                Nest<
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        Nest<
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                Nest<
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        Nest<
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                BigDecimal>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+                deep;
     }
 
     // --- Composition fixtures ---
