@@ -24,13 +24,13 @@ import io.vertx.core.Future;
 import io.vertx.core.MultiMap;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
-import io.vertx.core.http.HttpClient;
-import io.vertx.core.http.HttpMethod;
 import io.vertx.core.http.HttpServer;
 import io.vertx.core.http.HttpVersion;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.Router;
 import io.vertx.ext.web.RoutingContext;
+import io.vertx.ext.web.client.WebClient;
+import io.vertx.ext.web.client.WebClientOptions;
 import io.vertx.ext.web.handler.HttpException;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
@@ -73,12 +73,13 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * through an {@link ErrorInterceptor} before mapping. Asserting the status alone would prove only that
  * <em>some</em> branch answered; asserting the hint proves <em>which</em> branch produced it.
  *
- * <p><strong>Raw {@link HttpClient} exemption — reference implementation of the pre-attach idiom.</strong>
- * {@code testing.md} cites this class as the canonical example of that idiom, so it stays on the raw
- * client deliberately. Its exchanges attach the whole response continuation — body read included — to
- * {@code request.response()} <em>before</em> {@code request.end()} initiates the send, rather than
- * reading the body off a {@code send()} that has already started, so no already-delivered buffer can
- * be dropped.
+ * <p>Requests are issued through a {@link WebClient} rather than a raw {@code HttpClient} deliberately:
+ * a raw {@code HttpClientResponse} discards body buffers that arrive before a body handler is attached,
+ * so under load {@code body()} can succeed with zero bytes while the status code is correct (issue
+ * #167). Several cases here decode the {@code problem+json} body — the sanitized 401 and the
+ * problem-status assertion both read it — so a silently emptied body would fail them for a reason
+ * unrelated to failure-status handling. A {@link WebClient} aggregates the body into its
+ * {@code HttpResponse} before completing the send.
  */
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
@@ -123,7 +124,7 @@ public class VertxFailureStatusPreservationIT {
     private static final Map<String, Optional<Object>> OBSERVED_HINTS = new ConcurrentHashMap<>();
 
     private static HttpServer server;
-    private static HttpClient client;
+    private static WebClient client;
 
     @BeforeAll
     static void setUp(Vertx vertx, VertxTestContext ctx) {
@@ -145,16 +146,28 @@ public class VertxFailureStatusPreservationIT {
                 })
                 .onComplete(ctx.succeeding(listeningServer -> {
                     server = listeningServer;
-                    client = vertx.createHttpClient();
+                    // Redirects off: parity with the raw client; WebClient forwards Authorization across 3xx.
+                    client = WebClient.create(vertx, new WebClientOptions().setFollowRedirects(false));
                     ctx.completeNow();
                 }));
     }
 
+    /**
+     * Closes the {@link WebClient} and then the server.
+     *
+     * <p>{@link WebClient#close()} is {@code void}, unlike {@code HttpClient.close()}: it returns once
+     * the underlying client has been asked to close, so there is nothing to join here and the server
+     * close alone carries the completion.
+     *
+     * @param ctx the test context used to signal teardown completion
+     */
     @AfterAll
     static void tearDown(VertxTestContext ctx) {
-        Future<?> serverClose = server != null ? server.close() : Future.succeededFuture();
-        Future<?> clientClose = client != null ? client.close() : Future.succeededFuture();
-        Future.join(serverClose, clientClose).onComplete(ctx.succeeding(v -> ctx.completeNow()));
+        if (client != null) {
+            client.close();
+        }
+        Future<Void> serverClose = server != null ? server.close() : Future.succeededFuture();
+        serverClose.onComplete(ctx.succeeding(v -> ctx.completeNow()));
     }
 
     // --- The two preservation cases ---
@@ -276,25 +289,23 @@ public class VertxFailureStatusPreservationIT {
     // --- Harness ---
 
     private static HttpResult get(String failMode) throws Exception {
-        return client.request(HttpMethod.GET, server.actualPort(), "127.0.0.1", "/probe")
-                .compose(request -> {
-                    // The response continuation — INCLUDING the body read — is attached before end()
-                    // initiates the send. Vert.x discards body buffers delivered before a handler is
-                    // attached, so a read attached after the send loses the entire body whenever this
-                    // (worker) thread is descheduled in between, reporting success with zero bytes
-                    // under a correct status. See HttpClientBodyReadRaceIT.
-                    Future<HttpResult> result = request.response().compose(response -> response.body()
-                            .map(body -> new HttpResult(
-                                    response.statusCode(),
-                                    // Copied: the response's headers are not guaranteed to stay
-                                    // readable once the exchange is recycled.
-                                    MultiMap.caseInsensitiveMultiMap().addAll(response.headers()),
-                                    response.version(),
-                                    body)));
-                    request.putHeader(FAIL_MODE_HEADER, failMode);
-                    request.end();
-                    return result;
-                })
+        // The WebClient response future resolves only once the whole body has been aggregated. A raw
+        // client discards body buffers delivered before a handler is attached, so a read attached after
+        // the send loses the entire body whenever this (worker) thread is descheduled in between,
+        // reporting success with zero bytes under a correct status. See HttpClientBodyReadRaceIT.
+        return client.get(server.actualPort(), "127.0.0.1", "/probe")
+                .putHeader(FAIL_MODE_HEADER, failMode)
+                .send()
+                .map(response -> new HttpResult(
+                        response.statusCode(),
+                        // Copied: the response's headers are not guaranteed to stay
+                        // readable once the exchange is recycled.
+                        MultiMap.caseInsensitiveMultiMap().addAll(response.headers()),
+                        response.version(),
+                        // A body-less response arrives as a null buffer, where the raw client
+                        // reported a zero-length one; normalised so problem()/bodyText()/diagnostic()
+                        // read exactly as they did before.
+                        response.body() == null ? Buffer.buffer() : response.body()))
                 .toCompletionStage()
                 .toCompletableFuture()
                 .get(ASYNC_TIMEOUT_SECONDS, TimeUnit.SECONDS);

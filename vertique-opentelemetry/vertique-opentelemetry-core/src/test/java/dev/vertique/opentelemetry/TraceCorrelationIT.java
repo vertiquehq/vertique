@@ -34,10 +34,11 @@ import io.vertx.core.Vertx;
 import io.vertx.core.VertxBuilder;
 import io.vertx.core.VertxOptions;
 import io.vertx.core.http.HttpClient;
-import io.vertx.core.http.HttpClientResponse;
-import io.vertx.core.http.HttpMethod;
 import io.vertx.core.http.HttpServer;
 import io.vertx.ext.web.Router;
+import io.vertx.ext.web.client.HttpResponse;
+import io.vertx.ext.web.client.WebClient;
+import io.vertx.ext.web.client.WebClientOptions;
 import io.vertx.tracing.opentelemetry.OpenTelemetryOptions;
 import io.vertx.tracing.opentelemetry.OpenTelemetryTracingFactory;
 import java.util.List;
@@ -75,12 +76,19 @@ import org.slf4j.LoggerFactory;
  * {@link #tearDown(io.vertx.junit5.VertxTestContext)} so that its lifecycle is tied to the async
  * test lifecycle rather than the synchronous method body.
  *
- * <p><strong>Raw {@link HttpClient} exemption — the raw client is the instrumented subject.</strong>
- * These tests observe what Vert.x's own tracing does around a raw client/server exchange (span
- * creation, propagation, and the scope the MDC is read from); interposing a {@code WebClient} would
- * change the instrumented path under assertion. Every exchange is status-only and goes through
- * {@link #getStatus(HttpClient, int, String)}, which uses the raw-client idiom pinned by
- * {@code HttpClientBodyReadRaceIT}.
+ * <p>Requests are issued through a {@link WebClient} rather than a raw {@code HttpClient}
+ * deliberately. Nothing here observes the client: every assertion is on the MDC the handler saw, the
+ * log events the appender captured, or the SERVER span the <em>server's</em> tracer exported, so the
+ * raw client is a bare trigger and buys nothing. And while every exchange is status-only — which is
+ * why a raw client could not lose anything here today — a status-only raw exchange is merely
+ * unexposed to the empty-body race (issue #167), not immune to it: the first body assertion added
+ * here would make it live. A {@link WebClient} aggregates the body into its {@code HttpResponse}
+ * before completing the send, so the hazard cannot appear at all.
+ *
+ * <p>The raw {@link HttpClient} the wrapper delegates to is nonetheless created explicitly rather
+ * than left to {@link WebClient#create}, for one reason only: {@code WebClient.close()} is
+ * {@code void}, and this class owns its {@link Vertx}, so teardown needs an awaitable close handle
+ * (see {@link #tearDown(io.vertx.junit5.VertxTestContext)}). No request is issued through it.
  */
 @ExtendWith(io.vertx.junit5.VertxExtension.class)
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
@@ -90,7 +98,13 @@ public class TraceCorrelationIT {
     private static final org.slf4j.Logger PROBE_LOGGER = LoggerFactory.getLogger(TraceCorrelationIT.class);
 
     private HttpServer server;
-    private HttpClient client;
+
+    /** The client teardown awaits; exists only to keep an awaitable close handle. */
+    private HttpClient rawClient;
+
+    /** What the test bodies issue their requests through; wraps {@link #rawClient}. */
+    private WebClient client;
+
     private Vertx tracedVertx;
 
     /** Captures log events emitted from the handler; installed/removed per test. */
@@ -103,11 +117,23 @@ public class TraceCorrelationIT {
         ((Logger) PROBE_LOGGER).addAppender(listAppender);
     }
 
+    /**
+     * Detaches the log appender and tears the exchange down in the one order that survives an
+     * event-loop shutdown.
+     *
+     * <p>The close awaited here is {@link #rawClient}'s, not {@link #client}'s:
+     * {@link WebClient#close()} is {@code void}, so the wrapper offers nothing to join. That is why
+     * the raw client is created explicitly and wrapped — the test body keeps {@link WebClient}
+     * semantics while teardown keeps the awaitable {@code Future<Void>} handle it needs. Closing the
+     * raw client closes the wrapper's transport, which is the resource the ordering below is about.
+     *
+     * @param ctx the test context used to signal teardown completion
+     */
     @AfterEach
     void tearDown(io.vertx.junit5.VertxTestContext ctx) {
         ((Logger) PROBE_LOGGER).detachAppender(listAppender);
         Future<?> serverClose = server != null ? server.close() : Future.succeededFuture();
-        Future<?> clientClose = client != null ? client.close() : Future.succeededFuture();
+        Future<?> clientClose = rawClient != null ? rawClient.close() : Future.succeededFuture();
         GlobalOpenTelemetry.resetForTest();
         // Join the server/client closes while tracedVertx's event loop is still alive (they resolve on
         // it), then close the traced Vertx last from the callback. Including tracedVertx.close() in the
@@ -190,29 +216,27 @@ public class TraceCorrelationIT {
                 .listen(0, "127.0.0.1")
                 .map(s -> {
                     this.server = s;
-                    this.client = vertx.createHttpClient();
+                    // The raw client exists only to give teardown an awaitable close handle.
+                    this.rawClient = vertx.createHttpClient();
+                    // Redirects off: parity with the raw client; WebClient follows 3xx by default.
+                    this.client = WebClient.wrap(rawClient, new WebClientOptions().setFollowRedirects(false));
                     return s.actualPort();
                 });
     }
 
     /**
-     * Issues a status-only GET through the raw-client idiom: the response continuation is attached
-     * to the request's {@code response()} future <em>before</em> {@code end()} initiates the send,
-     * because Vert.x discards response data delivered before a handler is attached. The send's own
-     * outcome is deliberately not composed in — the exchange settles on the response, exactly as
-     * {@code send()} did. See {@code HttpClientBodyReadRaceIT}.
+     * Issues a status-only GET through the shared {@link WebClient}, whose response future resolves
+     * only once the whole body has been aggregated — later than the raw client's {@code send()},
+     * which settled at the response head. Every span assertion here is made after the exchange, off
+     * the exporter, so settling later only widens the window the export already needed.
      *
      * @param client the client issuing the request
      * @param port   the bound server port
      * @param path   the request path
      * @return a future of the response status code
      */
-    private static Future<Integer> getStatus(HttpClient client, int port, String path) {
-        return client.request(HttpMethod.GET, port, "127.0.0.1", path).compose(request -> {
-            Future<Integer> responded = request.response().map(HttpClientResponse::statusCode);
-            request.end();
-            return responded;
-        });
+    private static Future<Integer> getStatus(WebClient client, int port, String path) {
+        return client.get(port, "127.0.0.1", path).send().map(HttpResponse::statusCode);
     }
 
     /**
@@ -420,7 +444,10 @@ public class TraceCorrelationIT {
                 .listen(0, "127.0.0.1")
                 .compose(s -> {
                     this.server = s;
-                    this.client = vertx.createHttpClient();
+                    // The raw client exists only to give teardown an awaitable close handle.
+                    this.rawClient = vertx.createHttpClient();
+                    // Redirects off: parity with the raw client; WebClient follows 3xx by default.
+                    this.client = WebClient.wrap(rawClient, new WebClientOptions().setFollowRedirects(false));
                     return getStatus(client, s.actualPort(), "/test");
                 })
                 .onComplete(ctx.succeeding(status -> {

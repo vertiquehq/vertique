@@ -8,7 +8,6 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vertique.rest.core.interceptor.RequestInterceptor;
-import dev.vertique.rest.core.request.FilePart;
 import dev.vertique.rest.core.response.ResponseBodyEncoder;
 import dev.vertique.rest.core.response.SerializedBody;
 import dev.vertique.rest.core.response.StreamingBody;
@@ -56,19 +55,23 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
- * End-to-end proof for the framework-owned lifecycle of multipart upload temporary files.
+ * End-to-end proof for the framework-owned lifecycle of multipart upload temporary files, for the
+ * facts that are only observable while the response is still on the wire.
  *
  * <p>Every test uses its own uploads directory. {@link UploadPathCapture} runs immediately after
- * the mount's {@code BodyHandler}, so it records the exact path created by Vert.x even when the
- * validation gate rejects the request before resource invocation.
+ * the mount's {@code BodyHandler}, so it records the exact path created by Vert.x before the
+ * resource is invoked.
  *
  * <p><strong>Raw {@link HttpClient} exemption — mid-stream observation and wire-level control.</strong>
- * The lifecycle these tests pin is only observable while a response is still streaming (the upload
- * must still exist between the first body byte and the last), and one test must abort the
+ * The lifecycle the two tests below pin is only observable while a response is still streaming (the
+ * upload must still exist between the first body byte and the last), and one of them must abort the
  * connection with {@code SO_LINGER(0)} through a raw {@link Socket}; a buffered {@code WebClient}
- * exchange can express neither. Every exchange below therefore uses the raw-client idiom pinned by
- * {@code HttpClientBodyReadRaceIT}: the whole response continuation — including the body read — is
- * attached before {@code end()} initiates the send.
+ * exchange can express neither. The exemption is contained to that need: nothing else in this file
+ * issues a request. The three cleanup outcomes that are only inspected after the exchange has
+ * settled were moved to {@code UploadTempFileCleanupWebClientIT}, which uses the default
+ * {@code WebClient}. The one {@code HttpClient} exchange left here uses the raw-client idiom pinned
+ * by {@code HttpClientBodyReadRaceIT}: the whole response continuation — including the body read —
+ * is attached before {@code end()} initiates the send.
  */
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 30, unit = TimeUnit.SECONDS)
@@ -108,21 +111,6 @@ public class UploadTempFileCleanupIT {
     }
 
     @Test
-    @DisplayName("A normally completed response deletes its exact multipart temporary file")
-    void tempFileDeletedAfterSuccess() throws Exception {
-        uploadsDirectory = uniqueUploadsDirectory("tempFileDeletedAfterSuccess");
-        UploadPathCapture capture = startServer(uploadsDirectory);
-
-        HttpResult result = postMultipart("/cleanup/success", "application/octet-stream", PAYLOAD);
-        java.nio.file.Path uploadedPath = capture.awaitPath();
-
-        assertEquals(200, result.statusCode());
-        assertEquals("ok", result.body().toString());
-        assertTrue(capture.existedWhenCaptured(), "the interceptor must observe the exact spooled file");
-        awaitDeleted(uploadedPath);
-    }
-
-    @Test
     @DisplayName("A hard client reset after the first response byte deletes the temporary file")
     void tempFileDeletedAfterClientResetMidResponse() throws Exception {
         uploadsDirectory = uniqueUploadsDirectory("tempFileDeletedAfterClientResetMidResponse");
@@ -150,20 +138,6 @@ public class UploadTempFileCleanupIT {
     }
 
     @Test
-    @DisplayName("A validation-gate rejection deletes its exact multipart temporary file")
-    void tempFileDeletedAfterGateRejection() throws Exception {
-        uploadsDirectory = uniqueUploadsDirectory("tempFileDeletedAfterGateRejection");
-        UploadPathCapture capture = startServer(uploadsDirectory);
-
-        HttpResult result = postMultipart("/cleanup/reject", "application/x-msdownload", new byte[] {'M', 'Z'});
-        java.nio.file.Path uploadedPath = capture.awaitPath();
-
-        assertEquals(400, result.statusCode());
-        assertTrue(capture.existedWhenCaptured(), "the interceptor must capture the upload before gate rejection");
-        awaitDeleted(uploadedPath);
-    }
-
-    @Test
     @DisplayName("The temporary file remains alive until a streaming response finishes")
     void fileAliveDuringResponseStreaming() throws Exception {
         uploadsDirectory = uniqueUploadsDirectory("fileAliveDuringResponseStreaming");
@@ -182,23 +156,6 @@ public class UploadTempFileCleanupIT {
         awaitDeleted(uploadedPath);
     }
 
-    @Test
-    @DisplayName("HttpConfig uploadsDirectory controls where BodyHandler spools multipart files")
-    void customUploadsDirectoryHonored() throws Exception {
-        uploadsDirectory = uniqueUploadsDirectory("customUploadsDirectoryHonored");
-        UploadPathCapture capture = startServer(uploadsDirectory);
-
-        HttpResult result = postMultipart("/cleanup/success", "application/octet-stream", PAYLOAD);
-        java.nio.file.Path uploadedPath = capture.awaitPath().toAbsolutePath().normalize();
-
-        assertEquals(200, result.statusCode());
-        assertTrue(capture.existedWhenCaptured(), "the configured directory must contain the upload during handling");
-        assertEquals(
-                uploadsDirectory.toAbsolutePath().normalize(),
-                uploadedPath.getParent(),
-                "the exact spooled file must be created directly in the configured directory");
-    }
-
     private UploadPathCapture startServer(java.nio.file.Path directory) {
         UploadPathCapture capture = new UploadPathCapture();
         RestTestContributions contributions = RestTestContributions.builder()
@@ -214,28 +171,6 @@ public class UploadTempFileCleanupIT {
                 Set.of(new CleanupResource(capture, streamingGate)),
                 Duration.ofSeconds(ASYNC_TIMEOUT_SECONDS));
         return capture;
-    }
-
-    private HttpResult postMultipart(String path, String declaredType, byte[] content) throws Exception {
-        Buffer body = multipart(declaredType, content);
-        return client.request(HttpMethod.POST, server.actualPort(), "127.0.0.1", path)
-                .compose(request -> {
-                    // The continuation — including the body read — is attached before end() initiates
-                    // the send: Vert.x discards body buffers delivered before a handler is attached, so
-                    // a read attached after the send loses the whole body whenever this thread is
-                    // descheduled in between, reporting success with zero bytes under a correct status.
-                    // See HttpClientBodyReadRaceIT.
-                    Future<HttpResult> result = request.response().compose(response -> {
-                        int statusCode = response.statusCode();
-                        return response.body().map(responseBody -> new HttpResult(statusCode, responseBody));
-                    });
-                    request.putHeader("Content-Type", MultipartBodies.contentType());
-                    request.end(body);
-                    return result;
-                })
-                .toCompletionStage()
-                .toCompletableFuture()
-                .get(ASYNC_TIMEOUT_SECONDS, TimeUnit.SECONDS);
     }
 
     private StreamingResponse postStreamingMultipart(String path, byte[] content) throws Exception {
@@ -330,7 +265,7 @@ public class UploadTempFileCleanupIT {
         assertFalse(Files.exists(uploadedPath), "temporary upload was not deleted: " + uploadedPath);
     }
 
-    /** JAX-RS fixture exposing success, gate-rejection, and gated streaming outcomes. */
+    /** JAX-RS fixture exposing the gated streaming outcome. */
     @Path("/cleanup")
     public static class CleanupResource {
 
@@ -340,26 +275,6 @@ public class UploadTempFileCleanupIT {
         private CleanupResource(UploadPathCapture capture, StreamingGate streamingGate) {
             this.capture = capture;
             this.streamingGate = streamingGate;
-        }
-
-        @POST
-        @Path("/success")
-        @Consumes(MediaType.MULTIPART_FORM_DATA)
-        @Produces(MediaType.TEXT_PLAIN)
-        @Operation(operationId = "cleanupSuccess")
-        public String success(@FormParam("upload") FileUpload upload) {
-            capture.capture(upload);
-            return "ok";
-        }
-
-        @POST
-        @Path("/reject")
-        @Consumes(MediaType.MULTIPART_FORM_DATA)
-        @Produces(MediaType.TEXT_PLAIN)
-        @Operation(operationId = "cleanupGateRejection")
-        public String reject(@FormParam("upload") @FilePart(allowedTypes = {"image/png"}) FileUpload upload) {
-            capture.capture(upload);
-            return "unexpected";
         }
 
         @POST
@@ -401,8 +316,6 @@ public class UploadTempFileCleanupIT {
     }
 
     private record CaptureObservation(java.nio.file.Path path, boolean existed) {}
-
-    private record HttpResult(int statusCode, Buffer body) {}
 
     private record StreamingResponse(CompletableFuture<Integer> firstBodyByte, CompletableFuture<Buffer> body) {}
 

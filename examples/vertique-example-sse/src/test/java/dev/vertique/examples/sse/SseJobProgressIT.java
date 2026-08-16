@@ -9,7 +9,6 @@ import dev.vertique.application.test.VertiqueAppExtension;
 import io.restassured.RestAssured;
 import io.restassured.filter.log.RequestLoggingFilter;
 import io.restassured.filter.log.ResponseLoggingFilter;
-import io.restassured.response.Response;
 import io.vertx.core.Handler;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.http.HttpClient;
@@ -40,6 +39,10 @@ import org.junit.jupiter.api.extension.RegisterExtension;
  * documents. Every subscription therefore goes through
  * {@link #subscribe(RequestOptions, VertxTestContext, Handler)}, which applies the raw-client idiom
  * pinned by {@code HttpClientBodyReadRaceIT}.
+ *
+ * <p>The exemption is contained to that need: both tests here consume a stream, and the RestAssured
+ * calls below only create the job a subscription then observes. The standalone job-creation test,
+ * which never touched the raw client, lives in {@link JobCreationIT}.
  */
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
 @ExtendWith(VertxExtension.class)
@@ -68,24 +71,6 @@ public class SseJobProgressIT {
             httpClient.close();
         }
         RestAssured.reset();
-    }
-
-    @Test
-    @DisplayName("POST /jobs creates a job and returns an id")
-    void createJobReturnsId() {
-        Response response = RestAssured.given()
-                .contentType("application/json")
-                .when()
-                .post("/jobs")
-                .then()
-                .statusCode(200)
-                .contentType("application/json")
-                .extract()
-                .response();
-
-        String id = response.jsonPath().getString("id");
-        assertNotNull(id, "Job id should be present");
-        assertFalse(id.isBlank(), "Job id should not be blank");
     }
 
     @Test

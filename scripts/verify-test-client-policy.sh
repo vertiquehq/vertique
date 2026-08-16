@@ -274,8 +274,35 @@ while IFS= read -r file; do
     # Any reference to a raw client type puts the file in scope: explicit
     # import of HttpClient/HttpClientRequest/HttpClientResponse, a wildcard
     # import of the package, or fully-qualified use.
-    if grep -qE '^[[:space:]]*import[[:space:]]+io\.vertx\.core\.http\.(HttpClient|HttpClientRequest|HttpClientResponse|\*)[[:space:]]*;' "$stripped" \
-        || grep -qE '\bio\.vertx\.core\.http\.HttpClient(Request|Response)?\b' "$stripped"; then
+    #
+    # One sanctioned shape is exempt from that scoping: a test that owns its
+    # Vertx must keep an awaitable close handle, which WebClient cannot give
+    # it (its close() returns void and discards the underlying future). The
+    # documented idiom is to create the raw HttpClient, WebClient.wrap(...)
+    # it, and join the RAW client's close. Such a file legitimately holds a
+    # raw client that never issues a request — every .send( in it belongs to
+    # WebClient. Scoping on the import alone would flag it, which is a false
+    # positive on the very idiom the rules prescribe.
+    #
+    # The exemption is deliberately narrow: it applies only while no raw
+    # client identifier is ever the receiver of .request(. The moment one is,
+    # the file is back in scope and every .send( is judged normally — so this
+    # cannot become a way to smuggle the unsafe idiom in behind a wrap call.
+    wrap_only=0
+    if grep -qE '\bWebClient\.wrap\(' "$stripped"; then
+        wrap_only=1
+        while IFS= read -r raw_name; do
+            [[ -z "$raw_name" ]] && continue
+            if grep -qE "\b${raw_name}\.request\(" "$stripped"; then
+                wrap_only=0
+                break
+            fi
+        done < <(grep -oE '\bHttpClient[[:space:]]+[A-Za-z_][A-Za-z0-9_]*' "$stripped" \
+            | awk '{print $2}' | LC_ALL=C sort -u)
+    fi
+
+    if (( wrap_only == 0 )) && { grep -qE '^[[:space:]]*import[[:space:]]+io\.vertx\.core\.http\.(HttpClient|HttpClientRequest|HttpClientResponse|\*)[[:space:]]*;' "$stripped" \
+        || grep -qE '\bio\.vertx\.core\.http\.HttpClient(Request|Response)?\b' "$stripped"; }; then
         # `|| true` is load-bearing: grep exits 1 when nothing matches, and
         # under `set -o pipefail` that would abort the whole scan silently —
         # reporting a clean tree by dying before reaching any later file.

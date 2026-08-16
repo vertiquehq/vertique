@@ -31,10 +31,11 @@ import io.vertx.core.Vertx;
 import io.vertx.core.VertxBuilder;
 import io.vertx.core.VertxOptions;
 import io.vertx.core.http.HttpClient;
-import io.vertx.core.http.HttpClientResponse;
-import io.vertx.core.http.HttpMethod;
 import io.vertx.core.http.HttpServer;
 import io.vertx.ext.web.Router;
+import io.vertx.ext.web.client.HttpResponse;
+import io.vertx.ext.web.client.WebClient;
+import io.vertx.ext.web.client.WebClientOptions;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
 import io.vertx.tracing.opentelemetry.OpenTelemetryOptions;
@@ -92,13 +93,21 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * <p>The production-path test is repeated 5 times ({@code @RepeatedTest(5)}) to verify
  * determinism — the span capture and scope re-establishment must work on every request.
  *
- * <h3>Raw {@link HttpClient} exemption — post-response export timing</h3>
+ * <h3>Why {@link WebClient}</h3>
  *
- * <p>What is under assertion is when the server-side span and its exemplar become observable
- * <em>after</em> the response is written, so the test drives the raw client rather than a
- * {@code WebClient} that would add its own request/response handling to that window. The exchange
- * is status-only and uses the raw-client idiom pinned by {@code HttpClientBodyReadRaceIT}: the
- * response continuation is attached before {@code end()} initiates the send.
+ * <p>Requests are issued through a {@link WebClient} rather than a raw {@code HttpClient}
+ * deliberately. Nothing here observes the client: the assertions are on the spans the
+ * <em>server's</em> tracer exported and on the {@link PrometheusMeterRegistry} scrape body, so the
+ * raw client is a bare trigger and buys nothing. And while both exchanges are status-only — which is
+ * why a raw client could not lose anything here today — a status-only raw exchange is merely
+ * unexposed to the empty-body race (issue #167), not immune to it: the first body assertion added
+ * here would make it live. A {@link WebClient} aggregates the body into its {@code HttpResponse}
+ * before completing the send, so the hazard cannot appear at all.
+ *
+ * <p>The raw {@link HttpClient} the wrapper delegates to is nonetheless created explicitly rather
+ * than left to {@link WebClient#create}, for one reason only: {@code WebClient.close()} is
+ * {@code void}, and this class owns its {@link Vertx}, so teardown needs an awaitable close handle
+ * (see {@link #tearDown(VertxTestContext)}). No request is issued through it.
  */
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
@@ -107,14 +116,31 @@ public class RestServerExemplarIT {
     // --- Shared per-test state ---
 
     private HttpServer server;
-    private HttpClient httpClient;
+
+    /** The client teardown awaits; exists only to keep an awaitable close handle. */
+    private HttpClient rawClient;
+
+    /** What the test bodies issue their requests through; wraps {@link #rawClient}. */
+    private WebClient httpClient;
+
     private Vertx tracedVertx;
     private OpenTelemetrySdk sdk;
 
+    /**
+     * Tears the exchange down in the one order that survives an event-loop shutdown.
+     *
+     * <p>The close awaited here is {@link #rawClient}'s, not {@link #httpClient}'s:
+     * {@link WebClient#close()} is {@code void}, so the wrapper offers nothing to join. That is why
+     * the raw client is created explicitly and wrapped — the test body keeps {@link WebClient}
+     * semantics while teardown keeps the awaitable {@code Future<Void>} handle it needs. Closing the
+     * raw client closes the wrapper's transport, which is the resource the ordering below is about.
+     *
+     * @param ctx the test context used to signal teardown completion
+     */
     @AfterEach
     void tearDown(VertxTestContext ctx) {
         Future<?> serverClose = server != null ? server.close() : Future.succeededFuture();
-        Future<?> clientClose = httpClient != null ? httpClient.close() : Future.succeededFuture();
+        Future<?> clientClose = rawClient != null ? rawClient.close() : Future.succeededFuture();
         if (sdk != null) {
             sdk.close();
         }
@@ -193,23 +219,20 @@ public class RestServerExemplarIT {
     }
 
     /**
-     * Issues a status-only GET through the raw-client idiom: the response continuation is attached
-     * to the request's {@code response()} future <em>before</em> {@code end()} initiates the send,
-     * because Vert.x discards response data delivered before a handler is attached. The send's own
-     * outcome is deliberately not composed in — the exchange settles on the response, exactly as
-     * {@code send()} did. See {@code HttpClientBodyReadRaceIT}.
+     * Issues a status-only GET through the {@link WebClient}, whose response future resolves only
+     * once the whole body has been aggregated — later than the raw client's {@code send()}, which
+     * settled at the response head. Nothing here is asserted at the response head: the exemplar
+     * becomes observable only after the completion emitter has run, which is what the span poll and
+     * the subsequent 100 ms timer wait for, so settling later only widens a window this test already
+     * had to wait out.
      *
      * @param client the client issuing the request
      * @param port   the bound server port
      * @param path   the request path
      * @return a future of the response status code
      */
-    private static Future<Integer> getStatus(HttpClient client, int port, String path) {
-        return client.request(HttpMethod.GET, port, "127.0.0.1", path).compose(request -> {
-            Future<Integer> responded = request.response().map(HttpClientResponse::statusCode);
-            request.end();
-            return responded;
-        });
+    private static Future<Integer> getStatus(WebClient client, int port, String path) {
+        return client.get(port, "127.0.0.1", path).send().map(HttpResponse::statusCode);
     }
 
     // --- Test 1: production-path exemplar proof (5x for determinism) ---
@@ -262,7 +285,10 @@ public class RestServerExemplarIT {
                 .listen(0, "127.0.0.1")
                 .compose(s -> {
                     this.server = s;
-                    this.httpClient = vertx.createHttpClient();
+                    // The raw client exists only to give teardown an awaitable close handle.
+                    this.rawClient = vertx.createHttpClient();
+                    // Redirects off: parity with the raw client; WebClient follows 3xx by default.
+                    this.httpClient = WebClient.wrap(rawClient, new WebClientOptions().setFollowRedirects(false));
                     return getStatus(httpClient, s.actualPort(), "/exemplar");
                 })
                 .compose(status -> pollUntilSpanPresent(vertx, exporter, 40, 50))
@@ -348,7 +374,10 @@ public class RestServerExemplarIT {
                 .listen(0, "127.0.0.1")
                 .compose(s -> {
                     this.server = s;
-                    this.httpClient = vertx.createHttpClient();
+                    // The raw client exists only to give teardown an awaitable close handle.
+                    this.rawClient = vertx.createHttpClient();
+                    // Redirects off: parity with the raw client; WebClient follows 3xx by default.
+                    this.httpClient = WebClient.wrap(rawClient, new WebClientOptions().setFollowRedirects(false));
                     return getStatus(httpClient, s.actualPort(), "/negative");
                 })
                 .compose(status -> pollUntilSpanPresent(vertx, exporter, 40, 50))
