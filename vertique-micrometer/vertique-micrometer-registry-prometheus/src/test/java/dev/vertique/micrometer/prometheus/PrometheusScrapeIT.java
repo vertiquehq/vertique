@@ -9,9 +9,11 @@ import dev.vertique.management.ManagementConfig;
 import dev.vertique.management.ManagementVerticle;
 import dev.vertique.micrometer.MicrometerMetricsContributor;
 import io.micrometer.core.instrument.Gauge;
+import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.core.VertxBuilder;
 import io.vertx.core.VertxOptions;
+import io.vertx.core.http.HttpClient;
 import io.vertx.core.http.HttpMethod;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.Router;
@@ -54,6 +56,15 @@ import org.junit.jupiter.api.extension.ExtendWith;
 public class PrometheusScrapeIT {
 
     private static Vertx vertx;
+
+    /**
+     * One HTTP client shared by every test in the class, created in {@link #setUp(VertxTestContext)}
+     * and closed in {@link #tearDown(VertxTestContext)} before {@link #vertx}. Allocating a client
+     * per request would leak a netty connection pool per call — the recursive
+     * {@link #doPoll(String, int, long, VertxTestContext)} alone would create one per poll attempt.
+     */
+    private static HttpClient client;
+
     private static int managementPort;
     private static int appServerPort;
     private static MicrometerMetricsContributor contributor;
@@ -63,7 +74,8 @@ public class PrometheusScrapeIT {
      * <ol>
      *   <li>Creates {@link MicrometerMetricsContributor} (ServiceLoader discovers
      *       {@link PrometheusMeterRegistryProvider}).</li>
-     *   <li>Builds a Vertx with Micrometer wired.</li>
+     *   <li>Builds a Vertx with Micrometer wired, plus the shared {@link #client} used by every
+     *       test in this class.</li>
      *   <li>Starts an application HTTP server (Router-based, so unknown paths → 404) on port 0
      *       and fires one request to {@code /} to generate HTTP metrics.</li>
      *   <li>Deploys {@link ManagementVerticle} on port 0 with a {@link PrometheusScrapeEndpoint}.</li>
@@ -83,6 +95,7 @@ public class PrometheusScrapeIT {
         contributor.contribute(builder, fakeBootstrapContext(config, options));
 
         vertx = builder.build();
+        client = vertx.createHttpClient();
 
         // Start a Router-based application HTTP server on port 0.
         // A Router returns 404 for paths not explicitly registered (NFR-TEL-005).
@@ -95,8 +108,7 @@ public class PrometheusScrapeIT {
                 .compose(server -> {
                     appServerPort = server.actualPort();
                     // Fire one request to / to seed HTTP server metrics
-                    return vertx.createHttpClient()
-                            .request(HttpMethod.GET, appServerPort, "127.0.0.1", "/")
+                    return client.request(HttpMethod.GET, appServerPort, "127.0.0.1", "/")
                             .compose(req -> req.send())
                             .mapEmpty();
                 })
@@ -130,11 +142,18 @@ public class PrometheusScrapeIT {
         if (contributor != null) {
             contributor.onShutdown();
         }
-        if (vertx != null) {
-            vertx.close().onComplete(ar -> ctx.completeNow());
-        } else {
-            ctx.completeNow();
-        }
+        // Close the shared client while vertx's event loop is still alive (the close resolves on
+        // it), then close Vert.x last, from the callback. Closing Vert.x first tears down the netty
+        // connection pools underneath requests that are still in flight, which surfaces under
+        // parallel CI load as VertxException: Pool closed.
+        Future<?> clientClose = client != null ? client.close() : Future.succeededFuture();
+        clientClose.onComplete(ar -> {
+            if (vertx != null) {
+                vertx.close().onComplete(ignored -> ctx.completeNow());
+            } else {
+                ctx.completeNow();
+            }
+        });
     }
 
     // --- Tests ---
@@ -154,8 +173,7 @@ public class PrometheusScrapeIT {
     @Test
     @DisplayName("GET /metrics with Accept: application/openmetrics-text → openmetrics content-type and '# EOF'")
     void openmetricsAcceptHeader(VertxTestContext ctx) {
-        vertx.createHttpClient()
-                .request(HttpMethod.GET, managementPort, "127.0.0.1", "/metrics")
+        client.request(HttpMethod.GET, managementPort, "127.0.0.1", "/metrics")
                 .compose(req -> {
                     req.putHeader("Accept", "application/openmetrics-text; version=1.0.0");
                     return req.send();
@@ -179,8 +197,7 @@ public class PrometheusScrapeIT {
     @Test
     @DisplayName("GET /health/live → 200 (health endpoint still works alongside /metrics)")
     void healthLiveStillWorks(VertxTestContext ctx) {
-        vertx.createHttpClient()
-                .request(HttpMethod.GET, managementPort, "127.0.0.1", "/health/live")
+        client.request(HttpMethod.GET, managementPort, "127.0.0.1", "/health/live")
                 .compose(req -> req.send())
                 .onSuccess(resp -> {
                     ctx.verify(() -> assertEquals(200, resp.statusCode()));
@@ -192,8 +209,7 @@ public class PrometheusScrapeIT {
     @Test
     @DisplayName("NFR-TEL-005: GET /metrics on application port → 404 (Router-based app server)")
     void metricsNotOnApplicationPort(VertxTestContext ctx) {
-        vertx.createHttpClient()
-                .request(HttpMethod.GET, appServerPort, "127.0.0.1", "/metrics")
+        client.request(HttpMethod.GET, appServerPort, "127.0.0.1", "/metrics")
                 .compose(req -> req.send())
                 .onSuccess(resp -> {
                     ctx.verify(() -> assertEquals(404, resp.statusCode(), "app server must return 404 for /metrics"));
@@ -216,8 +232,7 @@ public class PrometheusScrapeIT {
                                 .register(registry),
                         () -> ctx.failNow(new AssertionError("Prometheus registry must be present")));
 
-        vertx.createHttpClient()
-                .request(HttpMethod.GET, managementPort, "127.0.0.1", "/metrics")
+        client.request(HttpMethod.GET, managementPort, "127.0.0.1", "/metrics")
                 .compose(req -> req.send())
                 .compose(resp -> resp.body())
                 // Small delay to ensure the gauge supplier has been invoked
@@ -255,7 +270,9 @@ public class PrometheusScrapeIT {
     }
 
     /**
-     * Recursive Vert.x-timer-based poll implementation.
+     * Recursive Vert.x-timer-based poll implementation. Every attempt reuses the shared
+     * {@link #client} — creating one per attempt would leak a connection pool per {@code remaining}
+     * step, up to one per poll attempt.
      *
      * @param substring the string to find
      * @param remaining remaining poll attempts
@@ -267,8 +284,7 @@ public class PrometheusScrapeIT {
             ctx.failNow(new AssertionError("Timed out waiting for '" + substring + "' in /metrics body"));
             return;
         }
-        vertx.createHttpClient()
-                .request(HttpMethod.GET, managementPort, "127.0.0.1", "/metrics")
+        client.request(HttpMethod.GET, managementPort, "127.0.0.1", "/metrics")
                 .compose(req -> req.send())
                 .compose(resp -> resp.body())
                 .onSuccess(body -> {

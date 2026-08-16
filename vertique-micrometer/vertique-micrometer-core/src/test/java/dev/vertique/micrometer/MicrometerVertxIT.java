@@ -7,9 +7,11 @@ import static org.junit.jupiter.api.Assertions.*;
 
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.core.VertxBuilder;
 import io.vertx.core.VertxOptions;
+import io.vertx.core.http.HttpClient;
 import io.vertx.core.json.JsonObject;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
@@ -33,16 +35,39 @@ import org.junit.jupiter.api.extension.ExtendWith;
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
 public class MicrometerVertxIT {
 
+    /**
+     * The Vert.x instance built by the test method itself — each test needs a different contributor
+     * configuration, so it cannot be shared across the class.
+     */
     private Vertx vertx;
 
+    /**
+     * The HTTP client used by the running test. Bound to a field (rather than created inline) so
+     * {@link #tearDown(VertxTestContext)} can close it before {@link #vertx} goes away.
+     */
+    private HttpClient client;
+
+    /**
+     * Closes the per-test client before the Vert.x instance that owns it.
+     *
+     * <p>The client close is awaited while {@link #vertx}'s event loop is still alive (it resolves
+     * on that loop) and the Vert.x instance is closed last, from the callback. Closing Vert.x first
+     * tears down the netty connection pools underneath requests that are still in flight, which
+     * surfaces under parallel CI load as {@code VertxException: Pool closed}.
+     *
+     * @param ctx the Vert.x test context
+     */
     @AfterEach
     void tearDown(VertxTestContext ctx) {
         MeterRegistryHolder.resetForTests();
-        if (vertx != null) {
-            vertx.close().onComplete(ar -> ctx.completeNow());
-        } else {
-            ctx.completeNow();
-        }
+        Future<?> clientClose = client != null ? client.close() : Future.succeededFuture();
+        clientClose.onComplete(ar -> {
+            if (vertx != null) {
+                vertx.close().onComplete(ignored -> ctx.completeNow());
+            } else {
+                ctx.completeNow();
+            }
+        });
     }
 
     // --- Test: active path with fake provider → vertx.http. meters appear ---
@@ -71,9 +96,10 @@ public class MicrometerVertxIT {
                 .listen(0, "127.0.0.1")
                 .compose(server -> {
                     int port = server.actualPort();
-                    // Issue one HTTP request using the vertx web client
-                    return vertx.createHttpClient()
-                            .request(io.vertx.core.http.HttpMethod.GET, port, "127.0.0.1", "/")
+                    // Issue one HTTP request using a client bound to the instance field, so that
+                    // @AfterEach closes it before the owning Vert.x instance.
+                    client = vertx.createHttpClient();
+                    return client.request(io.vertx.core.http.HttpMethod.GET, port, "127.0.0.1", "/")
                             .compose(req -> req.send())
                             .compose(resp -> {
                                 assertEquals(200, resp.statusCode());
@@ -109,8 +135,10 @@ public class MicrometerVertxIT {
                 .listen(0, "127.0.0.1")
                 .compose(server -> {
                     int port = server.actualPort();
-                    return vertx.createHttpClient()
-                            .request(io.vertx.core.http.HttpMethod.GET, port, "127.0.0.1", "/")
+                    // Client bound to the instance field, so that @AfterEach closes it before the
+                    // owning Vert.x instance.
+                    client = vertx.createHttpClient();
+                    return client.request(io.vertx.core.http.HttpMethod.GET, port, "127.0.0.1", "/")
                             .compose(req -> req.send())
                             .compose(resp -> {
                                 assertEquals(200, resp.statusCode());
