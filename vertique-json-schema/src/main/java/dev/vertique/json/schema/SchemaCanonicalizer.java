@@ -56,13 +56,15 @@ final class SchemaCanonicalizer {
     /**
      * Rebuilds one node in canonical form.
      *
+     * <p>{@code node} is never {@code null}: the top-level call passes the generated document itself,
+     * and every recursive call passes either an array element (Jackson never yields a {@code null}
+     * array element — an explicit JSON {@code null} is a non-null {@code NullNode} instance) or the
+     * value read back for a key {@link #canonicalObject(JsonNode)} just observed present.
+     *
      * @param node the node to rebuild
      * @return a fresh canonical node, or the node itself when it is a scalar
      */
     private static JsonNode canonicalNode(JsonNode node) {
-        if (node == null) {
-            return JsonNodeFactory.instance.nullNode();
-        }
         if (node.isObject()) {
             return canonicalObject(node);
         }
@@ -103,14 +105,15 @@ final class SchemaCanonicalizer {
     /**
      * Returns whether a member is the Swagger unset-default sentinel.
      *
+     * <p>{@code value} is never {@code null}: it is always an object member's value read from {@link
+     * JsonNode#properties()}, and Jackson represents an explicit JSON {@code null} as a non-null
+     * {@code NullNode} instance rather than a Java {@code null} reference.
+     *
      * @param key   the member key
      * @param value the member value
      * @return {@code true} when the member is {@code "default": "##default"}
      */
     private static boolean isSentinelDefault(String key, JsonNode value) {
-        return DEFAULT_KEYWORD.equals(key)
-                && value != null
-                && value.isTextual()
-                && DEFAULT_SENTINEL.equals(value.textValue());
+        return DEFAULT_KEYWORD.equals(key) && value.isTextual() && DEFAULT_SENTINEL.equals(value.textValue());
     }
 }

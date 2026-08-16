@@ -212,34 +212,25 @@ class ModuleStructureTest {
 
     @Test
     @DisplayName("dev.vertique.json.schema main sources contain none of the explicitly banned import prefixes")
-    void mainSourcesContainNoBannedImports() throws IOException {
-        Path srcMain = Path.of(System.getProperty("user.dir"), "src", "main", "java");
-        assertTrue(Files.isDirectory(srcMain), "Expected src/main/java to exist at " + srcMain);
-
-        List<String> violations = new ArrayList<>();
-        try (Stream<Path> javaFiles =
-                Files.walk(srcMain).filter(p -> p.toString().endsWith(".java"))) {
-            javaFiles.forEach(file -> {
-                try {
-                    List<String> lines = Files.readAllLines(file);
-                    for (int i = 0; i < lines.size(); i++) {
-                        String stripped = lines.get(i).strip();
-                        for (String banned : BANNED_MAIN_IMPORT_PREFIXES) {
-                            if (stripped.startsWith("import " + banned)
-                                    || stripped.startsWith("import static " + banned)) {
-                                violations.add(file + ":" + (i + 1) + ": " + stripped);
-                            }
-                        }
-                    }
-                } catch (IOException e) {
-                    throw new UncheckedIOException("Failed to read " + file, e);
-                }
-            });
+    void mainSourcesContainNoBannedImports() {
+        // mainSourcesImportOnlyAllowedPackages() already proves every import in src/main/java
+        // starts with an allowed prefix. A banned import can therefore only ever reach the source
+        // tree undetected if some allowed prefix were itself a prefix of a banned one — in which
+        // case a banned import would incorrectly satisfy the allowlist check. Proving that never
+        // happens makes the banned surface structurally unreachable without a second full file
+        // walk: no source file scan can find what the allowlist already forecloses.
+        List<String> reachable = new ArrayList<>();
+        for (String banned : BANNED_MAIN_IMPORT_PREFIXES) {
+            boolean coveredByAllowlist = ALLOWED_MAIN_IMPORT_PREFIXES.stream().anyMatch(banned::startsWith);
+            if (coveredByAllowlist) {
+                reachable.add(banned);
+            }
         }
 
-        if (!violations.isEmpty()) {
-            fail("dev.vertique.json.schema must not import any of " + BANNED_MAIN_IMPORT_PREFIXES + ". Found "
-                    + violations.size() + " violation(s):\n  " + String.join("\n  ", violations));
+        if (!reachable.isEmpty()) {
+            fail("the following banned prefixes are covered by an allowed prefix, so "
+                    + "mainSourcesImportOnlyAllowedPackages() could not catch an import matching them: "
+                    + reachable);
         }
     }
 

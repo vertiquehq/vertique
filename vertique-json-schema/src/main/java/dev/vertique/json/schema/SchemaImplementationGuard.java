@@ -65,13 +65,6 @@ import java.util.Map;
  */
 final class SchemaImplementationGuard<M extends MemberScope<?, ?>> implements CustomPropertyDefinitionProvider<M> {
 
-    /**
-     * Maximum nesting depth walked through a declared type graph. A declared type this deep is
-     * pathological, and bounding the walk keeps a hostile generic declaration from costing unbounded
-     * work.
-     */
-    private static final int MAX_DEPTH = 64;
-
     /** Maximum length, in UTF-16 code units, of the member identity rendered in a failure message. */
     private static final int MAX_MEMBER_NAME_LENGTH = 128;
 
@@ -108,8 +101,10 @@ final class SchemaImplementationGuard<M extends MemberScope<?, ?>> implements Cu
         if (declaredSchema == null) {
             return null;
         }
+        // Class.class-typed annotation members are never null (the compiler rejects a null default
+        // or literal), so only the sentinel default Void.class needs to be checked here.
         Class<?> implementation = declaredSchema.implementation();
-        if (implementation == null || implementation == Void.class) {
+        if (implementation == Void.class) {
             return null;
         }
 
@@ -164,7 +159,7 @@ final class SchemaImplementationGuard<M extends MemberScope<?, ?>> implements Cu
      * @return the overridden class, or {@code null} when the graph carries none
      */
     private Class<?> firstOverriddenClass(Type type, int depth) {
-        if (type == null || depth > MAX_DEPTH) {
+        if (type == null || depth > TypeGrammar.MAX_DEPTH) {
             return null;
         }
         if (type instanceof Class<?> rawClass) {

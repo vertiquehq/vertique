@@ -3,6 +3,8 @@
 
 package dev.vertique.json.schema;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.vertique.core.json.JsonMapperProfile;
 import dev.vertique.core.json.JsonProfileId;
@@ -17,12 +19,16 @@ import java.util.Set;
 
 /**
  * A {@link JsonMapperProfile} read once, validated once, and reduced to exactly what generator
- * construction needs: the profile's mapper, and the canonical override fragments that apply in one
- * direction, keyed by the exact raw Java class they describe.
+ * construction needs: the profile's mapper, and the canonical override fragments — parsed exactly
+ * once, at construction — that apply in one direction, keyed by the exact raw Java class they
+ * describe.
  *
  * <p>Reading the profile exactly once matters. The profile is caller-supplied, so a second call to
  * {@code mapper()} or {@code jsonSchemaTypeOverrides()} could legally return something else; the
- * generator would then be configured with values it never validated.
+ * generator would then be configured with values it never validated. Parsing each fragment exactly
+ * once at construction — rather than on every {@link ProfileOverrideDefinitionProvider} call — means
+ * a malformed fragment fails fast during generator construction instead of during the first
+ * generation that happens to resolve it.
  *
  * <p><strong>Validation is whole-declaration.</strong> The full override list is expanded to
  * {@code (class, INPUT)} and {@code (class, OUTPUT)} keys — a {@code BOTH} declaration expanding to
@@ -39,10 +45,10 @@ final class ValidatedProfile {
     /** The profile's mapper, captured once. */
     private final ObjectMapper mapper;
 
-    /** Canonical fragment JSON per exact raw class, for the selected direction only. */
-    private final Map<Class<?>, String> fragmentsByType;
+    /** Parsed fragment tree per exact raw class, for the selected direction only. */
+    private final Map<Class<?>, JsonNode> fragmentsByType;
 
-    private ValidatedProfile(ObjectMapper mapper, Map<Class<?>, String> fragmentsByType) {
+    private ValidatedProfile(ObjectMapper mapper, Map<Class<?>, JsonNode> fragmentsByType) {
         this.mapper = mapper;
         this.fragmentsByType = fragmentsByType;
     }
@@ -55,8 +61,8 @@ final class ValidatedProfile {
      *                  {@link Direction#OUTPUT}
      * @return the validated, direction-filtered view of the profile
      * @throws JsonSchemaGenerationException if the profile's id, mapper, override list, an override,
-     *     or an override member is {@code null}, or if the whole declaration carries a duplicate
-     *     effective {@code (class, direction)} mapping
+     *     or an override member is {@code null}, if a fragment cannot be read back as JSON, or if the
+     *     whole declaration carries a duplicate effective {@code (class, direction)} mapping
      */
     static ValidatedProfile forDirection(JsonMapperProfile profile, Direction direction) {
         JsonProfileId id = profile.id();
@@ -79,8 +85,8 @@ final class ValidatedProfile {
                     null);
         }
 
-        Map<Class<?>, String> selected = new HashMap<>();
-        Set<String> effectiveKeys = new HashSet<>();
+        Map<Class<?>, JsonNode> selected = new HashMap<>();
+        Set<Map.Entry<Class<?>, Direction>> effectiveKeys = new HashSet<>();
         for (JsonSchemaTypeOverride override : declared) {
             validateAndCollect(override, direction, profileLabel, effectiveKeys, selected);
         }
@@ -88,23 +94,24 @@ final class ValidatedProfile {
     }
 
     /**
-     * Validates one declared override, registers its expanded effective keys, and selects it when it
-     * applies in the requested direction.
+     * Validates one declared override, registers its expanded effective keys, and selects it — parsed
+     * to a fresh {@link JsonNode} — when it applies in the requested direction.
      *
      * @param override      the declared override
      * @param direction     the direction being constructed
      * @param profileLabel  the bounded profile label used in failure messages
      * @param effectiveKeys the accumulating set of expanded {@code (class, direction)} keys
      * @param selected      the accumulating direction-filtered fragment map
-     * @throws JsonSchemaGenerationException if the override or one of its members is {@code null}, or
-     *     if it duplicates an effective mapping already declared
+     * @throws JsonSchemaGenerationException if the override or one of its members is {@code null}, if
+     *     the fragment cannot be read back as JSON, or if it duplicates an effective mapping already
+     *     declared
      */
     private static void validateAndCollect(
             JsonSchemaTypeOverride override,
             Direction direction,
             String profileLabel,
-            Set<String> effectiveKeys,
-            Map<Class<?>, String> selected) {
+            Set<Map.Entry<Class<?>, Direction>> effectiveKeys,
+            Map<Class<?>, JsonNode> selected) {
         if (override == null) {
             throw Diagnostics.failure(
                     "cannot construct a JSON Schema generator: " + profileLabel
@@ -122,7 +129,7 @@ final class ValidatedProfile {
         }
 
         for (Direction expanded : expand(declaredDirection)) {
-            if (!effectiveKeys.add(javaType.getName() + "@" + expanded)) {
+            if (!effectiveKeys.add(Map.entry(javaType, expanded))) {
                 throw Diagnostics.failure(
                         "cannot construct a JSON Schema generator: " + profileLabel
                                 + " declares more than one effective " + expanded + " schema type override for "
@@ -132,7 +139,29 @@ final class ValidatedProfile {
         }
 
         if (declaredDirection == Direction.BOTH || declaredDirection == direction) {
-            selected.put(javaType, fragment.canonicalJson());
+            selected.put(javaType, parse(fragment.canonicalJson(), profileLabel, javaType));
+        }
+    }
+
+    /**
+     * Parses one declared override's canonical fragment text into a tree, once.
+     *
+     * @param canonicalJson the fragment's canonical JSON text
+     * @param profileLabel  the bounded profile label used in the failure message
+     * @param javaType      the class the fragment was declared for, named in the failure message
+     * @return the parsed, unshared fragment tree
+     * @throws JsonSchemaGenerationException if the text cannot be read back as JSON — unreachable in
+     *     practice, since {@link JsonSchemaFragment} only ever holds text it parsed itself
+     */
+    private static JsonNode parse(String canonicalJson, String profileLabel, Class<?> javaType) {
+        try {
+            return NeutralJson.read(canonicalJson);
+        } catch (JsonProcessingException malformed) {
+            throw Diagnostics.failure(
+                    "cannot construct a JSON Schema generator: " + profileLabel
+                            + " declares a schema type override fragment for " + Diagnostics.typeIdentity(javaType)
+                            + " that is not readable JSON",
+                    malformed);
         }
     }
 
@@ -165,15 +194,17 @@ final class ValidatedProfile {
     }
 
     /**
-     * Looks up the canonical fragment declared for an exact raw class.
+     * Looks up the parsed fragment tree declared for an exact raw class.
      *
      * <p>The match is by exact class: no assignability, so a subclass of an overridden class is not
-     * covered by its supertype's declaration.
+     * covered by its supertype's declaration. The returned tree is the single instance parsed at
+     * construction — shared across every call — so a caller that embeds it in a mutable document must
+     * copy it first.
      *
      * @param rawType the erased class of a resolved type
-     * @return the canonical fragment JSON, or {@code null} when the class carries no override
+     * @return the parsed fragment tree, or {@code null} when the class carries no override
      */
-    String fragmentFor(Class<?> rawType) {
+    JsonNode fragmentFor(Class<?> rawType) {
         return rawType == null ? null : fragmentsByType.get(rawType);
     }
 }

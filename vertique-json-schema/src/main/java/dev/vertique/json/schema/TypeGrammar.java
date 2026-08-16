@@ -30,11 +30,13 @@ import java.lang.reflect.WildcardType;
 final class TypeGrammar {
 
     /**
-     * Maximum nesting depth walked while validating a type. A resolved type this deep is
-     * pathological; refusing it bounds the walk against a maliciously or accidentally cyclic custom
-     * {@code Type} implementation, which — unlike a recursive object graph — has no fixed point.
+     * Maximum nesting depth walked while validating a type, and while walking a declared type graph
+     * for {@link SchemaImplementationGuard}. A resolved or declared type this deep is pathological;
+     * refusing it bounds the walk against a maliciously or accidentally cyclic custom {@code Type}
+     * implementation, which — unlike a recursive object graph — has no fixed point, and keeps a
+     * hostile generic declaration from costing unbounded work.
      */
-    private static final int MAX_DEPTH = 64;
+    static final int MAX_DEPTH = 64;
 
     private TypeGrammar() {}
 

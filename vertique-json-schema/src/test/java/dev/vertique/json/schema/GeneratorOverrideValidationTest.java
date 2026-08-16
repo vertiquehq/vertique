@@ -31,9 +31,6 @@ import org.junit.jupiter.api.Test;
  */
 class GeneratorOverrideValidationTest {
 
-    /** Maximum length, in UTF-16 code units, a bounded failure message may reach. */
-    private static final int MAX_MESSAGE_LENGTH = 512;
-
     /** The id every well-formed test profile is registered under. */
     private static final String PROFILE_ID = "hardening-test-profile";
 
@@ -225,8 +222,8 @@ class GeneratorOverrideValidationTest {
         String message = input.getMessage();
         assertNotNull(message, "the " + label + " rejection must carry a message");
         assertTrue(
-                message.length() <= MAX_MESSAGE_LENGTH,
-                "the " + label + " message must stay within " + MAX_MESSAGE_LENGTH + " code units; was "
+                message.length() <= Diagnostics.MAX_MESSAGE_LENGTH,
+                "the " + label + " message must stay within " + Diagnostics.MAX_MESSAGE_LENGTH + " code units; was "
                         + message.length());
         assertNotNull(output.getMessage(), "the " + label + " output-direction rejection must carry a message");
         return message;

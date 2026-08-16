@@ -3,12 +3,18 @@
 
 package dev.vertique.json.schema;
 
+import static dev.vertique.json.schema.SchemaAssertions.assertCanonicalForm;
+import static dev.vertique.json.schema.SchemaAssertions.collectMemberTexts;
+import static dev.vertique.json.schema.SchemaAssertions.golden;
+import static dev.vertique.json.schema.SchemaAssertions.keywordValues;
+import static dev.vertique.json.schema.SchemaAssertions.propertyClosure;
+import static dev.vertique.json.schema.SchemaAssertions.text;
+import static dev.vertique.json.schema.SchemaAssertions.textValues;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.junit.jupiter.api.Assertions.fail;
 
 import com.fasterxml.jackson.annotation.JsonAutoDetect;
 import com.fasterxml.jackson.annotation.PropertyAccessor;
@@ -28,15 +34,8 @@ import io.vertx.json.schema.JsonSchema;
 import io.vertx.json.schema.JsonSchemaOptions;
 import io.vertx.json.schema.OutputUnit;
 import io.vertx.json.schema.Validator;
-import java.io.IOException;
-import java.io.InputStream;
-import java.nio.charset.StandardCharsets;
-import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.Deque;
-import java.util.IdentityHashMap;
 import java.util.List;
-import java.util.Map;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -57,14 +56,11 @@ import org.junit.jupiter.api.Test;
  */
 class SchemaFixtureMatrixTest {
 
-    /** Neutral mapper used to read documents inside the assertions. */
-    private static final ObjectMapper MAPPER = new ObjectMapper();
-
     // --- FR-JSON-081 baseline matrix ---
 
     @Test
     @DisplayName("ordinaryPojo: required and length constraints survive")
-    void ordinaryPojo() throws Exception {
+    void ordinaryPojo() {
         String canonical = AnnotationJsonSchemaGenerator.withVictoolsDefaults()
                 .generateCanonical(MatrixFixtures.OrdinaryPojo.class);
         JsonNode document = assertCanonicalForm(canonical);
@@ -79,7 +75,7 @@ class SchemaFixtureMatrixTest {
 
     @Test
     @DisplayName("record: canonical constructor components become properties")
-    void record() throws Exception {
+    void record() {
         String canonical =
                 AnnotationJsonSchemaGenerator.withVictoolsDefaults().generateCanonical(MatrixFixtures.RecordDto.class);
         JsonNode document = assertCanonicalForm(canonical);
@@ -92,7 +88,7 @@ class SchemaFixtureMatrixTest {
 
     @Test
     @DisplayName("inheritance: a subclass schema carries both the inherited and the declared property")
-    void inheritance() throws Exception {
+    void inheritance() {
         String canonical =
                 AnnotationJsonSchemaGenerator.withVictoolsDefaults().generateCanonical(MatrixFixtures.DogSubtype.class);
         JsonNode document = assertCanonicalForm(canonical);
@@ -105,7 +101,7 @@ class SchemaFixtureMatrixTest {
 
     @Test
     @DisplayName("nestedGenericCollections: List<Set<String>> generates array-of-array-of-string")
-    void nestedGenericCollections() throws Exception {
+    void nestedGenericCollections() {
         String canonical = AnnotationJsonSchemaGenerator.withVictoolsDefaults()
                 .generateCanonical(MatrixFixtures.NestedGenericHolder.class);
         JsonNode document = assertCanonicalForm(canonical);
@@ -124,7 +120,7 @@ class SchemaFixtureMatrixTest {
 
     @Test
     @DisplayName("resolvedMap: Map<String, Integer> generates a bare object type (pinned S4 fact)")
-    void resolvedMap() throws Exception {
+    void resolvedMap() {
         String canonical =
                 AnnotationJsonSchemaGenerator.withVictoolsDefaults().generateCanonical(MatrixFixtures.MapHolder.class);
         JsonNode document = assertCanonicalForm(canonical);
@@ -140,7 +136,7 @@ class SchemaFixtureMatrixTest {
 
     @Test
     @DisplayName("optional: Optional<String> is flattened to the value type's schema")
-    void optional() throws Exception {
+    void optional() {
         String canonical = AnnotationJsonSchemaGenerator.withVictoolsDefaults()
                 .generateCanonical(MatrixFixtures.OptionalHolder.class);
         JsonNode document = assertCanonicalForm(canonical);
@@ -159,7 +155,7 @@ class SchemaFixtureMatrixTest {
 
     @Test
     @DisplayName("enums: an enum property generates a string type with an enum value list")
-    void enums() throws Exception {
+    void enums() {
         String canonical =
                 AnnotationJsonSchemaGenerator.withVictoolsDefaults().generateCanonical(MatrixFixtures.EnumHolder.class);
         JsonNode document = assertCanonicalForm(canonical);
@@ -179,7 +175,7 @@ class SchemaFixtureMatrixTest {
 
     @Test
     @DisplayName("temporal: Instant/LocalDate properties generate successfully")
-    void temporal() throws Exception {
+    void temporal() {
         String canonical = AnnotationJsonSchemaGenerator.withVictoolsDefaults()
                 .generateCanonical(MatrixFixtures.TemporalHolder.class);
         JsonNode document = assertCanonicalForm(canonical);
@@ -192,7 +188,7 @@ class SchemaFixtureMatrixTest {
 
     @Test
     @DisplayName("jacksonMetadata: @JsonProperty renames, @JsonIgnore excludes")
-    void jacksonMetadata() throws Exception {
+    void jacksonMetadata() {
         String canonical = AnnotationJsonSchemaGenerator.withVictoolsDefaults()
                 .generateCanonical(MatrixFixtures.JacksonMetadataDto.class);
         JsonNode document = assertCanonicalForm(canonical);
@@ -206,7 +202,7 @@ class SchemaFixtureMatrixTest {
 
     @Test
     @DisplayName("jakartaConstraints: @Min/@Max, @Pattern, and @NotNull are mapped")
-    void jakartaConstraints() throws Exception {
+    void jakartaConstraints() {
         String canonical = AnnotationJsonSchemaGenerator.withVictoolsDefaults()
                 .generateCanonical(MatrixFixtures.JakartaConstraintsDto.class);
         JsonNode document = assertCanonicalForm(canonical);
@@ -224,7 +220,7 @@ class SchemaFixtureMatrixTest {
 
     @Test
     @DisplayName("swaggerMetadata: @Schema description/title/minLength are mapped")
-    void swaggerMetadata() throws Exception {
+    void swaggerMetadata() {
         String canonical = AnnotationJsonSchemaGenerator.withVictoolsDefaults()
                 .generateCanonical(MatrixFixtures.SwaggerMetadataDto.class);
         JsonNode document = assertCanonicalForm(canonical);
@@ -239,7 +235,7 @@ class SchemaFixtureMatrixTest {
 
     @Test
     @DisplayName("closedPolymorphism: @JsonTypeInfo/@JsonSubTypes generates an anyOf of two named subtypes")
-    void closedPolymorphism() throws Exception {
+    void closedPolymorphism() {
         String canonical =
                 AnnotationJsonSchemaGenerator.withVictoolsDefaults().generateCanonical(MatrixFixtures.Vehicle.class);
         JsonNode document = assertCanonicalForm(canonical);
@@ -257,7 +253,7 @@ class SchemaFixtureMatrixTest {
 
     @Test
     @DisplayName("recursiveGraph: a self-referencing type generates via $defs/$ref without overflowing")
-    void recursiveGraph() throws Exception {
+    void recursiveGraph() {
         String canonical =
                 AnnotationJsonSchemaGenerator.withVictoolsDefaults().generateCanonical(MatrixFixtures.TreeNode.class);
         JsonNode document = assertCanonicalForm(canonical);
@@ -359,7 +355,7 @@ class SchemaFixtureMatrixTest {
 
     @Test
     @DisplayName("@DecimalMin on a string-form BigDecimal does not emit 'minimum' on the string schema (PRD §6.2)")
-    void jakartaConstraintInapplicableToWireTypeNotEmitted() throws Exception {
+    void jakartaConstraintInapplicableToWireTypeNotEmitted() {
         // Given: the real vertique-strict profile, whose BigDecimal override declares a string wire
         // type, and a property additionally carrying a Jakarta numeric-domain constraint.
         JsonMapperProfile strict = HardeningFixtures.strictProfile();
@@ -411,7 +407,7 @@ class SchemaFixtureMatrixTest {
     @Test
     @DisplayName(
             "The strict decimal pattern validates \"1\\n\" under find semantics (documented residual, §2 finding 12)")
-    void anchoredPatternValidatorSemanticsPinned() throws Exception {
+    void anchoredPatternValidatorSemanticsPinned() {
         JsonObject schema = new JsonObject(golden("strict-input-amount.json"));
         JsonSchemaOptions options =
                 new JsonSchemaOptions().setDraft(Draft.DRAFT202012).setBaseUri("https://vertique.local/");
@@ -430,161 +426,6 @@ class SchemaFixtureMatrixTest {
                         + "update this test and its javadoc to record the new pinned semantics");
     }
 
-    // --- Canonical-form + conjunctive-path helpers (mirroring AnnotationJsonSchemaGeneratorProofTest) ---
-
-    /**
-     * Asserts that a canonical document is valid JSON, compact, and recursively key-sorted, and
-     * returns its parsed form.
-     *
-     * @param canonical the canonical document text
-     * @return the parsed document
-     * @throws Exception if the text is not valid JSON
-     */
-    private static JsonNode assertCanonicalForm(String canonical) throws Exception {
-        assertNotNull(canonical, "the canonical document must not be null");
-        JsonNode document = MAPPER.readTree(canonical);
-        assertEquals(
-                MAPPER.writeValueAsString(document),
-                canonical,
-                "the canonical document must be compact JSON with no re-serialization difference");
-        return document;
-    }
-
-    /**
-     * Collects every schema node that conjunctively applies at {@code start}: the node itself, each
-     * direct {@code allOf} branch, and each locally resolvable {@code $ref} target.
-     *
-     * @param document the whole document, used to resolve {@code $ref} pointers
-     * @param start    the node whose conjunctive closure is wanted
-     * @return the closure, in discovery order
-     */
-    private static List<JsonNode> conjunctiveClosure(JsonNode document, JsonNode start) {
-        List<JsonNode> collected = new ArrayList<>();
-        Map<JsonNode, Boolean> visited = new IdentityHashMap<>();
-        Deque<JsonNode> queue = new ArrayDeque<>();
-        queue.add(start);
-        while (!queue.isEmpty()) {
-            JsonNode node = queue.poll();
-            if (!node.isObject() || visited.put(node, Boolean.TRUE) != null) {
-                continue;
-            }
-            collected.add(node);
-
-            JsonNode allOf = node.get("allOf");
-            if (allOf != null && allOf.isArray()) {
-                allOf.forEach(queue::add);
-            }
-
-            JsonNode ref = node.get("$ref");
-            if (ref != null && ref.isTextual() && ref.textValue().startsWith("#")) {
-                JsonNode target = document.at(ref.textValue().substring(1));
-                if (!target.isMissingNode()) {
-                    queue.add(target);
-                }
-            }
-        }
-        return collected;
-    }
-
-    /**
-     * Collects every schema node that conjunctively applies to the named property.
-     *
-     * @param document the whole document
-     * @param property the property name
-     * @return the property's conjunctive closure
-     */
-    private static List<JsonNode> propertyClosure(JsonNode document, String property) {
-        List<JsonNode> collected = new ArrayList<>();
-        for (JsonNode root : conjunctiveClosure(document, document)) {
-            JsonNode properties = root.get("properties");
-            if (properties == null || !properties.isObject()) {
-                continue;
-            }
-            JsonNode declared = properties.get(property);
-            if (declared != null) {
-                collected.addAll(conjunctiveClosure(document, declared));
-            }
-        }
-        assertFalse(collected.isEmpty(), "no schema node was found for property '" + property + "'");
-        return collected;
-    }
-
-    /**
-     * Collects the raw values a keyword takes across a set of conjunctive locations.
-     *
-     * @param nodes   the conjunctive locations
-     * @param keyword the keyword to collect
-     * @return every value found, in order
-     */
-    private static List<JsonNode> keywordValues(List<JsonNode> nodes, String keyword) {
-        List<JsonNode> values = new ArrayList<>();
-        for (JsonNode node : nodes) {
-            JsonNode value = node.get(keyword);
-            if (value != null) {
-                values.add(value);
-            }
-        }
-        return values;
-    }
-
-    /**
-     * Collects the textual values a keyword takes across a set of conjunctive locations, flattening an
-     * array-valued occurrence.
-     *
-     * @param nodes   the conjunctive locations
-     * @param keyword the keyword to collect
-     * @return every textual value found
-     */
-    private static List<String> textValues(List<JsonNode> nodes, String keyword) {
-        List<String> values = new ArrayList<>();
-        for (JsonNode node : nodes) {
-            JsonNode value = node.get(keyword);
-            if (value == null) {
-                continue;
-            }
-            if (value.isArray()) {
-                value.forEach(element -> {
-                    if (element.isTextual()) {
-                        values.add(element.textValue());
-                    }
-                });
-            } else if (value.isTextual()) {
-                values.add(value.textValue());
-            }
-        }
-        return values;
-    }
-
-    /**
-     * Recursively collects the textual values of every object member with the given key.
-     *
-     * @param node      the node to walk
-     * @param key       the member key
-     * @param collected the accumulator
-     */
-    private static void collectMemberTexts(JsonNode node, String key, List<String> collected) {
-        if (node.isObject()) {
-            for (Map.Entry<String, JsonNode> entry : node.properties()) {
-                if (entry.getKey().equals(key) && entry.getValue().isTextual()) {
-                    collected.add(entry.getValue().textValue());
-                }
-                collectMemberTexts(entry.getValue(), key, collected);
-            }
-        } else if (node.isArray()) {
-            node.forEach(element -> collectMemberTexts(element, key, collected));
-        }
-    }
-
-    /**
-     * Returns a node's textual value, or {@code null} when it is absent or not textual.
-     *
-     * @param node the node, possibly {@code null}
-     * @return the textual value or {@code null}
-     */
-    private static String text(JsonNode node) {
-        return node != null && node.isTextual() ? node.textValue() : null;
-    }
-
     // --- Golden bytes ---
 
     /**
@@ -593,27 +434,8 @@ class SchemaFixtureMatrixTest {
      *
      * @param name      the golden file name under {@code golden/matrix/}
      * @param canonical the generated canonical document text
-     * @throws IOException if the golden resource cannot be read
      */
-    private static void assertGolden(String name, String canonical) throws IOException {
+    private static void assertGolden(String name, String canonical) {
         assertEquals(golden("matrix/" + name), canonical, name + " golden bytes");
-    }
-
-    /**
-     * Reads a committed golden document from the test classpath under {@code /golden/}.
-     *
-     * @param path the path under {@code /golden/} (e.g. {@code "matrix/ordinary-pojo.json"} or {@code
-     *             "strict-input-amount.json"})
-     * @return the golden document text, trailing newline stripped
-     * @throws IOException if the resource exists but cannot be read
-     */
-    private static String golden(String path) throws IOException {
-        try (InputStream in = SchemaFixtureMatrixTest.class.getResourceAsStream("/golden/" + path)) {
-            if (in == null) {
-                return fail("golden document /golden/" + path
-                        + " is not recorded yet — generate it, inspect it for contract correctness, then commit it");
-            }
-            return new String(in.readAllBytes(), StandardCharsets.UTF_8).strip();
-        }
     }
 }

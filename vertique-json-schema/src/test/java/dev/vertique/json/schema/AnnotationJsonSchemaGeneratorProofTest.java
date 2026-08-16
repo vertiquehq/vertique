@@ -3,14 +3,19 @@
 
 package dev.vertique.json.schema;
 
+import static dev.vertique.json.schema.SchemaAssertions.assertCanonicalForm;
+import static dev.vertique.json.schema.SchemaAssertions.collectMemberTexts;
+import static dev.vertique.json.schema.SchemaAssertions.conjunctiveClosure;
+import static dev.vertique.json.schema.SchemaAssertions.golden;
+import static dev.vertique.json.schema.SchemaAssertions.keywordValues;
+import static dev.vertique.json.schema.SchemaAssertions.propertyClosure;
+import static dev.vertique.json.schema.SchemaAssertions.text;
+import static dev.vertique.json.schema.SchemaAssertions.textValues;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.junit.jupiter.api.Assertions.fail;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.github.victools.jsonschema.generator.OptionPreset;
 import com.github.victools.jsonschema.generator.SchemaGenerator;
@@ -21,20 +26,11 @@ import com.github.victools.jsonschema.module.jakarta.validation.JakartaValidatio
 import com.github.victools.jsonschema.module.jakarta.validation.JakartaValidationOption;
 import com.github.victools.jsonschema.module.swagger2.Swagger2Module;
 import dev.vertique.core.json.JsonMapperProfile;
-import dev.vertique.core.json.JsonProfileId;
-import dev.vertique.json.DefaultJsonMapperProfileRegistry;
-import java.io.IOException;
-import java.io.InputStream;
 import java.lang.reflect.Type;
-import java.nio.charset.StandardCharsets;
-import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.Deque;
-import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -52,9 +48,6 @@ import org.junit.jupiter.api.Test;
  */
 class AnnotationJsonSchemaGeneratorProofTest {
 
-    /** Neutral mapper used to read and re-serialize documents inside the assertions. */
-    private static final ObjectMapper MAPPER = new ObjectMapper();
-
     /** The swagger-2 sentinel emitted for an unset {@code @Schema} default value. */
     private static final String DEFAULT_SENTINEL = "##default";
 
@@ -68,7 +61,7 @@ class AnnotationJsonSchemaGeneratorProofTest {
 
     @Test
     @DisplayName("Default mode reproduces the REST Victools configuration and emits compact, key-sorted JSON")
-    void defaultModeMatchesRestConfigurationStructurally() throws Exception {
+    void defaultModeMatchesRestConfigurationStructurally() {
         // Given: a POJO with a @NotNull field and a @Size-constrained field.
         // When: the default-mode generator produces its canonical document.
         String canonical = AnnotationJsonSchemaGenerator.withVictoolsDefaults()
@@ -91,9 +84,9 @@ class AnnotationJsonSchemaGeneratorProofTest {
 
     @Test
     @DisplayName("Input mode applies the vertique-strict BigDecimal fragment to the property")
-    void inputProfileAppliesStrictBigDecimalFragment() throws Exception {
+    void inputProfileAppliesStrictBigDecimalFragment() {
         // Given: the real built-in vertique-strict profile.
-        JsonMapperProfile strict = strictProfile();
+        JsonMapperProfile strict = HardeningFixtures.strictProfile();
 
         // When: an input-mode generator produces the document for a BigDecimal-bearing POJO.
         String canonical =
@@ -118,9 +111,9 @@ class AnnotationJsonSchemaGeneratorProofTest {
 
     @Test
     @DisplayName("Output mode applies the same symmetric BOTH override byte-for-byte")
-    void outputProfileAppliesStrictBigDecimalFragment() throws Exception {
+    void outputProfileAppliesStrictBigDecimalFragment() {
         // Given: the real built-in vertique-strict profile, whose only override is BOTH-directional.
-        JsonMapperProfile strict = strictProfile();
+        JsonMapperProfile strict = HardeningFixtures.strictProfile();
 
         // When: both directions generate the same type.
         String input =
@@ -135,9 +128,9 @@ class AnnotationJsonSchemaGeneratorProofTest {
 
     @Test
     @DisplayName("A property refinement conjoins with the profile fragment without overwriting it")
-    void propertyRefinementConjoinsWithoutOverwrite() throws Exception {
+    void propertyRefinementConjoinsWithoutOverwrite() {
         // Given: the strict profile and a property additionally narrowed by Swagger metadata.
-        JsonMapperProfile strict = strictProfile();
+        JsonMapperProfile strict = HardeningFixtures.strictProfile();
 
         // When: the input-mode generator produces the document.
         String canonical = AnnotationJsonSchemaGenerator.forInputProfile(strict)
@@ -166,9 +159,9 @@ class AnnotationJsonSchemaGeneratorProofTest {
 
     @Test
     @DisplayName("A resolved List<BigDecimal> element receives the profile fragment")
-    void listOfBigDecimalElementReceivesFragment() throws Exception {
+    void listOfBigDecimalElementReceivesFragment() {
         // Given: the strict profile and a resolved List<BigDecimal>.
-        JsonMapperProfile strict = strictProfile();
+        JsonMapperProfile strict = HardeningFixtures.strictProfile();
 
         // When: the input-mode generator produces the document.
         String canonical = AnnotationJsonSchemaGenerator.forInputProfile(strict)
@@ -199,7 +192,7 @@ class AnnotationJsonSchemaGeneratorProofTest {
     @DisplayName("Independent instances and repeated calls produce byte-identical documents")
     void determinismAcrossIndependentInstances() {
         // Given: two independent generators per mode, built from equal inputs.
-        JsonMapperProfile strict = strictProfile();
+        JsonMapperProfile strict = HardeningFixtures.strictProfile();
         AnnotationJsonSchemaGenerator defaultOne = AnnotationJsonSchemaGenerator.withVictoolsDefaults();
         AnnotationJsonSchemaGenerator defaultTwo = AnnotationJsonSchemaGenerator.withVictoolsDefaults();
         AnnotationJsonSchemaGenerator inputOne = AnnotationJsonSchemaGenerator.forInputProfile(strict);
@@ -224,7 +217,7 @@ class AnnotationJsonSchemaGeneratorProofTest {
 
     @Test
     @DisplayName("The ##default sentinel is stripped everywhere while a legitimate default survives")
-    void defaultSentinelStrippedEverywhere() throws Exception {
+    void defaultSentinelStrippedEverywhere() {
         // Given/When: a type whose swagger metadata emits both the sentinel and a real default.
         String canonical =
                 AnnotationJsonSchemaGenerator.withVictoolsDefaults().generateCanonical(ProofFixtures.SentinelDto.class);
@@ -241,7 +234,7 @@ class AnnotationJsonSchemaGeneratorProofTest {
 
     @Test
     @DisplayName("Representative REST body types generate the same document modulo key order")
-    void restDifferentialFixture() throws Exception {
+    void restDifferentialFixture() {
         // Given: three representative body types mirroring the existing REST fixtures.
         Map<String, Type> fixtures = new LinkedHashMap<>();
         fixtures.put("nested object", ProofFixtures.WithNested.class);
@@ -257,17 +250,6 @@ class AnnotationJsonSchemaGeneratorProofTest {
             // Then: the documents are structurally equal modulo key order and the sentinel strip.
             assertEquals(restEquivalent, generated, "REST differential mismatch for the " + fixture.getKey() + " body");
         }
-    }
-
-    // --- Profile helper ---
-
-    /**
-     * Resolves the real built-in {@code vertique-strict} profile from the default registry.
-     *
-     * @return the {@code vertique-strict} profile, carrying its declared {@code BigDecimal} override
-     */
-    private static JsonMapperProfile strictProfile() {
-        return new DefaultJsonMapperProfileRegistry(Set.of()).profile(JsonProfileId.of("vertique-strict"));
     }
 
     // --- REST-configuration differential helper ---
@@ -312,159 +294,20 @@ class AnnotationJsonSchemaGeneratorProofTest {
         }
     }
 
-    // --- Canonical-form assertions ---
+    // --- Local assertion helpers (not shared: no other test class needs them) ---
 
     /**
-     * Asserts that a canonical document is valid JSON, compact, and recursively key-sorted, and
-     * returns its parsed form.
+     * Asserts that each expected textual value is present among a keyword's conjunctive occurrences.
      *
-     * @param canonical the canonical document text
-     * @return the parsed document
-     * @throws Exception if the text is not valid JSON
+     * @param nodes    the conjunctive locations
+     * @param keyword  the keyword
+     * @param expected the values that must be present
      */
-    private static JsonNode assertCanonicalForm(String canonical) throws Exception {
-        assertNotNull(canonical, "the canonical document must not be null");
-        JsonNode document = MAPPER.readTree(canonical);
-        assertEquals(
-                MAPPER.writeValueAsString(document),
-                canonical,
-                "the canonical document must be compact JSON with no re-serialization difference");
-        assertKeysSorted(document, "#");
-        return document;
-    }
-
-    /**
-     * Asserts that every object's keys are in {@link String#compareTo(String)} order, recursively,
-     * and that arrays are visited without reordering.
-     *
-     * @param node the node to check
-     * @param path the JSON-pointer-ish path used in failure messages
-     */
-    private static void assertKeysSorted(JsonNode node, String path) {
-        if (node.isObject()) {
-            String previous = null;
-            for (Map.Entry<String, JsonNode> entry : node.properties()) {
-                if (previous != null && previous.compareTo(entry.getKey()) >= 0) {
-                    fail("keys out of order at " + path + ": '" + previous + "' before '" + entry.getKey() + "'");
-                }
-                previous = entry.getKey();
-                assertKeysSorted(entry.getValue(), path + "/" + entry.getKey());
-            }
-        } else if (node.isArray()) {
-            for (int i = 0; i < node.size(); i++) {
-                assertKeysSorted(node.get(i), path + "/" + i);
-            }
+    private static void assertTextValues(List<JsonNode> nodes, String keyword, List<String> expected) {
+        List<String> actual = textValues(nodes, keyword);
+        for (String value : expected) {
+            assertTrue(actual.contains(value), "expected " + keyword + "='" + value + "'; found " + actual);
         }
-    }
-
-    // --- Conjunctive-path probe ---
-
-    /**
-     * Collects every schema node that conjunctively applies at {@code start}: the node itself, each
-     * direct {@code allOf} branch, and each locally resolvable {@code $ref} target. The walk is
-     * guarded by a visited set and deliberately does <em>not</em> descend through {@code properties},
-     * {@code items}, {@code anyOf}, or {@code oneOf} — those are not unconditional conjunctions.
-     *
-     * @param document the whole document, used to resolve {@code $ref} pointers
-     * @param start    the node whose conjunctive closure is wanted
-     * @return the closure, in discovery order
-     */
-    private static List<JsonNode> conjunctiveClosure(JsonNode document, JsonNode start) {
-        List<JsonNode> collected = new ArrayList<>();
-        Map<JsonNode, Boolean> visited = new IdentityHashMap<>();
-        Deque<JsonNode> queue = new ArrayDeque<>();
-        queue.add(start);
-        while (!queue.isEmpty()) {
-            JsonNode node = queue.poll();
-            if (!node.isObject() || visited.put(node, Boolean.TRUE) != null) {
-                continue;
-            }
-            collected.add(node);
-
-            JsonNode allOf = node.get("allOf");
-            if (allOf != null && allOf.isArray()) {
-                allOf.forEach(queue::add);
-            }
-
-            JsonNode ref = node.get("$ref");
-            if (ref != null && ref.isTextual() && ref.textValue().startsWith("#")) {
-                JsonNode target = document.at(ref.textValue().substring(1));
-                if (!target.isMissingNode()) {
-                    queue.add(target);
-                }
-            }
-        }
-        return collected;
-    }
-
-    /**
-     * Collects every schema node that conjunctively applies to the named property, from every
-     * conjunctive location of the document root that declares it.
-     *
-     * @param document the whole document
-     * @param property the property name
-     * @return the property's conjunctive closure
-     */
-    private static List<JsonNode> propertyClosure(JsonNode document, String property) {
-        List<JsonNode> collected = new ArrayList<>();
-        for (JsonNode root : conjunctiveClosure(document, document)) {
-            JsonNode properties = root.get("properties");
-            if (properties == null || !properties.isObject()) {
-                continue;
-            }
-            JsonNode declared = properties.get(property);
-            if (declared != null) {
-                collected.addAll(conjunctiveClosure(document, declared));
-            }
-        }
-        assertFalse(collected.isEmpty(), "no schema node was found for property '" + property + "'");
-        return collected;
-    }
-
-    /**
-     * Collects the raw values a keyword takes across a set of conjunctive locations.
-     *
-     * @param nodes   the conjunctive locations
-     * @param keyword the keyword to collect
-     * @return every value found, in order
-     */
-    private static List<JsonNode> keywordValues(List<JsonNode> nodes, String keyword) {
-        List<JsonNode> values = new ArrayList<>();
-        for (JsonNode node : nodes) {
-            JsonNode value = node.get(keyword);
-            if (value != null) {
-                values.add(value);
-            }
-        }
-        return values;
-    }
-
-    /**
-     * Collects the textual values a keyword takes across a set of conjunctive locations, flattening
-     * an array-valued occurrence (e.g. {@code "type": ["string", "null"]}).
-     *
-     * @param nodes   the conjunctive locations
-     * @param keyword the keyword to collect
-     * @return every textual value found
-     */
-    private static List<String> textValues(List<JsonNode> nodes, String keyword) {
-        List<String> values = new ArrayList<>();
-        for (JsonNode node : nodes) {
-            JsonNode value = node.get(keyword);
-            if (value == null) {
-                continue;
-            }
-            if (value.isArray()) {
-                value.forEach(element -> {
-                    if (element.isTextual()) {
-                        values.add(element.textValue());
-                    }
-                });
-            } else if (value.isTextual()) {
-                values.add(value.textValue());
-            }
-        }
-        return values;
     }
 
     /**
@@ -486,20 +329,6 @@ class AnnotationJsonSchemaGeneratorProofTest {
     }
 
     /**
-     * Asserts that each expected textual value is present among a keyword's conjunctive occurrences.
-     *
-     * @param nodes    the conjunctive locations
-     * @param keyword  the keyword
-     * @param expected the values that must be present
-     */
-    private static void assertTextValues(List<JsonNode> nodes, String keyword, List<String> expected) {
-        List<String> actual = textValues(nodes, keyword);
-        for (String value : expected) {
-            assertTrue(actual.contains(value), "expected " + keyword + "='" + value + "'; found " + actual);
-        }
-    }
-
-    /**
      * Asserts that each expected integral value is present among a keyword's conjunctive occurrences.
      *
      * @param nodes    the conjunctive locations
@@ -510,26 +339,6 @@ class AnnotationJsonSchemaGeneratorProofTest {
         List<Integer> actual = intValues(nodes, keyword);
         for (Integer value : expected) {
             assertTrue(actual.contains(value), "expected " + keyword + "=" + value + "; found " + actual);
-        }
-    }
-
-    /**
-     * Recursively collects the textual values of every object member with the given key.
-     *
-     * @param node      the node to walk
-     * @param key       the member key
-     * @param collected the accumulator
-     */
-    private static void collectMemberTexts(JsonNode node, String key, List<String> collected) {
-        if (node.isObject()) {
-            for (Map.Entry<String, JsonNode> entry : node.properties()) {
-                if (entry.getKey().equals(key) && entry.getValue().isTextual()) {
-                    collected.add(entry.getValue().textValue());
-                }
-                collectMemberTexts(entry.getValue(), key, collected);
-            }
-        } else if (node.isArray()) {
-            node.forEach(element -> collectMemberTexts(element, key, collected));
         }
     }
 
@@ -552,35 +361,5 @@ class AnnotationJsonSchemaGeneratorProofTest {
             }
         }
         return false;
-    }
-
-    /**
-     * Returns a node's textual value, or {@code null} when it is absent or not textual.
-     *
-     * @param node the node, possibly {@code null}
-     * @return the textual value or {@code null}
-     */
-    private static String text(JsonNode node) {
-        return node != null && node.isTextual() ? node.textValue() : null;
-    }
-
-    // --- Golden bytes ---
-
-    /**
-     * Reads a committed golden document from the test classpath.
-     *
-     * @param name the file name under {@code src/test/resources/golden/}
-     * @return the golden document text, trailing newline stripped
-     */
-    private static String golden(String name) {
-        try (InputStream in = AnnotationJsonSchemaGeneratorProofTest.class.getResourceAsStream("/golden/" + name)) {
-            if (in == null) {
-                return fail("golden document /golden/" + name
-                        + " is not recorded yet — generate it, inspect it for contract correctness, then commit it");
-            }
-            return new String(in.readAllBytes(), StandardCharsets.UTF_8).strip();
-        } catch (IOException e) {
-            return fail("failed to read golden document /golden/" + name, e);
-        }
     }
 }

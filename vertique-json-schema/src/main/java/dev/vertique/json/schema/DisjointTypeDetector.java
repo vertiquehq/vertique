@@ -4,10 +4,6 @@
 package dev.vertique.json.schema;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import java.util.ArrayDeque;
-import java.util.Deque;
-import java.util.IdentityHashMap;
-import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Set;
 
@@ -18,18 +14,9 @@ import java.util.Set;
  *
  * <p>The check is deliberately narrow and provenance-free. It does not attempt schema satisfiability
  * analysis, and it does not care which contributor — a profile fragment, Swagger property metadata, a
- * Jakarta constraint — supplied which keyword. It computes, per <em>conjunctive location</em>, the
- * intersection of the explicit {@code type} value sets found there; an empty intersection is a
- * failure. A location that declares no explicit {@code type} at all always passes.
- *
- * <p>A conjunctive location is:
- *
- * <ul>
- *   <li>an object node;
- *   <li>each of its direct {@code allOf} branches; and
- *   <li>each locally resolvable {@code $ref} target (a {@code #}-rooted JSON pointer, typically into
- *       {@code $defs}).
- * </ul>
+ * Jakarta constraint — supplied which keyword. It computes, per {@link ConjunctiveLocations conjunctive
+ * location}, the intersection of the explicit {@code type} value sets found there; an empty
+ * intersection is a failure. A location that declares no explicit {@code type} at all always passes.
  *
  * <p>The closure deliberately does <strong>not</strong> descend through {@code properties},
  * {@code items}, {@code anyOf}, or {@code oneOf}. Those are not unconditional conjunctions: a
@@ -48,15 +35,6 @@ import java.util.Set;
  */
 final class DisjointTypeDetector {
 
-    /** The {@code allOf} keyword whose branches are conjoined with their parent. */
-    private static final String ALL_OF = "allOf";
-
-    /** The reference keyword whose local target is conjoined with the referring node. */
-    private static final String REF = "$ref";
-
-    /** The keyword whose value sets are intersected. */
-    private static final String TYPE = "type";
-
     /** Maximum length, in UTF-16 code units, of the document path rendered in a failure message. */
     private static final int MAX_PATH_LENGTH = 160;
 
@@ -68,14 +46,15 @@ final class DisjointTypeDetector {
     /**
      * Rejects a generated document that conjoins disjoint explicit {@code type} declarations.
      *
+     * <p>{@code document} is never {@code null} in practice: every caller passes the {@code
+     * ObjectNode} a successful Victools generation produced, and generation failure is reported
+     * before this method is ever reached.
+     *
      * @param document the freshly generated schema document; not mutated
      * @throws JsonSchemaGenerationException if any conjunctive location's explicit {@code type} sets
      *     intersect to nothing
      */
     static void requireNoDisjointTypes(JsonNode document) {
-        if (document == null) {
-            return;
-        }
         walk(document, document, "#");
     }
 
@@ -110,18 +89,8 @@ final class DisjointTypeDetector {
      */
     private static void requireSatisfiableTypes(JsonNode document, JsonNode start, String path) {
         Set<String> intersection = null;
-        Map<JsonNode, Boolean> visited = new IdentityHashMap<>();
-        Deque<JsonNode> pending = new ArrayDeque<>();
-        pending.add(start);
-
-        while (!pending.isEmpty()) {
-            JsonNode node = pending.poll();
-            if (!node.isObject() || visited.put(node, Boolean.TRUE) != null) {
-                continue;
-            }
-            enqueueConjoined(document, node, pending);
-
-            Set<String> declared = explicitTypes(node.get(TYPE));
+        for (JsonNode node : ConjunctiveLocations.closure(document, start)) {
+            Set<String> declared = ConjunctiveLocations.explicitTypes(node.get(ConjunctiveLocations.TYPE));
             if (declared == null) {
                 continue;
             }
@@ -134,57 +103,6 @@ final class DisjointTypeDetector {
                 throw conflict(path, declared);
             }
         }
-    }
-
-    /**
-     * Adds a node's direct {@code allOf} branches and its locally resolvable {@code $ref} target to
-     * the location's pending queue.
-     *
-     * @param document the whole document, used to resolve {@code $ref} pointers
-     * @param node     the node being expanded
-     * @param pending  the queue of nodes still to visit in this location
-     */
-    private static void enqueueConjoined(JsonNode document, JsonNode node, Deque<JsonNode> pending) {
-        JsonNode allOf = node.get(ALL_OF);
-        if (allOf != null && allOf.isArray()) {
-            allOf.forEach(pending::add);
-        }
-
-        JsonNode reference = node.get(REF);
-        if (reference != null && reference.isTextual() && reference.textValue().startsWith("#")) {
-            JsonNode target = document.at(reference.textValue().substring(1));
-            if (!target.isMissingNode()) {
-                pending.add(target);
-            }
-        }
-    }
-
-    /**
-     * Reads one node's explicit {@code type} declaration as a value set.
-     *
-     * @param type the {@code type} member's value, possibly {@code null}
-     * @return the declared type names, or {@code null} when the node declares no explicit type this
-     *     check can reason about
-     */
-    private static Set<String> explicitTypes(JsonNode type) {
-        if (type == null) {
-            return null;
-        }
-        if (type.isTextual()) {
-            Set<String> single = new LinkedHashSet<>();
-            single.add(type.textValue());
-            return single;
-        }
-        if (type.isArray()) {
-            Set<String> declared = new LinkedHashSet<>();
-            type.forEach(element -> {
-                if (element.isTextual()) {
-                    declared.add(element.textValue());
-                }
-            });
-            return declared;
-        }
-        return null;
     }
 
     /**

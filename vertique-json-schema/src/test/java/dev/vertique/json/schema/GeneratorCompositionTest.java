@@ -32,9 +32,6 @@ import org.junit.jupiter.api.Test;
  */
 class GeneratorCompositionTest {
 
-    /** Maximum length, in UTF-16 code units, a bounded failure message may reach. */
-    private static final int MAX_MESSAGE_LENGTH = 512;
-
     @Test
     @DisplayName("@Schema(implementation) on an override-bearing declared type fails generation")
     void schemaImplementationOnOverriddenDeclaredTypeFailsGeneration() {
@@ -102,8 +99,9 @@ class GeneratorCompositionTest {
         String message = failure.getMessage();
         assertNotNull(message, "the conflict must carry a message");
         assertTrue(
-                message.length() <= MAX_MESSAGE_LENGTH,
-                "the conflict message must stay within " + MAX_MESSAGE_LENGTH + " code units; was " + message.length());
+                message.length() <= Diagnostics.MAX_MESSAGE_LENGTH,
+                "the conflict message must stay within " + Diagnostics.MAX_MESSAGE_LENGTH + " code units; was "
+                        + message.length());
         assertTrue(message.contains("type"), "the message must name the conflicting keyword; was: " + message);
     }
 
@@ -197,7 +195,7 @@ class GeneratorCompositionTest {
                     "the walk must reject " + json);
             assertNotNull(failure.getMessage(), "the conflict must carry a message");
             assertTrue(
-                    failure.getMessage().length() <= MAX_MESSAGE_LENGTH,
+                    failure.getMessage().length() <= Diagnostics.MAX_MESSAGE_LENGTH,
                     "the conflict message must stay bounded; was " + failure.getMessage());
         }
 
@@ -244,8 +242,9 @@ class GeneratorCompositionTest {
         String message = failure.getMessage();
         assertNotNull(message, "the guard failure must carry a message");
         assertTrue(
-                message.length() <= MAX_MESSAGE_LENGTH,
-                "the guard message must stay within " + MAX_MESSAGE_LENGTH + " code units; was " + message.length());
+                message.length() <= Diagnostics.MAX_MESSAGE_LENGTH,
+                "the guard message must stay within " + Diagnostics.MAX_MESSAGE_LENGTH + " code units; was "
+                        + message.length());
         assertTrue(
                 message.contains(property), "the message must name the property '" + property + "'; was: " + message);
         assertFalse(

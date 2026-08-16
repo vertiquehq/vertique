@@ -32,12 +32,6 @@ class GeneratorTypeContractTest {
     /** Neutral mapper used to prove each accepted form produced a readable document. */
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
-    /** Maximum length, in UTF-16 code units, a bounded failure message may reach. */
-    private static final int MAX_MESSAGE_LENGTH = 512;
-
-    /** Maximum length, in UTF-16 code units, one resolved-type identity may reach in a message. */
-    private static final int MAX_TYPE_IDENTITY_LENGTH = 256;
-
     @Test
     @DisplayName("Every accepted Type form generates a document")
     void acceptsClassPrimitiveArrayParameterizedOwnerAndGenericArrayTypes() throws Exception {
@@ -47,11 +41,11 @@ class GeneratorTypeContractTest {
         accepted.put("primitive class", int.class);
         accepted.put("array class", String[].class);
         accepted.put("raw generic class", List.class);
-        accepted.put("parameterized type", HardeningFixtures.parameterized(List.class, String.class));
+        accepted.put("parameterized type", ProofFixtures.parameterized(List.class, String.class));
         accepted.put(
                 "nested parameterized type",
-                HardeningFixtures.parameterized(
-                        Map.class, String.class, HardeningFixtures.parameterized(List.class, Integer.class)));
+                ProofFixtures.parameterized(
+                        Map.class, String.class, ProofFixtures.parameterized(List.class, Integer.class)));
         accepted.put("generic array type", HardeningFixtures.holderType("matrix"));
         accepted.put("owner-bearing parameterized type", HardeningFixtures.holderType("nested"));
 
@@ -123,11 +117,14 @@ class GeneratorTypeContractTest {
         // Then: the whole message stays bounded and the identity portion is truncated.
         String message = failure.getMessage();
         assertTrue(
-                message.length() <= MAX_MESSAGE_LENGTH,
-                "message must stay within " + MAX_MESSAGE_LENGTH + " code units; was " + message.length());
+                message.length() <= Diagnostics.MAX_MESSAGE_LENGTH,
+                "message must stay within " + Diagnostics.MAX_MESSAGE_LENGTH + " code units; was " + message.length());
         assertFalse(message.contains(longName), "the untruncated type name must not reach the message");
-        String truncated = longName.substring(0, MAX_TYPE_IDENTITY_LENGTH - 3) + "...";
-        assertEquals(MAX_TYPE_IDENTITY_LENGTH, truncated.length(), "the truncated identity must be exactly bounded");
+        String truncated = longName.substring(0, Diagnostics.MAX_TYPE_IDENTITY_LENGTH - 3) + "...";
+        assertEquals(
+                Diagnostics.MAX_TYPE_IDENTITY_LENGTH,
+                truncated.length(),
+                "the truncated identity must be exactly bounded");
         assertTrue(message.contains(truncated), "the message must carry the truncated identity; was: " + message);
     }
 
@@ -156,8 +153,8 @@ class GeneratorTypeContractTest {
     private static void assertBoundedAndValueFree(String message, String form) {
         assertNotNull(message, "the " + form + " rejection must carry a message");
         assertTrue(
-                message.length() <= MAX_MESSAGE_LENGTH,
-                "the " + form + " message must stay within " + MAX_MESSAGE_LENGTH + " code units; was "
+                message.length() <= Diagnostics.MAX_MESSAGE_LENGTH,
+                "the " + form + " message must stay within " + Diagnostics.MAX_MESSAGE_LENGTH + " code units; was "
                         + message.length());
         assertFalse(
                 message.contains(HardeningFixtures.SENTINEL_VALUE),

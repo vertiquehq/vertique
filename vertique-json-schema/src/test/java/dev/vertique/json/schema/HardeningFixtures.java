@@ -316,17 +316,6 @@ final class HardeningFixtures {
     // --- Resolved generic types ---
 
     /**
-     * Builds a resolved {@link ParameterizedType} with no owner type.
-     *
-     * @param rawType   the raw class
-     * @param arguments the resolved type arguments
-     * @return the parameterized type
-     */
-    static Type parameterized(Class<?> rawType, Type... arguments) {
-        return ProofFixtures.parameterized(rawType, arguments);
-    }
-
-    /**
      * Reads a declared field's generic type from {@link TypeHolder}.
      *
      * @param field the field name

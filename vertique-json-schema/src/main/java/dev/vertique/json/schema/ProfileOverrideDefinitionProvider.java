@@ -4,7 +4,6 @@
 package dev.vertique.json.schema;
 
 import com.fasterxml.classmate.ResolvedType;
-import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -33,8 +32,10 @@ import com.github.victools.jsonschema.generator.SchemaKeyword;
  * document may legally flatten this wrapper wherever the merge is lossless. What is normative is the
  * conjunction, not the literal shape.
  *
- * <p>The provider is stateless apart from the immutable declarations it was built with, and it
- * builds a fresh node tree per call, so it never hands the same mutable tree to two generations.
+ * <p>The provider is stateless apart from the immutable declarations it was built with. {@link
+ * ValidatedProfile} parses each declared fragment exactly once, at construction, so this provider
+ * deep-copies the shared parsed tree per call rather than re-parsing it — it still never hands the
+ * same mutable tree to two generations.
  */
 final class ProfileOverrideDefinitionProvider implements CustomDefinitionProviderV2 {
 
@@ -56,31 +57,19 @@ final class ProfileOverrideDefinitionProvider implements CustomDefinitionProvide
      * @param resolvedType the type Victools is about to define
      * @param context      the active generation context, supplying the node factory and keyword names
      * @return the wrapped fragment definition, or {@code null} to leave the type to Victools
-     * @throws JsonSchemaGenerationException if a declared fragment cannot be re-read as JSON
      */
     @Override
     public CustomDefinition provideCustomSchemaDefinition(ResolvedType resolvedType, SchemaGenerationContext context) {
         if (resolvedType == null) {
             return null;
         }
-        String canonicalFragment = profile.fragmentFor(resolvedType.getErasedType());
-        if (canonicalFragment == null) {
+        JsonNode fragment = profile.fragmentFor(resolvedType.getErasedType());
+        if (fragment == null) {
             return null;
         }
 
-        JsonNode fragment;
-        try {
-            fragment = NeutralJson.read(canonicalFragment);
-        } catch (JsonProcessingException malformed) {
-            // Unreachable in practice: JsonSchemaFragment only ever holds text it parsed itself.
-            throw Diagnostics.failure(
-                    "the declared schema override fragment for "
-                            + Diagnostics.typeIdentity(resolvedType.getErasedType()) + " is not readable JSON",
-                    malformed);
-        }
-
         ArrayNode conjunction = context.getGeneratorConfig().createArrayNode();
-        conjunction.add(fragment);
+        conjunction.add(fragment.deepCopy());
         ObjectNode definition = context.getGeneratorConfig().createObjectNode();
         definition.set(context.getKeyword(SchemaKeyword.TAG_ALLOF), conjunction);
 

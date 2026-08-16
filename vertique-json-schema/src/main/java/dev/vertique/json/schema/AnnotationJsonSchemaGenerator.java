@@ -205,14 +205,15 @@ public final class AnnotationJsonSchemaGenerator {
 
         SchemaGeneratorConfigBuilder builder = new SchemaGeneratorConfigBuilder(
                 validated.mapper(), SchemaVersion.DRAFT_2020_12, OptionPreset.PLAIN_JSON);
-        if (validated.hasOverrides()) {
+        boolean hasOverrides = validated.hasOverrides();
+        if (hasOverrides) {
             builder.forTypesInGeneral().withCustomDefinitionProvider(new ProfileOverrideDefinitionProvider(validated));
             // Registered before the annotation modules, so the guard is consulted for every member
             // regardless of what a module's own member-scope provider decides to supply.
             builder.forFields().withCustomDefinitionProvider(new SchemaImplementationGuard<FieldScope>(validated));
             builder.forMethods().withCustomDefinitionProvider(new SchemaImplementationGuard<MethodScope>(validated));
         }
-        return new AnnotationJsonSchemaGenerator(build(builder), validated.hasOverrides());
+        return new AnnotationJsonSchemaGenerator(build(builder), hasOverrides);
     }
 
     /**

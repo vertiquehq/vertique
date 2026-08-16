@@ -5,12 +5,7 @@ package dev.vertique.json.schema;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import java.util.ArrayDeque;
-import java.util.ArrayList;
 import java.util.Collections;
-import java.util.Deque;
-import java.util.IdentityHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -33,12 +28,11 @@ import java.util.Set;
  *
  * <p>The check is deliberately provenance-free, mirroring {@link DisjointTypeDetector}: it does not
  * ask which contributor supplied a numeric-domain keyword or which override is in effect. It
- * computes, per conjunctive location — the same closure {@link DisjointTypeDetector} defines (a node,
- * its direct {@code allOf} branches, and locally resolvable {@code $ref} targets) — the intersection
- * of explicit {@code type} declarations found there. When that intersection is non-empty and
- * excludes both {@code number} and {@code integer}, the four keywords are removed from every branch
- * in the closure. A location that declares no explicit {@code type} at all is left untouched: with
- * nothing to reason about, suppressing would risk dropping a keyword that legitimately applies.
+ * computes, per {@link ConjunctiveLocations conjunctive location}, the intersection of explicit
+ * {@code type} declarations found there. When that intersection is non-empty and excludes both
+ * {@code number} and {@code integer}, the four keywords are removed from every branch in the closure.
+ * A location that declares no explicit {@code type} at all is left untouched: with nothing to reason
+ * about, suppressing would risk dropping a keyword that legitimately applies.
  *
  * <p>Applied only by the profile-aware construction modes ({@code forInputProfile}/{@code
  * forOutputProfile}) when at least one override is in effect for that direction; {@code
@@ -59,15 +53,6 @@ final class NumericDomainKeywordFilter {
     /** The explicit {@code type} values that keep a numeric-domain keyword applicable. */
     private static final Set<String> NUMERIC_TYPES = Set.of("number", "integer");
 
-    /** The {@code allOf} keyword whose branches are conjoined with their parent. */
-    private static final String ALL_OF = "allOf";
-
-    /** The reference keyword whose local target is conjoined with the referring node. */
-    private static final String REF = "$ref";
-
-    /** The keyword whose value sets are intersected. */
-    private static final String TYPE = "type";
-
     private NumericDomainKeywordFilter() {}
 
     /**
@@ -75,12 +60,12 @@ final class NumericDomainKeywordFilter {
      * conjunctive location whose effective explicit type excludes both {@code number} and {@code
      * integer}.
      *
+     * <p>{@code document} is never {@code null} in practice: the only caller passes the {@code
+     * ObjectNode} a successful Victools generation produced.
+     *
      * @param document the freshly generated schema document; mutated in place
      */
     static void suppressInapplicableNumericKeywords(JsonNode document) {
-        if (document == null) {
-            return;
-        }
         walk(document, document);
     }
 
@@ -113,88 +98,28 @@ final class NumericDomainKeywordFilter {
      * @param start    the object node heading the location
      */
     private static void applyAtLocation(JsonNode document, JsonNode start) {
-        List<ObjectNode> closure = new ArrayList<>();
+        List<JsonNode> closure = ConjunctiveLocations.closure(document, start);
         Set<String> intersection = null;
-        Map<JsonNode, Boolean> visited = new IdentityHashMap<>();
-        Deque<JsonNode> pending = new ArrayDeque<>();
-        pending.add(start);
 
-        while (!pending.isEmpty()) {
-            JsonNode node = pending.poll();
-            if (!node.isObject() || visited.put(node, Boolean.TRUE) != null) {
-                continue;
-            }
-            closure.add((ObjectNode) node);
-            enqueueConjoined(document, node, pending);
-
-            Set<String> declared = explicitTypes(node.get(TYPE));
+        for (JsonNode node : closure) {
+            Set<String> declared = ConjunctiveLocations.explicitTypes(node.get(ConjunctiveLocations.TYPE));
             if (declared == null) {
                 continue;
             }
             if (intersection == null) {
-                intersection = new LinkedHashSet<>(declared);
+                intersection = declared;
             } else {
                 intersection.retainAll(declared);
             }
         }
 
         if (intersection != null && !intersection.isEmpty() && Collections.disjoint(intersection, NUMERIC_TYPES)) {
-            for (ObjectNode member : closure) {
+            for (JsonNode member : closure) {
+                ObjectNode objectMember = (ObjectNode) member;
                 for (String keyword : NUMERIC_DOMAIN_KEYWORDS) {
-                    member.remove(keyword);
+                    objectMember.remove(keyword);
                 }
             }
         }
-    }
-
-    /**
-     * Adds a node's direct {@code allOf} branches and its locally resolvable {@code $ref} target to
-     * the location's pending queue.
-     *
-     * @param document the whole document, used to resolve {@code $ref} pointers
-     * @param node     the node being expanded
-     * @param pending  the queue of nodes still to visit in this location
-     */
-    private static void enqueueConjoined(JsonNode document, JsonNode node, Deque<JsonNode> pending) {
-        JsonNode allOf = node.get(ALL_OF);
-        if (allOf != null && allOf.isArray()) {
-            allOf.forEach(pending::add);
-        }
-
-        JsonNode reference = node.get(REF);
-        if (reference != null && reference.isTextual() && reference.textValue().startsWith("#")) {
-            JsonNode target = document.at(reference.textValue().substring(1));
-            if (!target.isMissingNode()) {
-                pending.add(target);
-            }
-        }
-    }
-
-    /**
-     * Reads one node's explicit {@code type} declaration as a value set.
-     *
-     * @param type the {@code type} member's value, possibly {@code null}
-     * @return the declared type names, or {@code null} when the node declares no explicit type this
-     *     check can reason about
-     */
-    private static Set<String> explicitTypes(JsonNode type) {
-        if (type == null) {
-            return null;
-        }
-        if (type.isTextual()) {
-            Set<String> single = new LinkedHashSet<>();
-            single.add(type.textValue());
-            return single;
-        }
-        if (type.isArray()) {
-            Set<String> declared = new LinkedHashSet<>();
-            type.forEach(element -> {
-                if (element.isTextual()) {
-                    declared.add(element.textValue());
-                }
-            });
-            return declared;
-        }
-        return null;
     }
 }
