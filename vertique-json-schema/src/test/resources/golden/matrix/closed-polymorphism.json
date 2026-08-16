@@ -1,0 +1,1 @@
+{"$schema":"https://json-schema.org/draft/2020-12/schema","anyOf":[{"properties":{"kind":{"const":"car"},"plate":{"type":"string"},"seats":{"type":"integer"}},"required":["kind"],"type":"object"},{"properties":{"kind":{"const":"truck"},"payloadTons":{"type":"number"},"plate":{"type":"string"}},"required":["kind"],"type":"object"}]}
