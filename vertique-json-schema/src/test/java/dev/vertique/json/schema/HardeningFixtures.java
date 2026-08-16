@@ -306,6 +306,61 @@ final class HardeningFixtures {
     }
 
     /**
+     * A {@link List} subclass that binds its element type in the {@code extends} clause. Classmate
+     * reports <em>no</em> self-declared type parameters for it — {@code getTypeParameters()} returns a
+     * type's own declared parameters, and this class declares none — while
+     * {@code typeParametersFor(Iterable.class)} still resolves the element to {@link BigDecimal}.
+     * Victools publishes it as an array whose items carry the element's schema, so the element is a
+     * real position an override applies to.
+     */
+    static final class DecimalList extends java.util.ArrayList<BigDecimal> {}
+
+    /**
+     * A {@link Map} subclass binding both its key and value types in the {@code extends} clause, with
+     * the overridden class in the <em>value</em> position. Like {@link DecimalList} it declares no type
+     * parameters of its own, so only {@code typeParametersFor(Map.class)} reaches the value.
+     */
+    static final class DecimalValuedMap extends java.util.HashMap<String, BigDecimal> {}
+
+    /**
+     * A {@link Map} subclass whose only overridden class sits in the excluded <em>key</em> position, so
+     * the inherited-container descent must not turn the key exclusion into a false positive.
+     */
+    static final class DecimalKeyedMap extends java.util.HashMap<BigDecimal, String> {}
+
+    /** Property whose redirect covers a {@link List} subclass carrying the override as its element. */
+    static final class ContainerSubclassImplementationDto {
+
+        /** Inherited element position — reachable only through the container's supertype bindings. */
+        @Schema(implementation = Number.class)
+        public DecimalList amounts;
+    }
+
+    /** Property whose redirect covers a {@link Map} subclass carrying the override as its value. */
+    static final class MapSubclassValueImplementationDto {
+
+        /** Inherited value position — reachable only through the map's supertype bindings. */
+        @Schema(implementation = Number.class)
+        public DecimalValuedMap rates;
+    }
+
+    /** Property whose redirect covers a {@link Map} subclass carrying the override as its key only. */
+    static final class MapSubclassKeyOnlyImplementationDto {
+
+        /** Inherited key position — excluded from the walk, so this must redirect rather than fail. */
+        @Schema(implementation = String.class)
+        public DecimalKeyedMap keys;
+    }
+
+    /** Property whose redirect covers a container subclass nested inside another generic type. */
+    static final class NestedContainerSubclassImplementationDto {
+
+        /** The overridden element is two descents away: through the wrapper, then through the subclass. */
+        @Schema(implementation = Number.class)
+        public java.util.Optional<DecimalList> batch;
+    }
+
+    /**
      * Declares the redirected property as an unresolved type variable, so plain JDK reflection reads
      * a {@code TypeVariable} and only a declaring-context resolution recovers the actual class.
      *

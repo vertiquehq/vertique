@@ -13,6 +13,7 @@ import io.swagger.v3.oas.annotations.media.Schema;
 import java.lang.reflect.Field;
 import java.lang.reflect.Member;
 import java.lang.reflect.Method;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -59,10 +60,22 @@ import java.util.Map;
  * override for exactly the member Victools then redirects, which is the silent drop this guard
  * exists to prevent.
  *
- * <p>The graph comprises the declared type itself plus, recursively, its resolved type parameters
- * and array element types. <strong>Map key positions are excluded</strong>: for a {@link Map} with
- * two type parameters the key parameter is skipped, matching the override contract, under which a
- * map key stays mapper-owned. The walk is bounded by {@link TypeGrammar#MAX_DEPTH}, and exceeding
+ * <p>The graph comprises the declared type itself plus, recursively, its array element type and its
+ * child types in the sense of {@link #declaredTypeGraphChildren(ResolvedType, Class)}: the type's
+ * <em>self-declared</em> resolved parameters <em>and</em> the container element types it merely
+ * <em>inherits</em>. Both are required, because {@link ResolvedType#getTypeParameters()} reports only
+ * a type's own declared parameters. A container subclass that binds its element in the
+ * {@code extends} clause — {@code class Amounts extends ArrayList<BigDecimal>} — declares none, so a
+ * self-parameters-only walk sees an empty graph and reports "no override found" for a type Victools
+ * nonetheless publishes as {@code {"type":"array","items":<element schema>}}. The element is a real
+ * position the profile fragment applies to, so missing it is the exact silent drop this guard exists
+ * to prevent. The inherited descent therefore mirrors {@code TypeContext.getContainerItemType} —
+ * {@code typeParametersFor(Iterable.class)} for the element — and adds the matching map binding.
+ *
+ * <p><strong>Map key positions are excluded</strong> in both descents: for a {@link Map} with two
+ * type parameters the key parameter is skipped, and only index 1 of an inherited
+ * {@code typeParametersFor(Map.class)} binding is walked, matching the override contract, under which
+ * a map key stays mapper-owned. The walk is bounded by {@link TypeGrammar#MAX_DEPTH}, and exceeding
  * that bound <em>fails</em> rather than resolving to "no override found" — a depth bound inside a
  * fail-closed guard must never fail open.
  *
@@ -183,6 +196,13 @@ final class SchemaImplementationGuard<M extends MemberScope<?, ?>> implements Cu
     /**
      * Finds the first class in a resolved declared type graph that carries an effective override.
      *
+     * <p>The walk descends into the node's array element type, its self-declared type parameters, and
+     * the container element types it inherits from a supertype binding — see
+     * {@link #declaredTypeGraphChildren(ResolvedType, Class)} for why the inherited half is not
+     * optional. Every child is visited at {@code depth + 1} regardless of which half it came from, so
+     * widening the walk does not change the depth accounting for any graph the narrower walk already
+     * covered.
+     *
      * <p>Exceeding {@link TypeGrammar#MAX_DEPTH} throws instead of returning {@code null}: past the
      * bound the guard has not proven the absence of an override, and reporting "none found" would
      * turn the bound into a silent bypass of the very drop this guard refuses to emit.
@@ -212,17 +232,72 @@ final class SchemaImplementationGuard<M extends MemberScope<?, ?>> implements Cu
         if (type.isArray()) {
             return firstOverriddenClass(type.getArrayElementType(), depth + 1, memberName);
         }
-        List<ResolvedType> parameters = type.getTypeParameters();
-        boolean mapKeyExcluded = Map.class.isAssignableFrom(erasedType) && parameters.size() == 2;
-        for (int index = 0; index < parameters.size(); index++) {
-            if (mapKeyExcluded && index == 0) {
-                continue;
-            }
-            Class<?> hit = firstOverriddenClass(parameters.get(index), depth + 1, memberName);
+        for (ResolvedType child : declaredTypeGraphChildren(type, erasedType)) {
+            Class<?> hit = firstOverriddenClass(child, depth + 1, memberName);
             if (hit != null) {
                 return hit;
             }
         }
         return null;
+    }
+
+    /**
+     * Collects the child nodes of one graph node: the type's self-declared resolved parameters plus
+     * the element types it inherits as a container, with map key positions excluded from both.
+     *
+     * <p>{@link ResolvedType#getTypeParameters()} answers only for parameters the type itself
+     * <em>declares</em>. A container subclass such as {@code class Amounts extends ArrayList<BigDecimal>}
+     * declares none, so that accessor alone reports an empty graph — while
+     * {@code typeParametersFor(Iterable.class)} still resolves the element to {@code BigDecimal} and
+     * Victools publishes the type as an array carrying that element's schema. Reading only the
+     * self-declared half would therefore let an implementation redirect drop the element's profile
+     * fragment with no trace, which is precisely the outcome the guard refuses. The inherited descent
+     * mirrors {@code TypeContext.getContainerItemType}, which resolves the item as
+     * {@code getTypeParameterFor(type, Iterable.class, 0)}.
+     *
+     * <p>The map binding is read the same way but at index 1 only: an inherited key position stays
+     * mapper-owned exactly like a directly declared one, so widening the walk must not turn a
+     * key-only override into a false positive.
+     *
+     * <p>Children are de-duplicated by value. For a directly parameterized container the two halves
+     * resolve to the same element — {@code List<BigDecimal>} reports {@code BigDecimal} through both —
+     * so de-duplication keeps such a graph identical to the self-parameters-only walk and prevents the
+     * branching factor from doubling at every level of a deeply nested container.
+     *
+     * @param type       the graph node whose children are wanted
+     * @param erasedType the node's erased class, already resolved by the caller
+     * @return the child nodes to descend into, in declaration-then-inheritance order
+     */
+    private static List<ResolvedType> declaredTypeGraphChildren(ResolvedType type, Class<?> erasedType) {
+        List<ResolvedType> children = new ArrayList<>();
+        List<ResolvedType> declared = type.getTypeParameters();
+        boolean mapKeyExcluded = Map.class.isAssignableFrom(erasedType) && declared.size() == 2;
+        for (int index = 0; index < declared.size(); index++) {
+            if (mapKeyExcluded && index == 0) {
+                continue;
+            }
+            addDistinct(children, declared.get(index));
+        }
+        List<ResolvedType> inheritedElement = type.typeParametersFor(Iterable.class);
+        if (inheritedElement != null && !inheritedElement.isEmpty()) {
+            addDistinct(children, inheritedElement.get(0));
+        }
+        List<ResolvedType> inheritedMapping = type.typeParametersFor(Map.class);
+        if (inheritedMapping != null && inheritedMapping.size() == 2) {
+            addDistinct(children, inheritedMapping.get(1));
+        }
+        return children;
+    }
+
+    /**
+     * Appends a child node unless an equal one was already collected.
+     *
+     * @param children the accumulating child list
+     * @param child    the candidate child, possibly {@code null}
+     */
+    private static void addDistinct(List<ResolvedType> children, ResolvedType child) {
+        if (child != null && !children.contains(child)) {
+            children.add(child);
+        }
     }
 }
