@@ -107,6 +107,7 @@ Obtain via `CodegenContext.diagnostics()`.
 |--------|-------------|
 | `error(Element, String, Object...)` | Emits `Diagnostic.Kind.ERROR` attributed to the given element |
 | `warning(Element, String, Object...)` | Emits `Diagnostic.Kind.WARNING` |
+| `mandatoryWarning(Element, String, Object...)` | Emits `Diagnostic.Kind.MANDATORY_WARNING`, which survives `-nowarn` and `-Xlint:none`. Use when the warning is the only signal that generated output was reduced — an ordinary warning makes such a case silent under flags common in large reactors |
 | `note(Element, String, Object...)` | Emits `Diagnostic.Kind.NOTE` |
 
 All instance methods accept a `String.format`-style format string.
@@ -119,6 +120,31 @@ All instance methods accept a `String.format`-style format string.
 | `duplicateOperation(String opName)` | `"Duplicate operation name '{opName}' in contract"` |
 | `unsupportedAnnotation(String fqn)` | `"@{fqn} is not supported in this position"` |
 | `expectedRecord(String typeFqn)` | `"{typeFqn} must be a record"` |
+
+---
+
+### TypeVisibility
+
+Answers whether generated source placed in one package may name a user type declared in another.
+
+```java
+static boolean isReferenceableFrom(TypeElement type, String fromPackage)
+```
+
+An aggregate emitter writes one `public` type into a package derived from all its origins, then references each origin by name. Consult this before emitting such a reference: a reference the generated package cannot legally make produces source that does not compile, and because javac compiles generated sources in the same task, the application's build breaks merely by putting the processor on `annotationProcessorPaths` — whether or not the generated module is installed in a `@Component`. Emitters skip what they cannot name (and say so via `Diagnostics.mandatoryWarning`) rather than emitting it.
+
+The rules, each matching what javac accepts:
+
+| Case | Referenceable |
+|---|---|
+| Same package, any access level except `private` | yes |
+| Same package, `private` nested type (or nested inside one) | no — a `private` nested type is in scope only inside its enclosing class body, and generated source is a separate compilation unit |
+| Other package, type and every enclosing type `public` | yes |
+| Other package, type or any enclosing type not `public` | no |
+| Type in the unnamed package, generated source in a named package | no — it can neither be imported nor named by simple name |
+| Type in a named package, generated source in the unnamed package | yes — the restriction is not symmetric |
+
+The type's own package is derived from its enclosing elements rather than passed in, so a caller cannot silently supply the wrong one.
 
 ---
 

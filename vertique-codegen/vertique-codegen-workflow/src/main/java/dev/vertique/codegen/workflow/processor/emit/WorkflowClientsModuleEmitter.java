@@ -8,14 +8,17 @@ import com.palantir.javapoet.CodeBlock;
 import com.palantir.javapoet.JavaFile;
 import com.palantir.javapoet.ParameterSpec;
 import dev.vertique.codegen.CodegenContext;
+import dev.vertique.codegen.TypeVisibility;
 import dev.vertique.codegen.dagger.DaggerModuleWriter;
 import dev.vertique.codegen.workflow.processor.scan.ContractModel;
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import javax.lang.model.SourceVersion;
+import javax.lang.model.element.TypeElement;
 
 /**
  * Emitter that generates an aggregate Dagger {@code @Module} ({@code GeneratedWorkflowClientsModule})
@@ -92,18 +95,27 @@ public final class WorkflowClientsModuleEmitter {
         if (contracts.isEmpty()) {
             return;
         }
-        if (hasSimpleNameCollisions(contracts)) {
+        // Resolved from every valid contract before any is filtered out, so skipping an
+        // unreferenceable contract never relocates the module.
+        String pkg = resolvePackage(contracts);
+        List<ContractModel> bindable = referenceableFrom(contracts, pkg);
+        if (bindable.isEmpty()) {
+            return;
+        }
+        // Collisions are checked on the contracts that actually get bindings. Checking the
+        // unfiltered list would hard-fail on a clash with a contract that is about to be skipped —
+        // a collision that never reaches the generated source.
+        if (hasSimpleNameCollisions(bindable)) {
             return;
         }
 
-        String pkg = resolvePackage(contracts);
         ClassName moduleName = ClassName.get(pkg, MODULE_SIMPLE_NAME);
         DaggerModuleWriter writer = DaggerModuleWriter.named(moduleName).concrete();
 
         ParameterSpec factoryParam =
                 ParameterSpec.builder(WORKFLOW_CLIENT_FACTORY, "factory").build();
 
-        for (ContractModel contract : contracts) {
+        for (ContractModel contract : bindable) {
             ClassName contractType = ClassName.get(contract.contractType());
             String methodName = provideMethodName(contractType.simpleName());
             CodeBlock body = CodeBlock.of("return factory.create($T.class);", contractType);
@@ -157,6 +169,44 @@ public final class WorkflowClientsModuleEmitter {
             }
         }
         return anyConflict;
+    }
+
+    /**
+     * Filters the contracts down to those the generated module can name, warning once per skipped
+     * contract.
+     *
+     * <p>A contract that is not {@code public} (or is nested in a non-public type) outside the
+     * module's package cannot be referenced from it, and neither can one in the unnamed package.
+     * Emitting the binding anyway produces a module that does not compile, which would break the
+     * application's build merely by putting this processor on the annotation-processor path — javac
+     * compiles generated sources in the same task, so installing the module in a {@code @Component}
+     * is not required to hit it. A skipped contract keeps working through a hand-written provider.
+     *
+     * @param contracts     the validated contracts; must not be {@code null}
+     * @param modulePackage the already-resolved package the module will be written to
+     * @return the subset the module may reference, in the original order; possibly empty
+     */
+    private List<ContractModel> referenceableFrom(List<ContractModel> contracts, String modulePackage) {
+        List<ContractModel> bindable = new ArrayList<>(contracts.size());
+        for (ContractModel contract : contracts) {
+            TypeElement contractType = contract.contractType();
+            if (TypeVisibility.isReferenceableFrom(contractType, modulePackage)) {
+                bindable.add(contract);
+                continue;
+            }
+            ctx.diagnostics()
+                    .mandatoryWarning(
+                            contractType,
+                            "@WorkflowContract %s is not accessible from package '%s', where %s is"
+                                    + " generated, so it is left unbound. Make the contract (and any enclosing"
+                                    + " type) public, set -A%s to a package it is visible from, or provide it"
+                                    + " with a hand-written @Provides method.",
+                            ClassName.get(contractType).canonicalName(),
+                            modulePackage,
+                            MODULE_SIMPLE_NAME,
+                            CodegenContext.OPTION_OUTPUT_PACKAGE);
+        }
+        return bindable;
     }
 
     /**

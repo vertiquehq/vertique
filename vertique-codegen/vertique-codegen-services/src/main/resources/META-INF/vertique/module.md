@@ -166,6 +166,23 @@ It delegates construction to `ServiceClientFactory`; it never instantiates
 `{Contract}_ServiceClientProxy` itself. This preserves generated-proxy selection, reflective
 fallback, registry/metadata validation, context propagation, and transport ownership.
 
+**A contract the module's package cannot name gets no client binding.** A contract that is not
+`public` (or is nested in a non-public type) and lives outside the module's resolved package, a
+`private` nested contract even within it, or one in the unnamed package — is skipped with a
+*mandatory* compiler warning naming the reason (mandatory so `-nowarn` cannot turn the skip silent), because
+emitting the binding would produce a module that does not compile. Since javac compiles generated
+sources in the same task, that would break the application's build merely by putting the processor
+on `annotationProcessorPaths`, whether or not the module is installed in a `@Component`. Make the
+contract and its enclosing types public, point `-Avertique.codegen.package` at a package it is
+visible from, or bind it with a hand-written `@Provides`.
+
+Contributor bindings are unaffected by contract *visibility*: they reference the generated
+`public {Contract}_ContractContributor`, which always sits in the contract's own package. The one
+exception is a contract in the **unnamed package** — its contributor is generated there too, and a
+named package can never reference it. That is a compile **error**, not a skip: dropping a
+contributor unregisters the service, which would fail at runtime rather than at Dagger's
+compile-time graph validation. Move such a contract into a named package.
+
 Client-only compilation units still receive the unified `GeneratedServicesModule`, even when the
 implementation is compiled in another application module. Provider names are deterministic and
 collision-safe across contracts and across both binding families.

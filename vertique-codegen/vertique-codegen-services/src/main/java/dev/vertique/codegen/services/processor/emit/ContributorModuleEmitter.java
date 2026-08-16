@@ -9,6 +9,7 @@ import com.palantir.javapoet.JavaFile;
 import com.palantir.javapoet.MethodSpec;
 import com.palantir.javapoet.TypeSpec;
 import dev.vertique.codegen.CodegenContext;
+import dev.vertique.codegen.TypeVisibility;
 import dev.vertique.codegen.services.processor.scan.ClientContractModel;
 import dev.vertique.codegen.services.processor.scan.ContractModel;
 import java.beans.Introspector;
@@ -133,6 +134,23 @@ public final class ContributorModuleEmitter {
         for (Map.Entry<String, ContractModel> entry : contributors.entrySet()) {
             ContractModel model = entry.getValue();
             String contractPkg = ctx.packageNameOf(model.contractType());
+            // The contributor itself is always public and lands in the contract's own package, so
+            // contract visibility never blocks this binding. The unnamed package is the one
+            // exception: it cannot be named from the named package the module resolves to. That is
+            // an error rather than a skip — dropping a contributor unregisters the service, which
+            // fails at runtime instead of at Dagger's compile-time graph validation.
+            if (contractPkg.isEmpty() && !packageName.isEmpty()) {
+                ctx.diagnostics()
+                        .error(
+                                model.contractType(),
+                                "@ServiceContract %s is in the unnamed package, so its generated"
+                                        + " contributor cannot be referenced from package '%s', where %s is"
+                                        + " generated. Move the contract into a named package.",
+                                entry.getKey(),
+                                packageName,
+                                MODULE_SIMPLE_NAME);
+                continue;
+            }
             String contributorSimpleName = model.contractType().getSimpleName() + "_ContractContributor";
             ClassName contributorClass = ClassName.get(contractPkg, contributorSimpleName);
 
@@ -157,6 +175,24 @@ public final class ContributorModuleEmitter {
             ClientContractModel model = entry.getValue();
             TypeElement contractType = model.contractType();
             ClassName contractClass = ClassName.get(contractType);
+            // Contributor bindings above are safe regardless of contract visibility: they reference
+            // the generated public {Contract}_ContractContributor, not the contract. A client binding
+            // returns the contract itself, so an unreferenceable contract would emit a module that
+            // does not compile — breaking the build even without installing it in a @Component.
+            if (!TypeVisibility.isReferenceableFrom(contractType, packageName)) {
+                ctx.diagnostics()
+                        .mandatoryWarning(
+                                contractType,
+                                "@ServiceContract %s is not accessible from package '%s', where %s is"
+                                        + " generated, so no typed client is bound for it. Make the contract"
+                                        + " (and any enclosing type) public, set -A%s to a package it is visible"
+                                        + " from, or provide the client with a hand-written @Provides method.",
+                                contractClass.canonicalName(),
+                                packageName,
+                                MODULE_SIMPLE_NAME,
+                                CodegenContext.OPTION_OUTPUT_PACKAGE);
+                continue;
+            }
             String methodName = uniqueBindingMethodName(
                     clientBindingMethodName(contractType.getSimpleName().toString()), entry.getKey(), usedMethodNames);
 

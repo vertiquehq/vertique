@@ -147,4 +147,105 @@ class WorkflowClientsModuleEmitterTest {
                 .assertFailed()
                 .assertErrorMessage("collides with");
     }
+
+    @Test
+    @DisplayName("a contract not visible from the module package is skipped, not emitted into a broken module")
+    void contractInvisibleFromModulePackageIsSkipped() {
+        // com.foo + com.bar resolve the module to package "com", from which the package-private
+        // com.foo.HiddenWf cannot be named. Emitting its binding produced a module that did not
+        // compile, and because javac compiles generated sources in the same task that broke the
+        // application build on processor upgrade alone — no @Component change required.
+        JavaFileObject hiddenPayload = idempotencyKeyedPayload("com.foo", "StartFooPayload", "id");
+        JavaFileObject visiblePayload = idempotencyKeyedPayload("com.bar", "StartBarPayload", "id");
+        JavaFileObject hidden = SourceFiles.inline("com.foo.HiddenWf", """
+                        package com.foo;
+                        import dev.vertique.workflow.contract.WorkflowContract;
+                        import dev.vertique.workflow.contract.WorkflowStart;
+                        import dev.vertique.workflow.ops.WorkflowInstanceId;
+                        import io.vertx.core.Future;
+                        @WorkflowContract(definitionId = "foo", definitionVersion = 1L)
+                        interface HiddenWf {
+                            @WorkflowStart
+                            Future<WorkflowInstanceId> start(StartFooPayload cmd);
+                        }
+                        """);
+        JavaFileObject visible = SourceFiles.inline("com.bar.VisibleWf", """
+                        package com.bar;
+                        import dev.vertique.workflow.contract.WorkflowContract;
+                        import dev.vertique.workflow.contract.WorkflowStart;
+                        import dev.vertique.workflow.ops.WorkflowInstanceId;
+                        import io.vertx.core.Future;
+                        @WorkflowContract(definitionId = "bar", definitionVersion = 1L)
+                        public interface VisibleWf {
+                            @WorkflowStart
+                            Future<WorkflowInstanceId> start(StartBarPayload cmd);
+                        }
+                        """);
+
+        ProcessorTestHarness.run(new WorkflowContractProcessor(), hiddenPayload, visiblePayload, hidden, visible)
+                .assertSuccess()
+                .assertWarningMessage("com.foo.HiddenWf is not accessible from package 'com'")
+                .assertGeneratedSourceContains("com.GeneratedWorkflowClientsModule", "provideVisibleWf")
+                .assertGeneratedSourceDoesNotContain("com.GeneratedWorkflowClientsModule", "HiddenWf");
+    }
+
+    @Test
+    @DisplayName("a package-private contract is still bound when the module lands in its own package")
+    void packagePrivateContractIsBoundWithinItsOwnPackage() {
+        JavaFileObject payload = idempotencyKeyedPayload("com.foo", "StartFooPayload", "id");
+        JavaFileObject hidden = SourceFiles.inline("com.foo.HiddenWf", """
+                        package com.foo;
+                        import dev.vertique.workflow.contract.WorkflowContract;
+                        import dev.vertique.workflow.contract.WorkflowStart;
+                        import dev.vertique.workflow.ops.WorkflowInstanceId;
+                        import io.vertx.core.Future;
+                        @WorkflowContract(definitionId = "foo", definitionVersion = 1L)
+                        interface HiddenWf {
+                            @WorkflowStart
+                            Future<WorkflowInstanceId> start(StartFooPayload cmd);
+                        }
+                        """);
+
+        ProcessorTestHarness.run(new WorkflowContractProcessor(), payload, hidden)
+                .assertSuccess()
+                .assertGeneratedSourceContains("com.foo.GeneratedWorkflowClientsModule", "provideHiddenWf");
+    }
+
+    @Test
+    @DisplayName("a simple-name clash with a skipped contract does not fail the build")
+    void collisionWithSkippedContractDoesNotFail() {
+        // com.foo.Wf is package-private and unreferenceable from the resolved package "com", so it
+        // is skipped and never produces a provider method — meaning it cannot collide with
+        // com.bar.Wf. Checking collisions before filtering hard-failed the whole module here.
+        JavaFileObject fooPayload = idempotencyKeyedPayload("com.foo", "StartFooPayload", "id");
+        JavaFileObject barPayload = idempotencyKeyedPayload("com.bar", "StartBarPayload", "id");
+        JavaFileObject hidden = SourceFiles.inline("com.foo.Wf", """
+                        package com.foo;
+                        import dev.vertique.workflow.contract.WorkflowContract;
+                        import dev.vertique.workflow.contract.WorkflowStart;
+                        import dev.vertique.workflow.ops.WorkflowInstanceId;
+                        import io.vertx.core.Future;
+                        @WorkflowContract(definitionId = "foo", definitionVersion = 1L)
+                        interface Wf {
+                            @WorkflowStart
+                            Future<WorkflowInstanceId> start(StartFooPayload cmd);
+                        }
+                        """);
+        JavaFileObject visible = SourceFiles.inline("com.bar.Wf", """
+                        package com.bar;
+                        import dev.vertique.workflow.contract.WorkflowContract;
+                        import dev.vertique.workflow.contract.WorkflowStart;
+                        import dev.vertique.workflow.ops.WorkflowInstanceId;
+                        import io.vertx.core.Future;
+                        @WorkflowContract(definitionId = "bar", definitionVersion = 1L)
+                        public interface Wf {
+                            @WorkflowStart
+                            Future<WorkflowInstanceId> start(StartBarPayload cmd);
+                        }
+                        """);
+
+        ProcessorTestHarness.run(new WorkflowContractProcessor(), fooPayload, barPayload, hidden, visible)
+                .assertSuccess()
+                .assertGeneratedSourceContains("com.GeneratedWorkflowClientsModule", "provideWf");
+    }
 }

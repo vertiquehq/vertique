@@ -9,6 +9,7 @@ import com.palantir.javapoet.JavaFile;
 import com.palantir.javapoet.ParameterSpec;
 import dev.vertique.codegen.CodegenContext;
 import dev.vertique.codegen.PackageResolver;
+import dev.vertique.codegen.TypeVisibility;
 import dev.vertique.codegen.dagger.DaggerModuleWriter;
 import dev.vertique.codegen.delayed.processor.DelayedJobContractModel;
 import java.io.IOException;
@@ -17,8 +18,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
-import javax.lang.model.element.Element;
-import javax.lang.model.element.Modifier;
 import javax.lang.model.element.TypeElement;
 
 /**
@@ -178,9 +177,9 @@ public final class DelayedJobClientsModuleEmitter {
         Map<String, DelayedJobContractModel> bindable = new TreeMap<>();
         for (Map.Entry<String, DelayedJobContractModel> entry : contracts.entrySet()) {
             TypeElement contract = entry.getValue().contractType();
-            if (!isVisibleFrom(contract, modulePackage)) {
+            if (!TypeVisibility.isReferenceableFrom(contract, modulePackage)) {
                 ctx.diagnostics()
-                        .warning(
+                        .mandatoryWarning(
                                 contract,
                                 "@DelayedJobContract %s is not accessible from package '%s', where %s is"
                                         + " generated, so it is left unbound. Make the contract (and any"
@@ -195,29 +194,6 @@ public final class DelayedJobClientsModuleEmitter {
             bindable.put(entry.getKey(), entry.getValue());
         }
         return bindable;
-    }
-
-    /**
-     * Returns whether {@code contract} can be named from source in {@code modulePackage}.
-     *
-     * <p>Within its own package any access level works. From any other package the contract and
-     * every type enclosing it must be {@code public} — a {@code public} interface nested in a
-     * package-private class is still unreachable.
-     *
-     * @param contract      the contract interface element
-     * @param modulePackage the package the generated module lives in
-     * @return {@code true} when the module can reference the contract
-     */
-    private boolean isVisibleFrom(TypeElement contract, String modulePackage) {
-        if (ctx.packageNameOf(contract).equals(modulePackage)) {
-            return true;
-        }
-        for (Element e = contract; e instanceof TypeElement type; e = e.getEnclosingElement()) {
-            if (!type.getModifiers().contains(Modifier.PUBLIC)) {
-                return false;
-            }
-        }
-        return true;
     }
 
     /**
