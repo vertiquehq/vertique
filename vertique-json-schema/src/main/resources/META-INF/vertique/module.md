@@ -83,6 +83,15 @@ Property-level Swagger schema metadata and applicable Jakarta constraints then n
 baseline through explicit conjunction; neither contributor overwrites the other's declared
 keyword.
 
+A constraint that does not apply to the substituted wire type is not published as if it did. The
+numeric-domain keywords `minimum`, `maximum`, `exclusiveMinimum`, `exclusiveMaximum`, and
+`multipleOf` are suppressed wherever the effective declared type excludes both `number` and
+`integer` — so `@DecimalMin("0.01")` or `@Schema(multipleOf = 0.01)` on a `BigDecimal` the profile
+republishes as a decimal string emits no numeric keyword against that string schema. Which
+contributor supplied the keyword is irrelevant; the effective wire type alone decides. Bean
+Validation still enforces the constraint against the materialized Java value — only the published,
+wire-facing keyword is dropped.
+
 ### Accepted type grammar
 
 `generateCanonical(Type)` accepts a *resolved* type, recursively: a non-null `Class` (including a

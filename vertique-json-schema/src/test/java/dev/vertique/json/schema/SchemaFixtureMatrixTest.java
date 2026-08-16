@@ -385,6 +385,15 @@ class SchemaFixtureMatrixTest {
         assertTrue(
                 keywordValues(applicable, "exclusiveMaximum").isEmpty(),
                 "exclusiveMaximum must likewise be suppressed");
+
+        // ...and so is multipleOf, which constrains a numeric value exactly as minimum does. It
+        // reaches the document from Swagger property metadata rather than a Jakarta constraint, but
+        // provenance is irrelevant: the suppression is decided from the effective wire type alone, so
+        // two numeric-domain keywords on one property may not receive opposite treatment.
+        assertTrue(
+                keywordValues(applicable, "multipleOf").isEmpty(),
+                "no 'multipleOf' keyword may apply to a property whose effective wire type excludes number/integer; document: "
+                        + canonical);
     }
 
     // --- §2 finding 12: validator pattern-matching semantics for the anchored strict-decimal pattern ---

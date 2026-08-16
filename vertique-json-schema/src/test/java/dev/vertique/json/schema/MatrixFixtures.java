@@ -223,11 +223,17 @@ final class MatrixFixtures {
 
     // --- wire-honesty fixture (jakartaConstraintInapplicableToWireTypeNotEmitted) ---
 
-    /** DTO whose {@link BigDecimal} property carries a Jakarta numeric-domain constraint. */
+    /**
+     * DTO whose {@link BigDecimal} property carries numeric-domain constraints from both
+     * contributors this module consumes: a Jakarta constraint (emitting {@code minimum}) and Swagger
+     * property metadata (emitting {@code multipleOf}). Neither is applicable to the string wire type
+     * a profile override substitutes, so both must be suppressed — the symmetry is the point.
+     */
     static final class DecimalMinDto {
 
         /** Under the strict profile this property's wire type is a string, not a number. */
         @DecimalMin("0.01")
+        @Schema(multipleOf = 0.01)
         public BigDecimal amount;
     }
 

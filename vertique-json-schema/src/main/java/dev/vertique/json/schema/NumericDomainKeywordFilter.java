@@ -11,20 +11,23 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * Suppresses the Jakarta numeric-domain keywords {@code minimum}, {@code maximum}, {@code
- * exclusiveMinimum}, and {@code exclusiveMaximum} at any conjunctive location whose effective,
+ * Suppresses the numeric-domain keywords {@code minimum}, {@code maximum}, {@code exclusiveMinimum},
+ * {@code exclusiveMaximum}, and {@code multipleOf} at any conjunctive location whose effective,
  * explicitly declared {@code type} excludes both {@code number} and {@code integer}.
  *
- * <p><strong>Why this exists (PRD §6.2 wire-honesty).</strong> A Jakarta constraint such as {@code
- * @DecimalMin} targets the <em>materialized Java value</em>, not the wire representation a profile
- * override may substitute for it. {@code JakartaValidationModule} has no visibility into a profile's
- * declared {@link dev.vertique.core.json.JsonSchemaTypeOverride} and contributes {@code minimum} at
- * member scope purely from the annotated Java type, regardless of the member's effective wire type.
- * A profile that republishes {@code BigDecimal} as a bounded decimal <em>string</em> — the built-in
- * {@code vertique-strict} profile — would otherwise publish a {@code minimum} keyword that no JSON
- * Schema validator applies to a string instance: an inert, misleading keyword. Bean Validation still
- * enforces the constraint against the materialized Java value; only the published, wire-facing
- * keyword is suppressed.
+ * <p><strong>Why this exists (PRD §6.2 wire-honesty).</strong> A numeric constraint — a Jakarta
+ * {@code @DecimalMin}, a Swagger {@code @Schema(multipleOf = ...)} — targets the <em>materialized
+ * Java value</em>, not the wire representation a profile override may substitute for it. Neither
+ * {@code JakartaValidationModule} nor {@code Swagger2Module} has visibility into a profile's declared
+ * {@link dev.vertique.core.json.JsonSchemaTypeOverride}; each contributes its keyword at member scope
+ * purely from the annotated Java type, regardless of the member's effective wire type. A profile that
+ * republishes {@code BigDecimal} as a bounded decimal <em>string</em> — the built-in {@code
+ * vertique-strict} profile — would otherwise publish keywords that no JSON Schema validator applies
+ * to a string instance: inert, misleading keywords. Bean Validation still enforces the constraint
+ * against the materialized Java value; only the published, wire-facing keyword is suppressed.
+ *
+ * <p>The keyword set is the whole numeric-domain vocabulary rather than one contributor's share of
+ * it, so two keywords carried by the same property never receive opposite treatment.
  *
  * <p>The check is deliberately provenance-free, mirroring {@link DisjointTypeDetector}: it does not
  * ask which contributor supplied a numeric-domain keyword or which override is in effect. It folds,
@@ -32,7 +35,7 @@ import java.util.Set;
  * there through {@link ConjunctiveLocations#refine(Set, Set)} — the same subtype-aware narrowing
  * {@link DisjointTypeDetector} applies, so the two walks never disagree about one location's
  * effective type. When that effective type is non-empty and excludes both
- * {@code number} and {@code integer}, the four keywords are removed from the location's
+ * {@code number} and {@code integer}, the keywords are removed from the location's
  * {@link ConjunctiveLocations#localBranches(JsonNode) local branches} — the head and its {@code allOf}
  * branches — and never from a {@code $ref} target, which other members share and whose own effective
  * type may still admit them. A location that declares no explicit {@code type} at all is left
@@ -40,15 +43,14 @@ import java.util.Set;
  * applies.
  *
  * <p>Wire-honesty (FR-JSON-089) survives that confinement, because every node a keyword can legally be
- * suppressed from is reachable as a local branch of some location: a Jakarta constraint lands as a
- * sibling of the {@code $ref} at member scope — the location's own head — and a {@code $defs} entry is
- * itself visited as a location head, where its own conjoined keywords decide its own contents.
+ * suppressed from is reachable as a local branch of some location: a member-scope constraint lands as
+ * a sibling of the {@code $ref} — the location's own head — and a {@code $defs} entry is itself
+ * visited as a location head, where its own conjoined keywords decide its own contents.
  *
  * <p>Applied only by the profile-aware construction modes ({@code forInputProfile}/{@code
  * forOutputProfile}) when at least one override is in effect for that direction; {@code
- * withVictoolsDefaults()} never substitutes a wire type for a Java type, so a numeric Jakarta
- * constraint there always targets a genuinely numeric schema and this filter is never invoked in that
- * mode.
+ * withVictoolsDefaults()} never substitutes a wire type for a Java type, so a numeric constraint
+ * there always targets a genuinely numeric schema and this filter is never invoked in that mode.
  *
  * <p>Runs after {@link DisjointTypeDetector#requireNoDisjointTypes(JsonNode)} has already accepted the
  * document, so an intersection this class computes is never empty when non-{@code null} — a
@@ -56,9 +58,9 @@ import java.util.Set;
  */
 final class NumericDomainKeywordFilter {
 
-    /** The Jakarta numeric-domain keywords suppressed when they target a non-numeric wire type. */
+    /** The numeric-domain keywords suppressed when they target a non-numeric wire type. */
     private static final Set<String> NUMERIC_DOMAIN_KEYWORDS =
-            Set.of("minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum");
+            Set.of("minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum", "multipleOf");
 
     /** The explicit {@code type} values that keep a numeric-domain keyword applicable. */
     private static final Set<String> NUMERIC_TYPES = Set.of("number", "integer");
