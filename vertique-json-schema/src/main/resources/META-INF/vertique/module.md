@@ -128,8 +128,13 @@ misdescribes the wire:
   its accessor counts, matching how the Swagger module resolves it. The detection reads the
   property's declared type — resolved against its declaring context, so a member inherited from a
   generic supertype is checked against the binding subtype's actual class — plus, recursively, its
-  type arguments and array element types; a map **key** position is excluded, since a map key is
-  never fragment-bearing. A declared type graph nesting deeper than 64 levels also fails, because
+  type arguments and array element types, including the element or payload type a subclass or
+  implementor binds in its `extends`/`implements` clause rather than declaring itself; a map **key**
+  position is excluded, since a map key is never fragment-bearing. This search is deliberately wider
+  than the set of positions an override fragment is actually published at: it rejects the
+  combination whenever an override is *reachable* from the declared type, not only where the
+  fragment would have applied, because a rejection is visible and resolvable while a dropped
+  fragment is neither. A declared type graph nesting deeper than 64 levels also fails, because
   past that bound the absence of an override has not been proven.
 - **A conjunction of disjoint explicit `type` keywords.** After generation, every conjunctive
   location — an object node, its direct `allOf` branches, and its locally resolved `$ref`

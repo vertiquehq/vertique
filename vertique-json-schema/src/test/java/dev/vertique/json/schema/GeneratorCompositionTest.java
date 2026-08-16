@@ -202,6 +202,39 @@ class GeneratorCompositionTest {
     }
 
     @Test
+    @DisplayName("A redirect over a Supplier implementor carrying the override as its payload fails generation")
+    void supplierImplementorImplementationRedirectFailsGeneration() {
+        // Given: the strict profile and a redirected property typed as a concrete Supplier implementor
+        // that binds its payload in the implements clause — no self-declared parameters, and neither
+        // an Iterable nor a Map — while Victools flattens the wrapper and publishes the payload.
+        AnnotationJsonSchemaGenerator generator =
+                AnnotationJsonSchemaGenerator.forInputProfile(HardeningFixtures.strictProfile());
+
+        // When/Then: the inherited supplier payload is walked, so the drop is refused.
+        String message = assertFailsNamingProperty(
+                generator, HardeningFixtures.SupplierImplementorImplementationDto.class, "amount");
+        assertTrue(
+                message.contains("java.math.BigDecimal"),
+                "the message must name the overridden class; was: " + message);
+    }
+
+    @Test
+    @DisplayName("A redirect over a Supplier implementor nested in a container fails generation")
+    void nestedSupplierImplementorImplementationRedirectFailsGeneration() {
+        // Given: the strict profile and a redirected property whose overridden class is two descents
+        // away — through the list's element, then through the implementor's inherited payload.
+        AnnotationJsonSchemaGenerator generator =
+                AnnotationJsonSchemaGenerator.forInputProfile(HardeningFixtures.strictProfile());
+
+        // When/Then: the walk stays sighted after descending into a nested supplier implementor.
+        String message = assertFailsNamingProperty(
+                generator, HardeningFixtures.NestedSupplierImplementorImplementationDto.class, "amounts");
+        assertTrue(
+                message.contains("java.math.BigDecimal"),
+                "the message must name the overridden class; was: " + message);
+    }
+
+    @Test
     @DisplayName("@Schema(implementation) without an overridden declared type redirects normally")
     void schemaImplementationWithoutOverriddenDeclaredTypeRedirectsNormally() {
         // Given: the strict profile and a property whose declared type carries no override.

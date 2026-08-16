@@ -361,6 +361,39 @@ final class HardeningFixtures {
     }
 
     /**
+     * A concrete {@link java.util.function.Supplier} implementor binding its payload in the
+     * {@code implements} clause. Like {@link DecimalList} it declares no type parameters of its own,
+     * and it is neither an {@link Iterable} nor a {@link Map} — so only
+     * {@code typeParametersFor(Supplier.class)} reaches {@link BigDecimal}. Victools flattens the
+     * wrapper under {@code Option.FLATTENED_SUPPLIERS} and publishes the payload's schema in its
+     * place, so the payload is a real position an override applies to.
+     */
+    static final class DecimalSupplier implements java.util.function.Supplier<BigDecimal> {
+
+        /** Never invoked: the fixture exists for its declared type graph only. */
+        @Override
+        public BigDecimal get() {
+            return BigDecimal.ZERO;
+        }
+    }
+
+    /** Property whose redirect covers a supplier implementor carrying the override as its payload. */
+    static final class SupplierImplementorImplementationDto {
+
+        /** Inherited supplier payload — reachable only through the implementor's supertype bindings. */
+        @Schema(implementation = String.class)
+        public DecimalSupplier amount;
+    }
+
+    /** Property whose redirect covers a supplier implementor nested inside another container. */
+    static final class NestedSupplierImplementorImplementationDto {
+
+        /** The overridden payload is two descents away: through the list, then through the supplier. */
+        @Schema(implementation = String.class)
+        public List<DecimalSupplier> amounts;
+    }
+
+    /**
      * Declares the redirected property as an unresolved type variable, so plain JDK reflection reads
      * a {@code TypeVariable} and only a declaring-context resolution recovers the actual class.
      *

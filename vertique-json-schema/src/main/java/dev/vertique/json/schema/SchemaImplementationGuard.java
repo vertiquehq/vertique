@@ -16,6 +16,8 @@ import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.function.Supplier;
 
 /**
  * Fails generation when a property carries a non-default {@code @Schema(implementation = ...)} while
@@ -62,15 +64,49 @@ import java.util.Map;
  *
  * <p>The graph comprises the declared type itself plus, recursively, its array element type and its
  * child types in the sense of {@link #declaredTypeGraphChildren(ResolvedType, Class)}: the type's
- * <em>self-declared</em> resolved parameters <em>and</em> the container element types it merely
- * <em>inherits</em>. Both are required, because {@link ResolvedType#getTypeParameters()} reports only
- * a type's own declared parameters. A container subclass that binds its element in the
- * {@code extends} clause — {@code class Amounts extends ArrayList<BigDecimal>} — declares none, so a
- * self-parameters-only walk sees an empty graph and reports "no override found" for a type Victools
- * nonetheless publishes as {@code {"type":"array","items":<element schema>}}. The element is a real
- * position the profile fragment applies to, so missing it is the exact silent drop this guard exists
- * to prevent. The inherited descent therefore mirrors {@code TypeContext.getContainerItemType} —
- * {@code typeParametersFor(Iterable.class)} for the element — and adds the matching map binding.
+ * <em>self-declared</em> resolved parameters <em>and</em> the payload types it merely
+ * <em>inherits</em> from a supertype binding. Both are required, because
+ * {@link ResolvedType#getTypeParameters()} reports only a type's own declared parameters. A container
+ * subclass that binds its element in the {@code extends} clause —
+ * {@code class Amounts extends ArrayList<BigDecimal>} — declares none, so a self-parameters-only walk
+ * sees an empty graph and reports "no override found" for a type Victools nonetheless publishes as
+ * {@code {"type":"array","items":<element schema>}}. The element is a real position the profile
+ * fragment applies to, so missing it is the exact silent drop this guard exists to prevent.
+ *
+ * <p><strong>The walk is deliberately broader than Victools' own container notion, and deliberately
+ * position-unaware.</strong> It is <em>not</em> a mirror of {@code TypeContext.getContainerItemType},
+ * which answers {@code null} unless {@code isContainerType} holds (an array or a {@link Iterable}) —
+ * and it must not be narrowed to match it. This guard decides only whether an override <em>could</em>
+ * be reachable under a redirect; being fail-closed, it prefers a false rejection, which a developer
+ * sees and can resolve by declaring the wire shape once, over a silent drop, which nobody sees. That
+ * posture also keeps the walk internally consistent: under the pinned option set an inherited
+ * {@link Map} value is not a distinct schema position either (the generator does not enable
+ * {@code Option.MAP_VALUES_AS_ADDITIONAL_PROPERTIES}), so narrowing one inherited descent while
+ * keeping another would trade a coherent over-approximation for an arbitrary one.
+ *
+ * <p><strong>Closed enumeration of a declared-type-graph child</strong>, at the pinned Victools
+ * version — a future reader can check completeness against this list by inspection rather than
+ * rediscovering it from a defect:
+ *
+ * <ol>
+ *   <li>the type's self-declared resolved type parameters;
+ *   <li>the array element type;
+ *   <li>the inherited {@link Iterable} binding, index 0;
+ *   <li>the inherited {@link Map} binding, <em>value</em> position only (index 1);
+ *   <li>the inherited {@link Optional} binding, index 0;
+ *   <li>the inherited {@link Supplier} binding, index 0.
+ * </ol>
+ *
+ * <p>Items 5 and 6 are exhaustive for the <em>wrapper</em> axis because {@code Option} builds exactly
+ * two flattening wrapper modules — {@code FlattenedOptionalModule extends
+ * FlattenedWrapperModule<Optional>} and {@code new FlattenedWrapperModule<>(Supplier.class)} — and
+ * both match implementors, resolving the payload through the <em>inherited</em> binding. Item 5 needs
+ * no dedicated read: {@link Optional} is {@code final}, so no subtype can hide the binding from
+ * item 1, and {@code Optional<BigDecimal>} already reports {@code BigDecimal} as a self-declared
+ * parameter. {@link Supplier} is an interface, so item 6 is the only way to reach the payload of
+ * {@code class DecimalSupplier implements Supplier<BigDecimal>}. This enumeration is pinned to
+ * Victools 4.38.0; a version bump must re-verify it against the wrapper modules {@code Option} builds
+ * and the option set {@code OptionPreset.PLAIN_JSON} enables.
  *
  * <p><strong>Map key positions are excluded</strong> in both descents: for a {@link Map} with two
  * type parameters the key parameter is skipped, and only index 1 of an inherited
@@ -197,7 +233,7 @@ final class SchemaImplementationGuard<M extends MemberScope<?, ?>> implements Cu
      * Finds the first class in a resolved declared type graph that carries an effective override.
      *
      * <p>The walk descends into the node's array element type, its self-declared type parameters, and
-     * the container element types it inherits from a supertype binding — see
+     * the container or wrapper payload types it inherits from a supertype binding — see
      * {@link #declaredTypeGraphChildren(ResolvedType, Class)} for why the inherited half is not
      * optional. Every child is visited at {@code depth + 1} regardless of which half it came from, so
      * widening the walk does not change the depth accounting for any graph the narrower walk already
@@ -243,7 +279,9 @@ final class SchemaImplementationGuard<M extends MemberScope<?, ?>> implements Cu
 
     /**
      * Collects the child nodes of one graph node: the type's self-declared resolved parameters plus
-     * the element types it inherits as a container, with map key positions excluded from both.
+     * the payload types it inherits from a container or wrapper supertype binding, with map key
+     * positions excluded from both. The class javadoc's closed enumeration lists every position that
+     * counts as a child here and why that list is complete at the pinned Victools version.
      *
      * <p>{@link ResolvedType#getTypeParameters()} answers only for parameters the type itself
      * <em>declares</em>. A container subclass such as {@code class Amounts extends ArrayList<BigDecimal>}
@@ -251,18 +289,27 @@ final class SchemaImplementationGuard<M extends MemberScope<?, ?>> implements Cu
      * {@code typeParametersFor(Iterable.class)} still resolves the element to {@code BigDecimal} and
      * Victools publishes the type as an array carrying that element's schema. Reading only the
      * self-declared half would therefore let an implementation redirect drop the element's profile
-     * fragment with no trace, which is precisely the outcome the guard refuses. The inherited descent
-     * mirrors {@code TypeContext.getContainerItemType}, which resolves the item as
-     * {@code getTypeParameterFor(type, Iterable.class, 0)}.
+     * fragment with no trace, which is precisely the outcome the guard refuses.
+     *
+     * <p>The same reasoning forces the {@link Supplier} binding. Under the pinned option preset
+     * Victools flattens a supplier to its payload, matching <em>implementors</em> and resolving the
+     * payload through the inherited binding, so {@code class DecimalSupplier implements
+     * Supplier<BigDecimal>} publishes {@code BigDecimal}'s schema while declaring no parameters of its
+     * own and being neither an {@link Iterable} nor a {@link Map}. {@link Optional} needs no separate
+     * read: it is {@code final}, so its binding is always a self-declared parameter of the node
+     * itself.
      *
      * <p>The map binding is read the same way but at index 1 only: an inherited key position stays
      * mapper-owned exactly like a directly declared one, so widening the walk must not turn a
      * key-only override into a false positive.
      *
-     * <p>Children are de-duplicated by value. For a directly parameterized container the two halves
-     * resolve to the same element — {@code List<BigDecimal>} reports {@code BigDecimal} through both —
-     * so de-duplication keeps such a graph identical to the self-parameters-only walk and prevents the
-     * branching factor from doubling at every level of a deeply nested container.
+     * <p>Children are de-duplicated by <em>value</em>, not by instance: {@link List#contains(Object)}
+     * uses {@link ResolvedType#equals(Object)}, which compares the erased type and its bindings, so
+     * two equal-but-distinct resolutions of the same element collapse to one child. For a directly
+     * parameterized container the halves resolve to the same element — {@code List<BigDecimal>}
+     * reports {@code BigDecimal} through both — so de-duplication keeps such a graph identical to the
+     * self-parameters-only walk and prevents the branching factor from growing at every level of a
+     * deeply nested container.
      *
      * @param type       the graph node whose children are wanted
      * @param erasedType the node's erased class, already resolved by the caller
@@ -285,6 +332,10 @@ final class SchemaImplementationGuard<M extends MemberScope<?, ?>> implements Cu
         List<ResolvedType> inheritedMapping = type.typeParametersFor(Map.class);
         if (inheritedMapping != null && inheritedMapping.size() == 2) {
             addDistinct(children, inheritedMapping.get(1));
+        }
+        List<ResolvedType> inheritedSupplied = type.typeParametersFor(Supplier.class);
+        if (inheritedSupplied != null && !inheritedSupplied.isEmpty()) {
+            addDistinct(children, inheritedSupplied.get(0));
         }
         return children;
     }
