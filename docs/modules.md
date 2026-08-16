@@ -45,6 +45,7 @@ SPDX-License-Identifier: EUPL-1.2
 | `vertique-inbox-outbox-kafka` | [module.md](../vertique-inbox-outbox/vertique-inbox-outbox-kafka/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-inbox-outbox-postgresql` | [module.md](../vertique-inbox-outbox/vertique-inbox-outbox-postgresql/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-inbox-outbox-services` | [module.md](../vertique-inbox-outbox/vertique-inbox-outbox-services/src/main/resources/META-INF/vertique/module.md) |
+| `vertique-input-processing` | [module.md](../vertique-input-processing/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-job-core` | [module.md](../vertique-job/vertique-job-core/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-job-cron` | [module.md](../vertique-job/vertique-job-cron/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-job-delayed` | [module.md](../vertique-job/vertique-job-delayed/src/main/resources/META-INF/vertique/module.md) |
