@@ -31,10 +31,12 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Verifies {@link AnnotationSchemaSource}: body schema synthesis via victools (required fields,
- * string constraints, nested objects), parameter schema synthesis from constraint annotations (list
- * params, size/pattern), the swagger-2 {@code ##default} sentinel strip, and that distinct operations
- * sharing an operationId across mounts get distinct schemas (no operationId-keyed cache collision).
+ * Verifies {@link AnnotationSchemaSource}: body schema synthesis via the shared
+ * {@code AnnotationJsonSchemaGenerator} (required fields, string constraints, nested objects,
+ * canonical key ordering, bounded startup failure for an unrepresentable body type), parameter schema
+ * synthesis from constraint annotations (list params, size/pattern), the swagger-2 {@code ##default}
+ * sentinel strip, and that distinct operations sharing an operationId across mounts get distinct
+ * schemas (no operationId-keyed cache collision).
  */
 class AnnotationSchemaSourceTest {
 
