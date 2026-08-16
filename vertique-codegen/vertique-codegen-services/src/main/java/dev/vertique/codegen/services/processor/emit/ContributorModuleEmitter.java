@@ -9,6 +9,7 @@ import com.palantir.javapoet.JavaFile;
 import com.palantir.javapoet.MethodSpec;
 import com.palantir.javapoet.TypeSpec;
 import dev.vertique.codegen.CodegenContext;
+import dev.vertique.codegen.TypeVisibility;
 import dev.vertique.codegen.services.processor.scan.ClientContractModel;
 import dev.vertique.codegen.services.processor.scan.ContractModel;
 import java.beans.Introspector;
@@ -157,6 +158,24 @@ public final class ContributorModuleEmitter {
             ClientContractModel model = entry.getValue();
             TypeElement contractType = model.contractType();
             ClassName contractClass = ClassName.get(contractType);
+            // Contributor bindings above are safe regardless of contract visibility: they reference
+            // the generated public {Contract}_ContractContributor, not the contract. A client binding
+            // returns the contract itself, so an unreferenceable contract would emit a module that
+            // does not compile — breaking the build even without installing it in a @Component.
+            if (!TypeVisibility.isReferenceableFrom(contractType, ctx.packageNameOf(contractType), packageName)) {
+                ctx.diagnostics()
+                        .warning(
+                                contractType,
+                                "@ServiceContract %s is not accessible from package '%s', where %s is"
+                                        + " generated, so no typed client is bound for it. Make the contract"
+                                        + " (and any enclosing type) public, set -A%s to a package it is visible"
+                                        + " from, or provide the client with a hand-written @Provides method.",
+                                contractClass.canonicalName(),
+                                packageName,
+                                MODULE_SIMPLE_NAME,
+                                CodegenContext.OPTION_OUTPUT_PACKAGE);
+                continue;
+            }
             String methodName = uniqueBindingMethodName(
                     clientBindingMethodName(contractType.getSimpleName().toString()), entry.getKey(), usedMethodNames);
 

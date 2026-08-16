@@ -134,6 +134,8 @@ The body delegates to `WorkflowClientFactory.create({Contract}.class)` and never
 
 **Simple-name collision guard.** Two contracts whose simple names are identical would produce the same `provide{Name}` method in the module. The emitter detects this before writing, emits a compiler error per colliding contract, and skips module emission.
 
+**Unreferenceable contracts are skipped, not bound.** A contract the module's package cannot name — one that is not `public` (or is nested in a non-public type) and lives outside that package, or one in the unnamed package — is left unbound with a compiler *warning* naming the reason. Emitting the binding would produce a module that does not compile, and since javac compiles generated sources in the same task, that breaks the application's build merely by putting the processor on `annotationProcessorPaths`, whether or not the module is installed in a `@Component`. A skipped contract keeps working through a hand-written `@Provides`; make the contract and its enclosing types public, or point `-Avertique.codegen.package` at a package it is visible from, to have it bound. The module's package is resolved from all valid contracts *before* this filtering, so skipping one never relocates the module.
+
 ---
 
 ## Runtime Integration

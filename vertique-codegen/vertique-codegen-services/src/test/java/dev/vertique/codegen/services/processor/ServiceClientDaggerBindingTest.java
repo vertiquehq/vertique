@@ -238,6 +238,50 @@ class ServiceClientDaggerBindingTest {
                 .compile(concat(FRAMEWORK_SOURCES, sources));
     }
 
+    @Test
+    @DisplayName("a contract not visible from the module package gets no client binding")
+    void contractInvisibleFromModulePackageIsSkipped() {
+        // com.foo + com.bar resolve GeneratedServicesModule to package "com", from which the
+        // package-private com.foo.HiddenService cannot be named. Emitting its client binding produced
+        // a module that did not compile, and javac compiles generated sources in the same task — so
+        // this broke the build without the application installing the module anywhere.
+        JavaFileObject hidden = SourceFiles.inline("com.foo.HiddenService", """
+                package com.foo;
+                import dev.vertique.services.ServiceContract;
+                import dev.vertique.services.ServiceOperation;
+                import io.vertx.core.Future;
+                @ServiceContract("hidden")
+                interface HiddenService {
+                    @ServiceOperation("get") Future<String> get(String id);
+                }
+                """);
+        JavaFileObject visible = userServiceContract("com.bar.VisibleService", "VisibleService");
+
+        ProcessorTestHarness.run(new ServiceContractProcessor(), concat(FRAMEWORK_SOURCES, hidden, visible))
+                .assertSuccess()
+                .assertGeneratedSourceContains("com.GeneratedServicesModule", "provideVisibleServiceClient")
+                .assertGeneratedSourceDoesNotContain("com.GeneratedServicesModule", "HiddenService");
+    }
+
+    @Test
+    @DisplayName("a package-private contract still gets a client binding within its own package")
+    void packagePrivateContractIsBoundWithinItsOwnPackage() {
+        JavaFileObject hidden = SourceFiles.inline("com.foo.HiddenService", """
+                package com.foo;
+                import dev.vertique.services.ServiceContract;
+                import dev.vertique.services.ServiceOperation;
+                import io.vertx.core.Future;
+                @ServiceContract("hidden")
+                interface HiddenService {
+                    @ServiceOperation("get") Future<String> get(String id);
+                }
+                """);
+
+        ProcessorTestHarness.run(new ServiceContractProcessor(), concat(FRAMEWORK_SOURCES, hidden))
+                .assertSuccess()
+                .assertGeneratedSourceContains("com.foo.GeneratedServicesModule", "provideHiddenServiceClient");
+    }
+
     private static JavaFileObject userServiceContract(String fqn, String simpleName) {
         int lastDot = fqn.lastIndexOf('.');
         String packageName = fqn.substring(0, lastDot);
