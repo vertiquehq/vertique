@@ -11,9 +11,7 @@ import dev.vertique.core.sanitization.Canonicalizer;
 import dev.vertique.core.sanitization.CanonicalizerBinding;
 import dev.vertique.core.sanitization.Sanitizer;
 import dev.vertique.core.sanitization.SanitizerBinding;
-import dev.vertique.rest.core.request.DefaultInputObjectProcessor;
-import dev.vertique.rest.core.request.InputObjectProcessor;
-import dev.vertique.rest.core.request.InputPolicyMetadataResolver;
+import dev.vertique.input.processing.InputObjectProcessor;
 import dev.vertique.sanitization.canonicalize.CollapseWhitespaceCanonicalizer;
 import dev.vertique.sanitization.canonicalize.LowerCaseCanonicalizer;
 import dev.vertique.sanitization.canonicalize.NfcCanonicalizer;
@@ -134,34 +132,20 @@ public abstract class SanitizationModule {
     // --- Input processing wiring ---
 
     /**
-     * Provides the {@link InputPolicyMetadataResolver} used by {@link DefaultInputObjectProcessor}
-     * to resolve and cache per-type annotation metadata.
-     *
-     * @return a new singleton metadata resolver
-     */
-    @Provides
-    @Singleton
-    static InputPolicyMetadataResolver inputPolicyMetadataResolver() {
-        return new InputPolicyMetadataResolver();
-    }
-
-    /**
      * Provides the {@link InputObjectProcessor} that applies canonicalization and sanitization
-     * to structured request bodies.
+     * to structured request bodies, obtaining the default engine via the public factory.
      *
      * <p>This binding satisfies the {@code @BindsOptionalOf InputObjectProcessor} declared in
      * {@code RestModule} — when {@code SanitizationModule} is included in the Dagger component,
      * input processing is active.
      *
-     * @param metadataResolver  resolves and caches per-type annotation metadata
      * @param processorResolver resolves canonicalizer and sanitizer instances by class
-     * @return a fully wired {@link DefaultInputObjectProcessor}
+     * @return the default {@link InputObjectProcessor}
      */
     @Provides
     @Singleton
-    static InputObjectProcessor inputObjectProcessor(
-            InputPolicyMetadataResolver metadataResolver, ProcessorResolver processorResolver) {
-        return new DefaultInputObjectProcessor(
-                metadataResolver, processorResolver::resolveCanonicalizer, processorResolver::resolveSanitizer);
+    static InputObjectProcessor inputObjectProcessor(ProcessorResolver processorResolver) {
+        return InputObjectProcessor.createDefault(
+                processorResolver::resolveCanonicalizer, processorResolver::resolveSanitizer);
     }
 }
