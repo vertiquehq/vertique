@@ -76,9 +76,16 @@ import org.slf4j.LoggerFactory;
  * <p>The client is a {@link WebClient} rather than a raw {@code HttpClient} deliberately: a raw
  * {@code HttpClientResponse} discards body buffers that arrive before a body handler is attached, so
  * under load a body read can succeed with zero bytes while the status code is correct (issue #167).
- * The blank-{@code sub} test asserts that the failure body does NOT leak an internal validation
- * message — an assertion an emptied body would satisfy vacuously — so aggregating the body before the
- * send completes is what keeps that proof honest. A {@link WebClient} does exactly that.
+ *
+ * <p><strong>Where the no-leak proof actually lives.</strong> In
+ * {@code blankSubDoesNotLeakValidationMessage} the guarantee is carried by the {@code 500} status
+ * assertion together with the {@code assertInstanceOf(IdentityResolutionException.class, ...)}
+ * check — <em>not</em> by the body assertion. The leak scenario (the resolver throwing
+ * {@code IllegalArgumentException}) takes the {@code 400} branch, and the status assertion fails the
+ * future before the body is ever inspected; the body this test does see is the literal
+ * {@code "failed-as-expected"} written by its own failure handler, so it is structurally incapable
+ * of observing a leak. Do not relax the status assertion on the belief that the body check still
+ * guards it — that is the exact regression this test exists to catch.
  */
 @ExtendWith(VertxExtension.class)
 class IdentityResolutionMiddlewareTest {
