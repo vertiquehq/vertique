@@ -1,19 +1,19 @@
 // SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
 // SPDX-License-Identifier: EUPL-1.2
 
-package dev.vertique.rest.core.request;
+package dev.vertique.input.processing;
 
-import static dev.vertique.rest.core.request.GeneratedSupport.applyString;
-import static dev.vertique.rest.core.request.GeneratedSupport.applyStringCollection;
-import static dev.vertique.rest.core.request.GeneratedSupport.dispatchObjectCollection;
+import static dev.vertique.input.processing.GeneratedSupport.applyString;
+import static dev.vertique.input.processing.GeneratedSupport.applyStringCollection;
+import static dev.vertique.input.processing.GeneratedSupport.dispatchObjectCollection;
 
 import dev.vertique.core.sanitization.Canonicalizer;
 import dev.vertique.core.sanitization.InputLocation;
 import dev.vertique.core.sanitization.Sanitizer;
-import dev.vertique.rest.core.request.GeneratedVsReflectiveEquivalenceTest.Generated;
-import dev.vertique.rest.core.request.GeneratedVsReflectiveEquivalenceTest.Inner;
-import dev.vertique.rest.core.request.GeneratedVsReflectiveEquivalenceTest.TestStripDots;
-import dev.vertique.rest.core.request.GeneratedVsReflectiveEquivalenceTest.TestTrim;
+import dev.vertique.input.processing.GeneratedVsReflectiveEquivalenceTest.Generated;
+import dev.vertique.input.processing.GeneratedVsReflectiveEquivalenceTest.Inner;
+import dev.vertique.input.processing.GeneratedVsReflectiveEquivalenceTest.TestStripDots;
+import dev.vertique.input.processing.GeneratedVsReflectiveEquivalenceTest.TestTrim;
 import jakarta.annotation.Nullable;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -68,7 +68,7 @@ public final class GeneratedVsReflectiveEquivalenceTest_Generated_InputProcessor
         if (!(intermediate instanceof Map<?, ?> raw)) {
             return intermediate;
         }
-        InputTraversalContext rootCtx = parent != null ? parent : InputTraversalContext.fromRoute(policies);
+        InputTraversalContext rootCtx = parent != null ? parent : InputTraversalContext.fromPolicies(policies);
 
         Map<String, Object> out = new LinkedHashMap<>(raw.size());
         for (Map.Entry<?, ?> e : raw.entrySet()) {

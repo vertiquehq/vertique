@@ -26,7 +26,7 @@ SPDX-License-Identifier: EUPL-1.2
         </dependency>
         <dependency>
             <groupId>dev.vertique</groupId>
-            <artifactId>vertique-rest-core</artifactId>
+            <artifactId>vertique-input-processing</artifactId>
         </dependency>
         <dependency>
             <groupId>com.google.dagger</groupId>

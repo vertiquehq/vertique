@@ -1,13 +1,13 @@
 // SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
 // SPDX-License-Identifier: EUPL-1.2
 
-package dev.vertique.rest.core.request;
+package dev.vertique.input.processing;
 
 import dev.vertique.core.sanitization.Canonicalizer;
 import dev.vertique.core.sanitization.InputLocation;
 import dev.vertique.core.sanitization.Sanitizer;
-import dev.vertique.rest.core.request.DefaultInputObjectProcessorTest.TestPrefixSanitizer;
-import dev.vertique.rest.core.request.DefaultInputObjectProcessorTest.UriHolder;
+import dev.vertique.input.processing.DefaultInputObjectProcessorTest.TestPrefixSanitizer;
+import dev.vertique.input.processing.DefaultInputObjectProcessorTest.UriHolder;
 import jakarta.annotation.Nullable;
 import java.net.URI;
 import java.util.LinkedHashMap;
@@ -61,7 +61,7 @@ public final class DefaultInputObjectProcessorTest_UriHolder_InputProcessor
         if (!(intermediate instanceof Map<?, ?> raw)) {
             return intermediate;
         }
-        InputTraversalContext rootCtx = parent != null ? parent : InputTraversalContext.fromRoute(policies);
+        InputTraversalContext rootCtx = parent != null ? parent : InputTraversalContext.fromPolicies(policies);
 
         Map<String, Object> out = new LinkedHashMap<>(raw.size());
         for (Map.Entry<?, ?> e : raw.entrySet()) {

@@ -35,7 +35,7 @@
       "packaging": "pom"
     }
   ],
-  "expectedPublishableGavCount": 94,
+  "expectedPublishableGavCount": 95,
   "expectedPublishableGavs": [
     "dev.vertique:vertique-aop",
     "dev.vertique:vertique-app-parent",
@@ -80,6 +80,7 @@
     "dev.vertique:vertique-inbox-outbox-kafka",
     "dev.vertique:vertique-inbox-outbox-postgresql",
     "dev.vertique:vertique-inbox-outbox-services",
+    "dev.vertique:vertique-input-processing",
     "dev.vertique:vertique-job-core",
     "dev.vertique:vertique-job-cron",
     "dev.vertique:vertique-job-delayed",

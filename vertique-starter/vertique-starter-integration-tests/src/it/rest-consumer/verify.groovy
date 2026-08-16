@@ -99,6 +99,7 @@ Set<String> expectedVertique = [
         "vertique-core",
         "vertique-correlation",
         "vertique-deploy",
+        "vertique-input-processing",
         "vertique-json",
         "vertique-logging",
         "vertique-management",

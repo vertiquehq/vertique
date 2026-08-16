@@ -10,7 +10,7 @@ import dev.vertique.core.sanitization.Sanitize;
 import dev.vertique.core.sanitization.SkipCanonicalization;
 import dev.vertique.core.sanitization.SkipSanitization;
 import dev.vertique.core.util.AnnotationResolver;
-import dev.vertique.rest.core.request.EffectiveInputPolicies;
+import dev.vertique.input.processing.EffectiveInputPolicies;
 import dev.vertique.rest.jaxrs.ResourceMethodMeta;
 import dev.vertique.rest.jaxrs.request.BoundRequest;
 import dev.vertique.rest.jaxrs.runtime.GeneratedJaxRsSupport;

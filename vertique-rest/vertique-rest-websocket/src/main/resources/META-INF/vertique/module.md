@@ -422,6 +422,12 @@ silently — nothing fails.
 | Bean Validation | `ValidationModule` | The deserialized `@OnMessage` payload |
 | Canonicalization / sanitization | `SanitizationModule` | The `@OnMessage` payload and `@PathParam` string values |
 
+Canonicalizers and sanitizers see the value's provenance in their `InputValueContext`:
+`@OnMessage` values — both a raw `String` payload and the decoded intermediate of a typed
+message — report `InputLocation.PAYLOAD`, and `@PathParam` values report `InputLocation.PATH`.
+Message values reported `BODY` before `PAYLOAD` existed: a custom processor that branches on
+`InputLocation.BODY` must also handle `PAYLOAD` to keep covering messages.
+
 Bean Validation runs after deserialization (and after sanitization when both are installed). A
 violation raises `BeanValidationException`, which is routed to `@OnError`; the message is discarded.
 
@@ -526,7 +532,7 @@ coalesce with the same declaration in `AuthModule` when both are present.
 | `ActionRegistry` | `SecurityAuthzModule` | Same |
 | `VertxAuthorizationImporter` | `VertxAuthorizationImportModule` (opt-in, from `dev.vertique:vertique-rest-security`) | The upgrade-time authorization import is skipped: contributed `AuthorizationProvider`s stay inert and claims come from the claim mapper only |
 | `BeanValidator` | `ValidationModule` | Messages are not validated |
-| `InputObjectProcessor` | `SanitizationModule` | Messages and path parameters are not sanitized |
+| `InputObjectProcessor` (`dev.vertique.input.processing.InputObjectProcessor`) | `SanitizationModule` | Messages and path parameters are not sanitized |
 
 ---
 
@@ -595,7 +601,8 @@ be enforced refuses to boot rather than serving traffic with the gate silently m
 
 | Dependency | Why |
 |---|---|
-| `dev.vertique:vertique-rest-core` | `RouterMount`, request-lifecycle handle, `SecurityRuntime`, `RouteAuthHandler`, input processing |
+| `dev.vertique:vertique-rest-core` | `RouterMount`, request-lifecycle handle, `SecurityRuntime`, `RouteAuthHandler` |
+| `dev.vertique:vertique-input-processing` | the neutral `InputObjectProcessor` / `EffectiveInputPolicies` contracts message and path-parameter processing are typed against |
 | `dev.vertique:vertique-rest-security` | Policy enforcement, identity resolution, claim mapping |
 | `dev.vertique:vertique-core` | Context holder, config parsing, Bean Validation and sanitization contracts |
 | `dev.vertique:vertique-context` | `ContextSnapshot`/`ContextValues` used to carry request context across the handshake |

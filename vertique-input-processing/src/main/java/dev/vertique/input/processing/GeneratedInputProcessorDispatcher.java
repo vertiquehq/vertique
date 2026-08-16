@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
 // SPDX-License-Identifier: EUPL-1.2
 
-package dev.vertique.rest.core.request;
+package dev.vertique.input.processing;
 
 import dev.vertique.core.sanitization.InputLocation;
 import dev.vertique.core.util.GeneratedNames;
@@ -11,7 +11,7 @@ import java.util.concurrent.ConcurrentMap;
 
 /**
  * Looks up {@link GeneratedInputProcessor} instances for participating DTO types and dispatches
- * nested-type traversal during structured-body processing. Generated processors are resolved
+ * nested-type traversal during structured-input processing. Generated processors are resolved
  * from the consuming type's classloader via {@link Class#forName}; on miss, traversal continues
  * reflectively through the {@link ReflectiveContinuation} supplied by
  * {@link DefaultInputObjectProcessor}, preserving the accumulated
@@ -94,7 +94,7 @@ public final class GeneratedInputProcessorDispatcher {
      * @return the resolved processor, or empty if no generated class exists for {@code type}
      */
     @SuppressWarnings("unchecked")
-    public <T> Optional<GeneratedInputProcessor<T>> resolve(Class<T> type) {
+    <T> Optional<GeneratedInputProcessor<T>> resolve(Class<T> type) {
         if (!manualRegistrations.isEmpty()) {
             GeneratedInputProcessor<?> manual = manualRegistrations.get(type);
             if (manual != null) {
@@ -120,8 +120,8 @@ public final class GeneratedInputProcessorDispatcher {
      *
      * @param intermediate the nested intermediate (typically a {@code Map<String, Object>})
      * @param nestedType   the nested DTO class
-     * @param policies     route-level effective policies (passed through to generated processors)
-     * @param location     where the body originated
+     * @param policies     invocation-level effective policies (passed through to generated processors)
+     * @param location     where the input originated
      * @param resolver     chain application contract (passed through to generated processors)
      * @param parentCtx    the accumulated traversal context from the caller
      * @param parentPath   the dot-separated path of the nested field (becomes the {@code parentPath}
@@ -163,12 +163,12 @@ public final class GeneratedInputProcessorDispatcher {
      *
      * @param value     the value to walk (map / list / string / other)
      * @param ctx       the accumulated traversal context (with inherited chains)
-     * @param location  where the body originated
+     * @param location  where the input originated
      * @param fieldPath the dot-separated path so far, for diagnostic context
      * @param ownerType the owner type for {@link dev.vertique.core.sanitization.InputValueContext}
      * @return the processed value, applying only inherited chains
      */
-    public Object walkUnknown(
+    Object walkUnknown(
             Object value, InputTraversalContext ctx, InputLocation location, String fieldPath, Class<?> ownerType) {
         return continuation.walkUnknown(value, ctx, location, fieldPath, ownerType);
     }
@@ -185,10 +185,10 @@ public final class GeneratedInputProcessorDispatcher {
         /**
          * Continues processing the given intermediate at the given accumulated context.
          *
-         * @param intermediate the intermediate body fragment (map / list / string)
+         * @param intermediate the intermediate input fragment (map / list / string)
          * @param targetType   the type of the fragment
          * @param ctx          the accumulated traversal context
-         * @param location     where the body originated
+         * @param location     where the input originated
          * @param fieldPath    the dot-separated path so far, for diagnostic context
          * @param ownerType    the owner type for {@code InputValueContext}
          * @return the processed intermediate fragment
@@ -215,7 +215,7 @@ public final class GeneratedInputProcessorDispatcher {
          *
          * @param intermediate the intermediate fragment (map / list / string)
          * @param ctx          the accumulated traversal context (with inherited chains)
-         * @param location     where the body originated
+         * @param location     where the input originated
          * @param fieldPath    the dot-separated path so far, for diagnostic context
          * @param ownerType    the owner type for {@link dev.vertique.core.sanitization.InputValueContext}
          * @return the processed intermediate, applying only inherited chains

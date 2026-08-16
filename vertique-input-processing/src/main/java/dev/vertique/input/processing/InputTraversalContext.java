@@ -1,17 +1,17 @@
 // SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
 // SPDX-License-Identifier: EUPL-1.2
 
-package dev.vertique.rest.core.request;
+package dev.vertique.input.processing;
 
 import dev.vertique.core.sanitization.Canonicalizer;
 import dev.vertique.core.sanitization.Sanitizer;
-import dev.vertique.rest.core.request.InputPolicyMetadata.FieldPolicyMetadata;
+import dev.vertique.input.processing.InputPolicyMetadata.FieldPolicyMetadata;
 import jakarta.annotation.Nullable;
 import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Carries accumulated processing state through nested object traversal during structured-body
+ * Carries accumulated processing state through nested object traversal during structured-input
  * processing. Holds inherited ancestor canonicalizer/sanitizer chains and sticky skip flags.
  *
  * <p>Skip flags are sticky: once set by any ancestor, they suppress all descendants even if a
@@ -47,29 +47,31 @@ public final class InputTraversalContext {
     }
 
     /**
-     * Creates a context seeded from route-level policies as the root of a traversal.
+     * Creates a context seeded from the invocation-level policies as the root of a traversal.
      *
-     * @param policies the route-level effective policies; must not be {@code null}
-     * @return a context whose inherited chains are the route-level chains and whose skip flags
+     * @param policies the effective invocation-level policies; must not be {@code null}
+     * @return a context whose inherited chains are the invocation-level chains and whose skip flags
      *         are both {@code false}
      */
-    public static InputTraversalContext fromRoute(EffectiveInputPolicies policies) {
-        return new InputTraversalContext(policies.routeCanonicalizers(), policies.routeSanitizers(), false, false);
+    public static InputTraversalContext fromPolicies(EffectiveInputPolicies policies) {
+        return new InputTraversalContext(policies.canonicalizers(), policies.sanitizers(), false, false);
     }
 
     /**
      * Returns a child context for descending into a nested object, accumulating the parent
      * type's object-level chains and the enclosing field's field-level chains and skip flags.
      *
-     * <p>Used by the reflective walker. Skip flags are sticky: if any inherited or parent or
-     * field-level skip flag is set, the corresponding chain on the child context is empty.
+     * <p>Used by the reflective walker inside this module; the metadata carrier records are
+     * internal, so this overload is not part of the module's public surface. Skip flags are
+     * sticky: if any inherited or parent or field-level skip flag is set, the corresponding
+     * chain on the child context is empty.
      *
      * @param parentMeta annotation metadata for the current parent type; must not be {@code null}
      * @param fieldMeta  annotation metadata for the field that holds the nested object,
      *                   or {@code null} when descending from a list element
      * @return a new {@code InputTraversalContext} suitable for processing the child object
      */
-    public InputTraversalContext descend(InputPolicyMetadata parentMeta, @Nullable FieldPolicyMetadata fieldMeta) {
+    InputTraversalContext descend(InputPolicyMetadata parentMeta, @Nullable FieldPolicyMetadata fieldMeta) {
         return descend(
                 parentMeta.objectCanonicalizerChain(),
                 parentMeta.objectSanitizerChain(),

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
 // SPDX-License-Identifier: EUPL-1.2
 
-package dev.vertique.rest.core.request;
+package dev.vertique.input.processing;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -139,7 +139,7 @@ class GeneratedInputProcessorDispatcherTest {
                     EffectiveInputPolicies.NONE,
                     InputLocation.BODY,
                     (v, c, s, ctx) -> v,
-                    InputTraversalContext.fromRoute(EffectiveInputPolicies.NONE),
+                    InputTraversalContext.fromPolicies(EffectiveInputPolicies.NONE),
                     "field",
                     NoCompanionDto.class);
 
@@ -182,7 +182,7 @@ class GeneratedInputProcessorDispatcherTest {
                     EffectiveInputPolicies.NONE,
                     InputLocation.BODY,
                     (v, c, s, ctx) -> v,
-                    InputTraversalContext.fromRoute(EffectiveInputPolicies.NONE),
+                    InputTraversalContext.fromPolicies(EffectiveInputPolicies.NONE),
                     "field",
                     NoCompanionDto.class);
 
@@ -199,7 +199,7 @@ class GeneratedInputProcessorDispatcherTest {
         @DisplayName("top-level class: appends _InputProcessor")
         void topLevelClass() {
             assertEquals(
-                    "dev.vertique.rest.core.request.GeneratedInputProcessorDispatcherTest$NoCompanionDto_InputProcessor"
+                    "dev.vertique.input.processing.GeneratedInputProcessorDispatcherTest$NoCompanionDto_InputProcessor"
                             .replace("$", "_"),
                     GeneratedInputProcessorDispatcher.generatedClassName(NoCompanionDto.class));
         }
@@ -210,7 +210,7 @@ class GeneratedInputProcessorDispatcherTest {
             // Outer is a top-level nested class of the enclosing test class, so the binary name is
             // ...GeneratedInputProcessorDispatcherTest$Outer$Inner — both '$' separators flatten.
             assertEquals(
-                    "dev.vertique.rest.core.request.GeneratedInputProcessorDispatcherTest_Outer_Inner_InputProcessor",
+                    "dev.vertique.input.processing.GeneratedInputProcessorDispatcherTest_Outer_Inner_InputProcessor",
                     GeneratedInputProcessorDispatcher.generatedClassName(Outer.Inner.class));
         }
 

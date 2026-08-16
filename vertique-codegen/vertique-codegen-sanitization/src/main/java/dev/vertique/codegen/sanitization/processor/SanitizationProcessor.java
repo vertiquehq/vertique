@@ -49,7 +49,7 @@ import javax.lang.model.element.TypeElement;
  * must live in the same package as the source DTO for package-private access compatibility.
  *
  * <p>This processor emits no Dagger module: the
- * {@link dev.vertique.rest.core.request.GeneratedInputProcessorDispatcher} self-populates via
+ * {@link dev.vertique.input.processing.GeneratedInputProcessorDispatcher} self-populates via
  * classloader lookup, making CG-008 a transparent optimization that requires no extra wiring.
  */
 @SupportedAnnotationTypes("*")

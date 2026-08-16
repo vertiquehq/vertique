@@ -19,8 +19,9 @@ SPDX-License-Identifier: EUPL-1.2
     <artifactId>vertique-codegen-sanitization</artifactId>
     <name>Vertique Codegen Sanitization</name>
     <description>Annotation processor (CG-008) that generates {DTO}_InputProcessor walkers for REST request body
-        DTOs annotated with @Sanitize/@Canonicalize, replacing reflective Map traversal in DefaultInputObjectProcessor
-        with direct field-name switches and pre-resolved chain constants.</description>
+        DTOs annotated with @Sanitize/@Canonicalize, replacing the reflective Map traversal of the neutral input
+        processor (dev.vertique.input.processing) with direct field-name switches and pre-resolved chain
+        constants.</description>
 
     <dependencies>
         <dependency>
@@ -33,10 +34,20 @@ SPDX-License-Identifier: EUPL-1.2
             <artifactId>vertique-codegen-core</artifactId>
         </dependency>
 
-        <!-- Compile: emitted code references GeneratedInputProcessor, ChainResolver,
-             InputTraversalContext, GeneratedInputProcessorDispatcher, GeneratedSupport,
-             EffectiveInputPolicies, InputLocation, etc. Also pulls vertique-core (for the
-             sanitization annotations) transitively. -->
+        <!-- Compile: emitted code references the runtime SPI in dev.vertique.input.processing —
+             GeneratedInputProcessor, ChainResolver, InputTraversalContext,
+             GeneratedInputProcessorDispatcher, GeneratedSupport, EffectiveInputPolicies. Also
+             pulls vertique-core (for the sanitization annotations and InputLocation)
+             transitively. -->
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-input-processing</artifactId>
+        </dependency>
+
+        <!-- Compile: REST-rooted discovery only. RestBodyDiscovery imports
+             dev.vertique.rest.core.context.RestContextTypes and names the
+             RequestPreconditions/RequestParams FQNs when classifying resource-method
+             parameters. -->
         <dependency>
             <groupId>dev.vertique</groupId>
             <artifactId>vertique-rest-core</artifactId>

@@ -1,15 +1,15 @@
 // SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
 // SPDX-License-Identifier: EUPL-1.2
 
-package dev.vertique.rest.core.request;
+package dev.vertique.input.processing;
 
-import static dev.vertique.rest.core.request.GeneratedSupport.applyString;
+import static dev.vertique.input.processing.GeneratedSupport.applyString;
 
 import dev.vertique.core.sanitization.Canonicalizer;
 import dev.vertique.core.sanitization.InputLocation;
 import dev.vertique.core.sanitization.Sanitizer;
-import dev.vertique.rest.core.request.GeneratedVsReflectiveEquivalenceTest.GeneratedSkip;
-import dev.vertique.rest.core.request.GeneratedVsReflectiveEquivalenceTest.TestTrim;
+import dev.vertique.input.processing.GeneratedVsReflectiveEquivalenceTest.GeneratedSkip;
+import dev.vertique.input.processing.GeneratedVsReflectiveEquivalenceTest.TestTrim;
 import jakarta.annotation.Nullable;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -52,7 +52,7 @@ public final class GeneratedVsReflectiveEquivalenceTest_GeneratedSkip_InputProce
         if (!(intermediate instanceof Map<?, ?> raw)) {
             return intermediate;
         }
-        InputTraversalContext rootCtx = parent != null ? parent : InputTraversalContext.fromRoute(policies);
+        InputTraversalContext rootCtx = parent != null ? parent : InputTraversalContext.fromPolicies(policies);
 
         Map<String, Object> out = new LinkedHashMap<>(raw.size());
         for (Map.Entry<?, ?> e : raw.entrySet()) {

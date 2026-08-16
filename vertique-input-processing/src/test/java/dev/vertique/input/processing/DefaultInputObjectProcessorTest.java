@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
 // SPDX-License-Identifier: EUPL-1.2
 
-package dev.vertique.rest.core.request;
+package dev.vertique.input.processing;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -61,16 +61,16 @@ class DefaultInputObjectProcessorTest {
         @Test
         @DisplayName("null body returns null")
         void nullBodyReturnsNull() {
-            Object result = processor.processStructuredBody(
-                    null, EmptyDto.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
+            Object result =
+                    processor.processInput(null, EmptyDto.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
             assertNull(result);
         }
 
         @Test
         @DisplayName("empty map returns empty map")
         void emptyMapReturnsEmptyMap() {
-            Object result = processor.processStructuredBody(
-                    Map.of(), EmptyDto.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
+            Object result =
+                    processor.processInput(Map.of(), EmptyDto.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
             assertTrue(result instanceof Map);
             assertTrue(((Map<?, ?>) result).isEmpty());
         }
@@ -90,7 +90,7 @@ class DefaultInputObjectProcessorTest {
             input.put("name", "  hello  ");
             input.put("description", "  world  ");
 
-            Object result = processor.processStructuredBody(input, EmptyDto.class, policies, InputLocation.BODY);
+            Object result = processor.processInput(input, EmptyDto.class, policies, InputLocation.BODY);
             Map<?, ?> map = (Map<?, ?>) result;
             assertEquals("hello", map.get("name"));
             assertEquals("world", map.get("description"));
@@ -103,7 +103,7 @@ class DefaultInputObjectProcessorTest {
                     List.of(TestTrimCanonicalizer.class), List.of(TestPrefixSanitizer.class));
             Map<String, Object> input = Map.of("name", "  hello  ");
 
-            Object result = processor.processStructuredBody(input, EmptyDto.class, policies, InputLocation.BODY);
+            Object result = processor.processInput(input, EmptyDto.class, policies, InputLocation.BODY);
             Map<?, ?> map = (Map<?, ?>) result;
             assertEquals("safe:hello", map.get("name"));
         }
@@ -120,7 +120,7 @@ class DefaultInputObjectProcessorTest {
         void fieldCanonicalizerApplied() {
             Map<String, Object> input = Map.of("name", "  alice  ", "count", 42);
 
-            Object result = processor.processStructuredBody(
+            Object result = processor.processInput(
                     input, FieldAnnotatedDto.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
             Map<?, ?> map = (Map<?, ?>) result;
             assertEquals("alice", map.get("name"));
@@ -132,7 +132,7 @@ class DefaultInputObjectProcessorTest {
         void fieldSanitizerApplied() {
             Map<String, Object> input = Map.of("description", "hello\u0000world");
 
-            Object result = processor.processStructuredBody(
+            Object result = processor.processInput(
                     input, FieldAnnotatedDto.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
             Map<?, ?> map = (Map<?, ?>) result;
             assertEquals("helloworld", map.get("description"));
@@ -148,8 +148,8 @@ class DefaultInputObjectProcessorTest {
         input.put("a", "  foo  ");
         input.put("b", "  bar  ");
 
-        Object result = processor.processStructuredBody(
-                input, ObjectLevelDto.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
+        Object result =
+                processor.processInput(input, ObjectLevelDto.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
         Map<?, ?> map = (Map<?, ?>) result;
         assertEquals("foo", map.get("a"));
         assertEquals("bar", map.get("b"));
@@ -169,7 +169,7 @@ class DefaultInputObjectProcessorTest {
             input.put("raw", "  untouched  ");
             input.put("normal", "  touched  ");
 
-            Object result = processor.processStructuredBody(input, SkipFieldDto.class, policies, InputLocation.BODY);
+            Object result = processor.processInput(input, SkipFieldDto.class, policies, InputLocation.BODY);
             Map<?, ?> map = (Map<?, ?>) result;
             assertEquals("  untouched  ", map.get("raw"));
             assertEquals("touched", map.get("normal"));
@@ -183,8 +183,7 @@ class DefaultInputObjectProcessorTest {
             input.put("raw", "data");
             input.put("normal", "data");
 
-            Object result =
-                    processor.processStructuredBody(input, SkipSanitizeFieldDto.class, policies, InputLocation.BODY);
+            Object result = processor.processInput(input, SkipSanitizeFieldDto.class, policies, InputLocation.BODY);
             Map<?, ?> map = (Map<?, ?>) result;
             assertEquals("data", map.get("raw")); // skip
             assertEquals("safe:data", map.get("normal")); // not skipped
@@ -203,8 +202,7 @@ class DefaultInputObjectProcessorTest {
         input.put("outerName", "  outer  ");
         input.put("inner", nested);
 
-        Object result =
-                processor.processStructuredBody(input, OuterDto.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
+        Object result = processor.processInput(input, OuterDto.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
         Map<?, ?> map = (Map<?, ?>) result;
         assertEquals("outer", map.get("outerName")); // outer has @Canonicalize on the field
         Map<?, ?> innerMap = (Map<?, ?>) map.get("inner");
@@ -225,7 +223,7 @@ class DefaultInputObjectProcessorTest {
         Map<String, Object> input = new LinkedHashMap<>();
         input.put("tags", listValue);
 
-        Object result = processor.processStructuredBody(input, EmptyDto.class, policies, InputLocation.BODY);
+        Object result = processor.processInput(input, EmptyDto.class, policies, InputLocation.BODY);
         Map<?, ?> map = (Map<?, ?>) result;
         List<?> tags = (List<?>) map.get("tags");
         assertEquals("hello", tags.get(0));
@@ -242,7 +240,7 @@ class DefaultInputObjectProcessorTest {
         input.put("count", 42);
         input.put("active", true);
 
-        Object result = processor.processStructuredBody(input, EmptyDto.class, policies, InputLocation.BODY);
+        Object result = processor.processInput(input, EmptyDto.class, policies, InputLocation.BODY);
         Map<?, ?> map = (Map<?, ?>) result;
         assertEquals(42, map.get("count"));
         assertEquals(true, map.get("active"));
@@ -256,8 +254,7 @@ class DefaultInputObjectProcessorTest {
         Map<String, Object> input = new LinkedHashMap<>();
         input.put("name", null);
 
-        Object result =
-                processor.processStructuredBody(input, EmptyDto.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
+        Object result = processor.processInput(input, EmptyDto.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
         Map<?, ?> map = (Map<?, ?>) result;
         assertTrue(map.containsKey("name"));
         assertNull(map.get("name"));
@@ -272,7 +269,7 @@ class DefaultInputObjectProcessorTest {
         Map<String, Object> input = new LinkedHashMap<>();
         input.put("name", "  hello  ");
 
-        processor.processStructuredBody(input, EmptyDto.class, policies, InputLocation.BODY);
+        processor.processInput(input, EmptyDto.class, policies, InputLocation.BODY);
         assertEquals("  hello  ", input.get("name"));
     }
 
@@ -289,7 +286,7 @@ class DefaultInputObjectProcessorTest {
             java.lang.reflect.ParameterizedType listType = new TestParameterizedType(List.class, String.class);
             List<Object> input = new ArrayList<>(List.of("  hello  ", "  world  "));
 
-            Object result = processor.processStructuredBody(input, listType, policies, InputLocation.BODY);
+            Object result = processor.processInput(input, listType, policies, InputLocation.BODY);
             List<?> list = (List<?>) result;
             assertEquals("hello", list.get(0));
             assertEquals("world", list.get(1));
@@ -308,8 +305,7 @@ class DefaultInputObjectProcessorTest {
             elem2.put("description", "clean");
             List<Object> input = new ArrayList<>(List.of(elem1, elem2));
 
-            Object result =
-                    processor.processStructuredBody(input, listType, EffectiveInputPolicies.NONE, InputLocation.BODY);
+            Object result = processor.processInput(input, listType, EffectiveInputPolicies.NONE, InputLocation.BODY);
             List<?> list = (List<?>) result;
             Map<?, ?> r1 = (Map<?, ?>) list.get(0);
             assertEquals("alice", r1.get("name")); // @Canonicalize(Trim) on name
@@ -335,7 +331,7 @@ class DefaultInputObjectProcessorTest {
             Map<String, Object> input = new LinkedHashMap<>();
             input.put("inner", nested);
 
-            Object result = processor.processStructuredBody(
+            Object result = processor.processInput(
                     input, OuterWithObjectCanon.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
             Map<?, ?> map = (Map<?, ?>) result;
             Map<?, ?> innerMap = (Map<?, ?>) map.get("inner");
@@ -352,7 +348,7 @@ class DefaultInputObjectProcessorTest {
             Map<String, Object> input = new LinkedHashMap<>();
             input.put("inner", nested);
 
-            Object result = processor.processStructuredBody(
+            Object result = processor.processInput(
                     input, OuterWithFieldCanon.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
             Map<?, ?> map = (Map<?, ?>) result;
             Map<?, ?> innerMap = (Map<?, ?>) map.get("inner");
@@ -371,7 +367,7 @@ class DefaultInputObjectProcessorTest {
             Map<String, Object> input = new LinkedHashMap<>();
             input.put("middle", middle);
 
-            Object result = processor.processStructuredBody(
+            Object result = processor.processInput(
                     input, ThreeLevelRoot.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
             Map<?, ?> map = (Map<?, ?>) result;
             Map<?, ?> middleMap = (Map<?, ?>) map.get("middle");
@@ -391,7 +387,7 @@ class DefaultInputObjectProcessorTest {
             Map<String, Object> input = new LinkedHashMap<>();
             input.put("inner", nested);
 
-            Object result = processor.processStructuredBody(
+            Object result = processor.processInput(
                     input, OuterSkipCanon.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
             Map<?, ?> map = (Map<?, ?>) result;
             Map<?, ?> innerMap = (Map<?, ?>) map.get("inner");
@@ -409,7 +405,7 @@ class DefaultInputObjectProcessorTest {
             Map<String, Object> input = new LinkedHashMap<>();
             input.put("inner", nested);
 
-            Object result = processor.processStructuredBody(
+            Object result = processor.processInput(
                     input, OuterWithSkipField.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
             Map<?, ?> map = (Map<?, ?>) result;
             Map<?, ?> innerMap = (Map<?, ?>) map.get("inner");
@@ -428,7 +424,7 @@ class DefaultInputObjectProcessorTest {
             Map<String, Object> input = new LinkedHashMap<>();
             input.put("inner", nested);
 
-            Object result = processor.processStructuredBody(input, OuterSkipCanon.class, policies, InputLocation.BODY);
+            Object result = processor.processInput(input, OuterSkipCanon.class, policies, InputLocation.BODY);
             Map<?, ?> map = (Map<?, ?>) result;
             Map<?, ?> innerMap = (Map<?, ?>) map.get("inner");
             assertNotNull(innerMap);
@@ -453,8 +449,8 @@ class DefaultInputObjectProcessorTest {
             Map<String, Object> input = new LinkedHashMap<>();
             input.put("homepage", "example.test");
 
-            Object result = processor.processStructuredBody(
-                    input, UriHolder.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
+            Object result =
+                    processor.processInput(input, UriHolder.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
             Map<?, ?> map = (Map<?, ?>) result;
             assertEquals(
                     "safe:example.test",
@@ -469,7 +465,7 @@ class DefaultInputObjectProcessorTest {
             Map<String, Object> input = new LinkedHashMap<>();
             input.put("homepage", "  example.test  ");
 
-            Object result = processor.processStructuredBody(input, UriHolder.class, policies, InputLocation.BODY);
+            Object result = processor.processInput(input, UriHolder.class, policies, InputLocation.BODY);
             Map<?, ?> map = (Map<?, ?>) result;
             assertEquals(
                     "safe:example.test",
@@ -483,8 +479,8 @@ class DefaultInputObjectProcessorTest {
             Map<String, Object> input = new LinkedHashMap<>();
             input.put("homepage", 42);
 
-            Object result = processor.processStructuredBody(
-                    input, UriHolder.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
+            Object result =
+                    processor.processInput(input, UriHolder.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
             Map<?, ?> map = (Map<?, ?>) result;
             assertEquals(42, map.get("homepage"), "Non-string fragments are still returned unchanged");
         }
@@ -504,7 +500,7 @@ class DefaultInputObjectProcessorTest {
             Map<String, Object> input = new LinkedHashMap<>();
             input.put("comment", nested);
 
-            Object result = processor.processStructuredBody(
+            Object result = processor.processInput(
                     input, OptionalProfile.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
 
             Map<?, ?> map = (Map<?, ?>) result;
@@ -525,7 +521,7 @@ class DefaultInputObjectProcessorTest {
             Map<String, Object> input = new LinkedHashMap<>();
             input.put("comment", nested);
 
-            Object result = processor.processStructuredBody(
+            Object result = processor.processInput(
                     input, BoundedOptionalProfile.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
 
             Map<?, ?> map = (Map<?, ?>) result;
@@ -547,7 +543,7 @@ class DefaultInputObjectProcessorTest {
             Map<String, Object> input = new LinkedHashMap<>();
             input.put("comments", new ArrayList<Object>(List.of(first, second)));
 
-            Object result = processor.processStructuredBody(
+            Object result = processor.processInput(
                     input, BoundedCommentList.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
 
             Map<?, ?> map = (Map<?, ?>) result;
@@ -564,8 +560,7 @@ class DefaultInputObjectProcessorTest {
             Map<String, Object> input = new LinkedHashMap<>();
             input.put("values", new ArrayList<Object>(List.of("  a  ", "  b  ")));
 
-            Object result =
-                    processor.processStructuredBody(input, WildcardValueHolder.class, policies, InputLocation.BODY);
+            Object result = processor.processInput(input, WildcardValueHolder.class, policies, InputLocation.BODY);
 
             Map<?, ?> map = (Map<?, ?>) result;
             assertEquals(

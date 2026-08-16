@@ -1,9 +1,10 @@
 // SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
 // SPDX-License-Identifier: EUPL-1.2
 
-package dev.vertique.rest.core.request;
+package dev.vertique.input.processing;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vertique.core.sanitization.Canonicalize;
@@ -15,6 +16,7 @@ import dev.vertique.core.sanitization.Sanitizer;
 import dev.vertique.core.sanitization.SkipCanonicalization;
 import jakarta.annotation.Nullable;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -78,10 +80,10 @@ class GeneratedVsReflectiveEquivalenceTest {
         void flatStringFields() {
             Map<String, Object> input = inputWithStringFields();
 
-            Object reflectiveOut = processor.processStructuredBody(
-                    input, Reflective.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
-            Object generatedOut = processor.processStructuredBody(
-                    input, Generated.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
+            Object reflectiveOut =
+                    processor.processInput(input, Reflective.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
+            Object generatedOut =
+                    processor.processInput(input, Generated.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
 
             assertEquals(reflectiveOut, generatedOut);
         }
@@ -94,10 +96,10 @@ class GeneratedVsReflectiveEquivalenceTest {
             nested.put("note", "  hi  "); // Inner.note has @Canonicalize(TestTrim)
             input.put("nested", nested);
 
-            Object reflectiveOut = processor.processStructuredBody(
-                    input, Reflective.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
-            Object generatedOut = processor.processStructuredBody(
-                    input, Generated.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
+            Object reflectiveOut =
+                    processor.processInput(input, Reflective.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
+            Object generatedOut =
+                    processor.processInput(input, Generated.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
 
             assertEquals(reflectiveOut, generatedOut);
         }
@@ -108,10 +110,10 @@ class GeneratedVsReflectiveEquivalenceTest {
             Map<String, Object> input = inputWithStringFields();
             input.put("tags", new ArrayList<>(List.of("  one  ", "  two  ", 42)));
 
-            Object reflectiveOut = processor.processStructuredBody(
-                    input, Reflective.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
-            Object generatedOut = processor.processStructuredBody(
-                    input, Generated.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
+            Object reflectiveOut =
+                    processor.processInput(input, Reflective.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
+            Object generatedOut =
+                    processor.processInput(input, Generated.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
 
             assertEquals(reflectiveOut, generatedOut);
         }
@@ -126,10 +128,10 @@ class GeneratedVsReflectiveEquivalenceTest {
             nested2.put("note", "  beta  ");
             input.put("inners", new ArrayList<>(List.of(nested1, nested2)));
 
-            Object reflectiveOut = processor.processStructuredBody(
-                    input, Reflective.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
-            Object generatedOut = processor.processStructuredBody(
-                    input, Generated.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
+            Object reflectiveOut =
+                    processor.processInput(input, Reflective.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
+            Object generatedOut =
+                    processor.processInput(input, Generated.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
 
             assertEquals(reflectiveOut, generatedOut);
         }
@@ -143,10 +145,8 @@ class GeneratedVsReflectiveEquivalenceTest {
             Map<String, Object> input = new LinkedHashMap<>();
             input.put("unannotated", "  raw  ");
 
-            Object reflectiveOut =
-                    processor.processStructuredBody(input, Reflective.class, routePolicies, InputLocation.BODY);
-            Object generatedOut =
-                    processor.processStructuredBody(input, Generated.class, routePolicies, InputLocation.BODY);
+            Object reflectiveOut = processor.processInput(input, Reflective.class, routePolicies, InputLocation.BODY);
+            Object generatedOut = processor.processInput(input, Generated.class, routePolicies, InputLocation.BODY);
 
             assertEquals(reflectiveOut, generatedOut);
         }
@@ -159,10 +159,10 @@ class GeneratedVsReflectiveEquivalenceTest {
             Map<String, Object> input = new LinkedHashMap<>();
             input.put("skipped", "  preserved  ");
 
-            Object reflectiveOut = processor.processStructuredBody(
+            Object reflectiveOut = processor.processInput(
                     input, ReflectiveSkip.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
-            Object generatedOut = processor.processStructuredBody(
-                    input, GeneratedSkip.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
+            Object generatedOut =
+                    processor.processInput(input, GeneratedSkip.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
 
             assertEquals(reflectiveOut, generatedOut);
         }
@@ -183,11 +183,11 @@ class GeneratedVsReflectiveEquivalenceTest {
             input.put("nested", nested);
 
             RECORDED_CONTEXTS.clear();
-            processor.processStructuredBody(input, Reflective.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
+            processor.processInput(input, Reflective.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
             List<InputValueContext> reflectiveContexts = new ArrayList<>(RECORDED_CONTEXTS);
 
             RECORDED_CONTEXTS.clear();
-            processor.processStructuredBody(input, Generated.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
+            processor.processInput(input, Generated.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
             List<InputValueContext> generatedContexts = new ArrayList<>(RECORDED_CONTEXTS);
 
             // Both paths must observe at least one nested.note context entry.
@@ -217,11 +217,11 @@ class GeneratedVsReflectiveEquivalenceTest {
             input.put("inners", new ArrayList<>(List.of(first, second)));
 
             RECORDED_CONTEXTS.clear();
-            processor.processStructuredBody(input, Reflective.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
+            processor.processInput(input, Reflective.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
             List<InputValueContext> reflectiveContexts = new ArrayList<>(RECORDED_CONTEXTS);
 
             RECORDED_CONTEXTS.clear();
-            processor.processStructuredBody(input, Generated.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
+            processor.processInput(input, Generated.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
             List<InputValueContext> generatedContexts = new ArrayList<>(RECORDED_CONTEXTS);
 
             assertEquals(
@@ -239,11 +239,11 @@ class GeneratedVsReflectiveEquivalenceTest {
             input.put("tags", new ArrayList<>(List.of("  one  ", "  two  ")));
 
             RECORDED_CONTEXTS.clear();
-            processor.processStructuredBody(input, Reflective.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
+            processor.processInput(input, Reflective.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
             List<InputValueContext> reflectiveContexts = new ArrayList<>(RECORDED_CONTEXTS);
 
             RECORDED_CONTEXTS.clear();
-            processor.processStructuredBody(input, Generated.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
+            processor.processInput(input, Generated.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
             List<InputValueContext> generatedContexts = new ArrayList<>(RECORDED_CONTEXTS);
 
             assertEquals(paths(reflectiveContexts), paths(generatedContexts));
@@ -268,6 +268,83 @@ class GeneratedVsReflectiveEquivalenceTest {
     }
 
     @Nested
+    @DisplayName("PAYLOAD location propagation")
+    class PayloadLocation {
+
+        @Test
+        @DisplayName("nested DTO under PAYLOAD — outputs match and every observed context reports PAYLOAD")
+        void nestedDtoUnderPayloadLocation() {
+            // Non-HTTP transports (message/protocol payloads) drive the same engine with
+            // InputLocation.PAYLOAD. Both the reflective walker and the generated processor must
+            // thread that location unchanged into every InputValueContext they build, including
+            // nested-DTO and List<String> subtrees.
+            Map<String, Object> input = inputWithStringFields();
+            Map<String, Object> nested = new LinkedHashMap<>();
+            nested.put("note", "  hi  "); // Inner.note has @Canonicalize(TestTrim)
+            input.put("nested", nested);
+            input.put("tags", new ArrayList<>(List.of("  one  ", "  two  ")));
+
+            RECORDED_CONTEXTS.clear();
+            Object reflectiveOut =
+                    processor.processInput(input, Reflective.class, EffectiveInputPolicies.NONE, InputLocation.PAYLOAD);
+            List<InputValueContext> reflectiveContexts = new ArrayList<>(RECORDED_CONTEXTS);
+
+            RECORDED_CONTEXTS.clear();
+            Object generatedOut =
+                    processor.processInput(input, Generated.class, EffectiveInputPolicies.NONE, InputLocation.PAYLOAD);
+            List<InputValueContext> generatedContexts = new ArrayList<>(RECORDED_CONTEXTS);
+
+            assertEquals(reflectiveOut, generatedOut);
+            assertEveryContextReports(InputLocation.PAYLOAD, reflectiveContexts, "reflective");
+            assertEveryContextReports(InputLocation.PAYLOAD, generatedContexts, "generated");
+        }
+
+        @Test
+        @DisplayName("List<Inner> elements under PAYLOAD — outputs match and every observed context reports PAYLOAD")
+        void listOfNestedUnderPayloadLocation() {
+            // Element-type dispatch is the path where the generated processor hands control to the
+            // dispatcher per element; the location must survive that hop on both paths.
+            Map<String, Object> input = inputWithStringFields();
+            Map<String, Object> first = new LinkedHashMap<>();
+            first.put("note", "  alpha  ");
+            Map<String, Object> second = new LinkedHashMap<>();
+            second.put("note", "  beta  ");
+            input.put("inners", new ArrayList<>(List.of(first, second)));
+
+            RECORDED_CONTEXTS.clear();
+            Object reflectiveOut =
+                    processor.processInput(input, Reflective.class, EffectiveInputPolicies.NONE, InputLocation.PAYLOAD);
+            List<InputValueContext> reflectiveContexts = new ArrayList<>(RECORDED_CONTEXTS);
+
+            RECORDED_CONTEXTS.clear();
+            Object generatedOut =
+                    processor.processInput(input, Generated.class, EffectiveInputPolicies.NONE, InputLocation.PAYLOAD);
+            List<InputValueContext> generatedContexts = new ArrayList<>(RECORDED_CONTEXTS);
+
+            assertEquals(reflectiveOut, generatedOut);
+            assertEveryContextReports(InputLocation.PAYLOAD, reflectiveContexts, "reflective");
+            assertEveryContextReports(InputLocation.PAYLOAD, generatedContexts, "generated");
+        }
+
+        /**
+         * Asserts the walk observed at least one value and that EVERY recorded
+         * {@link InputValueContext} carries {@code expected} as its location — comparing the
+         * observed location list against {@code expected} repeated, so a mismatch reports the
+         * actual locations rather than just a boolean.
+         */
+        private void assertEveryContextReports(
+                InputLocation expected, List<InputValueContext> contexts, String pathName) {
+            assertFalse(contexts.isEmpty(), pathName + " path must observe at least one InputValueContext");
+            List<InputLocation> observed =
+                    contexts.stream().map(InputValueContext::location).toList();
+            assertEquals(
+                    Collections.nCopies(contexts.size(), expected),
+                    observed,
+                    pathName + " path must report location " + expected + " for every value; got " + contexts);
+        }
+    }
+
+    @Nested
     @DisplayName("class-level @Canonicalize on un-emitted keys")
     class ClassLevelOnDefaultArm {
 
@@ -283,9 +360,9 @@ class GeneratedVsReflectiveEquivalenceTest {
             input.put("known", "  visible  ");
             input.put("extras", new ArrayList<>(List.of("  a  ", "  b  ")));
 
-            Object reflectiveOut = processor.processStructuredBody(
+            Object reflectiveOut = processor.processInput(
                     input, ObjLevelReflective.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
-            Object generatedOut = processor.processStructuredBody(
+            Object generatedOut = processor.processInput(
                     input, ObjLevelGenerated.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
 
             assertEquals(reflectiveOut, generatedOut);
@@ -307,9 +384,9 @@ class GeneratedVsReflectiveEquivalenceTest {
             input.put("known", "  visible  "); // declared field
             input.put("extra", "  surprise  "); // not declared — flows through default arm
 
-            Object reflectiveOut = processor.processStructuredBody(
+            Object reflectiveOut = processor.processInput(
                     input, ObjLevelReflective.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
-            Object generatedOut = processor.processStructuredBody(
+            Object generatedOut = processor.processInput(
                     input, ObjLevelGenerated.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
 
             assertEquals(reflectiveOut, generatedOut);
@@ -332,9 +409,9 @@ class GeneratedVsReflectiveEquivalenceTest {
             Map<String, Object> input = new LinkedHashMap<>();
             input.put("misc", "  alpha  ");
 
-            Object reflectiveOut = processor.processStructuredBody(
+            Object reflectiveOut = processor.processInput(
                     input, AnnObjReflective.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
-            Object generatedOut = processor.processStructuredBody(
+            Object generatedOut = processor.processInput(
                     input, AnnObjGenerated.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
 
             assertEquals(reflectiveOut, generatedOut);
@@ -352,9 +429,9 @@ class GeneratedVsReflectiveEquivalenceTest {
             nested.put("inner", "  beta  ");
             input.put("misc", nested);
 
-            Object reflectiveOut = processor.processStructuredBody(
+            Object reflectiveOut = processor.processInput(
                     input, AnnObjReflective.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
-            Object generatedOut = processor.processStructuredBody(
+            Object generatedOut = processor.processInput(
                     input, AnnObjGenerated.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
 
             assertEquals(reflectiveOut, generatedOut);
@@ -373,9 +450,9 @@ class GeneratedVsReflectiveEquivalenceTest {
             Map<String, Object> input = new LinkedHashMap<>();
             input.put("misc", new ArrayList<>(List.of("  x  ", "  y  ")));
 
-            Object reflectiveOut = processor.processStructuredBody(
+            Object reflectiveOut = processor.processInput(
                     input, AnnObjReflective.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
-            Object generatedOut = processor.processStructuredBody(
+            Object generatedOut = processor.processInput(
                     input, AnnObjGenerated.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
 
             assertEquals(reflectiveOut, generatedOut);
@@ -557,6 +634,6 @@ class GeneratedVsReflectiveEquivalenceTest {
     //   GeneratedVsReflectiveEquivalenceTest_Generated_InputProcessor.java
     //   GeneratedVsReflectiveEquivalenceTest_GeneratedSkip_InputProcessor.java
     //
-    // Both must be in the same package (dev.vertique.rest.core.request) and follow the
+    // Both must be in the same package (dev.vertique.input.processing) and follow the
     // dispatcher's name derivation (binary name with '$' -> '_' + "_InputProcessor").
 }

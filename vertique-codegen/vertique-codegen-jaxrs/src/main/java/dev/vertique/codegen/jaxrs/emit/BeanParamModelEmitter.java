@@ -69,7 +69,7 @@ import javax.lang.model.type.TypeMirror;
  * ({@code @Canonicalize}, {@code @Sanitize}, {@code @SkipCanonicalization},
  * {@code @SkipSanitization}) declared on individual bean-param fields are visible to
  * {@code ParameterExtractor.materializeBean}, which derives per-field
- * {@link dev.vertique.rest.core.request.EffectiveInputPolicies} from the annotation array.
+ * {@link dev.vertique.input.processing.EffectiveInputPolicies} from the annotation array.
  * Without populated annotations the codegen path silently drops field-level policies,
  * creating parity divergence with the reflective path.
  *
@@ -401,7 +401,7 @@ public final class BeanParamModelEmitter {
      *
      * <p>The {@code ANN_n} constant carries the field's declared annotations so that
      * {@code ParameterExtractor.materializeBean} can derive per-field
-     * {@link dev.vertique.rest.core.request.EffectiveInputPolicies} from input-policy annotations
+     * {@link dev.vertique.input.processing.EffectiveInputPolicies} from input-policy annotations
      * (e.g. {@code @Canonicalize}, {@code @Sanitize}) on individual bean-param fields.
      *
      * @param fields the collected field specs

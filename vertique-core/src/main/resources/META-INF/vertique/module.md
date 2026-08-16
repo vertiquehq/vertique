@@ -654,7 +654,10 @@ A `Sanitizer` is registered the same way, through `SanitizerBinding`.
 `@SkipCanonicalization` and `@SkipSanitization` opt an element out of processing inherited from an
 enclosing type. `InputValueContext` is a `record (InputLocation location, String path, String
 logicalName, Class<?> ownerType)`; `InputLocation` is `PATH`, `QUERY`, `HEADER`, `COOKIE`, `FORM`,
-`BODY`, `BEAN_PARAM`.
+`BODY`, `BEAN_PARAM`, `PAYLOAD`. `PAYLOAD` marks values from message or protocol payloads (e.g.
+WebSocket messages); REST request bodies remain `BODY`. A custom `Canonicalizer`, `Sanitizer`, or
+`CharacterPolicy` that branches on `InputLocation.BODY` must also handle `PAYLOAD` to keep
+covering message-oriented inputs — WebSocket messages reported `BODY` before `PAYLOAD` existed.
 
 ### `CharacterPolicy`
 

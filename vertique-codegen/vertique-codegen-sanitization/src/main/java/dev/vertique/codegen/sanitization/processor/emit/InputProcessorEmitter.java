@@ -48,24 +48,25 @@ import javax.lang.model.type.TypeMirror;
  *       {@code dispatchObjectCollection} depending on field kind.</li>
  * </ul>
  *
- * <p>The emitted code shape exactly matches the hand-written companions in
+ * <p>The emitted code shape exactly matches the hand-written companions
  * {@code GeneratedVsReflectiveEquivalenceTest_Generated_InputProcessor} and
- * {@code GeneratedVsReflectiveEquivalenceTest_GeneratedSkip_InputProcessor}.
+ * {@code GeneratedVsReflectiveEquivalenceTest_GeneratedSkip_InputProcessor} in
+ * {@code vertique-input-processing}'s test tree ({@code dev.vertique.input.processing}).
  */
 public final class InputProcessorEmitter {
 
     // --- Well-known type names ---
 
     private static final ClassName GENERATED_INPUT_PROCESSOR =
-            ClassName.get("dev.vertique.rest.core.request", "GeneratedInputProcessor");
+            ClassName.get("dev.vertique.input.processing", "GeneratedInputProcessor");
     private static final ClassName EFFECTIVE_INPUT_POLICIES =
-            ClassName.get("dev.vertique.rest.core.request", "EffectiveInputPolicies");
+            ClassName.get("dev.vertique.input.processing", "EffectiveInputPolicies");
     private static final ClassName INPUT_LOCATION = ClassName.get("dev.vertique.core.sanitization", "InputLocation");
-    private static final ClassName CHAIN_RESOLVER = ClassName.get("dev.vertique.rest.core.request", "ChainResolver");
+    private static final ClassName CHAIN_RESOLVER = ClassName.get("dev.vertique.input.processing", "ChainResolver");
     private static final ClassName DISPATCHER =
-            ClassName.get("dev.vertique.rest.core.request", "GeneratedInputProcessorDispatcher");
+            ClassName.get("dev.vertique.input.processing", "GeneratedInputProcessorDispatcher");
     private static final ClassName INPUT_TRAVERSAL_CONTEXT =
-            ClassName.get("dev.vertique.rest.core.request", "InputTraversalContext");
+            ClassName.get("dev.vertique.input.processing", "InputTraversalContext");
     private static final ClassName CANONICALIZER = ClassName.get("dev.vertique.core.sanitization", "Canonicalizer");
     private static final ClassName SANITIZER = ClassName.get("dev.vertique.core.sanitization", "Sanitizer");
     private static final ClassName NULLABLE = ClassName.get("jakarta.annotation", "Nullable");
@@ -75,7 +76,7 @@ public final class InputProcessorEmitter {
 
     // GeneratedSupport static import target
     private static final ClassName GENERATED_SUPPORT =
-            ClassName.get("dev.vertique.rest.core.request", "GeneratedSupport");
+            ClassName.get("dev.vertique.input.processing", "GeneratedSupport");
     private static final String APPLY_STRING = "applyString";
     private static final String APPLY_STRING_COLLECTION = "applyStringCollection";
     private static final String DISPATCH_OBJECT_COLLECTION = "dispatchObjectCollection";
@@ -279,7 +280,7 @@ public final class InputProcessorEmitter {
 
         // Seed root context
         body.addStatement(
-                "$T rootCtx = parent != null ? parent : $T.fromRoute(policies)",
+                "$T rootCtx = parent != null ? parent : $T.fromPolicies(policies)",
                 INPUT_TRAVERSAL_CONTEXT,
                 INPUT_TRAVERSAL_CONTEXT);
 

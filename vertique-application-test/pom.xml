@@ -49,6 +49,21 @@ SPDX-License-Identifier: EUPL-1.2
             <scope>test</scope>
         </dependency>
         <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-rest-jaxrs</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-rest-websocket</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-sanitization</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
             <groupId>com.google.dagger</groupId>
             <artifactId>dagger</artifactId>
             <scope>test</scope>

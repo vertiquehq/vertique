@@ -4,7 +4,8 @@
 package dev.vertique.core.sanitization;
 
 /**
- * Identifies where in an HTTP request a string value originates.
+ * Identifies where an input value originates, across transports — HTTP request parts and
+ * message/protocol payloads.
  *
  * <p>Used by {@link InputValueContext} to give canonicalizers and sanitizers information about
  * the source of a value so they can apply location-appropriate normalization rules.
@@ -30,5 +31,8 @@ public enum InputLocation {
     BODY,
 
     /** Value extracted and aggregated via a JAX-RS {@code @BeanParam} container. */
-    BEAN_PARAM
+    BEAN_PARAM,
+
+    /** Value extracted from a message or protocol payload. */
+    PAYLOAD
 }

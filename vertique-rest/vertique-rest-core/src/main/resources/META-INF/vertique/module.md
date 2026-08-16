@@ -785,8 +785,9 @@ static RequestBodyDecoder csvDecoder() {
 
 A decoder that materializes a DTO from a structured intermediate can route it through the
 framework's canonicalization/sanitization traversal by injecting the optional
-`InputObjectProcessor` and calling
-`processStructuredBody(Object intermediateBody, Type targetType, EffectiveInputPolicies policies,
+`dev.vertique.input.processing.InputObjectProcessor` (from the
+`dev.vertique:vertique-input-processing` artifact) and calling
+`processInput(Object input, Type targetType, EffectiveInputPolicies policies,
 InputLocation location)` before final binding. The binding is `@BindsOptionalOf`; it resolves only
 when `dev.vertique:vertique-sanitization` is on the graph.
 
@@ -1240,7 +1241,7 @@ multi-scheme AND requirement, scopes declared on an OR alternative, and scopes d
 
 | Dependency | Why |
 |---|---|
-| `dev.vertique:vertique-core` | `OrderedExtension` ordering contract, exception hierarchy, `ConfigParser`, `ContextHolder`, JSON mapper profiles, sanitization SPIs |
+| `dev.vertique:vertique-core` | `OrderedExtension` ordering contract, exception hierarchy, `ConfigParser`, `ContextHolder`, JSON mapper profiles |
 | `dev.vertique:vertique-context` | `ContextValues` — the substrate the built-in `@Context` resolver reads |
 | `dev.vertique:vertique-correlation` | correlation context, header validation, and the MDC key vocabulary used by ingress |
 | `dev.vertique:vertique-logging` | `MDCContexts` scopes bound through `RequestContextLifecycle.Handle.bindMdc` |

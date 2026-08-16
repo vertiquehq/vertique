@@ -31,6 +31,10 @@ SPDX-License-Identifier: EUPL-1.2
         </dependency>
         <dependency>
             <groupId>dev.vertique</groupId>
+            <artifactId>vertique-input-processing</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>dev.vertique</groupId>
             <artifactId>vertique-json</artifactId>
         </dependency>
         <dependency>
@@ -43,6 +47,11 @@ SPDX-License-Identifier: EUPL-1.2
         </dependency>
 
         <!-- Test -->
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-sanitization</artifactId>
+            <scope>test</scope>
+        </dependency>
         <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter</artifactId>

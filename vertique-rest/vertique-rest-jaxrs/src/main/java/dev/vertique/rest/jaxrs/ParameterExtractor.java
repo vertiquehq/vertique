@@ -12,11 +12,11 @@ import dev.vertique.core.sanitization.Sanitizer;
 import dev.vertique.core.sanitization.SkipCanonicalization;
 import dev.vertique.core.sanitization.SkipSanitization;
 import dev.vertique.core.util.AnnotationResolver;
+import dev.vertique.input.processing.EffectiveInputPolicies;
+import dev.vertique.input.processing.InputObjectProcessor;
 import dev.vertique.rest.core.context.RestContextResolution;
 import dev.vertique.rest.core.convert.ConversionContext;
 import dev.vertique.rest.core.convert.ParamConversionResolver;
-import dev.vertique.rest.core.request.EffectiveInputPolicies;
-import dev.vertique.rest.core.request.InputObjectProcessor;
 import dev.vertique.rest.core.request.RequestBodyDecoder;
 import dev.vertique.rest.core.request.RequestPreconditions;
 import dev.vertique.rest.core.request.RequestValue;
@@ -464,9 +464,8 @@ final class ParameterExtractor {
 
         Object value = coerce(rv, paramMeta);
 
-        if (value instanceof String s && objectProcessor != null && !policies.hasNoRouteChains()) {
-            value = objectProcessor.processStructuredBody(
-                    s, String.class, policies, toInputLocation(paramMeta.source()));
+        if (value instanceof String s && objectProcessor != null && !policies.isEmpty()) {
+            value = objectProcessor.processInput(s, String.class, policies, toInputLocation(paramMeta.source()));
         }
 
         return value;
@@ -482,8 +481,8 @@ final class ParameterExtractor {
      * silently retaining the raw string, so a single bad element fails the whole collection cleanly.
      *
      * <p>Every element also traverses the input-policy chain exactly as its own source's scalar value
-     * does — same guard ({@code objectProcessor != null && !policies.hasNoRouteChains()}), same
-     * {@link InputObjectProcessor#processStructuredBody} call, same {@link InputLocation} derived from
+     * does — same guard ({@code objectProcessor != null && !policies.isEmpty()}), same
+     * {@link InputObjectProcessor#processInput} call, same {@link InputLocation} derived from
      * the parameter source, and the same position relative to conversion (before it for FORM, after it
      * for QUERY/HEADER/COOKIE — see {@link #convertElements}). Without this a
      * {@code @QueryParam List<String>} would bypass the canonicalization/sanitization chain that the
@@ -520,7 +519,7 @@ final class ParameterExtractor {
      * <p>Conversion is <em>fail-closed</em> per element: a malformed element propagates the
      * resolver's {@link dev.vertique.rest.core.convert.ParamConversionException} (mapped to 400)
      * rather than silently retaining the raw string. Policy processing uses the same guard the scalar
-     * path uses ({@code objectProcessor != null && !policies.hasNoRouteChains()}) and the
+     * path uses ({@code objectProcessor != null && !policies.isEmpty()}) and the
      * {@link InputLocation} derived from the parameter source.
      *
      * <p><strong>The chain's position relative to conversion is per source</strong>, because each
@@ -552,7 +551,7 @@ final class ParameterExtractor {
             List<?> rawValues, ResourceMethodMeta.ParamMeta paramMeta, EffectiveInputPolicies policies) {
         ConversionContext elementContext = componentContext(paramMeta, paramMeta.componentType());
         // Hoisted out of the loop: all of these are per-route constants.
-        boolean processElements = objectProcessor != null && !policies.hasNoRouteChains();
+        boolean processElements = objectProcessor != null && !policies.isEmpty();
         boolean processBeforeConversion = paramMeta.source() == ResourceMethodMeta.ParamSource.FORM;
         InputLocation location = processElements ? toInputLocation(paramMeta.source()) : null;
         List<Object> coerced = new ArrayList<>(rawValues.size());
@@ -564,11 +563,11 @@ final class ParameterExtractor {
             String rawValue = raw.toString();
             if (processElements && processBeforeConversion) {
                 // Same cast as the FORM scalar branch: a String target must yield a String.
-                rawValue = (String) objectProcessor.processStructuredBody(rawValue, String.class, policies, location);
+                rawValue = (String) objectProcessor.processInput(rawValue, String.class, policies, location);
             }
             Object element = paramConversionResolver.fromString(rawValue, elementContext);
             if (processElements && !processBeforeConversion && element instanceof String s) {
-                element = objectProcessor.processStructuredBody(s, String.class, policies, location);
+                element = objectProcessor.processInput(s, String.class, policies, location);
             }
             coerced.add(element);
         }
@@ -837,8 +836,8 @@ final class ParameterExtractor {
                 JsonObject jsonBody = body.getJsonObject();
                 if (jsonBody != null && !Collection.class.isAssignableFrom(targetType) && !targetType.isArray()) {
                     Map<String, Object> intermediate = jsonBody.getMap();
-                    Object processed = objectProcessor.processStructuredBody(
-                            intermediate, targetType, policies, InputLocation.BODY);
+                    Object processed =
+                            objectProcessor.processInput(intermediate, targetType, policies, InputLocation.BODY);
                     if (processed instanceof Map<?, ?> processedMap) {
                         @SuppressWarnings("unchecked")
                         Map<String, Object> typedMap = (Map<String, Object>) processedMap;
@@ -853,7 +852,7 @@ final class ParameterExtractor {
                     io.vertx.core.json.JsonArray jsonArray = body.getJsonArray();
                     if (jsonArray != null) {
                         java.lang.reflect.Type resolvedType = genericType != null ? genericType : targetType;
-                        Object processed = objectProcessor.processStructuredBody(
+                        Object processed = objectProcessor.processInput(
                                 jsonArray.getList(), resolvedType, policies, InputLocation.BODY);
                         if (processed instanceof List<?> processedList) {
                             com.fasterxml.jackson.databind.JavaType javaType =
@@ -868,9 +867,8 @@ final class ParameterExtractor {
                 // JSON string body — apply processing before decoder chain
                 if (targetType == String.class) {
                     String stringBody = body.getString();
-                    if (stringBody != null && !policies.hasNoRouteChains()) {
-                        return objectProcessor.processStructuredBody(
-                                stringBody, String.class, policies, InputLocation.BODY);
+                    if (stringBody != null && !policies.isEmpty()) {
+                        return objectProcessor.processInput(stringBody, String.class, policies, InputLocation.BODY);
                     }
                     return stringBody;
                 }
@@ -882,8 +880,8 @@ final class ParameterExtractor {
                     json.put(entry.getKey(), entry.getValue());
                 }
                 if (!json.isEmpty()) {
-                    Object processed = objectProcessor.processStructuredBody(
-                            json.getMap(), targetType, policies, InputLocation.BODY);
+                    Object processed =
+                            objectProcessor.processInput(json.getMap(), targetType, policies, InputLocation.BODY);
                     if (processed instanceof Map<?, ?> processedMap) {
                         @SuppressWarnings("unchecked")
                         Map<String, Object> typedMap = (Map<String, Object>) processedMap;
@@ -894,9 +892,8 @@ final class ParameterExtractor {
             } else if (targetType == String.class) {
                 // String body — apply route-level processing
                 String stringBody = body.getString();
-                if (stringBody != null && !policies.hasNoRouteChains()) {
-                    return objectProcessor.processStructuredBody(
-                            stringBody, String.class, policies, InputLocation.BODY);
+                if (stringBody != null && !policies.isEmpty()) {
+                    return objectProcessor.processInput(stringBody, String.class, policies, InputLocation.BODY);
                 }
                 return stringBody;
             }
@@ -1034,9 +1031,8 @@ final class ParameterExtractor {
             }
             return null;
         }
-        if (objectProcessor != null && !policies.hasNoRouteChains()) {
-            formValue = (String)
-                    objectProcessor.processStructuredBody(formValue, String.class, policies, InputLocation.FORM);
+        if (objectProcessor != null && !policies.isEmpty()) {
+            formValue = (String) objectProcessor.processInput(formValue, String.class, policies, InputLocation.FORM);
         }
         return coerceString(formValue, pm);
     }
@@ -1100,8 +1096,7 @@ final class ParameterExtractor {
         if (objectProcessor != null) {
             EffectiveInputPolicies policies =
                     new EffectiveInputPolicies(meta.routeCanonicalizerChain(), meta.routeSanitizerChain());
-            Object processed =
-                    objectProcessor.processStructuredBody(values, beanType, policies, InputLocation.BEAN_PARAM);
+            Object processed = objectProcessor.processInput(values, beanType, policies, InputLocation.BEAN_PARAM);
             if (processed instanceof Map<?, ?> processedMap) {
                 values = new LinkedHashMap<>();
                 for (var entry2 : processedMap.entrySet()) {
@@ -1125,7 +1120,7 @@ final class ParameterExtractor {
      *
      * <p>The overall processing contract is identical to {@link #extractBeanParam}: per-field
      * extraction happens first, then the assembled intermediate {@link LinkedHashMap} is submitted
-     * to the {@link dev.vertique.rest.core.request.InputObjectProcessor} with {@code routePolicies}
+     * to the {@link dev.vertique.input.processing.InputObjectProcessor} with {@code routePolicies}
      * before final Jackson conversion.
      *
      * @param fields           ordered array of bean field metadata; must not be {@code null};
@@ -1146,8 +1141,8 @@ final class ParameterExtractor {
             RoutingContext ctx,
             Class<?> beanType) {
         EffectiveInputPolicies[] perFieldPolicies = beanFieldPoliciesCache.computeIfAbsent(beanType, t -> {
-            List<Class<? extends Canonicalizer>> routeCanon = routePolicies.routeCanonicalizers();
-            List<Class<? extends Sanitizer>> routeSanit = routePolicies.routeSanitizers();
+            List<Class<? extends Canonicalizer>> routeCanon = routePolicies.canonicalizers();
+            List<Class<? extends Sanitizer>> routeSanit = routePolicies.sanitizers();
             EffectiveInputPolicies[] arr = new EffectiveInputPolicies[fields.length];
             for (int i = 0; i < fields.length; i++) {
                 arr[i] = resolveParamPolicies(fields[i].meta(), routeCanon, routeSanit);
@@ -1171,9 +1166,8 @@ final class ParameterExtractor {
         }
 
         // Apply route-level input processing to the intermediate map before materialization
-        if (objectProcessor != null && !routePolicies.hasNoRouteChains()) {
-            Object processed =
-                    objectProcessor.processStructuredBody(values, beanType, routePolicies, InputLocation.BEAN_PARAM);
+        if (objectProcessor != null && !routePolicies.isEmpty()) {
+            Object processed = objectProcessor.processInput(values, beanType, routePolicies, InputLocation.BEAN_PARAM);
             if (processed instanceof Map<?, ?> processedMap) {
                 values = new LinkedHashMap<>();
                 for (Map.Entry<?, ?> entry : processedMap.entrySet()) {

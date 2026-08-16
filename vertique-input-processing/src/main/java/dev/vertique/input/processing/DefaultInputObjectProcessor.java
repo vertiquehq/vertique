@@ -1,13 +1,13 @@
 // SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
 // SPDX-License-Identifier: EUPL-1.2
 
-package dev.vertique.rest.core.request;
+package dev.vertique.input.processing;
 
 import dev.vertique.core.sanitization.Canonicalizer;
 import dev.vertique.core.sanitization.InputLocation;
 import dev.vertique.core.sanitization.InputValueContext;
 import dev.vertique.core.sanitization.Sanitizer;
-import dev.vertique.rest.core.request.InputPolicyMetadata.FieldPolicyMetadata;
+import dev.vertique.input.processing.InputPolicyMetadata.FieldPolicyMetadata;
 import jakarta.annotation.Nullable;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
@@ -24,15 +24,15 @@ import java.util.function.Function;
  *
  * <p>Operates on {@code Map<String, Object>} (JSON objects) and {@code List<Object>}
  * (JSON arrays). String values are processed through the effective chain composed from
- * route-level, object-level, and field-level annotations.
+ * invocation-level, object-level, and field-level annotations.
  *
  * <p>Processing order for each string value:
  * <ol>
- *   <li>Route canonicalizers (from resource class/method)</li>
+ *   <li>Invocation-level canonicalizers (from the caller's effective policies)</li>
  *   <li>Accumulated ancestor canonicalizers (from enclosing DTO types and fields)</li>
  *   <li>Object-level canonicalizers (from DTO type annotation)</li>
  *   <li>Field-level canonicalizers (from field annotation)</li>
- *   <li>Route sanitizers</li>
+ *   <li>Invocation-level sanitizers</li>
  *   <li>Accumulated ancestor sanitizers</li>
  *   <li>Object-level sanitizers</li>
  *   <li>Field-level sanitizers</li>
@@ -41,7 +41,7 @@ import java.util.function.Function;
  * <p>Skip semantics:
  * <ul>
  *   <li>If a field has {@code @SkipCanonicalization}, all canonicalization is suppressed for
- *       that field — route, object, and field-level chains are all skipped.</li>
+ *       that field — invocation, object, and field-level chains are all skipped.</li>
  *   <li>If the owner type has {@code @SkipCanonicalization} and the field does not declare its
  *       own {@code @Canonicalize}, canonicalization is suppressed for that field.</li>
  *   <li>Ancestor skip flags are <em>sticky</em>: once an ancestor sets {@code @SkipCanonicalization}
@@ -61,7 +61,7 @@ import java.util.function.Function;
  * walker with a preserved {@link InputTraversalContext}, keeping accumulated chains and sticky
  * skip flags consistent across the codegen↔reflection boundary.
  */
-public class DefaultInputObjectProcessor implements InputObjectProcessor {
+class DefaultInputObjectProcessor implements InputObjectProcessor {
 
     private final InputPolicyMetadataResolver metadataResolver;
     private final Function<Class<? extends Canonicalizer>, Canonicalizer> canonicalizerResolver;
@@ -76,7 +76,7 @@ public class DefaultInputObjectProcessor implements InputObjectProcessor {
      * @param canonicalizerResolver factory that produces canonicalizer instances by class
      * @param sanitizerResolver     factory that produces sanitizer instances by class
      */
-    public DefaultInputObjectProcessor(
+    DefaultInputObjectProcessor(
             InputPolicyMetadataResolver metadataResolver,
             Function<Class<? extends Canonicalizer>, Canonicalizer> canonicalizerResolver,
             Function<Class<? extends Sanitizer>, Sanitizer> sanitizerResolver) {
@@ -112,30 +112,27 @@ public class DefaultInputObjectProcessor implements InputObjectProcessor {
     }
 
     @Override
-    public Object processStructuredBody(
-            Object intermediateBody, Type targetType, EffectiveInputPolicies policies, InputLocation location) {
-        if (intermediateBody == null) {
+    public Object processInput(Object input, Type targetType, EffectiveInputPolicies policies, InputLocation location) {
+        if (input == null) {
             return null;
         }
 
         Class<?> targetClass = extractClass(targetType);
         if (targetClass == null) {
-            return intermediateBody;
+            return input;
         }
 
-        InputTraversalContext ctx = InputTraversalContext.fromRoute(policies);
+        InputTraversalContext ctx = InputTraversalContext.fromPolicies(policies);
 
-        if (intermediateBody instanceof Map<?, ?> map) {
+        if (input instanceof Map<?, ?> map) {
             Optional<GeneratedInputProcessor<Object>> generated = dispatcher.resolve(asObjectClass(targetClass));
             if (generated.isPresent()) {
-                return generated
-                        .get()
-                        .process(intermediateBody, policies, location, chainResolver, dispatcher, null, "");
+                return generated.get().process(input, policies, location, chainResolver, dispatcher, null, "");
             }
             InputPolicyMetadata metadata = metadataResolver.resolve(targetClass);
             return processMap(map, metadata, ctx, policies, location, "", targetClass);
         }
-        if (intermediateBody instanceof List<?> list) {
+        if (input instanceof List<?> list) {
             // For parameterized collection types (e.g. List<MyDto>) and arrays (MyDto[]), resolve element type
             // metadata.
             // The runtime fast-path consults the dispatcher for the ELEMENT class — codegen never emits a List<X> or
@@ -152,24 +149,24 @@ public class DefaultInputObjectProcessor implements InputObjectProcessor {
             Class<?> elementOwner = elementClass != null ? elementClass : targetClass;
             return processList(list, elementMeta, ctx, policies, location, "", elementOwner);
         }
-        if (intermediateBody instanceof String s) {
+        if (input instanceof String s) {
             return applyChains(
                     s, ctx.inheritedCanonicalizerChain(), ctx.inheritedSanitizerChain(), location, "", "", targetClass);
         }
-        return intermediateBody;
+        return input;
     }
 
     /**
-     * Iterates a top-level list/array body whose element type has a generated processor.
+     * Iterates a top-level list/array input whose element type has a generated processor.
      * Each {@link Map} element is delegated to the generated processor; non-map elements are
      * passed through unchanged. The {@code parentPath} for each element is {@code "[N]"} so
      * that field paths inside the generated processor read as {@code "[N].fieldName"}.
      *
      * @param list      the intermediate list (also produced by JSON-array bodies for {@code E[]})
      * @param generated the generated processor for the element type
-     * @param policies  route-level policies passed through to the processor
+     * @param policies  invocation-level policies passed through to the processor
      * @param location  request origin
-     * @param rootCtx   the root traversal context for non-trivial route-level chains
+     * @param rootCtx   the root traversal context for non-trivial invocation-level chains
      * @return a new list with each map element processed
      */
     private Object generatedListWalk(
@@ -183,8 +180,8 @@ public class DefaultInputObjectProcessor implements InputObjectProcessor {
         int index = 0;
         for (Object element : list) {
             if (element instanceof Map<?, ?>) {
-                // Pass null parent so the generated processor seeds with fromRoute(policies);
-                // rootCtx for top-level entries is equivalent to fromRoute(policies).
+                // Pass null parent so the generated processor seeds with fromPolicies(policies);
+                // rootCtx for top-level entries is equivalent to fromPolicies(policies).
                 // Pass "[N]" as parentPath so field paths inside the processor read as "[N].fieldName".
                 String elementPath = "[" + index + "]";
                 result.add(
@@ -206,7 +203,7 @@ public class DefaultInputObjectProcessor implements InputObjectProcessor {
      * @param map        the input map (keys may be any type, values may be any type)
      * @param metadata   annotation metadata for the owner type
      * @param ctx        the accumulated traversal context (ancestor chains + skip flags)
-     * @param policies   route-level effective policies (passed to dispatcher for nested types)
+     * @param policies   invocation-level effective policies (passed to dispatcher for nested types)
      * @param location   request origin location
      * @param pathPrefix dot-separated path prefix for nested fields
      * @param ownerType  the Java type that declared the fields in this map
@@ -263,7 +260,7 @@ public class DefaultInputObjectProcessor implements InputObjectProcessor {
      * @param parentMeta metadata for the parent type
      * @param fieldMeta  metadata for this specific field (may be {@code null})
      * @param ctx        the current traversal context
-     * @param policies   route-level effective policies
+     * @param policies   invocation-level effective policies
      * @param location   request origin location
      * @param fieldPath  current dot-separated path
      * @param ownerType  the parent type
@@ -282,7 +279,7 @@ public class DefaultInputObjectProcessor implements InputObjectProcessor {
         InputTraversalContext childCtx = ctx.descend(parentMeta, fieldMeta);
         if (fieldMeta == null || fieldMeta.fieldType() == null) {
             // Unknown nested type (extra Jackson key, Object field, Map<String, Object> field) —
-            // walk reflectively with EMPTY metadata so only inherited route/type chains apply.
+            // walk reflectively with EMPTY metadata so only inherited invocation/type chains apply.
             // The dispatcher must NOT be consulted: passing the parent's class would either resolve
             // the parent's generated processor (re-applying the parent's per-field switch to the
             // child map) or fall through to continueAt with targetType = ownerType (re-applying
@@ -307,7 +304,7 @@ public class DefaultInputObjectProcessor implements InputObjectProcessor {
      * @param list       the list of elements
      * @param metadata   annotation metadata for the context type
      * @param ctx        the accumulated traversal context
-     * @param policies   route-level effective policies
+     * @param policies   invocation-level effective policies
      * @param location   request origin location
      * @param pathPrefix current path prefix
      * @param ownerType  the Java type context
@@ -355,7 +352,7 @@ public class DefaultInputObjectProcessor implements InputObjectProcessor {
      * @param parentMeta metadata for the parent map's type
      * @param fieldMeta  metadata for the current field (may be {@code null})
      * @param ctx        the current traversal context
-     * @param policies   route-level effective policies
+     * @param policies   invocation-level effective policies
      * @param location   request origin
      * @param fieldPath  current path
      * @param ownerType  parent owner type
@@ -443,7 +440,7 @@ public class DefaultInputObjectProcessor implements InputObjectProcessor {
      *
      * @param list        the list of elements (expected to be maps)
      * @param ctx         the child traversal context (already descended)
-     * @param policies    route-level effective policies (passed through to dispatcher)
+     * @param policies    invocation-level effective policies (passed through to dispatcher)
      * @param location    request origin
      * @param pathPrefix  current path prefix
      * @param elementType the element Java type
@@ -546,7 +543,7 @@ public class DefaultInputObjectProcessor implements InputObjectProcessor {
             // Continuation is invoked with a context already descended for the nested field, so
             // policies are not consulted here for chain composition (only threaded for further
             // recursion). Reconstruct EffectiveInputPolicies.NONE for the secondary path —
-            // route-level chains live entirely in `ctx.inheritedCanonicalizerChain()` /
+            // invocation-level chains live entirely in `ctx.inheritedCanonicalizerChain()` /
             // `ctx.inheritedSanitizerChain()` already.
             return processMap(map, metadata, ctx, EffectiveInputPolicies.NONE, location, fieldPath, targetType);
         }

@@ -189,7 +189,8 @@ class SanitizationContractsTest {
             assertTrue(names.contains("FORM"));
             assertTrue(names.contains("BODY"));
             assertTrue(names.contains("BEAN_PARAM"));
-            assertEquals(7, names.size());
+            assertTrue(names.contains("PAYLOAD"));
+            assertEquals(8, names.size());
         }
     }
 

@@ -5,8 +5,8 @@ package dev.vertique.rest.websocket;
 
 import dev.vertique.core.extension.OrderedExtension;
 import dev.vertique.core.validation.BeanValidator;
+import dev.vertique.input.processing.InputObjectProcessor;
 import dev.vertique.rest.core.interceptor.RequestInterceptor;
-import dev.vertique.rest.core.request.InputObjectProcessor;
 import dev.vertique.rest.core.router.MountMeta;
 import dev.vertique.rest.core.router.RouterMount;
 import dev.vertique.rest.core.security.RouteAuthHandler;

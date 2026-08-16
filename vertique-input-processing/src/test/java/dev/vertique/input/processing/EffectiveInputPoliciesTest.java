@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
 // SPDX-License-Identifier: EUPL-1.2
 
-package dev.vertique.rest.core.request;
+package dev.vertique.input.processing;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertSame;
@@ -16,7 +16,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Unit tests for {@link EffectiveInputPolicies} — verifies empty constant and
- * {@code hasNoRouteChains()} logic.
+ * {@code isEmpty()} logic.
  */
 class EffectiveInputPoliciesTest {
 
@@ -25,37 +25,37 @@ class EffectiveInputPoliciesTest {
     @Test
     @DisplayName("NONE constant has empty canonicalizer and sanitizer chains")
     void noneConstantIsEmpty() {
-        assertTrue(EffectiveInputPolicies.NONE.routeCanonicalizers().isEmpty());
-        assertTrue(EffectiveInputPolicies.NONE.routeSanitizers().isEmpty());
+        assertTrue(EffectiveInputPolicies.NONE.canonicalizers().isEmpty());
+        assertTrue(EffectiveInputPolicies.NONE.sanitizers().isEmpty());
     }
 
     @Test
-    @DisplayName("NONE hasNoRouteChains() returns true")
-    void noneHasNoRouteChainsReturnsTrue() {
-        assertTrue(EffectiveInputPolicies.NONE.hasNoRouteChains());
+    @DisplayName("NONE isEmpty() returns true")
+    void noneIsEmptyReturnsTrue() {
+        assertTrue(EffectiveInputPolicies.NONE.isEmpty());
     }
 
-    // --- hasNoRouteChains() ---
+    // --- isEmpty() ---
 
     @Test
-    @DisplayName("hasNoRouteChains() returns false when canonicalizer chain is non-empty")
-    void hasNoRouteChainsReturnsFalseWhenCanonicalizersPresent() {
+    @DisplayName("isEmpty() returns false when canonicalizer chain is non-empty")
+    void isEmptyReturnsFalseWhenCanonicalizersPresent() {
         var policies = new EffectiveInputPolicies(List.of(StubCanonicalizer.class), List.of());
-        assertFalse(policies.hasNoRouteChains());
+        assertFalse(policies.isEmpty());
     }
 
     @Test
-    @DisplayName("hasNoRouteChains() returns false when sanitizer chain is non-empty")
-    void hasNoRouteChainsReturnsFalseWhenSanitizersPresent() {
+    @DisplayName("isEmpty() returns false when sanitizer chain is non-empty")
+    void isEmptyReturnsFalseWhenSanitizersPresent() {
         var policies = new EffectiveInputPolicies(List.of(), List.of(StubSanitizer.class));
-        assertFalse(policies.hasNoRouteChains());
+        assertFalse(policies.isEmpty());
     }
 
     @Test
-    @DisplayName("hasNoRouteChains() returns true when both chains are empty")
-    void hasNoRouteChainsReturnsTrueWhenBothChainsEmpty() {
+    @DisplayName("isEmpty() returns true when both chains are empty")
+    void isEmptyReturnsTrueWhenBothChainsEmpty() {
         var policies = new EffectiveInputPolicies(List.of(), List.of());
-        assertTrue(policies.hasNoRouteChains());
+        assertTrue(policies.isEmpty());
     }
 
     // --- NONE is canonical singleton ---

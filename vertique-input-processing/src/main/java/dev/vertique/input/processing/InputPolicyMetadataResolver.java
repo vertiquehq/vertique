@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
 // SPDX-License-Identifier: EUPL-1.2
 
-package dev.vertique.rest.core.request;
+package dev.vertique.input.processing;
 
 import dev.vertique.core.sanitization.Canonicalize;
 import dev.vertique.core.sanitization.Canonicalizer;
@@ -10,7 +10,7 @@ import dev.vertique.core.sanitization.Sanitizer;
 import dev.vertique.core.sanitization.SkipCanonicalization;
 import dev.vertique.core.sanitization.SkipSanitization;
 import dev.vertique.core.util.AnnotationResolver;
-import dev.vertique.rest.core.request.InputPolicyMetadata.FieldPolicyMetadata;
+import dev.vertique.input.processing.InputPolicyMetadata.FieldPolicyMetadata;
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Field;
 import java.lang.reflect.ParameterizedType;
@@ -49,7 +49,7 @@ import java.util.concurrent.ConcurrentHashMap;
  *
  * <p>Thread-safe: metadata is computed once per type and cached via {@link ConcurrentHashMap}.
  */
-public class InputPolicyMetadataResolver {
+class InputPolicyMetadataResolver {
 
     private static final int MAX_DEPTH = 10;
 

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
 // SPDX-License-Identifier: EUPL-1.2
 
-package dev.vertique.rest.core.request;
+package dev.vertique.input.processing;
 
 import dev.vertique.core.sanitization.Canonicalizer;
 import dev.vertique.core.sanitization.InputLocation;
@@ -17,14 +17,14 @@ import java.util.List;
  * the chain-composition semantics match the reflective walker exactly.
  *
  * <p>Public visibility is required because generated processors live in application DTO packages
- * (e.g. {@code com.example.dto}) rather than {@code dev.vertique.rest.core.request}; package-
+ * (e.g. {@code com.example.dto}) rather than {@code dev.vertique.input.processing}; package-
  * private helpers would not be reachable.
  *
  * <p>This is a stable SPI: the helper signatures must not change in a way that would break
  * already-emitted {@code _InputProcessor} class bytecode produced by older codegen versions.
  * Hand-written callers are supported but unusual — most usage is from generated source. New
  * helpers may be added; existing helpers may not be renamed or have their parameter list
- * altered without a corresponding major version bump of {@code vertique-rest-core}.
+ * altered without a corresponding major version bump of {@code vertique-input-processing}.
  */
 public final class GeneratedSupport {
 
@@ -168,7 +168,7 @@ public final class GeneratedSupport {
      *
      * @param value             the candidate field value; only {@link List} values are processed
      * @param nestedType        the collection element class
-     * @param policies          route-level effective policies (passed through to nested dispatch)
+     * @param policies          invocation-level effective policies (passed through to nested dispatch)
      * @param location          request origin (passed through)
      * @param resolver          chain application contract (passed through)
      * @param dispatcher        the dispatcher used for nested-type lookup
@@ -231,7 +231,7 @@ public final class GeneratedSupport {
      * Handles the {@code default} switch arm of a generated {@code process(...)} method, AND the
      * dispatch for annotated {@code OTHER}-kind fields (e.g. {@code Object misc}) whose runtime
      * value-shape is determined dynamically. Composes the effective chain from inherited
-     * (route + ancestor) + object-level + field-level layers — mirroring the reflective walker's
+     * (invocation + ancestor) + object-level + field-level layers — mirroring the reflective walker's
      * behavior in
      * {@code DefaultInputObjectProcessor.processMap} for entries whose
      * {@link InputPolicyMetadata.FieldPolicyMetadata} is {@code null} or whose field-level data

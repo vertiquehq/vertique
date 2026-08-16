@@ -8,11 +8,11 @@ SPDX-License-Identifier: EUPL-1.2
 > **Status:** Implemented
 > **Package:** `dev.vertique.sanitization`
 > **Artifact:** `vertique-sanitization`
-> **Depends on:** core, rest-core
+> **Depends on:** core, input-processing
 
-Provides built-in canonicalization and sanitization processors, Dagger multibinding wiring, and the `ProcessorResolver` that powers the `InputObjectProcessor` for structured request body processing.
+Provides built-in canonicalization and sanitization processors, Dagger multibinding wiring, and the `ProcessorResolver` that powers the `dev.vertique.input.processing.InputObjectProcessor` for structured request body processing.
 
-The module bridges the annotation model defined in `dev.vertique.core.sanitization` (interfaces and annotations) with concrete implementations. Including `SanitizationModule` in a Dagger component activates all built-in processors and wires up `InputObjectProcessor`, satisfying the `@BindsOptionalOf InputObjectProcessor` declared by `RestModule`.
+The module bridges the annotation model defined in `dev.vertique.core.sanitization` (interfaces and annotations) with concrete implementations. Including `SanitizationModule` in a Dagger component activates all built-in processors and wires up `InputObjectProcessor` via `InputObjectProcessor.createDefault(...)`, satisfying the `@BindsOptionalOf InputObjectProcessor` declared by `RestModule`.
 
 ---
 
@@ -20,7 +20,7 @@ The module bridges the annotation model defined in `dev.vertique.core.sanitizati
 
 ### SanitizationModule
 
-Abstract Dagger `@Module` that registers all built-in canonicalizers and sanitizers via `@ElementsIntoSet`, declares `@Multibinds` for custom processor contributions, and wires up `InputPolicyMetadataResolver` and `DefaultInputObjectProcessor`.
+Abstract Dagger `@Module` that registers all built-in canonicalizers and sanitizers via `@ElementsIntoSet`, declares `@Multibinds` for custom processor contributions, and provides the default `InputObjectProcessor` engine via `InputObjectProcessor.createDefault(...)`.
 
 ```java
 @Component(modules = {
@@ -236,7 +236,7 @@ Custom processors are contributed via `@Provides @IntoSet` in application or lib
 ## Dependencies
 
 - `dev.vertique:core`
-- `dev.vertique:rest-core`
+- `dev.vertique:input-processing`
 - `com.google.dagger:dagger`
 - `jakarta.inject:jakarta.inject-api`
 - `com.googlecode.owasp-java-html-sanitizer:owasp-java-html-sanitizer` (OWASP Java HTML Sanitizer, used by HTML sanitizers)

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
 // SPDX-License-Identifier: EUPL-1.2
 
-package dev.vertique.rest.core.request;
+package dev.vertique.input.processing;
 
 import dev.vertique.core.sanitization.InputLocation;
 import jakarta.annotation.Nullable;
@@ -39,17 +39,17 @@ public interface GeneratedInputProcessor<T> {
      * values according to compile-time-resolved per-field metadata, and recursively dispatches
      * nested DTOs through the dispatcher.
      *
-     * @param intermediate the intermediate body — typically a {@code Map<String, Object>} for
+     * @param intermediate the intermediate input — typically a {@code Map<String, Object>} for
      *                     this processor's target type, or any other shape (in which case the
      *                     processor returns it unchanged, matching reflective semantics)
-     * @param policies     route-level effective policies; threaded through nested calls
-     * @param location     where the body originated (e.g. {@link InputLocation#BODY})
+     * @param policies     invocation-level effective policies; threaded through nested calls
+     * @param location     where the input originated (e.g. {@link InputLocation#BODY})
      * @param resolver     applies canonicalizer and sanitizer chains to string values
      * @param dispatcher   looks up generated processors for nested DTO types and falls back
      *                     reflectively when none exist for an external-jar nested type
      * @param parent       the accumulated traversal context from the caller, or {@code null} when
      *                     invoked at the top level (in which case the processor seeds with
-     *                     {@link InputTraversalContext#fromRoute(EffectiveInputPolicies)})
+     *                     {@link InputTraversalContext#fromPolicies(EffectiveInputPolicies)})
      * @param parentPath   the dot-separated path prefix of the field this DTO is nested under,
      *                     or an empty string when invoked at the top level; used to compose
      *                     correct {@code path} values in {@link dev.vertique.core.sanitization.InputValueContext}

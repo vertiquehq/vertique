@@ -20,9 +20,9 @@ import dev.vertique.core.sanitization.InputValueContext;
 import dev.vertique.core.sanitization.Sanitize;
 import dev.vertique.core.sanitization.Sanitizer;
 import dev.vertique.core.sanitization.SkipCanonicalization;
+import dev.vertique.input.processing.EffectiveInputPolicies;
+import dev.vertique.input.processing.InputObjectProcessor;
 import dev.vertique.rest.core.context.RestContextResolution;
-import dev.vertique.rest.core.request.EffectiveInputPolicies;
-import dev.vertique.rest.core.request.InputObjectProcessor;
 import dev.vertique.rest.core.request.RequestValue;
 import dev.vertique.rest.jaxrs.ResourceMethodMeta.ParamMeta;
 import dev.vertique.rest.jaxrs.ResourceMethodMeta.ParamSource;
@@ -51,7 +51,7 @@ import org.mockito.ArgumentCaptor;
  *
  * <p>Production behaviour relevant to the assertions: when the resolved per-field
  * {@link EffectiveInputPolicies} has empty canonicalizer + sanitizer chains
- * ({@link EffectiveInputPolicies#hasNoRouteChains()} returns {@code true}),
+ * ({@link EffectiveInputPolicies#isEmpty()} returns {@code true}),
  * {@code extractScalarParam} skips the processor call entirely. So the visible difference between
  * "field chain is empty" and "field chain has policy X" is whether the processor was invoked at
  * all for that field's {@link InputLocation}.
@@ -124,9 +124,9 @@ class BeanParamFieldPolicyParityTest {
             assertTrue(captured.isPresent(), "Per-field processor invocation must occur for @Canonicalize");
             assertEquals(
                     List.of(StubCanon.class),
-                    captured.get().routeCanonicalizers(),
+                    captured.get().canonicalizers(),
                     "Codegen path with field @Canonicalize must surface [StubCanon] to InputObjectProcessor");
-            assertEquals(List.of(), captured.get().routeSanitizers(), "No sanitizer declared");
+            assertEquals(List.of(), captured.get().sanitizers(), "No sanitizer declared");
         }
 
         @Test
@@ -136,10 +136,10 @@ class BeanParamFieldPolicyParityTest {
                     BeanWithSanit.class, "tag", true /* with annotations */, List.of(), List.of());
 
             assertTrue(captured.isPresent(), "Per-field processor invocation must occur for @Sanitize");
-            assertEquals(List.of(), captured.get().routeCanonicalizers(), "No canonicalizer declared on the field");
+            assertEquals(List.of(), captured.get().canonicalizers(), "No canonicalizer declared on the field");
             assertEquals(
                     List.of(StubSanit.class),
-                    captured.get().routeSanitizers(),
+                    captured.get().sanitizers(),
                     "Codegen path with field @Sanitize must surface [StubSanit] to InputObjectProcessor");
         }
 
@@ -147,7 +147,7 @@ class BeanParamFieldPolicyParityTest {
         @DisplayName("@SkipCanonicalization field with non-empty route chain — processor NOT invoked for the field")
         void skipCanonField_codegenPath_clearsRouteChain() throws Exception {
             // @SkipCanonicalization must clear the per-field chain. With route sanit also empty,
-            // hasNoRouteChains()=true and extractScalarParam never reaches the processor for the
+            // isEmpty()=true and extractScalarParam never reaches the processor for the
             // per-field call. (The route-level BEAN_PARAM intermediate-map call still happens because
             // routePolicies has a non-empty canon chain — that's a separate invocation we filter out.)
             Optional<EffectiveInputPolicies> captured = invokeMaterializeBean(
@@ -168,7 +168,7 @@ class BeanParamFieldPolicyParityTest {
             assertTrue(captured.isPresent(), "Per-field processor invocation must occur (route chain is non-empty)");
             assertEquals(
                     List.of(RouteCanon.class),
-                    captured.get().routeCanonicalizers(),
+                    captured.get().canonicalizers(),
                     "Field with no input-policy annotations must inherit the route canonicalizer chain");
         }
     }
@@ -214,7 +214,7 @@ class BeanParamFieldPolicyParityTest {
             assertTrue(captured.isPresent(), "Per-field processor invocation must occur (route chain is non-empty)");
             assertEquals(
                     List.of(RouteCanon.class),
-                    captured.get().routeCanonicalizers(),
+                    captured.get().canonicalizers(),
                     "Per-field chain must equal the route baseline (NOT contain [StubCanon] — annotations are null)");
         }
     }
@@ -236,12 +236,12 @@ class BeanParamFieldPolicyParityTest {
             assertTrue(codegenCaptured.isPresent(), "Codegen path must invoke processor for @Canonicalize");
             assertTrue(reflectiveCaptured.isPresent(), "Reflective path must invoke processor for @Canonicalize");
             assertEquals(
-                    codegenCaptured.get().routeCanonicalizers(),
-                    reflectiveCaptured.get().routeCanonicalizers(),
+                    codegenCaptured.get().canonicalizers(),
+                    reflectiveCaptured.get().canonicalizers(),
                     "Reflective and codegen paths must produce identical canonicalizer chains");
             assertEquals(
-                    codegenCaptured.get().routeSanitizers(),
-                    reflectiveCaptured.get().routeSanitizers(),
+                    codegenCaptured.get().sanitizers(),
+                    reflectiveCaptured.get().sanitizers(),
                     "Reflective and codegen paths must produce identical sanitizer chains");
         }
     }
@@ -334,8 +334,7 @@ class BeanParamFieldPolicyParityTest {
         ArgumentCaptor<EffectiveInputPolicies> policyCaptor = ArgumentCaptor.forClass(EffectiveInputPolicies.class);
         ArgumentCaptor<InputLocation> locationCaptor = ArgumentCaptor.forClass(InputLocation.class);
         // verify at least 0 — accommodates the case where the processor was never invoked at all.
-        verify(processor, atLeast(0))
-                .processStructuredBody(any(), any(), policyCaptor.capture(), locationCaptor.capture());
+        verify(processor, atLeast(0)).processInput(any(), any(), policyCaptor.capture(), locationCaptor.capture());
         List<EffectiveInputPolicies> allPolicies = policyCaptor.getAllValues();
         List<InputLocation> allLocations = locationCaptor.getAllValues();
         for (int i = 0; i < allLocations.size(); i++) {
@@ -347,14 +346,14 @@ class BeanParamFieldPolicyParityTest {
         // per-field chain was empty; if target was BEAN_PARAM, the route chain was empty.
         if (allLocations.isEmpty()) {
             verify(processor, never())
-                    .processStructuredBody(any(), any(), any(EffectiveInputPolicies.class), any(InputLocation.class));
+                    .processInput(any(), any(), any(EffectiveInputPolicies.class), any(InputLocation.class));
         }
         return Optional.empty();
     }
 
     private static InputObjectProcessor newProcessorStub() {
         InputObjectProcessor processor = mock(InputObjectProcessor.class);
-        when(processor.processStructuredBody(any(), any(), any(EffectiveInputPolicies.class), any(InputLocation.class)))
+        when(processor.processInput(any(), any(), any(EffectiveInputPolicies.class), any(InputLocation.class)))
                 .thenAnswer(inv -> inv.getArgument(0));
         return processor;
     }

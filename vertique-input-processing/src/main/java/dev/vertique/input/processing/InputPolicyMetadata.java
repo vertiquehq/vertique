@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
 // SPDX-License-Identifier: EUPL-1.2
 
-package dev.vertique.rest.core.request;
+package dev.vertique.input.processing;
 
 import dev.vertique.core.sanitization.Canonicalizer;
 import dev.vertique.core.sanitization.Sanitizer;
@@ -22,7 +22,7 @@ import java.util.Map;
  * @param skipSanitization         whether the type is annotated with {@code @SkipSanitization}
  * @param fields                   per-field metadata keyed by field name (matches JSON property name)
  */
-public record InputPolicyMetadata(
+record InputPolicyMetadata(
         List<Class<? extends Canonicalizer>> objectCanonicalizerChain,
         List<Class<? extends Sanitizer>> objectSanitizerChain,
         boolean skipCanonicalization,
@@ -61,7 +61,7 @@ public record InputPolicyMetadata(
      * @param collectionElementType for collections of non-string objects, the element type;
      *                              {@code null} for string collections or non-collection fields
      */
-    public record FieldPolicyMetadata(
+    record FieldPolicyMetadata(
             List<Class<? extends Canonicalizer>> canonicalizerChain,
             List<Class<? extends Sanitizer>> sanitizerChain,
             boolean skipCanonicalization,

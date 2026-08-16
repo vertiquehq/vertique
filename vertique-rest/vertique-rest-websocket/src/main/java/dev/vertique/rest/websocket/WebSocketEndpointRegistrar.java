@@ -13,9 +13,9 @@ import dev.vertique.core.sanitization.Sanitize;
 import dev.vertique.core.sanitization.Sanitizer;
 import dev.vertique.core.validation.BeanValidationException;
 import dev.vertique.core.validation.BeanValidator;
+import dev.vertique.input.processing.EffectiveInputPolicies;
+import dev.vertique.input.processing.InputObjectProcessor;
 import dev.vertique.rest.core.middleware.RequestContextLifecycle;
-import dev.vertique.rest.core.request.EffectiveInputPolicies;
-import dev.vertique.rest.core.request.InputObjectProcessor;
 import dev.vertique.rest.core.security.RouteAuthHandler;
 import dev.vertique.rest.core.security.SecurityPolicy;
 import dev.vertique.rest.core.security.SecurityRuntime;
@@ -981,7 +981,7 @@ class WebSocketEndpointRegistrar {
                 if (rawValue != null && objectProcessor != null) {
                     EffectiveInputPolicies policies = resolveMethodPolicies(method);
                     Object processed =
-                            objectProcessor.processStructuredBody(rawValue, String.class, policies, InputLocation.PATH);
+                            objectProcessor.processInput(rawValue, String.class, policies, InputLocation.PATH);
                     if (processed instanceof String s) {
                         rawValue = s;
                     }
@@ -1017,8 +1017,7 @@ class WebSocketEndpointRegistrar {
             // For raw String messages, apply scalar processing if available
             if (objectProcessor != null && meta.onMessage() != null) {
                 EffectiveInputPolicies policies = resolveMethodPolicies(meta.onMessage());
-                Object processed =
-                        objectProcessor.processStructuredBody(text, String.class, policies, InputLocation.BODY);
+                Object processed = objectProcessor.processInput(text, String.class, policies, InputLocation.PAYLOAD);
                 if (processed != null) {
                     return processed;
                 }
@@ -1032,8 +1031,8 @@ class WebSocketEndpointRegistrar {
                 // Two-phase: intermediate → process → materialize
                 EffectiveInputPolicies policies = resolveMethodPolicies(meta.onMessage());
                 Object intermediate = messageCodec.decodeToIntermediate(text);
-                Object processed = objectProcessor.processStructuredBody(
-                        intermediate, meta.messageType(), policies, InputLocation.BODY);
+                Object processed =
+                        objectProcessor.processInput(intermediate, meta.messageType(), policies, InputLocation.PAYLOAD);
                 decoded = messageCodec.convertFromIntermediate(
                         processed != null ? processed : intermediate, meta.messageType());
             } else {
