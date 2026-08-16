@@ -85,12 +85,21 @@ keyword.
 
 A constraint that does not apply to the substituted wire type is not published as if it did. The
 numeric-domain keywords `minimum`, `maximum`, `exclusiveMinimum`, `exclusiveMaximum`, and
-`multipleOf` are suppressed wherever the effective declared type excludes both `number` and
+`multipleOf` are suppressed at a property whose effective declared type excludes both `number` and
 `integer` — so `@DecimalMin("0.01")` or `@Schema(multipleOf = 0.01)` on a `BigDecimal` the profile
 republishes as a decimal string emits no numeric keyword against that string schema. Which
 contributor supplied the keyword is irrelevant; the effective wire type alone decides. Bean
 Validation still enforces the constraint against the materialized Java value — only the published,
 wire-facing keyword is dropped.
+
+Suppression is per-property and never rewrites a shared `$ref` target, because several properties
+may reference the same generated definition and one property's effective type is not the others'
+to narrow. A shared definition is cleaned only on its own terms — when the definition itself
+declares a type that excludes both numeric types. So when an override fragment contributes a
+numeric keyword *without* declaring a type, that keyword stays visible at a property whose
+effective type is not numeric. It is inert there rather than wrong: JSON Schema applies a numeric
+keyword only to a number instance. Declare a `type` in an override fragment that carries numeric
+bounds if you want those bounds confined to numeric referrers.
 
 ### Accepted type grammar
 

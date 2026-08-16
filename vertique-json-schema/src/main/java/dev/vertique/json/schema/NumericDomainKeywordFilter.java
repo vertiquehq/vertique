@@ -42,10 +42,18 @@ import java.util.Set;
  * untouched: with nothing to reason about, suppressing would risk dropping a keyword that legitimately
  * applies.
  *
- * <p>Wire-honesty (FR-JSON-089) survives that confinement, because every node a keyword can legally be
- * suppressed from is reachable as a local branch of some location: a member-scope constraint lands as
- * a sibling of the {@code $ref} — the location's own head — and a {@code $defs} entry is itself
- * visited as a location head, where its own conjoined keywords decide its own contents.
+ * <p><strong>What that confinement does and does not guarantee.</strong> Suppression is
+ * <em>per-referrer</em>. It reaches every keyword the referrer itself contributes — a member-scope
+ * constraint lands as a sibling of the {@code $ref}, which is the location's own head — and it reaches
+ * a shared {@code $defs} entry only when that entry, visited as a location head in its own right, has
+ * an effective type of its own that excludes both numeric types. It therefore does <em>not</em> reach a
+ * numeric keyword a shared definition contributes when that definition declares no type of its own:
+ * its own closure yields no explicit type, so nothing is suppressed there, and a referrer whose
+ * effective type is non-numeric may only rewrite its own local branches. Such a keyword stays visible
+ * in that referrer's effective schema. This is a deliberate trade: JSON Schema applies a numeric
+ * keyword only to a number instance, so the surviving keyword is inert rather than wrong, whereas
+ * rewriting the shared target from one referrer's effective type would strip a sibling's genuinely
+ * declared bounds.
  *
  * <p>Applied only by the profile-aware construction modes ({@code forInputProfile}/{@code
  * forOutputProfile}) when at least one override is in effect for that direction; {@code
