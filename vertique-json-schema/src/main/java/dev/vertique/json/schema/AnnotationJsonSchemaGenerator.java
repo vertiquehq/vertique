@@ -3,10 +3,22 @@
 
 package dev.vertique.json.schema;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.github.victools.jsonschema.generator.OptionPreset;
+import com.github.victools.jsonschema.generator.SchemaGenerator;
+import com.github.victools.jsonschema.generator.SchemaGeneratorConfigBuilder;
+import com.github.victools.jsonschema.generator.SchemaVersion;
+import com.github.victools.jsonschema.module.jackson.JacksonModule;
+import com.github.victools.jsonschema.module.jakarta.validation.JakartaValidationModule;
+import com.github.victools.jsonschema.module.jakarta.validation.JakartaValidationOption;
+import com.github.victools.jsonschema.module.swagger2.Swagger2Module;
 import dev.vertique.core.json.JsonMapperProfile;
+import dev.vertique.core.json.JsonSchemaTypeOverride.Direction;
 import java.lang.reflect.GenericArrayType;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
+import java.util.Objects;
 
 /**
  * Generates deterministic, canonical Draft 2020-12 JSON Schema documents from a resolved Java
@@ -65,7 +77,19 @@ import java.lang.reflect.Type;
  */
 public final class AnnotationJsonSchemaGenerator {
 
-    private AnnotationJsonSchemaGenerator() {}
+    /** The configured Victools generator; its configuration is fixed at construction. */
+    private final SchemaGenerator generator;
+
+    /**
+     * The instance-local lock serializing the complete generate-and-canonicalize operation. It is a
+     * plain private object so no caller can participate in — or deadlock against — this instance's
+     * lock, and it is never shared between instances.
+     */
+    private final Object lock = new Object();
+
+    private AnnotationJsonSchemaGenerator(SchemaGenerator generator) {
+        this.generator = generator;
+    }
 
     /**
      * Constructs a generator that reproduces the current REST-compatible Victools configuration:
@@ -76,7 +100,8 @@ public final class AnnotationJsonSchemaGenerator {
      * @return a generator configured with Victools' own default mapper
      */
     public static AnnotationJsonSchemaGenerator withVictoolsDefaults() {
-        return new AnnotationJsonSchemaGenerator();
+        return new AnnotationJsonSchemaGenerator(
+                build(new SchemaGeneratorConfigBuilder(SchemaVersion.DRAFT_2020_12, OptionPreset.PLAIN_JSON)));
     }
 
     /**
@@ -94,7 +119,7 @@ public final class AnnotationJsonSchemaGenerator {
      *                                        this direction
      */
     public static AnnotationJsonSchemaGenerator forInputProfile(JsonMapperProfile profile) {
-        return new AnnotationJsonSchemaGenerator();
+        return forProfile(profile, Direction.INPUT);
     }
 
     /**
@@ -112,7 +137,51 @@ public final class AnnotationJsonSchemaGenerator {
      *                                        this direction
      */
     public static AnnotationJsonSchemaGenerator forOutputProfile(JsonMapperProfile profile) {
-        return new AnnotationJsonSchemaGenerator();
+        return forProfile(profile, Direction.OUTPUT);
+    }
+
+    /**
+     * Builds a profile-aware generator for one direction: Victools property discovery is driven by
+     * the profile's mapper, and the profile's declarations applying in that direction are installed
+     * as an internal custom definition provider.
+     *
+     * @param profile   the caller-supplied profile; must not be {@code null}
+     * @param direction the direction being constructed
+     * @return the configured generator
+     * @throws NullPointerException          if {@code profile} is {@code null}
+     * @throws JsonSchemaGenerationException if the profile's declarations are invalid
+     */
+    private static AnnotationJsonSchemaGenerator forProfile(JsonMapperProfile profile, Direction direction) {
+        Objects.requireNonNull(profile, "profile");
+        ValidatedProfile validated = ValidatedProfile.forDirection(profile, direction);
+
+        SchemaGeneratorConfigBuilder builder = new SchemaGeneratorConfigBuilder(
+                validated.mapper(), SchemaVersion.DRAFT_2020_12, OptionPreset.PLAIN_JSON);
+        if (validated.hasOverrides()) {
+            builder.forTypesInGeneral().withCustomDefinitionProvider(new ProfileOverrideDefinitionProvider(validated));
+        }
+        return new AnnotationJsonSchemaGenerator(build(builder));
+    }
+
+    /**
+     * Installs the modules and options every construction mode shares — the Jackson module, the
+     * Jakarta Validation module with {@code NOT_NULLABLE_FIELD_IS_REQUIRED} and
+     * {@code INCLUDE_PATTERN_EXPRESSIONS}, and the Swagger 2 module — and builds the generator.
+     *
+     * <p>{@code OptionPreset.PLAIN_JSON}'s own options, including {@code ALLOF_CLEANUP_AT_THE_END},
+     * are deliberately left untouched in all three modes: only the mapper source and the selected
+     * profile overrides differ between modes.
+     *
+     * @param builder the mode-specific config builder
+     * @return the configured Victools generator
+     */
+    private static SchemaGenerator build(SchemaGeneratorConfigBuilder builder) {
+        builder.with(new JacksonModule())
+                .with(new JakartaValidationModule(
+                        JakartaValidationOption.NOT_NULLABLE_FIELD_IS_REQUIRED,
+                        JakartaValidationOption.INCLUDE_PATTERN_EXPRESSIONS))
+                .with(new Swagger2Module());
+        return new SchemaGenerator(builder.build());
     }
 
     /**
@@ -145,6 +214,27 @@ public final class AnnotationJsonSchemaGenerator {
      *                                        or canonicalization fails
      */
     public String generateCanonical(Type type) {
-        throw new UnsupportedOperationException("not yet implemented");
+        TypeGrammar.requireGeneratable(type);
+        // The whole operation — generation and canonicalization — is serialized per instance. Victools'
+        // own thread-safety is deliberately not relied upon, and the custom definition provider is
+        // shared by every call on this instance.
+        synchronized (lock) {
+            ObjectNode generated;
+            try {
+                generated = generator.generateSchema(type);
+            } catch (JsonSchemaGenerationException alreadyBounded) {
+                throw alreadyBounded;
+            } catch (RuntimeException failed) {
+                throw Diagnostics.failure(
+                        "JSON Schema generation failed for " + Diagnostics.typeIdentity(type), failed);
+            }
+            try {
+                return SchemaCanonicalizer.canonicalize(generated);
+            } catch (JsonProcessingException | RuntimeException failed) {
+                throw Diagnostics.failure(
+                        "canonicalization of the generated JSON Schema failed for " + Diagnostics.typeIdentity(type),
+                        failed);
+            }
+        }
     }
 }
