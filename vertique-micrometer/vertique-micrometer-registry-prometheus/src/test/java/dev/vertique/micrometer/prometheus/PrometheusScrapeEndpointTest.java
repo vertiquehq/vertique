@@ -12,12 +12,14 @@ import io.prometheus.metrics.tracer.common.SpanContext;
 import io.vertx.core.Vertx;
 import io.vertx.core.http.HttpMethod;
 import io.vertx.ext.web.Router;
+import io.vertx.ext.web.client.WebClient;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
 import java.util.Optional;
 import java.util.concurrent.Callable;
 import java.util.function.Function;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -34,13 +36,53 @@ import org.junit.jupiter.api.extension.ExtendWith;
  *   <li>Handler behavior: 200 + default content type + meter presence; Accept: openmetrics →
  *       openmetrics content type + EOF marker; 500 failure path via renderer-factory seam.</li>
  * </ul>
+ *
+ * <p>The real-HTTP cases dial through a single {@link WebClient} bound to the per-test {@link Vertx}
+ * instance rather than a fresh inline {@code HttpClient} per request. Two reasons: an inline client
+ * is unclosable by construction, so {@code Vertx} teardown reclaims its netty pools while requests
+ * may still be in flight; and a raw {@code HttpClientResponse} discards body buffers that arrive
+ * before a body handler is attached, so under load {@code body()} can succeed with zero bytes while
+ * the status code is correct — which every scrape assertion below, reading the rendered exposition
+ * text, would surface as a content mismatch unrelated to the endpoint (issues #167, #330). A
+ * {@link WebClient} aggregates the body into its {@code HttpResponse} before completing the send.
+ *
+ * <p>No case here answers 3xx, so {@link WebClient}'s follow-redirects default (a raw
+ * {@code HttpClient} follows none) never engages.
  */
 @ExtendWith(VertxExtension.class)
 class PrometheusScrapeEndpointTest {
 
+    /** The scrape client for the test that is running; recreated per test alongside {@link Vertx}. */
+    private WebClient client;
+
+    /**
+     * Creates the per-test {@link WebClient} on the same {@link Vertx} instance the test bodies
+     * receive, so the client never outlives the event loop it runs on.
+     *
+     * @param vertx the per-test Vert.x instance injected by vertx-junit5
+     */
+    @BeforeEach
+    void createClient(Vertx vertx) {
+        client = WebClient.create(vertx);
+    }
+
     @AfterEach
     void clearBackend() {
         PrometheusBackend.clear();
+    }
+
+    /**
+     * Closes the per-test {@link WebClient} before the extension closes the {@link Vertx} instance
+     * it was created on.
+     *
+     * <p>{@link WebClient#close()} is {@code void}, unlike {@code HttpClient.close()}: it returns
+     * once the underlying client has been asked to close, so there is no future to await here.
+     */
+    @AfterEach
+    void closeClient() {
+        if (client != null) {
+            client.close();
+        }
     }
 
     // --- Backend absent ---
@@ -167,10 +209,9 @@ class PrometheusScrapeEndpointTest {
             vertx.createHttpServer()
                     .requestHandler(router)
                     .listen(0, "127.0.0.1")
-                    .compose(server -> vertx.createHttpClient()
-                            .request(HttpMethod.GET, server.actualPort(), "127.0.0.1", "/metrics")
-                            .compose(req -> req.send())
-                            .compose(resp -> resp.body().map(body -> {
+                    .compose(server -> client.get(server.actualPort(), "127.0.0.1", "/metrics")
+                            .send()
+                            .map(resp -> {
                                 ctx.verify(() -> {
                                     assertEquals(200, resp.statusCode());
                                     String ct = resp.getHeader("Content-Type");
@@ -178,13 +219,13 @@ class PrometheusScrapeEndpointTest {
                                     assertTrue(
                                             ct.contains("text/plain"),
                                             "Content-Type must be text/plain for default format, got: " + ct);
-                                    String bodyStr = body.toString();
+                                    String bodyStr = String.valueOf(resp.bodyAsString());
                                     assertTrue(
                                             bodyStr.contains("test_counter_total"),
                                             "body must contain test_counter_total, got: " + bodyStr);
                                 });
-                                return body;
-                            })))
+                                return resp;
+                            }))
                     .onSuccess(ignored -> ctx.completeNow())
                     .onFailure(ctx::failNow);
         }
@@ -203,13 +244,10 @@ class PrometheusScrapeEndpointTest {
             vertx.createHttpServer()
                     .requestHandler(router)
                     .listen(0, "127.0.0.1")
-                    .compose(server -> vertx.createHttpClient()
-                            .request(HttpMethod.GET, server.actualPort(), "127.0.0.1", "/metrics")
-                            .compose(req -> {
-                                req.putHeader("Accept", "application/openmetrics-text; version=1.0.0");
-                                return req.send();
-                            })
-                            .compose(resp -> resp.body().map(body -> {
+                    .compose(server -> client.get(server.actualPort(), "127.0.0.1", "/metrics")
+                            .putHeader("Accept", "application/openmetrics-text; version=1.0.0")
+                            .send()
+                            .map(resp -> {
                                 ctx.verify(() -> {
                                     assertEquals(200, resp.statusCode());
                                     String ct = resp.getHeader("Content-Type");
@@ -217,13 +255,13 @@ class PrometheusScrapeEndpointTest {
                                     assertTrue(
                                             ct.contains("application/openmetrics-text"),
                                             "Content-Type must be openmetrics, got: " + ct);
-                                    String bodyStr = body.toString();
+                                    String bodyStr = String.valueOf(resp.bodyAsString());
                                     assertTrue(
                                             bodyStr.contains("# EOF"),
                                             "OpenMetrics body must end with '# EOF', body=" + bodyStr);
                                 });
-                                return body;
-                            })))
+                                return resp;
+                            }))
                     .onSuccess(ignored -> ctx.completeNow())
                     .onFailure(ctx::failNow);
         }
@@ -247,21 +285,20 @@ class PrometheusScrapeEndpointTest {
             vertx.createHttpServer()
                     .requestHandler(router)
                     .listen(0, "127.0.0.1")
-                    .compose(server -> vertx.createHttpClient()
-                            .request(HttpMethod.GET, server.actualPort(), "127.0.0.1", "/metrics")
-                            .compose(req -> req.send())
-                            .compose(resp -> resp.body().map(body -> {
+                    .compose(server -> client.get(server.actualPort(), "127.0.0.1", "/metrics")
+                            .send()
+                            .map(resp -> {
                                 ctx.verify(() -> {
                                     assertEquals(500, resp.statusCode());
-                                    String bodyStr = body.toString();
+                                    String bodyStr = String.valueOf(resp.bodyAsString());
                                     assertEquals("metrics unavailable", bodyStr);
                                     // Must NOT contain the exception message
                                     assertFalse(
                                             bodyStr.contains("simulated"),
                                             "exception details must not be in the response body");
                                 });
-                                return body;
-                            })))
+                                return resp;
+                            }))
                     .onSuccess(ignored -> ctx.completeNow())
                     .onFailure(ctx::failNow);
         }
@@ -291,10 +328,13 @@ class PrometheusScrapeEndpointTest {
             vertx.createHttpServer()
                     .requestHandler(router)
                     .listen(0, "127.0.0.1")
-                    .compose(server -> vertx.createHttpClient()
-                            .request(HttpMethod.GET, server.actualPort(), "127.0.0.1", "/metrics")
-                            .compose(req -> req.send())
-                            .compose(resp -> resp.body().map(body -> {
+                    .compose(server -> client.get(server.actualPort(), "127.0.0.1", "/metrics")
+                            .send()
+                            .map(resp -> {
+                                // Never null, exactly as the raw client's Buffer projection was: an
+                                // aggregated WebClient body is null for an empty response, and this
+                                // assertion must fail on content, not with an NPE.
+                                String body = String.valueOf(resp.bodyAsString());
                                 ctx.verify(() -> {
                                     // Must be 503, NOT 200 (stale registry scrape) and NOT 500 (render failure)
                                     assertEquals(503, resp.statusCode(), "cleared backend must yield 503");
@@ -305,8 +345,8 @@ class PrometheusScrapeEndpointTest {
                                     // Body must be the constant "metrics unavailable" — not exception text
                                     assertEquals("metrics unavailable", body.toString(), "body must be constant");
                                 });
-                                return body;
-                            })))
+                                return resp;
+                            }))
                     .onSuccess(ignored -> ctx.completeNow())
                     .onFailure(ctx::failNow);
         }

@@ -107,18 +107,33 @@ class RestClientRequestFactoryDefaultValueTest {
 
     private static Vertx vertx;
 
+    /**
+     * One {@link WebClient} for the whole class instead of one per {@code newDispatcher(...)} call.
+     * The dispatcher only reads from it (it never closes it), and the client used to be left
+     * unclosed, so {@link Vertx#close()} reclaimed its netty pools out from under it.
+     */
+    private static WebClient webClient;
+
     @BeforeAll
     static void startVertx() {
         vertx = Vertx.vertx();
+        webClient = WebClient.create(vertx);
     }
 
+    /**
+     * Closes the shared {@link WebClient} before {@link Vertx#close()} tears down the event loops it
+     * runs on. {@link WebClient#close()} is {@code void}, so it cannot be chained — the
+     * {@link Vertx} close that follows carries the completion.
+     */
     @AfterAll
     static void stopVertx() {
+        if (webClient != null) {
+            webClient.close();
+        }
         vertx.close();
     }
 
     private static DefaultRestClientDispatcher newDispatcher(ParamConversionResolver resolver) {
-        WebClient webClient = WebClient.create(vertx);
         return new DefaultRestClientDispatcher(
                 webClient,
                 "http://localhost",

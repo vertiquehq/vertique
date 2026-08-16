@@ -9,10 +9,10 @@ import dev.vertique.core.health.HealthCheck;
 import dev.vertique.core.health.HealthCheckResult;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
-import io.vertx.core.http.HttpMethod;
 import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.Router;
+import io.vertx.ext.web.client.WebClient;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
 import java.util.ArrayList;
@@ -20,6 +20,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -29,9 +31,52 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * Verifies {@link ManagementVerticle} health endpoint behavior including
  * check aggregation logic, HTTP status codes, and error handling for
  * both liveness and readiness probes.
+ *
+ * <p>Requests go through a single {@link WebClient} bound to the per-test {@link Vertx} instance
+ * rather than a fresh inline {@code HttpClient} per request. Two reasons: an inline client is
+ * unclosable by construction, so {@code Vertx} teardown reclaims its netty pools while requests may
+ * still be in flight; and a raw {@code HttpClientResponse} discards body buffers that arrive before
+ * a body handler is attached, so under load {@code body()} can succeed with zero bytes while the
+ * status code is correct — which every helper below, decoding the body as JSON, would surface as a
+ * spurious decode failure (issues #167, #330). A {@link WebClient} aggregates the body into its
+ * {@code HttpResponse} before completing the send.
+ *
+ * <p>No route exercised here ever answers 3xx, so {@link WebClient}'s follow-redirects default
+ * (a raw {@code HttpClient} follows none) never engages, and every health endpoint answers with a
+ * JSON body on both the 200 and the 503 path.
  */
 @ExtendWith(VertxExtension.class)
 class ManagementVerticleTest {
+
+    // --- Per-test resources ---
+
+    /** The shared client for the test that is running; recreated per test alongside {@link Vertx}. */
+    private WebClient client;
+
+    /**
+     * Creates the per-test {@link WebClient} on the same {@link Vertx} instance the test bodies
+     * receive, so the client never outlives the event loop it runs on.
+     *
+     * @param vertx the per-test Vert.x instance injected by vertx-junit5
+     */
+    @BeforeEach
+    void setUpClient(Vertx vertx) {
+        client = WebClient.create(vertx);
+    }
+
+    /**
+     * Closes the per-test {@link WebClient} before the extension closes the {@link Vertx} instance
+     * it was created on.
+     *
+     * <p>{@link WebClient#close()} is {@code void}, unlike {@code HttpClient.close()}: it returns
+     * once the underlying client has been asked to close, so there is no future to await here.
+     */
+    @AfterEach
+    void closeClient() {
+        if (client != null) {
+            client.close();
+        }
+    }
 
     // --- Test HealthCheck implementations ---
 
@@ -155,14 +200,11 @@ class ManagementVerticleTest {
      * @return a future completing with the parsed response body
      */
     private Future<JsonObject> request(Vertx vertx, int port, String host, String path) {
-        return vertx.createHttpClient()
-                .request(HttpMethod.GET, port, host, path)
-                .compose(req -> req.send())
-                .compose(resp -> resp.body().map(body -> {
-                    JsonObject json = new JsonObject(body);
-                    json.put("_statusCode", resp.statusCode());
-                    return json;
-                }));
+        return client.get(port, host, path).send().map(response -> {
+            JsonObject json = new JsonObject(response.body());
+            json.put("_statusCode", response.statusCode());
+            return json;
+        });
     }
 
     // --- Liveness endpoint ---
@@ -375,9 +417,8 @@ class ManagementVerticleTest {
             ManagementVerticle verticle = new ManagementVerticle(Set.of(), Set.of(), config, Set.of());
             vertx.deployVerticle(verticle).onComplete(ctx.succeeding(id -> {
                 // Verify port is NOT bound by attempting to connect — the request must fail
-                vertx.createHttpClient()
-                        .request(HttpMethod.GET, 9999, "127.0.0.1", "/health/live")
-                        .compose(req -> req.send())
+                client.get(9999, "127.0.0.1", "/health/live")
+                        .send()
                         .onComplete(ctx.failing(cause -> ctx.completeNow()));
             }));
         }
