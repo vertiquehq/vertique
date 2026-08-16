@@ -5,6 +5,8 @@ package dev.vertique.json.schema;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.github.victools.jsonschema.generator.FieldScope;
+import com.github.victools.jsonschema.generator.MethodScope;
 import com.github.victools.jsonschema.generator.OptionPreset;
 import com.github.victools.jsonschema.generator.SchemaGenerator;
 import com.github.victools.jsonschema.generator.SchemaGeneratorConfigBuilder;
@@ -159,6 +161,10 @@ public final class AnnotationJsonSchemaGenerator {
                 validated.mapper(), SchemaVersion.DRAFT_2020_12, OptionPreset.PLAIN_JSON);
         if (validated.hasOverrides()) {
             builder.forTypesInGeneral().withCustomDefinitionProvider(new ProfileOverrideDefinitionProvider(validated));
+            // Registered before the annotation modules, so the guard is consulted for every member
+            // regardless of what a module's own member-scope provider decides to supply.
+            builder.forFields().withCustomDefinitionProvider(new SchemaImplementationGuard<FieldScope>(validated));
+            builder.forMethods().withCustomDefinitionProvider(new SchemaImplementationGuard<MethodScope>(validated));
         }
         return new AnnotationJsonSchemaGenerator(build(builder));
     }
@@ -228,6 +234,9 @@ public final class AnnotationJsonSchemaGenerator {
                 throw Diagnostics.failure(
                         "JSON Schema generation failed for " + Diagnostics.typeIdentity(type), failed);
             }
+            // Structural safety net: a document that conjoins disjoint explicit types is unsatisfiable,
+            // and is refused before it can be canonicalized and handed to a consumer.
+            DisjointTypeDetector.requireNoDisjointTypes(generated);
             try {
                 return SchemaCanonicalizer.canonicalize(generated);
             } catch (JsonProcessingException | RuntimeException failed) {

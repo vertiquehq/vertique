@@ -83,6 +83,40 @@ Property-level Swagger schema metadata and applicable Jakarta constraints then n
 baseline through explicit conjunction; neither contributor overwrites the other's declared
 keyword.
 
+### Accepted type grammar
+
+`generateCanonical(Type)` accepts a *resolved* type, recursively: a non-null `Class` (including a
+primitive class, an array class, and a raw generic class), a `ParameterizedType` whose optional
+owner type, raw type, and arguments are themselves accepted, and a `GenericArrayType` whose
+component type is accepted. It rejects `null`, a `TypeVariable`, a `WildcardType`, any nested
+occurrence of either unresolved form, and an unknown custom `Type` implementation. The rejection is
+eager — it happens before Victools is invoked — so an unrepresentable type never produces a
+partially built document. A recursive object graph is fully supported; it is not an unresolved
+type.
+
+### Constraints and common mistakes
+
+Two annotation combinations fail generation rather than producing a schema that quietly
+misdescribes the wire:
+
+- **`@Schema(implementation = ...)` on a property whose declared type graph carries a profile
+  override.** The Swagger module redirects the property's resolved type before the profile's
+  override is consulted, so the override fragment would be dropped without a trace. Generation
+  therefore fails with a bounded `JsonSchemaGenerationException` naming the property. Declare the
+  wire shape through the profile override *or* through `implementation`, not both. The detection
+  reads the property's declared type plus, recursively, its type arguments and array component
+  types; a map **key** position is excluded, since a map key is never fragment-bearing. A
+  `@Schema` on either the field or its accessor counts, matching how the Swagger module resolves
+  the annotation.
+- **A conjunction of disjoint explicit `type` keywords.** After generation, every conjunctive
+  location — an object node, its direct `allOf` branches, and its locally resolved `$ref`
+  targets — must have a non-empty intersection of the explicit `type` sets declared there. An
+  empty intersection is an unsatisfiable contract and fails generation. `anyOf` and `oneOf`
+  branches are alternatives, not conjunctions, so a nullable overridden property remains valid.
+
+`@Schema(type = ...)` has no effect in this module; `implementation` is the supported way for a
+property to contribute a type shape.
+
 ---
 
 ## Key Classes
