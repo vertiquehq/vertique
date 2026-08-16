@@ -10,8 +10,10 @@ import io.restassured.RestAssured;
 import io.restassured.filter.log.RequestLoggingFilter;
 import io.restassured.filter.log.ResponseLoggingFilter;
 import io.restassured.response.Response;
+import io.vertx.core.Handler;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.http.HttpClient;
+import io.vertx.core.http.HttpClientResponse;
 import io.vertx.core.http.HttpMethod;
 import io.vertx.core.http.RequestOptions;
 import io.vertx.core.json.JsonObject;
@@ -31,6 +33,13 @@ import org.junit.jupiter.api.extension.RegisterExtension;
  * {@code @VertiqueApp} annotation processor) with a tight configuration (fast steps, random port)
  * and verifies the SSE wire protocol: progress frames, terminal complete frame, stream close, and
  * Last-Event-ID replay filtering.
+ *
+ * <p><strong>Raw {@link HttpClient} exemption — SSE-consumer representativeness.</strong> An SSE
+ * client consumes frames incrementally from a long-lived response and reacts to its close; a
+ * buffered {@code WebClient} exchange would model a different consumer than the one this example
+ * documents. Every subscription therefore goes through
+ * {@link #subscribe(RequestOptions, VertxTestContext, Handler)}, which applies the raw-client idiom
+ * pinned by {@code HttpClientBodyReadRaceIT}.
  */
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
 @ExtendWith(VertxExtension.class)
@@ -102,7 +111,7 @@ public class SseJobProgressIT {
                 .setMethod(HttpMethod.GET)
                 .setURI("/jobs/" + jobId + "/events");
 
-        httpClient.request(opts).compose(req -> req.send()).onComplete(ctx.succeeding(response -> {
+        subscribe(opts, ctx, response -> {
             response.handler(chunk -> accumulated.appendBuffer(chunk));
             response.endHandler(v -> {
                 ctx.verify(() -> {
@@ -135,7 +144,7 @@ public class SseJobProgressIT {
                 ctx.completeNow();
             });
             response.exceptionHandler(ctx::failNow);
-        }));
+        });
     }
 
     @Test
@@ -160,7 +169,7 @@ public class SseJobProgressIT {
                 .setMethod(HttpMethod.GET)
                 .setURI("/jobs/" + jobId + "/events");
 
-        httpClient.request(firstOpts).compose(req -> req.send()).onComplete(ctx.succeeding(firstResponse -> {
+        subscribe(firstOpts, ctx, firstResponse -> {
             firstResponse.handler(chunk -> firstAccumulated.appendBuffer(chunk));
             firstResponse.endHandler(v -> {
                 List<SseFrame> firstFrames = parseSseFrames(firstAccumulated.toString());
@@ -184,7 +193,7 @@ public class SseJobProgressIT {
                         .setURI("/jobs/" + jobId + "/events")
                         .addHeader("Last-Event-ID", lastEventId);
 
-                httpClient.request(secondOpts).compose(req -> req.send()).onComplete(ctx.succeeding(secondResponse -> {
+                subscribe(secondOpts, ctx, secondResponse -> {
                     secondResponse.handler(chunk -> secondAccumulated.appendBuffer(chunk));
                     secondResponse.endHandler(v2 -> {
                         ctx.verify(() -> {
@@ -201,9 +210,34 @@ public class SseJobProgressIT {
                         ctx.completeNow();
                     });
                     secondResponse.exceptionHandler(ctx::failNow);
-                }));
+                });
             });
             firstResponse.exceptionHandler(ctx::failNow);
+        });
+    }
+
+    // --- Subscription helper ---
+
+    /**
+     * Opens an SSE subscription and hands the response to {@code subscriber} for incremental
+     * consumption.
+     *
+     * <p>The subscriber — which registers the frame, end, and exception handlers — is attached to
+     * the request's {@code response()} future <em>before</em> {@code end()} initiates the send.
+     * That ordering is load-bearing: Vert.x discards response data delivered before a handler is
+     * attached, so handlers registered after the send lose every frame that arrived on the head's
+     * tick, and the stream then looks silently short rather than failing. See
+     * {@code HttpClientBodyReadRaceIT}. The send's own outcome is deliberately not observed — a
+     * response the server did send must not be masked by a write failure.
+     *
+     * @param opts       the request options describing the subscription
+     * @param ctx        the test context failed if the request or the response never arrives
+     * @param subscriber receives the response and registers the streaming handlers on it
+     */
+    private static void subscribe(RequestOptions opts, VertxTestContext ctx, Handler<HttpClientResponse> subscriber) {
+        httpClient.request(opts).onComplete(ctx.succeeding(request -> {
+            request.response().onComplete(ctx.succeeding(subscriber));
+            request.end();
         }));
     }
 

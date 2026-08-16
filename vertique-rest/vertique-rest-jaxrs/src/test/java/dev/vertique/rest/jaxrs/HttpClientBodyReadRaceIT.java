@@ -36,6 +36,10 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * Pins the Vert.x client-side hazard behind this module's "correct status, empty body" IT flakes,
  * and pins the request idiom that is immune to it.
  *
+ * <p><strong>Raw {@link HttpClient} exemption — this class pins the hazard.</strong> It is the one
+ * place that must reproduce the drop deliberately and prove the idiom's guarantee against it, so it
+ * cannot be expressed through a {@code WebClient} that is immune by construction.
+ *
  * <p><strong>The hazard.</strong> {@link HttpClientResponse} discards body buffers delivered before
  * a body handler is attached. A request that initiates the send and only then attaches the body
  * read — {@code client.request(..).compose(req -> req.send()).compose(resp -> resp.body())} — leaves
