@@ -31,12 +31,12 @@ import io.vertx.core.Handler;
 import io.vertx.core.Vertx;
 import io.vertx.core.VertxBuilder;
 import io.vertx.core.VertxOptions;
-import io.vertx.core.http.HttpClient;
-import io.vertx.core.http.HttpClientResponse;
-import io.vertx.core.http.HttpMethod;
 import io.vertx.core.http.HttpServer;
 import io.vertx.ext.web.Router;
 import io.vertx.ext.web.RoutingContext;
+import io.vertx.ext.web.client.HttpResponse;
+import io.vertx.ext.web.client.WebClient;
+import io.vertx.ext.web.client.WebClientOptions;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
 import io.vertx.tracing.opentelemetry.OpenTelemetryOptions;
@@ -74,12 +74,16 @@ import org.junit.jupiter.api.extension.ExtendWith;
  *
  * <p>All tests use class-level 20-second timeout and port 0 for deterministic port allocation.
  *
- * <p><strong>Raw {@link HttpClient} exemption — the raw client/server pair is the instrumented
- * subject.</strong> The tests assert on the SERVER span Vert.x's own tracer produces for a raw
- * exchange, including the {@code traceparent} the client puts on the wire verbatim; a
- * {@code WebClient} would interpose another layer over exactly that path. Both exchanges are
- * status-only and use the raw-client idiom pinned by {@code HttpClientBodyReadRaceIT}: the response
- * continuation is attached before {@code end()} initiates the send.
+ * <p>Requests are issued through a {@link WebClient} rather than a raw {@code HttpClient}
+ * deliberately. Nothing here observes the client: every assertion is on the SERVER span the
+ * <em>server's</em> tracer exported, so the raw client is a bare trigger and buys nothing. The
+ * {@code traceparent} header still reaches the server verbatim — {@code putHeader} sets it on the
+ * request before the send, and with no span active on the calling context the client's own tracing
+ * policy ({@code PROPAGATE}) neither opens a CLIENT span nor injects a header of its own. And while
+ * both exchanges are status-only — which is why a raw client could not lose anything here today — a
+ * status-only raw exchange is merely unexposed to the empty-body race (issue #167), not immune to
+ * it: the first body assertion added here would make it live. A {@link WebClient} aggregates the
+ * body into its {@code HttpResponse} before completing the send, so the hazard cannot appear at all.
  */
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
@@ -88,23 +92,35 @@ public class RestServerSpanEnrichmentIT {
     // --- Shared per-test state ---
 
     private HttpServer server;
-    private HttpClient httpClient;
+    private WebClient httpClient;
     private Vertx tracedVertx;
     private OpenTelemetrySdk sdk;
 
+    /**
+     * Tears the exchange down in the one order that survives an event-loop shutdown.
+     *
+     * <p>{@link WebClient#close()} is {@code void}, unlike {@code HttpClient.close()}: it returns once
+     * the underlying client has been asked to close, so there is no future to join and the client
+     * close is no longer awaited — a deliberate trade taken when this class moved off the raw client.
+     * The server close alone now carries the completion.
+     *
+     * @param ctx the test context used to signal teardown completion
+     */
     @AfterEach
     void tearDown(VertxTestContext ctx) {
+        if (httpClient != null) {
+            httpClient.close();
+        }
         Future<?> serverClose = server != null ? server.close() : Future.succeededFuture();
-        Future<?> clientClose = httpClient != null ? httpClient.close() : Future.succeededFuture();
         if (sdk != null) {
             sdk.close();
         }
         GlobalOpenTelemetry.resetForTest();
-        // Join the server/client closes while tracedVertx's event loop is still alive (they resolve on
-        // it), then close the traced Vertx last from the callback. Including tracedVertx.close() in the
-        // join raced the loop shutdown and intermittently threw RejectedExecutionException
+        // Close the server while tracedVertx's event loop is still alive (that close resolves on it),
+        // then close the traced Vertx last from the callback. Including tracedVertx.close() alongside
+        // it raced the loop shutdown and intermittently threw RejectedExecutionException
         // ("event executor terminated").
-        Future.join(serverClose, clientClose).onComplete(ar -> {
+        serverClose.onComplete(ar -> {
             if (tracedVertx != null) {
                 tracedVertx.close();
             }
@@ -216,7 +232,8 @@ public class RestServerSpanEnrichmentIT {
                 .listen(0, "127.0.0.1")
                 .map(s -> {
                     this.server = s;
-                    this.httpClient = vertx.createHttpClient();
+                    // Redirects off: parity with the raw client; WebClient follows 3xx by default.
+                    this.httpClient = WebClient.create(vertx, new WebClientOptions().setFollowRedirects(false));
                     return s.actualPort();
                 });
     }
@@ -241,17 +258,15 @@ public class RestServerSpanEnrichmentIT {
 
         startServer(vertx, router)
                 .compose(port -> httpClient
-                        .request(HttpMethod.GET, port, "127.0.0.1", "/orders/42")
-                        .compose(request -> {
-                            // Status-only exchange: the response continuation is attached before
-                            // end() initiates the send, and the send's own outcome is not composed
-                            // in — the exchange settles on the response, exactly as send() did.
-                            // See HttpClientBodyReadRaceIT.
-                            Future<Integer> responded = request.response().map(HttpClientResponse::statusCode);
-                            request.putHeader("traceparent", traceparent);
-                            request.end();
-                            return responded;
-                        }))
+                        // Status-only exchange. putHeader sets the injected parent on the request
+                        // before the send, so the server's tracer extracts it verbatim; the
+                        // WebClient's response future then resolves once the body (here empty) has
+                        // been aggregated, which is strictly later than the raw client's send()
+                        // settled — harmless, because the span poll below is what this test waits on.
+                        .get(port, "127.0.0.1", "/orders/42")
+                        .putHeader("traceparent", traceparent)
+                        .send()
+                        .map(HttpResponse::statusCode))
                 .compose(status -> pollUntilSpanPresent(vertx, exporter, 40, 50))
                 .onComplete(ctx.succeeding(v -> {
                     ctx.verify(() -> {
@@ -318,16 +333,13 @@ public class RestServerSpanEnrichmentIT {
                 .listen(0, "127.0.0.1")
                 .compose(s -> {
                     this.server = s;
-                    this.httpClient = vertx.createHttpClient();
+                    // Redirects off: parity with the raw client; WebClient follows 3xx by default.
+                    this.httpClient = WebClient.create(vertx, new WebClientOptions().setFollowRedirects(false));
+                    // Status-only exchange — see the note in tracedRequestEnrichesServerSpan.
                     return httpClient
-                            .request(HttpMethod.GET, s.actualPort(), "127.0.0.1", "/orders/99")
-                            .compose(request -> {
-                                // Status-only exchange through the pre-attach idiom — see the note in
-                                // tracedRequestEnrichesServerSpan.
-                                Future<Integer> responded = request.response().map(HttpClientResponse::statusCode);
-                                request.end();
-                                return responded;
-                            });
+                            .get(s.actualPort(), "127.0.0.1", "/orders/99")
+                            .send()
+                            .map(HttpResponse::statusCode);
                 })
                 .compose(statusCode -> {
                     // Brief wait to confirm no async span export happens
