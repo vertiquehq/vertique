@@ -59,6 +59,13 @@ import java.util.Objects;
  * silently drops the override fragment once {@code implementation} redirects the member's
  * resolved type.
  *
+ * <p>A Jakarta constraint still targets the <em>materialized Java value</em>: a numeric-domain
+ * keyword ({@code minimum}, {@code maximum}, {@code exclusiveMinimum}, {@code exclusiveMaximum}) that
+ * an override's effective wire type can no longer satisfy — for example {@code @DecimalMin} on a
+ * {@code BigDecimal} an override republishes as a string — is suppressed from the published document
+ * by {@link NumericDomainKeywordFilter} rather than advertised against a type it cannot apply to; Bean
+ * Validation still enforces it against the Java value.
+ *
  * <p>{@code forInputProfile(null)} and {@code forOutputProfile(null)} throw {@link
  * NullPointerException} naming {@code "profile"}. A null profile id, mapper, override list,
  * override, or override member fails construction with a bounded {@link
@@ -83,6 +90,18 @@ public final class AnnotationJsonSchemaGenerator {
     private final SchemaGenerator generator;
 
     /**
+     * Whether {@link NumericDomainKeywordFilter} runs on every generated document from this instance.
+     *
+     * <p>{@code true} only for a profile-aware generator ({@link #forInputProfile(JsonMapperProfile)}
+     * / {@link #forOutputProfile(JsonMapperProfile)}) whose profile declares at least one applicable
+     * schema-type override — the only case in which a member's declared numeric Java type can end up
+     * with a non-numeric effective wire type (PRD §6.2 wire-honesty). {@code
+     * withVictoolsDefaults()} never substitutes a wire type for a Java type, so this is always {@code
+     * false} for that mode.
+     */
+    private final boolean suppressInapplicableNumericKeywords;
+
+    /**
      * The instance-local lock serializing the complete generate-and-canonicalize operation. It is a
      * plain private object so no caller can participate in — or deadlock against — this instance's
      * lock, and it is never shared between instances.
@@ -90,19 +109,34 @@ public final class AnnotationJsonSchemaGenerator {
     private final Object lock = new Object();
 
     /**
-     * Wraps an already-configured Victools generator.
+     * Wraps an already-configured Victools generator, applying no numeric-domain keyword suppression.
      *
      * <p>Package-private on purpose: it is the seam a same-package test uses to inject an
      * instrumented {@link SchemaGenerator} subclass — for instance one that blocks inside {@code
      * generateSchema} — so the per-instance serialization contract can be proven without exposing a
      * Victools type on the public surface. Application code constructs generators exclusively
      * through {@link #withVictoolsDefaults()}, {@link #forInputProfile(JsonMapperProfile)}, and
-     * {@link #forOutputProfile(JsonMapperProfile)}, all of which delegate here.
+     * {@link #forOutputProfile(JsonMapperProfile)}, all of which delegate here or to the two-argument
+     * constructor.
      *
      * @param generator the configured Victools generator this instance owns for its lifetime
      */
     AnnotationJsonSchemaGenerator(SchemaGenerator generator) {
+        this(generator, false);
+    }
+
+    /**
+     * Wraps an already-configured Victools generator, optionally applying
+     * {@link NumericDomainKeywordFilter} to every document this instance generates.
+     *
+     * @param generator                           the configured Victools generator this instance owns
+     *                                             for its lifetime
+     * @param suppressInapplicableNumericKeywords  whether to run {@link NumericDomainKeywordFilter}
+     *                                             after generation and before canonicalization
+     */
+    AnnotationJsonSchemaGenerator(SchemaGenerator generator, boolean suppressInapplicableNumericKeywords) {
         this.generator = generator;
+        this.suppressInapplicableNumericKeywords = suppressInapplicableNumericKeywords;
     }
 
     /**
@@ -178,7 +212,7 @@ public final class AnnotationJsonSchemaGenerator {
             builder.forFields().withCustomDefinitionProvider(new SchemaImplementationGuard<FieldScope>(validated));
             builder.forMethods().withCustomDefinitionProvider(new SchemaImplementationGuard<MethodScope>(validated));
         }
-        return new AnnotationJsonSchemaGenerator(build(builder));
+        return new AnnotationJsonSchemaGenerator(build(builder), validated.hasOverrides());
     }
 
     /**
@@ -249,6 +283,11 @@ public final class AnnotationJsonSchemaGenerator {
             // Structural safety net: a document that conjoins disjoint explicit types is unsatisfiable,
             // and is refused before it can be canonicalized and handed to a consumer.
             DisjointTypeDetector.requireNoDisjointTypes(generated);
+            if (suppressInapplicableNumericKeywords) {
+                // PRD §6.2 wire-honesty: a Jakarta numeric-domain constraint (e.g. @DecimalMin) must
+                // not be advertised against a wire type an override has replaced with a non-number.
+                NumericDomainKeywordFilter.suppressInapplicableNumericKeywords(generated);
+            }
             try {
                 return SchemaCanonicalizer.canonicalize(generated);
             } catch (JsonProcessingException | RuntimeException failed) {
