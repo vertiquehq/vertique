@@ -5,17 +5,23 @@
 # Proves that test sources honor the HTTP client policy. Two families of
 # CI-only flake motivated it, and each maps to one rule below.
 #
-# --- Rule 1: every client must be bound ------------------------------------
+# --- Rule 1: a client must not be created into a chain --------------------
 #
-# A client created inline — `vertx.createHttpClient().request(...)` — leaves no
-# reference behind, so nothing can ever close it. This is not a style
-# preference: an unbound client is unclosable by construction. The pools then
-# survive until the owning Vertx is closed, and closing Vertx while requests are
-# still in flight throws `VertxException: Pool closed` (issue #330).
+# `vertx.createHttpClient().request(...)` discards the client reference into a
+# method chain, so nothing can ever close it. The pools then survive until the
+# owning Vertx is closed, and closing Vertx while requests are still in flight
+# throws `VertxException: Pool closed` (issue #330).
 #
-# Detection is an invariant, not a heuristic: a creation call on a line carrying
-# no `=` cannot have been assigned to anything. `client = vertx.createHttpClient()`
-# passes; `return vertx.createHttpClient()` does not.
+# Detection keys on the chain, not on the absence of an assignment. An earlier
+# revision flagged any creation on a line carrying no `=`, which was wrong in
+# both directions: it failed a formatter-wrapped `this.client =\n
+# WebClient.create(...)` and a perfectly closable `clients.add(vertx.
+# createHttpClient())`, while passing `if (x == y) use(vertx.createHttpClient())`.
+# Chaining is the unambiguous defect: the value is consumed by the call that
+# follows it and never bound anywhere.
+#
+# Passing a fresh client as an argument is NOT flagged. The callee may well
+# bind and close it, and this checker cannot see across that boundary.
 #
 # --- Rule 2: no raw-client send() ------------------------------------------
 #
@@ -25,16 +31,18 @@
 # arrive unobserved and `body()` completes successfully with zero bytes while
 # the status is correct (issue #167).
 #
-# The repo-wide answer is to use `io.vertx.ext.web.client.WebClient`, which
-# aggregates the body before its future resolves and cannot hit this. A test
-# that genuinely needs the raw client — wire-level control, mid-stream failure,
-# observing the raw client's own instrumentation, SSE-consumer
-# representativeness — must use the pre-attach idiom instead: attach the whole
-# continuation to `response()` BEFORE `end()`, never `send()`.
+# The repo-wide answer is `io.vertx.ext.web.client.WebClient`, which aggregates
+# the body before its future resolves. A test that genuinely needs the raw
+# client must use the pre-attach idiom: attach the whole continuation to
+# `response()` BEFORE `end()`, never `send()`.
 #
-# So rule 2 fires on any `send(` in a file importing `io.vertx.core.http.HttpClient`.
-# WebClient's own `send()` is not in scope, because a migrated file does not
-# import the raw client.
+# Scope is any test source that references a raw client type — by explicit
+# import, by wildcard import, or fully qualified. Matching only the exact
+# `import io.vertx.core.http.HttpClient;` line was evadable two ways, and the
+# second is the realistic one: this repo's own exempt files import
+# `HttpClientResponse` without importing `HttpClient`, so a future test that
+# copies that idiom, obtains its client from a helper, and later regresses to
+# `send()` would have had zero gate coverage.
 #
 # --- What rule 2 deliberately does NOT prove -------------------------------
 #
@@ -50,14 +58,14 @@
 #
 # --- The allowlist ---------------------------------------------------------
 #
-# Exactly one file is permitted to use the unsafe idiom: the tripwire that
-# asserts the hazard still exists, so a Vert.x upgrade that fixes the drop
-# behaviour is detected rather than silently relied upon.
+# Exactly one file may use the unsafe idiom: the tripwire asserting the hazard
+# still exists, so a Vert.x upgrade that fixes the drop behaviour is detected
+# rather than silently relied upon.
 #
 # The entry is a dual lock — exact repo-relative path AND the exact number of
-# permitted occurrences. Adding a second `send(` to an allowlisted file fails,
-# so the exemption cannot become a hiding place. Copying the file elsewhere
-# fails too, since the path will not match.
+# permitted occurrences. Occurrences are counted per match, not per line: an
+# earlier revision counted matching lines, so two `send(` calls sharing one
+# line slipped through the lock it advertised.
 #
 # Usage: verify-test-client-policy.sh [repository-root]
 # The root defaults to the script's parent directory; an explicit root exists so
@@ -91,9 +99,9 @@ report_failure() {
 
 # --- Allowlist -------------------------------------------------------------
 #
-# "<repo-relative path>|<exact permitted send( count>|<reason>"
-# Keep this list minimal. A new entry needs a reason a reviewer would accept
-# without reading the file.
+# "<repo-relative path>|<exact permitted send( occurrence count>|<reason>"
+# Keep this minimal. A new entry needs a reason a reviewer would accept without
+# reading the file.
 allowlist=(
     "vertique-rest/vertique-rest-jaxrs/src/test/java/dev/vertique/rest/jaxrs/HttpClientBodyReadRaceIT.java|1|pins the hazard: asserts Vert.x still drops pre-handler body data, so an upgrade that fixes it is detected"
 )
@@ -112,28 +120,42 @@ allowlisted_count_for() {
 
 # --- Noise stripping -------------------------------------------------------
 #
-# Blanks out block comments, line comments and string literals while preserving
-# the line count, so reported line numbers stay true and a javadoc sentence
-# mentioning send() or createHttpClient() never trips a rule. Javadoc is where
-# this policy is explained, so scanning raw text would flag the documentation
-# describing the rule it violates.
+# Blanks out block comments, line comments, string literals, text blocks and
+# character literals while preserving the line count, so reported line numbers
+# stay true. This is not incidental: the policy is explained in javadoc on the
+# very files it governs, so scanning raw text would flag the prose describing
+# the rule it enforces.
+#
+# Text blocks matter because archetype template tests under
+# src/main/resources/archetype-resources/**/src/test/java are in scope, and
+# embedded Java source is exactly where a `"""` block appears. Character
+# literals matter for the narrower `'"'` case, which would otherwise open a
+# string that swallows the rest of the line.
 strip_noise() {
     awk '
-        BEGIN { in_block = 0 }
+        BEGIN { in_block = 0; in_text_block = 0 }
         {
             line = $0
             out = ""
             i = 1
             n = length(line)
             while (i <= n) {
+                three = substr(line, i, 3)
                 two = substr(line, i, 2)
+                ch = substr(line, i, 1)
+
+                if (in_text_block) {
+                    if (three == "\"\"\"") { in_text_block = 0; i += 3 } else { i++ }
+                    continue
+                }
                 if (in_block) {
                     if (two == "*/") { in_block = 0; i += 2 } else { i++ }
                     continue
                 }
+                if (three == "\"\"\"") { in_text_block = 1; i += 3; continue }
                 if (two == "/*") { in_block = 1; i += 2; continue }
                 if (two == "//") { break }
-                ch = substr(line, i, 1)
+
                 if (ch == "\"") {
                     i++
                     while (i <= n) {
@@ -144,10 +166,76 @@ strip_noise() {
                     }
                     continue
                 }
+                if (ch == "'\''") {
+                    i++
+                    while (i <= n) {
+                        c = substr(line, i, 1)
+                        if (c == "\\") { i += 2; continue }
+                        if (c == "'\''") { i++; break }
+                        i++
+                    }
+                    continue
+                }
                 out = out ch
                 i++
             }
             print out
+        }
+    ' "$1"
+}
+
+# --- Rule 1 detection ------------------------------------------------------
+#
+# Slurps the stripped source so a chain broken across lines is still seen as
+# one expression, finds each client creation, balances parentheses to its end,
+# then reports it only when the next non-whitespace character is a `.`.
+chained_creations() {
+    awk '
+        {
+            content = content $0 "\n"
+        }
+        END {
+            n = length(content)
+            start = 1
+            while (1) {
+                best = 0
+                # Earliest creation call at or after "start".
+                split("createHttpClient(,createWebSocketClient(,WebClient.create(", needles, ",")
+                for (k in needles) {
+                    p = index(substr(content, start), needles[k])
+                    if (p > 0) {
+                        abs = start + p - 1
+                        if (best == 0 || abs < best) {
+                            best = abs
+                            best_len = length(needles[k])
+                        }
+                    }
+                }
+                if (best == 0) { break }
+
+                # Balance parentheses from the opening paren of the creation call.
+                i = best + best_len - 1
+                depth = 0
+                while (i <= n) {
+                    c = substr(content, i, 1)
+                    if (c == "(") { depth++ }
+                    else if (c == ")") {
+                        depth--
+                        if (depth == 0) { break }
+                    }
+                    i++
+                }
+
+                # Next non-whitespace character after the call decides it.
+                j = i + 1
+                while (j <= n && substr(content, j, 1) ~ /[ \t\r\n]/) { j++ }
+                if (substr(content, j, 1) == ".") {
+                    prefix = substr(content, 1, best)
+                    line_number = split(prefix, tmp, "\n")
+                    print line_number
+                }
+                start = best + best_len
+            }
         }
     ' "$1"
 }
@@ -175,29 +263,33 @@ while IFS= read -r file; do
     strip_noise "$file" > "$stripped"
     scanned=$((scanned + 1))
 
-    # --- Rule 1: unbound client creation ---------------------------------
-    #
-    # `=` anywhere on the line means the value was bound to something. Its
-    # absence means the creation call's result is discarded into a chain.
-    while IFS=: read -r line_number content; do
+    # --- Rule 1: client created straight into a chain --------------------
+    while IFS= read -r line_number; do
         [[ -z "$line_number" ]] && continue
-        if [[ "$content" != *"="* ]]; then
-            report_failure "$relative:$line_number: client created inline and never bound, so it can never be closed (issue #330). Assign it to a field or variable and close it before the owning Vertx: ${content#"${content%%[![:space:]]*}"}"
-        fi
-    done < <(grep -nE '\.(createHttpClient|createWebSocketClient)\(|WebClient\.create\(' "$stripped" || true)
+        report_failure "$relative:$line_number: client created directly into a call chain, so the reference is discarded and it can never be closed (issue #330). Bind it to a field or variable and close it before the owning Vertx."
+    done < <(chained_creations "$stripped")
 
     # --- Rule 2: raw-client send() ---------------------------------------
-    if grep -q '^[[:space:]]*import[[:space:]]\+io\.vertx\.core\.http\.HttpClient[[:space:]]*;' "$stripped"; then
-        send_count="$(grep -cE '\.send\(|::send' "$stripped" || true)"
+    #
+    # Any reference to a raw client type puts the file in scope: explicit
+    # import of HttpClient/HttpClientRequest/HttpClientResponse, a wildcard
+    # import of the package, or fully-qualified use.
+    if grep -qE '^[[:space:]]*import[[:space:]]+io\.vertx\.core\.http\.(HttpClient|HttpClientRequest|HttpClientResponse|\*)[[:space:]]*;' "$stripped" \
+        || grep -qE '\bio\.vertx\.core\.http\.HttpClient(Request|Response)?\b' "$stripped"; then
+        # `|| true` is load-bearing: grep exits 1 when nothing matches, and
+        # under `set -o pipefail` that would abort the whole scan silently —
+        # reporting a clean tree by dying before reaching any later file.
+        send_count="$({ grep -oE '\.send\(|::send' "$stripped" || true; } | wc -l | tr -d '[:space:]')"
         if (( send_count > 0 )); then
             if permitted="$(allowlisted_count_for "$relative")"; then
                 if (( send_count != permitted )); then
                     report_failure "$relative: allowlisted for exactly $permitted raw send( occurrence(s) but found $send_count. The allowlist is a dual lock — if this new occurrence is deliberate, update the count in scripts/verify-test-client-policy.sh and say why; otherwise use the pre-attach idiom (attach the response() continuation before end())."
                 fi
             else
-                grep -nE '\.send\(|::send' "$stripped" | while IFS=: read -r line_number _; do
+                while IFS=: read -r line_number _; do
+                    [[ -z "$line_number" ]] && continue
                     printf 'FAIL: %s:%s: raw HttpClient send() attaches the body read after the send begins, so the response can arrive unobserved and body() yields zero bytes with a correct status (issue #167). Use WebClient, or the pre-attach idiom for an exempt file.\n' "$relative" "$line_number" >&2
-                done
+                done < <(grep -nE '\.send\(|::send' "$stripped")
                 failures=$((failures + send_count))
             fi
         fi
@@ -206,7 +298,7 @@ done < "$work_dir/test-sources.txt"
 
 if (( failures > 0 )); then
     printf '\n%d violation(s) of the test HTTP client policy.\n' "$failures" >&2
-    printf 'See .claude/rules/testing.md in the governance repository, section "HTTP clients in tests".\n' >&2
+    printf 'See .claude/rules/testing.md in the governance repository, section "HTTP clients in tests: WebClient by default".\n' >&2
     exit 1
 fi
 

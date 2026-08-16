@@ -76,7 +76,7 @@ public class SampleIT {
         return vertx.createHttpClient().request(GET, port, "127.0.0.1", "/");
     }
 }')" \
-    "never bound"
+    "call chain"
 
 expect "rule1-bound-httpclient-is-accepted" 0 \
     "$(make_fixture rule1b "$std_path" '
@@ -93,7 +93,7 @@ public class SampleIT {
         return WebClient.create(vertx).get(port, "127.0.0.1", "/").send();
     }
 }')" \
-    "never bound"
+    "call chain"
 
 expect "rule1-unbound-websocket-client-is-rejected" 1 \
     "$(make_fixture rule1d "$std_path" '
@@ -102,7 +102,7 @@ public class SampleIT {
         return vertx.createWebSocketClient().connect(options);
     }
 }')" \
-    "never bound"
+    "call chain"
 
 expect "rule1-declaration-with-type-is-accepted" 0 \
     "$(make_fixture rule1e "$std_path" '
@@ -284,6 +284,123 @@ expect "main-sources-are-out-of-scope" 0 "$scope_root"
 empty_root="$work_root/empty"
 mkdir -p "$empty_root"
 expect "root-with-no-test-sources-is-an-error" 1 "$empty_root" "No test sources found"
+
+# --- Rule 2 scope: the spellings that used to evade it ---------------------
+#
+# An earlier revision matched only the literal `import io.vertx.core.http.HttpClient;`
+# line. Each case below passed that revision while carrying the racy idiom.
+
+expect "rule2-wildcard-import-is-in-scope" 1 \
+    "$(make_fixture scope_wild "$std_path" '
+import io.vertx.core.http.*;
+public class SampleIT {
+    void exercise() {
+        client.request(GET, port, "127.0.0.1", "/").compose(req -> req.send());
+    }
+}')" \
+    "issue #167"
+
+# The realistic evasion: this repo'"'"'s own exempt files import HttpClientResponse
+# WITHOUT importing HttpClient, so a future test copying that idiom and later
+# regressing to send() would have had no gate coverage at all.
+expect "rule2-response-only-import-is-in-scope" 1 \
+    "$(make_fixture scope_resp "$std_path" '
+import io.vertx.core.http.HttpClientResponse;
+public class SampleIT {
+    void exercise() {
+        client.request(GET, port, "127.0.0.1", "/").compose(req -> req.send());
+    }
+}')" \
+    "issue #167"
+
+expect "rule2-fully-qualified-use-is-in-scope" 1 \
+    "$(make_fixture scope_fqn "$std_path" '
+public class SampleIT {
+    void exercise() {
+        io.vertx.core.http.HttpClient c = vertx.createHttpClient();
+        c.request(GET, port, "127.0.0.1", "/").compose(req -> req.send());
+    }
+}')" \
+    "issue #167"
+
+# --- Allowlist counts occurrences, not lines -------------------------------
+#
+# An earlier revision used `grep -c`, which counts matching LINES, so two
+# send( calls sharing one line satisfied a lock advertised as counting
+# occurrences.
+expect "allowlist-counts-occurrences-not-lines" 1 \
+    "$(make_fixture allow_sameline "$tripwire_path" '
+import io.vertx.core.http.HttpClient;
+public class HttpClientBodyReadRaceIT {
+    void exercise() {
+        { a.compose(req -> req.send()); b.compose(req -> req.send()); }
+    }
+}')" \
+    "dual lock"
+
+# --- Rule 1 must not false-positive on compliant spellings -----------------
+#
+# An earlier revision keyed on the absence of `=` on the creation line, which
+# failed both of these even though the client is bound and closable.
+
+expect "rule1-formatter-wrapped-assignment-is-accepted" 0 \
+    "$(make_fixture rule1_wrap "$std_path" '
+public class SampleIT {
+    void exercise() {
+        this.client =
+                WebClient.create(vertx, new WebClientOptions().setDefaultHost("127.0.0.1"));
+    }
+}')"
+
+expect "rule1-collection-binding-is-accepted" 0 \
+    "$(make_fixture rule1_coll "$std_path" '
+public class SampleIT {
+    void exercise() {
+        clients.add(vertx.createHttpClient());
+    }
+}')"
+
+# Documented non-detection: the callee may bind and close it, and this checker
+# cannot see across that boundary. Pinned so the limit is deliberate.
+expect "rule1-creation-passed-as-argument-is-not-flagged" 0 \
+    "$(make_fixture rule1_arg "$std_path" '
+public class SampleIT {
+    void exercise() {
+        register(vertx.createHttpClient());
+    }
+}')"
+
+# --- Stripper edge cases ---------------------------------------------------
+#
+# Archetype template tests embed Java source in text blocks, and they are in
+# scope. An earlier revision had no `"""` handling, so every line of a block
+# was scanned as executable code.
+expect "text-block-contents-are-not-scanned" 0 \
+    "$(make_fixture strip_text "$std_path" '
+import io.vertx.core.http.HttpClient;
+public class SampleIT {
+    String template = """
+        return vertx.createHttpClient().request(GET);
+        req.send();
+        """;
+    void exercise() {
+        request.end();
+    }
+}')"
+
+# A char literal holding a double quote used to open a string that swallowed
+# the rest of the line, hiding a real violation after it. Built with a
+# double-quoted shell string so the Java char literal '"' survives intact.
+char_literal_fixture="
+import io.vertx.core.http.HttpClient;
+public class SampleIT {
+    void exercise() {
+        if (c == '\"') { client.request(o).compose(req -> req.send()); }
+    }
+}"
+expect "char-literal-quote-does-not-hide-a-violation" 1 \
+    "$(make_fixture strip_char "$std_path" "$char_literal_fixture")" \
+    "issue #167"
 
 # --- Summary ---------------------------------------------------------------
 
