@@ -11,8 +11,6 @@ import dev.vertique.core.health.HealthCheckResult;
 import io.vertx.core.Future;
 import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
-import io.vertx.core.http.HttpClient;
-import io.vertx.core.http.HttpMethod;
 import io.vertx.core.http.HttpServer;
 import io.vertx.core.http.HttpServerResponse;
 import io.vertx.core.json.EncodeException;
@@ -20,6 +18,7 @@ import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.Router;
 import io.vertx.ext.web.RoutingContext;
+import io.vertx.ext.web.client.WebClient;
 import io.vertx.junit5.Timeout;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
@@ -40,9 +39,15 @@ import org.junit.jupiter.api.extension.ExtendWith;
 /**
  * Verifies {@link HealthCheckHandler} in isolation by mounting it on a lightweight
  * {@link Router} attached to a real HTTP server. Each test starts its own server on a free
- * loopback port and closes it explicitly in {@code @AfterEach}; a single {@link HttpClient}
+ * loopback port and closes it explicitly in {@code @AfterEach}; a single {@link WebClient}
  * is shared across the class. testing.md requires both: relying on extension teardown to
  * reclaim sockets is what surfaces under load as a misrouted response.
+ *
+ * <p>The client is a {@link WebClient} rather than a raw {@code HttpClient} deliberately: a raw
+ * {@code HttpClientResponse} discards body buffers that arrive before a body handler is attached,
+ * so under load {@code body()} can succeed with zero bytes while the status code is correct — which
+ * this class, decoding every body as JSON, would surface as a spurious decode failure. A
+ * {@link WebClient} aggregates the body into its {@code HttpResponse} before completing the send.
  *
  * <p>Coverage:
  *
@@ -87,16 +92,16 @@ class HealthCheckHandlerTest {
     // --- Class-scoped resources (shared across all @Test methods, including @Nested) ---
 
     private static Vertx vertx;
-    private static HttpClient client;
+    private static WebClient client;
 
     // --- Per-test resources ---
 
     private HttpServer server;
 
     /**
-     * Creates the class-scoped {@link Vertx} instance and shared {@link HttpClient} once for the
+     * Creates the class-scoped {@link Vertx} instance and shared {@link WebClient} once for the
      * entire test class. A client per request accumulates netty channel pools that are never
-     * reclaimed until the JVM exits.
+     * reclaimed until the JVM exits, and an unbound client can never be closed at all.
      *
      * @param v   the class-scoped Vert.x instance injected by vertx-junit5
      * @param ctx the test context used to signal setup completion
@@ -104,7 +109,7 @@ class HealthCheckHandlerTest {
     @BeforeAll
     static void setUpClass(Vertx v, VertxTestContext ctx) {
         vertx = v;
-        client = v.createHttpClient();
+        client = WebClient.create(v);
         ctx.completeNow();
     }
 
@@ -121,17 +126,21 @@ class HealthCheckHandlerTest {
     }
 
     /**
-     * Closes the shared {@link HttpClient} after all tests in the class have run.
+     * Closes the shared {@link WebClient} after all tests in the class have run — before the
+     * extension-owned {@link Vertx} instance is closed, which happens only once every
+     * {@code @AfterAll} method has run.
+     *
+     * <p>{@link WebClient#close()} is {@code void}, unlike {@code HttpClient.close()}: it returns
+     * once the underlying client has been asked to close, so there is no future to await here.
      *
      * @param ctx the test context used to signal teardown completion
      */
     @AfterAll
     static void tearDownClass(VertxTestContext ctx) {
         if (client != null) {
-            client.close().onComplete(ar -> ctx.completeNow());
-        } else {
-            ctx.completeNow();
+            client.close();
         }
+        ctx.completeNow();
     }
 
     // --- Test HealthCheck implementations ---
@@ -587,13 +596,11 @@ class HealthCheckHandlerTest {
      * @return a future completing with the parsed response body
      */
     private Future<JsonObject> request(Vertx vertx, int port) {
-        return client.request(HttpMethod.GET, port, "127.0.0.1", "/health")
-                .compose(req -> req.send())
-                .compose(resp -> resp.body().map(body -> {
-                    JsonObject json = new JsonObject(body);
-                    json.put("_statusCode", resp.statusCode());
-                    return json;
-                }));
+        return client.get(port, "127.0.0.1", "/health").send().map(response -> {
+            JsonObject json = new JsonObject(response.body());
+            json.put("_statusCode", response.statusCode());
+            return json;
+        });
     }
 
     /**
@@ -614,9 +621,9 @@ class HealthCheckHandlerTest {
      * @return a future completing with the raw status and body
      */
     private Future<RawResponse> requestRaw(Vertx vertx, int port) {
-        return client.request(HttpMethod.GET, port, "127.0.0.1", "/health")
-                .compose(req -> req.send())
-                .compose(resp -> resp.body().map(body -> new RawResponse(resp.statusCode(), body.toString())));
+        return client.get(port, "127.0.0.1", "/health")
+                .send()
+                .map(response -> new RawResponse(response.statusCode(), response.bodyAsString()));
     }
 
     // --- Aggregation ---
