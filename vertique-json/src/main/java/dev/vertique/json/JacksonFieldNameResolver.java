@@ -157,7 +157,9 @@ public final class JacksonFieldNameResolver implements InputFieldNameResolver {
      * collection element types. A visited set makes a cyclic type graph terminate, and a shape
      * carrying no statically known property set — a wildcard, a type variable, a primitive, an enum,
      * a platform type such as {@link String}, or a map's key and value types — is skipped rather than
-     * introspected. The walk follows exactly the links the engine descends, no more.
+     * introspected. The map rule applies to the declared shape itself as well as to a property: a
+     * {@code Map<String, Dto>} body warms neither {@code String} nor {@code Dto}. The walk follows
+     * exactly the links the engine descends, no more.
      *
      * <p>Why transitive rather than only the declared body or message type: the engine resolves the
      * projection for the <em>owner of each nested fragment</em>, so a nested DTO's projection is
@@ -179,6 +181,12 @@ public final class JacksonFieldNameResolver implements InputFieldNameResolver {
      * Walks one reflective type shape, unwrapping arrays and parameterized types down to the classes
      * that carry a property set.
      *
+     * <p><strong>A map shape's arguments are not walked</strong>, matching
+     * {@link #warmPropertyType}: a {@code Map<String, Dto>} body is schema-free exactly like a
+     * map-typed property, so neither its key nor its value type is ever consulted as a projection
+     * owner and warming one would let an ambiguity the request path can never reach fail
+     * registration.
+     *
      * @param declaredType the shape to walk, or {@code null}
      * @param visited      the classes already warmed on this walk
      */
@@ -186,7 +194,11 @@ public final class JacksonFieldNameResolver implements InputFieldNameResolver {
         if (declaredType instanceof Class<?> rawClass) {
             warmClass(rawClass, visited);
         } else if (declaredType instanceof ParameterizedType parameterized) {
-            warmDeclaredType(parameterized.getRawType(), visited);
+            Type rawType = parameterized.getRawType();
+            warmDeclaredType(rawType, visited);
+            if (isMapLike(rawType)) {
+                return;
+            }
             for (Type argument : parameterized.getActualTypeArguments()) {
                 warmDeclaredType(argument, visited);
             }
@@ -194,6 +206,20 @@ public final class JacksonFieldNameResolver implements InputFieldNameResolver {
             warmDeclaredType(genericArray.getGenericComponentType(), visited);
         }
         // A wildcard or type variable carries no statically known property set — nothing to project.
+    }
+
+    /**
+     * Returns whether a raw type is the map-like shape {@link #warmPropertyType} refuses to descend.
+     * The verdict comes from the mapper's own {@link com.fasterxml.jackson.databind.type.TypeFactory}
+     * rather than from an {@code instanceof Map} test, so both walks agree even for a map-like type a
+     * registered module contributes.
+     *
+     * @param rawType the parameterized shape's raw type
+     * @return {@code true} when the shape is map-like
+     */
+    private boolean isMapLike(Type rawType) {
+        return rawType instanceof Class<?> rawClass
+                && mapper.getTypeFactory().constructType(rawClass).isMapLikeType();
     }
 
     /**

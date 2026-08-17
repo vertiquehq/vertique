@@ -11,6 +11,7 @@ import jakarta.annotation.Nullable;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
 
 /**
@@ -76,16 +77,42 @@ public final class InputTraversalContext {
 
     /**
      * One place in the application's source where a {@code @Canonicalize} / {@code @Sanitize} chain
-     * is declared: a type for an object-level chain, and a type plus a property name for a
-     * field-level one. Two sites are the same site only when both components match, so a field's
-     * chain and its owner type's chain are always distinct sites, and the same property name on two
-     * different DTOs is two sites.
+     * is declared: {@link ObjectSite} for a type's own chain, {@link FieldSite} for a property's.
      *
-     * @param ownerType the type carrying the declaration
-     * @param fieldName the declaring property's Java name, or {@code null} for an object-level chain
+     * <p>The two kinds are <strong>distinct record types</strong>, not one record with a nullable
+     * name, so an object-level site and a field-level site can never be equal however they are
+     * built. That is what keeps a caller that cannot name its field — {@link GeneratedSupport}'s
+     * collection-of-strings arm, whose frozen signature carries no logical name — from producing a
+     * key that collides with its owner type's object-level site. Such a caller produces
+     * <em>no</em> site at all (see {@link InputTraversalContext#fieldSite}): an unnamed field
+     * declaration is neither suppressed nor recorded, exactly as
+     * {@link InputTraversalContext#contributed} documents.
      */
-    private record DeclarationSite(
-            Class<?> ownerType, @Nullable String fieldName) {}
+    private sealed interface DeclarationSite {
+
+        /**
+         * A type's own object-level chain.
+         *
+         * @param ownerType the type carrying the {@code @Canonicalize} / {@code @Sanitize}
+         */
+        record ObjectSite(Class<?> ownerType) implements DeclarationSite {}
+
+        /**
+         * One property's field-level chain. Two sites are the same site only when both components
+         * match, so the same property name on two different DTOs is two sites.
+         *
+         * @param ownerType the type declaring the property
+         * @param fieldName the declaring property's Java name; never {@code null} — an unnamed
+         *                  field declaration has no site
+         */
+        record FieldSite(Class<?> ownerType, String fieldName) implements DeclarationSite {
+            // Implicitly public: a record nested in an interface cannot narrow its canonical
+            // constructor. The enclosing DeclarationSite is private, so neither record escapes.
+            public FieldSite {
+                Objects.requireNonNull(fieldName, "fieldName");
+            }
+        }
+    }
 
     /**
      * Creates a context seeded from the invocation-level policies and the traversal's wire-name
@@ -298,10 +325,10 @@ public final class InputTraversalContext {
 
         Set<DeclarationSite> sites = contributedSites;
         if (objectContributed) {
-            sites = withSite(sites, ownerType, null);
+            sites = withSite(sites, objectSite(ownerType));
         }
         if (fieldContributed) {
-            sites = withSite(sites, ownerType, fieldName);
+            sites = withSite(sites, fieldSite(ownerType, fieldName));
         }
 
         return new InputTraversalContext(canon, sanit, skipCanon, skipSanit, nameResolver, sites);
@@ -352,6 +379,12 @@ public final class InputTraversalContext {
      * {@code (ownerType, fieldName)} has. The {@code inherited} reference is reused unchanged when
      * nothing is appended, which avoids per-{@code descend} allocations on the common case where the
      * nested DTO declares no chain.
+     *
+     * <p>The two kinds of site are keyed by <em>different</em> {@link DeclarationSite} record types,
+     * so a caller with no {@code fieldName} to offer — the collection-of-strings arm, or a
+     * list-element descent — never has its {@code field} chain suppressed by the owner type's
+     * object-level site having already contributed. It keys on nothing, and a chain keyed on nothing
+     * is appended.
      *
      * <p><strong>Why declared chains are never filtered by class.</strong> A repeat <em>within</em>
      * one {@code @Canonicalize}/{@code @Sanitize} declaration — or between an inherited level's
@@ -409,8 +442,8 @@ public final class InputTraversalContext {
             List<T> object,
             @Nullable List<T> field) {
 
-        List<T> effectiveObject = alreadyContributed(ownerType, null) ? List.of() : object;
-        boolean fieldEmpty = field == null || field.isEmpty() || alreadyContributed(ownerType, fieldName);
+        List<T> effectiveObject = contributed(objectSite(ownerType)) ? List.of() : object;
+        boolean fieldEmpty = field == null || field.isEmpty() || contributed(fieldSite(ownerType, fieldName));
         if (effectiveObject.isEmpty() && fieldEmpty) {
             return inherited;
         }
@@ -424,39 +457,56 @@ public final class InputTraversalContext {
     }
 
     /**
-     * Returns {@code true} when the chain declared at {@code (ownerType, fieldName)} is already
-     * folded into this context's inherited chains. An unnamed site is never suppressed: the caller
-     * could not identify it, so it cannot be recognized as a re-offer either. A field site is also
-     * unnamed when {@code fieldName} is {@code null} — a list-element descent has no enclosing
-     * field, so there is nothing to key on.
+     * Returns the object-level site of {@code ownerType}, or {@code null} when the caller could not
+     * name the declaring type.
      *
      * @param ownerType the declaring type, or {@code null} when the caller cannot name it
-     * @param fieldName the declaring property, or {@code null} for an object-level site
-     * @return whether the site has already contributed on this descent path
+     * @return the site, or {@code null} when there is nothing to key on
      */
-    private boolean alreadyContributed(@Nullable Class<?> ownerType, @Nullable String fieldName) {
-        if (ownerType == null) {
-            return false;
-        }
-        return contributedSites.contains(new DeclarationSite(ownerType, fieldName));
+    @Nullable
+    private static DeclarationSite objectSite(@Nullable Class<?> ownerType) {
+        return ownerType == null ? null : new DeclarationSite.ObjectSite(ownerType);
     }
 
     /**
-     * Returns {@code sites} with {@code (ownerType, fieldName)} added, reusing the input set when
-     * the addition would change nothing — an unnamed site, or one already recorded.
+     * Returns the field-level site of {@code fieldName} on {@code ownerType}, or {@code null} when
+     * either half is missing — the caller could not name the declaring type, there is no enclosing
+     * field (a list-element descent), or the caller holds no logical name for the field it is
+     * offering. A missing half yields <em>no site</em> rather than a half-keyed one, which is what
+     * keeps an unnamed field declaration from being read as its owner type's object-level site.
      *
-     * @param sites     the sites recorded so far; must not be {@code null}
-     * @param ownerType the declaring type, or {@code null} when the caller could not name one
-     * @param fieldName the declaring property, or {@code null} for an object-level site
+     * @param ownerType the declaring type, or {@code null} when the caller cannot name it
+     * @param fieldName the declaring property, or {@code null} when the caller cannot name it
+     * @return the site, or {@code null} when there is nothing to key on
+     */
+    @Nullable
+    private static DeclarationSite fieldSite(@Nullable Class<?> ownerType, @Nullable String fieldName) {
+        return ownerType == null || fieldName == null ? null : new DeclarationSite.FieldSite(ownerType, fieldName);
+    }
+
+    /**
+     * Returns {@code true} when {@code site}'s declared chain is already folded into this context's
+     * inherited chains. An unidentifiable site — a {@code null} one, from {@link #objectSite} or
+     * {@link #fieldSite} — is never suppressed: the caller could not identify it, so it cannot be
+     * recognized as a re-offer either.
+     *
+     * @param site the site to test, or {@code null} when the caller could not name one
+     * @return whether the site has already contributed on this descent path
+     */
+    private boolean contributed(@Nullable DeclarationSite site) {
+        return site != null && contributedSites.contains(site);
+    }
+
+    /**
+     * Returns {@code sites} with {@code site} added, reusing the input set when the addition would
+     * change nothing — an unidentifiable ({@code null}) site, or one already recorded.
+     *
+     * @param sites the sites recorded so far; must not be {@code null}
+     * @param site  the site to record, or {@code null} when the caller could not name one
      * @return an immutable set containing the site, or {@code sites} unchanged
      */
-    private static Set<DeclarationSite> withSite(
-            Set<DeclarationSite> sites, @Nullable Class<?> ownerType, @Nullable String fieldName) {
-        if (ownerType == null) {
-            return sites;
-        }
-        DeclarationSite site = new DeclarationSite(ownerType, fieldName);
-        if (sites.contains(site)) {
+    private static Set<DeclarationSite> withSite(Set<DeclarationSite> sites, @Nullable DeclarationSite site) {
+        if (site == null || sites.contains(site)) {
             return sites;
         }
         Set<DeclarationSite> next = new HashSet<>(sites);

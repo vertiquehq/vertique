@@ -812,6 +812,72 @@ class GeneratedVsReflectiveEquivalenceTest {
     }
 
     @Nested
+    @DisplayName("a collection field's own chain under a recursive type-level chain")
+    class CollectionChainUnderRecursiveTypeChain {
+
+        private static final int LEVELS = 3;
+
+        @Test
+        @DisplayName("both paths sanitize every level's List<String> field with its own declared chain")
+        void shouldAgreeThatACollectionFieldsChainSurvivesTheOwnerTypesOwnContribution() {
+            Object reflectiveOut = processor.processInput(
+                    collectionChainInput(),
+                    CollectionChainRecursiveReflective.class,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY,
+                    InputFieldNameResolver.IDENTITY);
+            Object generatedOut = processor.processInput(
+                    collectionChainInput(),
+                    CollectionChainRecursiveGenerated.class,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY,
+                    InputFieldNameResolver.IDENTITY);
+
+            assertEquals(
+                    reflectiveOut,
+                    generatedOut,
+                    "the collection arm names no field site, which must not be read as the owner type's "
+                            + "object-level site on either path");
+            // Agreement alone would also hold if both paths dropped the field's sanitizer, so pin the
+            // sanitized output on each path independently and at every level: a dropped chain leaves
+            // the markup "<script" in what the application receives.
+            for (int level = 0; level < LEVELS; level++) {
+                assertEquals(
+                        List.of("script"),
+                        tagsAtLevel(reflectiveOut, level),
+                        "reflective path: level " + level + "'s tags must run the field's own sanitizer");
+                assertEquals(
+                        List.of("script"),
+                        tagsAtLevel(generatedOut, level),
+                        "generated path: level " + level + "'s tags must run the field's own sanitizer, "
+                                + "even after the owner type's own chain has contributed on this path");
+            }
+        }
+
+        /** Builds a {@value #LEVELS}-level self-referential intermediate with one tag per level. */
+        private Map<String, Object> collectionChainInput() {
+            Map<String, Object> current = new LinkedHashMap<>();
+            current.put("tags", new ArrayList<Object>(List.of("  <script  ")));
+            for (int level = LEVELS - 1; level >= 1; level--) {
+                Map<String, Object> node = new LinkedHashMap<>();
+                node.put("tags", new ArrayList<Object>(List.of("  <script  ")));
+                node.put("child", current);
+                current = node;
+            }
+            return current;
+        }
+
+        /** Returns the {@code tags} value {@code level} steps down the {@code child} chain. */
+        private Object tagsAtLevel(Object result, int level) {
+            Map<?, ?> node = (Map<?, ?>) result;
+            for (int step = 0; step < level; step++) {
+                node = (Map<?, ?>) node.get("child");
+            }
+            return node.get("tags");
+        }
+    }
+
+    @Nested
     @DisplayName("a field's own declared chain keeps its declared order")
     class DeclaredChainOrder {
 
@@ -1562,6 +1628,35 @@ class GeneratedVsReflectiveEquivalenceTest {
 
         @Canonicalize(TestTrim.class)
         public FieldChainRecursiveGenerated child;
+    }
+
+    /**
+     * Self-referential reflective baseline carrying a type-level chain <em>and</em> a
+     * {@code List<String>} field with a chain of its own. The collection field is the arm whose
+     * declaration site has no logical name to key on, so this is the shape that proves an unnamed
+     * field site is never mistaken for the owner type's object-level site.
+     */
+    @Canonicalize(TestTrim.class)
+    static final class CollectionChainRecursiveReflective {
+        @Sanitize(TestStripHtml.class)
+        public List<String> tags;
+
+        public CollectionChainRecursiveReflective child;
+    }
+
+    /**
+     * Generated counterpart of {@link CollectionChainRecursiveReflective}, paired with the
+     * hand-written
+     * {@code GeneratedVsReflectiveEquivalenceTest_CollectionChainRecursiveGenerated_InputProcessor}
+     * fixture whose {@code tags} arm routes through {@code applyStringCollection} and whose
+     * {@code child} arm dispatches back at its own target type.
+     */
+    @Canonicalize(TestTrim.class)
+    static final class CollectionChainRecursiveGenerated {
+        @Sanitize(TestStripHtml.class)
+        public List<String> tags;
+
+        public CollectionChainRecursiveGenerated child;
     }
 
     /**

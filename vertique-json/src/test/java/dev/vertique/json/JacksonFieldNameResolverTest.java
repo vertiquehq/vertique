@@ -128,6 +128,18 @@ class JacksonFieldNameResolverTest {
         public java.util.Map<DuplicateAliasDto, String> byDto;
     }
 
+    /**
+     * Carrier whose fields supply the <em>declared</em> {@link java.lang.reflect.Type} shapes a
+     * boundary hands {@code precomputeGraph} — the same shapes a resource method's
+     * {@code param.genericType()} produces for a map-shaped body. This type is never warmed itself;
+     * only its fields' generic types are.
+     */
+    public static class DeclaredBodyShapes {
+        public java.util.Map<String, DuplicateAliasDto> mapBody;
+        public java.util.List<java.util.Map<String, DuplicateAliasDto>> listOfMapsBody;
+        public java.util.List<DuplicateAliasDto> listBody;
+    }
+
     /** Cyclic DTO graph — the walk must terminate rather than recurse forever. */
     public static class CyclicNodeDto {
         public String name;
@@ -387,6 +399,40 @@ class JacksonFieldNameResolverTest {
         assertDoesNotThrow(
                 () -> resolver.precomputeGraph(MapOnlyHolderDto.class),
                 "a type reachable only as a map key or value must not be warmed");
+    }
+
+    @Test
+    @DisplayName("precomputeGraph does not warm a map's value type from a declared parameterized body")
+    void shouldNotWarmMapValueTypesReachedFromADeclaredParameterizedType() throws Exception {
+        JacksonFieldNameResolver resolver = JacksonFieldNameResolver.forMapper(vanillaMapper());
+
+        // A `Map<String, Dto>` body is schema-free exactly like a map-typed property: the engine keys
+        // its fragment's policies against the map type and never resolves a projection for the value
+        // type, so warming it turns a collision the request path can never consult into a startup
+        // failure. The entry-point walk must apply the same rule the property walk does.
+        java.lang.reflect.Type mapBody =
+                DeclaredBodyShapes.class.getField("mapBody").getGenericType();
+        assertDoesNotThrow(
+                () -> resolver.precomputeGraph(mapBody),
+                "a declared Map<String, Dto> body must not warm its value type");
+
+        java.lang.reflect.Type listOfMapsBody =
+                DeclaredBodyShapes.class.getField("listOfMapsBody").getGenericType();
+        assertDoesNotThrow(
+                () -> resolver.precomputeGraph(listOfMapsBody),
+                "a map nested inside a declared collection body must not warm its value type either");
+
+        // Control — a non-map parameterized body still walks its arguments, so the suppression is
+        // scoped to map shapes rather than to parameterized types in general.
+        java.lang.reflect.Type listBody =
+                DeclaredBodyShapes.class.getField("listBody").getGenericType();
+        ConfigurationException listed = assertThrows(
+                ConfigurationException.class,
+                () -> resolver.precomputeGraph(listBody),
+                "a declared List<Dto> body must still warm its element type");
+        assertTrue(
+                listed.getMessage().contains(DuplicateAliasDto.class.getName()),
+                "the failure must name the element type: " + listed.getMessage());
     }
 
     @Test

@@ -137,9 +137,13 @@ public final class GeneratedSupport {
             return value;
         }
 
-        // The collection-of-strings arm is a leaf: the emitter never routes a descend through it, so
-        // its (ownerType, field) site can never already be on the descent path and there is nothing
-        // for a field-site key to recognize. Passing no name keeps this helper's frozen signature.
+        // This helper's frozen signature carries no logical name, so the field site it offers cannot
+        // be named. Passing no name is safe rather than lossy: an unnamed field site keys on nothing
+        // (InputTraversalContext.fieldSite returns no site), so the field's own chain is appended
+        // unconditionally instead of colliding with the owner type's object-level site — which IS on
+        // the descent path whenever a recursive DTO's type-level chain has already contributed. The
+        // arm is also a leaf the emitter never routes a descend through, so there is nothing a field
+        // key could legitimately recognize here anyway.
         List<Class<? extends Canonicalizer>> canonChain =
                 effectiveCanonChain(ctx, ownerType, null, objectCanon, objectSkipCanon, fieldCanon, fieldSkipCanon);
         List<Class<? extends Sanitizer>> sanitChain =
