@@ -319,9 +319,9 @@ class GeneratorPostGenerationWalkTest {
     }
 
     @Test
-    @DisplayName("Both public factories pin the dialect the allowlist is defined for")
+    @DisplayName("All three public factories pin the dialect the allowlist is defined for")
     void publicFactoriesPinTheDialect() {
-        // Given/When/Then: the two construction modes an application uses both build a Draft 2020-12
+        // Given/When/Then: the three construction modes an application uses all build a Draft 2020-12
         // generator, so the seam's constraint is never in their way.
         assertDoesNotThrow(
                 () -> AnnotationJsonSchemaGenerator.withVictoolsDefaults()
@@ -330,7 +330,11 @@ class GeneratorPostGenerationWalkTest {
         assertDoesNotThrow(
                 () -> AnnotationJsonSchemaGenerator.forInputProfile(HardeningFixtures.strictProfile())
                         .generateCanonical(HardeningFixtures.OverriddenDecimalDto.class),
-                "the profile-aware factory must construct and generate under the pinned dialect");
+                "the profile-aware input factory must construct and generate under the pinned dialect");
+        assertDoesNotThrow(
+                () -> AnnotationJsonSchemaGenerator.forOutputProfile(HardeningFixtures.strictProfile())
+                        .generateCanonical(HardeningFixtures.OverriddenDecimalDto.class),
+                "the profile-aware output factory must construct and generate under the pinned dialect");
     }
 
     // --- Position awareness: a $ref target is conjoined only when it is a schema head ---

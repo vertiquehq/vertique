@@ -109,9 +109,9 @@ final class NumericDomainKeywordFilter {
      * from the location's local branches.
      *
      * <p>The two sets are deliberately different. The effective type is read from the whole
-     * {@link ConjunctiveLocations#closure(JsonNode, JsonNode) closure}, because every conjoined node —
-     * including a {@code $ref} target — contributes to the member's effective type. The suppression is
-     * written only to the location's
+     * {@link ConjunctiveLocations#closure(JsonNode, JsonNode, Set) closure}, because every conjoined
+     * node — including a {@code $ref} target — contributes to the member's effective type. The
+     * suppression is written only to the location's
      * {@link ConjunctiveLocations#localBranches(JsonNode) local branches}, because a {@code $defs}
      * entry is shared by every member referencing it: rewriting it from one referrer's effective type
      * would strip keywords from members whose own effective type still admits them.

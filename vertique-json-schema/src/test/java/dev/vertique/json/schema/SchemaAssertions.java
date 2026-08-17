@@ -22,8 +22,9 @@ import java.util.Map;
  * AnnotationJsonSchemaGeneratorProofTest} and {@link SchemaFixtureMatrixTest}.
  *
  * <p>The conjunctive-path walk ({@link #conjunctiveClosure(JsonNode, JsonNode)}) delegates to the
- * main-source {@link ConjunctiveLocations#closure(JsonNode, JsonNode)}: it is the identical BFS
- * expansion, so the test-side probe and the production walk cannot silently drift apart.
+ * main-source {@link ConjunctiveLocations#closure(JsonNode, JsonNode, java.util.Set)}: it is the
+ * identical BFS expansion, so the test-side probe and the production walk cannot silently drift
+ * apart.
  */
 final class SchemaAssertions {
 

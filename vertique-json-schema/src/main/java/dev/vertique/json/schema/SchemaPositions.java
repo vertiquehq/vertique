@@ -158,8 +158,10 @@ final class SchemaPositions {
      * Visits the document root and every node reachable from it through a subschema position, in
      * document order.
      *
-     * <p>A non-object document has no schema position at all and is visited not at all, which is
-     * vacuously correct: neither walk has anything to fold over a scalar or an array root.
+     * <p>A non-object document has no <em>object</em> schema head to visit — a boolean {@code true}/
+     * {@code false} document is still a valid schema, per the class javadoc, but neither walk has a
+     * keyword to read on it, so this method visits nothing. Neither walk has anything to fold over a
+     * scalar or an array root either.
      *
      * @param document the whole generated document
      * @param visitor  the caller's per-schema policy

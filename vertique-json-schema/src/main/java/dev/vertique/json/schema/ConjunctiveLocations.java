@@ -108,8 +108,8 @@ final class ConjunctiveLocations {
      * <p>This is the only part of a location a caller may safely <em>mutate</em>. A {@code $ref}
      * target — typically a {@code $defs} entry — is shared: every other member referencing it sees the
      * same node, while a policy decided from one referrer's conjoined keywords holds for that referrer
-     * only. Reading the whole {@link #closure(JsonNode, JsonNode) closure} and writing only the local
-     * branches keeps a per-referrer decision from silently rewriting another member's contract.
+     * only. Reading the whole {@link #closure(JsonNode, JsonNode, Set) closure} and writing only the
+     * local branches keeps a per-referrer decision from silently rewriting another member's contract.
      *
      * @param start the node heading the location
      * @return the head and its transitively conjoined {@code allOf} branches, in BFS visit order
