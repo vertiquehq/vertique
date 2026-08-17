@@ -276,11 +276,11 @@ class InputPolicyMetadataResolver {
      * schema takes the no-element-schema branch, where inherited chains still reach string leaves.
      *
      * <p><strong>Only a descendable element type is recorded.</strong> An element type that is a
-     * scalar leaf — a primitive or boxed scalar (see {@link #isPrimitiveOrBoxed}) or an enum — takes
-     * the no-element-schema branch instead, exactly as {@link #isDescendableObject} excludes those
-     * types from a field-type descent. Recording one would send the list into element-wise dispatch,
-     * where a JSON-string value (an enum name, or a number Jackson coerces from a string) matches no
-     * nested-object shape and is returned untouched, silently dropping every declared chain. The
+     * scalar leaf — see {@link TypeClassifier#isScalarLeaf} — takes the no-element-schema branch
+     * instead, exactly as {@link #isDescendableObject} excludes those types from a field-type
+     * descent. Recording one would send the list into element-wise dispatch, where a JSON-string
+     * value (an enum name, or a number Jackson coerces from a string) matches no nested-object shape
+     * and is returned untouched, silently dropping every declared chain. The
      * APT-time {@code AnnotationCollector} applies the same rule through
      * {@code isScalarOrEnum}, so the generated and reflective paths agree.
      *
@@ -312,11 +312,7 @@ class InputPolicyMetadataResolver {
             if (wrappedRaw == null || wrappedRaw == Optional.class) {
                 // Raw Optional (or a type argument that does not resolve to a class) — nothing to
                 // classify against.
-                if (hasAnnotations) {
-                    return new FieldPolicyMetadata(
-                            canonChain, sanitChain, skipCanon, skipSanit, rawType, false, false, null);
-                }
-                return null;
+                return schemaFree(canonChain, sanitChain, skipCanon, skipSanit, rawType, hasAnnotations);
             }
             return buildFieldMeta(wrapped, wrappedRaw, canon, sanit, skipCanon, skipSanit);
         }
@@ -332,11 +328,7 @@ class InputPolicyMetadataResolver {
             Class<?> elementType = TypeClassifier.elementType(genericType);
             if (elementType == null) {
                 // Raw collection, or an element type with no schema — can't determine element type
-                if (hasAnnotations) {
-                    return new FieldPolicyMetadata(
-                            canonChain, sanitChain, skipCanon, skipSanit, rawType, false, false, null);
-                }
-                return null;
+                return schemaFree(canonChain, sanitChain, skipCanon, skipSanit, rawType, hasAnnotations);
             }
             if (elementType == String.class) {
                 return new FieldPolicyMetadata(
@@ -347,15 +339,11 @@ class InputPolicyMetadataResolver {
             // an enum field type: it carries no property set to descend into, so recording it would
             // route the list into element-wise dispatch, where a JSON-string enum value is neither a
             // map nor a list and is returned verbatim with no chain applied.
-            if (!isPrimitiveOrBoxed(elementType) && !elementType.isEnum()) {
+            if (!TypeClassifier.isScalarLeaf(elementType)) {
                 return new FieldPolicyMetadata(
                         canonChain, sanitChain, skipCanon, skipSanit, rawType, false, false, elementType);
             }
-            if (hasAnnotations) {
-                return new FieldPolicyMetadata(
-                        canonChain, sanitChain, skipCanon, skipSanit, rawType, false, false, null);
-            }
-            return null;
+            return schemaFree(canonChain, sanitChain, skipCanon, skipSanit, rawType, hasAnnotations);
         }
 
         // Nested object — record the declared type unconditionally so the walker can descend into
@@ -365,10 +353,33 @@ class InputPolicyMetadataResolver {
         }
 
         // Primitives / enums / Object / Map / etc. — no statically known property set.
-        if (hasAnnotations) {
-            return new FieldPolicyMetadata(canonChain, sanitChain, skipCanon, skipSanit, rawType, false, false, null);
-        }
-        return null;
+        return schemaFree(canonChain, sanitChain, skipCanon, skipSanit, rawType, hasAnnotations);
+    }
+
+    /**
+     * Builds the metadata for a field that carries no element or nested schema — the shape every
+     * non-descendable branch of {@link #buildFieldMeta} produces. Such a field is only worth
+     * recording when it declares policy of its own; otherwise the walker has nothing to do with it
+     * and it is left out of the metadata entirely.
+     *
+     * @param canonChain     the declared canonicalizer chain, possibly empty
+     * @param sanitChain     the declared sanitizer chain, possibly empty
+     * @param skipCanon      whether {@code @SkipCanonicalization} is present
+     * @param skipSanit      whether {@code @SkipSanitization} is present
+     * @param rawType        the raw (erased) class of the field
+     * @param hasAnnotations whether the field declares any policy of its own
+     * @return the schema-free field metadata, or {@code null} when the field declares no policy
+     */
+    private static FieldPolicyMetadata schemaFree(
+            List<Class<? extends Canonicalizer>> canonChain,
+            List<Class<? extends Sanitizer>> sanitChain,
+            boolean skipCanon,
+            boolean skipSanit,
+            Class<?> rawType,
+            boolean hasAnnotations) {
+        return hasAnnotations
+                ? new FieldPolicyMetadata(canonChain, sanitChain, skipCanon, skipSanit, rawType, false, false, null)
+                : null;
     }
 
     /**
@@ -376,18 +387,18 @@ class InputPolicyMetadataResolver {
      * set the walker can descend into and resolve metadata for.
      *
      * <p>Excluded, each because it has no such property set and must keep the walker's
-     * inherited-chain-only handling: primitives and boxed/scalar JDK types, {@link Object},
-     * enums, and {@link Map} (arbitrary keys). Arrays are excluded here too, but only defensively:
-     * {@link #buildFieldMeta} routes them through the {@link Collection} branch before this test is
-     * reached, because element traversal is a collection concern.
+     * inherited-chain-only handling: scalar leaves — primitives, boxed/scalar JDK types and enums,
+     * see {@link TypeClassifier#isScalarLeaf} — plus {@link Object} and {@link Map} (arbitrary
+     * keys). Arrays are excluded here too, but only defensively: {@link #buildFieldMeta} routes them
+     * through the {@link Collection} branch before this test is reached, because element traversal
+     * is a collection concern.
      *
      * @param type the declared field type
      * @return {@code true} if the walker should resolve {@code type}'s own metadata at descent
      */
     private static boolean isDescendableObject(Class<?> type) {
-        return !isPrimitiveOrBoxed(type)
+        return !TypeClassifier.isScalarLeaf(type)
                 && type != Object.class
-                && !type.isEnum()
                 && !type.isArray()
                 && !Map.class.isAssignableFrom(type);
     }
@@ -432,47 +443,5 @@ class InputPolicyMetadataResolver {
             throw new IllegalStateException(location + " has both @Sanitize and @SkipSanitization — "
                     + "these annotations are mutually exclusive.");
         }
-    }
-
-    // --- Type classification helpers ---
-
-    /**
-     * Returns {@code true} for primitive types and their boxed counterparts, as well as
-     * other common immutable scalar types that cannot carry annotations and need no recursion.
-     *
-     * <p>The set mirrors {@code AnnotationCollector.SCALAR_FQNS} in
-     * {@code vertique-codegen-sanitization} so the generated and reflective paths classify the same
-     * element and field types as scalar leaves. The two entries that set is allowed to hold without
-     * a counterpart here are {@code java.lang.String} and {@code java.lang.Object}, each of which
-     * this class routes through its own dedicated branch; enums are handled by an explicit
-     * {@link Class#isEnum()} test at each site for the same reason.
-     *
-     * @param type the type to test
-     * @return {@code true} if the type is a primitive or boxed primitive
-     */
-    private static boolean isPrimitiveOrBoxed(Class<?> type) {
-        return type.isPrimitive()
-                || type == Boolean.class
-                || type == Byte.class
-                || type == Short.class
-                || type == Integer.class
-                || type == Long.class
-                || type == Float.class
-                || type == Double.class
-                || type == Character.class
-                || type == Number.class
-                || type == java.math.BigDecimal.class
-                || type == java.math.BigInteger.class
-                || type == java.time.LocalDate.class
-                || type == java.time.LocalDateTime.class
-                || type == java.time.OffsetDateTime.class
-                || type == java.time.ZonedDateTime.class
-                || type == java.time.Instant.class
-                || type == java.util.UUID.class
-                // Primitive Optional specializations carry no string payload and have no type
-                // argument to unwrap, so they are scalar leaves rather than descendable objects.
-                || type == java.util.OptionalInt.class
-                || type == java.util.OptionalLong.class
-                || type == java.util.OptionalDouble.class;
     }
 }

@@ -700,13 +700,11 @@ public final class AnnotationCollector {
      * {@link #buildFieldModel} passes the result through {@link #normalizeElementType}, which is
      * what rejects a nested-array or primitive component.
      *
-     * @param type the array type mirror
-     * @return the component type mirror, or {@code null} when {@code type} is not an array
+     * @param type the array type mirror; the caller must have established that its kind is
+     *     {@link TypeKind#ARRAY}
+     * @return the component type mirror
      */
     static TypeMirror arrayElementType(TypeMirror type) {
-        if (type.getKind() == TypeKind.ARRAY) {
-            return ((ArrayType) type).getComponentType();
-        }
-        return null;
+        return ((ArrayType) type).getComponentType();
     }
 }

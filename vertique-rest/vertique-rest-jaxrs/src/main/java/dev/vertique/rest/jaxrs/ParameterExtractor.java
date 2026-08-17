@@ -175,8 +175,9 @@ final class ParameterExtractor {
     private final Set<ResourceMethodMeta.ParamMeta> multiplicityMismatchLogged = ConcurrentHashMap.newKeySet(2);
 
     /**
-     * Creates a new {@code ParameterExtractor} for the given resource method.
-     * Input object processing is disabled when using this constructor.
+     * Creates a new {@code ParameterExtractor} for the given resource method, coercing scalars through
+     * the built-ins-only default resolver and matching body policies against Java property names
+     * directly. Input object processing is disabled when using this constructor.
      *
      * @param meta                   metadata describing the JAX-RS resource method
      * @param decoders               priority-sorted list of request body decoders
@@ -185,12 +186,19 @@ final class ParameterExtractor {
      */
     ParameterExtractor(
             ResourceMethodMeta meta, List<RequestBodyDecoder> decoders, RestContextResolution restContextResolution) {
-        this(meta, decoders, restContextResolution, null, ConversionContexts.defaultResolver());
+        this(
+                meta,
+                decoders,
+                restContextResolution,
+                null,
+                ConversionContexts.defaultResolver(),
+                InputFieldNameResolver.IDENTITY);
     }
 
     /**
-     * Creates a new {@code ParameterExtractor} for the given resource method with optional
-     * input processing support, coercing scalars through the built-ins-only default resolver.
+     * Creates a new {@code ParameterExtractor} for the given resource method with optional input
+     * processing support, coercing scalars through the built-ins-only default resolver and matching
+     * body policies against Java property names directly.
      *
      * @param meta                   metadata describing the JAX-RS resource method
      * @param decoders               priority-sorted list of request body decoders
@@ -204,35 +212,12 @@ final class ParameterExtractor {
             List<RequestBodyDecoder> decoders,
             RestContextResolution restContextResolution,
             @Nullable InputObjectProcessor objectProcessor) {
-        this(meta, decoders, restContextResolution, objectProcessor, ConversionContexts.defaultResolver());
-    }
-
-    /**
-     * Creates a new {@code ParameterExtractor} for the given resource method with optional input
-     * processing support and an explicit {@link ParamConversionResolver}. Used by the route-registration
-     * path so application converter bindings and JAX-RS providers participate in coercion.
-     *
-     * @param meta                    metadata describing the JAX-RS resource method
-     * @param decoders                priority-sorted list of request body decoders
-     * @param restContextResolution   coordinator for the {@link RestContextResolution} resolver chain;
-     *                                must not be {@code null}
-     * @param objectProcessor         optional input object processor for canonicalization and
-     *                                sanitization; {@code null} disables processing
-     * @param paramConversionResolver the framework conversion resolver used to coerce inbound scalars
-     *                                and collection elements; must not be {@code null}
-     */
-    ParameterExtractor(
-            ResourceMethodMeta meta,
-            List<RequestBodyDecoder> decoders,
-            RestContextResolution restContextResolution,
-            @Nullable InputObjectProcessor objectProcessor,
-            ParamConversionResolver paramConversionResolver) {
         this(
                 meta,
                 decoders,
                 restContextResolution,
                 objectProcessor,
-                paramConversionResolver,
+                ConversionContexts.defaultResolver(),
                 InputFieldNameResolver.IDENTITY);
     }
 

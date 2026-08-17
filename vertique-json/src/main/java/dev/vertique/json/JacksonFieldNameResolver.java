@@ -12,7 +12,6 @@ import dev.vertique.core.exception.ConfigurationException;
 import dev.vertique.core.sanitization.InputFieldNameResolver;
 import io.vertx.core.json.jackson.DatabindCodec;
 import jakarta.annotation.Nullable;
-import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -106,7 +105,7 @@ public final class JacksonFieldNameResolver implements InputFieldNameResolver {
      *
      * @return the body mapper; never {@code null}
      */
-    public ObjectMapper mapper() {
+    ObjectMapper mapper() {
         return mapper;
     }
 
@@ -117,7 +116,7 @@ public final class JacksonFieldNameResolver implements InputFieldNameResolver {
      * @param ownerType the type whose projection to test; must not be {@code null}
      * @return {@code true} when every wire name of {@code ownerType} maps onto itself
      */
-    public boolean isIdentityProjection(Class<?> ownerType) {
+    boolean isIdentityProjection(Class<?> ownerType) {
         return projections.get(ownerType).identity();
     }
 
@@ -142,32 +141,27 @@ public final class JacksonFieldNameResolver implements InputFieldNameResolver {
         BeanDescription description = config.introspect(mapper.getTypeFactory().constructType(type));
         List<BeanPropertyDefinition> properties = description.findProperties();
 
-        // Pass 1 — primary names. Every primary claims its key unconditionally.
+        // Pass 1 — primary names, which run before any alias and so claim their key first. A second
+        // primary on the same key is a configuration error unless it names the same Java property.
         Map<String, String> names = new LinkedHashMap<>(Math.max(4, properties.size() * 2));
-        Map<String, String> claimedByPrimary = new HashMap<>(Math.max(4, properties.size() * 2));
         for (BeanPropertyDefinition property : properties) {
             String wireName = property.getName();
             String javaName = property.getInternalName();
-            String previousOwner = claimedByPrimary.putIfAbsent(wireName, javaName);
+            String previousOwner = names.putIfAbsent(wireName, javaName);
             if (previousOwner != null && !previousOwner.equals(javaName)) {
                 throw new ConfigurationException("Type " + type.getName() + " publishes the wire property name '"
                         + wireName + "' for both Java properties '" + previousOwner + "' and '" + javaName
                         + "'. The declared input policies of the two cannot be told apart on the wire; give one of "
                         + "them a distinct @JsonProperty name.");
             }
-            names.put(wireName, javaName);
         }
 
-        // Pass 2 — aliases, which fill only the keys no primary name claimed. Jackson binds the primary
-        // on such a collision (it does not reject the configuration), so the projection must agree with
-        // it rather than refuse to boot.
+        // Pass 2 — aliases, which fill only the keys no primary name and no earlier alias claimed.
+        // Jackson binds the primary on such a collision (it does not reject the configuration), so the
+        // projection must agree with it rather than refuse to boot.
         for (BeanPropertyDefinition property : properties) {
             for (PropertyName alias : property.findAliases()) {
-                String aliasName = alias.getSimpleName();
-                if (claimedByPrimary.containsKey(aliasName)) {
-                    continue;
-                }
-                names.putIfAbsent(aliasName, property.getInternalName());
+                names.putIfAbsent(alias.getSimpleName(), property.getInternalName());
             }
         }
 

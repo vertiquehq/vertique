@@ -36,7 +36,7 @@ import java.util.Optional;
  * <p>These rules are symmetric with the APT-time {@code AnnotationCollector} in
  * {@code vertique-codegen-sanitization}, so the generated and reflective paths classify identically.
  *
- * <p>All methods are null-tolerant and side-effect free.
+ * <p>All {@link Type}-accepting methods are null-tolerant, and every method is side-effect free.
  */
 final class TypeClassifier {
 
@@ -118,6 +118,47 @@ final class TypeClassifier {
             return null;
         }
         return candidate;
+    }
+
+    /**
+     * Returns {@code true} for a scalar leaf: a primitive type or its boxed counterpart, one of the
+     * other common immutable scalar JDK types that cannot carry annotations and need no recursion,
+     * or an enum. A scalar leaf carries no property set the walker could descend into.
+     *
+     * <p>The set mirrors {@code AnnotationCollector.SCALAR_FQNS} in
+     * {@code vertique-codegen-sanitization} so the generated and reflective paths classify the same
+     * element and field types as scalar leaves. The two entries that set is allowed to hold without
+     * a counterpart here are {@code java.lang.String} and {@code java.lang.Object}, each of which
+     * {@link InputPolicyMetadataResolver} routes through its own dedicated branch.
+     *
+     * @param type the type to test
+     * @return {@code true} if the type is a scalar leaf
+     */
+    static boolean isScalarLeaf(Class<?> type) {
+        return type.isPrimitive()
+                || type == Boolean.class
+                || type == Byte.class
+                || type == Short.class
+                || type == Integer.class
+                || type == Long.class
+                || type == Float.class
+                || type == Double.class
+                || type == Character.class
+                || type == Number.class
+                || type == java.math.BigDecimal.class
+                || type == java.math.BigInteger.class
+                || type == java.time.LocalDate.class
+                || type == java.time.LocalDateTime.class
+                || type == java.time.OffsetDateTime.class
+                || type == java.time.ZonedDateTime.class
+                || type == java.time.Instant.class
+                || type == java.util.UUID.class
+                // Primitive Optional specializations carry no string payload and have no type
+                // argument to unwrap, so they are scalar leaves rather than descendable objects.
+                || type == java.util.OptionalInt.class
+                || type == java.util.OptionalLong.class
+                || type == java.util.OptionalDouble.class
+                || type.isEnum();
     }
 
     /**
