@@ -117,6 +117,28 @@ A policy declared on a parameter the engine never sees — a `@Context` paramete
 parameter, or a raw multipart `FileUpload` / `EntityPart` parameter — is inert and is neither
 processed nor reported: those values are not caller-supplied string input the chain model applies to.
 
+**Renamed body fields are covered.** A field-level policy is declared on a Java property, while the
+decoded body is keyed by whatever Jackson publishes — `@JsonProperty("user_name")`, a naming
+strategy, `@JsonNaming`, a mix-in, or a `@JsonAlias`. The route's resolved body mapper is introspected
+at route registration and its projection maps each wire key back onto the Java property whose policies
+apply (`JacksonFieldNameResolver`, from `dev.vertique:vertique-json`). A `@Sanitize` on a renamed
+field therefore runs exactly as it would on an unrenamed one, with no extra declaration, and nothing
+is introspected on the request path.
+
+```java
+public record CreateUserRequest(
+    @JsonProperty("display_name") @Sanitize(StripAllHtmlSanitizer.class) String displayName
+) {}
+// {"display_name": "<b>ada</b>"} -> displayName == "ada"
+```
+
+**Five shapes a declared policy still does not reach.** A `Map`-typed field, an `Object`-typed field,
+a concrete `@JsonTypeInfo` subtype's own fields, `@JsonUnwrapped` members, and a key matched only by
+`ACCEPT_CASE_INSENSITIVE_PROPERTIES` all leave the field with its inherited route- and object-level
+chains and nothing else. Nothing fails and nothing is logged, so a stranded policy on one of these is
+invisible until the value that mattered gets through. The `vertique-input-processing` reference
+documents each shape, what still applies, and how to stay inside the covered set.
+
 ### JSON profiles are symmetric
 
 A resource method's request body and its response body use the same effective `ObjectMapper`. The

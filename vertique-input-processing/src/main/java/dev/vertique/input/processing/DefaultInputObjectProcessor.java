@@ -59,7 +59,17 @@ import java.util.function.Function;
  * that field's declared type through {@link InputPolicyMetadataResolver}'s per-type cache. The
  * walk therefore terminates on the finite intermediate data rather than on a type-graph budget:
  * a self-referential type resolves once and applies at every level, direct and mutual recursion
- * behave identically, and a policy declared behind any number of policy-free links still runs.
+ * behave identically, and a policy declared behind any number of policy-free <em>descendable</em>
+ * links still runs.
+ *
+ * <p>Not every link is descendable. Descent follows a field's <em>declared</em> type, and
+ * {@link InputPolicyMetadataResolver} treats scalar leaves, {@link Object} and {@link Map} as
+ * carrying no statically known property set. A policy declared <em>beyond</em> such a link is
+ * therefore not found however shallow the graph: a chain on {@code Inner}'s field is invisible
+ * across a {@code Map<String, Inner>} or {@code Object} field, and a subtype's own chains are
+ * invisible because the runtime type is never consulted. Values behind those links still receive
+ * the chains they inherit — they simply contribute no declared metadata of their own. See
+ * {@link InputPolicyMetadataResolver} for the full statement of the boundary.
  *
  * <p><strong>Type classification is shared with the metadata resolver.</strong> The entry-point
  * target type and its element type are classified by {@link TypeClassifier}, the same rules

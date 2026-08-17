@@ -43,8 +43,19 @@ import java.util.concurrent.ConcurrentHashMap;
  * declared {@link Class}, and {@link DefaultInputObjectProcessor} calls {@link #resolve} again for
  * that class when it descends into the value. There is consequently no cycle state and no depth
  * budget: a self-referential type resolves once and applies at every level, direct and mutual
- * recursion behave identically, and a policy declared behind any number of policy-free links is
- * still found. Traversal terminates on the finite intermediate data instead.
+ * recursion behave identically, and a policy declared behind any number of policy-free
+ * <em>descendable</em> links is still found. Traversal terminates on the finite intermediate data
+ * instead.
+ *
+ * <p><strong>Not every link is descendable.</strong> {@link #isDescendableObject} excludes scalar
+ * leaves, {@link Object} and {@link Map}, because none carries a statically known property set to
+ * key per-property metadata on. A policy declared <em>beyond</em> such a link is therefore not
+ * found, however shallow the graph: a chain on {@code Inner}'s field is invisible across a
+ * {@code Map<String, Inner>} or {@code Object} field, and a subtype's own chains are invisible
+ * because descent follows the declared type rather than the runtime one. Values behind those links
+ * still receive the chains they inherit — they simply contribute no declared metadata of their own.
+ * {@link #declaresPolicies} follows exactly the same links and reports {@code false} for the same
+ * cases, by construction.
  *
  * <p>Field classification runs through {@link TypeClassifier}, the single rule set this module also
  * applies to {@link DefaultInputObjectProcessor}'s entry-point target type: {@code java.util.Optional}

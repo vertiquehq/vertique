@@ -54,10 +54,10 @@ import javax.lang.model.type.TypeMirror;
  * <p>The emitted code shape matches the hand-written companions in
  * {@code vertique-input-processing}'s test tree ({@code dev.vertique.input.processing}). The
  * reference for the projected-switch shape above is
- * {@code GeneratedVsReflectiveEquivalenceTest_ProjectionGenerated_InputProcessor}; the older
- * companions such as {@code GeneratedVsReflectiveEquivalenceTest_Generated_InputProcessor} still
- * switch on the raw key, which is equivalent only because they are exercised under
- * {@code InputFieldNameResolver.IDENTITY}.
+ * {@code GeneratedVsReflectiveEquivalenceTest_ProjectionGenerated_InputProcessor}, and every other
+ * companion now mirrors it. Keep them in step when this emitter changes: a companion that switches
+ * on the raw key stays green under {@code InputFieldNameResolver.IDENTITY} while diverging from
+ * what actually ships, which is how an emitter gap once survived a whole slice unnoticed.
  */
 public final class InputProcessorEmitter {
 

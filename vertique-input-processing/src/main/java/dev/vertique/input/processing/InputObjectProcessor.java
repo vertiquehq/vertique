@@ -42,12 +42,17 @@ public interface InputObjectProcessor {
      * and its per-type metadata cache, so callers hold only the resolver functions that produce
      * canonicalizer and sanitizer instances (typically backed by dependency injection).
      *
-     * <p>The engine consults each resolver function at most once per processor class and reuses the
-     * returned instance for every value it processes, so a resolver need not cache anything itself;
-     * a resolution that fails is cached too and rethrown on every later use of that class. Both
-     * caches are owned by the returned engine and die with it. A resolver must therefore return an
-     * instance safe to share across requests and threads, and may be invoked more than once for the
-     * same class when several threads race on a cold entry.
+     * <p>The engine memoizes each resolver function's result per processor class and reuses the
+     * returned instance for every value it processes, so a resolver need not cache anything itself
+     * and is not called once per string value; a resolution that fails is memoized too and rethrown
+     * on every later use of that class. Both caches are owned by the returned engine and die with
+     * it.
+     *
+     * <p>Memoization is not mutual exclusion: threads racing on a cold class may each run the
+     * resolver, and one result wins while the others are discarded. Once per class is the steady
+     * state, not a guarantee. A resolver function must therefore be safe to call concurrently, must
+     * return an instance safe to share across requests and threads, and must not depend on being
+     * invoked exactly once.
      *
      * @param canonicalizerResolver factory that produces canonicalizer instances by class;
      *                              must not be {@code null}

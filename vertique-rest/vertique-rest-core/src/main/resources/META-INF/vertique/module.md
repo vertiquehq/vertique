@@ -788,8 +788,19 @@ framework's canonicalization/sanitization traversal by injecting the optional
 `dev.vertique.input.processing.InputObjectProcessor` (from the
 `dev.vertique:vertique-input-processing` artifact) and calling
 `processInput(Object input, Type targetType, EffectiveInputPolicies policies,
-InputLocation location)` before final binding. The binding is `@BindsOptionalOf`; it resolves only
-when `dev.vertique:vertique-sanitization` is on the graph.
+InputLocation location, InputFieldNameResolver nameResolver)` before final binding. The binding is
+`@BindsOptionalOf`; it resolves only when `dev.vertique:vertique-sanitization` is on the graph.
+
+The trailing `dev.vertique.core.sanitization.InputFieldNameResolver` is the decoder's own choice,
+and there is no overload that omits it. Pass `InputFieldNameResolver.IDENTITY` when the
+intermediate's keys are already Java property names — including any call that processes a bare
+string, where no object's fields could be renamed. Pass a codec-backed projection when the keys are
+wire names the codec renames while binding, such as `JacksonFieldNameResolver` from
+`dev.vertique:vertique-json` for a decoder that materializes through an `ObjectMapper`; build it
+from the same mapper the decoder will bind with. Choosing `IDENTITY` where the keys are wire names
+does not fail the request — it looks each key up under a name the target type never declares, so
+the declared chains for those fields do not run. The projection's semantics are documented in the
+`vertique-input-processing` reference.
 
 ### `ResponseProducer` and `ResponseProducerBinding`
 

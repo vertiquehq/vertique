@@ -659,6 +659,14 @@ WebSocket messages); REST request bodies remain `BODY`. A custom `Canonicalizer`
 `CharacterPolicy` that branches on `InputLocation.BODY` must also handle `PAYLOAD` to keep
 covering message-oriented inputs — WebSocket messages reported `BODY` before `PAYLOAD` existed.
 
+`path` and `logicalName` are deliberately different views of the same value. `path` is the **wire**
+path — the dot-separated keys as the caller sent them — so a diagnostic points at what actually
+arrived. `logicalName` is the **Java** property name whenever the value came from a property the
+processing engine matched, and the wire name otherwise. A `Canonicalizer` or `Sanitizer` that
+branches on `logicalName` is therefore branching on the Java name, not on a `@JsonProperty`-renamed
+key; branch on `path` when the wire form is what matters. Collection elements carry the element path
+in both components.
+
 ### `InputFieldNameResolver`
 
 Codec-neutral projection from a **wire** property name to the **Java** property name that declares

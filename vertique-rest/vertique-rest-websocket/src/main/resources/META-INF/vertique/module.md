@@ -495,8 +495,12 @@ path, so no Jackson introspection happens on the event loop and a message type w
 projected fails startup (see [Startup failures](#startup-failures)) rather than failing every message
 that reaches it.
 
-Two limitations are not covered by the projection and can still bypass a declared policy:
-`ACCEPT_CASE_INSENSITIVE_PROPERTIES` and `@JsonUnwrapped`. Neither is claimed as supported.
+**Five shapes a declared policy still does not reach.** A `Map`-typed field, an `Object`-typed field,
+a concrete `@JsonTypeInfo` subtype's own fields, `@JsonUnwrapped` members, and a key matched only by
+`ACCEPT_CASE_INSENSITIVE_PROPERTIES` all leave the field with its inherited method- and type-level
+chains and nothing else. Nothing fails and nothing is logged, so a stranded policy on one of these is
+invisible until the message that mattered gets through. The `vertique-input-processing` reference
+documents each shape, what still applies, and how to stay inside the covered set.
 
 ---
 
