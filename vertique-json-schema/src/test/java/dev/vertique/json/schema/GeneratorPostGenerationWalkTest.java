@@ -205,6 +205,50 @@ class GeneratorPostGenerationWalkTest {
                 "the data-bearing definitions member must survive untouched; was: " + canonical);
     }
 
+    // --- The pinned-dialect premise the position allowlist rests on ---
+
+    @Test
+    @DisplayName("A generator configured for another dialect is rejected at construction")
+    void nonDraft202012GeneratorIsRejected() {
+        // Given: a Victools generator configured for Draft-07 — a dialect in which the walks'
+        // allowlist is wrong: Victools spells `$defs` as `definitions` and `dependentSchemas` as
+        // `dependencies` there, and neither spelling is on the allowlist, so the whole definition
+        // graph would silently escape both passes.
+        SchemaGenerator foreignDialect = new SchemaGenerator(
+                new SchemaGeneratorConfigBuilder(SchemaVersion.DRAFT_7, OptionPreset.PLAIN_JSON).build());
+
+        // When: it is handed to the package-private injection seam.
+        JsonSchemaGenerationException failure = assertThrows(
+                JsonSchemaGenerationException.class,
+                () -> new AnnotationJsonSchemaGenerator(foreignDialect),
+                "a generator configured for another dialect must be rejected, not silently accepted");
+
+        // Then: the failure is bounded and names both the required and the supplied dialect.
+        String message = failure.getMessage();
+        assertNotNull(message, "the rejection must carry a message");
+        assertTrue(
+                message.length() <= Diagnostics.MAX_MESSAGE_LENGTH,
+                "the rejection must stay within " + Diagnostics.MAX_MESSAGE_LENGTH + " code units; was "
+                        + message.length());
+        assertTrue(message.contains("DRAFT_2020_12"), "the rejection must name the required dialect; was: " + message);
+        assertTrue(message.contains("DRAFT_7"), "the rejection must name the supplied dialect; was: " + message);
+    }
+
+    @Test
+    @DisplayName("Both public factories pin the dialect the allowlist is defined for")
+    void publicFactoriesPinTheDialect() {
+        // Given/When/Then: the two construction modes an application uses both build a Draft 2020-12
+        // generator, so the seam's constraint is never in their way.
+        assertDoesNotThrow(
+                () -> AnnotationJsonSchemaGenerator.withVictoolsDefaults()
+                        .generateCanonical(HardeningFixtures.SimpleDto.class),
+                "the Victools-defaults factory must construct and generate under the pinned dialect");
+        assertDoesNotThrow(
+                () -> AnnotationJsonSchemaGenerator.forInputProfile(HardeningFixtures.strictProfile())
+                        .generateCanonical(HardeningFixtures.OverriddenDecimalDto.class),
+                "the profile-aware factory must construct and generate under the pinned dialect");
+    }
+
     // --- Position awareness: a $ref target is conjoined only when it is a schema head ---
 
     @Test

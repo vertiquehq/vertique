@@ -9,6 +9,7 @@ import com.github.victools.jsonschema.generator.FieldScope;
 import com.github.victools.jsonschema.generator.MethodScope;
 import com.github.victools.jsonschema.generator.OptionPreset;
 import com.github.victools.jsonschema.generator.SchemaGenerator;
+import com.github.victools.jsonschema.generator.SchemaGeneratorConfig;
 import com.github.victools.jsonschema.generator.SchemaGeneratorConfigBuilder;
 import com.github.victools.jsonschema.generator.SchemaVersion;
 import com.github.victools.jsonschema.module.jackson.JacksonModule;
@@ -89,6 +90,13 @@ import java.util.Objects;
  */
 public final class AnnotationJsonSchemaGenerator {
 
+    /**
+     * The one dialect this class generates for. Both public factories pin it, and the package-private
+     * injection seam enforces it: the post-generation walks' subschema-position allowlist names this
+     * dialect's keywords, and Victools renames several of them under an older dialect.
+     */
+    private static final SchemaVersion REQUIRED_SCHEMA_VERSION = SchemaVersion.DRAFT_2020_12;
+
     /** The configured Victools generator; its configuration is fixed at construction. */
     private final SchemaGenerator generator;
 
@@ -122,7 +130,11 @@ public final class AnnotationJsonSchemaGenerator {
      * {@link #forOutputProfile(JsonMapperProfile)}, all of which delegate here or to the two-argument
      * constructor.
      *
-     * @param generator the configured Victools generator this instance owns for its lifetime
+     * @param generator the configured Victools generator this instance owns for its lifetime; must be
+     *                  configured for {@code DRAFT_2020_12}
+     * @throws NullPointerException          if {@code generator} is {@code null}
+     * @throws JsonSchemaGenerationException if {@code generator} is configured for any dialect other
+     *                                        than {@code DRAFT_2020_12}
      */
     AnnotationJsonSchemaGenerator(SchemaGenerator generator) {
         this(generator, false);
@@ -132,14 +144,52 @@ public final class AnnotationJsonSchemaGenerator {
      * Wraps an already-configured Victools generator, optionally applying
      * {@link NumericDomainKeywordFilter} to every document this instance generates.
      *
+     * <p>The supplied generator must be configured for {@code DRAFT_2020_12}. This is the seam where
+     * that premise is enforced: the public factories pin the dialect themselves, but an injected
+     * generator is arbitrary, and the post-generation walks are only correct for the pinned dialect.
+     *
      * @param generator                           the configured Victools generator this instance owns
      *                                             for its lifetime
      * @param suppressInapplicableNumericKeywords  whether to run {@link NumericDomainKeywordFilter}
      *                                             after generation and before canonicalization
+     * @throws NullPointerException          if {@code generator} is {@code null}
+     * @throws JsonSchemaGenerationException if {@code generator} is configured for any dialect other
+     *                                        than {@code DRAFT_2020_12}
      */
     AnnotationJsonSchemaGenerator(SchemaGenerator generator, boolean suppressInapplicableNumericKeywords) {
-        this.generator = generator;
+        this.generator = requirePinnedDialect(generator);
         this.suppressInapplicableNumericKeywords = suppressInapplicableNumericKeywords;
+    }
+
+    /**
+     * Rejects a Victools generator configured for any dialect but {@link #REQUIRED_SCHEMA_VERSION}.
+     *
+     * <p>The module's two post-generation walks descend a closed allowlist of Draft 2020-12 subschema
+     * positions. Victools spells two of those positions differently under an older dialect — {@code
+     * $defs} becomes {@code definitions} and {@code dependentSchemas} becomes {@code dependencies},
+     * neither of which the allowlist names — so under {@code DRAFT_6} or {@code DRAFT_7} the whole
+     * definition graph would silently escape both walks: an unsatisfiable definition would publish,
+     * and an inapplicable numeric keyword would survive. Failing construction states that constraint
+     * where it can still be acted on, rather than degrading generation invisibly.
+     *
+     * @param generator the generator to check; must not be {@code null}
+     * @return the same generator, when it is configured for the pinned dialect
+     * @throws NullPointerException          if {@code generator} is {@code null}
+     * @throws JsonSchemaGenerationException if the generator is configured for another dialect
+     */
+    private static SchemaGenerator requirePinnedDialect(SchemaGenerator generator) {
+        Objects.requireNonNull(generator, "generator");
+        SchemaGeneratorConfig config = generator.getConfig();
+        SchemaVersion version = config == null ? null : config.getSchemaVersion();
+        if (version != REQUIRED_SCHEMA_VERSION) {
+            throw Diagnostics.failure(
+                    "the supplied JSON Schema generator must be configured for " + REQUIRED_SCHEMA_VERSION.name()
+                            + ": the post-generation subschema-position allowlist names that dialect's keywords,"
+                            + " and an older dialect renames them ($defs, dependentSchemas); the supplied generator"
+                            + " is configured for " + version,
+                    null);
+        }
+        return generator;
     }
 
     /**
