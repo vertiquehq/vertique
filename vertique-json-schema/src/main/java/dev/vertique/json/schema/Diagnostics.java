@@ -8,10 +8,16 @@ import java.lang.reflect.Type;
 /**
  * Builds the bounded, value-free diagnostics every {@link JsonSchemaGenerationException} carries.
  *
- * <p>Two bounds are enforced: a whole message is at most {@value #MAX_MESSAGE_LENGTH} UTF-16 code
- * units, and any single resolved-type identity inside it is at most {@value #MAX_TYPE_IDENTITY_LENGTH}.
- * A deeply nested generic type can otherwise produce an unbounded type name, and a failure message
- * is frequently logged verbatim.
+ * <p>Three bounds are enforced: a whole message is at most {@value #MAX_MESSAGE_LENGTH} UTF-16 code
+ * units, any single resolved-type identity inside it is at most {@value #MAX_TYPE_IDENTITY_LENGTH},
+ * and any shorter identity fragment — a profile id, a member name, an unknown {@code Type}
+ * implementation's class name — is at most {@value #MAX_SHORT_IDENTITY_LENGTH}. A deeply nested
+ * generic type can otherwise produce an unbounded type name, and a failure message is frequently
+ * logged verbatim.
+ *
+ * <p>Because a message reaches a log verbatim, every bounded fragment is also made loggable: any
+ * code point that could terminate a log record, forge a second one, or leave the text ill-formed is
+ * replaced before the fragment is bounded. See {@link #truncate(String, int)}.
  *
  * <p>Only <em>identity</em> ever reaches a message — a type name, a property name, a profile id.
  * Application values never do.
@@ -24,8 +30,19 @@ final class Diagnostics {
     /** Maximum length, in UTF-16 code units, of one resolved-type identity inside a message. */
     static final int MAX_TYPE_IDENTITY_LENGTH = 256;
 
+    /**
+     * Maximum length, in UTF-16 code units, of a short identity fragment inside a message: a profile
+     * id, or the class name of an unknown {@code Type} implementation. These name a single
+     * declaration rather than a whole resolved type graph, so they are bounded more tightly than
+     * {@link #MAX_TYPE_IDENTITY_LENGTH}.
+     */
+    static final int MAX_SHORT_IDENTITY_LENGTH = 128;
+
     /** Marker appended in place of the elided tail of a truncated fragment. */
     private static final String ELLIPSIS = "...";
+
+    /** Replacement written in place of a code point that must not reach a log line. */
+    private static final char REPLACEMENT = '?';
 
     private Diagnostics() {}
 
@@ -57,20 +74,114 @@ final class Diagnostics {
     }
 
     /**
-     * Truncates a message fragment to a maximum length, marking the elision.
+     * Makes a message fragment loggable and bounds it to a maximum length, marking the elision.
+     *
+     * <p>Sanitization happens <em>first</em>, so the bound applies to what is actually emitted.
+     * Every code point that could corrupt a log record is replaced one-for-one by {@value
+     * #REPLACEMENT}, which keeps the surrounding identity readable and the length arithmetic exact:
+     *
+     * <ul>
+     *   <li>Unicode general category {@code Cc} — the C0 controls, {@code DEL}, and the whole C1
+     *       block including {@code NEL} (U+0085). A regular-expression class such as {@code
+     *       \p{Cntrl}} covers ASCII only and would let every C1 control through, so the category is
+     *       read from {@link Character#getType(char)} instead.
+     *   <li>Unicode {@code Zl} (U+2028) and {@code Zp} (U+2029), which several log and JSON readers
+     *       treat as line terminators.
+     *   <li>Every unpaired surrogate, whether already present in the input or not, so the result is
+     *       always well-formed UTF-16 and cannot become a replacement character or an encoder error
+     *       downstream.
+     * </ul>
+     *
+     * <p>The bound is hard: the returned value never exceeds {@code max} code units under any input.
+     * That includes the two cases the previous implementation overran — a {@code null} value, whose
+     * {@code "null"} placeholder is four code units, and a {@code max} smaller than the elision
+     * marker. Below the marker's length there is no room to signal an elision at all, so the
+     * fragment is simply cut; the marker stays inside the bound rather than extending past it,
+     * because callers such as {@link #MAX_MESSAGE_LENGTH} treat their bound as a hard invariant.
+     *
+     * <p>A cut never splits a surrogate pair: sanitization guarantees every remaining surrogate is
+     * paired, so a cut point landing on a high surrogate is moved back one code unit.
      *
      * @param value the fragment, possibly {@code null}
      * @param max   the maximum retained length in UTF-16 code units
-     * @return the bounded fragment
+     * @return the sanitized, bounded fragment; never {@code null}, never longer than {@code max}
      */
     static String truncate(String value, int max) {
-        if (value == null) {
-            return "null";
+        if (max <= 0) {
+            return "";
         }
-        if (value.length() <= max) {
-            return value;
+        String sanitized = sanitize(value == null ? "null" : value);
+        if (sanitized.length() <= max) {
+            return sanitized;
         }
-        return value.substring(0, Math.max(0, max - ELLIPSIS.length())) + ELLIPSIS;
+        if (max < ELLIPSIS.length()) {
+            return sanitized.substring(0, cutPoint(sanitized, max));
+        }
+        return sanitized.substring(0, cutPoint(sanitized, max - ELLIPSIS.length())) + ELLIPSIS;
+    }
+
+    /**
+     * Replaces every code unit that must not reach a log line, one-for-one, preserving length.
+     *
+     * @param value the fragment to sanitize; never {@code null}
+     * @return the sanitized fragment, which is {@code value} itself when nothing needed replacing
+     */
+    private static String sanitize(String value) {
+        StringBuilder sanitized = null;
+        for (int index = 0; index < value.length(); index++) {
+            char unit = value.charAt(index);
+            boolean paired = Character.isHighSurrogate(unit)
+                    && index + 1 < value.length()
+                    && Character.isLowSurrogate(value.charAt(index + 1));
+            if (paired) {
+                // Skip the low half: a well-formed pair is never inspected further, and its code
+                // point can be neither Cc, Zl, nor Zp — all three categories are BMP-only.
+                index++;
+                continue;
+            }
+            if (!mustBeReplaced(unit)) {
+                continue;
+            }
+            if (sanitized == null) {
+                sanitized = new StringBuilder(value);
+            }
+            sanitized.setCharAt(index, REPLACEMENT);
+        }
+        return sanitized == null ? value : sanitized.toString();
+    }
+
+    /**
+     * Reports whether a single code unit must be replaced before the fragment can be logged.
+     *
+     * <p>Only ever consulted for a code unit that is not part of a well-formed surrogate pair, so
+     * any surrogate reaching it is unpaired by construction.
+     *
+     * @param unit the code unit to classify
+     * @return {@code true} for a {@code Cc}, {@code Zl}, or {@code Zp} code point, or an unpaired
+     *     surrogate
+     */
+    private static boolean mustBeReplaced(char unit) {
+        if (Character.isSurrogate(unit)) {
+            return true;
+        }
+        int category = Character.getType(unit);
+        return category == Character.CONTROL
+                || category == Character.LINE_SEPARATOR
+                || category == Character.PARAGRAPH_SEPARATOR;
+    }
+
+    /**
+     * Resolves the index a sanitized fragment may be cut at without splitting a surrogate pair.
+     *
+     * @param sanitized the sanitized fragment, in which every surrogate is paired
+     * @param limit     the desired cut index, already known to be within the fragment
+     * @return {@code limit}, or {@code limit - 1} when cutting there would split a pair
+     */
+    private static int cutPoint(String sanitized, int limit) {
+        if (limit > 0 && Character.isHighSurrogate(sanitized.charAt(limit - 1))) {
+            return limit - 1;
+        }
+        return limit;
     }
 
     /**

@@ -113,7 +113,8 @@ final class TypeGrammar {
         throw reject(
                 requested,
                 "it contains an unknown java.lang.reflect.Type implementation ("
-                        + Diagnostics.truncate(current.getClass().getName(), 128) + ")");
+                        + Diagnostics.truncate(current.getClass().getName(), Diagnostics.MAX_SHORT_IDENTITY_LENGTH)
+                        + ")");
     }
 
     /**

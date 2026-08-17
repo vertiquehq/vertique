@@ -320,11 +320,19 @@ public final class AnnotationJsonSchemaGenerator {
      * failure too: a call that fails restores the underlying generator's per-generation provider
      * state before propagating, so it leaves no trace in what later calls on this instance publish.
      *
+     * <p>Stack exhaustion inside the underlying generator's recursive descent — the way a
+     * pathologically deep type graph fails — is normalized like any other generation failure, so a
+     * deep type does not escape the bounded failure contract merely because the JVM reports it as an
+     * {@link Error}. A VM-level {@code Error} such as {@link OutOfMemoryError} or a {@link
+     * LinkageError} is deliberately not normalized: it reports a condition of the runtime rather than
+     * of the requested type, and propagates unchanged.
+     *
      * @param type the resolved Java type to generate a schema for; must not be {@code null}
      * @return the canonical, compact Draft 2020-12 JSON Schema document as a {@code String}
-     * @throws JsonSchemaGenerationException if {@code type} is outside the accepted grammar, or if
-     *                                        generation, override application, conflict detection,
-     *                                        or canonicalization fails
+     * @throws JsonSchemaGenerationException if {@code type} is outside the accepted grammar, if
+     *                                        generation exhausts the stack, or if generation,
+     *                                        override application, conflict detection, or
+     *                                        canonicalization fails
      */
     public String generateCanonical(Type type) {
         TypeGrammar.requireGeneratable(type);
@@ -335,7 +343,11 @@ public final class AnnotationJsonSchemaGenerator {
             ObjectNode generated;
             try {
                 generated = generator.generateSchema(type);
-            } catch (RuntimeException aborted) {
+            } catch (RuntimeException | StackOverflowError aborted) {
+                // StackOverflowError is caught with the runtime failures on purpose: exhausting the
+                // stack is how a pathologically deep type graph fails inside the generator's own
+                // recursive descent, which makes it a generation failure like any other. It is
+                // unrelated to the VM-level conditions the next clause deliberately leaves alone.
                 restoreProviderStateAfterAbortedGeneration(aborted);
                 if (aborted instanceof JsonSchemaGenerationException alreadyBounded) {
                     throw alreadyBounded;
@@ -343,8 +355,10 @@ public final class AnnotationJsonSchemaGenerator {
                 throw Diagnostics.failure(
                         "JSON Schema generation failed for " + Diagnostics.typeIdentity(type), aborted);
             } catch (Throwable aborted) {
-                // A VM-level Error is not a generation failure this module can describe, so it
-                // propagates unchanged — but the provider state it aborted still has to be restored.
+                // Any other Error — OutOfMemoryError, a LinkageError — reports a VM-level condition
+                // this module can neither describe nor recover from, and building a diagnostic for it
+                // may well fail in turn, so it propagates unchanged. The provider state it aborted is
+                // still restored on the way out.
                 restoreProviderStateAfterAbortedGeneration(aborted);
                 throw aborted;
             }
