@@ -178,6 +178,14 @@ class JwtAuthFactoryTest {
      * {@link #shouldResolveClasspathLocationThroughTheCallerContextClassLoader(Vertx, VertxTestContext)}
      * pins that dispatch directly for the {@code classpath:} branch.
      *
+     * <p><b>If {@code fromJwksAsync} ever grows a second {@code executeBlocking} site or a
+     * per-location fast path, that transitive argument collapses</b> and the filesystem branch needs
+     * a direct proof of its own. Nothing in the factory can observe the reading thread for a
+     * filesystem location today — {@code vertx.fileSystem().readFileBlocking(...)} offers no seam —
+     * so that proof would first require one (a package-private read-thread observer, say). It is
+     * deliberately absent while the single dispatch site stands: it would be production plumbing
+     * whose only consumer is a test.
+     *
      * @param tempDir     the JUnit-managed temporary directory holding the filesystem JWKS fixture
      * @param testContext the async assertion sink
      * @throws Exception if the fixture cannot be copied or the gate is never reached
