@@ -32,14 +32,12 @@ import org.junit.jupiter.api.io.TempDir;
 class JwtAuthFactoryTest {
 
     /**
-     * The {@link Vertx} instance owned by {@link #shouldQueueLocalJwksReadsBehindTheWorkerPool()} —
-     * sized to a single worker thread so that test can saturate the pool. Every other test uses the
+     * The {@link Vertx} instance owned by
+     * {@link #shouldQueueLocalJwksReadsBehindTheWorkerPool(Path, VertxTestContext)} — sized to a
+     * single worker thread so that test can saturate the pool. Every other test uses the
      * {@link VertxExtension}-injected instance and leaves this {@code null}.
      */
     private Vertx ownedVertx;
-
-    /** Counted down by the gate task once it holds the sole worker thread. */
-    private CountDownLatch workerOccupied;
 
     /** Awaited by the gate task; counting it down frees the sole worker thread. */
     private CountDownLatch releaseWorker;
@@ -171,7 +169,7 @@ class JwtAuthFactoryTest {
             throws Exception {
         Path jwksFile = copyJwksToTempDir(tempDir);
         ownedVertx = Vertx.vertx(new VertxOptions().setWorkerPoolSize(1));
-        workerOccupied = new CountDownLatch(1);
+        CountDownLatch workerOccupied = new CountDownLatch(1);
         releaseWorker = new CountDownLatch(1);
 
         // The gate is submitted from the JUnit thread deliberately. A Vert.x call made from a
@@ -182,11 +180,15 @@ class JwtAuthFactoryTest {
         // change what is proved: the ordered queue would hold the reads back even for an
         // implementation that never dispatched them, and the assertions below would pass on the
         // very regression they exist to catch.
-        ownedVertx.executeBlocking(() -> {
+        Future<Void> gate = ownedVertx.executeBlocking(() -> {
             workerOccupied.countDown();
             assertTrue(releaseWorker.await(20, TimeUnit.SECONDS), "the gate must be released by the test");
             return null;
         });
+        // The gate's own assertion runs on a worker thread, so its only route to JUnit is this
+        // future. Left unobserved, a gate that never got released would time out, free the worker
+        // itself, let the reads complete, and report the test GREEN on a failed assertion.
+        gate.onFailure(testContext::failNow);
         assertTrue(
                 workerOccupied.await(5, TimeUnit.SECONDS),
                 "the gate task must occupy the pool's only worker thread before the reads are issued");
@@ -268,11 +270,9 @@ class JwtAuthFactoryTest {
     @DisplayName("Should resolve a classpath JWKS location through the caller's thread context classloader")
     void shouldResolveClasspathLocationThroughTheCallerContextClassLoader(Vertx vertx, VertxTestContext testContext) {
         RecordingClassLoader recordingLoader = new RecordingClassLoader(JwtAuthFactoryTest.class.getClassLoader());
-        AtomicReference<Thread> callingThread = new AtomicReference<>();
 
         vertx.runOnContext(ignored -> {
             Thread caller = Thread.currentThread();
-            callingThread.set(caller);
 
             ClassLoader previousLoader = caller.getContextClassLoader();
             Future<JWTAuth> auth;
@@ -299,7 +299,7 @@ class JwtAuthFactoryTest {
                         "the classpath JWKS read must run inside an executeBlocking callable, where "
                                 + "Context.isOnWorkerThread() is documented to be true");
                 assertNotSame(
-                        callingThread.get(),
+                        caller,
                         recordingLoader.readThread.get(),
                         "the classpath JWKS read must not run on the caller's event-loop thread");
                 testContext.completeNow();
