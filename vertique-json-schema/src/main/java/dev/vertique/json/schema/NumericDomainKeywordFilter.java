@@ -7,7 +7,6 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.util.Collections;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
 
 /**
@@ -80,33 +79,28 @@ final class NumericDomainKeywordFilter {
      * conjunctive location whose effective explicit type excludes both {@code number} and {@code
      * integer}.
      *
+     * <p>The locations visited are the Draft 2020-12 subschema positions {@link SchemaPositions}
+     * classifies, never every object node. That distinction is a correctness requirement, not an
+     * optimization: this pass <em>mutates</em> what it reaches, so a position-blind traversal would
+     * silently delete members out of a caller's JSON data — a {@code minimum} inside a {@code default}
+     * value, for instance — which is not a schema and carries no numeric-domain keyword at all.
+     *
+     * <p>The same requirement governs where a location's effective type is <em>read</em> from: a
+     * {@code $ref} target contributes only when it is itself a schema head. Reading a type out of a
+     * data object would be the silent half of the same defect — the location's effective type would be
+     * decided by JSON data, and a non-numeric data {@code type} would strip a genuine schema's bounds.
+     *
      * <p>{@code document} is never {@code null} in practice: the only caller passes the {@code
      * ObjectNode} a successful Victools generation produced.
      *
      * @param document the freshly generated schema document; mutated in place
      */
     static void suppressInapplicableNumericKeywords(JsonNode document) {
-        walk(document, document);
-    }
-
-    /**
-     * Visits every node of the document, evaluating each object node as the head of its own
-     * conjunctive location.
-     *
-     * @param document the whole document, used to resolve {@code $ref} pointers
-     * @param node     the node currently being visited
-     */
-    private static void walk(JsonNode document, JsonNode node) {
-        if (node.isObject()) {
-            applyAtLocation(document, node);
-            for (Map.Entry<String, JsonNode> member : node.properties()) {
-                walk(document, member.getValue());
-            }
-        } else if (node.isArray()) {
-            for (JsonNode element : node) {
-                walk(document, element);
-            }
-        }
+        // Pass 1 collects every schema head; pass 2 folds and suppresses. Collecting first is required
+        // for correctness, not speed: a $ref may point forward to a head this walk has not reached.
+        // The set survives this walk's own mutations, which remove keywords but never a schema node.
+        Set<JsonNode> schemaHeads = SchemaPositions.collectSchemaHeads(document);
+        SchemaPositions.visitSchemaHeads(document, (schema, path) -> applyAtLocation(document, schemaHeads, schema));
     }
 
     /**
@@ -115,18 +109,20 @@ final class NumericDomainKeywordFilter {
      * from the location's local branches.
      *
      * <p>The two sets are deliberately different. The effective type is read from the whole
-     * {@link ConjunctiveLocations#closure(JsonNode, JsonNode) closure}, because every conjoined node —
-     * including a {@code $ref} target — contributes to the member's effective type. The suppression is
-     * written only to the location's
+     * {@link ConjunctiveLocations#closure(JsonNode, JsonNode, Set) closure}, because every conjoined
+     * node — including a {@code $ref} target — contributes to the member's effective type. The
+     * suppression is written only to the location's
      * {@link ConjunctiveLocations#localBranches(JsonNode) local branches}, because a {@code $defs}
      * entry is shared by every member referencing it: rewriting it from one referrer's effective type
      * would strip keywords from members whose own effective type still admits them.
      *
-     * @param document the whole document, used to resolve {@code $ref} pointers
-     * @param start    the object node heading the location
+     * @param document    the whole document, used to resolve {@code $ref} pointers
+     * @param schemaHeads the document's complete set of schema heads, limiting which {@code $ref}
+     *                    targets contribute to the effective type
+     * @param start       the object node heading the location
      */
-    private static void applyAtLocation(JsonNode document, JsonNode start) {
-        List<JsonNode> closure = ConjunctiveLocations.closure(document, start);
+    private static void applyAtLocation(JsonNode document, Set<JsonNode> schemaHeads, JsonNode start) {
+        List<JsonNode> closure = ConjunctiveLocations.closure(document, start, schemaHeads);
         Set<String> intersection = null;
 
         for (JsonNode node : closure) {

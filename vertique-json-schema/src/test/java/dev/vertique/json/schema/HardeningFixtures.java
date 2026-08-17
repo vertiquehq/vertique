@@ -3,6 +3,8 @@
 
 package dev.vertique.json.schema;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.vertique.core.json.JsonMapperProfile;
 import dev.vertique.core.json.JsonProfileId;
@@ -128,6 +130,23 @@ final class HardeningFixtures {
      */
     static JsonSchemaFragment markerFragment(String marker) {
         return JsonSchemaFragment.parse("{\"type\":\"string\",\"format\":\"" + marker + "\"}");
+    }
+
+    // --- Document parsing ---
+
+    /**
+     * Parses a hand-built document. Both post-generation walks take a {@code JsonNode}, so a document
+     * shape the generator cannot itself emit is still a legitimate input to prove a walk against.
+     *
+     * @param json the document text
+     * @return the parsed tree
+     */
+    static JsonNode read(String json) {
+        try {
+            return new ObjectMapper().readTree(json);
+        } catch (JsonProcessingException malformed) {
+            throw new IllegalArgumentException("test document is not valid JSON: " + json, malformed);
+        }
     }
 
     // --- Accepted-grammar fixtures ---
@@ -589,6 +608,71 @@ final class HardeningFixtures {
         /** Carries the {@code $anchor}-style reference into the generated document. */
         @Schema(ref = ANCHOR_REF)
         public String label;
+    }
+
+    // --- Schema-position fixtures ---
+
+    /**
+     * The canonical rendering of the JSON <em>data</em> object a fragment declares as its
+     * {@code default} value. It is annotation data, not a subschema: no walk may descend into it, and
+     * in particular no walk may strip its {@code minimum} member.
+     */
+    static final String DATA_BEARING_DEFAULT = "\"default\":{\"minimum\":3,\"type\":\"gold\"}";
+
+    /**
+     * The canonical rendering of the JSON <em>data</em> object a fragment declares as its {@code const}
+     * value. Read as a schema it would conjoin two disjoint types and fail generation; read as data —
+     * which is what Draft 2020-12 says it is — it is inert.
+     */
+    static final String DATA_BEARING_CONST = "\"const\":{\"allOf\":[{\"type\":\"b\"}],\"type\":\"a\"}";
+
+    /**
+     * The canonical rendering of a fragment-authored {@code definitions} member. Under the pinned
+     * fixed {@code DRAFT_2020_12} dialect the generator emits {@code $defs}, and
+     * {@code JsonSchemaFragment} rejects {@code $defs} but not {@code definitions} — so a
+     * {@code definitions} member can only ever be annotation data.
+     */
+    static final String DATA_BEARING_DEFINITIONS =
+            "\"definitions\":{\"legacy\":{\"allOf\":[{\"type\":\"b\"}],\"type\":\"a\"}}";
+
+    /** DTO with a single, plainly declared property of the class a profile override replaces. */
+    static final class OverriddenDecimalDto {
+
+        /** The overridden property; carries no property-level metadata of its own. */
+        public BigDecimal amount;
+    }
+
+    /**
+     * Builds an override fragment whose {@code default} value is a JSON data object carrying keywords
+     * a position-blind walk would act on: a {@code type} no JSON Schema vocabulary defines, and a
+     * {@code minimum} the numeric-domain filter would strip.
+     *
+     * @return the parsed fragment
+     */
+    static JsonSchemaFragment dataBearingDefaultFragment() {
+        return JsonSchemaFragment.parse("{\"type\":\"string\",\"default\":{\"type\":\"gold\",\"minimum\":3}}");
+    }
+
+    /**
+     * Builds an override fragment whose {@code const} value is a JSON data object that, read as a
+     * schema, would conjoin the disjoint types {@code a} and {@code b}.
+     *
+     * @return the parsed fragment
+     */
+    static JsonSchemaFragment dataBearingConstFragment() {
+        return JsonSchemaFragment.parse(
+                "{\"type\":\"string\",\"const\":{\"type\":\"a\",\"allOf\":[{\"type\":\"b\"}]}}");
+    }
+
+    /**
+     * Builds an override fragment carrying a {@code definitions} member whose content, read as a
+     * schema, would conjoin the disjoint types {@code a} and {@code b}.
+     *
+     * @return the parsed fragment
+     */
+    static JsonSchemaFragment legacyDefinitionsFragment() {
+        return JsonSchemaFragment.parse(
+                "{\"type\":\"string\",\"definitions\":{\"legacy\":{\"type\":\"a\",\"allOf\":[{\"type\":\"b\"}]}}}");
     }
 
     // --- Map position fixtures ---

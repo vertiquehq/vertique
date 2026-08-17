@@ -22,8 +22,9 @@ import java.util.Map;
  * AnnotationJsonSchemaGeneratorProofTest} and {@link SchemaFixtureMatrixTest}.
  *
  * <p>The conjunctive-path walk ({@link #conjunctiveClosure(JsonNode, JsonNode)}) delegates to the
- * main-source {@link ConjunctiveLocations#closure(JsonNode, JsonNode)}: it is the identical BFS
- * expansion, so the test-side probe and the production walk cannot silently drift apart.
+ * main-source {@link ConjunctiveLocations#closure(JsonNode, JsonNode, java.util.Set)}: it is the
+ * identical BFS expansion, so the test-side probe and the production walk cannot silently drift
+ * apart.
  */
 final class SchemaAssertions {
 
@@ -96,16 +97,17 @@ final class SchemaAssertions {
 
     /**
      * Collects every schema node that conjunctively applies at {@code start}: the node itself, each
-     * direct {@code allOf} branch, and each locally resolvable {@code $ref} target. Delegates to
-     * {@link ConjunctiveLocations#closure(JsonNode, JsonNode)} — the identical BFS expansion the
-     * production walks fold over.
+     * direct {@code allOf} branch, and each locally resolvable {@code $ref} target that is a schema
+     * head. Delegates to {@link ConjunctiveLocations#closure(JsonNode, JsonNode, java.util.Set)},
+     * seeded from {@link SchemaPositions#collectSchemaHeads(JsonNode)} — the identical two-pass
+     * expansion the production walks fold over.
      *
      * @param document the whole document, used to resolve {@code $ref} pointers
      * @param start    the node whose conjunctive closure is wanted
      * @return the closure, in discovery order
      */
     static List<JsonNode> conjunctiveClosure(JsonNode document, JsonNode start) {
-        return ConjunctiveLocations.closure(document, start);
+        return ConjunctiveLocations.closure(document, start, SchemaPositions.collectSchemaHeads(document));
     }
 
     /**

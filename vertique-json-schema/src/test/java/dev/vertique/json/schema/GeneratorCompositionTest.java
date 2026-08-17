@@ -11,9 +11,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.vertique.core.json.JsonMapperProfile;
 import dev.vertique.core.json.JsonSchemaTypeOverride;
 import java.math.BigDecimal;
@@ -443,7 +441,7 @@ class GeneratorCompositionTest {
         private void assertConflict(String json) {
             JsonSchemaGenerationException failure = assertThrows(
                     JsonSchemaGenerationException.class,
-                    () -> DisjointTypeDetector.requireNoDisjointTypes(read(json)),
+                    () -> DisjointTypeDetector.requireNoDisjointTypes(HardeningFixtures.read(json)),
                     "the walk must reject " + json);
             assertNotNull(failure.getMessage(), "the conflict must carry a message");
             assertTrue(
@@ -457,21 +455,9 @@ class GeneratorCompositionTest {
          * @param json the document text
          */
         private void assertNoConflict(String json) {
-            assertDoesNotThrow(() -> DisjointTypeDetector.requireNoDisjointTypes(read(json)), "must accept " + json);
-        }
-
-        /**
-         * Parses a constructed document.
-         *
-         * @param json the document text
-         * @return the parsed tree
-         */
-        private JsonNode read(String json) {
-            try {
-                return new ObjectMapper().readTree(json);
-            } catch (JsonProcessingException malformed) {
-                throw new IllegalArgumentException("test document is not valid JSON: " + json, malformed);
-            }
+            assertDoesNotThrow(
+                    () -> DisjointTypeDetector.requireNoDisjointTypes(HardeningFixtures.read(json)),
+                    "must accept " + json);
         }
     }
 

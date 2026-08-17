@@ -21,10 +21,22 @@ import java.util.Set;
  * the one keyword read both folds need.
  *
  * <p>A conjunctive location is a node plus every node conjoined with it: the node itself, each of its
- * direct {@code allOf} branches, and each locally resolvable {@code $ref} target (a {@code #}-rooted
- * JSON pointer, typically into {@code $defs}), expanded transitively. The expansion deliberately does
- * <strong>not</strong> descend through {@code properties}, {@code items}, {@code anyOf}, or
- * {@code oneOf} — those are not unconditional conjunctions.
+ * direct {@code allOf} branches, and each locally resolvable {@code $ref} target that is itself a
+ * schema head (a {@code #}-rooted JSON pointer, typically into {@code $defs}), expanded transitively.
+ * The expansion deliberately does <strong>not</strong> descend through {@code properties},
+ * {@code items}, {@code anyOf}, or {@code oneOf} — those are not unconditional conjunctions.
+ *
+ * <p><strong>Why a target must be a schema head.</strong> A {@code $ref} value is not always machine
+ * generated: the Swagger module publishes a developer-authored {@code @Schema(ref = "#/...")}
+ * verbatim, so a pointer may resolve to any node in the document — a {@code default} value, an
+ * annotation keyword's data, or a <em>container</em> such as the object under {@code properties},
+ * whose keys are property names rather than keywords. Conjoining such a node would read JSON data as
+ * a schema, which is the exact corruption {@link SchemaPositions} exists to prevent at the outer
+ * traversal: a data {@code type} would fail a publishable document, and a data {@code type} that is
+ * non-numeric would silently strip a genuine schema's numeric bounds. The closure therefore admits a
+ * resolved target only when it belongs to the caller-supplied set of schema heads, which
+ * {@link SchemaPositions#collectSchemaHeads(JsonNode)} produces in a pass that must complete before
+ * any folding starts — a {@code $ref} may point forward to a head later in document order.
  *
  * <p>The closure is <strong>best-effort over locally resolvable, {@code "#/"}-rooted pointers</strong>:
  * a reference this class cannot resolve within the document itself — a JSON Schema {@code $anchor}
@@ -64,11 +76,14 @@ final class ConjunctiveLocations {
      * bounding reference cycles: a document whose {@code $defs} entries reference each other
      * terminates.
      *
-     * @param document the whole document, used to resolve {@code $ref} pointers
-     * @param start    the node heading the location
+     * @param document    the whole document, used to resolve {@code $ref} pointers
+     * @param start       the node heading the location
+     * @param schemaHeads the document's complete, identity-comparing set of schema heads, as produced
+     *                    by {@link SchemaPositions#collectSchemaHeads(JsonNode)}; a resolved
+     *                    {@code $ref} target outside it is skipped
      * @return every object node in the closure, in BFS visit order
      */
-    static List<JsonNode> closure(JsonNode document, JsonNode start) {
+    static List<JsonNode> closure(JsonNode document, JsonNode start, Set<JsonNode> schemaHeads) {
         List<JsonNode> closure = new ArrayList<>();
         Map<JsonNode, Boolean> visited = new IdentityHashMap<>();
         Deque<JsonNode> pending = new ArrayDeque<>();
@@ -80,7 +95,7 @@ final class ConjunctiveLocations {
                 continue;
             }
             closure.add(node);
-            enqueueConjoined(document, node, pending);
+            enqueueConjoined(document, node, pending, schemaHeads);
         }
         return closure;
     }
@@ -93,8 +108,8 @@ final class ConjunctiveLocations {
      * <p>This is the only part of a location a caller may safely <em>mutate</em>. A {@code $ref}
      * target — typically a {@code $defs} entry — is shared: every other member referencing it sees the
      * same node, while a policy decided from one referrer's conjoined keywords holds for that referrer
-     * only. Reading the whole {@link #closure(JsonNode, JsonNode) closure} and writing only the local
-     * branches keeps a per-referrer decision from silently rewriting another member's contract.
+     * only. Reading the whole {@link #closure(JsonNode, JsonNode, Set) closure} and writing only the
+     * local branches keeps a per-referrer decision from silently rewriting another member's contract.
      *
      * @param start the node heading the location
      * @return the head and its transitively conjoined {@code allOf} branches, in BFS visit order
@@ -120,17 +135,24 @@ final class ConjunctiveLocations {
      * Adds a node's direct {@code allOf} branches and its locally resolvable {@code $ref} target to
      * the location's pending queue.
      *
-     * @param document the whole document, used to resolve {@code $ref} pointers
-     * @param node     the node being expanded
-     * @param pending  the queue of nodes still to visit in this location
+     * <p>A resolved target is enqueued only when it is one of the document's schema heads. Every other
+     * resolvable node — a data value, a container — is skipped exactly as an unresolvable reference
+     * is: the fold simply sees fewer conjoined nodes, which is always sound because a node that is not
+     * a schema carries no keyword the fold may read.
+     *
+     * @param document    the whole document, used to resolve {@code $ref} pointers
+     * @param node        the node being expanded
+     * @param pending     the queue of nodes still to visit in this location
+     * @param schemaHeads the document's complete, identity-comparing set of schema heads
      */
-    private static void enqueueConjoined(JsonNode document, JsonNode node, Deque<JsonNode> pending) {
+    private static void enqueueConjoined(
+            JsonNode document, JsonNode node, Deque<JsonNode> pending, Set<JsonNode> schemaHeads) {
         enqueueAllOfBranches(node, pending);
 
         JsonNode reference = node.get(REF);
         if (reference != null && reference.isTextual() && isLocalPointer(reference.textValue())) {
             JsonNode target = document.at(reference.textValue().substring(1));
-            if (!target.isMissingNode()) {
+            if (schemaHeads.contains(target)) {
                 pending.add(target);
             }
         }
