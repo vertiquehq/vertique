@@ -15,6 +15,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import java.util.function.Function;
 
 /**
@@ -73,6 +75,13 @@ import java.util.function.Function;
  * returned unchanged: whether the type graph declares policies of its own is not answerable without
  * the classification that just failed.
  *
+ * <p><strong>Processor resolution is cached per engine instance.</strong> The caller-supplied
+ * resolver functions handed to {@link InputObjectProcessor#createDefault} are consulted once per
+ * canonicalizer / sanitizer class instead of once per string value, and a resolution that fails is
+ * cached and rethrown so a large payload cannot re-run a failing lookup per value. The engine makes
+ * no assumption about whether those functions cache anything themselves. Retention is bounded by
+ * the engine instance, which is component-scoped and dies with its Dagger component.
+ *
  * <p><strong>Generated-processor fast path.</strong> The processor self-bootstraps a
  * {@link GeneratedInputProcessorDispatcher} in its constructor and consults it before walking
  * reflectively. When a {@code {DTO}_InputProcessor} class exists on the consuming type's
@@ -85,13 +94,16 @@ import java.util.function.Function;
 class DefaultInputObjectProcessor implements InputObjectProcessor {
 
     private final InputPolicyMetadataResolver metadataResolver;
-    private final Function<Class<? extends Canonicalizer>, Canonicalizer> canonicalizerResolver;
-    private final Function<Class<? extends Sanitizer>, Sanitizer> sanitizerResolver;
+    private final ResolutionCache<Canonicalizer> canonicalizers;
+    private final ResolutionCache<Sanitizer> sanitizers;
     private final ChainResolver chainResolver;
     private final GeneratedInputProcessorDispatcher dispatcher;
 
     /**
      * Creates a new processor with the given dependencies.
+     *
+     * <p>Both resolver functions are wrapped in a per-engine {@link ResolutionCache}, so each is
+     * consulted at most once per processor class for the life of this engine.
      *
      * @param metadataResolver      resolves (and caches) annotation metadata for target types
      * @param canonicalizerResolver factory that produces canonicalizer instances by class
@@ -102,8 +114,8 @@ class DefaultInputObjectProcessor implements InputObjectProcessor {
             Function<Class<? extends Canonicalizer>, Canonicalizer> canonicalizerResolver,
             Function<Class<? extends Sanitizer>, Sanitizer> sanitizerResolver) {
         this.metadataResolver = metadataResolver;
-        this.canonicalizerResolver = canonicalizerResolver;
-        this.sanitizerResolver = sanitizerResolver;
+        this.canonicalizers = new ResolutionCache<>(canonicalizerResolver);
+        this.sanitizers = new ResolutionCache<>(sanitizerResolver);
         this.chainResolver = this::applyChainsForResolver;
         this.dispatcher =
                 new GeneratedInputProcessorDispatcher(new GeneratedInputProcessorDispatcher.ReflectiveContinuation() {
@@ -748,12 +760,123 @@ class DefaultInputObjectProcessor implements InputObjectProcessor {
 
         String result = value;
         for (Class<? extends Canonicalizer> cls : canonChain) {
-            result = canonicalizerResolver.apply(cls).canonicalize(result, valueCtx);
+            result = canonicalizers.get(cls).canonicalize(result, valueCtx);
         }
         for (Class<? extends Sanitizer> cls : sanitChain) {
-            result = sanitizerResolver.apply(cls).sanitize(result, valueCtx);
+            result = sanitizers.get(cls).sanitize(result, valueCtx);
         }
         return result;
+    }
+
+    // --- Processor resolution cache ---
+
+    /**
+     * Memoizes one caller-supplied processor resolver function per engine instance, so the function
+     * is consulted once per processor class rather than once per string value.
+     *
+     * <p>The cache is <strong>instance-owned</strong>: it is reachable only from the owning
+     * {@link DefaultInputObjectProcessor} and becomes collectible with it. It deliberately does not
+     * use a static or {@link ClassValue} cache — a static {@code Class}-keyed map is the retention
+     * hazard {@link GeneratedInputProcessorDispatcher} avoids, and a per-engine map has no such
+     * problem because its lifetime is already bounded by the component-scoped engine.
+     *
+     * <p><strong>Concurrency.</strong> The engine is shared across requests on several event-loop
+     * threads. Lookups take the lock-free {@link ConcurrentHashMap#get} path and a miss computes the
+     * value <em>outside</em> the map before publishing it with
+     * {@link ConcurrentHashMap#putIfAbsent}, so no request thread ever waits on another while an
+     * arbitrary caller-supplied function runs. {@code computeIfAbsent} is deliberately not used: it
+     * would hold the bin lock across that function and would deadlock if a resolver ever re-entered
+     * the cache. The trade-off is that two threads racing on a cold key may both invoke the
+     * resolver; one result wins and the other is discarded. That is benign — canonicalizers and
+     * sanitizers are stateless, and the existing resolver already allocates a fresh instance per
+     * reflective resolution.
+     *
+     * @param <T> the processor kind — {@link Canonicalizer} or {@link Sanitizer}
+     */
+    private static final class ResolutionCache<T> {
+
+        private final Function<Class<? extends T>, T> resolver;
+        private final ConcurrentMap<Class<? extends T>, Resolution<T>> entries = new ConcurrentHashMap<>();
+
+        /**
+         * Creates a cache over the given caller-supplied resolver function.
+         *
+         * @param resolver the function that produces a processor instance from its class
+         */
+        ResolutionCache(Function<Class<? extends T>, T> resolver) {
+            this.resolver = resolver;
+        }
+
+        /**
+         * Returns the processor instance for the given class, resolving it through the wrapped
+         * function on first use.
+         *
+         * @param type the processor class to resolve
+         * @return the cached processor instance
+         * @throws RuntimeException the failure the resolver raised for this class — captured on the
+         *                          first attempt and rethrown on every later one, so an unresolvable
+         *                          processor still fails the request without re-running a lookup
+         *                          already known to fail
+         */
+        T get(Class<? extends T> type) {
+            Resolution<T> cached = entries.get(type);
+            if (cached == null) {
+                cached = resolve(type);
+                Resolution<T> published = entries.putIfAbsent(type, cached);
+                if (published != null) {
+                    cached = published;
+                }
+            }
+            return switch (cached) {
+                case Resolution.Resolved<T> resolved -> resolved.instance();
+                case Resolution.Failed<T> failed -> throw failed.error();
+            };
+        }
+
+        /**
+         * Invokes the resolver once, capturing either the instance or the failure it raised.
+         *
+         * <p>Only a {@link RuntimeException} is captured. An {@link Error} propagates uncached: it
+         * signals a JVM-level problem (a failing static initializer, a linkage error) whose retry
+         * semantics are not this cache's to decide.
+         *
+         * @param type the processor class to resolve
+         * @return the resolution outcome to cache
+         */
+        private Resolution<T> resolve(Class<? extends T> type) {
+            try {
+                return new Resolution.Resolved<>(resolver.apply(type));
+            } catch (RuntimeException failure) {
+                return new Resolution.Failed<>(failure);
+            }
+        }
+    }
+
+    /**
+     * A cached processor-resolution outcome. Mirrors {@link GeneratedInputProcessorDispatcher}'s
+     * lookup-result model: a failure is cached alongside a success so a broken binding costs one
+     * lookup rather than one per value, and the captured exception is rethrown on every retrieval so
+     * consumers still see the failure immediately.
+     *
+     * @param <T> the processor kind
+     */
+    private sealed interface Resolution<T> {
+
+        /**
+         * A successful resolution.
+         *
+         * @param instance the resolved processor instance
+         * @param <T>      the processor kind
+         */
+        record Resolved<T>(T instance) implements Resolution<T> {}
+
+        /**
+         * A resolution that failed. The captured exception is rethrown on every retrieval.
+         *
+         * @param error the failure the resolver raised
+         * @param <T>   the processor kind
+         */
+        record Failed<T>(RuntimeException error) implements Resolution<T> {}
     }
 
     // --- Type extraction ---

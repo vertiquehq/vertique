@@ -24,6 +24,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -839,6 +841,122 @@ class DefaultInputObjectProcessorTest {
         }
     }
 
+    // --- Processor resolution caching ---
+
+    @Nested
+    @DisplayName("processor resolution caching")
+    class ProcessorResolutionCaching {
+
+        @Test
+        @DisplayName("each processor class is resolved once per engine, not once per string value")
+        void shouldResolveEachProcessorClassAtMostOncePerEngineInstance() {
+            ResolutionCounter counter = new ResolutionCounter();
+            DefaultInputObjectProcessor engine = new DefaultInputObjectProcessor(
+                    new InputPolicyMetadataResolver(),
+                    cls -> {
+                        counter.record(cls);
+                        if (cls == TestTrimCanonicalizer.class) {
+                            return new TestTrimCanonicalizer();
+                        }
+                        if (cls == TestUpperCanonicalizer.class) {
+                            return new TestUpperCanonicalizer();
+                        }
+                        throw new IllegalArgumentException("Unknown canonicalizer: " + cls);
+                    },
+                    cls -> {
+                        counter.record(cls);
+                        if (cls == TestStripControlsSanitizer.class) {
+                            return new TestStripControlsSanitizer();
+                        }
+                        if (cls == TestPrefixSanitizer.class) {
+                            return new TestPrefixSanitizer();
+                        }
+                        throw new IllegalArgumentException("Unknown sanitizer: " + cls);
+                    });
+
+            var policies = new EffectiveInputPolicies(
+                    List.of(TestTrimCanonicalizer.class, TestUpperCanonicalizer.class),
+                    List.of(TestStripControlsSanitizer.class, TestPrefixSanitizer.class));
+            Map<String, Object> input = new LinkedHashMap<>();
+            for (int i = 0; i < 25; i++) {
+                input.put("field" + i, "  value" + i + "  ");
+            }
+
+            Map<?, ?> first = (Map<?, ?>) engine.processInput(input, EmptyDto.class, policies, InputLocation.BODY);
+            Map<?, ?> second = (Map<?, ?>) engine.processInput(input, EmptyDto.class, policies, InputLocation.BODY);
+
+            assertEquals("safe:VALUE0", first.get("field0"), "the cached instances must still be applied in order");
+            assertEquals("safe:VALUE0", second.get("field0"), "a second call must produce the same processed output");
+
+            assertEquals(
+                    1,
+                    counter.count(TestTrimCanonicalizer.class),
+                    "the caller-supplied canonicalizer resolver must be consulted once per class across "
+                            + "both calls, not once per string value");
+            assertEquals(
+                    1,
+                    counter.count(TestUpperCanonicalizer.class),
+                    "every distinct canonicalizer class is resolved exactly once per engine instance");
+            assertEquals(
+                    1,
+                    counter.count(TestStripControlsSanitizer.class),
+                    "the caller-supplied sanitizer resolver must be consulted once per class across "
+                            + "both calls, not once per string value");
+            assertEquals(
+                    1,
+                    counter.count(TestPrefixSanitizer.class),
+                    "every distinct sanitizer class is resolved exactly once per engine instance");
+        }
+
+        @Test
+        @DisplayName("a failed resolution is cached and rethrown without re-invoking the resolver")
+        void shouldCacheAndRethrowAFailedProcessorResolution() {
+            ResolutionCounter counter = new ResolutionCounter();
+            DefaultInputObjectProcessor engine = new DefaultInputObjectProcessor(
+                    new InputPolicyMetadataResolver(),
+                    cls -> {
+                        counter.record(cls);
+                        throw new IllegalArgumentException("no canonicalizer bound for " + cls.getName());
+                    },
+                    cls -> {
+                        counter.record(cls);
+                        throw new IllegalArgumentException("no sanitizer bound for " + cls.getName());
+                    });
+
+            var policies = new EffectiveInputPolicies(List.of(TestUpperCanonicalizer.class), List.of());
+            Map<String, Object> input = Map.of("name", "hello");
+
+            RuntimeException firstFailure = assertThrows(
+                    RuntimeException.class,
+                    () -> engine.processInput(input, EmptyDto.class, policies, InputLocation.BODY),
+                    "an unresolvable processor must surface as a failure on the first call");
+            assertEquals(
+                    1,
+                    counter.count(TestUpperCanonicalizer.class),
+                    "fixture guard: the first call consults the resolver exactly once");
+
+            RuntimeException secondFailure = assertThrows(
+                    RuntimeException.class,
+                    () -> engine.processInput(input, EmptyDto.class, policies, InputLocation.BODY),
+                    "a cached failure must keep failing — it must not silently degrade to a no-op");
+
+            assertEquals(
+                    1,
+                    counter.count(TestUpperCanonicalizer.class),
+                    "the failed resolution must be served from the engine's cache: the caller-supplied "
+                            + "resolver must not be invoked a second time for a class already known to fail");
+            assertEquals(
+                    firstFailure.getClass(),
+                    secondFailure.getClass(),
+                    "the rethrown failure must be equivalent to the first, so callers that map on "
+                            + "exception type see no difference between a cold and a warm cache");
+            assertEquals(
+                    firstFailure.getMessage(),
+                    secondFailure.getMessage(),
+                    "the rethrown failure must carry the original diagnostic message");
+        }
+    }
+
     // =========================================================================
     // Test DTOs
     // =========================================================================
@@ -1168,6 +1286,35 @@ class DefaultInputObjectProcessorTest {
         @Override
         public String sanitize(String value, InputValueContext context) {
             return value == null ? null : "safe:" + value;
+        }
+    }
+
+    /**
+     * Counts how often each processor class is handed to a caller-supplied resolver function, so a
+     * test can assert the engine consults it once per class rather than once per string value.
+     */
+    static final class ResolutionCounter {
+
+        private final Map<Class<?>, AtomicInteger> counts = new ConcurrentHashMap<>();
+
+        /**
+         * Records one resolver invocation for the given processor class.
+         *
+         * @param type the processor class handed to the resolver
+         */
+        void record(Class<?> type) {
+            counts.computeIfAbsent(type, ignored -> new AtomicInteger()).incrementAndGet();
+        }
+
+        /**
+         * Returns how many times the resolver was invoked for the given processor class.
+         *
+         * @param type the processor class to report on
+         * @return the invocation count, or {@code 0} when the class was never resolved
+         */
+        int count(Class<?> type) {
+            AtomicInteger counter = counts.get(type);
+            return counter == null ? 0 : counter.get();
         }
     }
 }

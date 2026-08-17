@@ -53,6 +53,8 @@ Object processInput(
 
 `createDefault(...)` returns the default engine — the reflective walker with the generated-processor fast path — and owns the construction of its internal annotation-metadata resolver and per-type cache. Callers supply only the two resolver functions that produce canonicalizer and sanitizer instances (typically backed by dependency injection).
 
+The engine consults each resolver function **at most once per processor class** and reuses the returned instance for every value it processes, so a resolver need not cache anything itself. A resolution that fails is cached too and rethrown on every later use of that class, so an unresolvable processor still fails the request but costs one lookup rather than one per string value. Both caches are owned by the engine instance and die with it. Two consequences follow: a resolver function must return an instance that is safe to share across requests and threads, and it may be invoked more than once for the same class when several threads race on a cold entry.
+
 `processInput(...)` accepts the decoded intermediate (`Map<String, Object>` for objects, `List<Object>` for arrays, or a raw value; `null` is returned unchanged) and returns a new structure with string values transformed.
 
 ### `EffectiveInputPolicies`
