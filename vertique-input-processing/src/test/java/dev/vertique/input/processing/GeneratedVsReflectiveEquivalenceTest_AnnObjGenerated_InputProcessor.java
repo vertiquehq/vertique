@@ -22,6 +22,10 @@ import java.util.Map;
  * with {@link AnnObjGenerated} as {@code parentOwnerType} (for string and list-element values)
  * and {@code Object.class} (the field's declared type) as {@code nestedMapOwnerType} (for
  * nested map values).
+ *
+ * <p>As the emitter does, the switch selects on the projected logical name
+ * ({@code rootCtx.logicalFieldName(AnnObjGenerated.class, k)}) with arms keyed on Java property
+ * names, while the emitted map keeps the wire key {@code k}.
  */
 public final class GeneratedVsReflectiveEquivalenceTest_AnnObjGenerated_InputProcessor
         implements GeneratedInputProcessor<AnnObjGenerated> {
@@ -67,48 +71,49 @@ public final class GeneratedVsReflectiveEquivalenceTest_AnnObjGenerated_InputPro
                 continue;
             }
             String childPath = parentPath.isEmpty() ? k : parentPath + "." + k;
-            if ("misc".equals(k)) {
-                out.put(
-                        k,
-                        GeneratedSupport.applyDefault(
-                                v,
-                                rootCtx,
-                                OBJ_CANON,
-                                OBJ_SANIT,
-                                OBJ_SKIP_CANON,
-                                OBJ_SKIP_SANIT,
-                                MISC_CANON,
-                                MISC_SANIT,
-                                false,
-                                false,
-                                resolver,
-                                location,
-                                childPath,
-                                k,
-                                AnnObjGenerated.class,
-                                Object.class,
-                                dispatcher));
-            } else {
-                out.put(
-                        k,
-                        GeneratedSupport.applyDefault(
-                                v,
-                                rootCtx,
-                                OBJ_CANON,
-                                OBJ_SANIT,
-                                OBJ_SKIP_CANON,
-                                OBJ_SKIP_SANIT,
-                                List.of(),
-                                List.of(),
-                                false,
-                                false,
-                                resolver,
-                                location,
-                                childPath,
-                                k,
-                                AnnObjGenerated.class,
-                                AnnObjGenerated.class,
-                                dispatcher));
+            switch (rootCtx.logicalFieldName(AnnObjGenerated.class, k)) {
+                case "misc" ->
+                    out.put(
+                            k,
+                            GeneratedSupport.applyDefault(
+                                    v,
+                                    rootCtx,
+                                    OBJ_CANON,
+                                    OBJ_SANIT,
+                                    OBJ_SKIP_CANON,
+                                    OBJ_SKIP_SANIT,
+                                    MISC_CANON,
+                                    MISC_SANIT,
+                                    false,
+                                    false,
+                                    resolver,
+                                    location,
+                                    childPath,
+                                    "misc",
+                                    AnnObjGenerated.class,
+                                    Object.class,
+                                    dispatcher));
+                default ->
+                    out.put(
+                            k,
+                            GeneratedSupport.applyDefault(
+                                    v,
+                                    rootCtx,
+                                    OBJ_CANON,
+                                    OBJ_SANIT,
+                                    OBJ_SKIP_CANON,
+                                    OBJ_SKIP_SANIT,
+                                    List.of(),
+                                    List.of(),
+                                    false,
+                                    false,
+                                    resolver,
+                                    location,
+                                    childPath,
+                                    k,
+                                    AnnObjGenerated.class,
+                                    AnnObjGenerated.class,
+                                    dispatcher));
             }
         }
         return out;

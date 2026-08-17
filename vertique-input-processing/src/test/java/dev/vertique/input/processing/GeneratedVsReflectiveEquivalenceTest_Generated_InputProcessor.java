@@ -27,6 +27,10 @@ import java.util.Map;
  * walker on the structurally-identical {@link GeneratedVsReflectiveEquivalenceTest.Reflective}
  * fixture.
  *
+ * <p>As the emitter does, the switch selects on the projected logical name
+ * ({@code rootCtx.logicalFieldName(Generated.class, k)}) with arms keyed on Java property names,
+ * while the emitted map keeps the wire key {@code k}.
+ *
  * <p>Naming follows the dispatcher's {@code generatedClassName(...)} algorithm: binary name of
  * {@link Generated} is {@code ...GeneratedVsReflectiveEquivalenceTest$Generated}; flattening
  * {@code '$' → '_'} and appending {@code _InputProcessor} yields this class's FQN.
@@ -81,7 +85,7 @@ public final class GeneratedVsReflectiveEquivalenceTest_Generated_InputProcessor
                 continue;
             }
             String childPath = parentPath.isEmpty() ? k : parentPath + "." + k;
-            switch (k) {
+            switch (rootCtx.logicalFieldName(Generated.class, k)) {
                 case "trimmed" ->
                     out.put(
                             k,
@@ -99,7 +103,7 @@ public final class GeneratedVsReflectiveEquivalenceTest_Generated_InputProcessor
                                     resolver,
                                     location,
                                     childPath,
-                                    k,
+                                    "trimmed",
                                     Generated.class));
                 case "dotty" ->
                     out.put(
@@ -118,7 +122,7 @@ public final class GeneratedVsReflectiveEquivalenceTest_Generated_InputProcessor
                                     resolver,
                                     location,
                                     childPath,
-                                    k,
+                                    "dotty",
                                     Generated.class));
                 case "unannotated" ->
                     out.put(
@@ -137,7 +141,7 @@ public final class GeneratedVsReflectiveEquivalenceTest_Generated_InputProcessor
                                     resolver,
                                     location,
                                     childPath,
-                                    k,
+                                    "unannotated",
                                     Generated.class));
                 case "nested" -> {
                     InputTraversalContext nestedCtx = rootCtx.descend(
@@ -197,7 +201,7 @@ public final class GeneratedVsReflectiveEquivalenceTest_Generated_InputProcessor
                                     false,
                                     resolver,
                                     location,
-                                    parentPath.isEmpty() ? k : parentPath + "." + k,
+                                    childPath,
                                     k,
                                     Generated.class,
                                     Generated.class,

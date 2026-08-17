@@ -23,6 +23,10 @@ import java.util.Map;
  * the {@code child} arm dispatches the nested value back at its own target type, so the generated
  * path recurses for as many levels as the intermediate actually carries.
  *
+ * <p>As the emitter does, the switch selects on the projected logical name
+ * ({@code rootCtx.logicalFieldName(RecursiveGenerated.class, k)}) with arms keyed on Java property
+ * names, while the emitted map keeps the wire key {@code k}.
+ *
  * <p>Naming follows the dispatcher's {@code generatedClassName(...)} algorithm.
  */
 public final class GeneratedVsReflectiveEquivalenceTest_RecursiveGenerated_InputProcessor
@@ -69,7 +73,7 @@ public final class GeneratedVsReflectiveEquivalenceTest_RecursiveGenerated_Input
                 continue;
             }
             String childPath = childPath(parentPath, k);
-            switch (k) {
+            switch (rootCtx.logicalFieldName(RecursiveGenerated.class, k)) {
                 case "note" ->
                     out.put(
                             k,
@@ -87,7 +91,7 @@ public final class GeneratedVsReflectiveEquivalenceTest_RecursiveGenerated_Input
                                     resolver,
                                     location,
                                     childPath,
-                                    k,
+                                    "note",
                                     RecursiveGenerated.class));
                 case "child" -> {
                     InputTraversalContext nestedCtx = rootCtx.descend(

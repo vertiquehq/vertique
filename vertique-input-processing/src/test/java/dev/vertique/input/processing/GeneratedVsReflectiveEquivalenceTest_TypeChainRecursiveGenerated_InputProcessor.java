@@ -24,6 +24,10 @@ import java.util.Map;
  * {@code child} arm dispatches back at its own target type, so the object-level chain is offered
  * to {@code descend} once per level of the intermediate.
  *
+ * <p>As the emitter does, the switch selects on the projected logical name
+ * ({@code rootCtx.logicalFieldName(TypeChainRecursiveGenerated.class, k)}) with arms keyed on Java
+ * property names, while the emitted map keeps the wire key {@code k}.
+ *
  * <p>Naming follows the dispatcher's {@code generatedClassName(...)} algorithm.
  */
 public final class GeneratedVsReflectiveEquivalenceTest_TypeChainRecursiveGenerated_InputProcessor
@@ -70,7 +74,7 @@ public final class GeneratedVsReflectiveEquivalenceTest_TypeChainRecursiveGenera
                 continue;
             }
             String childPath = childPath(parentPath, k);
-            switch (k) {
+            switch (rootCtx.logicalFieldName(TypeChainRecursiveGenerated.class, k)) {
                 case "note" ->
                     out.put(
                             k,
@@ -88,7 +92,7 @@ public final class GeneratedVsReflectiveEquivalenceTest_TypeChainRecursiveGenera
                                     resolver,
                                     location,
                                     childPath,
-                                    k,
+                                    "note",
                                     TypeChainRecursiveGenerated.class));
                 case "child" -> {
                     InputTraversalContext nestedCtx = rootCtx.descend(

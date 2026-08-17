@@ -23,6 +23,10 @@ import java.util.Map;
  * {@link GeneratedSupport#applyDefault(Object, InputTraversalContext, java.util.List, java.util.List, boolean, boolean, java.util.List, java.util.List, boolean, boolean, ChainResolver, InputLocation, String, String, Class, GeneratedInputProcessorDispatcher) applyDefault}
  * with those object-level constants so unknown Jackson keys still receive the type chain —
  * matching the reflective walker.
+ *
+ * <p>As the emitter does, the switch selects on the projected logical name
+ * ({@code rootCtx.logicalFieldName(ObjLevelGenerated.class, k)}) with arms keyed on Java property
+ * names, while the emitted map keeps the wire key {@code k}.
  */
 public final class GeneratedVsReflectiveEquivalenceTest_ObjLevelGenerated_InputProcessor
         implements GeneratedInputProcessor<ObjLevelGenerated> {
@@ -68,7 +72,7 @@ public final class GeneratedVsReflectiveEquivalenceTest_ObjLevelGenerated_InputP
                 continue;
             }
             String childPath = parentPath.isEmpty() ? k : parentPath + "." + k;
-            switch (k) {
+            switch (rootCtx.logicalFieldName(ObjLevelGenerated.class, k)) {
                 case "known" ->
                     out.put(
                             k,
@@ -86,7 +90,7 @@ public final class GeneratedVsReflectiveEquivalenceTest_ObjLevelGenerated_InputP
                                     resolver,
                                     location,
                                     childPath,
-                                    k,
+                                    "known",
                                     ObjLevelGenerated.class));
                 default ->
                     out.put(

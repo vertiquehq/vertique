@@ -27,7 +27,12 @@ import java.util.Map;
  * bounded type argument to its upper bound, and an array's component type is its element type, so
  * {@code List<Inner>}, {@code List<? extends Inner>} and {@code Inner[]} carry one and the same
  * element schema. The wire shape is a JSON array in all three cases, which the intermediate
- * represents as a {@link List}.
+ * represents as a {@link List}. Because the three arms are byte-identical, they are collapsed into
+ * one multi-label arm; the emitter writes them out separately.
+ *
+ * <p>As the emitter does, the switch selects on the projected logical name
+ * ({@code rootCtx.logicalFieldName(WildcardGenerated.class, k)}) with arms keyed on Java property
+ * names, while the emitted map keeps the wire key {@code k}.
  *
  * <p>Naming follows the dispatcher's {@code generatedClassName(...)} algorithm: binary name of
  * {@link WildcardGenerated} is {@code ...GeneratedVsReflectiveEquivalenceTest$WildcardGenerated};
@@ -74,7 +79,7 @@ public final class GeneratedVsReflectiveEquivalenceTest_WildcardGenerated_InputP
                 continue;
             }
             String childPath = GeneratedSupport.childPath(parentPath, k);
-            switch (k) {
+            switch (rootCtx.logicalFieldName(WildcardGenerated.class, k)) {
                 case "invariant", "bounded", "array" -> {
                     InputTraversalContext elementCtx = rootCtx.descend(
                             OBJ_CANON, OBJ_SANIT, OBJ_SKIP_CANON, OBJ_SKIP_SANIT, null, null, false, false);

@@ -26,6 +26,10 @@ import java.util.Map;
  * constant is {@code true} and every arm hands its own field chain to {@code applyString} or to
  * {@code descend}.
  *
+ * <p>As the emitter does, the switch selects on the projected logical name
+ * ({@code rootCtx.logicalFieldName(SkipOverrideGenerated.class, k)}) with arms keyed on Java
+ * property names, while the emitted map keeps the wire key {@code k}.
+ *
  * <p>Naming follows the dispatcher's {@code generatedClassName(...)} algorithm.
  */
 public final class GeneratedVsReflectiveEquivalenceTest_SkipOverrideGenerated_InputProcessor
@@ -76,7 +80,7 @@ public final class GeneratedVsReflectiveEquivalenceTest_SkipOverrideGenerated_In
                 continue;
             }
             String childPath = childPath(parentPath, k);
-            switch (k) {
+            switch (rootCtx.logicalFieldName(SkipOverrideGenerated.class, k)) {
                 case "direct" ->
                     out.put(
                             k,
@@ -94,7 +98,7 @@ public final class GeneratedVsReflectiveEquivalenceTest_SkipOverrideGenerated_In
                                     resolver,
                                     location,
                                     childPath,
-                                    k,
+                                    "direct",
                                     SkipOverrideGenerated.class));
                 case "nested" -> {
                     InputTraversalContext nestedCtx = rootCtx.descend(

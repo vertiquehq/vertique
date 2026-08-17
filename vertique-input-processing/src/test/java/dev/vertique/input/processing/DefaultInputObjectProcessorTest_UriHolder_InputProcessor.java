@@ -26,6 +26,10 @@ import java.util.Map;
  * {@link DefaultInputObjectProcessorTest} can prove that path applies the inherited chain instead
  * of returning the value untouched.
  *
+ * <p>As the emitter does, the switch selects on the projected logical name
+ * ({@code rootCtx.logicalFieldName(UriHolder.class, k)}) with arms keyed on Java property names,
+ * while the emitted map keeps the wire key {@code k}.
+ *
  * <p>Naming follows the dispatcher's {@code generatedClassName(...)} algorithm: the binary name of
  * {@link UriHolder} is {@code ...DefaultInputObjectProcessorTest$UriHolder}; flattening
  * {@code '$' → '_'} and appending {@code _InputProcessor} yields this class's FQN.
@@ -74,7 +78,7 @@ public final class DefaultInputObjectProcessorTest_UriHolder_InputProcessor
                 continue;
             }
             String childPath = parentPath.isEmpty() ? k : parentPath + "." + k;
-            switch (k) {
+            switch (rootCtx.logicalFieldName(UriHolder.class, k)) {
                 case "homepage" -> {
                     InputTraversalContext nestedCtx = rootCtx.descend(
                             OBJ_CANON,

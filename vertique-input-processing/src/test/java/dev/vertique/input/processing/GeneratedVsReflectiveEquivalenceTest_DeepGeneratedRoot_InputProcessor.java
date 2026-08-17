@@ -23,6 +23,10 @@ import java.util.Map;
  * NESTED_DTO shape: descend the context, then dispatch the nested value at the declared field type.
  * The remaining eleven levels have no companion, so they resume on the reflective walker.
  *
+ * <p>As the emitter does, the switch selects on the projected logical name
+ * ({@code rootCtx.logicalFieldName(DeepGeneratedRoot.class, k)}) with arms keyed on Java property
+ * names, while the emitted map keeps the wire key {@code k}.
+ *
  * <p>Naming follows the dispatcher's {@code generatedClassName(...)} algorithm.
  */
 public final class GeneratedVsReflectiveEquivalenceTest_DeepGeneratedRoot_InputProcessor
@@ -66,7 +70,7 @@ public final class GeneratedVsReflectiveEquivalenceTest_DeepGeneratedRoot_InputP
                 continue;
             }
             String childPath = childPath(parentPath, k);
-            switch (k) {
+            switch (rootCtx.logicalFieldName(DeepGeneratedRoot.class, k)) {
                 case "child" -> {
                     InputTraversalContext nestedCtx = rootCtx.descend(
                             OBJ_CANON, OBJ_SANIT, OBJ_SKIP_CANON, OBJ_SKIP_SANIT, null, null, false, false);

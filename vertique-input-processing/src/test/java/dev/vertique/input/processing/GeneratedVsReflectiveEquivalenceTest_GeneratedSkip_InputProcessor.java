@@ -20,6 +20,10 @@ import java.util.Map;
  * Hand-written companion {@link GeneratedInputProcessor} for {@link GeneratedSkip}, which
  * carries {@code @SkipCanonicalization} at the type level. Mirrors the codegen output for the
  * sticky-skip equivalence scenario.
+ *
+ * <p>As the emitter does, the switch selects on the projected logical name
+ * ({@code rootCtx.logicalFieldName(GeneratedSkip.class, k)}) with arms keyed on Java property
+ * names, while the emitted map keeps the wire key {@code k}.
  */
 public final class GeneratedVsReflectiveEquivalenceTest_GeneratedSkip_InputProcessor
         implements GeneratedInputProcessor<GeneratedSkip> {
@@ -64,47 +68,48 @@ public final class GeneratedVsReflectiveEquivalenceTest_GeneratedSkip_InputProce
                 out.put(k, null);
                 continue;
             }
-            if ("skipped".equals(k)) {
-                String childPath = parentPath.isEmpty() ? k : parentPath + "." + k;
-                out.put(
-                        k,
-                        applyString(
-                                v,
-                                rootCtx,
-                                OBJ_CANON,
-                                OBJ_SANIT,
-                                OBJ_SKIP_CANON,
-                                OBJ_SKIP_SANIT,
-                                SKIPPED_CANON,
-                                SKIPPED_SANIT,
-                                false,
-                                false,
-                                resolver,
-                                location,
-                                childPath,
-                                k,
-                                GeneratedSkip.class));
-            } else {
-                out.put(
-                        k,
-                        GeneratedSupport.applyDefault(
-                                v,
-                                rootCtx,
-                                OBJ_CANON,
-                                OBJ_SANIT,
-                                OBJ_SKIP_CANON,
-                                OBJ_SKIP_SANIT,
-                                List.of(),
-                                List.of(),
-                                false,
-                                false,
-                                resolver,
-                                location,
-                                parentPath.isEmpty() ? k : parentPath + "." + k,
-                                k,
-                                GeneratedSkip.class,
-                                GeneratedSkip.class,
-                                dispatcher));
+            String childPath = parentPath.isEmpty() ? k : parentPath + "." + k;
+            switch (rootCtx.logicalFieldName(GeneratedSkip.class, k)) {
+                case "skipped" ->
+                    out.put(
+                            k,
+                            applyString(
+                                    v,
+                                    rootCtx,
+                                    OBJ_CANON,
+                                    OBJ_SANIT,
+                                    OBJ_SKIP_CANON,
+                                    OBJ_SKIP_SANIT,
+                                    SKIPPED_CANON,
+                                    SKIPPED_SANIT,
+                                    false,
+                                    false,
+                                    resolver,
+                                    location,
+                                    childPath,
+                                    "skipped",
+                                    GeneratedSkip.class));
+                default ->
+                    out.put(
+                            k,
+                            GeneratedSupport.applyDefault(
+                                    v,
+                                    rootCtx,
+                                    OBJ_CANON,
+                                    OBJ_SANIT,
+                                    OBJ_SKIP_CANON,
+                                    OBJ_SKIP_SANIT,
+                                    List.of(),
+                                    List.of(),
+                                    false,
+                                    false,
+                                    resolver,
+                                    location,
+                                    childPath,
+                                    k,
+                                    GeneratedSkip.class,
+                                    GeneratedSkip.class,
+                                    dispatcher));
             }
         }
         return out;

@@ -33,6 +33,10 @@ import java.util.Map;
  * {@code buildOtherFieldArm} with the erased declared type as the nested-map owner) and
  * {@code labels} (a collection of strings) get their own arm.
  *
+ * <p>As the emitter does, the switch selects on the projected logical name
+ * ({@code rootCtx.logicalFieldName(EnumElementGenerated.class, k)}) with arms keyed on Java property
+ * names, while the emitted map keeps the wire key {@code k}.
+ *
  * <p>Naming follows the dispatcher's {@code generatedClassName(...)} algorithm: binary name of
  * {@link EnumElementGenerated} is
  * {@code ...GeneratedVsReflectiveEquivalenceTest$EnumElementGenerated}; flattening {@code '$' → '_'}
@@ -84,7 +88,7 @@ public final class GeneratedVsReflectiveEquivalenceTest_EnumElementGenerated_Inp
                 continue;
             }
             String childPath = GeneratedSupport.childPath(parentPath, k);
-            switch (k) {
+            switch (rootCtx.logicalFieldName(EnumElementGenerated.class, k)) {
                 case "chained" ->
                     out.put(
                             k,
@@ -102,7 +106,7 @@ public final class GeneratedVsReflectiveEquivalenceTest_EnumElementGenerated_Inp
                                     resolver,
                                     location,
                                     childPath,
-                                    k,
+                                    "chained",
                                     EnumElementGenerated.class,
                                     List.class,
                                     dispatcher));
