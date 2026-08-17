@@ -154,9 +154,10 @@ public final class JacksonFieldNameResolver implements InputFieldNameResolver {
      * <p>This is the shared warm-up walk every Jackson-bound boundary uses: it unwraps arrays and
      * parameterized shapes (a {@code List<Dto>} body warms {@code Dto}, a {@code Dto[]} message warms
      * {@code Dto}), then follows each visited type's declared property types transitively, including
-     * collection element and map value types. A visited set makes a cyclic type graph terminate, and
-     * a shape carrying no statically known property set — a wildcard, a type variable, a primitive, an
-     * enum, or a platform type such as {@link String} — is skipped rather than introspected.
+     * collection element types. A visited set makes a cyclic type graph terminate, and a shape
+     * carrying no statically known property set — a wildcard, a type variable, a primitive, an enum,
+     * a platform type such as {@link String}, or a map's key and value types — is skipped rather than
+     * introspected. The walk follows exactly the links the engine descends, no more.
      *
      * <p>Why transitive rather than only the declared body or message type: the engine resolves the
      * projection for the <em>owner of each nested fragment</em>, so a nested DTO's projection is
@@ -219,18 +220,23 @@ public final class JacksonFieldNameResolver implements InputFieldNameResolver {
     }
 
     /**
-     * Warms one property's declared type, descending through array, collection, and map shapes to the
-     * element and value types the engine walks element-wise.
+     * Warms one property's declared type, descending through array and collection shapes to the
+     * element types the engine walks element-wise.
+     *
+     * <p><strong>A map shape is not descended.</strong> The engine treats a map-typed field as
+     * schema-free — it carries no statically known property set, so its fragment's policies are keyed
+     * against the map type itself and neither the key nor the value type is ever consulted as a
+     * projection owner. Warming them anyway would let an ambiguity the request path can never reach
+     * fail registration, which is an availability change with no behavioural payoff.
      *
      * @param propertyType the property's resolved Jackson type, or {@code null}
      * @param visited      the classes already warmed on this walk
      */
     private void warmPropertyType(@Nullable JavaType propertyType, Set<Class<?>> visited) {
-        if (propertyType == null) {
+        if (propertyType == null || propertyType.isMapLikeType()) {
             return;
         }
         warmPropertyType(propertyType.getContentType(), visited);
-        warmPropertyType(propertyType.getKeyType(), visited);
         for (int i = 0; i < propertyType.containedTypeCount(); i++) {
             warmPropertyType(propertyType.containedType(i), visited);
         }

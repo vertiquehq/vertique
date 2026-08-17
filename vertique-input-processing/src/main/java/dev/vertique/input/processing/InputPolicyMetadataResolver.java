@@ -175,7 +175,7 @@ class InputPolicyMetadataResolver {
         // --- Field/component-level annotations ---
         Map<String, FieldPolicyMetadata> fields = resolveFields(type);
 
-        return new InputPolicyMetadata(objectCanonChain, objectSanitChain, skipCanon, skipSanit, fields);
+        return new InputPolicyMetadata(type, objectCanonChain, objectSanitChain, skipCanon, skipSanit, fields);
     }
 
     /**
@@ -236,7 +236,13 @@ class InputPolicyMetadataResolver {
         checkConflicts(field.getDeclaringClass().getName() + "#" + field.getName(), canon, skipCanon, sanit, skipSanit);
 
         return buildFieldMeta(
-                field.getGenericType(), field.getType(), canon, sanit, skipCanon != null, skipSanit != null);
+                field.getName(),
+                field.getGenericType(),
+                field.getType(),
+                canon,
+                sanit,
+                skipCanon != null,
+                skipSanit != null);
     }
 
     /**
@@ -261,7 +267,13 @@ class InputPolicyMetadataResolver {
                 skipSanit);
 
         return buildFieldMeta(
-                component.getGenericType(), component.getType(), canon, sanit, skipCanon != null, skipSanit != null);
+                component.getName(),
+                component.getGenericType(),
+                component.getType(),
+                canon,
+                sanit,
+                skipCanon != null,
+                skipSanit != null);
     }
 
     /**
@@ -305,6 +317,8 @@ class InputPolicyMetadataResolver {
      * APT-time {@code AnnotationCollector} applies the same rule through
      * {@code isScalarOrEnum}, so the generated and reflective paths agree.
      *
+     * @param fieldName   the Java property name; recorded on the metadata so the field's
+     *                    declaration site can be named without threading the map key
      * @param genericType the full generic type of the field
      * @param rawType     the raw (erased) class of the field
      * @param canon       {@code @Canonicalize} annotation, or {@code null}
@@ -314,6 +328,7 @@ class InputPolicyMetadataResolver {
      * @return field metadata, or {@code null}
      */
     private FieldPolicyMetadata buildFieldMeta(
+            String fieldName,
             Type genericType,
             Class<?> rawType,
             Canonicalize canon,
@@ -333,14 +348,15 @@ class InputPolicyMetadataResolver {
             if (wrappedRaw == null || wrappedRaw == Optional.class) {
                 // Raw Optional (or a type argument that does not resolve to a class) — nothing to
                 // classify against.
-                return schemaFree(canonChain, sanitChain, skipCanon, skipSanit, rawType, hasAnnotations);
+                return schemaFree(fieldName, canonChain, sanitChain, skipCanon, skipSanit, rawType, hasAnnotations);
             }
-            return buildFieldMeta(wrapped, wrappedRaw, canon, sanit, skipCanon, skipSanit);
+            return buildFieldMeta(fieldName, wrapped, wrappedRaw, canon, sanit, skipCanon, skipSanit);
         }
 
         // String field
         if (rawType == String.class) {
-            return new FieldPolicyMetadata(canonChain, sanitChain, skipCanon, skipSanit, rawType, true, false, null);
+            return new FieldPolicyMetadata(
+                    fieldName, canonChain, sanitChain, skipCanon, skipSanit, rawType, true, false, null);
         }
 
         // Collection and array types — both arrive as a JSON array on the wire and carry exactly
@@ -349,11 +365,11 @@ class InputPolicyMetadataResolver {
             Class<?> elementType = TypeClassifier.elementType(genericType);
             if (elementType == null) {
                 // Raw collection, or an element type with no schema — can't determine element type
-                return schemaFree(canonChain, sanitChain, skipCanon, skipSanit, rawType, hasAnnotations);
+                return schemaFree(fieldName, canonChain, sanitChain, skipCanon, skipSanit, rawType, hasAnnotations);
             }
             if (elementType == String.class) {
                 return new FieldPolicyMetadata(
-                        canonChain, sanitChain, skipCanon, skipSanit, rawType, false, true, null);
+                        fieldName, canonChain, sanitChain, skipCanon, skipSanit, rawType, false, true, null);
             }
             // Collection or array of objects — record the element type; its metadata is resolved at
             // descent. An enum element is excluded for the same reason isDescendableObject excludes
@@ -362,19 +378,20 @@ class InputPolicyMetadataResolver {
             // map nor a list and is returned verbatim with no chain applied.
             if (!TypeClassifier.isScalarLeaf(elementType)) {
                 return new FieldPolicyMetadata(
-                        canonChain, sanitChain, skipCanon, skipSanit, rawType, false, false, elementType);
+                        fieldName, canonChain, sanitChain, skipCanon, skipSanit, rawType, false, false, elementType);
             }
-            return schemaFree(canonChain, sanitChain, skipCanon, skipSanit, rawType, hasAnnotations);
+            return schemaFree(fieldName, canonChain, sanitChain, skipCanon, skipSanit, rawType, hasAnnotations);
         }
 
         // Nested object — record the declared type unconditionally so the walker can descend into
         // it and resolve its own metadata, even across links that declare no policy themselves.
         if (isDescendableObject(rawType)) {
-            return new FieldPolicyMetadata(canonChain, sanitChain, skipCanon, skipSanit, rawType, false, false, null);
+            return new FieldPolicyMetadata(
+                    fieldName, canonChain, sanitChain, skipCanon, skipSanit, rawType, false, false, null);
         }
 
         // Primitives / enums / Object / Map / etc. — no statically known property set.
-        return schemaFree(canonChain, sanitChain, skipCanon, skipSanit, rawType, hasAnnotations);
+        return schemaFree(fieldName, canonChain, sanitChain, skipCanon, skipSanit, rawType, hasAnnotations);
     }
 
     /**
@@ -383,6 +400,7 @@ class InputPolicyMetadataResolver {
      * recording when it declares policy of its own; otherwise the walker has nothing to do with it
      * and it is left out of the metadata entirely.
      *
+     * @param fieldName      the Java property name, recorded so the declaration site can be named
      * @param canonChain     the declared canonicalizer chain, possibly empty
      * @param sanitChain     the declared sanitizer chain, possibly empty
      * @param skipCanon      whether {@code @SkipCanonicalization} is present
@@ -392,6 +410,7 @@ class InputPolicyMetadataResolver {
      * @return the schema-free field metadata, or {@code null} when the field declares no policy
      */
     private static FieldPolicyMetadata schemaFree(
+            String fieldName,
             List<Class<? extends Canonicalizer>> canonChain,
             List<Class<? extends Sanitizer>> sanitChain,
             boolean skipCanon,
@@ -399,7 +418,8 @@ class InputPolicyMetadataResolver {
             Class<?> rawType,
             boolean hasAnnotations) {
         return hasAnnotations
-                ? new FieldPolicyMetadata(canonChain, sanitChain, skipCanon, skipSanit, rawType, false, false, null)
+                ? new FieldPolicyMetadata(
+                        fieldName, canonChain, sanitChain, skipCanon, skipSanit, rawType, false, false, null)
                 : null;
     }
 

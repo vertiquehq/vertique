@@ -755,6 +755,63 @@ class GeneratedVsReflectiveEquivalenceTest {
     }
 
     @Nested
+    @DisplayName("composed chain length under a field-level chain on the recursive link")
+    class ComposedChainLengthUnderFieldLevelRecursion {
+
+        private static final int LEVELS = 5;
+
+        @Test
+        @DisplayName("both paths apply a recursive field's own chain once per value at every depth")
+        void shouldAgreeThatAFieldLevelChainOnTheRecursiveLinkAppliesOncePerValue() {
+            RECORDED_CONTEXTS.clear();
+            Object reflectiveOut = processor.processInput(
+                    fieldChainInput(),
+                    FieldChainRecursiveReflective.class,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY,
+                    InputFieldNameResolver.IDENTITY);
+            int reflectiveInvocations = RECORDED_CONTEXTS.size();
+
+            RECORDED_CONTEXTS.clear();
+            Object generatedOut = processor.processInput(
+                    fieldChainInput(),
+                    FieldChainRecursiveGenerated.class,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY,
+                    InputFieldNameResolver.IDENTITY);
+            int generatedInvocations = RECORDED_CONTEXTS.size();
+
+            assertEquals(reflectiveOut, generatedOut, "both paths must produce the same output");
+            // TestTrim is idempotent, so a chain that grew with depth would produce identical output
+            // and only a different invocation count. Count, do not compare strings. The root's own
+            // note sits above the field, so LEVELS - 1 values carry the chain.
+            assertEquals(
+                    LEVELS - 1,
+                    reflectiveInvocations,
+                    "reflective path: the recursive field's chain must apply once per string value, "
+                            + "not once per level of the self-reference");
+            assertEquals(
+                    LEVELS - 1,
+                    generatedInvocations,
+                    "generated path: the recursive field's chain must apply once per string value, "
+                            + "not once per level of the self-reference");
+        }
+
+        /** Builds a {@value #LEVELS}-level self-referential intermediate with one string per level. */
+        private Map<String, Object> fieldChainInput() {
+            Map<String, Object> current = new LinkedHashMap<>();
+            current.put("note", "  note" + LEVELS + "  ");
+            for (int level = LEVELS - 1; level >= 1; level--) {
+                Map<String, Object> node = new LinkedHashMap<>();
+                node.put("note", "  note" + level + "  ");
+                node.put("child", current);
+                current = node;
+            }
+            return current;
+        }
+    }
+
+    @Nested
     @DisplayName("a field's own declared chain keeps its declared order")
     class DeclaredChainOrder {
 
@@ -785,6 +842,52 @@ class GeneratedVsReflectiveEquivalenceTest {
                     "script",
                     ((Map<?, ?>) generatedOut).get("value"),
                     "generated path: the field's declared decode-then-strip order must survive");
+        }
+
+        /** Builds an intermediate whose single value only reads correctly under decode-then-strip. */
+        private Map<String, Object> declaredOrderInput() {
+            Map<String, Object> input = new LinkedHashMap<>();
+            input.put("value", "&lt;script");
+            return input;
+        }
+    }
+
+    @Nested
+    @DisplayName("a declared chain keeps its own entries under an invocation-level chain")
+    class RoutePolicyDeclaredChainOrder {
+
+        /** The invocation-level shape codegen emits for a route annotated {@code @Sanitize}. */
+        private final EffectiveInputPolicies routePolicies =
+                new EffectiveInputPolicies(List.of(), List.of(TestStripHtml.class));
+
+        @Test
+        @DisplayName("both paths keep the field's trailing strip when the route names that sanitizer")
+        void shouldAgreeThatAFieldsDeclaredOrderSurvivesARouteLevelChain() {
+            Object reflectiveOut = processor.processInput(
+                    declaredOrderInput(),
+                    DeclaredOrderReflective.class,
+                    routePolicies,
+                    InputLocation.BODY,
+                    InputFieldNameResolver.IDENTITY);
+            Object generatedOut = processor.processInput(
+                    declaredOrderInput(),
+                    DeclaredOrderGenerated.class,
+                    routePolicies,
+                    InputLocation.BODY,
+                    InputFieldNameResolver.IDENTITY);
+
+            assertEquals(reflectiveOut, generatedOut, "both paths share compose(), so they must agree");
+            // Agreement alone would also hold if both paths dropped the field's trailing strip, so
+            // pin the sanitized output on each path independently: a dropped strip leaves the
+            // decoded "<script" in what the application receives.
+            assertEquals(
+                    "script",
+                    ((Map<?, ?>) reflectiveOut).get("value"),
+                    "reflective path: an invocation-level strip must not consume the field's own");
+            assertEquals(
+                    "script",
+                    ((Map<?, ?>) generatedOut).get("value"),
+                    "generated path: an invocation-level strip must not consume the field's own");
         }
 
         /** Builds an intermediate whose single value only reads correctly under decode-then-strip. */
@@ -1434,6 +1537,31 @@ class GeneratedVsReflectiveEquivalenceTest {
         public String note;
 
         public TypeChainRecursiveGenerated child;
+    }
+
+    /**
+     * Self-referential reflective baseline whose chain sits on the <em>recursive link</em> instead of
+     * on the type. Per-type metadata re-offers the {@code child} field's chain at every level, so
+     * this is the field-level twin of {@link TypeChainRecursiveReflective}.
+     */
+    static final class FieldChainRecursiveReflective {
+        public String note;
+
+        @Canonicalize(TestTrim.class)
+        public FieldChainRecursiveReflective child;
+    }
+
+    /**
+     * Generated counterpart of {@link FieldChainRecursiveReflective}, paired with the hand-written
+     * {@code GeneratedVsReflectiveEquivalenceTest_FieldChainRecursiveGenerated_InputProcessor}
+     * fixture whose {@code child} arm carries the chain as its per-field constant and dispatches back
+     * at its own target type.
+     */
+    static final class FieldChainRecursiveGenerated {
+        public String note;
+
+        @Canonicalize(TestTrim.class)
+        public FieldChainRecursiveGenerated child;
     }
 
     /**

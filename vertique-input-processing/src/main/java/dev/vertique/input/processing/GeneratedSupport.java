@@ -7,6 +7,7 @@ import dev.vertique.core.sanitization.Canonicalizer;
 import dev.vertique.core.sanitization.InputLocation;
 import dev.vertique.core.sanitization.InputValueContext;
 import dev.vertique.core.sanitization.Sanitizer;
+import jakarta.annotation.Nullable;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -82,10 +83,10 @@ public final class GeneratedSupport {
             return value;
         }
 
-        List<Class<? extends Canonicalizer>> canonChain =
-                effectiveCanonChain(ctx, objectCanon, objectSkipCanon, fieldCanon, fieldSkipCanon);
-        List<Class<? extends Sanitizer>> sanitChain =
-                effectiveSanitChain(ctx, objectSanit, objectSkipSanit, fieldSanit, fieldSkipSanit);
+        List<Class<? extends Canonicalizer>> canonChain = effectiveCanonChain(
+                ctx, ownerType, logicalName, objectCanon, objectSkipCanon, fieldCanon, fieldSkipCanon);
+        List<Class<? extends Sanitizer>> sanitChain = effectiveSanitChain(
+                ctx, ownerType, logicalName, objectSanit, objectSkipSanit, fieldSanit, fieldSkipSanit);
 
         InputValueContext valueCtx = new InputValueContext(location, fieldPath, logicalName, ownerType);
         return resolver.apply(s, canonChain, sanitChain, valueCtx);
@@ -136,10 +137,13 @@ public final class GeneratedSupport {
             return value;
         }
 
+        // The collection-of-strings arm is a leaf: the emitter never routes a descend through it, so
+        // its (ownerType, field) site can never already be on the descent path and there is nothing
+        // for a field-site key to recognize. Passing no name keeps this helper's frozen signature.
         List<Class<? extends Canonicalizer>> canonChain =
-                effectiveCanonChain(ctx, objectCanon, objectSkipCanon, fieldCanon, fieldSkipCanon);
+                effectiveCanonChain(ctx, ownerType, null, objectCanon, objectSkipCanon, fieldCanon, fieldSkipCanon);
         List<Class<? extends Sanitizer>> sanitChain =
-                effectiveSanitChain(ctx, objectSanit, objectSkipSanit, fieldSanit, fieldSkipSanit);
+                effectiveSanitChain(ctx, ownerType, null, objectSanit, objectSkipSanit, fieldSanit, fieldSkipSanit);
 
         List<Object> result = new ArrayList<>(list.size());
         int index = 0;
@@ -302,18 +306,26 @@ public final class GeneratedSupport {
             return null;
         }
         if (value instanceof String s) {
-            List<Class<? extends Canonicalizer>> canonChain =
-                    effectiveCanonChain(ctx, objectCanon, objectSkipCanon, fieldCanon, fieldSkipCanon);
-            List<Class<? extends Sanitizer>> sanitChain =
-                    effectiveSanitChain(ctx, objectSanit, objectSkipSanit, fieldSanit, fieldSkipSanit);
+            // The object-level chains belong to the ENCLOSING DTO, so parentOwnerType is their
+            // provenance key even on an annotated OTHER-kind field, whose nestedMapOwnerType is the
+            // field's declared type. The field-level chains are declared on that same DTO, so their
+            // site is parentOwnerType paired with logicalName.
+            List<Class<? extends Canonicalizer>> canonChain = effectiveCanonChain(
+                    ctx, parentOwnerType, logicalName, objectCanon, objectSkipCanon, fieldCanon, fieldSkipCanon);
+            List<Class<? extends Sanitizer>> sanitChain = effectiveSanitChain(
+                    ctx, parentOwnerType, logicalName, objectSanit, objectSkipSanit, fieldSanit, fieldSkipSanit);
             // Strings use the enclosing DTO as ownerType — matches reflective processStringValue.
             InputValueContext valueCtx = new InputValueContext(location, fieldPath, logicalName, parentOwnerType);
             return resolver.apply(s, canonChain, sanitChain, valueCtx);
         }
         if (value instanceof java.util.Map<?, ?>) {
             // Nested map: descend the ctx then walk reflectively. ownerType becomes the declared
-            // field type, mirroring processNestedMap → dispatchNested(..., fieldMeta.fieldType()).
+            // field type, mirroring processNestedMap → dispatchNested(..., fieldMeta.fieldType());
+            // the descend is still keyed on the enclosing DTO and this field, which is where OBJ_*
+            // and the field chains were declared.
             InputTraversalContext childCtx = ctx.descend(
+                    parentOwnerType,
+                    logicalName,
                     objectCanon,
                     objectSanit,
                     objectSkipCanon,
@@ -330,6 +342,8 @@ public final class GeneratedSupport {
             // walkUnknown(list, childCtx, ..., ownerType=parent) and recurses each element with
             // the same parent ownerType.
             InputTraversalContext childCtx = ctx.descend(
+                    parentOwnerType,
+                    logicalName,
                     objectCanon,
                     objectSanit,
                     objectSkipCanon,
@@ -345,8 +359,29 @@ public final class GeneratedSupport {
 
     // --- Chain composition (mirrors DefaultInputObjectProcessor.build*Chain) ---
 
+    /**
+     * Composes the effective canonicalizer chain for one value of {@code ownerType}.
+     *
+     * <p>{@code ownerType} and {@code fieldName} are the provenance keys for the two declaration
+     * sites being offered: {@code ownerType} alone for {@code objectCanon} — the DTO whose
+     * {@code @Canonicalize} produced it, which for every generated arm is the processor's own target
+     * type — and the pair for {@code fieldCanon}, the property on that DTO. See
+     * {@link InputTraversalContext#compose} for what they govern.
+     *
+     * @param ctx             the accumulated traversal context
+     * @param ownerType       the type declaring {@code objectCanon} and owning {@code fieldName}
+     * @param fieldName       the property declaring {@code fieldCanon}, or {@code null} when the
+     *                        caller has no name to key on
+     * @param objectCanon     object-level canonicalizer chain on the owner type
+     * @param objectSkipCanon whether the owner type declares {@code @SkipCanonicalization}
+     * @param fieldCanon      field-level canonicalizer chain
+     * @param fieldSkipCanon  whether the field declares {@code @SkipCanonicalization}
+     * @return the effective ordered chain, or an empty list when canonicalization is skipped
+     */
     private static List<Class<? extends Canonicalizer>> effectiveCanonChain(
             InputTraversalContext ctx,
+            Class<?> ownerType,
+            @Nullable String fieldName,
             List<Class<? extends Canonicalizer>> objectCanon,
             boolean objectSkipCanon,
             List<Class<? extends Canonicalizer>> fieldCanon,
@@ -358,11 +393,26 @@ public final class GeneratedSupport {
         if (objectSkipCanon && fieldCanon.isEmpty()) {
             return List.of();
         }
-        return InputTraversalContext.compose(ctx.inheritedCanonicalizerChain(), objectCanon, fieldCanon);
+        return ctx.compose(ctx.inheritedCanonicalizerChain(), ownerType, fieldName, objectCanon, fieldCanon);
     }
 
+    /**
+     * Sanitization twin of {@link #effectiveCanonChain}.
+     *
+     * @param ctx             the accumulated traversal context
+     * @param ownerType       the type declaring {@code objectSanit} and owning {@code fieldName}
+     * @param fieldName       the property declaring {@code fieldSanit}, or {@code null} when the
+     *                        caller has no name to key on
+     * @param objectSanit     object-level sanitizer chain on the owner type
+     * @param objectSkipSanit whether the owner type declares {@code @SkipSanitization}
+     * @param fieldSanit      field-level sanitizer chain
+     * @param fieldSkipSanit  whether the field declares {@code @SkipSanitization}
+     * @return the effective ordered chain, or an empty list when sanitization is skipped
+     */
     private static List<Class<? extends Sanitizer>> effectiveSanitChain(
             InputTraversalContext ctx,
+            Class<?> ownerType,
+            @Nullable String fieldName,
             List<Class<? extends Sanitizer>> objectSanit,
             boolean objectSkipSanit,
             List<Class<? extends Sanitizer>> fieldSanit,
@@ -374,6 +424,6 @@ public final class GeneratedSupport {
         if (objectSkipSanit && fieldSanit.isEmpty()) {
             return List.of();
         }
-        return InputTraversalContext.compose(ctx.inheritedSanitizerChain(), objectSanit, fieldSanit);
+        return ctx.compose(ctx.inheritedSanitizerChain(), ownerType, fieldName, objectSanit, fieldSanit);
     }
 }

@@ -539,10 +539,17 @@ public final class InputProcessorEmitter {
                 // GeneratedInputProcessorDispatcher.dispatchNested takes a raw Class<?> anyway.
                 TypeName nestedType = rawTypeName(field.nestedTypeMirror(), originClass);
                 arm.beginControlFlow("case $S ->", fieldName);
+                // The descend is keyed on the two declaration sites it folds in: the ENCLOSING DTO
+                // (which declared OBJ_CANON / OBJ_SANIT) and that DTO paired with this field name
+                // (which declared the per-field chains). A self-referential type therefore
+                // contributes each of its chains once per descent path instead of once per level of
+                // the intermediate — the field-level key is what bounds `@Sanitize(X) Node child`.
                 arm.addStatement(
-                        "$T nestedCtx = rootCtx.descend(OBJ_CANON, OBJ_SANIT, OBJ_SKIP_CANON, OBJ_SKIP_SANIT, "
-                                + "$L, $L, $L, $L)",
+                        "$T nestedCtx = rootCtx.descend($T.class, $S, OBJ_CANON, OBJ_SANIT, OBJ_SKIP_CANON, "
+                                + "OBJ_SKIP_SANIT, $L, $L, $L, $L)",
                         INPUT_TRAVERSAL_CONTEXT,
+                        originClass,
+                        fieldName,
                         prefix + "_CANON",
                         prefix + "_SANIT",
                         field.skipCanon(),
@@ -560,10 +567,14 @@ public final class InputProcessorEmitter {
                 // Optional<String>.class).
                 TypeName elementType = rawTypeName(field.nestedTypeMirror(), originClass);
                 arm.beginControlFlow("case $S ->", fieldName);
+                // Keyed on the enclosing DTO and this field name, for the same reason as the
+                // NESTED_DTO arm above.
                 arm.addStatement(
-                        "$T innerCtx = rootCtx.descend(OBJ_CANON, OBJ_SANIT, OBJ_SKIP_CANON, OBJ_SKIP_SANIT, "
-                                + "$L, $L, $L, $L)",
+                        "$T innerCtx = rootCtx.descend($T.class, $S, OBJ_CANON, OBJ_SANIT, OBJ_SKIP_CANON, "
+                                + "OBJ_SKIP_SANIT, $L, $L, $L, $L)",
                         INPUT_TRAVERSAL_CONTEXT,
+                        originClass,
+                        fieldName,
                         prefix + "_CANON",
                         prefix + "_SANIT",
                         field.skipCanon(),

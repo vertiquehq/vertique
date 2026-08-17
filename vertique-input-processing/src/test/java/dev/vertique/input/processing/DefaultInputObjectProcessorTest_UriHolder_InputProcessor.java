@@ -81,6 +81,8 @@ public final class DefaultInputObjectProcessorTest_UriHolder_InputProcessor
             switch (rootCtx.logicalFieldName(UriHolder.class, k)) {
                 case "homepage" -> {
                     InputTraversalContext nestedCtx = rootCtx.descend(
+                            UriHolder.class,
+                            "homepage",
                             OBJ_CANON,
                             OBJ_SANIT,
                             OBJ_SKIP_CANON,

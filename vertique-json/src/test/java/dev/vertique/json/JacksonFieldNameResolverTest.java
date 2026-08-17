@@ -113,10 +113,19 @@ class JacksonFieldNameResolverTest {
         public DuplicateAliasDto nested;
     }
 
-    /** DTO reaching {@link DuplicateAliasDto} through a collection and a map value. */
+    /** DTO reaching {@link DuplicateAliasDto} through a collection, alongside a map-valued field. */
     public static class ContainerHolderDto {
         public java.util.List<DuplicateAliasDto> many;
         public java.util.Map<String, RenamedDto> byKey;
+    }
+
+    /**
+     * DTO reaching {@link DuplicateAliasDto} only as a map key and a map value. The engine treats a
+     * map field as schema-free and never projects either type, so neither may be warmed.
+     */
+    public static class MapOnlyHolderDto {
+        public java.util.Map<String, DuplicateAliasDto> byName;
+        public java.util.Map<DuplicateAliasDto, String> byDto;
     }
 
     /** Cyclic DTO graph — the walk must terminate rather than recurse forever. */
@@ -346,7 +355,8 @@ class JacksonFieldNameResolverTest {
                 nested.getMessage().contains(DuplicateAliasDto.class.getName()),
                 "the failure must name the nested type: " + nested.getMessage());
 
-        // Container element and value types are the same case: the engine descends into them.
+        // A collection element type is the same case as a plain field type: the engine descends into
+        // it. (A map value type is not — see shouldNotWarmMapKeyOrValueTypes.)
         ConfigurationException contained = assertThrows(
                 ConfigurationException.class,
                 () -> resolver.precomputeGraph(ContainerHolderDto.class),
@@ -363,6 +373,20 @@ class JacksonFieldNameResolverTest {
         assertTrue(
                 arrayed.getMessage().contains(DuplicateAliasDto.class.getName()),
                 "the failure must name the component type, not the array class: " + arrayed.getMessage());
+    }
+
+    @Test
+    @DisplayName("precomputeGraph does not warm map key or value types the engine never projects")
+    void shouldNotWarmMapKeyOrValueTypes() {
+        JacksonFieldNameResolver resolver = JacksonFieldNameResolver.forMapper(vanillaMapper());
+
+        // A map field carries no statically known property set, so the engine keys its fragment's
+        // policies against Map itself and never resolves a projection for the key or value type.
+        // Warming one anyway turns an ambiguity the request path can never consult into a
+        // registration failure — an availability change with no behavioural payoff.
+        assertDoesNotThrow(
+                () -> resolver.precomputeGraph(MapOnlyHolderDto.class),
+                "a type reachable only as a map key or value must not be warmed");
     }
 
     @Test

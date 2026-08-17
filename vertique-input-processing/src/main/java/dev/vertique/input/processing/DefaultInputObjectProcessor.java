@@ -731,8 +731,10 @@ class DefaultInputObjectProcessor implements InputObjectProcessor {
         if (typeMeta.skipCanonicalization() && !fieldHasOwnChain) {
             return List.of();
         }
-        return InputTraversalContext.compose(
+        return ctx.compose(
                 ctx.inheritedCanonicalizerChain(),
+                typeMeta.ownerType(),
+                fieldMeta != null ? fieldMeta.fieldName() : null,
                 typeMeta.objectCanonicalizerChain(),
                 fieldMeta != null ? fieldMeta.canonicalizerChain() : List.of());
     }
@@ -761,8 +763,10 @@ class DefaultInputObjectProcessor implements InputObjectProcessor {
         if (typeMeta.skipSanitization() && !fieldHasOwnChain) {
             return List.of();
         }
-        return InputTraversalContext.compose(
+        return ctx.compose(
                 ctx.inheritedSanitizerChain(),
+                typeMeta.ownerType(),
+                fieldMeta != null ? fieldMeta.fieldName() : null,
                 typeMeta.objectSanitizerChain(),
                 fieldMeta != null ? fieldMeta.sanitizerChain() : List.of());
     }

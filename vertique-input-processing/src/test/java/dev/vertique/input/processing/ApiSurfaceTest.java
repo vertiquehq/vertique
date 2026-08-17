@@ -181,6 +181,7 @@ class ApiSurfaceTest {
                     "fromPolicies(EffectiveInputPolicies,InputFieldNameResolver)",
                     "logicalFieldName(Class,String)",
                     "descend(List,List,boolean,boolean,List,List,boolean,boolean)",
+                    "descend(Class,String,List,List,boolean,boolean,List,List,boolean,boolean)",
                     "inheritedCanonicalizerChain()",
                     "inheritedSanitizerChain()",
                     "inheritedSkipCanonicalization()",

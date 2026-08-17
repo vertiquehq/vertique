@@ -122,7 +122,7 @@ Built once by the default engine (`InputObjectProcessor.createDefault(...)`) fro
 
 ### `InputTraversalContext`
 
-Public final class (not a record) that carries traversal state across generated and reflective dispatch. Two `descend(...)` overloads preserve the metadata-shape for the reflective walker (package-private — the walker shares the package) and provide a public primitive-shape for generated callers (avoiding metadata allocation on the hot path).
+Public final class (not a record) that carries traversal state across generated and reflective dispatch. Its `descend(...)` overloads preserve the metadata-shape for the reflective walker (package-private — the walker shares the package) and provide a public primitive-shape for generated callers (avoiding metadata allocation on the hot path). Emitted code calls the **site-keyed** primitive overload, naming both declaration sites the descent folds in: the enclosing DTO — the type that declared `OBJ_CANON` / `OBJ_SANIT` — and that DTO paired with the arm's own field name, which declared the per-field constants. Those keys are how a self-referential DTO's chains are contributed once per descent path rather than once per level of the request body, whether the chain sits on the recursive type or on the recursive link itself. The unkeyed overload still exists for processors emitted before it, and does not bound that growth.
 
 ```java
 public final class InputTraversalContext {
@@ -136,8 +136,12 @@ public final class InputTraversalContext {
     InputTraversalContext descend(InputPolicyMetadata parentMeta,
                                   @Nullable FieldPolicyMetadata fieldMeta) { ... }
 
-    // Generated-caller overload — no metadata allocation
+    // Generated-caller overload — no metadata allocation. ownerType is the enclosing DTO, the
+    // declaration site of objectCanon / objectSanit; ownerType + fieldName is the declaration
+    // site of fieldCanon / fieldSanit.
     public InputTraversalContext descend(
+            Class<?> ownerType,
+            String fieldName,
             List<Class<? extends Canonicalizer>> objectCanon,
             List<Class<? extends Sanitizer>> objectSanit,
             boolean objectSkipCanon, boolean objectSkipSanit,

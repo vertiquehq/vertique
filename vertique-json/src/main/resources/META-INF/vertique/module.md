@@ -298,7 +298,8 @@ JacksonFieldNameResolver vertxProfile = JacksonFieldNameResolver.forRoute(null);
 resolver.precompute(RenamedDto.class);
 
 // Or warm the whole declared graph a boundary can descend into: the type itself, an array's or
-// container's element type, and every type its Jackson-visible properties expose, transitively.
+// collection's element type, and every type its Jackson-visible properties expose, transitively.
+// Map key and value types are not part of that graph — a map-typed field is schema-free.
 resolver.precomputeGraph(orderBodyType);
 
 resolver.logicalName(RenamedDto.class, "user_name"); // -> "userName"
@@ -314,7 +315,7 @@ resolver.logicalName(RenamedDto.class, "unknown");   // -> "unknown" (the projec
 | Unknown wire name | Returned unchanged — the projection is total and never throws for an unrecognized key |
 | Caching | One `ClassValue`-cached projection per `(mapper, type)`; entries are collected with the DTO's classloader |
 | When the projection is composed | `precompute(Class)` composes it for one type at registration; `precomputeGraph(Type)` composes it for a declared type and everything reachable from it. Every boundary calls the latter there for each body or message type it knows, so `logicalName` neither introspects nor raises anything on the request path, and a name collision fails startup instead of failing every request that touches the type |
-| What `precomputeGraph` walks | The declared type, an array component or container element/value type, a parameterized type's arguments, and then each visited type's Jackson-visible property types, transitively. A visited set terminates cyclic graphs; primitives, enums, and platform (`java.*` / `javax.*` / `jakarta.*`) types are skipped, so a `String` body or message type costs no introspection |
+| What `precomputeGraph` walks | The declared type, an array component or collection element type, a parameterized type's arguments, and then each visited type's Jackson-visible property types, transitively — exactly the links the input-processing engine descends. A visited set terminates cyclic graphs; primitives, enums, and platform (`java.*` / `javax.*` / `jakarta.*`) types are skipped, so a `String` body or message type costs no introspection. A **map's key and value types are not walked**: a map-typed field is schema-free, so neither is ever consulted as a projection owner, and warming one would let a collision the request path can never reach fail startup |
 | Identity short circuit | When the *computed* projection maps every wire name onto itself, `logicalName` returns the wire name directly and no per-field lookup happens |
 
 Nested types are covered: the engine consults the projection of the owner of every nested fragment,

@@ -831,6 +831,123 @@ class DefaultInputObjectProcessorTest {
         }
     }
 
+    // --- The same bound holds for a chain declared on the recursive link itself ---
+
+    @Nested
+    @DisplayName("a field-level chain on a recursive link contributes once per descent path")
+    class ComposedChainLengthUnderFieldLevelRecursion {
+
+        private static final int LEVELS = 6;
+
+        @Test
+        @DisplayName("a chain on the self-referential field applies once per string value at every depth")
+        void shouldContributeTheRecursiveFieldsChainOnceAlongTheDescentPath() {
+            RecordingSanitizer.INVOCATIONS.clear();
+
+            Object result = processor.processInput(
+                    fieldChainInput(),
+                    FieldChainNode.class,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY,
+                    InputFieldNameResolver.IDENTITY);
+
+            // One string value per level. `child` is a single declaration site that per-type metadata
+            // re-offers at every level, so composing it afresh each time makes level d's value carry
+            // it d-1 times — 0+1+…+(LEVELS-1) applications in total, a count the request's nesting
+            // depth alone controls. Keyed by declaration site it is contributed once, on the descent
+            // from level 1, and every level below sees exactly that one application.
+            assertEquals(
+                    LEVELS - 1L,
+                    RecordingSanitizer.countFor(CountingFieldSanitizer.class),
+                    "the recursive field's declared chain must apply once per string value from the "
+                            + "level below the field down; re-offering it at each level would grow the "
+                            + "count with the intermediate's depth");
+            assertNotNull(deepestNode(result), "every level of the intermediate must still be traversed");
+        }
+
+        /** Builds a {@value #LEVELS}-level self-referential intermediate with one string per level. */
+        private Map<String, Object> fieldChainInput() {
+            Map<String, Object> deepest = new LinkedHashMap<>();
+            deepest.put("name", "name" + LEVELS);
+            Map<String, Object> current = deepest;
+            for (int level = LEVELS - 1; level >= 1; level--) {
+                Map<String, Object> node = new LinkedHashMap<>();
+                node.put("name", "name" + level);
+                node.put("child", current);
+                current = node;
+            }
+            return current;
+        }
+
+        /** Returns the deepest node reachable through the {@code child} key. */
+        private Map<?, ?> deepestNode(Object result) {
+            Map<?, ?> node = (Map<?, ?>) result;
+            while (node.get("child") != null) {
+                node = (Map<?, ?>) node.get("child");
+            }
+            return node;
+        }
+    }
+
+    // --- The same bound holds when the recursion runs through two types ---
+
+    @Nested
+    @DisplayName("mutually recursive types each contribute their type-level chain once per path")
+    class ComposedChainLengthUnderMutualRecursion {
+
+        private static final int LEVELS = 6;
+
+        @Test
+        @DisplayName("two alternating types apply each type-level chain once per value at every depth")
+        void shouldContributeEachTypesChainOnceAlongTheDescentPath() {
+            RecordingSanitizer.INVOCATIONS.clear();
+
+            Object result = processor.processInput(
+                    alternatingInput(),
+                    PingNode.class,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY,
+                    InputFieldNameResolver.IDENTITY);
+
+            // One string per level. Ping's chain is inherited from level 1 down, Pong's from level 2
+            // down, and neither is re-offered on re-entry, so each applies exactly once per value.
+            assertEquals(
+                    LEVELS,
+                    RecordingSanitizer.countFor(CountingTypeSanitizer.class),
+                    "PingNode's chain must apply once per string value at every depth; re-offering it "
+                            + "each time the recursion re-enters PingNode would grow with the input");
+            assertEquals(
+                    LEVELS - 1L,
+                    RecordingSanitizer.countFor(CountingFieldSanitizer.class),
+                    "PongNode's chain must apply once per string value from the level it is first "
+                            + "reached — the root is above it, so it sees one value fewer");
+            assertNotNull(deepestNode(result), "every level of the intermediate must still be traversed");
+        }
+
+        /** Builds a {@value #LEVELS}-level intermediate alternating {@code PingNode}/{@code PongNode}. */
+        private Map<String, Object> alternatingInput() {
+            Map<String, Object> deepest = new LinkedHashMap<>();
+            deepest.put("name", "name" + LEVELS);
+            Map<String, Object> current = deepest;
+            for (int level = LEVELS - 1; level >= 1; level--) {
+                Map<String, Object> node = new LinkedHashMap<>();
+                node.put("name", "name" + level);
+                node.put("child", current);
+                current = node;
+            }
+            return current;
+        }
+
+        /** Returns the deepest node reachable through the {@code child} key. */
+        private Map<?, ?> deepestNode(Object result) {
+            Map<?, ?> node = (Map<?, ?>) result;
+            while (node.get("child") != null) {
+                node = (Map<?, ?>) node.get("child");
+            }
+            return node;
+        }
+    }
+
     // --- A field's own declared chain keeps its declared order ---
 
     @Nested
@@ -881,6 +998,68 @@ class DefaultInputObjectProcessorTest {
                     processedNested.get("value"),
                     "the nested owner's field declares the same decode-then-strip order, which its own "
                             + "type-level chain must not reorder");
+        }
+    }
+
+    // --- A route-level chain must not consume a declared chain's own entries ---
+
+    @Nested
+    @DisplayName("an invocation-level chain never suppresses an entry a declared chain repeats")
+    class RoutePolicyDeclaredChainOrder {
+
+        /**
+         * The invocation-level shape codegen emits for a route annotated
+         * {@code @Sanitize(StripHtml.class)}. Every {@code DeclaredChainOrder} case runs with
+         * {@link EffectiveInputPolicies#NONE}, so this is the arm that sees what a real route sees.
+         */
+        private final EffectiveInputPolicies routePolicies =
+                new EffectiveInputPolicies(List.of(), List.of(TestStripHtmlSanitizer.class));
+
+        @Test
+        @DisplayName("a field's trailing strip still runs when the route declares the same sanitizer")
+        void shouldKeepTheFieldsTrailingStripUnderARouteLevelStrip() {
+            Map<String, Object> input = new LinkedHashMap<>();
+            input.put("value", "&lt;script");
+
+            Object result = processor.processInput(
+                    input,
+                    DeclaredOrderOwner.class,
+                    routePolicies,
+                    InputLocation.BODY,
+                    InputFieldNameResolver.IDENTITY);
+
+            // Declared intent is [StripHtml(route), StripHtml(type), DecodeEntities, StripHtml(field)].
+            // Dropping the field's trailing strip because the route already named that class leaves
+            // the decoded "<script" in the value the application receives — the strip that was meant
+            // to remove it ran while the markup was still entity-encoded.
+            assertEquals(
+                    "script",
+                    ((Map<?, ?>) result).get("value"),
+                    "the field's declared decode-then-strip must survive an invocation-level chain "
+                            + "that names the same sanitizer class");
+        }
+
+        @Test
+        @DisplayName("the same holds for a nested owner reached under the route-level chain")
+        void shouldKeepTheFieldsTrailingStripOnANestedOwnerUnderARouteLevelStrip() {
+            Map<String, Object> nested = new LinkedHashMap<>();
+            nested.put("value", "&lt;script");
+            Map<String, Object> input = new LinkedHashMap<>();
+            input.put("nested", nested);
+
+            Object result = processor.processInput(
+                    input,
+                    DeclaredOrderHolder.class,
+                    routePolicies,
+                    InputLocation.BODY,
+                    InputFieldNameResolver.IDENTITY);
+
+            Map<?, ?> processedNested = (Map<?, ?>) ((Map<?, ?>) result).get("nested");
+            assertEquals(
+                    "script",
+                    processedNested.get("value"),
+                    "a chain inherited from an enclosing level must not consume entries of a chain "
+                            + "declared below it either");
         }
     }
 
@@ -1743,6 +1922,40 @@ class DefaultInputObjectProcessorTest {
         String name;
 
         TypeChainNode child;
+    }
+
+    /**
+     * Directly self-referential DTO whose chain is declared on the <em>recursive link itself</em>
+     * rather than on the type. A type-level chain on a self-referential type is one declaration site
+     * re-offered per level; so is a chain on the field that closes the cycle, which is why both are
+     * bounded by the same declaration-site key.
+     */
+    static class FieldChainNode {
+        String name;
+
+        @Sanitize(CountingFieldSanitizer.class)
+        FieldChainNode child;
+    }
+
+    /**
+     * First half of a mutually recursive pair, each half carrying its own <em>type-level</em> chain.
+     * Neither type is its own field's type, so the recursion re-enters each of them only through the
+     * other — the shape that proves the object-chain bound is keyed on the declaring type rather than
+     * on "the type I just came from".
+     */
+    @Sanitize(CountingTypeSanitizer.class)
+    static class PingNode {
+        String name;
+
+        PongNode child;
+    }
+
+    /** Second half of the mutually recursive pair; declares a distinct type-level chain. */
+    @Sanitize(CountingFieldSanitizer.class)
+    static class PongNode {
+        String name;
+
+        PingNode child;
     }
 
     /**

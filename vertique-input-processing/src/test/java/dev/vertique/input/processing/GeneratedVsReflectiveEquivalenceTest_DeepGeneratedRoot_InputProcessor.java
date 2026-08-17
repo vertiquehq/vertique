@@ -73,7 +73,16 @@ public final class GeneratedVsReflectiveEquivalenceTest_DeepGeneratedRoot_InputP
             switch (rootCtx.logicalFieldName(DeepGeneratedRoot.class, k)) {
                 case "child" -> {
                     InputTraversalContext nestedCtx = rootCtx.descend(
-                            OBJ_CANON, OBJ_SANIT, OBJ_SKIP_CANON, OBJ_SKIP_SANIT, null, null, false, false);
+                            DeepGeneratedRoot.class,
+                            "child",
+                            OBJ_CANON,
+                            OBJ_SANIT,
+                            OBJ_SKIP_CANON,
+                            OBJ_SKIP_SANIT,
+                            null,
+                            null,
+                            false,
+                            false);
                     out.put(
                             k,
                             dispatcher.dispatchNested(

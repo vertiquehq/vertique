@@ -5,14 +5,12 @@ package dev.vertique.input.processing;
 
 import static dev.vertique.input.processing.GeneratedSupport.applyString;
 import static dev.vertique.input.processing.GeneratedSupport.childPath;
-import static dev.vertique.input.processing.GeneratedSupport.dispatchObjectCollection;
 
 import dev.vertique.core.sanitization.Canonicalizer;
 import dev.vertique.core.sanitization.InputFieldNameResolver;
 import dev.vertique.core.sanitization.InputLocation;
 import dev.vertique.core.sanitization.Sanitizer;
-import dev.vertique.input.processing.GeneratedVsReflectiveEquivalenceTest.PlainInner;
-import dev.vertique.input.processing.GeneratedVsReflectiveEquivalenceTest.SkipOverrideGenerated;
+import dev.vertique.input.processing.GeneratedVsReflectiveEquivalenceTest.FieldChainRecursiveGenerated;
 import dev.vertique.input.processing.GeneratedVsReflectiveEquivalenceTest.TestTrim;
 import jakarta.annotation.Nullable;
 import java.util.LinkedHashMap;
@@ -20,39 +18,44 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Hand-written companion {@link GeneratedInputProcessor} for {@link SkipOverrideGenerated},
- * mirroring the shape {@code vertique-codegen-sanitization} emits for an owner type carrying
- * {@code @SkipCanonicalization} whose fields each declare their own chain: the object-level skip
- * constant is {@code true} and every arm hands its own field chain to {@code applyString} or to
- * {@code descend}.
+ * Hand-written companion {@link GeneratedInputProcessor} for {@link FieldChainRecursiveGenerated},
+ * mirroring the shape {@code vertique-codegen-sanitization} emits for a directly self-referential
+ * DTO whose chain is declared on the <em>recursive link</em>: the object-level constant is empty,
+ * the {@code child} arm's per-field constant is non-empty, and that arm dispatches back at its own
+ * target type — so the field-level chain is offered to {@code descend} once per level of the
+ * intermediate.
+ *
+ * <p>The {@code child} arm passes {@code "child"} as {@code descend}'s field-name key, exactly as the
+ * emitter writes the arm's own {@code case} literal into that argument. That key is what bounds the
+ * composed chain here: without it, {@code CHILD_CANON} would be appended afresh at every level and
+ * the count of applications per string value would track the request's nesting depth.
  *
  * <p>As the emitter does, the switch selects on the projected logical name
- * ({@code rootCtx.logicalFieldName(SkipOverrideGenerated.class, k)}) with arms keyed on Java
+ * ({@code rootCtx.logicalFieldName(FieldChainRecursiveGenerated.class, k)}) with arms keyed on Java
  * property names, while the emitted map keeps the wire key {@code k}.
  *
  * <p>Naming follows the dispatcher's {@code generatedClassName(...)} algorithm.
  */
-public final class GeneratedVsReflectiveEquivalenceTest_SkipOverrideGenerated_InputProcessor
-        implements GeneratedInputProcessor<SkipOverrideGenerated> {
+public final class GeneratedVsReflectiveEquivalenceTest_FieldChainRecursiveGenerated_InputProcessor
+        implements GeneratedInputProcessor<FieldChainRecursiveGenerated> {
 
     private static final List<Class<? extends Canonicalizer>> OBJ_CANON = List.of();
     private static final List<Class<? extends Sanitizer>> OBJ_SANIT = List.of();
-    private static final boolean OBJ_SKIP_CANON = true; // type-level @SkipCanonicalization
+    private static final boolean OBJ_SKIP_CANON = false;
     private static final boolean OBJ_SKIP_SANIT = false;
 
-    private static final List<Class<? extends Canonicalizer>> DIRECT_CANON = List.of(TestTrim.class);
-    private static final List<Class<? extends Sanitizer>> DIRECT_SANIT = List.of();
-    private static final List<Class<? extends Canonicalizer>> NESTED_CANON = List.of(TestTrim.class);
-    private static final List<Class<? extends Sanitizer>> NESTED_SANIT = List.of();
-    private static final List<Class<? extends Canonicalizer>> MANY_CANON = List.of(TestTrim.class);
-    private static final List<Class<? extends Sanitizer>> MANY_SANIT = List.of();
+    private static final List<Class<? extends Canonicalizer>> NOTE_CANON = List.of();
+    private static final List<Class<? extends Sanitizer>> NOTE_SANIT = List.of();
+
+    private static final List<Class<? extends Canonicalizer>> CHILD_CANON = List.of(TestTrim.class);
+    private static final List<Class<? extends Sanitizer>> CHILD_SANIT = List.of();
 
     /** Public no-arg constructor for {@code Class.forName}-based instantiation by the dispatcher. */
-    public GeneratedVsReflectiveEquivalenceTest_SkipOverrideGenerated_InputProcessor() {}
+    public GeneratedVsReflectiveEquivalenceTest_FieldChainRecursiveGenerated_InputProcessor() {}
 
     @Override
-    public Class<SkipOverrideGenerated> targetType() {
-        return SkipOverrideGenerated.class;
+    public Class<FieldChainRecursiveGenerated> targetType() {
+        return FieldChainRecursiveGenerated.class;
     }
 
     @Override
@@ -80,8 +83,8 @@ public final class GeneratedVsReflectiveEquivalenceTest_SkipOverrideGenerated_In
                 continue;
             }
             String childPath = childPath(parentPath, k);
-            switch (rootCtx.logicalFieldName(SkipOverrideGenerated.class, k)) {
-                case "direct" ->
+            switch (rootCtx.logicalFieldName(FieldChainRecursiveGenerated.class, k)) {
+                case "note" ->
                     out.put(
                             k,
                             applyString(
@@ -91,63 +94,38 @@ public final class GeneratedVsReflectiveEquivalenceTest_SkipOverrideGenerated_In
                                     OBJ_SANIT,
                                     OBJ_SKIP_CANON,
                                     OBJ_SKIP_SANIT,
-                                    DIRECT_CANON,
-                                    DIRECT_SANIT,
+                                    NOTE_CANON,
+                                    NOTE_SANIT,
                                     false,
                                     false,
                                     resolver,
                                     location,
                                     childPath,
-                                    "direct",
-                                    SkipOverrideGenerated.class));
-                case "nested" -> {
+                                    "note",
+                                    FieldChainRecursiveGenerated.class));
+                case "child" -> {
                     InputTraversalContext nestedCtx = rootCtx.descend(
-                            SkipOverrideGenerated.class,
-                            "nested",
+                            FieldChainRecursiveGenerated.class,
+                            "child",
                             OBJ_CANON,
                             OBJ_SANIT,
                             OBJ_SKIP_CANON,
                             OBJ_SKIP_SANIT,
-                            NESTED_CANON,
-                            NESTED_SANIT,
+                            CHILD_CANON,
+                            CHILD_SANIT,
                             false,
                             false);
                     out.put(
                             k,
                             dispatcher.dispatchNested(
                                     v,
-                                    PlainInner.class,
+                                    FieldChainRecursiveGenerated.class,
                                     policies,
                                     location,
                                     resolver,
                                     nestedCtx,
                                     childPath,
-                                    PlainInner.class));
-                }
-                case "many" -> {
-                    InputTraversalContext innerCtx = rootCtx.descend(
-                            SkipOverrideGenerated.class,
-                            "many",
-                            OBJ_CANON,
-                            OBJ_SANIT,
-                            OBJ_SKIP_CANON,
-                            OBJ_SKIP_SANIT,
-                            MANY_CANON,
-                            MANY_SANIT,
-                            false,
-                            false);
-                    out.put(
-                            k,
-                            dispatchObjectCollection(
-                                    v,
-                                    PlainInner.class,
-                                    policies,
-                                    location,
-                                    resolver,
-                                    dispatcher,
-                                    innerCtx,
-                                    childPath,
-                                    PlainInner.class));
+                                    FieldChainRecursiveGenerated.class));
                 }
                 default ->
                     out.put(
@@ -167,8 +145,8 @@ public final class GeneratedVsReflectiveEquivalenceTest_SkipOverrideGenerated_In
                                     location,
                                     childPath,
                                     k,
-                                    SkipOverrideGenerated.class,
-                                    SkipOverrideGenerated.class,
+                                    FieldChainRecursiveGenerated.class,
+                                    FieldChainRecursiveGenerated.class,
                                     dispatcher));
             }
         }

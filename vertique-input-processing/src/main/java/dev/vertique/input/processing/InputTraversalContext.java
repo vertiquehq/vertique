@@ -9,6 +9,7 @@ import dev.vertique.core.sanitization.Sanitizer;
 import dev.vertique.input.processing.InputPolicyMetadata.FieldPolicyMetadata;
 import jakarta.annotation.Nullable;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
@@ -19,17 +20,20 @@ import java.util.Set;
  * <p>Skip flags are sticky: once set by an <em>ancestor</em>, they suppress all descendants even if
  * a descendant type or field declares its own canonicalizer/sanitizer chain. An <em>object-level</em>
  * skip is narrower — it yields to the enclosing field's own declared chain, on every field kind.
- * Inherited chains accumulate as recursion descends: each level appends its declared chains verbatim
- * minus the classes an ancestor already contributed, which mirrors the run-time semantics of
- * {@link DefaultInputObjectProcessor} and bounds the chain by the declared type graph rather than by
- * the input's depth (see {@link #compose}).
+ * Inherited chains accumulate as recursion descends: each level appends its declared chains
+ * verbatim, with each <em>declaration site</em> contributing at most once per descent path.
+ * That mirrors the run-time semantics of {@link DefaultInputObjectProcessor} and bounds the chain by
+ * the declared type graph rather than by the input's depth (see {@link #compose}).
  *
  * <p>This is a behavior-bearing public API used by both the reflective walker (via
  * {@link #descend(InputPolicyMetadata, FieldPolicyMetadata)}) and codegen-emitted
  * {@link GeneratedInputProcessor} implementations (via the primitive
- * {@link #descend(List, List, boolean, boolean, List, List, boolean, boolean) descend} overload
- * that takes raw chain lists and skip flags). The two overloads share a common implementation;
- * the metadata-shape overload is a thin adapter over the primitive one.
+ * {@link #descend(Class, String, List, List, boolean, boolean, List, List, boolean, boolean) descend}
+ * overload that takes the declaring type and field name plus raw chain lists and skip flags). Every
+ * overload shares one implementation: the metadata-shape overload is a thin adapter that reads its
+ * provenance keys from {@link InputPolicyMetadata#ownerType()} and
+ * {@link FieldPolicyMetadata#fieldName()}, and the site-less primitive overload is the same call
+ * with {@code null} keys.
  *
  * <p>The context also carries the traversal's {@link InputFieldNameResolver}. That is what lets a
  * generated processor consult the wire → Java projection through
@@ -48,18 +52,40 @@ public final class InputTraversalContext {
     private final boolean inheritedSkipSanitization;
     private final InputFieldNameResolver nameResolver;
 
+    /**
+     * The declaration sites whose chains this descent path has already folded into the inherited
+     * chains. Small (bounded by the declared type graph) and per-traversal, so the {@link Class}
+     * references it holds die with the request rather than being retained in a long-lived cache.
+     */
+    private final Set<DeclarationSite> contributedSites;
+
     private InputTraversalContext(
             List<Class<? extends Canonicalizer>> inheritedCanonicalizerChain,
             List<Class<? extends Sanitizer>> inheritedSanitizerChain,
             boolean inheritedSkipCanonicalization,
             boolean inheritedSkipSanitization,
-            InputFieldNameResolver nameResolver) {
+            InputFieldNameResolver nameResolver,
+            Set<DeclarationSite> contributedSites) {
         this.inheritedCanonicalizerChain = inheritedCanonicalizerChain;
         this.inheritedSanitizerChain = inheritedSanitizerChain;
         this.inheritedSkipCanonicalization = inheritedSkipCanonicalization;
         this.inheritedSkipSanitization = inheritedSkipSanitization;
         this.nameResolver = nameResolver;
+        this.contributedSites = contributedSites;
     }
+
+    /**
+     * One place in the application's source where a {@code @Canonicalize} / {@code @Sanitize} chain
+     * is declared: a type for an object-level chain, and a type plus a property name for a
+     * field-level one. Two sites are the same site only when both components match, so a field's
+     * chain and its owner type's chain are always distinct sites, and the same property name on two
+     * different DTOs is two sites.
+     *
+     * @param ownerType the type carrying the declaration
+     * @param fieldName the declaring property's Java name, or {@code null} for an object-level chain
+     */
+    private record DeclarationSite(
+            Class<?> ownerType, @Nullable String fieldName) {}
 
     /**
      * Creates a context seeded from the invocation-level policies and the traversal's wire-name
@@ -78,7 +104,8 @@ public final class InputTraversalContext {
      */
     public static InputTraversalContext fromPolicies(
             EffectiveInputPolicies policies, InputFieldNameResolver nameResolver) {
-        return new InputTraversalContext(policies.canonicalizers(), policies.sanitizers(), false, false, nameResolver);
+        return new InputTraversalContext(
+                policies.canonicalizers(), policies.sanitizers(), false, false, nameResolver, Set.of());
     }
 
     /**
@@ -125,6 +152,11 @@ public final class InputTraversalContext {
      * child context, while a parent object-level skip does so only when {@code fieldMeta} declares
      * no chain of that kind.
      *
+     * <p>Both provenance keys come out of the carriers: {@link InputPolicyMetadata#ownerType()}
+     * names the object-level chains' declaration site, and it paired with
+     * {@link FieldPolicyMetadata#fieldName()} names the field-level one, so no separate site
+     * argument is needed here.
+     *
      * @param parentMeta annotation metadata for the current parent type; must not be {@code null}
      * @param fieldMeta  annotation metadata for the field that holds the nested object,
      *                   or {@code null} when descending from a list element
@@ -132,6 +164,8 @@ public final class InputTraversalContext {
      */
     InputTraversalContext descend(InputPolicyMetadata parentMeta, @Nullable FieldPolicyMetadata fieldMeta) {
         return descend(
+                parentMeta.ownerType(),
+                fieldMeta != null ? fieldMeta.fieldName() : null,
                 parentMeta.objectCanonicalizerChain(),
                 parentMeta.objectSanitizerChain(),
                 parentMeta.skipCanonicalization(),
@@ -143,19 +177,16 @@ public final class InputTraversalContext {
     }
 
     /**
-     * Returns a child context using raw chain lists and skip flags. This overload is intended for
-     * codegen-emitted callers that hold object-level and field-level chains as static class
-     * constants and never construct {@link InputPolicyMetadata}/{@link FieldPolicyMetadata}
-     * carrier records.
+     * Returns a child context using raw chain lists and skip flags, without naming the declaration
+     * sites they come from. Semantics are the
+     * {@link #descend(Class, String, List, List, boolean, boolean, List, List, boolean, boolean)
+     * site-keyed} overload's with a {@code null} owner type and field name.
      *
-     * <p>Skip-flag precedence is identical to the metadata overload, and to
-     * {@code DefaultInputObjectProcessor}'s per-value chain composition: an inherited skip from any
-     * ancestor wins outright, a field-level skip wins next, and an object-level skip applies only
-     * when the enclosing field declares no chain of its own. A field that <em>does</em> declare its
-     * own chain therefore overrides its owner type's {@code @SkipCanonicalization} /
-     * {@code @SkipSanitization} — on a nested-object or collection field exactly as on a direct
-     * {@code String} field. A sticky skip empties the chains, never the name projection — a skipped
-     * subtree still has to resolve field names to select the right per-field metadata.
+     * <p><strong>Prefer the site-keyed overload — it is what codegen emits.</strong> With no site to
+     * key on, this overload records no provenance for the chains it folds in, so a self-referential
+     * DTO re-offering its own type-level or field-level chain contributes that chain once per level
+     * of the intermediate rather than once per descent path. It is retained so that processors
+     * emitted before the site-keyed overload existed keep linking.
      *
      * @param objectCanon       object-level canonicalizer chain on the parent type; must not be {@code null}
      * @param objectSanit       object-level sanitizer chain on the parent type; must not be {@code null}
@@ -177,22 +208,103 @@ public final class InputTraversalContext {
             @Nullable List<Class<? extends Sanitizer>> fieldSanit,
             boolean fieldSkipCanon,
             boolean fieldSkipSanit) {
+        return descend(
+                null,
+                null,
+                objectCanon,
+                objectSanit,
+                objectSkipCanon,
+                objectSkipSanit,
+                fieldCanon,
+                fieldSanit,
+                fieldSkipCanon,
+                fieldSkipSanit);
+    }
+
+    /**
+     * Returns a child context using raw chain lists and skip flags, keyed by the declaration sites
+     * the chains come from. This is the overload codegen-emitted processors call: they hold
+     * object-level and field-level chains as static class constants and never construct
+     * {@link InputPolicyMetadata}/{@link FieldPolicyMetadata} carrier records.
+     *
+     * <p>Skip-flag precedence is identical to the metadata overload, and to
+     * {@code DefaultInputObjectProcessor}'s per-value chain composition: an inherited skip from any
+     * ancestor wins outright, a field-level skip wins next, and an object-level skip applies only
+     * when the enclosing field declares no chain of its own. A field that <em>does</em> declare its
+     * own chain therefore overrides its owner type's {@code @SkipCanonicalization} /
+     * {@code @SkipSanitization} — on a nested-object or collection field exactly as on a direct
+     * {@code String} field. A sticky skip empties the chains, never the name projection — a skipped
+     * subtree still has to resolve field names to select the right per-field metadata.
+     *
+     * <p>{@code ownerType} and {@code fieldName} are the provenance keys described on
+     * {@link #compose}. {@code ownerType} names the declaration site of {@code objectCanon} /
+     * {@code objectSanit} — the DTO class whose {@code @Canonicalize} / {@code @Sanitize} produced
+     * them, <em>not</em> the nested type being descended into — and {@code ownerType} plus
+     * {@code fieldName} names the site of {@code fieldCanon} / {@code fieldSanit}: the property on
+     * that same DTO whose value is being descended into. A recursive DTO re-offering either chain is
+     * recognized by them, so each site contributes once per descent path.
+     *
+     * @param ownerType         the type declaring {@code objectCanon} / {@code objectSanit}, or
+     *                          {@code null} when the caller cannot name it (see the unkeyed overload)
+     * @param fieldName         the Java property name declaring {@code fieldCanon} /
+     *                          {@code fieldSanit}, or {@code null} when there is no enclosing field
+     *                          or the caller cannot name it
+     * @param objectCanon       object-level canonicalizer chain on the parent type; must not be {@code null}
+     * @param objectSanit       object-level sanitizer chain on the parent type; must not be {@code null}
+     * @param objectSkipCanon   whether the parent type declares {@code @SkipCanonicalization}
+     * @param objectSkipSanit   whether the parent type declares {@code @SkipSanitization}
+     * @param fieldCanon        field-level canonicalizer chain, or {@code null} when descending
+     *                          from a list element with no enclosing field
+     * @param fieldSanit        field-level sanitizer chain, or {@code null} (same)
+     * @param fieldSkipCanon    whether the field declares {@code @SkipCanonicalization}
+     * @param fieldSkipSanit    whether the field declares {@code @SkipSanitization}
+     * @return a new {@code InputTraversalContext} suitable for processing the child object
+     */
+    public InputTraversalContext descend(
+            @Nullable Class<?> ownerType,
+            @Nullable String fieldName,
+            List<Class<? extends Canonicalizer>> objectCanon,
+            List<Class<? extends Sanitizer>> objectSanit,
+            boolean objectSkipCanon,
+            boolean objectSkipSanit,
+            @Nullable List<Class<? extends Canonicalizer>> fieldCanon,
+            @Nullable List<Class<? extends Sanitizer>> fieldSanit,
+            boolean fieldSkipCanon,
+            boolean fieldSkipSanit) {
 
         // An object-level skip is overridden by the enclosing field's own chain, matching
         // DefaultInputObjectProcessor.buildCanonicalizerChain / buildSanitizerChain. Inherited and
-        // field-level skips are not overridable.
+        // field-level skips are not overridable. This reads the DECLARED chains, before any
+        // provenance suppression: a field that declares a chain keeps overriding its owner type's
+        // skip at every level, even at the levels where that chain is already in effect.
         boolean fieldDeclaresCanon = fieldCanon != null && !fieldCanon.isEmpty();
         boolean fieldDeclaresSanit = fieldSanit != null && !fieldSanit.isEmpty();
 
         boolean skipCanon = inheritedSkipCanonicalization || fieldSkipCanon || (objectSkipCanon && !fieldDeclaresCanon);
         boolean skipSanit = inheritedSkipSanitization || fieldSkipSanit || (objectSkipSanit && !fieldDeclaresSanit);
 
-        List<Class<? extends Canonicalizer>> canon =
-                skipCanon ? List.of() : compose(inheritedCanonicalizerChain, objectCanon, fieldCanon);
+        List<Class<? extends Canonicalizer>> canon = skipCanon
+                ? List.of()
+                : compose(inheritedCanonicalizerChain, ownerType, fieldName, objectCanon, fieldCanon);
         List<Class<? extends Sanitizer>> sanit =
-                skipSanit ? List.of() : compose(inheritedSanitizerChain, objectSanit, fieldSanit);
+                skipSanit ? List.of() : compose(inheritedSanitizerChain, ownerType, fieldName, objectSanit, fieldSanit);
 
-        return new InputTraversalContext(canon, sanit, skipCanon, skipSanit, nameResolver);
+        // Record a site only when its chain actually reached one of the child's inherited chains. A
+        // skipped kind contributed nothing — and its skip is sticky, so it can contribute nothing
+        // further down this path either. Re-recording an already-recorded site is a no-op, so the
+        // suppressed re-offer needs no special case.
+        boolean objectContributed = (!skipCanon && !objectCanon.isEmpty()) || (!skipSanit && !objectSanit.isEmpty());
+        boolean fieldContributed = (!skipCanon && fieldDeclaresCanon) || (!skipSanit && fieldDeclaresSanit);
+
+        Set<DeclarationSite> sites = contributedSites;
+        if (objectContributed) {
+            sites = withSite(sites, ownerType, null);
+        }
+        if (fieldContributed) {
+            sites = withSite(sites, ownerType, fieldName);
+        }
+
+        return new InputTraversalContext(canon, sanit, skipCanon, skipSanit, nameResolver, sites);
     }
 
     /**
@@ -232,81 +344,123 @@ public final class InputTraversalContext {
     }
 
     /**
-     * Returns the effective chain composed of {@code inherited + object + field}, where the
-     * {@code object} and {@code field} entries are appended <strong>in their declared order,
-     * repeats included</strong>, and only entries already present in {@code inherited} are dropped.
-     * The {@code inherited} reference is reused unchanged when {@code object} and {@code field}
-     * contribute nothing new, which avoids per-{@code descend} allocations on the common case where
-     * the nested DTO has no object- or field-level chain.
+     * Returns the effective chain composed of {@code inherited + object + field}, with both declared
+     * chains appended <strong>verbatim — declared order, repeats included</strong>. Nothing is
+     * filtered by processor class. The only thing ever dropped is a <em>whole</em> declared chain,
+     * and only when the site that declares it already contributed it on this descent path — the
+     * {@code object} chain when {@code ownerType} has, the {@code field} chain when
+     * {@code (ownerType, fieldName)} has. The {@code inherited} reference is reused unchanged when
+     * nothing is appended, which avoids per-{@code descend} allocations on the common case where the
+     * nested DTO declares no chain.
      *
-     * <p><strong>Why anything is dropped at all.</strong> Policy metadata is resolved per type, so a
-     * type's own chain is offered afresh at <em>every</em> level of a recursive graph. Without the
-     * inherited-side filter a self-referential DTO carrying a type-level chain would apply that
+     * <p><strong>Why declared chains are never filtered by class.</strong> A repeat <em>within</em>
+     * one {@code @Canonicalize}/{@code @Sanitize} declaration — or between an inherited level's
+     * chain and a field's — is a deliberately ordered pipeline, not an accident of inheritance.
+     * Idempotence, which both {@code Canonicalizer} and {@code Sanitizer} publish as a MUST, is not
+     * commutativity: with {@code @Sanitize(StripHtml.class)} at the route and
+     * {@code @Sanitize({DecodeEntities.class, StripHtml.class})} on a field, dropping the field's
+     * trailing {@code StripHtml} because the route already named that class yields
+     * {@code [StripHtml, DecodeEntities]} — which strips nothing (the markup is still
+     * entity-encoded), then decodes, and hands {@code &lt;script} to the application. Appending
+     * verbatim keeps {@code [StripHtml, DecodeEntities, StripHtml]}, which is what the declarations
+     * say.
+     *
+     * <p><strong>Why a declared chain is deduplicated by declaration site.</strong> Policy metadata
+     * is resolved per type, so every site on a type is offered afresh at <em>every</em> level of a
+     * recursive graph. Left unchecked, a self-referential DTO carrying a chain would apply that
      * chain once per level — depth <em>N</em> means <em>N</em> applications per string leaf — which
-     * an attacker controls purely by nesting the request body. Filtering the newly offered entries
-     * against {@code inherited} removes that amplification outright: a class already inherited is
-     * never appended again, so the accumulated chain can only grow while <em>new</em> declaration
-     * sites are reached. Both the number of those sites and the length of each declared chain are
-     * fixed by the application's code, never by the request, so the composed chain's length is
-     * bounded by the declared type graph and is independent of the intermediate's depth.
-     *
-     * <p><strong>Why the declared chains themselves are left alone.</strong> A repeat <em>within</em>
-     * one {@code @Canonicalize}/{@code @Sanitize} declaration — or between a type's chain and its
-     * field's — is a deliberately ordered pipeline, not an accident of inheritance. Idempotence,
-     * which both {@code Canonicalizer} and {@code Sanitizer} publish as a MUST, is not
-     * commutativity: for {@code @Sanitize(StripHtml.class)} on the type and
-     * {@code @Sanitize({DecodeEntities.class, StripHtml.class})} on the field, collapsing the
-     * repeated {@code StripHtml} yields {@code [StripHtml, DecodeEntities]} and leaves
-     * {@code &lt;script} decoded but unstripped. Appending both declared chains verbatim keeps
-     * {@code [StripHtml, DecodeEntities, StripHtml]}, which is what the declarations say.
+     * an attacker controls purely by nesting the request body. That holds for a type-level chain on
+     * the recursive type and, identically, for a field-level chain on the recursive link:
+     * {@code class Node { @Sanitize(X) Node child; }} is a single declaration site re-offered once
+     * per level. Suppressing the offer when the site already contributed on this descent path
+     * removes the amplification at its source: the amplifier is one site re-offering itself, never
+     * two sites naming the same processor class. {@code Node → Node → Node} contributes each of
+     * {@code Node}'s sites once; distinct sites each contribute once; both the number of sites and
+     * the length of each declared chain are fixed by the application's code, never by the request.
+     * The composed chain is therefore bounded by the declared type graph and independent of the
+     * intermediate's depth, while every declared chain keeps its contents and order intact at every
+     * level — a site contributes all of its entries, in declared order, or none of them.
      *
      * <p>Package-private because it is the single chain-composition implementation shared by
      * {@link DefaultInputObjectProcessor} and {@link GeneratedSupport}; callers that always have a
-     * field chain simply pass a non-{@code null} list.
+     * field chain simply pass a non-{@code null} list. It is an instance method because the
+     * provenance it consults — the declaration sites this path has already folded in — is traversal
+     * state.
      *
      * @param inherited accumulated chain from ancestors; never {@code null}
+     * @param ownerType the type declaring {@code object}, and the owning half of {@code field}'s
+     *                  site, or {@code null} when the caller cannot name it, in which case both
+     *                  chains are appended unconditionally
+     * @param fieldName the property name declaring {@code field}, or {@code null} when there is no
+     *                  enclosing field or the caller cannot name it, in which case {@code field} is
+     *                  appended unconditionally
      * @param object    object-level chain from the parent type; never {@code null}
      * @param field     field-level chain from the enclosing field, or {@code null} when descending
      *                  from a list element
      * @param <T>       the chain class element type
-     * @return {@code inherited} followed by every {@code object} then {@code field} entry it does
-     *         not already contain, in declared order, or {@code inherited} unchanged when nothing
-     *         new is contributed
+     * @return {@code inherited} followed by {@code object} and then {@code field} — each verbatim,
+     *         and each omitted when its own site already contributed on this path — or
+     *         {@code inherited} unchanged when nothing is appended
      */
-    static <T> List<T> compose(List<T> inherited, List<T> object, @Nullable List<T> field) {
-        boolean fieldEmpty = field == null || field.isEmpty();
-        if (object.isEmpty() && fieldEmpty) {
+    <T> List<T> compose(
+            List<T> inherited,
+            @Nullable Class<?> ownerType,
+            @Nullable String fieldName,
+            List<T> object,
+            @Nullable List<T> field) {
+
+        List<T> effectiveObject = alreadyContributed(ownerType, null) ? List.of() : object;
+        boolean fieldEmpty = field == null || field.isEmpty() || alreadyContributed(ownerType, fieldName);
+        if (effectiveObject.isEmpty() && fieldEmpty) {
             return inherited;
         }
-        Set<T> alreadyInherited = inherited.isEmpty() ? Set.of() : Set.copyOf(inherited);
-        List<T> composed = new ArrayList<>(inherited.size() + object.size() + (fieldEmpty ? 0 : field.size()));
+        List<T> composed = new ArrayList<>(inherited.size() + effectiveObject.size() + (fieldEmpty ? 0 : field.size()));
         composed.addAll(inherited);
-        appendUninherited(composed, object, alreadyInherited);
+        composed.addAll(effectiveObject);
         if (!fieldEmpty) {
-            appendUninherited(composed, field, alreadyInherited);
-        }
-        // Reuse the caller's list when the declared chains added nothing an ancestor had not
-        // already contributed — the common case for a recursive type re-offering its own chain.
-        if (composed.size() == inherited.size()) {
-            return inherited;
+            composed.addAll(field);
         }
         return List.copyOf(composed);
     }
 
     /**
-     * Appends every entry of {@code declared} that {@code alreadyInherited} does not contain,
-     * preserving {@code declared}'s order and its own repeats.
+     * Returns {@code true} when the chain declared at {@code (ownerType, fieldName)} is already
+     * folded into this context's inherited chains. An unnamed site is never suppressed: the caller
+     * could not identify it, so it cannot be recognized as a re-offer either. A field site is also
+     * unnamed when {@code fieldName} is {@code null} — a list-element descent has no enclosing
+     * field, so there is nothing to key on.
      *
-     * @param target           the composed chain being built; must not be {@code null}
-     * @param declared         the object- or field-level chain to append; must not be {@code null}
-     * @param alreadyInherited the classes an ancestor already contributed; must not be {@code null}
-     * @param <T>              the chain class element type
+     * @param ownerType the declaring type, or {@code null} when the caller cannot name it
+     * @param fieldName the declaring property, or {@code null} for an object-level site
+     * @return whether the site has already contributed on this descent path
      */
-    private static <T> void appendUninherited(List<T> target, List<T> declared, Set<T> alreadyInherited) {
-        for (T entry : declared) {
-            if (!alreadyInherited.contains(entry)) {
-                target.add(entry);
-            }
+    private boolean alreadyContributed(@Nullable Class<?> ownerType, @Nullable String fieldName) {
+        if (ownerType == null) {
+            return false;
         }
+        return contributedSites.contains(new DeclarationSite(ownerType, fieldName));
+    }
+
+    /**
+     * Returns {@code sites} with {@code (ownerType, fieldName)} added, reusing the input set when
+     * the addition would change nothing — an unnamed site, or one already recorded.
+     *
+     * @param sites     the sites recorded so far; must not be {@code null}
+     * @param ownerType the declaring type, or {@code null} when the caller could not name one
+     * @param fieldName the declaring property, or {@code null} for an object-level site
+     * @return an immutable set containing the site, or {@code sites} unchanged
+     */
+    private static Set<DeclarationSite> withSite(
+            Set<DeclarationSite> sites, @Nullable Class<?> ownerType, @Nullable String fieldName) {
+        if (ownerType == null) {
+            return sites;
+        }
+        DeclarationSite site = new DeclarationSite(ownerType, fieldName);
+        if (sites.contains(site)) {
+            return sites;
+        }
+        Set<DeclarationSite> next = new HashSet<>(sites);
+        next.add(site);
+        return Set.copyOf(next);
     }
 }

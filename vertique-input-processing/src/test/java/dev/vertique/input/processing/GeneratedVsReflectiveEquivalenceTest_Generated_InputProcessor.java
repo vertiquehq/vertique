@@ -145,7 +145,16 @@ public final class GeneratedVsReflectiveEquivalenceTest_Generated_InputProcessor
                                     Generated.class));
                 case "nested" -> {
                     InputTraversalContext nestedCtx = rootCtx.descend(
-                            OBJ_CANON, OBJ_SANIT, OBJ_SKIP_CANON, OBJ_SKIP_SANIT, null, null, false, false);
+                            Generated.class,
+                            "nested",
+                            OBJ_CANON,
+                            OBJ_SANIT,
+                            OBJ_SKIP_CANON,
+                            OBJ_SKIP_SANIT,
+                            null,
+                            null,
+                            false,
+                            false);
                     out.put(
                             k,
                             dispatcher.dispatchNested(
@@ -171,7 +180,16 @@ public final class GeneratedVsReflectiveEquivalenceTest_Generated_InputProcessor
                                     Generated.class));
                 case "inners" -> {
                     InputTraversalContext innerCtx = rootCtx.descend(
-                            OBJ_CANON, OBJ_SANIT, OBJ_SKIP_CANON, OBJ_SKIP_SANIT, null, null, false, false);
+                            Generated.class,
+                            "inners",
+                            OBJ_CANON,
+                            OBJ_SANIT,
+                            OBJ_SKIP_CANON,
+                            OBJ_SKIP_SANIT,
+                            null,
+                            null,
+                            false,
+                            false);
                     out.put(
                             k,
                             dispatchObjectCollection(

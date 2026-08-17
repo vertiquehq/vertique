@@ -96,7 +96,16 @@ public final class GeneratedVsReflectiveEquivalenceTest_TypeChainRecursiveGenera
                                     TypeChainRecursiveGenerated.class));
                 case "child" -> {
                     InputTraversalContext nestedCtx = rootCtx.descend(
-                            OBJ_CANON, OBJ_SANIT, OBJ_SKIP_CANON, OBJ_SKIP_SANIT, null, null, false, false);
+                            TypeChainRecursiveGenerated.class,
+                            "child",
+                            OBJ_CANON,
+                            OBJ_SANIT,
+                            OBJ_SKIP_CANON,
+                            OBJ_SKIP_SANIT,
+                            null,
+                            null,
+                            false,
+                            false);
                     out.put(
                             k,
                             dispatcher.dispatchNested(
