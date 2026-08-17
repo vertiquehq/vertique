@@ -17,6 +17,7 @@ import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
 import java.io.InputStream;
 import java.io.UncheckedIOException;
+import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.concurrent.CountDownLatch;
@@ -28,6 +29,12 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.api.io.TempDir;
 
+/**
+ * Verifies {@link JwtAuthFactory}'s construction paths: JWKS location handling for {@code classpath:}
+ * and filesystem locations, symmetric-key construction, the arguments and malformed documents each
+ * rejects, the delegation the returned {@link JWTAuth} wrapper performs, and — for the asynchronous
+ * overloads — the documented worker-thread dispatch and caller-classloader capture.
+ */
 @ExtendWith(VertxExtension.class)
 class JwtAuthFactoryTest {
 
@@ -58,8 +65,13 @@ class JwtAuthFactoryTest {
         }
         if (ownedVertx != null) {
             CountDownLatch closed = new CountDownLatch(1);
-            ownedVertx.close().onComplete(ignored -> closed.countDown());
+            Future<Void> close = ownedVertx.close();
+            close.onComplete(ignored -> closed.countDown());
             assertTrue(closed.await(20, TimeUnit.SECONDS), "the test-owned Vertx must close within 20 seconds");
+            // The latch alone would count down on a failed close too, so the outcome is asserted
+            // separately: this instance deploys no verticle and registers no close hook, and the
+            // gate is released above, so a failed close means something the test did went wrong.
+            assertTrue(close.succeeded(), "the test-owned Vertx must close cleanly");
             ownedVertx = null;
         }
     }
@@ -159,6 +171,13 @@ class JwtAuthFactoryTest {
      * test exists to catch — the regression fixed by commit {@code 516202b}, which was
      * branch-specific, hence one assertion per location kind with a message naming its branch.
      *
+     * <p>What it does <em>not</em> exclude: an implementation that read inline on the event loop but
+     * completed the future on a later turn would also pass. The filesystem branch's worker execution
+     * is therefore proven transitively — through the single {@code executeBlocking} dispatch site
+     * shared by every location kind — while
+     * {@link #shouldResolveClasspathLocationThroughTheCallerContextClassLoader(Vertx, VertxTestContext)}
+     * pins that dispatch directly for the {@code classpath:} branch.
+     *
      * @param tempDir     the JUnit-managed temporary directory holding the filesystem JWKS fixture
      * @param testContext the async assertion sink
      * @throws Exception if the fixture cannot be copied or the gate is never reached
@@ -189,42 +208,66 @@ class JwtAuthFactoryTest {
         // future. Left unobserved, a gate that never got released would time out, free the worker
         // itself, let the reads complete, and report the test GREEN on a failed assertion.
         gate.onFailure(testContext::failNow);
+        // 20 seconds, matching the gate's own await and the teardown close: this budget is not a
+        // proof, only an outer bound on a brand-new pool thread being scheduled, and a saturated CI
+        // runner is exactly where that is slow. It stays inside the vertx-junit5 default, which does
+        // not start until the test method returns.
         assertTrue(
-                workerOccupied.await(5, TimeUnit.SECONDS),
+                workerOccupied.await(20, TimeUnit.SECONDS),
                 "the gate task must occupy the pool's only worker thread before the reads are issued");
 
         ownedVertx.runOnContext(ignored -> {
-            Future<JWTAuth> classpathAuth = JwtAuthFactory.fromJwksAsync(ownedVertx, "classpath:test-jwks.json");
-            Future<JWTAuth> filesystemAuth = JwtAuthFactory.fromJwksAsync(ownedVertx, jwksFile.toString());
-
             try {
-                // An inline read would return an already-complete future while the sole worker is
-                // still occupied; a dispatched read cannot possibly have run yet.
-                testContext.verify(() -> {
-                    assertFalse(
-                            classpathAuth.isComplete(),
-                            "fromJwksAsync must dispatch a classpath: JWKS read to a worker thread; the returned "
-                                    + "future was already complete while the pool's only worker was held, so the "
-                                    + "classpath branch read inline on the event loop");
-                    assertFalse(
-                            filesystemAuth.isComplete(),
-                            "fromJwksAsync must dispatch a filesystem JWKS read to a worker thread; the returned "
-                                    + "future was already complete while the pool's only worker was held, so the "
-                                    + "filesystem branch read inline on the event loop");
-                });
-            } finally {
-                // Outside the verify block on purpose: a failed assertion must not strand the gate
-                // on the only worker thread, or teardown would block instead of the test failing.
+                issueReadsAndAssertTheyAreQueued(jwksFile, testContext);
+            } catch (Throwable failure) {
+                // fromJwksAsync validates its arguments synchronously, so the calls inside can throw
+                // before the helper's own finally is reached. Without this catch the gate would hold
+                // the worker until its await expired and the test would fail ~20 seconds later
+                // accusing the gate, never naming the exception that actually happened.
                 releaseWorker.countDown();
+                testContext.failNow(failure);
             }
-
-            Future.join(classpathAuth, filesystemAuth)
-                    .onComplete(testContext.succeeding(joined -> testContext.verify(() -> {
-                        assertNotNull(classpathAuth.result(), "the classpath JWKS read must produce a JWTAuth");
-                        assertNotNull(filesystemAuth.result(), "the filesystem JWKS read must produce a JWTAuth");
-                        testContext.completeNow();
-                    })));
         });
+    }
+
+    /**
+     * Issues both local JWKS reads on the calling event-loop task and asserts neither can have
+     * completed while the gate holds the pool's only worker thread.
+     *
+     * @param jwksFile    the filesystem JWKS fixture to read
+     * @param testContext the async assertion sink
+     */
+    private void issueReadsAndAssertTheyAreQueued(Path jwksFile, VertxTestContext testContext) {
+        Future<JWTAuth> classpathAuth = JwtAuthFactory.fromJwksAsync(ownedVertx, "classpath:test-jwks.json");
+        Future<JWTAuth> filesystemAuth = JwtAuthFactory.fromJwksAsync(ownedVertx, jwksFile.toString());
+
+        try {
+            // An inline read would return an already-complete future while the sole worker is
+            // still occupied; a dispatched read cannot possibly have run yet.
+            testContext.verify(() -> {
+                assertFalse(
+                        classpathAuth.isComplete(),
+                        "fromJwksAsync must dispatch a classpath: JWKS read to a worker thread; the returned "
+                                + "future was already complete while the pool's only worker was held, so the "
+                                + "classpath branch read inline on the event loop");
+                assertFalse(
+                        filesystemAuth.isComplete(),
+                        "fromJwksAsync must dispatch a filesystem JWKS read to a worker thread; the returned "
+                                + "future was already complete while the pool's only worker was held, so the "
+                                + "filesystem branch read inline on the event loop");
+            });
+        } finally {
+            // Outside the verify block on purpose: a failed assertion must not strand the gate
+            // on the only worker thread, or teardown would block instead of the test failing.
+            releaseWorker.countDown();
+        }
+
+        Future.join(classpathAuth, filesystemAuth)
+                .onComplete(testContext.succeeding(joined -> testContext.verify(() -> {
+                    assertNotNull(classpathAuth.result(), "the classpath JWKS read must produce a JWTAuth");
+                    assertNotNull(filesystemAuth.result(), "the filesystem JWKS read must produce a JWTAuth");
+                    testContext.completeNow();
+                })));
     }
 
     /**
@@ -334,10 +377,29 @@ class JwtAuthFactoryTest {
 
         @Override
         public InputStream getResourceAsStream(String name) {
+            record(name);
+            return super.getResourceAsStream(name);
+        }
+
+        @Override
+        public URL getResource(String name) {
+            record(name);
+            return super.getResource(name);
+        }
+
+        /**
+         * Records the first consultation for the JWKS fixture, whichever lookup method reached it.
+         *
+         * <p>Both methods are instrumented so that a behavior-preserving change in the factory —
+         * {@code getResource(name).openStream()} instead of {@code getResourceAsStream(name)} — keeps
+         * failing for the right reason rather than reporting that the loader was never consulted.
+         *
+         * @param name the requested resource name
+         */
+        private void record(String name) {
             if ("test-jwks.json".equals(name) && readThread.compareAndSet(null, Thread.currentThread())) {
                 onWorkerThread.set(Context.isOnWorkerThread());
             }
-            return super.getResourceAsStream(name);
         }
     }
 
