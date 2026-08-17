@@ -458,6 +458,23 @@ ignored; put them on the lifecycle method whose input they govern. `@PathParam` 
 with the policies declared on the method that receives them, so `@OnOpen` and `@OnMessage` can
 normalize the same path parameter differently.
 
+**Composed policy annotations are honored.** A custom annotation meta-annotated with
+`@Canonicalize`/`@Sanitize` — the usual way to name a reusable chain — declares that chain on a
+lifecycle method exactly as the bare annotation does, matching REST. The startup gate resolves
+composed annotations the same way, so what fails the build and what runs on the message path always
+agree.
+
+```java
+@Target(ElementType.METHOD)
+@Retention(RetentionPolicy.RUNTIME)
+@Sanitize(StripAllHtmlSanitizer.class)
+public @interface SafeText {}
+
+@OnMessage
+@SafeText                      // identical to @Sanitize(StripAllHtmlSanitizer.class)
+void onMessage(WebSocketSession session, String text) { }
+```
+
 **Renamed message fields are covered.** A field-level policy is declared on a Java property, while an
 incoming message is keyed by whatever Jackson publishes — `@JsonProperty("user_name")`, a naming
 strategy, or a `@JsonAlias`. Messages are bound through Vert.x's shared `DatabindCodec.mapper()`, and
@@ -555,7 +572,7 @@ coalesce with the same declaration in `AuthModule` when both are present.
 | `ActionRegistry` | `SecurityAuthzModule` | Same |
 | `VertxAuthorizationImporter` | `VertxAuthorizationImportModule` (opt-in, from `dev.vertique:vertique-rest-security`) | The upgrade-time authorization import is skipped: contributed `AuthorizationProvider`s stay inert and claims come from the claim mapper only |
 | `BeanValidator` | `ValidationModule` | Messages are not validated |
-| `InputObjectProcessor` (`dev.vertique.input.processing.InputObjectProcessor`) | `SanitizationModule` | Messages and path parameters are not sanitized |
+| `InputObjectProcessor` (`dev.vertique.input.processing.InputObjectProcessor`) | `SanitizationModule` | Messages and path parameters are not sanitized — and any endpoint that *declares* a policy fails startup rather than accepting messages unprocessed |
 
 ---
 
@@ -584,6 +601,7 @@ All of these are raised while the router is built, so a misconfigured endpoint n
 | `authScheme` names no registered `RouteAuthHandler` | `IllegalStateException` |
 | Several `RouteAuthHandler`s registered and no `authScheme` given | `IllegalStateException` |
 | A message type's wire-name projection cannot be composed — two properties claiming one wire name, or two claiming one `@JsonAlias` (checked only when an `InputObjectProcessor` is bound) | `ConfigurationException` |
+| A lifecycle method declares a canonicalizer or sanitizer chain — directly or through a composed annotation — or the message type declares field-level policies, while no `InputObjectProcessor` is bound | `ConfigurationException` |
 
 Every `@RequiresAction` failure mode above is deliberately fail-closed: an action gate that cannot
 be enforced refuses to boot rather than serving traffic with the gate silently missing.

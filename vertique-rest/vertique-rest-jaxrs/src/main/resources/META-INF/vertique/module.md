@@ -104,6 +104,19 @@ covering all string values in the body plus scalar and collection-element parame
 `@SkipSanitization` opt an individual parameter out. Scalar and collection-element parameters receive
 route-level chains only.
 
+**Which body shapes step 3 reaches.** A DTO body, a collection or array body, a `String` body, a
+form-urlencoded body bound to a POJO, and the schema-free `JsonObject` / `JsonArray` bodies all pass
+through the engine — a Vert.x JSON wrapper is already the intermediate the engine walks, so a
+declared chain reaches every string leaf in it, at any nesting depth. A schema-free body carries no
+declared property set, so only route- and parameter-level chains apply to it and no wire-name
+projection is consulted. A raw binary body (`byte[]`, `io.vertx.core.buffer.Buffer`) is the one
+shape the engine cannot process at all; declaring a chain on one is rejected at startup rather than
+skipped (see [Startup failures](#startup-failures)).
+
+A policy declared on a parameter the engine never sees — a `@Context` parameter, a `RequestPreconditions`
+parameter, or a raw multipart `FileUpload` / `EntityPart` parameter — is inert and is neither
+processed nor reported: those values are not caller-supplied string input the chain model applies to.
+
 ### JSON profiles are symmetric
 
 A resource method's request body and its response body use the same effective `ObjectMapper`. The
@@ -947,6 +960,23 @@ the `application/problem+json` media type preserved, and logs a WARN. A profile-
 finds a violation, rather than being collected. `JsonProfileConfigurationException` is thrown at
 router-build time for an unknown profile id.
 
+Route registration also gates declared input processing, raising `ConfigurationException` with one
+aggregated message naming every offending route:
+
+| Condition | When it is checked |
+|---|---|
+| A route declares a canonicalizer or sanitizer chain — on the route, on a processed parameter, or inside a processed parameter's type graph — while no `InputObjectProcessor` is bound | only when the binding is absent |
+| A `byte[]` or `io.vertx.core.buffer.Buffer` body parameter carries a declared chain | always, bound engine or not |
+
+Both are declarations that provably could not run, and there is no opt-out flag: "declared but not
+running" is not a second legitimate mode. The unbound-engine check ignores parameters whose source
+never reaches the engine (`@Context`, `RequestPreconditions`, raw multipart), so it never asks for a
+module that would change nothing. The binary-body check is independent of the binding because no
+Dagger graph can make a chain act on opaque bytes; its message points at `FileContentVerifier` as the
+control that does inspect binary content, while stating that `FileContentVerifier` covers multipart
+`FileUpload` parts rather than a raw binary body parameter — a pointer, not a drop-in replacement.
+Remove the declaration, or add `@SkipCanonicalization` / `@SkipSanitization` to the binary parameter.
+
 When an `InputObjectProcessor` is bound, route registration also composes each route's body wire-name
 projection (`JacksonFieldNameResolver`, from `dev.vertique:vertique-json`) against that route's
 resolved body mapper — for the body parameter's declared type, an array's component type, and a
@@ -988,6 +1018,9 @@ as proof of a complete body.
   create a text-part bypass.
 - **Mixing `@Context` with a value-binding annotation.** `CONTEXT_PARAM_CONFLICT` fails the build; the
   two are mutually exclusive by design.
+- **Declaring `@Sanitize`/`@Canonicalize` on a `byte[]` or `Buffer` body.** It fails startup. Both
+  chain phases act on string values, and a raw binary body has none — use `FileContentVerifier` on a
+  multipart `FileUpload` part when the intent is to inspect uploaded content.
 - **Expecting `@FilePart.maxSizeBytes` to prevent a disk write.** It is checked post-spool and returns
   400. The ingress limits are `http.maxBodySize` (total bytes, returns 413) and `http.maxFormFields`
   (part count).

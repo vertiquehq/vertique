@@ -162,4 +162,77 @@ class RestSanitizationComponentTest {
                 "the @Sanitize declared on the Java property must run on its renamed wire key");
         assertEquals("paris", bound.city(), "an ungoverned field is left untouched");
     }
+
+    // --- Schema-free structured bodies ---
+
+    /** Resource fixture whose method takes a schema-free {@link JsonObject} body. */
+    static final class JsonObjectBodyResource {
+        @SuppressWarnings("unused")
+        public String accept(JsonObject body) {
+            return body.encode();
+        }
+    }
+
+    @Test
+    @DisplayName("a JsonObject body declaring a chain is processed to every string leaf")
+    void shouldSanitizeStructuredJsonObjectBodies() throws Exception {
+        WithSanitizationComponent component = DaggerRestSanitizationComponentTest_WithSanitizationComponent.create();
+        InputObjectProcessor processor =
+                component.inputObjectProcessor().orElseThrow(() -> new AssertionError("engine must be bound"));
+
+        Method accept = JsonObjectBodyResource.class.getDeclaredMethod("accept", JsonObject.class);
+        ResourceMethodMeta meta = new ResourceMethodMeta(
+                new JsonObjectBodyResource(),
+                accept,
+                "accept",
+                "POST",
+                "/raw-json",
+                List.of(new ResourceMethodMeta.ParamMeta(
+                        "body", ResourceMethodMeta.ParamSource.BODY, JsonObject.class)),
+                String.class,
+                false,
+                false,
+                new dev.vertique.rest.core.security.SecurityPolicy.None(),
+                new ResourceMethodMeta.MediaTypes(List.of(), List.of()),
+                null,
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of());
+        ParameterExtractor extractor = new ParameterExtractor(
+                meta,
+                List.of(new JsonRequestBodyDecoder()),
+                new RestContextResolution(Set.of()),
+                processor,
+                ConversionContexts.defaultResolver(),
+                JacksonFieldNameResolver.forRoute(null));
+
+        RoutingContext ctx = mock(RoutingContext.class);
+        HttpServerRequest request = mock(HttpServerRequest.class);
+        when(ctx.request()).thenReturn(request);
+        when(request.getHeader("Content-Type")).thenReturn("application/json");
+        when(ctx.<ObjectMapper>get(BoundRequest.KEY_RESOLVED_BODY_MAPPER)).thenReturn(null);
+
+        // Decoded from text, exactly as a request body arrives: the backing map's nested values are
+        // plain Maps and Lists, which is what the engine walks.
+        JsonObject body = new JsonObject("{\"greeting\":\"ada\",\"nested\":{\"deep\":\"bob\"},\"list\":[\"carol\"]}");
+
+        Object result = extractor.deserializeBody(
+                RequestValue.of(body),
+                JsonObject.class,
+                null,
+                ctx,
+                new EffectiveInputPolicies(List.of(), List.of(UppercasingSanitizer.class)));
+
+        JsonObject processed = assertInstanceOf(JsonObject.class, result, "a JsonObject body stays a JsonObject");
+        assertEquals("ADA", processed.getString("greeting"), "the declared chain must reach a top-level string");
+        assertEquals(
+                "BOB",
+                processed.getJsonObject("nested").getString("deep"),
+                "the declared chain must reach a nested string");
+        assertEquals(
+                "CAROL",
+                processed.getJsonArray("list").getString(0),
+                "the declared chain must reach an array element string");
+    }
 }

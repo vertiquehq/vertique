@@ -13,6 +13,7 @@ import dev.vertique.core.sanitization.InputFieldNameResolver;
 import dev.vertique.core.sanitization.InputLocation;
 import dev.vertique.core.sanitization.Sanitize;
 import dev.vertique.core.sanitization.Sanitizer;
+import dev.vertique.core.util.AnnotationResolver;
 import dev.vertique.core.validation.BeanValidationException;
 import dev.vertique.core.validation.BeanValidator;
 import dev.vertique.input.processing.EffectiveInputPolicies;
@@ -275,6 +276,11 @@ class WebSocketEndpointRegistrar {
      * Returns why the given endpoint's declared input processing cannot run, or {@code null} when it
      * declares none.
      *
+     * <p>Policy annotations are resolved exactly as {@link #resolveMethodPolicies} resolves them on
+     * the message path — meta-annotation-aware. The two must agree: a gate that saw composed
+     * annotations the runtime ignored would fail startup for policies that still would not run, which
+     * is worse than not gating them at all.
+     *
      * @param meta the scanned endpoint metadata
      * @return a human-readable reason naming the declaration, or {@code null}
      */
@@ -283,8 +289,8 @@ class WebSocketEndpointRegistrar {
             if (lifecycleMethod == null) {
                 continue;
             }
-            if (lifecycleMethod.getAnnotation(Canonicalize.class) != null
-                    || lifecycleMethod.getAnnotation(Sanitize.class) != null) {
+            if (AnnotationResolver.findMetaAnnotation(lifecycleMethod, Canonicalize.class) != null
+                    || AnnotationResolver.findMetaAnnotation(lifecycleMethod, Sanitize.class) != null) {
                 return "lifecycle method '" + lifecycleMethod.getName()
                         + "' declares a canonicalizer or sanitizer chain";
             }
@@ -1189,14 +1195,19 @@ class WebSocketEndpointRegistrar {
      * Resolves canonicalization and sanitization policies from annotations on the given lifecycle
      * method only. No class-level fallback — avoids cross-method policy contamination.
      *
+     * <p>Resolution is meta-annotation-aware through {@link AnnotationResolver#findMetaAnnotation},
+     * matching REST: a custom annotation itself meta-annotated with {@code @Canonicalize} or
+     * {@code @Sanitize} is the documented way to name a reusable chain, and a bare
+     * {@code Method#getAnnotation} would silently ignore it.
+     *
      * @param method the lifecycle method to inspect for {@code @Canonicalize} and {@code @Sanitize}
-     *               annotations
+     *               annotations, directly or through a composed annotation
      * @return the resolved effective input policies; {@link EffectiveInputPolicies#NONE} when no
      *         annotations are present on the method
      */
     private EffectiveInputPolicies resolveMethodPolicies(Method method) {
-        Canonicalize canonicalize = method.getAnnotation(Canonicalize.class);
-        Sanitize sanitize = method.getAnnotation(Sanitize.class);
+        Canonicalize canonicalize = AnnotationResolver.findMetaAnnotation(method, Canonicalize.class);
+        Sanitize sanitize = AnnotationResolver.findMetaAnnotation(method, Sanitize.class);
 
         if (canonicalize == null && sanitize == null) {
             return EffectiveInputPolicies.NONE;

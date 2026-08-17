@@ -26,6 +26,10 @@ import io.vertx.ext.web.Router;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
 import jakarta.ws.rs.PathParam;
+import java.lang.annotation.ElementType;
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
+import java.lang.annotation.Target;
 import java.lang.reflect.Type;
 import java.util.List;
 import java.util.Locale;
@@ -95,7 +99,7 @@ public class WebSocketInputProcessingIT {
                 type -> new UppercasingSanitizer());
         WebSocketEndpointRegistrar sanitizingRegistrar = new WebSocketEndpointRegistrar(
                 new WebSocketMessageCodec(), null, null, null, Set.of(), null, engine, null, null, null);
-        sanitizingRegistrar.registerAll(Set.of(new RenamedEndpoint()), router);
+        sanitizingRegistrar.registerAll(Set.of(new RenamedEndpoint(), new ComposedPolicyEndpoint()), router);
 
         vertx.createHttpServer().requestHandler(router).listen(0, "127.0.0.1").onComplete(ctx.succeeding(s -> {
             server = s;
@@ -211,6 +215,25 @@ public class WebSocketInputProcessingIT {
                 received.userName(),
                 "the @Sanitize declared on the Java property must run on its renamed wire key");
         assertEquals("paris", received.city(), "an ungoverned field is left untouched");
+    }
+
+    @Test
+    @DisplayName("a composed @Sanitize on @OnMessage runs, exactly as the same idiom does on REST")
+    void shouldApplyAComposedPolicyAnnotationOnMessages() throws Exception {
+        ComposedPolicyEndpoint.reset();
+
+        WebSocket ws = connect("/ws/proc-composed");
+        try {
+            ws.writeTextMessage("ada");
+            assertTrue(ComposedPolicyEndpoint.messageLatch.await(10, TimeUnit.SECONDS), "@OnMessage must be invoked");
+        } finally {
+            ws.close().toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS);
+        }
+
+        assertEquals(
+                "ADA",
+                ComposedPolicyEndpoint.received.get(),
+                "a chain declared through a meta-annotated preset must run on the message payload");
     }
 
     private Capture findCapture(String value) {
@@ -347,6 +370,42 @@ public class WebSocketInputProcessingIT {
          */
         @OnMessage
         public void onMessage(WebSocketSession session, ChatMessage msg) {
+            messageLatch.countDown();
+        }
+    }
+
+    /**
+     * Composed policy preset — a custom annotation meta-annotated with {@code @Sanitize}, the
+     * documented idiom REST honors through {@code AnnotationResolver.findMetaAnnotation}.
+     */
+    @Target({ElementType.METHOD, ElementType.PARAMETER, ElementType.FIELD, ElementType.TYPE})
+    @Retention(RetentionPolicy.RUNTIME)
+    @Sanitize(UppercasingSanitizer.class)
+    public @interface SafeText {}
+
+    /** Endpoint whose {@code @OnMessage} declares its chain through a composed annotation. */
+    @WebSocketEndpoint("/ws/proc-composed")
+    static class ComposedPolicyEndpoint {
+
+        static final AtomicReference<String> received = new AtomicReference<>();
+        static CountDownLatch messageLatch = new CountDownLatch(1);
+
+        /** Resets the captured message and latch before a test run. */
+        static void reset() {
+            received.set(null);
+            messageLatch = new CountDownLatch(1);
+        }
+
+        /**
+         * Captures the processed message so the test can observe whether the composed chain ran.
+         *
+         * @param session the WebSocket session
+         * @param msg     the received text message
+         */
+        @OnMessage
+        @SafeText
+        public void onMessage(WebSocketSession session, String msg) {
+            received.set(msg);
             messageLatch.countDown();
         }
     }

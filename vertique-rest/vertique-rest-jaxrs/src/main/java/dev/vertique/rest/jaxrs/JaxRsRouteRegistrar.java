@@ -8,6 +8,7 @@ import dev.vertique.core.exception.ConfigurationException;
 import dev.vertique.core.json.JsonMapperProfileRegistry;
 import dev.vertique.core.sanitization.InputFieldNameResolver;
 import dev.vertique.core.validation.BeanValidator;
+import dev.vertique.input.processing.EffectiveInputPolicies;
 import dev.vertique.input.processing.InputObjectProcessor;
 import dev.vertique.json.JacksonFieldNameResolver;
 import dev.vertique.json.JsonConfig;
@@ -504,6 +505,10 @@ public class JaxRsRouteRegistrar {
         // Composition gate: declared input processing with no engine bound is a configuration error,
         // never a silent no-op.
         checkInputProcessingComposition(allMethods, objectProcessor);
+
+        // Shape gate: a chain declared on a raw binary body cannot run under any graph, so it is
+        // rejected whether or not the engine is bound.
+        checkBinaryBodyPolicies(allMethods);
     }
 
     /**
@@ -569,8 +574,12 @@ public class JaxRsRouteRegistrar {
      * <p>Both shapes a declaration can take are covered: an invocation-level chain (from the route's
      * own or its parameters' annotations, derived by the same {@link ParameterExtractor} computation
      * the request path uses) and a policy declared inside a parameter's type graph (answered by
-     * {@link InputObjectProcessor#declaresPolicies}). Every offending route is collected before
-     * throwing, so one startup failure reports the whole surface rather than one route per rebuild.
+     * {@link InputObjectProcessor#declaresPolicies}). Both halves are scoped by the same
+     * {@link ParameterExtractor#isProcessedParamSource} filter, so neither can report a policy on a
+     * parameter source the engine would never see — telling an operator to install a module that
+     * would not make that policy run is worse than saying nothing. Every offending route is collected
+     * before throwing, so one startup failure reports the whole surface rather than one route per
+     * rebuild.
      *
      * @param methods         every scanned resource method
      * @param objectProcessor the optional input-processing engine; {@code null} when unbound
@@ -611,7 +620,7 @@ public class JaxRsRouteRegistrar {
             return "the route or one of its parameters declares a canonicalizer or sanitizer chain";
         }
         for (ResourceMethodMeta.ParamMeta param : meta.params()) {
-            if (!isProcessedParamSource(param.source())) {
+            if (!ParameterExtractor.isProcessedParamSource(param.source())) {
                 continue;
             }
             Type declaredType = param.genericType() != null ? param.genericType() : param.type();
@@ -624,18 +633,50 @@ public class JaxRsRouteRegistrar {
     }
 
     /**
-     * Returns whether values from the given parameter source pass through the input-processing engine
-     * at request time. Context, precondition, and raw multipart sources never do, so a policy
-     * annotation reachable from their types could not run with or without a bound engine.
+     * Fails startup when a route declares canonicalization or sanitization on a raw binary body.
      *
-     * @param source the parameter source
-     * @return {@code true} when the source's values are submitted to the engine
+     * <p>A {@code byte[]} or {@link io.vertx.core.buffer.Buffer} body is opaque bytes; both engine
+     * phases operate on string values, of which such a body has none. The declaration therefore
+     * cannot run under <em>any</em> Dagger graph — which is why this check is independent of whether
+     * the engine is bound, unlike {@link #checkInputProcessingComposition}. Silently skipping it is
+     * the failure mode this whole gate exists to remove.
+     *
+     * <p>The failure names {@code FileContentVerifier} as the control that does apply to binary
+     * content, while stating plainly what its contract actually covers, so the operator gets an
+     * honest pointer rather than an implied migration that does not exist.
+     *
+     * @param methods every scanned resource method
+     * @throws ConfigurationException if any route declares a chain on a binary body parameter
      */
-    private static boolean isProcessedParamSource(ResourceMethodMeta.ParamSource source) {
-        return switch (source) {
-            case PATH, QUERY, HEADER, COOKIE, BODY, FORM, BEAN_PARAM -> true;
-            case CONTEXT, PRECONDITIONS, FILE_UPLOADS, ENTITY_PARTS -> false;
-        };
+    private static void checkBinaryBodyPolicies(List<ResourceMethodMeta> methods) {
+        List<String> offendingRoutes = new ArrayList<>();
+        for (ResourceMethodMeta meta : methods) {
+            List<ResourceMethodMeta.ParamMeta> params = meta.params();
+            EffectiveInputPolicies[] policies = ParameterExtractor.invocationPolicies(meta);
+            for (int i = 0; i < params.size(); i++) {
+                ResourceMethodMeta.ParamMeta param = params.get(i);
+                if (param.source() != ResourceMethodMeta.ParamSource.BODY
+                        || !ParameterExtractor.isBinaryBodyTarget(param.type())
+                        || policies[i].isEmpty()) {
+                    continue;
+                }
+                offendingRoutes.add("  - " + meta.httpMethod() + " " + meta.path() + " (operationId="
+                        + meta.operationId() + "): parameter '" + param.name() + "' of type "
+                        + param.type().getSimpleName() + " is a raw binary body");
+            }
+        }
+        if (offendingRoutes.isEmpty()) {
+            return;
+        }
+        throw new ConfigurationException(offendingRoutes.size()
+                + " route(s) declare input canonicalization or sanitization on a raw binary body, which carries no "
+                + "string values for a chain to act on, so the declaration could never run:\n"
+                + String.join("\n", offendingRoutes)
+                + "\nRemove the declared policies from these parameters, or declare @SkipCanonicalization and "
+                + "@SkipSanitization on them. The control that does apply to binary content is FileContentVerifier "
+                + "— but note its contract covers multipart FileUpload parts "
+                + "(Future<FileVerificationResult> verify(FileUpload)), not a raw binary body parameter, so it is a "
+                + "pointer rather than a drop-in replacement for what was declared here.");
     }
 
     /**

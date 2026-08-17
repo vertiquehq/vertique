@@ -18,10 +18,13 @@ import dev.vertique.input.processing.EffectiveInputPolicies;
 import dev.vertique.input.processing.InputObjectProcessor;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
+import io.vertx.core.buffer.Buffer;
 import io.vertx.ext.web.Router;
+import io.vertx.ext.web.RoutingContext;
 import jakarta.ws.rs.GET;
 import jakarta.ws.rs.POST;
 import jakarta.ws.rs.Path;
+import jakarta.ws.rs.core.Context;
 import java.lang.reflect.Type;
 import java.util.List;
 import java.util.Set;
@@ -119,6 +122,53 @@ class RestInputProcessingCompositionTest {
         }
     }
 
+    /**
+     * Resource whose binary body carries a declared chain. Canonicalization and sanitization act on
+     * string values, of which a {@code byte[]} or {@code Buffer} body has none, so the declaration can
+     * never run no matter which modules are installed.
+     */
+    @Path("/binary")
+    static class BinaryBodyResource {
+
+        @POST
+        @Path("/bytes")
+        @Sanitize(NoopSanitizer.class)
+        public Future<String> uploadBytes(byte[] payload) {
+            return Future.succeededFuture(String.valueOf(payload.length));
+        }
+
+        @POST
+        @Path("/buffer")
+        @Sanitize(NoopSanitizer.class)
+        public Future<String> uploadBuffer(Buffer payload) {
+            return Future.succeededFuture(String.valueOf(payload.length()));
+        }
+    }
+
+    /** Resource whose binary body declares nothing — the ordinary upload shape, which must still boot. */
+    @Path("/binary-free")
+    static class UngovernedBinaryBodyResource {
+
+        @POST
+        public Future<String> upload(byte[] payload) {
+            return Future.succeededFuture(String.valueOf(payload.length));
+        }
+    }
+
+    /**
+     * Resource declaring a policy on a parameter source the engine never sees. {@code @Context},
+     * {@code FILE_UPLOADS}, and {@code ENTITY_PARTS} values are {@code FileContentVerifier} territory,
+     * so the gate must not demand an engine binding that would change nothing for them.
+     */
+    @Path("/excluded-source")
+    static class ExcludedSourcePolicyResource {
+
+        @GET
+        public Future<String> read(@Sanitize(NoopSanitizer.class) @Context RoutingContext routingContext) {
+            return Future.succeededFuture("ok");
+        }
+    }
+
     /** Resource that declares no policy anywhere in its parameter graph. */
     @Path("/free")
     static class PolicyFreeResource {
@@ -205,6 +255,41 @@ class RestInputProcessingCompositionTest {
         assertDoesNotThrow(
                 () -> register(Set.of(new PolicyFreeResource()), null),
                 "the gate must not fire for routes that declare nothing to process");
+    }
+
+    @Test
+    @DisplayName("a binary body carrying a declared policy fails startup and points at FileContentVerifier")
+    void shouldFailStartupWhenABinaryBodyDeclaresAPolicy() {
+        ConfigurationException failure = assertThrows(
+                ConfigurationException.class,
+                () -> register(Set.of(new BinaryBodyResource()), new PassThroughProcessor()),
+                "a policy declared on a binary body cannot run even with the engine bound, so it must fail startup");
+
+        String message = failure.getMessage();
+        assertTrue(message.contains("uploadBytes"), "the error must name the byte[] route: " + message);
+        assertTrue(message.contains("uploadBuffer"), "the error must name the Buffer route: " + message);
+        assertTrue(
+                message.contains("FileContentVerifier"),
+                "the error must name the control that does apply to binary content: " + message);
+        assertTrue(
+                message.contains("FileUpload") && message.contains("multipart"),
+                "the error must state that FileContentVerifier covers multipart FileUpload parts, "
+                        + "not a raw binary body parameter: " + message);
+
+        // The gate is about the declaration, not about binary bodies: an ordinary upload still boots.
+        setUp();
+        assertDoesNotThrow(
+                () -> register(Set.of(new UngovernedBinaryBodyResource()), new PassThroughProcessor()),
+                "a binary body declaring no policy must register normally");
+    }
+
+    @Test
+    @DisplayName("a policy declared on a parameter source the engine never sees does not fail startup")
+    void shouldNotFailStartupForAPolicyOnAnExcludedParameterSource() {
+        assertDoesNotThrow(
+                () -> register(Set.of(new ExcludedSourcePolicyResource()), null),
+                "a @Context parameter's values never reach the engine, so demanding an engine binding "
+                        + "would tell the operator to install a module that changes nothing");
     }
 
     @Test

@@ -281,28 +281,86 @@ final class ParameterExtractor {
     }
 
     /**
-     * Returns whether any invocation-level canonicalizer or sanitizer chain applies to the given
-     * resource method — either declared on the route (class or method) or on one of its parameters.
+     * Returns whether any invocation-level canonicalizer or sanitizer chain applies to a parameter
+     * this extractor actually submits to the engine — a chain declared on the route (class or method)
+     * reaches such a parameter, or the parameter declares one itself.
      *
      * <p>Exposed for {@link JaxRsRouteRegistrar}'s startup composition gate, which must know whether a
      * route declares processing before deciding that an absent {@link InputObjectProcessor} binding is
      * a configuration error. It reuses {@link #computeCachedParamPolicies} — the very derivation the
      * request path uses — so the gate can never disagree with what would actually run.
      *
+     * <p>A route-level chain is <em>not</em> reported on its own: {@link #resolveParamPolicies} seeds
+     * every parameter with it, so a route chain that reaches no processed parameter would run nowhere
+     * even with the engine bound. Parameters whose source {@link #isProcessedParamSource} rejects are
+     * skipped for the same reason, which keeps this half of the gate scoped exactly like the
+     * type-graph half in {@link JaxRsRouteRegistrar}.
+     *
      * @param meta the resource method metadata; must not be {@code null}
-     * @return {@code true} when the route or any of its parameters declares a chain
+     * @return {@code true} when a chain applies to a parameter whose values reach the engine
      */
     static boolean declaresInvocationPolicies(ResourceMethodMeta meta) {
-        if (!meta.routeCanonicalizerChain().isEmpty()
-                || !meta.routeSanitizerChain().isEmpty()) {
-            return true;
-        }
-        for (EffectiveInputPolicies policies : computeCachedParamPolicies(meta)) {
-            if (!policies.isEmpty()) {
+        List<ResourceMethodMeta.ParamMeta> params = meta.params();
+        EffectiveInputPolicies[] policies = computeCachedParamPolicies(meta);
+        for (int i = 0; i < params.size(); i++) {
+            if (isProcessedParamSource(params.get(i).source()) && !policies[i].isEmpty()) {
                 return true;
             }
         }
         return false;
+    }
+
+    /**
+     * Returns whether values from the given parameter source pass through the input-processing engine
+     * at request time.
+     *
+     * <p>{@code CONTEXT}, {@code PRECONDITIONS}, {@code FILE_UPLOADS}, and {@code ENTITY_PARTS} never
+     * do, and that exclusion is correct rather than incidental: a {@code @Context} value is resolved
+     * from the server, not sent by the caller, and raw multipart parts are
+     * {@code FileContentVerifier} territory — a binary control that inspects uploaded content —
+     * not engine territory, which is canonicalization and sanitization of string values. Do not
+     * "fix" the asymmetry by submitting these sources to the engine; the fix direction is always to
+     * apply this filter wherever the gate reasons about declared policies.
+     *
+     * @param source the parameter source
+     * @return {@code true} when the source's values are submitted to the engine
+     */
+    static boolean isProcessedParamSource(ResourceMethodMeta.ParamSource source) {
+        return switch (source) {
+            case PATH, QUERY, HEADER, COOKIE, BODY, FORM, BEAN_PARAM -> true;
+            case CONTEXT, PRECONDITIONS, FILE_UPLOADS, ENTITY_PARTS -> false;
+        };
+    }
+
+    /**
+     * Returns whether the given body target carries no string values for the engine to act on, so a
+     * declared canonicalizer or sanitizer chain provably cannot run against it.
+     *
+     * <p>A {@code byte[]} or {@link io.vertx.core.buffer.Buffer} body is opaque bytes: it is never
+     * decoded to an intermediate map, and both engine phases operate on strings. Unlike the
+     * schema-free {@link JsonObject}/{@code JsonArray} bodies — which <em>are</em> intermediates and
+     * do route through the engine — there is nothing here for a chain to reach.
+     *
+     * @param targetType the raw body target class
+     * @return {@code true} for a raw binary body target
+     */
+    static boolean isBinaryBodyTarget(Class<?> targetType) {
+        return targetType == byte[].class || targetType == io.vertx.core.buffer.Buffer.class;
+    }
+
+    /**
+     * Returns each parameter's effective invocation-level policies, in declaration order, derived
+     * exactly as the request path derives them.
+     *
+     * <p>Exposed for {@link JaxRsRouteRegistrar}'s startup gates, which must reason per parameter
+     * rather than per route — a binary body carrying a declared chain is a configuration error even
+     * when the route's other parameters are processed normally.
+     *
+     * @param meta the resource method metadata; must not be {@code null}
+     * @return policies indexed by parameter position
+     */
+    static EffectiveInputPolicies[] invocationPolicies(ResourceMethodMeta meta) {
+        return computeCachedParamPolicies(meta);
     }
 
     /**
@@ -850,9 +908,11 @@ final class ParameterExtractor {
      * <p>Logs a warning if a multipart body is encountered, since multipart content should
      * be handled via {@code @FormParam} or {@code List<EntityPart>} parameters instead.
      *
-     * <p>When an {@link InputObjectProcessor} is active, structured bodies (JSON objects and
-     * JSON arrays) are intercepted before materialization so that canonicalization and
-     * sanitization chains can be applied.
+     * <p>When an {@link InputObjectProcessor} is active, structured bodies are intercepted before
+     * materialization so that canonicalization and sanitization chains can be applied. That includes
+     * the schema-free {@link JsonObject} and {@code JsonArray} targets, whose backing map or list is
+     * itself the intermediate the engine walks. Only raw binary targets are excluded — see
+     * {@link #isStructuredBodyTarget}.
      *
      * <p>This overload is used by {@link GeneratedJaxRsSupport} so that generated execution
      * plans can pass policies computed at codegen time.
@@ -885,14 +945,55 @@ final class ParameterExtractor {
         if (objectProcessor != null && isStructuredBodyTarget(targetType)) {
 
             String lowerContentType = contentType != null ? contentType.toLowerCase() : "";
+            // FR-JSON-024B/022/023: a non-vertx JSON profile resolved for this method (slice 2.1) is
+            // stashed on the routing context under KEY_RESOLVED_BODY_MAPPER. When present it owns the
+            // two-phase MATERIALIZATION of the processed body; when absent (the vertx default) the
+            // calls below are byte-for-byte identical to today (JsonObject.mapTo / DatabindCodec).
+            // Resolved ABOVE the content-type branch: the form-urlencoded body is bound by the same
+            // mapper the JSON body is, and its bodyNameResolver projection was built from that mapper —
+            // binding it through the global codec instead would make the projection and the binder
+            // disagree about property names on any non-vertx profile.
+            ObjectMapper profileMapper = ctx.get(BoundRequest.KEY_RESOLVED_BODY_MAPPER);
 
             // JSON body — intercept intermediate map before materialization
             if (lowerContentType.isEmpty() || lowerContentType.contains("json")) {
-                // FR-JSON-024B/022/023: a non-vertx JSON profile resolved for this method (slice 2.1) is
-                // stashed on the routing context under KEY_RESOLVED_BODY_MAPPER. When present it owns the
-                // two-phase MATERIALIZATION of the processed body; when absent (the vertx default) the
-                // calls below are byte-for-byte identical to today (JsonObject.mapTo / DatabindCodec).
-                ObjectMapper profileMapper = ctx.get(BoundRequest.KEY_RESOLVED_BODY_MAPPER);
+                // A schema-free Vert.x wrapper body is already an intermediate: hand its backing map or
+                // list to the engine so invocation-level chains reach every string leaf, and re-wrap the
+                // result. IDENTITY is the correct projection — there is no declared DTO whose properties
+                // could be renamed, so there is nothing to project (plan 3.5, 3.8). A body that is not
+                // the declared wrapper shape falls through to the decoder chain, which owns that
+                // mismatch exactly as it did before.
+                if (targetType == JsonObject.class) {
+                    JsonObject rawObject = body.getJsonObject();
+                    if (rawObject != null) {
+                        Object processed = objectProcessor.processInput(
+                                rawObject.getMap(),
+                                Map.class,
+                                policies,
+                                InputLocation.BODY,
+                                InputFieldNameResolver.IDENTITY);
+                        if (processed instanceof Map<?, ?> processedMap) {
+                            @SuppressWarnings("unchecked")
+                            Map<String, Object> typedMap = (Map<String, Object>) processedMap;
+                            return new JsonObject(typedMap);
+                        }
+                        return rawObject;
+                    }
+                } else if (targetType == io.vertx.core.json.JsonArray.class) {
+                    io.vertx.core.json.JsonArray rawArray = body.getJsonArray();
+                    if (rawArray != null) {
+                        Object processed = objectProcessor.processInput(
+                                rawArray.getList(),
+                                List.class,
+                                policies,
+                                InputLocation.BODY,
+                                InputFieldNameResolver.IDENTITY);
+                        if (processed instanceof List<?> processedList) {
+                            return new io.vertx.core.json.JsonArray(new ArrayList<>(processedList));
+                        }
+                        return rawArray;
+                    }
+                }
                 JsonObject jsonBody = body.getJsonObject();
                 if (jsonBody != null && !Collection.class.isAssignableFrom(targetType) && !targetType.isArray()) {
                     Map<String, Object> intermediate = jsonBody.getMap();
@@ -946,12 +1047,17 @@ final class ParameterExtractor {
                 }
                 if (!json.isEmpty()) {
                     // A form-urlencoded body materialized as a POJO is bound by Jackson exactly like a
-                    // JSON object body, so its keys are wire names and carry the same projection.
+                    // JSON object body, so its keys are wire names and carry the same projection — and
+                    // therefore the same materialization pair: the route's profile mapper when one was
+                    // resolved, the global codec otherwise.
                     Object processed = objectProcessor.processInput(
                             json.getMap(), targetType, policies, InputLocation.BODY, bodyNameResolver);
                     if (processed instanceof Map<?, ?> processedMap) {
                         @SuppressWarnings("unchecked")
                         Map<String, Object> typedMap = (Map<String, Object>) processedMap;
+                        if (profileMapper != null) {
+                            return ProfileBodyMaterialization.convertValue(profileMapper, typedMap, targetType);
+                        }
                         return new JsonObject(typedMap).mapTo(targetType);
                     }
                 }
@@ -979,17 +1085,19 @@ final class ParameterExtractor {
 
     /**
      * Returns {@code true} for body target types that support two-phase intermediate processing.
-     * Excludes raw binary types, Vert.x JSON wrappers, collections, and arrays — these bypass
-     * the intermediate map path and go directly to the decoder chain.
+     *
+     * <p>Only raw binary targets are excluded: a {@code byte[]} or {@link io.vertx.core.buffer.Buffer}
+     * body is opaque bytes with no string values for a chain to act on, so it goes directly to the
+     * decoder chain — and a policy declared on one is rejected at startup by {@link JaxRsRouteRegistrar}
+     * rather than silently skipped here. The Vert.x JSON wrappers are <em>not</em> excluded: a
+     * {@link JsonObject} or {@code JsonArray} body is already the intermediate the engine walks, so
+     * routing it through the engine is what makes a declared chain reach its string leaves.
      *
      * @param targetType the raw target class
      * @return {@code true} when the target type supports intermediate map processing
      */
     private static boolean isStructuredBodyTarget(Class<?> targetType) {
-        return targetType != byte[].class
-                && targetType != io.vertx.core.buffer.Buffer.class
-                && targetType != JsonObject.class
-                && targetType != io.vertx.core.json.JsonArray.class;
+        return !isBinaryBodyTarget(targetType);
     }
 
     // --- Form parameter extraction ---
