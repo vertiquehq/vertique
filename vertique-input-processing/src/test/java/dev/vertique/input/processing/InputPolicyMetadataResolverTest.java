@@ -18,6 +18,7 @@ import dev.vertique.core.sanitization.Sanitizer;
 import dev.vertique.core.sanitization.SkipCanonicalization;
 import dev.vertique.core.sanitization.SkipSanitization;
 import java.util.List;
+import java.util.Map;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -227,6 +228,98 @@ class InputPolicyMetadataResolverTest {
         assertNotNull(meta);
     }
 
+    // --- Recursive type resolution ---
+
+    @Nested
+    @DisplayName("recursive type resolution")
+    class RecursiveTypeResolution {
+
+        @Test
+        @DisplayName("self-referential type keeps the policies declared below the self-reference")
+        void shouldResolveSelfReferentialTypeWithoutEmptyingNestedPolicies() {
+            InputPolicyMetadata meta = resolver.resolve(Node.class);
+
+            InputPolicyMetadata.FieldPolicyMetadata child = meta.fields().get("child");
+            assertNotNull(
+                    child,
+                    "the self-referential 'child' field must be present in the resolved metadata — "
+                            + "dropping it discards every policy declared below the self-reference, so the "
+                            + "nested subtree is walked with no schema at all");
+            assertEquals(Node.class, child.fieldType(), "'child' must carry its declared nested type");
+
+            // The nested subtree's policies are read back through the same per-type resolution the
+            // walker performs when it descends into 'child'.
+            InputPolicyMetadata nested = resolver.resolve(child.fieldType());
+            InputPolicyMetadata.FieldPolicyMetadata nestedName = nested.fields().get("name");
+            assertNotNull(nestedName, "the nested level must still expose the 'name' field");
+            assertEquals(
+                    List.of(TestStripControlsSanitizer.class),
+                    nestedName.sanitizerChain(),
+                    "the nested level must still carry the @Sanitize chain declared on 'name'");
+        }
+
+        @Test
+        @DisplayName("direct A->A and mutual A->B->A recursion resolve to the same metadata shape")
+        void shouldTreatDirectAndMutualRecursionIdentically() {
+            String direct = shapeOf(DirectRecursive.class, 3);
+            String mutual = shapeOf(MutualA.class, 3);
+
+            assertEquals(
+                    direct,
+                    mutual,
+                    "direct and mutual recursion declare equivalent policies at equivalent depths, so "
+                            + "their resolved metadata must be shape-equivalent; a difference means "
+                            + "resolution is path-dependent rather than per-type");
+        }
+
+        /**
+         * Renders the resolved metadata of {@code type} as a type-name-free structural string:
+         * object-level chains and skip flags, then each field's chains, skip flags, and — for
+         * non-string fields — the shape of its declared nested type, resolved the way the walker
+         * resolves it at descent. {@code remainingDepth} bounds the expansion of recursive graphs.
+         *
+         * @param type           the type to render
+         * @param remainingDepth how many further nested levels to expand
+         * @return the structural shape string
+         */
+        private String shapeOf(Class<?> type, int remainingDepth) {
+            InputPolicyMetadata meta = resolver.resolve(type);
+            StringBuilder shape = new StringBuilder("type[canon=")
+                    .append(simpleNames(meta.objectCanonicalizerChain()))
+                    .append(",sanit=")
+                    .append(simpleNames(meta.objectSanitizerChain()))
+                    .append(",skipCanon=")
+                    .append(meta.skipCanonicalization())
+                    .append(",skipSanit=")
+                    .append(meta.skipSanitization())
+                    .append("]{");
+            for (Map.Entry<String, InputPolicyMetadata.FieldPolicyMetadata> entry :
+                    meta.fields().entrySet()) {
+                InputPolicyMetadata.FieldPolicyMetadata field = entry.getValue();
+                shape.append(entry.getKey())
+                        .append("[canon=")
+                        .append(simpleNames(field.canonicalizerChain()))
+                        .append(",sanit=")
+                        .append(simpleNames(field.sanitizerChain()))
+                        .append(",skipCanon=")
+                        .append(field.skipCanonicalization())
+                        .append(",skipSanit=")
+                        .append(field.skipSanitization())
+                        .append("]");
+                Class<?> fieldType = field.fieldType();
+                if (fieldType != null && fieldType != String.class) {
+                    shape.append("->").append(remainingDepth > 0 ? shapeOf(fieldType, remainingDepth - 1) : "(elided)");
+                }
+                shape.append(" ");
+            }
+            return shape.append("}").toString();
+        }
+
+        private List<String> simpleNames(List<? extends Class<?>> classes) {
+            return classes.stream().map(Class::getSimpleName).toList();
+        }
+    }
+
     // --- Meta-annotation resolution ---
 
     @Nested
@@ -362,6 +455,43 @@ class InputPolicyMetadataResolverTest {
         String name;
         SelfRefDto self;
     }
+
+    /**
+     * Directly self-referential record: the policy on {@code name} must remain visible for the
+     * nested {@code child} level, not only for the top level.
+     *
+     * @param name  the policy-carrying string component
+     * @param child the self-reference
+     */
+    record Node(@Sanitize(TestStripControlsSanitizer.class) String name, Node child) {}
+
+    /**
+     * Direct {@code A -> A} recursion — the shape-equivalence baseline for {@link MutualA}.
+     *
+     * @param name  the policy-carrying string component
+     * @param child the self-reference
+     */
+    record DirectRecursive(
+            @Sanitize(TestStripControlsSanitizer.class) String name, DirectRecursive child) {}
+
+    /**
+     * Mutual {@code A -> B -> A} recursion, declaring the same policies at the same depths as
+     * {@link DirectRecursive}.
+     *
+     * @param name  the policy-carrying string component
+     * @param child the reference to the other half of the cycle
+     */
+    record MutualA(
+            @Sanitize(TestStripControlsSanitizer.class) String name, MutualB child) {}
+
+    /**
+     * The other half of the {@link MutualA} cycle.
+     *
+     * @param name  the policy-carrying string component
+     * @param child the reference back to {@link MutualA}
+     */
+    record MutualB(
+            @Sanitize(TestStripControlsSanitizer.class) String name, MutualA child) {}
 
     static class CollectionDto {
         @Canonicalize(TestTrimCanonicalizer.class)

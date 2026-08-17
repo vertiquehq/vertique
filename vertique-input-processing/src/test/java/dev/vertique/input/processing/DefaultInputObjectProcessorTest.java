@@ -571,6 +571,98 @@ class DefaultInputObjectProcessorTest {
         }
     }
 
+    // --- Recursive and deeply nested DTOs ---
+
+    @Nested
+    @DisplayName("recursive and deeply nested DTOs")
+    class RecursiveAndDeepDtos {
+
+        @Test
+        @DisplayName("self-referential DTO is sanitized at every level, not only the top")
+        void shouldSanitizeEveryLevelOfASelfReferentialDto() {
+            Map<String, Object> level4 = new LinkedHashMap<>();
+            level4.put("name", "d");
+            Map<String, Object> level3 = new LinkedHashMap<>();
+            level3.put("name", "c");
+            level3.put("child", level4);
+            Map<String, Object> level2 = new LinkedHashMap<>();
+            level2.put("name", "b");
+            level2.put("child", level3);
+            Map<String, Object> level1 = new LinkedHashMap<>();
+            level1.put("name", "a");
+            level1.put("child", level2);
+
+            Object result =
+                    processor.processInput(level1, SelfRefNode.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
+
+            assertEquals(
+                    List.of("safe:a", "safe:b", "safe:c", "safe:d"),
+                    namesAlongChain(result),
+                    "SelfRefNode.name declares @Sanitize, so every level reached through the "
+                            + "self-referential 'child' field must be sanitized — not just the top level");
+        }
+
+        @Test
+        @DisplayName("a chain of twelve distinct types is sanitized at its deepest level")
+        void shouldSanitizeBeyondTenNestingLevelsOfDistinctTypes() {
+            Map<String, Object> deepest = new LinkedHashMap<>();
+            deepest.put("name", "leaf");
+            Map<String, Object> current = deepest;
+            List<Map<String, Object>> levels = new ArrayList<>();
+            levels.add(deepest);
+            for (int level = 11; level >= 1; level--) {
+                Map<String, Object> node = new LinkedHashMap<>();
+                if (level == 1) {
+                    node.put("name", "root");
+                }
+                node.put("child", current);
+                levels.add(0, node);
+                current = node;
+            }
+
+            // Control: entering the same chain at level 4 leaves nine links to the deepest level,
+            // which is inside the resolver's ten-level budget — so this arm passes today and pins
+            // the failure below to the depth budget rather than to the fixture.
+            Object shallowResult = processor.processInput(
+                    levels.get(3), Depth4.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
+            assertEquals(
+                    "safe:leaf",
+                    deepestName(shallowResult),
+                    "control: the same chain entered nine levels above the leaf must be sanitized");
+
+            Object result = processor.processInput(
+                    levels.get(0), Depth1.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
+
+            Map<?, ?> map = (Map<?, ?>) result;
+            assertEquals("safe:root", map.get("name"), "the root level's own @Sanitize must still run");
+            assertEquals(
+                    "safe:leaf",
+                    deepestName(result),
+                    "Depth12.name declares @Sanitize twelve levels below the root; traversal must "
+                            + "terminate on the finite intermediate, not on a fixed type-graph depth budget");
+        }
+
+        /** Collects the {@code name} value of every level reachable through the {@code child} key. */
+        private List<Object> namesAlongChain(Object result) {
+            List<Object> names = new ArrayList<>();
+            Map<?, ?> node = (Map<?, ?>) result;
+            while (node != null) {
+                names.add(node.get("name"));
+                node = (Map<?, ?>) node.get("child");
+            }
+            return names;
+        }
+
+        /** Returns the {@code name} value of the deepest level reachable through {@code child}. */
+        private Object deepestName(Object result) {
+            Map<?, ?> node = (Map<?, ?>) result;
+            while (node.get("child") != null) {
+                node = (Map<?, ?>) node.get("child");
+            }
+            return node.get("name");
+        }
+    }
+
     // =========================================================================
     // Test DTOs
     // =========================================================================
@@ -667,6 +759,83 @@ class DefaultInputObjectProcessorTest {
     static class OuterWithSkipField {
         @SkipCanonicalization
         InnerWithCanon inner;
+    }
+
+    /** Directly self-referential DTO — its {@code @Sanitize} chain must apply at every level. */
+    static class SelfRefNode {
+        @Sanitize(TestPrefixSanitizer.class)
+        String name;
+
+        SelfRefNode child;
+    }
+
+    // Twelve distinct types forming an acyclic chain deeper than the resolver's ten-level budget.
+    // Only the outermost and the deepest level declare a policy: an annotated intermediate would
+    // re-anchor resolution at its own level (each nested descent re-resolves from depth zero), so
+    // the depth budget would never be observable.
+
+    /** Level 1 of the twelve-level chain. */
+    static class Depth1 {
+        @Sanitize(TestPrefixSanitizer.class)
+        String name;
+
+        Depth2 child;
+    }
+
+    /** Level 2 of the twelve-level chain. */
+    static class Depth2 {
+        Depth3 child;
+    }
+
+    /** Level 3 of the twelve-level chain. */
+    static class Depth3 {
+        Depth4 child;
+    }
+
+    /** Level 4 of the twelve-level chain; also the control entry point. */
+    static class Depth4 {
+        Depth5 child;
+    }
+
+    /** Level 5 of the twelve-level chain. */
+    static class Depth5 {
+        Depth6 child;
+    }
+
+    /** Level 6 of the twelve-level chain. */
+    static class Depth6 {
+        Depth7 child;
+    }
+
+    /** Level 7 of the twelve-level chain. */
+    static class Depth7 {
+        Depth8 child;
+    }
+
+    /** Level 8 of the twelve-level chain. */
+    static class Depth8 {
+        Depth9 child;
+    }
+
+    /** Level 9 of the twelve-level chain. */
+    static class Depth9 {
+        Depth10 child;
+    }
+
+    /** Level 10 of the twelve-level chain. */
+    static class Depth10 {
+        Depth11 child;
+    }
+
+    /** Level 11 of the twelve-level chain. */
+    static class Depth11 {
+        Depth12 child;
+    }
+
+    /** Level 12 of the twelve-level chain — carries the deepest declared policy. */
+    static class Depth12 {
+        @Sanitize(TestPrefixSanitizer.class)
+        String name;
     }
 
     /**

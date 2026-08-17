@@ -461,6 +461,189 @@ class GeneratedVsReflectiveEquivalenceTest {
         }
     }
 
+    @Nested
+    @DisplayName("recursive and deeply nested DTOs")
+    class RecursiveAndDeepDtos {
+
+        @Test
+        @DisplayName("self-referential and twelve-level DTOs agree and are processed at every level")
+        void shouldAgreeForRecursiveAndDeeplyNestedDtos() {
+            Map<String, Object> recursiveInput = recursiveInput();
+
+            Object reflectiveOut = processor.processInput(
+                    recursiveInput, RecursiveReflective.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
+            Object generatedOut = processor.processInput(
+                    recursiveInput, RecursiveGenerated.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
+
+            assertEquals(
+                    reflectiveOut,
+                    generatedOut,
+                    "self-referential DTO: the generated processor's self-dispatching 'child' arm trims "
+                            + "every level, so the reflective walker must too");
+            assertEquals(
+                    List.of("a", "b", "c"),
+                    notesAlongChain(reflectiveOut),
+                    "both paths must trim the @Canonicalize'd note at every level of the self-reference");
+
+            Map<String, Object> deepInput = deepInput();
+
+            Object deepReflectiveOut = processor.processInput(
+                    deepInput, DeepReflectiveRoot.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
+            Object deepGeneratedOut = processor.processInput(
+                    deepInput, DeepGeneratedRoot.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
+
+            assertEquals(deepReflectiveOut, deepGeneratedOut, "twelve-level chain: the two paths must agree");
+            // Agreement alone would also hold if both paths silently skipped the deepest level, so
+            // pin the observable effect on each path independently.
+            assertEquals(
+                    "deep",
+                    deepestNote(deepReflectiveOut),
+                    "reflective path must reach and trim the twelfth level's @Canonicalize'd note");
+            assertEquals(
+                    "deep",
+                    deepestNote(deepGeneratedOut),
+                    "generated path must reach and trim the twelfth level's @Canonicalize'd note");
+        }
+
+        /** Builds a three-level intermediate for the self-referential fixtures. */
+        private Map<String, Object> recursiveInput() {
+            Map<String, Object> third = new LinkedHashMap<>();
+            third.put("note", "  c  ");
+            Map<String, Object> second = new LinkedHashMap<>();
+            second.put("note", "  b  ");
+            second.put("child", third);
+            Map<String, Object> first = new LinkedHashMap<>();
+            first.put("note", "  a  ");
+            first.put("child", second);
+            return first;
+        }
+
+        /** Builds a twelve-level intermediate for the {@code DeepLink} chain. */
+        private Map<String, Object> deepInput() {
+            Map<String, Object> current = new LinkedHashMap<>();
+            current.put("note", "  deep  ");
+            for (int level = 11; level >= 1; level--) {
+                Map<String, Object> node = new LinkedHashMap<>();
+                node.put("child", current);
+                current = node;
+            }
+            return current;
+        }
+
+        /** Collects the {@code note} value of every level reachable through {@code child}. */
+        private List<Object> notesAlongChain(Object result) {
+            List<Object> notes = new ArrayList<>();
+            Map<?, ?> node = (Map<?, ?>) result;
+            while (node != null) {
+                notes.add(node.get("note"));
+                node = (Map<?, ?>) node.get("child");
+            }
+            return notes;
+        }
+
+        /** Returns the {@code note} value of the deepest level reachable through {@code child}. */
+        private Object deepestNote(Object result) {
+            Map<?, ?> node = (Map<?, ?>) result;
+            while (node.get("child") != null) {
+                node = (Map<?, ?>) node.get("child");
+            }
+            return node.get("note");
+        }
+    }
+
+    /** Self-referential reflective baseline — no companion processor. */
+    static final class RecursiveReflective {
+        @Canonicalize(TestTrim.class)
+        public String note;
+
+        public RecursiveReflective child;
+    }
+
+    /**
+     * Self-referential generated counterpart, paired with the hand-written
+     * {@code GeneratedVsReflectiveEquivalenceTest_RecursiveGenerated_InputProcessor} fixture whose
+     * {@code child} arm dispatches back to its own target type.
+     */
+    static final class RecursiveGenerated {
+        @Canonicalize(TestTrim.class)
+        public String note;
+
+        public RecursiveGenerated child;
+    }
+
+    // A twelve-level acyclic chain of distinct types. Only the leaf declares a policy: an
+    // annotated intermediate would re-anchor reflective resolution at its own level (each nested
+    // descent resolves from depth zero), so the resolver's depth budget would never be observable.
+
+    /** Reflective root of the twelve-level chain — no companion processor. */
+    static final class DeepReflectiveRoot {
+        public DeepLink2 child;
+    }
+
+    /**
+     * Generated root of the twelve-level chain, paired with the hand-written
+     * {@code GeneratedVsReflectiveEquivalenceTest_DeepGeneratedRoot_InputProcessor} fixture.
+     */
+    static final class DeepGeneratedRoot {
+        public DeepLink2 child;
+    }
+
+    /** Level 2 of the twelve-level chain. */
+    public static final class DeepLink2 {
+        public DeepLink3 child;
+    }
+
+    /** Level 3 of the twelve-level chain. */
+    public static final class DeepLink3 {
+        public DeepLink4 child;
+    }
+
+    /** Level 4 of the twelve-level chain. */
+    public static final class DeepLink4 {
+        public DeepLink5 child;
+    }
+
+    /** Level 5 of the twelve-level chain. */
+    public static final class DeepLink5 {
+        public DeepLink6 child;
+    }
+
+    /** Level 6 of the twelve-level chain. */
+    public static final class DeepLink6 {
+        public DeepLink7 child;
+    }
+
+    /** Level 7 of the twelve-level chain. */
+    public static final class DeepLink7 {
+        public DeepLink8 child;
+    }
+
+    /** Level 8 of the twelve-level chain. */
+    public static final class DeepLink8 {
+        public DeepLink9 child;
+    }
+
+    /** Level 9 of the twelve-level chain. */
+    public static final class DeepLink9 {
+        public DeepLink10 child;
+    }
+
+    /** Level 10 of the twelve-level chain. */
+    public static final class DeepLink10 {
+        public DeepLink11 child;
+    }
+
+    /** Level 11 of the twelve-level chain. */
+    public static final class DeepLink11 {
+        public DeepLeaf12 child;
+    }
+
+    /** Level 12 of the twelve-level chain — carries the deepest declared policy. */
+    public static final class DeepLeaf12 {
+        @Canonicalize(TestTrim.class)
+        public String note;
+    }
+
     /**
      * Reflective baseline with an annotated {@code Object} field — no companion processor.
      */
