@@ -4,6 +4,7 @@
 package dev.vertique.rest.jaxrs;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import dev.vertique.core.exception.ConfigurationException;
 import dev.vertique.core.json.JsonMapperProfileRegistry;
 import dev.vertique.core.validation.BeanValidator;
 import dev.vertique.input.processing.InputObjectProcessor;
@@ -42,6 +43,7 @@ import dev.vertique.security.authz.ActionRef;
 import dev.vertique.security.authz.ActionRegistry;
 import io.vertx.core.Handler;
 import io.vertx.core.http.HttpMethod;
+import io.vertx.core.json.jackson.DatabindCodec;
 import io.vertx.core.streams.ReadStream;
 import io.vertx.ext.web.FileUpload;
 import io.vertx.ext.web.Route;
@@ -58,6 +60,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -211,6 +214,11 @@ public class JaxRsRouteRegistrar {
         // effective policy while the raw policy is not (finding C2 / SH-4).
         Map<String, SecurityPolicy> effectivePolicies = new HashMap<>();
         List<ResourceMethodMeta> allMethods = new ArrayList<>();
+        // One wire → Java name projection per body mapper for this router build, so routes sharing a
+        // mapper (every route on the reserved vertx profile, typically the whole application) share one
+        // per-type projection cache instead of introspecting each body type once per route. Scoped to
+        // this build and discarded with it: a static mapper-keyed cache would outlive the router.
+        Map<ObjectMapper, JacksonFieldNameResolver> bodyNameResolvers = new IdentityHashMap<>();
 
         ResourceScanner scanner = new ResourceScanner(new SecurityPolicyBuilder());
         RequiresActionResolver requiresActionResolver = new RequiresActionResolver();
@@ -406,7 +414,10 @@ public class JaxRsRouteRegistrar {
                     objectProcessor,
                     evidenceCapturers != null ? evidenceCapturers : List.of(),
                     resolvedBodyMapper,
-                    paramConversionResolver));
+                    paramConversionResolver,
+                    bodyNameResolvers.computeIfAbsent(
+                            resolvedBodyMapper != null ? resolvedBodyMapper : DatabindCodec.mapper(),
+                            JacksonFieldNameResolver::forMapper)));
 
             // (e) Per-route ERROR-body profile decision (FR-JSON-058/058A). This closes the error-path
             // profiling asymmetry: a failure that fires BEFORE the request-path stash at (a-2) runs
@@ -473,6 +484,92 @@ public class JaxRsRouteRegistrar {
         if (!routeViolations.isEmpty()) {
             throw new RouteRegistrationException(routeViolations);
         }
+
+        // Composition gate: declared input processing with no engine bound is a configuration error,
+        // never a silent no-op.
+        checkInputProcessingComposition(allMethods, objectProcessor);
+    }
+
+    /**
+     * Fails startup when a route declares canonicalization or sanitization while no
+     * {@link InputObjectProcessor} is bound.
+     *
+     * <p>The engine binding is optional ({@code RestModule} declares {@code @BindsOptionalOf}), and
+     * every consumer null-guards it. Without this gate an application whose routes or DTOs declare
+     * {@code @Canonicalize}/{@code @Sanitize} boots and serves requests with none of that processing
+     * running — a silent security failure. There is deliberately no opt-out flag: "declared but not
+     * running" is not a second legitimate mode, and a warning is not an enforcement mechanism.
+     *
+     * <p>Both shapes a declaration can take are covered: an invocation-level chain (from the route's
+     * own or its parameters' annotations, derived by the same {@link ParameterExtractor} computation
+     * the request path uses) and a policy declared inside a parameter's type graph (answered by
+     * {@link InputObjectProcessor#declaresPolicies}). Every offending route is collected before
+     * throwing, so one startup failure reports the whole surface rather than one route per rebuild.
+     *
+     * @param methods         every scanned resource method
+     * @param objectProcessor the optional input-processing engine; {@code null} when unbound
+     * @throws ConfigurationException if any route declares processing that cannot run
+     */
+    private static void checkInputProcessingComposition(
+            List<ResourceMethodMeta> methods, @Nullable InputObjectProcessor objectProcessor) {
+        if (objectProcessor != null) {
+            return;
+        }
+        List<String> offendingRoutes = new ArrayList<>();
+        for (ResourceMethodMeta meta : methods) {
+            String reason = unboundPolicyReason(meta);
+            if (reason != null) {
+                offendingRoutes.add("  - " + meta.httpMethod() + " " + meta.path() + " (operationId="
+                        + meta.operationId() + "): " + reason);
+            }
+        }
+        if (offendingRoutes.isEmpty()) {
+            return;
+        }
+        throw new ConfigurationException(offendingRoutes.size()
+                + " route(s) declare input canonicalization or sanitization, but no InputObjectProcessor is bound, "
+                + "so none of it would run:\n" + String.join("\n", offendingRoutes)
+                + "\nInstall a module providing an InputObjectProcessor (SanitizationModule) in the Dagger "
+                + "component, or remove the declared policies.");
+    }
+
+    /**
+     * Returns why the given route's declared input processing cannot run, or {@code null} when it
+     * declares none.
+     *
+     * @param meta the resource method metadata
+     * @return a human-readable reason naming the declaration, or {@code null}
+     */
+    private static @Nullable String unboundPolicyReason(ResourceMethodMeta meta) {
+        if (ParameterExtractor.declaresInvocationPolicies(meta)) {
+            return "the route or one of its parameters declares a canonicalizer or sanitizer chain";
+        }
+        for (ResourceMethodMeta.ParamMeta param : meta.params()) {
+            if (!isProcessedParamSource(param.source())) {
+                continue;
+            }
+            Type declaredType = param.genericType() != null ? param.genericType() : param.type();
+            if (InputObjectProcessor.declaresPolicies(declaredType)) {
+                return "parameter '" + param.name() + "' of type " + declaredType.getTypeName()
+                        + " declares input policies on its own fields";
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Returns whether values from the given parameter source pass through the input-processing engine
+     * at request time. Context, precondition, and raw multipart sources never do, so a policy
+     * annotation reachable from their types could not run with or without a bound engine.
+     *
+     * @param source the parameter source
+     * @return {@code true} when the source's values are submitted to the engine
+     */
+    private static boolean isProcessedParamSource(ResourceMethodMeta.ParamSource source) {
+        return switch (source) {
+            case PATH, QUERY, HEADER, COOKIE, BODY, FORM, BEAN_PARAM -> true;
+            case CONTEXT, PRECONDITIONS, FILE_UPLOADS, ENTITY_PARTS -> false;
+        };
     }
 
     /**

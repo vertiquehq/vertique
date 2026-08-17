@@ -11,16 +11,21 @@ import dev.vertique.core.sanitization.SkipCanonicalization;
 import dev.vertique.core.sanitization.SkipSanitization;
 import dev.vertique.core.util.AnnotationResolver;
 import dev.vertique.input.processing.InputPolicyMetadata.FieldPolicyMetadata;
+import jakarta.annotation.Nullable;
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Field;
 import java.lang.reflect.RecordComponent;
 import java.lang.reflect.Type;
+import java.util.ArrayDeque;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.Deque;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -64,6 +69,64 @@ class InputPolicyMetadataResolver {
      */
     public InputPolicyMetadata resolve(Class<?> targetType) {
         return cache.computeIfAbsent(targetType, this::resolveInternal);
+    }
+
+    /**
+     * Answers {@link InputObjectProcessor#declaresPolicies(Type)}: whether any type reachable from
+     * {@code targetType} declares a canonicalizer or sanitizer chain.
+     *
+     * <p>Walks the declared type graph breadth-first with a visited set, using a throw-away resolver
+     * so no {@link Class} is retained past the call — this is a startup-time query, not a request-path
+     * one. Descent follows exactly the links {@link #buildFieldMeta} records: a field's declared type
+     * when it carries a property set, and a collection or array field's element type. Skip flags
+     * declare nothing to run and are therefore not policies.
+     *
+     * @param targetType the entry-point type; must not be {@code null}
+     * @return {@code true} if a declared chain exists anywhere in the reachable graph
+     */
+    static boolean declaresPolicies(Type targetType) {
+        InputPolicyMetadataResolver resolver = new InputPolicyMetadataResolver();
+        Deque<Class<?>> pending = new ArrayDeque<>();
+        Set<Class<?>> visited = new HashSet<>();
+        enqueueDescendable(pending, TypeClassifier.classify(targetType));
+        // A collection or array entry point carries its policies on the element type, not the container.
+        enqueueDescendable(pending, TypeClassifier.elementType(targetType));
+
+        while (!pending.isEmpty()) {
+            Class<?> type = pending.poll();
+            if (!visited.add(type)) {
+                continue;
+            }
+            InputPolicyMetadata metadata = resolver.resolve(type);
+            if (!metadata.objectCanonicalizerChain().isEmpty()
+                    || !metadata.objectSanitizerChain().isEmpty()) {
+                return true;
+            }
+            for (FieldPolicyMetadata field : metadata.fields().values()) {
+                if (!field.canonicalizerChain().isEmpty()
+                        || !field.sanitizerChain().isEmpty()) {
+                    return true;
+                }
+                if (field.collectionElementType() != null) {
+                    enqueueDescendable(pending, field.collectionElementType());
+                } else {
+                    enqueueDescendable(pending, field.fieldType());
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Adds {@code type} to the traversal queue when it carries a property set worth resolving.
+     *
+     * @param pending the traversal queue
+     * @param type    the candidate type; may be {@code null}
+     */
+    private static void enqueueDescendable(Deque<Class<?>> pending, @Nullable Class<?> type) {
+        if (type != null && type != String.class && isDescendableObject(type)) {
+            pending.add(type);
+        }
     }
 
     /**

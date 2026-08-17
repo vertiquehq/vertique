@@ -6,6 +6,7 @@ package dev.vertique.rest.jaxrs;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.vertique.core.validation.BeanValidator;
 import dev.vertique.core.validation.ParameterViolation;
+import dev.vertique.input.processing.InputFieldNameResolver;
 import dev.vertique.input.processing.InputObjectProcessor;
 import dev.vertique.rest.core.RestValidationException;
 import dev.vertique.rest.core.capture.HttpOperationMeta;
@@ -125,6 +126,56 @@ public class ResourceMethodInvoker implements Handler<RoutingContext> {
             List<RestServerRequestEvidenceCapturer> evidenceCapturers,
             @Nullable ObjectMapper resolvedBodyMapper,
             ParamConversionResolver paramConversionResolver) {
+        this(
+                meta,
+                interceptors,
+                errorPipeline,
+                responsePipeline,
+                restContextResolution,
+                decoders,
+                beanValidator,
+                objectProcessor,
+                evidenceCapturers,
+                resolvedBodyMapper,
+                paramConversionResolver,
+                JacksonFieldNameResolver.forRoute(resolvedBodyMapper));
+    }
+
+    /**
+     * Creates a new invoker with an explicit body-name projection, so a router build can share one
+     * projection cache across every route that materializes its body with the same
+     * {@link ObjectMapper} instead of introspecting each body type once per route.
+     *
+     * @param meta                  metadata describing the JAX-RS resource method
+     * @param interceptors          sorted list of operation interceptors
+     * @param errorPipeline         shared error mapping pipeline
+     * @param responsePipeline      unified response pipeline for producing and sending responses
+     * @param restContextResolution coordinator for the {@link RestContextResolution} resolver chain
+     * @param decoders              priority-sorted list of request body decoders
+     * @param beanValidator         optional Bean Validation implementation; {@code null} skips validation
+     * @param objectProcessor       optional input object processor; {@code null} skips input processing
+     * @param evidenceCapturers     pre-sorted request-evidence capturers; empty list is the no-op default
+     * @param resolvedBodyMapper    effective request-body mapper (FR-JSON-020), or {@code null} for the
+     *                              {@code vertx} default
+     * @param paramConversionResolver the framework parameter-conversion resolver; must not be {@code null}
+     * @param bodyNameResolver      the wire &rarr; Java property-name projection for this route's OBJECT
+     *                              bodies; must be built from {@code resolvedBodyMapper} (or
+     *                              {@code DatabindCodec.mapper()} when it is {@code null}), because that
+     *                              is the mapper whose naming decides which declared policies apply
+     */
+    public ResourceMethodInvoker(
+            ResourceMethodMeta meta,
+            List<OperationInterceptor> interceptors,
+            ErrorPipeline errorPipeline,
+            ResponsePipeline responsePipeline,
+            RestContextResolution restContextResolution,
+            List<RequestBodyDecoder> decoders,
+            @Nullable BeanValidator beanValidator,
+            @Nullable InputObjectProcessor objectProcessor,
+            List<RestServerRequestEvidenceCapturer> evidenceCapturers,
+            @Nullable ObjectMapper resolvedBodyMapper,
+            ParamConversionResolver paramConversionResolver,
+            InputFieldNameResolver bodyNameResolver) {
         this.meta = meta;
         this.errorPipeline = errorPipeline;
         this.responsePipeline = responsePipeline;
@@ -132,12 +183,17 @@ public class ResourceMethodInvoker implements Handler<RoutingContext> {
         this.resolvedBodyMapper = resolvedBodyMapper;
         this.paramConversionResolver = paramConversionResolver;
         this.interceptorChain = new OperationInterceptorChain(interceptors != null ? interceptors : List.of());
+        // The body-name projection comes from the mapper that actually materializes this route's body —
+        // the resolved profile mapper, or DatabindCodec.mapper() on the reserved vertx profile. Without
+        // it the engine would look up a renamed field's metadata by its wire key and silently skip its
+        // declared @Canonicalize/@Sanitize.
         this.parameterExtractor = new ParameterExtractor(
                 meta,
                 decoders != null ? decoders : List.of(),
                 restContextResolution,
                 objectProcessor,
-                paramConversionResolver);
+                paramConversionResolver,
+                bodyNameResolver);
         // Slice 2 adapter: wraps the per-route ParameterExtractor and exposes its policy-accepting
         // helpers to any generated ResourceExecutionPlan. Always wired; whether it actually runs
         // depends on whether meta.executionPlan() is non-null (which only happens when CG-010's

@@ -80,6 +80,17 @@ final class ParameterExtractor {
     private final @Nullable InputObjectProcessor objectProcessor;
 
     /**
+     * The wire &rarr; Java property-name projection applied to every OBJECT body this route processes.
+     * Built once per route from the mapper that materializes its body, so a {@code @JsonProperty},
+     * naming strategy or {@code @JsonAlias} rename still selects the field's declared policies. The
+     * bare-{@code String} parameter sites (query, header, path, form) pass
+     * {@link InputFieldNameResolver#IDENTITY} instead: there is no object whose fields could be
+     * renamed. {@code @BeanParam} intermediates likewise stay on {@code IDENTITY} — their keys are the
+     * bean's own Java field and record-component names, not codec-published wire names.
+     */
+    private final InputFieldNameResolver bodyNameResolver;
+
+    /**
      * The framework conversion resolver used to coerce every inbound scalar (and collection element)
      * to its declared Java type, so the reflective dispatch path, the binding facade, and the outbound
      * client share one symmetric conversion chain.
@@ -216,11 +227,46 @@ final class ParameterExtractor {
             RestContextResolution restContextResolution,
             @Nullable InputObjectProcessor objectProcessor,
             ParamConversionResolver paramConversionResolver) {
+        this(
+                meta,
+                decoders,
+                restContextResolution,
+                objectProcessor,
+                paramConversionResolver,
+                InputFieldNameResolver.IDENTITY);
+    }
+
+    /**
+     * Creates a new {@code ParameterExtractor} with an explicit body-name projection. Used by the
+     * route-registration path, which knows the {@code ObjectMapper} that materializes this route's
+     * body and therefore the wire names its declared policies must be matched against.
+     *
+     * @param meta                    metadata describing the JAX-RS resource method
+     * @param decoders                priority-sorted list of request body decoders
+     * @param restContextResolution   coordinator for the {@link RestContextResolution} resolver chain;
+     *                                must not be {@code null}
+     * @param objectProcessor         optional input object processor for canonicalization and
+     *                                sanitization; {@code null} disables processing
+     * @param paramConversionResolver the framework conversion resolver used to coerce inbound scalars
+     *                                and collection elements; must not be {@code null}
+     * @param bodyNameResolver        the wire &rarr; Java property-name projection for this route's
+     *                                OBJECT bodies; must not be {@code null}. Pass
+     *                                {@link InputFieldNameResolver#IDENTITY} only when the
+     *                                intermediate's keys are already Java property names
+     */
+    ParameterExtractor(
+            ResourceMethodMeta meta,
+            List<RequestBodyDecoder> decoders,
+            RestContextResolution restContextResolution,
+            @Nullable InputObjectProcessor objectProcessor,
+            ParamConversionResolver paramConversionResolver,
+            InputFieldNameResolver bodyNameResolver) {
         this.meta = meta;
         this.decoders = decoders;
         this.restContextResolution = restContextResolution;
         this.objectProcessor = objectProcessor;
         this.paramConversionResolver = paramConversionResolver;
+        this.bodyNameResolver = bodyNameResolver;
         this.cachedParamPolicies = computeCachedParamPolicies(meta);
         // Precomputed once for the FR-REST-174 missing-context diagnostic (used only on the
         // exceptional CONTEXT-resolution-failure path). Null-safe: some test fixtures build a
@@ -247,6 +293,31 @@ final class ParameterExtractor {
             cache[i] = resolveParamPolicies(params.get(i), routeCanon, routeSanit);
         }
         return cache;
+    }
+
+    /**
+     * Returns whether any invocation-level canonicalizer or sanitizer chain applies to the given
+     * resource method — either declared on the route (class or method) or on one of its parameters.
+     *
+     * <p>Exposed for {@link JaxRsRouteRegistrar}'s startup composition gate, which must know whether a
+     * route declares processing before deciding that an absent {@link InputObjectProcessor} binding is
+     * a configuration error. It reuses {@link #computeCachedParamPolicies} — the very derivation the
+     * request path uses — so the gate can never disagree with what would actually run.
+     *
+     * @param meta the resource method metadata; must not be {@code null}
+     * @return {@code true} when the route or any of its parameters declares a chain
+     */
+    static boolean declaresInvocationPolicies(ResourceMethodMeta meta) {
+        if (!meta.routeCanonicalizerChain().isEmpty()
+                || !meta.routeSanitizerChain().isEmpty()) {
+            return true;
+        }
+        for (EffectiveInputPolicies policies : computeCachedParamPolicies(meta)) {
+            if (!policies.isEmpty()) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -841,7 +912,7 @@ final class ParameterExtractor {
                 if (jsonBody != null && !Collection.class.isAssignableFrom(targetType) && !targetType.isArray()) {
                     Map<String, Object> intermediate = jsonBody.getMap();
                     Object processed = objectProcessor.processInput(
-                            intermediate, targetType, policies, InputLocation.BODY, InputFieldNameResolver.IDENTITY);
+                            intermediate, targetType, policies, InputLocation.BODY, bodyNameResolver);
                     if (processed instanceof Map<?, ?> processedMap) {
                         @SuppressWarnings("unchecked")
                         Map<String, Object> typedMap = (Map<String, Object>) processedMap;
@@ -857,11 +928,7 @@ final class ParameterExtractor {
                     if (jsonArray != null) {
                         java.lang.reflect.Type resolvedType = genericType != null ? genericType : targetType;
                         Object processed = objectProcessor.processInput(
-                                jsonArray.getList(),
-                                resolvedType,
-                                policies,
-                                InputLocation.BODY,
-                                InputFieldNameResolver.IDENTITY);
+                                jsonArray.getList(), resolvedType, policies, InputLocation.BODY, bodyNameResolver);
                         if (processed instanceof List<?> processedList) {
                             com.fasterxml.jackson.databind.JavaType javaType =
                                     DatabindCodec.mapper().getTypeFactory().constructType(resolvedType);
@@ -893,8 +960,10 @@ final class ParameterExtractor {
                     json.put(entry.getKey(), entry.getValue());
                 }
                 if (!json.isEmpty()) {
+                    // A form-urlencoded body materialized as a POJO is bound by Jackson exactly like a
+                    // JSON object body, so its keys are wire names and carry the same projection.
                     Object processed = objectProcessor.processInput(
-                            json.getMap(), targetType, policies, InputLocation.BODY, InputFieldNameResolver.IDENTITY);
+                            json.getMap(), targetType, policies, InputLocation.BODY, bodyNameResolver);
                     if (processed instanceof Map<?, ?> processedMap) {
                         @SuppressWarnings("unchecked")
                         Map<String, Object> typedMap = (Map<String, Object>) processedMap;

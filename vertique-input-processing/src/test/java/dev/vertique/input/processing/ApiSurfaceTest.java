@@ -135,6 +135,7 @@ class ApiSurfaceTest {
             assertMethods(
                     InputObjectProcessor.class,
                     "createDefault(Function,Function)",
+                    "declaresPolicies(Type)",
                     "processInput(Object,Type,EffectiveInputPolicies,InputLocation,InputFieldNameResolver)");
             assertNoPublicFields(InputObjectProcessor.class);
             assertNoPublicConstructors(InputObjectProcessor.class);

@@ -6,6 +6,7 @@ package dev.vertique.rest.websocket;
 import dev.vertique.context.ContextSnapshot;
 import dev.vertique.context.ContextValues;
 import dev.vertique.core.context.ContextHolder;
+import dev.vertique.core.exception.ConfigurationException;
 import dev.vertique.core.sanitization.Canonicalize;
 import dev.vertique.core.sanitization.Canonicalizer;
 import dev.vertique.core.sanitization.InputLocation;
@@ -35,6 +36,7 @@ import jakarta.annotation.Nullable;
 import jakarta.ws.rs.PathParam;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -174,10 +176,74 @@ class WebSocketEndpointRegistrar {
      */
     void registerAll(Set<Object> endpoints, Router router) {
         WebSocketEndpointScanner scanner = new WebSocketEndpointScanner(actionRegistry);
+        List<WebSocketEndpointMeta> metas = new ArrayList<>(endpoints.size());
         for (Object endpoint : endpoints) {
-            WebSocketEndpointMeta meta = scanner.scan(endpoint);
+            metas.add(scanner.scan(endpoint));
+        }
+        checkInputProcessingComposition(metas);
+        for (WebSocketEndpointMeta meta : metas) {
             registerEndpoint(meta, router);
         }
+    }
+
+    /**
+     * Fails startup when an endpoint declares canonicalization or sanitization while no
+     * {@link InputObjectProcessor} is bound.
+     *
+     * <p>{@code WebSocketModule} declares the engine binding optional and every consumer null-guards
+     * it, so without this gate an endpoint whose {@code @OnMessage} carries {@code @Sanitize} — or
+     * whose message type declares field-level policies — would accept messages with none of that
+     * processing running. This mirrors the REST registrar's gate: every offending endpoint is
+     * collected before throwing, and there is no opt-out flag.
+     *
+     * @param metas every scanned endpoint's metadata
+     * @throws ConfigurationException if any endpoint declares processing that cannot run
+     */
+    private void checkInputProcessingComposition(List<WebSocketEndpointMeta> metas) {
+        if (objectProcessor != null) {
+            return;
+        }
+        List<String> offendingEndpoints = new ArrayList<>();
+        for (WebSocketEndpointMeta meta : metas) {
+            String reason = unboundPolicyReason(meta);
+            if (reason != null) {
+                offendingEndpoints.add(
+                        "  - " + meta.path() + " (" + meta.instance().getClass().getName() + "): " + reason);
+            }
+        }
+        if (offendingEndpoints.isEmpty()) {
+            return;
+        }
+        throw new ConfigurationException(offendingEndpoints.size()
+                + " WebSocket endpoint(s) declare input canonicalization or sanitization, but no "
+                + "InputObjectProcessor is bound, so none of it would run:\n"
+                + String.join("\n", offendingEndpoints)
+                + "\nInstall a module providing an InputObjectProcessor (SanitizationModule) in the Dagger "
+                + "component, or remove the declared policies.");
+    }
+
+    /**
+     * Returns why the given endpoint's declared input processing cannot run, or {@code null} when it
+     * declares none.
+     *
+     * @param meta the scanned endpoint metadata
+     * @return a human-readable reason naming the declaration, or {@code null}
+     */
+    private static @Nullable String unboundPolicyReason(WebSocketEndpointMeta meta) {
+        for (Method lifecycleMethod : new Method[] {meta.onOpen(), meta.onMessage(), meta.onClose(), meta.onError()}) {
+            if (lifecycleMethod == null) {
+                continue;
+            }
+            if (lifecycleMethod.getAnnotation(Canonicalize.class) != null
+                    || lifecycleMethod.getAnnotation(Sanitize.class) != null) {
+                return "lifecycle method '" + lifecycleMethod.getName()
+                        + "' declares a canonicalizer or sanitizer chain";
+            }
+        }
+        if (meta.onMessage() != null && InputObjectProcessor.declaresPolicies(meta.messageType())) {
+            return "message type " + meta.messageType().getName() + " declares input policies on its own fields";
+        }
+        return null;
     }
 
     // --- Route registration ---

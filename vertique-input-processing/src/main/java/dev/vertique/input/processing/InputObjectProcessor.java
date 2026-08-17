@@ -62,6 +62,34 @@ public interface InputObjectProcessor {
     }
 
     /**
+     * Returns whether {@code targetType}'s type graph declares any canonicalization or sanitization
+     * policy, without requiring an engine instance.
+     *
+     * <p>Exists for the composition decision a transport makes at startup: the engine binding is
+     * optional, so a transport that mounts a route whose body type declares {@code @Canonicalize} or
+     * {@code @Sanitize} while no {@link InputObjectProcessor} is bound would serve requests with none
+     * of the declared processing running. Answering that question needs the same annotation
+     * traversal the engine performs, which is internal to this module — hence a static here rather
+     * than a reimplementation in every transport.
+     *
+     * <p>The walk is breadth-first over declared types with a visited set, so it terminates on any
+     * type graph including a self-referential or mutually recursive one. It reports only <em>declared
+     * chains</em>: a {@code @SkipCanonicalization}/{@code @SkipSanitization} declares nothing to run
+     * and is not a policy. A {@code targetType} that reduces to no class declares nothing detectable
+     * and yields {@code false}.
+     *
+     * <p>This is a startup-time query. It builds its own metadata cache and discards it, so it never
+     * retains a {@link Class} beyond the call.
+     *
+     * @param targetType the body or parameter type to inspect; must not be {@code null}
+     * @return {@code true} if the type or any type reachable from it declares a canonicalizer or
+     *         sanitizer chain, at type level or on a field
+     */
+    static boolean declaresPolicies(Type targetType) {
+        return InputPolicyMetadataResolver.declaresPolicies(targetType);
+    }
+
+    /**
      * Processes a structured input intermediate (typically a {@code Map<String, Object>}
      * or {@code List<Object>}) by applying canonicalization and sanitization to string values
      * according to the target type's annotation metadata and the effective invocation-level
