@@ -8,6 +8,7 @@ import static dev.vertique.input.processing.GeneratedSupport.applyStringCollecti
 import static dev.vertique.input.processing.GeneratedSupport.dispatchObjectCollection;
 
 import dev.vertique.core.sanitization.Canonicalizer;
+import dev.vertique.core.sanitization.InputFieldNameResolver;
 import dev.vertique.core.sanitization.InputLocation;
 import dev.vertique.core.sanitization.Sanitizer;
 import dev.vertique.input.processing.GeneratedVsReflectiveEquivalenceTest.Generated;

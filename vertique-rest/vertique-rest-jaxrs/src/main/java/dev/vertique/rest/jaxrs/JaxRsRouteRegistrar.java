@@ -8,6 +8,7 @@ import dev.vertique.core.exception.ConfigurationException;
 import dev.vertique.core.json.JsonMapperProfileRegistry;
 import dev.vertique.core.validation.BeanValidator;
 import dev.vertique.input.processing.InputObjectProcessor;
+import dev.vertique.json.JacksonFieldNameResolver;
 import dev.vertique.json.JsonConfig;
 import dev.vertique.rest.core.RestConfigurationException;
 import dev.vertique.rest.core.capture.RestServerRequestEvidenceCapturer;

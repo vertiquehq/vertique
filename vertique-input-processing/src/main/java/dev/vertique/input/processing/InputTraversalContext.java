@@ -4,6 +4,7 @@
 package dev.vertique.input.processing;
 
 import dev.vertique.core.sanitization.Canonicalizer;
+import dev.vertique.core.sanitization.InputFieldNameResolver;
 import dev.vertique.core.sanitization.Sanitizer;
 import dev.vertique.input.processing.InputPolicyMetadata.FieldPolicyMetadata;
 import jakarta.annotation.Nullable;

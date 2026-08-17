@@ -3,6 +3,7 @@
 
 package dev.vertique.input.processing;
 
+import dev.vertique.core.sanitization.InputFieldNameResolver;
 import dev.vertique.core.sanitization.InputLocation;
 import jakarta.annotation.Nullable;
 

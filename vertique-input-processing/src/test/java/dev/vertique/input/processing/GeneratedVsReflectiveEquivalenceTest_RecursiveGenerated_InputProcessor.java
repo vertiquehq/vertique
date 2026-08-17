@@ -7,6 +7,7 @@ import static dev.vertique.input.processing.GeneratedSupport.applyString;
 import static dev.vertique.input.processing.GeneratedSupport.childPath;
 
 import dev.vertique.core.sanitization.Canonicalizer;
+import dev.vertique.core.sanitization.InputFieldNameResolver;
 import dev.vertique.core.sanitization.InputLocation;
 import dev.vertique.core.sanitization.Sanitizer;
 import dev.vertique.input.processing.GeneratedVsReflectiveEquivalenceTest.RecursiveGenerated;

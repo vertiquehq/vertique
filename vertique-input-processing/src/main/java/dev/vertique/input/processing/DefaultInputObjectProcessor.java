@@ -4,6 +4,7 @@
 package dev.vertique.input.processing;
 
 import dev.vertique.core.sanitization.Canonicalizer;
+import dev.vertique.core.sanitization.InputFieldNameResolver;
 import dev.vertique.core.sanitization.InputLocation;
 import dev.vertique.core.sanitization.InputValueContext;
 import dev.vertique.core.sanitization.Sanitizer;

@@ -41,10 +41,17 @@ import org.junit.jupiter.api.Test;
  */
 class ApiSurfaceTest {
 
-    /** Types published to consumers of this module. */
+    /**
+     * Types published to consumers of this module.
+     *
+     * <p>{@code InputFieldNameResolver} is deliberately absent: the contract is declared in
+     * {@code dev.vertique.core.sanitization} beside its vocabulary siblings ({@code InputLocation},
+     * {@code Canonicalizer}, {@code Sanitizer}), so its surface is frozen by {@code vertique-core}'s
+     * {@code SanitizationContractsTest} rather than here. This module consumes it — every ledgered
+     * signature below that names it still pins the parameter type.
+     */
     private static final Set<String> PUBLIC_TYPES = Set.of(
             "InputObjectProcessor",
-            "InputFieldNameResolver",
             "EffectiveInputPolicies",
             "InputTraversalContext",
             "ChainResolver",
@@ -139,29 +146,6 @@ class ApiSurfaceTest {
                     "processInput(Object,Type,EffectiveInputPolicies,InputLocation,InputFieldNameResolver)");
             assertNoPublicFields(InputObjectProcessor.class);
             assertNoPublicConstructors(InputObjectProcessor.class);
-        }
-    }
-
-    @Nested
-    @DisplayName("InputFieldNameResolver")
-    class InputFieldNameResolverSurface {
-
-        @Test
-        @DisplayName("public members match the frozen ledger (one abstract method plus IDENTITY)")
-        void inputFieldNameResolverSurface() {
-            assertMethods(InputFieldNameResolver.class, "logicalName(Class,String)");
-            assertFields(InputFieldNameResolver.class, "IDENTITY");
-            assertNoPublicConstructors(InputFieldNameResolver.class);
-        }
-
-        @Test
-        @DisplayName("the contract stays a single-abstract-method interface")
-        void resolverIsFunctional() {
-            assertTrue(
-                    InputFieldNameResolver.class.isAnnotationPresent(FunctionalInterface.class),
-                    "InputFieldNameResolver is published as a lambda target and must stay "
-                            + "@FunctionalInterface — a second abstract method would break every "
-                            + "implementation");
         }
     }
 

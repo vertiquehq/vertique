@@ -4,11 +4,16 @@
 package dev.vertique.rest.websocket;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
+import dev.vertique.core.sanitization.InputFieldNameResolver;
 import dev.vertique.core.sanitization.InputLocation;
+import dev.vertique.core.sanitization.InputValueContext;
+import dev.vertique.core.sanitization.Sanitize;
+import dev.vertique.core.sanitization.Sanitizer;
 import dev.vertique.input.processing.EffectiveInputPolicies;
-import dev.vertique.input.processing.InputFieldNameResolver;
 import dev.vertique.input.processing.InputObjectProcessor;
 import dev.vertique.rest.core.middleware.RequestContextLifecycle;
 import io.vertx.core.Future;
@@ -23,10 +28,12 @@ import io.vertx.junit5.VertxTestContext;
 import jakarta.ws.rs.PathParam;
 import java.lang.reflect.Type;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
@@ -51,6 +58,12 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * <p>A capturing test-double processor records every {@code (value, targetType, location)}
  * invocation and returns the value unchanged, so the assertions observe exactly what the
  * registrar reported without altering message flow.
+ *
+ * <p>A second endpoint is mounted on a registrar carrying the <em>real</em> engine, pinning the
+ * wire &rarr; Java name projection the registrar must supply for object message bodies: a
+ * {@code @JsonProperty}-renamed field carrying a declared {@code @Sanitize} chain is keyed on the
+ * wire by its renamed name, while the engine keys its metadata on the Java property name. Without
+ * a projection the declared chain silently never runs.
  */
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
@@ -72,6 +85,17 @@ public class WebSocketInputProcessingIT {
         WebSocketEndpointRegistrar registrar = new WebSocketEndpointRegistrar(
                 new WebSocketMessageCodec(), null, null, null, Set.of(), null, processor, null, null, null);
         registrar.registerAll(Set.of(new TextEndpoint(), new DtoEndpoint()), router);
+
+        // A second registrar carrying the real engine: the renamed-field endpoint must observe the
+        // declared chain actually running, which only the wire -> Java projection makes possible.
+        InputObjectProcessor engine = InputObjectProcessor.createDefault(
+                type -> {
+                    throw new AssertionError("no canonicalizer is declared by this fixture: " + type);
+                },
+                type -> new UppercasingSanitizer());
+        WebSocketEndpointRegistrar sanitizingRegistrar = new WebSocketEndpointRegistrar(
+                new WebSocketMessageCodec(), null, null, null, Set.of(), null, engine, null, null, null);
+        sanitizingRegistrar.registerAll(Set.of(new RenamedEndpoint()), router);
 
         vertx.createHttpServer().requestHandler(router).listen(0, "127.0.0.1").onComplete(ctx.succeeding(s -> {
             server = s;
@@ -167,6 +191,28 @@ public class WebSocketInputProcessingIT {
                 "a decoded object @OnMessage value must be processed with InputLocation.PAYLOAD");
     }
 
+    @Test
+    @DisplayName("a @JsonProperty-renamed message-body field is sanitized by its declared chain")
+    void shouldSanitizeRenamedFieldsOnMessageBodies() throws Exception {
+        RenamedEndpoint.reset();
+
+        WebSocket ws = connect("/ws/proc-renamed");
+        try {
+            ws.writeTextMessage("{\"user_name\":\"ada\",\"city\":\"paris\"}");
+            assertTrue(RenamedEndpoint.messageLatch.await(10, TimeUnit.SECONDS), "@OnMessage must be invoked");
+        } finally {
+            ws.close().toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS);
+        }
+
+        RenamedMessage received = RenamedEndpoint.received.get();
+        assertNotNull(received, "the renamed message must materialize");
+        assertEquals(
+                "ADA",
+                received.userName(),
+                "the @Sanitize declared on the Java property must run on its renamed wire key");
+        assertEquals("paris", received.city(), "an ungoverned field is left untouched");
+    }
+
     private Capture findCapture(String value) {
         return processor.captures.stream()
                 .filter(c -> value.equals(c.value()))
@@ -236,6 +282,48 @@ public class WebSocketInputProcessingIT {
          */
         @OnMessage
         public void onMessage(WebSocketSession session, String msg) {
+            messageLatch.countDown();
+        }
+    }
+
+    /** Sanitizer whose effect on a governed value is unmistakable in an assertion. */
+    public static final class UppercasingSanitizer implements Sanitizer {
+
+        @Override
+        public String sanitize(String value, InputValueContext context) {
+            return value == null ? null : value.toUpperCase(Locale.ROOT);
+        }
+    }
+
+    /** Message DTO whose governed field is published on the wire under a different name. */
+    public record RenamedMessage(
+            @JsonProperty("user_name") @Sanitize(UppercasingSanitizer.class)
+            String userName,
+
+            String city) {}
+
+    /** Endpoint whose message body carries a renamed, policy-declaring field. */
+    @WebSocketEndpoint("/ws/proc-renamed")
+    static class RenamedEndpoint {
+
+        static final AtomicReference<RenamedMessage> received = new AtomicReference<>();
+        static CountDownLatch messageLatch = new CountDownLatch(1);
+
+        /** Resets the captured message and latch before a test run. */
+        static void reset() {
+            received.set(null);
+            messageLatch = new CountDownLatch(1);
+        }
+
+        /**
+         * Captures the materialized message so the test can observe whether the declared chain ran.
+         *
+         * @param session the WebSocket session
+         * @param msg     the decoded message
+         */
+        @OnMessage
+        public void onMessage(WebSocketSession session, RenamedMessage msg) {
+            received.set(msg);
             messageLatch.countDown();
         }
     }

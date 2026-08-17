@@ -458,6 +458,24 @@ ignored; put them on the lifecycle method whose input they govern. `@PathParam` 
 with the policies declared on the method that receives them, so `@OnOpen` and `@OnMessage` can
 normalize the same path parameter differently.
 
+**Renamed message fields are covered.** A field-level policy is declared on a Java property, while an
+incoming message is keyed by whatever Jackson publishes — `@JsonProperty("user_name")`, a naming
+strategy, or a `@JsonAlias`. Messages are bound through Vert.x's shared `DatabindCodec.mapper()`, and
+that mapper's own property introspection is what maps each wire key back onto the Java property whose
+policies apply (`JacksonFieldNameResolver`, from `dev.vertique:vertique-json`, implementing the
+`dev.vertique.core.sanitization.InputFieldNameResolver` contract). A `@Sanitize` on a
+renamed field therefore runs exactly as it would on an unrenamed one, with no extra declaration.
+
+```java
+public record ProfileMessage(
+    @JsonProperty("display_name") @Sanitize(StripAllHtmlSanitizer.class) String displayName
+) {}
+// {"display_name": "<b>ada</b>"} -> displayName == "ada"
+```
+
+Two limitations are not covered by the projection and can still bypass a declared policy:
+`ACCEPT_CASE_INSENSITIVE_PROPERTIES` and `@JsonUnwrapped`. Neither is claimed as supported.
+
 ---
 
 ## Identity Refresh
@@ -603,8 +621,9 @@ be enforced refuses to boot rather than serving traffic with the gate silently m
 |---|---|
 | `dev.vertique:vertique-rest-core` | `RouterMount`, request-lifecycle handle, `SecurityRuntime`, `RouteAuthHandler` |
 | `dev.vertique:vertique-input-processing` | the neutral `InputObjectProcessor` / `EffectiveInputPolicies` contracts message and path-parameter processing are typed against |
+| `dev.vertique:vertique-json` | `JacksonFieldNameResolver` — the wire-name projection that lets a declared policy reach a renamed message field |
 | `dev.vertique:vertique-rest-security` | Policy enforcement, identity resolution, claim mapping |
-| `dev.vertique:vertique-core` | Context holder, config parsing, Bean Validation and sanitization contracts |
+| `dev.vertique:vertique-core` | Context holder, config parsing, Bean Validation and sanitization contracts, including the `InputFieldNameResolver` projection contract message processing is typed against |
 | `dev.vertique:vertique-context` | `ContextSnapshot`/`ContextValues` used to carry request context across the handshake |
 | `dev.vertique:vertique-security-core` | `SecurityContext`, `ChannelIdentityManager`, action-gate types |
 | `dev.vertique:vertique-security-runtime` | Security event emission for the connection lifecycle |

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
 // SPDX-License-Identifier: EUPL-1.2
 
-package dev.vertique.rest.jaxrs;
+package dev.vertique.json;
 
 import com.fasterxml.jackson.databind.BeanDescription;
 import com.fasterxml.jackson.databind.DeserializationConfig;
@@ -9,7 +9,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.PropertyName;
 import com.fasterxml.jackson.databind.introspect.BeanPropertyDefinition;
 import dev.vertique.core.exception.ConfigurationException;
-import dev.vertique.input.processing.InputFieldNameResolver;
+import dev.vertique.core.sanitization.InputFieldNameResolver;
 import io.vertx.core.json.jackson.DatabindCodec;
 import jakarta.annotation.Nullable;
 import java.util.HashMap;
@@ -19,8 +19,8 @@ import java.util.Map;
 
 /**
  * Jackson-backed {@link InputFieldNameResolver}: projects the <strong>wire</strong> property names a
- * request body is keyed by onto the <strong>Java</strong> property names both input-processing
- * execution paths key their metadata on.
+ * request or message body is keyed by onto the <strong>Java</strong> property names both
+ * input-processing execution paths key their metadata on.
  *
  * <p>The projection is read from the mapper that actually materializes the body, through
  * {@link DeserializationConfig#introspect(com.fasterxml.jackson.databind.JavaType)}: every
@@ -31,6 +31,12 @@ import java.util.Map;
  * {@code @JsonNaming}, by a mix-in, or by an {@code AnnotationIntrospector} a registered module
  * installed — "nothing in this configuration renames anything" is not an enumerable set.
  *
+ * <p>This type lives here rather than in a transport module because the projection is a
+ * <em>mapper-derived</em> concern: it is a pure function of the {@link ObjectMapper} that binds the
+ * body, and this module already owns mapper profiles and {@code jackson-databind}. Every transport
+ * that materializes bodies through a Jackson mapper — REST, WebSocket — shares this one
+ * implementation instead of duplicating or re-deriving it.
+ *
  * <p><strong>Precedence.</strong> A primary name always claims its key; an alias populates a key only
  * when no primary name claims it. That is what Jackson itself binds: for
  * {@code class Dto { String alpha; @JsonAlias("alpha") String beta; }} a body {@code {"alpha":"V"}}
@@ -39,18 +45,18 @@ import java.util.Map;
  * are a configuration Jackson rejects itself and fail startup here.
  *
  * <p><strong>Caching and the identity short circuit.</strong> One instance is created per body mapper
- * at route registration and caches its per-type projection in a {@link ClassValue}, so entries are
- * collected with the classloader that owns the DTO rather than pinned in a static {@code Class}-keyed
- * map. When a type's computed projection maps every wire name onto itself — the overwhelmingly common
- * DTO — the entry records that and {@link #logicalName} returns the wire name directly, skipping the
- * per-field lookup entirely. The flag follows the <em>computed</em> projection, never an inference
- * about the mapper's configuration.
+ * at route or endpoint registration and caches its per-type projection in a {@link ClassValue}, so
+ * entries are collected with the classloader that owns the DTO rather than pinned in a static
+ * {@code Class}-keyed map. When a type's computed projection maps every wire name onto itself — the
+ * overwhelmingly common DTO — the entry records that and {@link #logicalName} returns the wire name
+ * directly, skipping the per-field lookup entirely. The flag follows the <em>computed</em>
+ * projection, never an inference about the mapper's configuration.
  *
  * <p>Instances are immutable and safe for concurrent use from several event-loop threads. A mapper
  * selected for a mounted route is treated as immutable after router construction: an application that
  * mutates a process-global mapper afterwards must rebuild the router.
  */
-final class JacksonFieldNameResolver implements InputFieldNameResolver {
+public final class JacksonFieldNameResolver implements InputFieldNameResolver {
 
     /** One type's wire &rarr; Java projection, plus whether it is the identity map. */
     private record Projection(boolean identity, Map<String, String> names) {}
@@ -76,22 +82,22 @@ final class JacksonFieldNameResolver implements InputFieldNameResolver {
      *               {@code null}
      * @return a resolver for {@code mapper}; never {@code null}
      */
-    static JacksonFieldNameResolver forMapper(ObjectMapper mapper) {
+    public static JacksonFieldNameResolver forMapper(ObjectMapper mapper) {
         return new JacksonFieldNameResolver(mapper);
     }
 
     /**
-     * Creates the resolver for a route from its resolved request-body profile mapper.
+     * Creates the resolver for a boundary from its resolved body-profile mapper.
      *
-     * <p>A {@code null} argument is the reserved {@code vertx} profile — the route's body is
-     * materialized by {@link DatabindCodec#mapper()}, so that is the mapper whose naming decides which
-     * declared policies apply.
+     * <p>A {@code null} argument is the reserved {@code vertx} profile — the body is materialized by
+     * {@link DatabindCodec#mapper()}, so that is the mapper whose naming decides which declared
+     * policies apply.
      *
-     * @param resolvedBodyMapper the route's resolved profile mapper, or {@code null} for the
+     * @param resolvedBodyMapper the boundary's resolved profile mapper, or {@code null} for the
      *                           {@code vertx} default
-     * @return the resolver for that route; never {@code null}
+     * @return the resolver for that boundary; never {@code null}
      */
-    static JacksonFieldNameResolver forRoute(@Nullable ObjectMapper resolvedBodyMapper) {
+    public static JacksonFieldNameResolver forRoute(@Nullable ObjectMapper resolvedBodyMapper) {
         return forMapper(resolvedBodyMapper != null ? resolvedBodyMapper : DatabindCodec.mapper());
     }
 
@@ -100,7 +106,7 @@ final class JacksonFieldNameResolver implements InputFieldNameResolver {
      *
      * @return the body mapper; never {@code null}
      */
-    ObjectMapper mapper() {
+    public ObjectMapper mapper() {
         return mapper;
     }
 
@@ -111,7 +117,7 @@ final class JacksonFieldNameResolver implements InputFieldNameResolver {
      * @param ownerType the type whose projection to test; must not be {@code null}
      * @return {@code true} when every wire name of {@code ownerType} maps onto itself
      */
-    boolean isIdentityProjection(Class<?> ownerType) {
+    public boolean isIdentityProjection(Class<?> ownerType) {
         return projections.get(ownerType).identity();
     }
 

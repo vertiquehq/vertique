@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
 // SPDX-License-Identifier: EUPL-1.2
 
-package dev.vertique.input.processing;
+package dev.vertique.core.sanitization;
 
 /**
  * Codec-neutral projection from a <strong>wire</strong> property name to the <strong>Java</strong>
@@ -12,9 +12,10 @@ package dev.vertique.input.processing;
  * switches on the same literal. An intermediate parsed from the wire, however, is keyed by whatever
  * the codec published — {@code @JsonProperty("user_name")}, a {@code SNAKE_CASE} naming strategy, or
  * a {@code @JsonAlias}. Without a projection between the two, a declared
- * {@code @Canonicalize}/{@code @Sanitize} on a renamed field silently never runs. This contract is
- * the seam that closes that gap while keeping this module free of any codec dependency: the
- * Jackson-backed implementation lives in the transport module that already owns Jackson.
+ * {@link Canonicalize}/{@link Sanitize} on a renamed field silently never runs. This contract is
+ * the seam that closes that gap while keeping both this package and the input-processing engine
+ * free of any codec dependency: each codec-backed implementation lives in the module that already
+ * owns that codec — the Jackson-backed one in {@code vertique-json}.
  *
  * <p><strong>Direction.</strong> The projection maps wire → Java, which is the only direction able
  * to express an alias's many-to-one mapping: several wire names may resolve to one Java property,
@@ -35,7 +36,11 @@ package dev.vertique.input.processing;
  * Java property names — including every call site that processes a bare {@code String}, where there
  * is no object whose fields could be renamed.
  *
- * @see InputTraversalContext#logicalFieldName(Class, String)
+ * <p>The projection is consulted by the input-processing engine's traversal context
+ * ({@code dev.vertique.input.processing.InputTraversalContext#logicalFieldName(Class, String)}),
+ * which resolves each intermediate key before looking its policies up.
+ *
+ * @see InputValueContext
  */
 @FunctionalInterface
 public interface InputFieldNameResolver {

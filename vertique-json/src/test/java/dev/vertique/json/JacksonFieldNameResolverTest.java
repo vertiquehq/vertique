@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
 // SPDX-License-Identifier: EUPL-1.2
 
-package dev.vertique.rest.jaxrs;
+package dev.vertique.json;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -23,7 +23,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Unit tests for {@link JacksonFieldNameResolver}, the Jackson-backed wire &rarr; Java property-name
- * projection REST hands to the input-processing engine.
+ * projection every Jackson-bound transport hands to the input-processing engine.
  *
  * <p>The four behaviours pinned here are the ones a wrong implementation silently converts into a
  * dropped {@code @Canonicalize}/{@code @Sanitize}:

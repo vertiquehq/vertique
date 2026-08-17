@@ -8,12 +8,12 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vertique.core.exception.ConfigurationException;
+import dev.vertique.core.sanitization.InputFieldNameResolver;
 import dev.vertique.core.sanitization.InputLocation;
 import dev.vertique.core.sanitization.InputValueContext;
 import dev.vertique.core.sanitization.Sanitize;
 import dev.vertique.core.sanitization.Sanitizer;
 import dev.vertique.input.processing.EffectiveInputPolicies;
-import dev.vertique.input.processing.InputFieldNameResolver;
 import dev.vertique.input.processing.InputObjectProcessor;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;

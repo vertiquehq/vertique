@@ -48,7 +48,11 @@ static InputObjectProcessor createDefault(
         Function<Class<? extends Sanitizer>, Sanitizer> sanitizerResolver);
 
 Object processInput(
-        Object input, Type targetType, EffectiveInputPolicies policies, InputLocation location);
+        Object input,
+        Type targetType,
+        EffectiveInputPolicies policies,
+        InputLocation location,
+        InputFieldNameResolver nameResolver);
 ```
 
 `createDefault(...)` returns the default engine — the reflective walker with the generated-processor fast path — and owns the construction of its internal annotation-metadata resolver and per-type cache. Callers supply only the two resolver functions that produce canonicalizer and sanitizer instances (typically backed by dependency injection).
@@ -56,6 +60,8 @@ Object processInput(
 The engine consults each resolver function **at most once per processor class** and reuses the returned instance for every value it processes, so a resolver need not cache anything itself. A resolution that fails is cached too and rethrown on every later use of that class, so an unresolvable processor still fails the request but costs one lookup rather than one per string value. Both caches are owned by the engine instance and die with it. Two consequences follow: a resolver function must return an instance that is safe to share across requests and threads, and it may be invoked more than once for the same class when several threads race on a cold entry.
 
 `processInput(...)` accepts the decoded intermediate (`Map<String, Object>` for objects, `List<Object>` for arrays, or a raw value; `null` is returned unchanged) and returns a new structure with string values transformed.
+
+`nameResolver` is a `dev.vertique.core.sanitization.InputFieldNameResolver` — the codec-neutral wire-name → Java-property-name projection the engine consults for every intermediate key before looking that field's policies up. The contract is declared in `vertique-core` beside `InputLocation`, `Canonicalizer` and `Sanitizer`; codec-backed implementations live in the module owning that codec (`JacksonFieldNameResolver` in `vertique-json`), which is what keeps this module free of any codec dependency. Pass `InputFieldNameResolver.IDENTITY` when the intermediate's keys are already Java property names — including every call that processes a bare `String`, where there is no object whose fields could be renamed.
 
 ### `EffectiveInputPolicies`
 
@@ -70,7 +76,8 @@ Record carrying the invocation-level chains for a single processing call:
 
 Immutable accumulated traversal state (inherited chains plus sticky skip flags). Every `descend` returns a new instance.
 
-- `static InputTraversalContext fromPolicies(EffectiveInputPolicies policies)` — seeds the root of a traversal
+- `static InputTraversalContext fromPolicies(EffectiveInputPolicies policies, InputFieldNameResolver nameResolver)` — seeds the root of a traversal with the projection it will consult; there is no resolver-less overload, so no caller can re-seed `InputFieldNameResolver.IDENTITY` by omission and silently drop a wire-name projection below that point
+- `String logicalFieldName(Class<?> ownerType, String wireName)` — projects one intermediate key through the seeded resolver
 - `InputTraversalContext descend(List<Class<? extends Canonicalizer>> objectCanon, List<Class<? extends Sanitizer>> objectSanit, boolean objectSkipCanon, boolean objectSkipSanit, List<Class<? extends Canonicalizer>> fieldCanon, List<Class<? extends Sanitizer>> fieldSanit, boolean fieldSkipCanon, boolean fieldSkipSanit)` — the raw-list overload generated processors call; `fieldCanon` / `fieldSanit` may be `null` when descending from a list element
 - `inheritedCanonicalizerChain()`, `inheritedSanitizerChain()`, `inheritedSkipCanonicalization()`, `inheritedSkipSanitization()` — accumulated state accessors
 
@@ -141,4 +148,4 @@ The default engine implementation, the annotation-metadata resolver and its meta
 
 ## Dependencies
 
-- `dev.vertique:vertique-core` — the canonicalization and sanitization contracts and annotation model this module executes.
+- `dev.vertique:vertique-core` — the canonicalization and sanitization contracts and annotation model this module executes, including `InputFieldNameResolver`, the wire-name projection every entry point takes.

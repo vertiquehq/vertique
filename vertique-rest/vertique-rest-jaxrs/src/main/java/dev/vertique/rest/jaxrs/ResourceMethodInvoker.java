@@ -4,10 +4,11 @@
 package dev.vertique.rest.jaxrs;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import dev.vertique.core.sanitization.InputFieldNameResolver;
 import dev.vertique.core.validation.BeanValidator;
 import dev.vertique.core.validation.ParameterViolation;
-import dev.vertique.input.processing.InputFieldNameResolver;
 import dev.vertique.input.processing.InputObjectProcessor;
+import dev.vertique.json.JacksonFieldNameResolver;
 import dev.vertique.rest.core.RestValidationException;
 import dev.vertique.rest.core.capture.HttpOperationMeta;
 import dev.vertique.rest.core.capture.RestServerRequestEvidenceCapturer;

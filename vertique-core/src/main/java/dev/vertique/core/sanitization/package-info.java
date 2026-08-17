@@ -23,6 +23,11 @@
  * {@link dev.vertique.core.sanitization.InputValueContext}, which carries the
  * {@link dev.vertique.core.sanitization.InputLocation}, property path, logical name, and owner type.
  *
+ * <p>Policies are declared on Java property names, but a transport's intermediate is keyed by
+ * whatever its codec published. {@link dev.vertique.core.sanitization.InputFieldNameResolver} is the
+ * codec-neutral projection that closes that gap; each codec-backed implementation lives in the
+ * module that owns that codec, so this package stays free of any codec dependency.
+ *
  * <p>Built-in canonicalizer and sanitizer implementations live in the {@code sanitization}
  * framework module, not in {@code core}. This package contains only the SPI contracts and
  * annotations that other modules depend on.
@@ -31,5 +36,6 @@
  * @see dev.vertique.core.sanitization.Sanitize
  * @see dev.vertique.core.sanitization.SkipCanonicalization
  * @see dev.vertique.core.sanitization.SkipSanitization
+ * @see dev.vertique.core.sanitization.InputFieldNameResolver
  */
 package dev.vertique.core.sanitization;

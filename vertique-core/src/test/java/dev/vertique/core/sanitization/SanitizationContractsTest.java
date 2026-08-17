@@ -9,8 +9,12 @@ import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
+import java.lang.reflect.Field;
+import java.lang.reflect.Modifier;
 import java.util.Arrays;
 import java.util.Set;
+import java.util.TreeSet;
+import java.util.stream.Collectors;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -20,7 +24,8 @@ import org.junit.jupiter.api.Test;
  *
  * <p>Covers annotation retention and targets for {@link Canonicalize}, {@link Sanitize},
  * {@link SkipCanonicalization}, and {@link SkipSanitization}; record equality and accessors
- * for {@link InputValueContext}; {@link InputLocation} enum values; and record structure for
+ * for {@link InputValueContext}; {@link InputLocation} enum values; the frozen member ledger of
+ * {@link InputFieldNameResolver}; and record structure for
  * {@link CanonicalizerBinding} and {@link SanitizerBinding}.
  */
 class SanitizationContractsTest {
@@ -191,6 +196,55 @@ class SanitizationContractsTest {
             assertTrue(names.contains("BEAN_PARAM"));
             assertTrue(names.contains("PAYLOAD"));
             assertEquals(8, names.size());
+        }
+    }
+
+    // --- InputFieldNameResolver ---
+
+    /**
+     * Freezes the published surface of {@link InputFieldNameResolver}.
+     *
+     * <p>The contract is a lambda target implemented outside this module (the Jackson-backed
+     * projection lives in {@code vertique-json}) and is consumed by the input-processing engine, so
+     * its member set is a compatibility commitment. This ledger moved here with the interface when
+     * it was relocated from {@code dev.vertique.input.processing}; the assertions are unchanged.
+     */
+    @Nested
+    @DisplayName("InputFieldNameResolver contract")
+    class InputFieldNameResolverTest {
+
+        @Test
+        @DisplayName("public members match the frozen ledger (one abstract method plus IDENTITY)")
+        void publicMembersMatchLedger() {
+            Set<String> methods = Arrays.stream(InputFieldNameResolver.class.getDeclaredMethods())
+                    .filter(method -> Modifier.isPublic(method.getModifiers()))
+                    .filter(method -> !method.isSynthetic())
+                    .map(method -> method.getName() + "("
+                            + Arrays.stream(method.getParameterTypes())
+                                    .map(Class::getSimpleName)
+                                    .collect(Collectors.joining(","))
+                            + ")")
+                    .collect(Collectors.toCollection(TreeSet::new));
+            assertEquals(new TreeSet<>(Set.of("logicalName(Class,String)")), methods);
+
+            Set<String> fields = Arrays.stream(InputFieldNameResolver.class.getDeclaredFields())
+                    .filter(field -> Modifier.isPublic(field.getModifiers()))
+                    .filter(field -> !field.isSynthetic())
+                    .map(Field::getName)
+                    .collect(Collectors.toCollection(TreeSet::new));
+            assertEquals(new TreeSet<>(Set.of("IDENTITY")), fields);
+
+            assertEquals(0, InputFieldNameResolver.class.getDeclaredConstructors().length);
+        }
+
+        @Test
+        @DisplayName("the contract stays a single-abstract-method interface")
+        void resolverIsFunctional() {
+            assertTrue(
+                    InputFieldNameResolver.class.isAnnotationPresent(FunctionalInterface.class),
+                    "InputFieldNameResolver is published as a lambda target and must stay "
+                            + "@FunctionalInterface — a second abstract method would break every "
+                            + "implementation");
         }
     }
 

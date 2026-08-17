@@ -15,13 +15,13 @@ import static org.mockito.Mockito.when;
 
 import dev.vertique.core.sanitization.Canonicalize;
 import dev.vertique.core.sanitization.Canonicalizer;
+import dev.vertique.core.sanitization.InputFieldNameResolver;
 import dev.vertique.core.sanitization.InputLocation;
 import dev.vertique.core.sanitization.InputValueContext;
 import dev.vertique.core.sanitization.Sanitize;
 import dev.vertique.core.sanitization.Sanitizer;
 import dev.vertique.core.sanitization.SkipCanonicalization;
 import dev.vertique.input.processing.EffectiveInputPolicies;
-import dev.vertique.input.processing.InputFieldNameResolver;
 import dev.vertique.input.processing.InputObjectProcessor;
 import dev.vertique.rest.core.context.RestContextResolution;
 import dev.vertique.rest.core.request.RequestValue;

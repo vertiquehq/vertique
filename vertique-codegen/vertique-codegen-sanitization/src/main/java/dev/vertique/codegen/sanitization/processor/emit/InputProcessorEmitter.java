@@ -74,7 +74,7 @@ public final class InputProcessorEmitter {
     private static final ClassName INPUT_TRAVERSAL_CONTEXT =
             ClassName.get("dev.vertique.input.processing", "InputTraversalContext");
     private static final ClassName INPUT_FIELD_NAME_RESOLVER =
-            ClassName.get("dev.vertique.input.processing", "InputFieldNameResolver");
+            ClassName.get("dev.vertique.core.sanitization", "InputFieldNameResolver");
     private static final ClassName CANONICALIZER = ClassName.get("dev.vertique.core.sanitization", "Canonicalizer");
     private static final ClassName SANITIZER = ClassName.get("dev.vertique.core.sanitization", "Sanitizer");
     private static final ClassName NULLABLE = ClassName.get("jakarta.annotation", "Nullable");

@@ -9,14 +9,15 @@ import dev.vertique.core.context.ContextHolder;
 import dev.vertique.core.exception.ConfigurationException;
 import dev.vertique.core.sanitization.Canonicalize;
 import dev.vertique.core.sanitization.Canonicalizer;
+import dev.vertique.core.sanitization.InputFieldNameResolver;
 import dev.vertique.core.sanitization.InputLocation;
 import dev.vertique.core.sanitization.Sanitize;
 import dev.vertique.core.sanitization.Sanitizer;
 import dev.vertique.core.validation.BeanValidationException;
 import dev.vertique.core.validation.BeanValidator;
 import dev.vertique.input.processing.EffectiveInputPolicies;
-import dev.vertique.input.processing.InputFieldNameResolver;
 import dev.vertique.input.processing.InputObjectProcessor;
+import dev.vertique.json.JacksonFieldNameResolver;
 import dev.vertique.rest.core.middleware.RequestContextLifecycle;
 import dev.vertique.rest.core.security.RouteAuthHandler;
 import dev.vertique.rest.core.security.SecurityPolicy;
@@ -29,6 +30,7 @@ import dev.vertique.security.authz.Authorizer;
 import io.vertx.core.Future;
 import io.vertx.core.Handler;
 import io.vertx.core.http.ServerWebSocket;
+import io.vertx.core.json.jackson.DatabindCodec;
 import io.vertx.ext.web.Route;
 import io.vertx.ext.web.Router;
 import io.vertx.ext.web.RoutingContext;
@@ -117,6 +119,24 @@ class WebSocketEndpointRegistrar {
      * failing closed per-request when the enforcer evaluates the gate (finding W2).
      */
     private final @Nullable Authorizer authorizer;
+
+    /**
+     * Wire &rarr; Java property-name projection for object message bodies.
+     *
+     * <p>{@link WebSocketMessageCodec} binds every message through
+     * {@link DatabindCodec#mapper()}, so that is the mapper whose naming decides which declared
+     * policies apply: a field renamed by {@code @JsonProperty}, by a naming strategy, or reached
+     * through a {@code @JsonAlias} arrives in the intermediate under its wire name, while the
+     * input-processing engine keys its per-field metadata on the Java property name. Without this
+     * projection a declared {@code @Canonicalize}/{@code @Sanitize} on such a field silently never
+     * runs.
+     *
+     * <p>Created once per registrar and internally cached per type, so no introspection happens on
+     * the message path. The bare-{@code String} call sites keep
+     * {@link InputFieldNameResolver#IDENTITY}: there is no object whose fields could be renamed.
+     */
+    private final JacksonFieldNameResolver messageNameResolver =
+            JacksonFieldNameResolver.forMapper(DatabindCodec.mapper());
 
     /**
      * Creates a new registrar.
@@ -1100,11 +1120,7 @@ class WebSocketEndpointRegistrar {
                 EffectiveInputPolicies policies = resolveMethodPolicies(meta.onMessage());
                 Object intermediate = messageCodec.decodeToIntermediate(text);
                 Object processed = objectProcessor.processInput(
-                        intermediate,
-                        meta.messageType(),
-                        policies,
-                        InputLocation.PAYLOAD,
-                        InputFieldNameResolver.IDENTITY);
+                        intermediate, meta.messageType(), policies, InputLocation.PAYLOAD, messageNameResolver);
                 decoded = messageCodec.convertFromIntermediate(
                         processed != null ? processed : intermediate, meta.messageType());
             } else {

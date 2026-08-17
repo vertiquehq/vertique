@@ -18,6 +18,7 @@ import dev.vertique.core.sanitization.Sanitize;
 import dev.vertique.core.sanitization.Sanitizer;
 import dev.vertique.input.processing.EffectiveInputPolicies;
 import dev.vertique.input.processing.InputObjectProcessor;
+import dev.vertique.json.JacksonFieldNameResolver;
 import dev.vertique.rest.core.context.RestContextResolution;
 import dev.vertique.rest.core.request.RequestBodyDecoder;
 import dev.vertique.rest.core.request.RequestValue;

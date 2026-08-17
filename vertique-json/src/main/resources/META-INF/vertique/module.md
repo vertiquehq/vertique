@@ -19,7 +19,8 @@ The profile *contracts* (`JsonProfileId`, `JsonMapperProfile`, `JsonMapperProfil
 `JsonProfileConfigurationException`, `@JsonProfile`, `@KeyedBy`) live in `dev.vertique.core.json`, in
 `dev.vertique:vertique-core`, so a boundary module can reference them without depending on this
 artifact. This module supplies the registry, the three built-in profiles, the opinionated-defaults
-helper, the opt-in strict serdes, the keyed-collection Jackson support, and the Dagger wiring.
+helper, the opt-in strict serdes, the keyed-collection Jackson support, the Jackson-backed
+wire-name projection every Jackson-bound transport hands to input processing, and the Dagger wiring.
 
 ---
 
@@ -31,8 +32,10 @@ when it needs to contribute its own named mapper profile.
 
 Most applications never add the dependency directly. The boundary modules
 (`dev.vertique:vertique-rest-jaxrs`, `dev.vertique:vertique-rest-client`,
-`dev.vertique:vertique-kafka-json`) install `JsonRuntimeModule` through their own Dagger modules, and
-`dev.vertique:vertique-config-core` depends on this artifact for keyed-collection config parsing.
+`dev.vertique:vertique-kafka-json`) install `JsonRuntimeModule` through their own Dagger modules,
+`dev.vertique:vertique-config-core` depends on this artifact for keyed-collection config parsing, and
+`dev.vertique:vertique-rest-websocket` depends on it for `JacksonFieldNameResolver` alone (it binds
+messages through Vert.x's shared mapper and installs no profile registry).
 
 ---
 
@@ -268,6 +271,49 @@ and property — never the conflicting values; an equal value is accepted.
 Map<String, Object> fixedProps)` is public so a caller can apply the same injection and conflict rules
 outside Jackson binding; it returns the prepared element node.
 
+### JacksonFieldNameResolver
+
+Projects the **wire** property names a body is keyed by onto the **Java** property names the
+input-processing engine keys its per-field policies on. Implements
+`dev.vertique.core.sanitization.InputFieldNameResolver`.
+
+Input processing (`@Canonicalize` / `@Sanitize`) resolves each field's declared chain by the Java
+property name, while an intermediate parsed from the wire is keyed by whatever Jackson published —
+`@JsonProperty("user_name")`, a `SNAKE_CASE` naming strategy, `@JsonNaming`, a mix-in, a
+`@JsonAlias`, or a name an `AnnotationIntrospector` a registered module installed produced. Without
+the projection, a policy declared on a renamed field silently never runs. The resolver lives here
+because the projection is a pure function of the `ObjectMapper` that binds the body, so REST and
+WebSocket share one implementation rather than each deriving their own. Because the contract is
+declared in `vertique-core`, implementing it adds no dependency on `vertique-input-processing` —
+this module never sees the processing engine.
+
+```java
+// The mapper that materializes the body decides the projection.
+JacksonFieldNameResolver resolver = JacksonFieldNameResolver.forMapper(mapper);
+
+// forRoute(null) is the reserved `vertx` profile: DatabindCodec.mapper().
+JacksonFieldNameResolver vertxProfile = JacksonFieldNameResolver.forRoute(null);
+
+resolver.logicalName(RenamedDto.class, "user_name"); // -> "userName"
+resolver.logicalName(RenamedDto.class, "unknown");   // -> "unknown" (the projection is total)
+```
+
+| Behavior | Contract |
+|---|---|
+| Source of names | `DeserializationConfig.introspect(JavaType)` — never an inference about how the mapper is configured |
+| Primary vs alias | A primary name always claims its key; an alias fills only keys no primary claims — matching what Jackson itself binds |
+| Colliding primary names | `ConfigurationException` naming the type, the wire name, and both Java properties |
+| Unknown wire name | Returned unchanged — the projection is total and never throws for an unrecognized key |
+| Caching | One `ClassValue`-cached projection per `(mapper, type)`; entries are collected with the DTO's classloader |
+| Identity short circuit | When the *computed* projection maps every wire name onto itself, `logicalName` returns the wire name directly and no per-field lookup happens |
+
+Instances are immutable and safe for concurrent use from several event-loop threads. A mapper
+selected for a mounted boundary is treated as immutable afterwards: an application that mutates a
+process-global mapper must rebuild the router.
+
+Boundaries that process a bare `String` (a query, header, path, or form parameter) use
+`InputFieldNameResolver.IDENTITY` instead — there is no object whose fields could be renamed.
+
 ---
 
 ## Extension Points
@@ -353,7 +399,7 @@ A validation failure then propagates out of `start()` and the verticle never bec
 
 | Artifact | Scope | Purpose |
 |----------|-------|---------|
-| `dev.vertique:vertique-core` | compile | `JsonProfileId`, `JsonMapperProfile`, `JsonMapperProfileRegistry`, `JsonProfileConfigurationException`, `@JsonProfile`, `@KeyedBy`, `ConfigurationException`, `ConfigParser`, `ComposeValidator` |
+| `dev.vertique:vertique-core` | compile | `JsonProfileId`, `JsonMapperProfile`, `JsonMapperProfileRegistry`, `JsonProfileConfigurationException`, `@JsonProfile`, `@KeyedBy`, `ConfigurationException`, `ConfigParser`, `ComposeValidator`, `InputFieldNameResolver` — the codec-neutral projection contract `JacksonFieldNameResolver` implements |
 | `io.vertx:vertx-core` | compile | `DatabindCodec.mapper()`, the Vert.x Jackson module, `JsonObject`, `JsonArray` |
 | `com.fasterxml.jackson.core:jackson-databind` | compile | `ObjectMapper`, `Module`, `BeanDeserializerModifier`, `ContextualDeserializer` |
 | `com.fasterxml.jackson.datatype:jackson-datatype-jsr310` | compile | `JavaTimeModule` — ISO-8601 `java.time` support in the `vertique` defaults |
