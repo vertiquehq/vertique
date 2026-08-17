@@ -957,6 +957,124 @@ class DefaultInputObjectProcessorTest {
         }
     }
 
+    // --- Wire-name projection ---
+
+    @Nested
+    @DisplayName("wire-name projection")
+    class WireNameProjection {
+
+        @Test
+        @DisplayName("top-level generated dispatch receives the real context, so the projection still applies")
+        void shouldPassTheRealContextToTopLevelGeneratedDispatch() {
+            // ProjectedDto has a hand-written companion whose switch keys on
+            // ctx.logicalFieldName(ProjectedDto.class, wireKey) — the shape codegen emits. A
+            // top-level dispatch that hands the generated processor a null parent makes it re-seed
+            // an IDENTITY resolver, the "userName" arm stops matching the "user_name" wire key, and
+            // the declared @Sanitize silently does not run on exactly the path REST takes when
+            // codegen is active.
+            InputFieldNameResolver projection =
+                    (ownerType, wireName) -> "user_name".equals(wireName) ? "userName" : wireName;
+
+            Map<String, Object> body = new LinkedHashMap<>();
+            body.put("user_name", "alice");
+
+            Map<?, ?> mapOut = (Map<?, ?>) processor.processInput(
+                    body, ProjectedDto.class, EffectiveInputPolicies.NONE, InputLocation.BODY, projection);
+
+            assertEquals(
+                    "safe:alice",
+                    mapOut.get("user_name"),
+                    "the top-level MAP entry point must pass the real traversal context to the generated "
+                            + "processor, so the projection selects the renamed field's arm");
+            assertNull(
+                    mapOut.get("userName"),
+                    "the projection selects the switch arm — it must not rename the emitted key, which "
+                            + "still has to match what the codec will bind");
+
+            java.lang.reflect.ParameterizedType listType = new TestParameterizedType(List.class, ProjectedDto.class);
+            Map<String, Object> element = new LinkedHashMap<>();
+            element.put("user_name", "bob");
+            List<Object> listBody = new ArrayList<>(List.of(element));
+
+            List<?> listOut = (List<?>) processor.processInput(
+                    listBody, listType, EffectiveInputPolicies.NONE, InputLocation.BODY, projection);
+
+            Map<?, ?> processedElement = (Map<?, ?>) listOut.get(0);
+            assertEquals(
+                    "safe:bob",
+                    processedElement.get("user_name"),
+                    "the top-level LIST entry point must pass the real traversal context too — it is the "
+                            + "second null-parent dispatch site and fails independently of the map one");
+            assertNull(processedElement.get("userName"), "list elements keep their wire keys as well");
+        }
+
+        @Test
+        @DisplayName("InputValueContext carries the wire path with the Java logical name")
+        void shouldReportWirePathAndJavaLogicalNameInValueContext() {
+            List<InputValueContext> seen = new ArrayList<>();
+            DefaultInputObjectProcessor engine = new DefaultInputObjectProcessor(
+                    new InputPolicyMetadataResolver(),
+                    cls -> (value, context) -> {
+                        seen.add(context);
+                        return value;
+                    },
+                    cls -> {
+                        throw new IllegalArgumentException("no sanitizer expected: " + cls);
+                    });
+
+            InputFieldNameResolver projection = (ownerType, wireName) -> switch (wireName) {
+                case "user_name" -> "userName";
+                case "tag_list" -> "tags";
+                default -> wireName;
+            };
+
+            Map<String, Object> body = new LinkedHashMap<>();
+            body.put("user_name", "alice");
+            body.put("tag_list", new ArrayList<>(List.of("first")));
+
+            engine.processInput(
+                    body, RenamedFieldDto.class, EffectiveInputPolicies.NONE, InputLocation.BODY, projection);
+
+            InputValueContext scalar = contextWithPath(seen, "user_name");
+            assertEquals(
+                    "user_name",
+                    scalar.path(),
+                    "path stays the WIRE path, so a diagnostic points at the key the caller actually sent");
+            assertEquals(
+                    "userName",
+                    scalar.logicalName(),
+                    "logicalName becomes the JAVA property name once a declared property matched the "
+                            + "projected wire key");
+            assertEquals(
+                    RenamedFieldDto.class,
+                    scalar.ownerType(),
+                    "ownerType stays the declaring class of the matched property");
+
+            InputValueContext elementContext = contextWithPath(seen, "tag_list[0]");
+            assertEquals("tag_list[0]", elementContext.path(), "a collection element's path is the wire element path");
+            assertEquals(
+                    "tag_list[0]",
+                    elementContext.logicalName(),
+                    "list elements keep today's behavior: the element path occupies both components, so "
+                            + "the projection does not change what an element-level sanitizer observes");
+        }
+
+        /**
+         * Returns the single recorded context for the given path.
+         *
+         * @param contexts every {@link InputValueContext} the recording canonicalizer observed
+         * @param path     the wire path to look for
+         * @return the matching context
+         */
+        private InputValueContext contextWithPath(List<InputValueContext> contexts, String path) {
+            return contexts.stream()
+                    .filter(context -> path.equals(context.path()))
+                    .findFirst()
+                    .orElseThrow(() -> new AssertionError("no InputValueContext was recorded for wire path '" + path
+                            + "' — the declared chain never ran on that key; recorded: " + contexts));
+        }
+    }
+
     // =========================================================================
     // Test DTOs
     // =========================================================================
@@ -1225,6 +1343,29 @@ class DefaultInputObjectProcessorTest {
     static class UriHolder {
         @Sanitize(TestPrefixSanitizer.class)
         java.net.URI homepage;
+    }
+
+    /**
+     * DTO whose Java property name differs from the wire key a projection maps onto it. Paired with
+     * the hand-written {@link DefaultInputObjectProcessorTest_ProjectedDto_InputProcessor} companion,
+     * so every entry point that reaches it goes through generated dispatch.
+     */
+    static class ProjectedDto {
+        @Sanitize(TestPrefixSanitizer.class)
+        String userName;
+    }
+
+    /**
+     * Reflective-path DTO with a renamed scalar property and a renamed {@code List<String>} property,
+     * used to observe what {@link InputValueContext} reports for each shape under a projection. It
+     * has no companion processor, so traversal walks reflectively.
+     */
+    static class RenamedFieldDto {
+        @Canonicalize(TestTrimCanonicalizer.class)
+        String userName;
+
+        @Canonicalize(TestTrimCanonicalizer.class)
+        List<String> tags;
     }
 
     // =========================================================================

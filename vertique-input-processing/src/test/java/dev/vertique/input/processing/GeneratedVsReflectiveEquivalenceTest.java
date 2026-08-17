@@ -707,6 +707,122 @@ class GeneratedVsReflectiveEquivalenceTest {
         }
     }
 
+    @Nested
+    @DisplayName("wire-name projections")
+    class WireNameProjections {
+
+        @Test
+        @DisplayName("identity, renamed and strategy projections agree byte for byte on both paths")
+        void shouldAgreeUnderIdentityRenamedAndStrategyProjections() {
+            // 1. Identity — the overwhelmingly common DTO, whose wire keys already are Java names.
+            assertProjectionAgrees("identity", InputFieldNameResolver.IDENTITY, "userName", "homePage");
+
+            // 2. A @JsonProperty-style rename: one property carries an arbitrary wire name while the
+            //    other keeps its Java name, so a projection that over-applies is caught too.
+            InputFieldNameResolver renamed = (ownerType, wireName) -> "login".equals(wireName) ? "userName" : wireName;
+            assertProjectionAgrees("@JsonProperty rename", renamed, "login", "homePage");
+
+            // 3. A SNAKE_CASE naming strategy: every wire key is the snake_case form of its property.
+            InputFieldNameResolver snakeCase = (ownerType, wireName) -> toCamelCase(wireName);
+            assertProjectionAgrees("SNAKE_CASE strategy", snakeCase, "user_name", "home_page");
+        }
+
+        /**
+         * Processes one wire-keyed intermediate through the reflective and the generated path under
+         * the same projection and asserts they agree — then asserts on each path independently that
+         * the renamed properties' declared chains actually ran, so mutual breakage cannot satisfy
+         * the equality.
+         *
+         * @param label        the projection under test, for failure messages
+         * @param projection   the wire → Java name projection
+         * @param userNameKey  the wire key the projection maps onto {@code userName}
+         * @param homePageKey  the wire key the projection maps onto {@code homePage}
+         */
+        private void assertProjectionAgrees(
+                String label, InputFieldNameResolver projection, String userNameKey, String homePageKey) {
+
+            Map<String, Object> input = new LinkedHashMap<>();
+            input.put(userNameKey, "  alice  ");
+            input.put(homePageKey, "a.b.c");
+
+            Object reflectiveOut = processor.processInput(
+                    input, ProjectionReflective.class, EffectiveInputPolicies.NONE, InputLocation.BODY, projection);
+            Object generatedOut = processor.processInput(
+                    input, ProjectionGenerated.class, EffectiveInputPolicies.NONE, InputLocation.BODY, projection);
+
+            assertEquals(
+                    reflectiveOut,
+                    generatedOut,
+                    label + ": the reflective walker matches per-field metadata by projected name and the "
+                            + "generated switch keys on the same projection, so the two paths must agree "
+                            + "byte for byte");
+            assertProjectedFieldsProcessed(reflectiveOut, userNameKey, homePageKey, label + " / reflective");
+            assertProjectedFieldsProcessed(generatedOut, userNameKey, homePageKey, label + " / generated");
+        }
+
+        /**
+         * Asserts that both declared chains ran on a single path's output and that the emitted map
+         * still carries the wire keys.
+         *
+         * @param output      the processed intermediate
+         * @param userNameKey the wire key for the canonicalized property
+         * @param homePageKey the wire key for the sanitized property
+         * @param pathName    the execution path, for failure messages
+         */
+        private void assertProjectedFieldsProcessed(
+                Object output, String userNameKey, String homePageKey, String pathName) {
+
+            Map<?, ?> out = (Map<?, ?>) output;
+            assertTrue(
+                    out.containsKey(userNameKey) && out.containsKey(homePageKey),
+                    pathName + ": the projection selects per-field metadata; it must not rename the "
+                            + "emitted keys, which still have to match what the codec will bind — got " + out);
+            assertEquals(
+                    "alice",
+                    out.get(userNameKey),
+                    pathName + ": @Canonicalize on userName must run on wire key '" + userNameKey + "'");
+            assertEquals(
+                    "abc",
+                    out.get(homePageKey),
+                    pathName + ": @Sanitize on homePage must run on wire key '" + homePageKey + "'");
+        }
+
+        /** Converts a {@code snake_case} wire key to its {@code camelCase} Java property name. */
+        private String toCamelCase(String wireName) {
+            String[] parts = wireName.split("_");
+            StringBuilder camel = new StringBuilder(parts[0]);
+            for (int i = 1; i < parts.length; i++) {
+                camel.append(Character.toUpperCase(parts[i].charAt(0))).append(parts[i].substring(1));
+            }
+            return camel.toString();
+        }
+    }
+
+    /**
+     * Reflective baseline whose Java property names differ from the wire keys a projection maps onto
+     * them — no companion processor, so traversal walks reflectively.
+     */
+    static final class ProjectionReflective {
+        @Canonicalize(TestTrim.class)
+        public String userName;
+
+        @Sanitize(TestStripDots.class)
+        public String homePage;
+    }
+
+    /**
+     * Generated counterpart paired with the hand-written
+     * {@code GeneratedVsReflectiveEquivalenceTest_ProjectionGenerated_InputProcessor} fixture, whose
+     * switch keys on {@code ctx.logicalFieldName(...)} while the emitted map keeps the wire key.
+     */
+    static final class ProjectionGenerated {
+        @Canonicalize(TestTrim.class)
+        public String userName;
+
+        @Sanitize(TestStripDots.class)
+        public String homePage;
+    }
+
     /** Enum element type for the {@link EnumElementReflective} / {@link EnumElementGenerated} pair. */
     public enum Status {
         /** Active. */
