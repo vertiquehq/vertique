@@ -6,6 +6,7 @@ package dev.vertique.input.processing;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -17,8 +18,11 @@ import dev.vertique.core.sanitization.Sanitize;
 import dev.vertique.core.sanitization.Sanitizer;
 import dev.vertique.core.sanitization.SkipCanonicalization;
 import dev.vertique.core.sanitization.SkipSanitization;
+import java.lang.reflect.Type;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -399,6 +403,125 @@ class InputPolicyMetadataResolverTest {
         assertEquals(SimpleDto.class, field.collectionElementType());
     }
 
+    // --- Nested containers carry no element schema ---
+
+    @Nested
+    @DisplayName("nested container element classification")
+    class NestedContainerElements {
+
+        @Test
+        @DisplayName("List<List<String>> records no collection element type")
+        void nestedListRecordsNoElementType() {
+            InputPolicyMetadata meta = resolver.resolve(NestedContainerDto.class);
+            assertNull(
+                    meta.fields().get("rows"),
+                    "an element type that is itself a container carries no property set to dispatch "
+                            + "at, so the unannotated field must fall out of the metadata entirely "
+                            + "and take the inherited-chain path");
+        }
+
+        @Test
+        @DisplayName("Set<List<Tag>> records no collection element type")
+        void nestedListInSetRecordsNoElementType() {
+            InputPolicyMetadata meta = resolver.resolve(NestedContainerDto.class);
+            assertNull(meta.fields().get("tagGroups"), "a Set of List has no single element schema either");
+        }
+
+        @Test
+        @DisplayName("an annotated List<List<String>> keeps its own chain but records no element type")
+        void annotatedNestedListKeepsChainWithoutElementType() {
+            InputPolicyMetadata meta = resolver.resolve(NestedContainerDto.class);
+            InputPolicyMetadata.FieldPolicyMetadata field = meta.fields().get("annotatedRows");
+            assertNotNull(field, "a field declaring its own chain stays in the metadata");
+            assertNull(
+                    field.collectionElementType(),
+                    "the inner List must not be recorded as an element type — element-wise dispatch "
+                            + "would return each inner list verbatim and drop the declared chain");
+            assertFalse(field.isCollectionOfStrings(), "the elements are lists, not strings");
+            assertEquals(List.of(TestTrimCanonicalizer.class), field.canonicalizerChain());
+        }
+
+        @Test
+        @DisplayName("List<Map<String, String>> records no collection element type")
+        void listOfMapsRecordsNoElementType() {
+            InputPolicyMetadata meta = resolver.resolve(NestedContainerDto.class);
+            assertNull(
+                    meta.fields().get("lookups"),
+                    "a Map element has arbitrary keys and no statically known property set, exactly "
+                            + "as a Map field type is not descendable");
+        }
+    }
+
+    // --- declaresPolicies agrees with what the walker can actually reach ---
+
+    @Nested
+    @DisplayName("declaresPolicies element-type gating")
+    class DeclaresPoliciesElementGating {
+
+        @Test
+        @DisplayName("a single-argument non-container generic type is not treated as a container")
+        void singleArgumentNonContainerIsNotAContainer() throws NoSuchFieldException {
+            Type wrapperType =
+                    WrapperHolderDto.class.getDeclaredField("wrapper").getGenericType();
+
+            assertFalse(
+                    InputPolicyMetadataResolver.declaresPolicies(wrapperType),
+                    "Wrapper<PolicyDto> is not a Collection, so its type argument is not an element "
+                            + "type; the walker classifies Wrapper's own field to its Object bound and "
+                            + "never reaches PolicyDto, and the startup gate must agree with it");
+        }
+
+        @Test
+        @DisplayName("a genuine collection type argument is still reached")
+        void collectionElementIsStillReached() throws NoSuchFieldException {
+            Type listType = WrapperHolderDto.class.getDeclaredField("policies").getGenericType();
+
+            assertTrue(
+                    InputPolicyMetadataResolver.declaresPolicies(listType),
+                    "fixture guard: the raw-type guard must not stop a real Collection element type "
+                            + "from being enqueued");
+        }
+    }
+
+    // --- Static and synthetic fields are not properties ---
+
+    @Nested
+    @DisplayName("static and synthetic field filtering")
+    class StaticAndSyntheticFields {
+
+        @Test
+        @DisplayName("a static field is not resolved into field metadata")
+        void staticFieldIsNotResolved() {
+            InputPolicyMetadata meta = resolver.resolve(StaticFieldDto.class);
+
+            assertNull(
+                    meta.fields().get("log"),
+                    "a static field is not a wire property; recording one makes declaresPolicies walk "
+                            + "an unrelated type's graph and lets a static's type trip the startup gate "
+                            + "for a policy no request path can reach");
+            assertNotNull(meta.fields().get("name"), "fixture guard: the instance field is still resolved");
+        }
+
+        @Test
+        @DisplayName("a non-static inner class's synthetic enclosing-instance field is not resolved")
+        void syntheticFieldIsNotResolved() {
+            assertTrue(
+                    Arrays.stream(InnerMemberDto.class.getDeclaredFields())
+                            .anyMatch(java.lang.reflect.Field::isSynthetic),
+                    "fixture guard: InnerMemberDto must actually carry a synthetic field, or this test "
+                            + "proves nothing — javac elides this$0 when the enclosing instance is unused");
+
+            InputPolicyMetadata meta = resolver.resolve(InnerMemberDto.class);
+
+            assertTrue(
+                    meta.fields().keySet().stream().noneMatch(name -> name.startsWith("this$")),
+                    "the synthetic enclosing-instance reference points metadata back at the enclosing "
+                            + "class and is reachable under a crafted wire key; it must be filtered out. "
+                            + "Resolved fields were: " + meta.fields().keySet());
+            assertNotNull(meta.fields().get("label"), "fixture guard: the declared field is still resolved");
+        }
+    }
+
     // =========================================================================
     // Test DTOs
     // =========================================================================
@@ -504,6 +627,79 @@ class InputPolicyMetadataResolverTest {
         List<String> tags;
 
         List<SimpleDto> items;
+    }
+
+    /** Leaf DTO used as the innermost element of a doubly-nested container field. */
+    static class TagDto {
+        String label;
+    }
+
+    /**
+     * DTO whose fields are containers whose element type is itself a container — a nested
+     * {@code List}, a {@code Set} of {@code List}, and a {@code List} of {@code Map}. None carries
+     * a single element schema the walker could dispatch at.
+     */
+    static class NestedContainerDto {
+        List<List<String>> rows;
+
+        @Canonicalize(TestTrimCanonicalizer.class)
+        List<List<String>> annotatedRows;
+
+        Set<List<TagDto>> tagGroups;
+
+        List<Map<String, String>> lookups;
+    }
+
+    /** DTO carrying a declared policy, used as the type argument the startup gate must not reach. */
+    static class PolicyDto {
+        @Canonicalize(TestTrimCanonicalizer.class)
+        String value;
+    }
+
+    /**
+     * Single-type-argument generic that is <em>not</em> a container: its property is typed by the
+     * type variable, so the walker classifies it to the variable's {@code Object} bound and stops.
+     *
+     * @param <T> the wrapped type, erased to {@code Object} in the field signature
+     */
+    static class Wrapper<T> {
+        T value;
+    }
+
+    /** Holder supplying real reflective {@link Type}s for the gate tests. */
+    static class WrapperHolderDto {
+        Wrapper<PolicyDto> wrapper;
+
+        List<PolicyDto> policies;
+    }
+
+    /**
+     * DTO with a {@code @Slf4j}-style static field alongside a real property. The static field is
+     * not part of the wire shape and must not become field metadata.
+     */
+    static class StaticFieldDto {
+        static final PolicyDto log = new PolicyDto();
+
+        String name;
+    }
+
+    /**
+     * Deliberately non-static member class that <em>uses</em> its enclosing instance, so javac
+     * synthesizes the {@code this$0} back-reference. Since JDK 18 javac elides that field when the
+     * inner class never reads the enclosing instance, so {@link #enclosingResolver()} is what makes
+     * the fixture actually carry a synthetic field.
+     */
+    class InnerMemberDto {
+        String label;
+
+        /**
+         * Reads the enclosing instance, forcing javac to emit the synthetic {@code this$0} field.
+         *
+         * @return the enclosing test's resolver
+         */
+        InputPolicyMetadataResolver enclosingResolver() {
+            return resolver;
+        }
     }
 
     // --- Meta-annotation DTOs ---

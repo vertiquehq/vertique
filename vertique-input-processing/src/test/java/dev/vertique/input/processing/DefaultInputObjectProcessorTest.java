@@ -1076,6 +1076,199 @@ class DefaultInputObjectProcessorTest {
                     secondFailure.getMessage(),
                     "the rethrown failure must carry the original diagnostic message");
         }
+
+        @Test
+        @DisplayName("a null canonicalizer resolution is rejected at the cache boundary, naming the class")
+        void shouldRejectANullCanonicalizerResolutionNamingTheProcessorClass() {
+            DefaultInputObjectProcessor engine =
+                    new DefaultInputObjectProcessor(new InputPolicyMetadataResolver(), cls -> null, cls -> {
+                        throw new IllegalArgumentException("no sanitizer expected: " + cls);
+                    });
+
+            var policies = new EffectiveInputPolicies(List.of(TestUpperCanonicalizer.class), List.of());
+            Map<String, Object> input = Map.of("name", "hello");
+
+            RuntimeException failure = assertThrows(
+                    RuntimeException.class,
+                    () -> engine.processInput(
+                            input, EmptyDto.class, policies, InputLocation.BODY, InputFieldNameResolver.IDENTITY),
+                    "a resolver that returns null must fail at the cache boundary rather than caching a "
+                            + "null instance that NPEs on every later value for the life of the engine");
+            assertTrue(
+                    failure.getMessage() != null
+                            && failure.getMessage().contains(TestUpperCanonicalizer.class.getName()),
+                    "the failure must name the processor class that resolved to null, which a bare NPE "
+                            + "from the cached null never does. Message was: " + failure.getMessage());
+        }
+
+        @Test
+        @DisplayName("a null sanitizer resolution is rejected at the cache boundary, naming the class")
+        void shouldRejectANullSanitizerResolutionNamingTheProcessorClass() {
+            DefaultInputObjectProcessor engine = new DefaultInputObjectProcessor(
+                    new InputPolicyMetadataResolver(),
+                    cls -> {
+                        throw new IllegalArgumentException("no canonicalizer expected: " + cls);
+                    },
+                    cls -> null);
+
+            var policies = new EffectiveInputPolicies(List.of(), List.of(TestPrefixSanitizer.class));
+            Map<String, Object> input = Map.of("name", "hello");
+
+            RuntimeException failure = assertThrows(
+                    RuntimeException.class,
+                    () -> engine.processInput(
+                            input, EmptyDto.class, policies, InputLocation.BODY, InputFieldNameResolver.IDENTITY),
+                    "the sanitizer cache must reject a null resolution on the same terms as the "
+                            + "canonicalizer one");
+            assertTrue(
+                    failure.getMessage() != null && failure.getMessage().contains(TestPrefixSanitizer.class.getName()),
+                    "the failure must name the sanitizer class that resolved to null. Message was: "
+                            + failure.getMessage());
+        }
+
+        @Test
+        @DisplayName("a null resolution keeps failing on every later call, like any other bad binding")
+        void shouldKeepFailingOnASubsequentCallAfterANullResolution() {
+            ResolutionCounter counter = new ResolutionCounter();
+            DefaultInputObjectProcessor engine = new DefaultInputObjectProcessor(
+                    new InputPolicyMetadataResolver(),
+                    cls -> {
+                        counter.record(cls);
+                        return null;
+                    },
+                    cls -> {
+                        throw new IllegalArgumentException("no sanitizer expected: " + cls);
+                    });
+
+            var policies = new EffectiveInputPolicies(List.of(TestUpperCanonicalizer.class), List.of());
+            Map<String, Object> input = Map.of("name", "hello");
+
+            RuntimeException first = assertThrows(
+                    RuntimeException.class,
+                    () -> engine.processInput(
+                            input, EmptyDto.class, policies, InputLocation.BODY, InputFieldNameResolver.IDENTITY));
+            RuntimeException second = assertThrows(
+                    RuntimeException.class,
+                    () -> engine.processInput(
+                            input, EmptyDto.class, policies, InputLocation.BODY, InputFieldNameResolver.IDENTITY),
+                    "a null resolution must not silently degrade to a no-op on a warm cache");
+
+            assertEquals(first.getMessage(), second.getMessage(), "the same diagnostic must be raised every time");
+            assertEquals(
+                    1,
+                    counter.count(TestUpperCanonicalizer.class),
+                    "the rejection is cached like any other failed resolution — the caller-supplied "
+                            + "resolver is not consulted again for a class already known to be unusable");
+        }
+    }
+
+    // --- Nested container fields ---
+
+    /**
+     * A field whose element type is itself a container ({@code List<List<String>>},
+     * {@code Set<List<Tag>>}, {@code List<Inner>[]}) carries no single element schema: the outer
+     * container's element is another JSON array, not an object the walker can dispatch at a
+     * declared type.
+     *
+     * <p>Such a field must therefore take the no-element-schema path, where the accumulated
+     * inherited chain — including the invocation-level one — still reaches every string leaf
+     * through the reflective unknown-subtree walk. Recording the inner container as the element
+     * type instead routes the field into element-wise dispatch, whose non-map arm returns each
+     * inner list verbatim and silently drops every chain that applied to the leaves beneath it.
+     */
+    @Nested
+    @DisplayName("nested container fields")
+    class NestedContainerFields {
+
+        @Test
+        @DisplayName("List<List<String>> leaves still receive the invocation-level chain")
+        void shouldApplyInvocationChainToListOfListOfStringLeaves() {
+            var policies = new EffectiveInputPolicies(List.of(TestTrimCanonicalizer.class), List.of());
+            Map<String, Object> input = new LinkedHashMap<>();
+            input.put("rows", new ArrayList<>(List.of(new ArrayList<>(List.of("  alpha  ", "  beta  ")))));
+
+            Map<?, ?> out = (Map<?, ?>) processor.processInput(
+                    input, NestedContainerDto.class, policies, InputLocation.BODY, InputFieldNameResolver.IDENTITY);
+
+            assertEquals(
+                    List.of(List.of("alpha", "beta")),
+                    out.get("rows"),
+                    "List<List<String>> has no single element schema, so it must keep the "
+                            + "inherited-chain path and trim every string leaf beneath it");
+        }
+
+        @Test
+        @DisplayName("Set<List<Tag>> leaves still receive the invocation-level chain")
+        void shouldApplyInvocationChainToSetOfListOfObjectLeaves() {
+            var policies = new EffectiveInputPolicies(List.of(TestTrimCanonicalizer.class), List.of());
+            Map<String, Object> input = new LinkedHashMap<>();
+            input.put("tagGroups", new ArrayList<>(List.of(new ArrayList<>(List.of(tag("  release  "))))));
+
+            Map<?, ?> out = (Map<?, ?>) processor.processInput(
+                    input, NestedContainerDto.class, policies, InputLocation.BODY, InputFieldNameResolver.IDENTITY);
+
+            assertEquals(
+                    "release",
+                    firstNestedLeaf(out.get("tagGroups"), "label"),
+                    "a Set whose element is itself a List carries no element schema, so the inner "
+                            + "objects' string leaves must still be reached by the invocation chain");
+        }
+
+        @Test
+        @DisplayName("List<Inner>[] leaves still receive the invocation-level chain")
+        void shouldApplyInvocationChainToArrayOfListLeaves() {
+            var policies = new EffectiveInputPolicies(List.of(TestTrimCanonicalizer.class), List.of());
+            Map<String, Object> input = new LinkedHashMap<>();
+            input.put("grid", new ArrayList<>(List.of(new ArrayList<>(List.of(inner("  cell  "))))));
+
+            Map<?, ?> out = (Map<?, ?>) processor.processInput(
+                    input, NestedContainerDto.class, policies, InputLocation.BODY, InputFieldNameResolver.IDENTITY);
+
+            assertEquals(
+                    "cell",
+                    firstNestedLeaf(out.get("grid"), "value"),
+                    "a generic array whose component is itself a List carries no element schema, so "
+                            + "the invocation chain must still reach the leaves beneath it");
+        }
+
+        /**
+         * Builds the intermediate map a serialized {@code TagDto} arrives as.
+         *
+         * @param label the raw {@code label} wire value
+         * @return the one-entry intermediate map
+         */
+        private Map<String, Object> tag(String label) {
+            Map<String, Object> node = new LinkedHashMap<>();
+            node.put("label", label);
+            return node;
+        }
+
+        /**
+         * Builds the intermediate map a serialized {@code InnerDto} arrives as.
+         *
+         * @param value the raw {@code value} wire value
+         * @return the one-entry intermediate map
+         */
+        private Map<String, Object> inner(String value) {
+            Map<String, Object> node = new LinkedHashMap<>();
+            node.put("value", value);
+            return node;
+        }
+
+        /**
+         * Reads one key of the first object nested two container levels down, so a test asserts on
+         * the leaf rather than on the container shape that carries it.
+         *
+         * @param processed the processed value of the doubly-nested container field
+         * @param key       the leaf key to read
+         * @return the processed leaf value
+         */
+        private Object firstNestedLeaf(Object processed, String key) {
+            assertNotNull(processed, "the nested container value must survive processing");
+            List<?> outer = (List<?>) processed;
+            List<?> middle = (List<?>) outer.get(0);
+            return ((Map<?, ?>) middle.get(0)).get(key);
+        }
     }
 
     // --- Wire-name projection ---
@@ -1240,6 +1433,24 @@ class DefaultInputObjectProcessorTest {
         String outerName;
 
         FieldAnnotatedDto inner;
+    }
+
+    /** Leaf DTO used as the innermost element of a doubly-nested container field. */
+    static class TagDto {
+        String label;
+    }
+
+    /**
+     * DTO whose fields are containers of containers — the three shapes whose element type is
+     * itself a {@link java.util.Collection}: a nested {@code List}, a {@code Set} of {@code List},
+     * and a generic array of {@code List}. None carries a single element schema.
+     */
+    static class NestedContainerDto {
+        List<List<String>> rows;
+
+        java.util.Set<List<TagDto>> tagGroups;
+
+        List<InnerDto>[] grid;
     }
 
     /** Plain DTO with a single string field — no annotations. */

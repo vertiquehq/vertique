@@ -15,6 +15,7 @@ import javax.lang.model.element.AnnotationMirror;
 import javax.lang.model.element.AnnotationValue;
 import javax.lang.model.element.Element;
 import javax.lang.model.element.ElementKind;
+import javax.lang.model.element.Modifier;
 import javax.lang.model.element.RecordComponentElement;
 import javax.lang.model.element.TypeElement;
 import javax.lang.model.element.VariableElement;
@@ -24,6 +25,7 @@ import javax.lang.model.type.TypeKind;
 import javax.lang.model.type.TypeMirror;
 import javax.lang.model.type.TypeVariable;
 import javax.lang.model.type.WildcardType;
+import javax.lang.model.util.Elements;
 import javax.tools.Diagnostic;
 
 /**
@@ -143,6 +145,14 @@ public final class AnnotationCollector {
      * Resolves field models for both records (record components) and regular classes (declared
      * fields walked up the supertype hierarchy).
      *
+     * <p><strong>Only instance properties are resolved.</strong> Static and synthetic fields are
+     * skipped, mirroring {@code InputPolicyMetadataResolver.resolveFields} in
+     * {@code vertique-input-processing}: neither is part of the type's wire shape, so emitting an
+     * arm for one would let a crafted wire key drive a Lombok {@code @Slf4j} {@code log} field's or
+     * a synthetic {@code this$0}'s type — and would make the generated path disagree with the
+     * reflective one on the same DTO. Record components need no such filter; the record's component
+     * list holds only its declared components.
+     *
      * @param type the type to inspect
      * @return ordered map of field name to {@link FieldModel}
      */
@@ -164,6 +174,7 @@ public final class AnnotationCollector {
                 if ("java.lang.Object".equals(fqn)) continue;
                 for (Element enclosed : te.getEnclosedElements()) {
                     if (enclosed.getKind() != ElementKind.FIELD) continue;
+                    if (isStaticOrSynthetic(enclosed)) continue;
                     VariableElement field = (VariableElement) enclosed;
                     String fieldName = field.getSimpleName().toString();
                     if (result.containsKey(fieldName)) continue; // subclass overrides
@@ -175,6 +186,24 @@ public final class AnnotationCollector {
             }
         }
         return result;
+    }
+
+    /**
+     * Returns {@code true} for a field that is not an instance property of its declaring type.
+     *
+     * <p>The {@link Elements#getOrigin(Element) origin} test matters for a supertype read from a
+     * class file rather than from source — a source {@code TypeElement} does not carry the
+     * synthetic {@code this$0} in its element model, but a compiled one does.
+     *
+     * @param field the enclosed field element
+     * @return {@code true} when the field is static, synthetic, or compiler-mandated
+     */
+    private boolean isStaticOrSynthetic(Element field) {
+        if (field.getModifiers().contains(Modifier.STATIC)) {
+            return true;
+        }
+        Elements.Origin origin = ctx.elements().getOrigin(field);
+        return origin == Elements.Origin.SYNTHETIC || origin == Elements.Origin.MANDATED;
     }
 
     /**
@@ -522,10 +551,22 @@ public final class AnnotationCollector {
      * @return {@code true} for collection types
      */
     private boolean isCollection(TypeMirror type) {
+        return isAssignableTo(type, "java.util.Collection");
+    }
+
+    /**
+     * Returns {@code true} if the type mirror is assignable to the named supertype, comparing
+     * erasures so a parameterized {@code List<Foo>} matches {@code java.util.Collection}.
+     *
+     * @param type       the type mirror to test
+     * @param supertypeFqn the fully-qualified name of the supertype to test against
+     * @return {@code true} when {@code type} is a declared type assignable to {@code supertypeFqn}
+     */
+    private boolean isAssignableTo(TypeMirror type, String supertypeFqn) {
         if (type.getKind() != TypeKind.DECLARED) return false;
-        TypeElement collectionElement = ctx.elements().getTypeElement("java.util.Collection");
-        if (collectionElement == null) return false;
-        return ctx.types().isAssignable(ctx.types().erasure(type), ctx.types().erasure(collectionElement.asType()));
+        TypeElement supertype = ctx.elements().getTypeElement(supertypeFqn);
+        if (supertype == null) return false;
+        return ctx.types().isAssignable(ctx.types().erasure(type), ctx.types().erasure(supertype.asType()));
     }
 
     /**
@@ -565,9 +606,14 @@ public final class AnnotationCollector {
      *
      * <p>Returns {@code null} for anything that does not reduce to a declared type — a primitive
      * component ({@code int[]}), a nested array component ({@code String[][]}, {@code List<String[]>})
-     * and a raw {@code Optional}. This is exactly {@code TypeClassifier.elementType}'s rule in
-     * {@code vertique-input-processing}, whose null result likewise keeps the field on the
-     * inherited-chain path instead of descending element-wise.
+     * and a raw {@code Optional} — and for an element that is itself a container: a
+     * {@link Collection} ({@code List<List<String>>}, {@code Set<List<Tag>>}) or a {@link java.util.Map}
+     * ({@code List<Map<String, String>>}). A container element's wire value is another JSON array
+     * or object rather than a dispatchable nested DTO, and a {@code Map}'s keys are arbitrary, so
+     * neither carries a statically known property set. This is exactly
+     * {@code TypeClassifier.elementType}'s rule in {@code vertique-input-processing}, whose null
+     * result likewise keeps the field on the inherited-chain path instead of descending
+     * element-wise — the two paths must classify these shapes identically or their output diverges.
      *
      * @param candidate the element type argument or array component type; may be {@code null}
      * @return the normalized declared element type, or {@code null} if not determinable
@@ -580,6 +626,7 @@ public final class AnnotationCollector {
             if (wrapped == null || wrapped.getKind() != TypeKind.DECLARED) return null;
             arg = wrapped;
         }
+        if (isCollection(arg) || isAssignableTo(arg, "java.util.Map")) return null;
         return arg;
     }
 

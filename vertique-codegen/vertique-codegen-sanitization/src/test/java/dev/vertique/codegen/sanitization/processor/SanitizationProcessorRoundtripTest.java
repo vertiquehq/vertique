@@ -304,6 +304,57 @@ class SanitizationProcessorRoundtripTest {
             }
             """);
 
+    // --- Nested-container and static-field fixtures ---
+
+    /**
+     * Nested DTO used as the innermost element of a doubly-nested container field, and as the type
+     * of {@link #NESTED_CONTAINER_DTO}'s static field. Carries its own {@code @Sanitize} so an
+     * unwanted element-wise dispatch or a resolved static field would be observable as an emitted
+     * {@code NestedTagDto_InputProcessor} reference.
+     */
+    private static final JavaFileObject NESTED_TAG_DTO = SourceFiles.inline("com.example.rt.NestedTagDto", """
+            package com.example.rt;
+            import dev.vertique.core.sanitization.Sanitize;
+            import dev.vertique.sanitization.sanitize.StripControlCharsSanitizer;
+            public class NestedTagDto {
+                @Sanitize(StripControlCharsSanitizer.class)
+                public String text;
+            }
+            """);
+
+    /**
+     * Root DTO covering the shapes whose element type is itself a container ({@code List<List<…>>},
+     * {@code Set<List<…>>}), plus a {@code @Slf4j}-style static field. None of the three is a
+     * dispatchable element schema or a wire property, so all three must keep the
+     * inherited-chain-only path — exactly as the reflective walker classifies them.
+     */
+    private static final JavaFileObject NESTED_CONTAINER_DTO =
+            SourceFiles.inline("com.example.rt.NestedContainerDto", """
+            package com.example.rt;
+            import dev.vertique.core.sanitization.Sanitize;
+            import dev.vertique.sanitization.sanitize.StripControlCharsSanitizer;
+            import java.util.List;
+            import java.util.Set;
+            public class NestedContainerDto {
+                public static final NestedTagDto SHARED = new NestedTagDto();
+                @Sanitize(StripControlCharsSanitizer.class)
+                public List<List<String>> rows;
+                public Set<List<NestedTagDto>> tagGroups;
+            }
+            """);
+
+    private static final JavaFileObject NESTED_CONTAINER_RESOURCE =
+            SourceFiles.inline("com.example.rt.NestedContainerResource", """
+            package com.example.rt;
+            import jakarta.ws.rs.POST;
+            import jakarta.ws.rs.Path;
+            @Path("/nested-containers")
+            public class NestedContainerResource {
+                @POST
+                public String create(NestedContainerDto body) { return null; }
+            }
+            """);
+
     // --- Wire-name projection fixtures ---
 
     /**
@@ -1177,6 +1228,85 @@ class SanitizationProcessorRoundtripTest {
                     "");
 
             assertEquals(nonMap, output, "Non-Map intermediate should be returned unchanged");
+        }
+    }
+
+    // --- Nested containers and static fields ---
+
+    /**
+     * Proves the APT-time classifier agrees with {@code TypeClassifier} on the two shapes that are
+     * not wire-dispatchable: a container whose element type is itself a container, and a static
+     * field. Both must reach the reflective continuation's {@code walkUnknown} (or not be emitted
+     * at all) rather than dispatching at a bogus element or field type.
+     *
+     * <p>Divergence here is not cosmetic: the generated and reflective paths must produce
+     * byte-equal output for the same intermediate, so a shape the reflective walker leaves on the
+     * inherited-chain path cannot be element-dispatched by codegen.
+     */
+    @Nested
+    @DisplayName("nested container and static fields")
+    class NestedContainerAndStaticFields {
+
+        @Test
+        @DisplayName("List<List<String>> has no element schema — keeps the inherited-chain path")
+        @SuppressWarnings("unchecked")
+        void nestedListField_keepsInheritedChainPath() throws Exception {
+            Result result = ProcessorTestHarness.run(
+                    new SanitizationProcessor(), NESTED_TAG_DTO, NESTED_CONTAINER_DTO, NESTED_CONTAINER_RESOURCE);
+            result.assertSuccess();
+            result.assertGeneratedSourceDoesNotContain(
+                    "com.example.rt.NestedContainerDto_InputProcessor", "dispatchObjectCollection(v, List");
+
+            GeneratedInputProcessor<?> processor =
+                    newProcessor(result, "com.example.rt.NestedContainerDto_InputProcessor");
+
+            RecordingContinuation continuation = new RecordingContinuation();
+            GeneratedInputProcessorDispatcher dispatcher = new GeneratedInputProcessorDispatcher(continuation);
+
+            List<Object> rows = new ArrayList<>(List.of(new ArrayList<>(List.of("ab"))));
+            Map<String, Object> intermediate = new LinkedHashMap<>();
+            intermediate.put("rows", rows);
+
+            Object output = processor.process(
+                    intermediate,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY,
+                    buildChainResolver(),
+                    dispatcher,
+                    null,
+                    "");
+
+            assertInstanceOf(Map.class, output);
+            Map<String, Object> out = (Map<String, Object>) output;
+            assertEquals(
+                    List.of("rows"),
+                    continuation.walkUnknownPaths,
+                    "List<List<String>> has no element schema (the inner List is itself a container), "
+                            + "so it must reach the reflective continuation rather than dispatching "
+                            + "elements at List");
+            assertSame(rows, out.get("rows"), "the continuation's return value is what lands in the output map");
+        }
+
+        @Test
+        @DisplayName("Set<List<NestedTagDto>> does not dispatch elements at the inner container type")
+        void nestedListInSetField_doesNotDispatchAtTheContainer() throws Exception {
+            Result result = ProcessorTestHarness.run(
+                    new SanitizationProcessor(), NESTED_TAG_DTO, NESTED_CONTAINER_DTO, NESTED_CONTAINER_RESOURCE);
+            result.assertSuccess();
+
+            result.assertGeneratedSourceDoesNotContain(
+                    "com.example.rt.NestedContainerDto_InputProcessor", "dispatchObjectCollection(v, List");
+        }
+
+        @Test
+        @DisplayName("a static field emits no arm — it is not a wire property")
+        void staticField_emitsNoArm() throws Exception {
+            Result result = ProcessorTestHarness.run(
+                    new SanitizationProcessor(), NESTED_TAG_DTO, NESTED_CONTAINER_DTO, NESTED_CONTAINER_RESOURCE);
+            result.assertSuccess();
+
+            result.assertGeneratedSourceDoesNotContain(
+                    "com.example.rt.NestedContainerDto_InputProcessor", "\"SHARED\"");
         }
     }
 

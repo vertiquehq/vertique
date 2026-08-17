@@ -9,6 +9,8 @@ import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
 import java.lang.reflect.TypeVariable;
 import java.lang.reflect.WildcardType;
+import java.util.Collection;
+import java.util.Map;
 import java.util.Optional;
 
 /**
@@ -91,11 +93,28 @@ final class TypeClassifier {
      * <p>So {@code List<Node>}, {@code List<? extends Node>}, {@code List<Optional<Node>>} and
      * {@code Node[]} all yield {@code Node}.
      *
+     * <p><strong>Only a genuine container yields an element type.</strong> A parameterized type is
+     * consulted for a type argument only when its raw type is a {@link Collection} — the same gate
+     * {@link InputPolicyMetadataResolver} applies before it reaches this method. Without it any
+     * single-argument generic ({@code Wrapper<Node>}, {@code Holder<Node>}) would report as a
+     * container, and the startup gate that calls this method directly would claim a policy the
+     * walker cannot reach: the walker classifies {@code Wrapper}'s own field to its {@code Object}
+     * bound and stops there.
+     *
      * <p>Returns {@code null} — "no element schema", which routes the field to handling that still
      * applies inherited chains to string leaves — for a raw collection, an element type that
      * resolves to {@link Object} or to a raw {@code Optional} (neither carries a property set), an
-     * element type that is itself an array, and any type that is neither a single-argument
-     * parameterized type nor an array.
+     * element type that is itself a container (an array, a {@link Collection} or a {@link Map}),
+     * and any type that is neither a single-argument parameterized collection nor an array.
+     *
+     * <p>The nested-container exclusion is what keeps {@code List<List<String>>},
+     * {@code Set<List<Node>>} and {@code List<Node>[]} on the inherited-chain path. Their wire
+     * element is another JSON array, not an object: recording the inner container as the element
+     * type routes the field into element-wise dispatch, whose non-object arm returns each inner
+     * container verbatim and silently drops every chain — including the invocation-level one — that
+     * should have reached the leaves beneath it. A {@link Map} element is excluded for the same
+     * reason a {@code Map} field type is not descendable: its keys are arbitrary, so it carries no
+     * statically known property set.
      *
      * @param type the collection or array type; may be {@code null}
      * @return the element class, or {@code null} when no element schema is determinable
@@ -109,12 +128,22 @@ final class TypeClassifier {
         } else if (container instanceof Class<?> cls && cls.isArray()) {
             candidate = cls.getComponentType();
         } else if (container instanceof ParameterizedType parameterized) {
-            Type[] args = parameterized.getActualTypeArguments();
-            if (args.length == 1) {
-                candidate = classify(args[0]);
+            Class<?> rawType = rawClassOf(parameterized);
+            // Array raw types are impossible for a ParameterizedType, so the array half of the
+            // caller-side gate is covered by the two branches above rather than repeated here.
+            if (rawType != null && Collection.class.isAssignableFrom(rawType)) {
+                Type[] args = parameterized.getActualTypeArguments();
+                if (args.length == 1) {
+                    candidate = classify(args[0]);
+                }
             }
         }
-        if (candidate == null || candidate == Object.class || candidate == Optional.class || candidate.isArray()) {
+        if (candidate == null
+                || candidate == Object.class
+                || candidate == Optional.class
+                || candidate.isArray()
+                || Collection.class.isAssignableFrom(candidate)
+                || Map.class.isAssignableFrom(candidate)) {
             return null;
         }
         return candidate;

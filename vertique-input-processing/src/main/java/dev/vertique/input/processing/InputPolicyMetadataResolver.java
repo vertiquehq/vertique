@@ -14,6 +14,7 @@ import dev.vertique.input.processing.InputPolicyMetadata.FieldPolicyMetadata;
 import jakarta.annotation.Nullable;
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Field;
+import java.lang.reflect.Modifier;
 import java.lang.reflect.RecordComponent;
 import java.lang.reflect.Type;
 import java.util.ArrayDeque;
@@ -170,6 +171,14 @@ class InputPolicyMetadataResolver {
      * Resolves per-field metadata for the given type, supporting both regular classes (via
      * {@link Field}) and records (via {@link RecordComponent}).
      *
+     * <p><strong>Only instance properties are resolved.</strong> Static and synthetic fields are
+     * skipped: neither is part of the type's wire shape, so recording one would make the walker —
+     * and {@link #declaresPolicies} with it — reason about a type no request path can reach. A
+     * Lombok {@code @Slf4j} {@code log} field or a static helper would otherwise let an unrelated
+     * type's graph trip the startup gate, and a non-static inner class's synthetic {@code this$0}
+     * would point metadata back at the enclosing class under a crafted wire key. Records need no
+     * such filter — {@link Class#getRecordComponents()} reports only the declared components.
+     *
      * @param type the type whose fields to inspect
      * @return a map of field name to {@link FieldPolicyMetadata}
      */
@@ -187,6 +196,7 @@ class InputPolicyMetadataResolver {
             // Walk all declared fields up the hierarchy
             for (Class<?> cls = type; cls != null && cls != Object.class; cls = cls.getSuperclass()) {
                 for (Field field : cls.getDeclaredFields()) {
+                    if (field.isSynthetic() || Modifier.isStatic(field.getModifiers())) continue;
                     if (result.containsKey(field.getName())) continue; // subclass overrides
                     FieldPolicyMetadata meta = resolveField(field);
                     if (meta != null) {

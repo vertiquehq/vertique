@@ -849,8 +849,10 @@ class DefaultInputObjectProcessor implements InputObjectProcessor {
          * function on first use.
          *
          * @param type the processor class to resolve
-         * @return the cached processor instance
-         * @throws RuntimeException the failure the resolver raised for this class — captured on the
+         * @return the cached processor instance; never {@code null}
+         * @throws RuntimeException the failure this class resolved to — the exception the resolver
+         *                          raised, or an {@link IllegalStateException} naming the class when
+         *                          the resolver returned {@code null}. Either is captured on the
          *                          first attempt and rethrown on every later one, so an unresolvable
          *                          processor still fails the request without re-running a lookup
          *                          already known to fail
@@ -877,12 +879,26 @@ class DefaultInputObjectProcessor implements InputObjectProcessor {
          * signals a JVM-level problem (a failing static initializer, a linkage error) whose retry
          * semantics are not this cache's to decide.
          *
+         * <p><strong>A null resolution is a failed resolution.</strong> Caching {@code null} as a
+         * success would make every later value for that class die on a bare
+         * {@link NullPointerException} that names no processor class, for the life of the engine —
+         * the resolver having returned null is long out of the stack by then. Rejecting it here
+         * turns an unbound processor into the same named, cached diagnostic a throwing resolver
+         * produces.
+         *
          * @param type the processor class to resolve
          * @return the resolution outcome to cache
          */
         private Resolution<T> resolve(Class<? extends T> type) {
             try {
-                return new Resolution.Resolved<>(resolver.apply(type));
+                T instance = resolver.apply(type);
+                if (instance == null) {
+                    return new Resolution.Failed<>(new IllegalStateException(
+                            "The configured resolver returned no instance for " + type.getName()
+                                    + ". Every canonicalizer and sanitizer named by a declared chain must be "
+                                    + "resolvable; bind it, or remove it from the chain that names it."));
+                }
+                return new Resolution.Resolved<>(instance);
             } catch (RuntimeException failure) {
                 return new Resolution.Failed<>(failure);
             }
