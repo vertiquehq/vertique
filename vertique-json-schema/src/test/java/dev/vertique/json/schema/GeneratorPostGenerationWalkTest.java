@@ -54,11 +54,61 @@ import org.junit.jupiter.params.provider.MethodSource;
  * allowlist of known subschema positions, and both halves of that contract are proven here: data in a
  * {@code default}, {@code const}, or {@code definitions} position is left alone, while a real
  * conflict at <em>every</em> allowlisted position still fails generation.
+ *
+ * <p>Position awareness covers the <strong>conjunctive closure</strong> as well as the outer
+ * traversal. A developer-authored {@code @Schema(ref = "#/...")} reaches the generated document
+ * verbatim and may point anywhere in it, so a target is conjoined only when it is itself a schema
+ * head: a pointer onto a data position or onto a subschema-map container contributes nothing, while a
+ * pointer onto a {@code $defs} entry or a sibling property's schema still contributes in full.
  */
 class GeneratorPostGenerationWalkTest {
 
     /** Unbounded text a hostile walk failure carries, which no bounded diagnostic may echo. */
     private static final String HOSTILE_TEXT = "hostile-walk-text".repeat(64);
+
+    /**
+     * A document whose only {@code $ref} points at a {@code default} <em>value</em>. The referring
+     * property is a genuine subschema the outer traversal reaches; its target is annotation data that
+     * happens to carry a {@code type}. Conjoining the two would reject a publishable document.
+     */
+    private static final String REF_INTO_DATA_CONFLICT = "{\"default\":{\"type\":\"integer\",\"minimum\":3},"
+            + "\"properties\":{\"victim\":{\"$ref\":\"#/default\",\"type\":\"string\"}}}";
+
+    /**
+     * A document whose root refers to a {@code default} value declaring {@code "type":"string"} and
+     * carries a genuine {@code minimum} of its own. Reading the data's type as the root's effective
+     * type would silently delete that {@code minimum}.
+     */
+    private static final String REF_INTO_DATA_SUPPRESSION =
+            "{\"default\":{\"type\":\"string\"},\"$ref\":\"#/default\",\"minimum\":5}";
+
+    /**
+     * A document whose {@code $ref} points at a {@code properties} <em>container</em> — the object
+     * mapping property names to subschemas — one of whose property names is literally {@code type}.
+     *
+     * <p>The container's member <em>values</em> are irrelevant to the misread this pins: what matters
+     * is that a container's keys are property names, so reading them as keywords turns a property
+     * named {@code type} into a type declaration about the referring location. The member is written
+     * as a bare string only because that is the shape which makes the misread observable through
+     * {@link ConjunctiveLocations#explicitTypes(JsonNode)}.
+     */
+    private static final String REF_ONTO_CONTAINER = "{\"$defs\":{\"Money\":{\"properties\":{\"type\":\"string\"}}},"
+            + "\"properties\":{\"victim\":{\"$ref\":\"#/$defs/Money/properties\",\"type\":\"integer\"}}}";
+
+    /** A document whose {@code $ref} points at a real {@code $defs} schema head with a disjoint type. */
+    private static final String REF_ONTO_DEFINITION = "{\"$defs\":{\"Money\":{\"type\":\"integer\"}},"
+            + "\"properties\":{\"victim\":{\"$ref\":\"#/$defs/Money\",\"type\":\"string\"}}}";
+
+    /** A document whose {@code $ref} points at a sibling property's schema head with a disjoint type. */
+    private static final String REF_ONTO_PROPERTY = "{\"properties\":{\"anchor\":{\"type\":\"integer\"},"
+            + "\"victim\":{\"$ref\":\"#/properties/anchor\",\"type\":\"string\"}}}";
+
+    /**
+     * A document whose {@code $ref} points at a real {@code $defs} schema head declaring a
+     * non-numeric type, so the referring property's own {@code minimum} is genuinely inapplicable.
+     */
+    private static final String REF_ONTO_DEFINITION_SUPPRESSION = "{\"$defs\":{\"Kind\":{\"type\":\"string\"}},"
+            + "\"properties\":{\"victim\":{\"$ref\":\"#/$defs/Kind\",\"minimum\":5}}}";
 
     /**
      * A self-contained subschema whose own {@code type} is disjoint from its single {@code allOf}
@@ -153,6 +203,92 @@ class GeneratorPostGenerationWalkTest {
         assertTrue(
                 canonical.contains(HardeningFixtures.DATA_BEARING_DEFINITIONS),
                 "the data-bearing definitions member must survive untouched; was: " + canonical);
+    }
+
+    // --- Position awareness: a $ref target is conjoined only when it is a schema head ---
+
+    @Test
+    @DisplayName("A $ref onto a data position does not conjoin the data's type")
+    void refOntoDataPositionIsNotConjoined() {
+        // Given: a document whose property refers to a `default` value — annotation data by
+        // specification — that happens to declare a type disjoint from the property's own.
+        JsonNode document = HardeningFixtures.read(REF_INTO_DATA_CONFLICT);
+
+        // When/Then: generation is clean. The outer traversal correctly reaches only the property, so
+        // the closure must not reintroduce the data position the traversal deliberately skipped.
+        assertDoesNotThrow(
+                () -> DisjointTypeDetector.requireNoDisjointTypes(document),
+                "a $ref onto a data position must not be read as a conjoined subschema");
+    }
+
+    @Test
+    @DisplayName("A $ref onto a data position does not strip a genuine numeric keyword")
+    void refOntoDataPositionDoesNotDriveSuppression() {
+        // Given: a document whose root refers to a `default` value declaring a string type, and which
+        // carries a genuine numeric bound of its own.
+        JsonNode document = HardeningFixtures.read(REF_INTO_DATA_SUPPRESSION);
+
+        // When: the numeric-domain filter runs.
+        NumericDomainKeywordFilter.suppressInapplicableNumericKeywords(document);
+
+        // Then: the bound survives. Its location has no explicit type at all — the only `type` in the
+        // document is data — so there is nothing to declare the bound inapplicable.
+        assertTrue(
+                document.has("minimum"),
+                "a genuine schema's numeric keyword must not be suppressed from a data-position type; was: "
+                        + document);
+    }
+
+    @Test
+    @DisplayName("A $ref onto a subschema-map container does not conjoin the container's keys")
+    void refOntoContainerIsNotConjoined() {
+        // Given: a document whose property refers to a `properties` container carrying a property
+        // literally named `type`.
+        JsonNode document = HardeningFixtures.read(REF_ONTO_CONTAINER);
+
+        // When/Then: generation is clean. A container is not a schema head — its keys are property
+        // names — so a pointer landing on one contributes no keyword to the referring location.
+        assertDoesNotThrow(
+                () -> DisjointTypeDetector.requireNoDisjointTypes(document),
+                "a $ref onto a subschema-map container must not be read as a conjoined subschema");
+    }
+
+    @Test
+    @DisplayName("A $ref onto a real schema head still contributes to the conjunction")
+    void refOntoSchemaHeadStillContributes() {
+        // Given/When/Then: the two pointer forms a developer legitimately authors — into `$defs` and
+        // onto a sibling property — both name real schema heads, and both must still be conjoined.
+        // This is the anti-over-restriction control: narrowing the closure to `$defs` alone, or
+        // dropping $ref resolution entirely, would let each of these unsatisfiable documents publish.
+        assertThrows(
+                JsonSchemaGenerationException.class,
+                () -> DisjointTypeDetector.requireNoDisjointTypes(HardeningFixtures.read(REF_ONTO_DEFINITION)),
+                "a $ref onto a $defs schema head must still be conjoined");
+        assertThrows(
+                JsonSchemaGenerationException.class,
+                () -> DisjointTypeDetector.requireNoDisjointTypes(HardeningFixtures.read(REF_ONTO_PROPERTY)),
+                "a $ref onto a property's schema head must still be conjoined");
+    }
+
+    @Test
+    @DisplayName("A $ref onto a real schema head still drives numeric suppression")
+    void refOntoSchemaHeadStillDrivesSuppression() {
+        // Given: a property whose referenced definition declares a string type, so the property's own
+        // numeric bound targets a wire type that can never satisfy it.
+        JsonNode document = HardeningFixtures.read(REF_ONTO_DEFINITION_SUPPRESSION);
+
+        // When: the numeric-domain filter runs.
+        NumericDomainKeywordFilter.suppressInapplicableNumericKeywords(document);
+
+        // Then: the inapplicable bound is gone from the referring location, and the shared definition
+        // — which no referrer may rewrite — is untouched.
+        assertFalse(
+                document.at("/properties/victim").has("minimum"),
+                "a numeric keyword conjoined with a referenced string type must be suppressed; was: " + document);
+        assertEquals(
+                "string",
+                document.at("/$defs/Kind/type").textValue(),
+                "the shared definition must survive the referrer's suppression; was: " + document);
     }
 
     // --- Position awareness: every allowlisted subschema position is still checked ---
