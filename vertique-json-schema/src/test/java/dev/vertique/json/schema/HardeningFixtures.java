@@ -3,6 +3,8 @@
 
 package dev.vertique.json.schema;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.vertique.core.json.JsonMapperProfile;
 import dev.vertique.core.json.JsonProfileId;
@@ -128,6 +130,23 @@ final class HardeningFixtures {
      */
     static JsonSchemaFragment markerFragment(String marker) {
         return JsonSchemaFragment.parse("{\"type\":\"string\",\"format\":\"" + marker + "\"}");
+    }
+
+    // --- Document parsing ---
+
+    /**
+     * Parses a hand-built document. Both post-generation walks take a {@code JsonNode}, so a document
+     * shape the generator cannot itself emit is still a legitimate input to prove a walk against.
+     *
+     * @param json the document text
+     * @return the parsed tree
+     */
+    static JsonNode read(String json) {
+        try {
+            return new ObjectMapper().readTree(json);
+        } catch (JsonProcessingException malformed) {
+            throw new IllegalArgumentException("test document is not valid JSON: " + json, malformed);
+        }
     }
 
     // --- Accepted-grammar fixtures ---

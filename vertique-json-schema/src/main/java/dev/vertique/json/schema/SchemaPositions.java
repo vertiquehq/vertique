@@ -52,8 +52,14 @@ import java.util.Set;
  */
 final class SchemaPositions {
 
-    /** Keywords whose value is a single subschema. */
-    private static final Set<String> SINGLE_SUBSCHEMA_KEYWORDS = Set.of(
+    /**
+     * Keywords whose value occupies a single-subschema-or-array-of-subschemas position. The two
+     * shapes are never distinguished by a caller: both route through {@link #visitSubschemaOrArray},
+     * whose javadoc explains why the shape tolerance is deliberate rather than an accident of merging
+     * this set.
+     */
+    private static final Set<String> SUBSCHEMA_KEYWORDS = Set.of(
+            // Single subschema.
             "not",
             "if",
             "then",
@@ -64,10 +70,13 @@ final class SchemaPositions {
             "propertyNames",
             "unevaluatedItems",
             "unevaluatedProperties",
-            "contentSchema");
+            "contentSchema",
 
-    /** Keywords whose value is an array of subschemas. */
-    private static final Set<String> SUBSCHEMA_ARRAY_KEYWORDS = Set.of("allOf", "anyOf", "oneOf", "prefixItems");
+            // Array of subschemas.
+            "allOf",
+            "anyOf",
+            "oneOf",
+            "prefixItems");
 
     /** Keywords whose value is an object whose <em>member values</em> are subschemas. */
     private static final Set<String> SUBSCHEMA_MAP_KEYWORDS =
@@ -77,6 +86,35 @@ final class SchemaPositions {
     private static final String ROOT_PATH = "#";
 
     private SchemaPositions() {}
+
+    /**
+     * Returns the frozen allowlist of single-subschema-or-array-of-subschemas keywords.
+     *
+     * <p>Exposed package-privately only so {@code GeneratorPostGenerationWalkTest} can assert, as a
+     * drift check, that its hardcoded {@code @MethodSource} cases and this allowlist name exactly the
+     * same keywords in both directions — a keyword added here with no case, or a case with no
+     * keyword. It carries no meaning beyond that test.
+     *
+     * @return the single/array subschema keyword allowlist
+     */
+    static Set<String> subschemaKeywords() {
+        return SUBSCHEMA_KEYWORDS;
+    }
+
+    /**
+     * Returns the frozen allowlist of keywords whose value is an object whose member values are
+     * subschemas.
+     *
+     * <p>Exposed package-privately only so {@code GeneratorPostGenerationWalkTest} can assert, as a
+     * drift check, that its hardcoded {@code @MethodSource} cases and this allowlist name exactly the
+     * same keywords in both directions — a keyword added here with no case, or a case with no
+     * keyword. It carries no meaning beyond that test.
+     *
+     * @return the subschema-map keyword allowlist
+     */
+    static Set<String> subschemaMapKeywords() {
+        return SUBSCHEMA_MAP_KEYWORDS;
+    }
 
     /**
      * Receives each node the traversal classifies as a schema.
@@ -126,11 +164,10 @@ final class SchemaPositions {
 
         for (Map.Entry<String, JsonNode> member : schema.properties()) {
             String keyword = member.getKey();
-            String memberPath = path + "/" + keyword;
-            if (SINGLE_SUBSCHEMA_KEYWORDS.contains(keyword) || SUBSCHEMA_ARRAY_KEYWORDS.contains(keyword)) {
-                visitSubschemaOrArray(member.getValue(), memberPath, visitor);
+            if (SUBSCHEMA_KEYWORDS.contains(keyword)) {
+                visitSubschemaOrArray(member.getValue(), path + "/" + keyword, visitor);
             } else if (SUBSCHEMA_MAP_KEYWORDS.contains(keyword)) {
-                visitSubschemaMap(member.getValue(), memberPath, visitor);
+                visitSubschemaMap(member.getValue(), path + "/" + keyword, visitor);
             }
         }
     }

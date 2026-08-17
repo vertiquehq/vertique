@@ -4,14 +4,13 @@
 package dev.vertique.json.schema;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.github.victools.jsonschema.generator.OptionPreset;
@@ -23,9 +22,12 @@ import dev.vertique.core.json.JsonSchemaFragment;
 import dev.vertique.core.json.JsonSchemaTypeOverride;
 import java.lang.reflect.Type;
 import java.math.BigDecimal;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -160,7 +162,7 @@ class GeneratorPostGenerationWalkTest {
     @DisplayName("Every allowlisted subschema position is still checked")
     void everySubschemaPositionIsStillChecked(String keyword, String document) {
         // Given: a document placing a genuinely unsatisfiable subschema at one allowlisted position.
-        JsonNode parsed = read(document);
+        JsonNode parsed = HardeningFixtures.read(document);
 
         // When/Then: the detector still reaches it. This is the anti-hole proof: an allowlist that
         // silently omitted this keyword would let an unsatisfiable subschema publish.
@@ -168,6 +170,28 @@ class GeneratorPostGenerationWalkTest {
                 JsonSchemaGenerationException.class,
                 () -> DisjointTypeDetector.requireNoDisjointTypes(parsed),
                 "a conflict at the '" + keyword + "' position must fail generation; document: " + document);
+    }
+
+    @Test
+    @DisplayName("The subschema-position allowlist and this test's cases name exactly the same keywords")
+    void allowlistAndCaseSetAgree() {
+        // Given: the union of SchemaPositions' two subschema-position allowlists — the keywords the
+        // implementation actually descends into.
+        Set<String> allowlisted = new HashSet<>(SchemaPositions.subschemaKeywords());
+        allowlisted.addAll(SchemaPositions.subschemaMapKeywords());
+
+        // Given: the keywords this class's hardcoded @MethodSource actually yields a case for.
+        Set<String> covered = allowlistedSubschemaPositions()
+                .map(arguments -> (String) arguments.get()[0])
+                .collect(Collectors.toSet());
+
+        // Then: the two sets agree in both directions. A keyword added to the implementation with no
+        // matching case, or a case naming a keyword the implementation no longer allows, fails here
+        // instead of silently drifting apart.
+        assertEquals(
+                allowlisted,
+                covered,
+                "the SchemaPositions allowlist and this test's cases must name exactly the same keywords");
     }
 
     /**
@@ -183,32 +207,29 @@ class GeneratorPostGenerationWalkTest {
      * @return the {@code (keyword, document)} cases
      */
     private static Stream<Arguments> allowlistedSubschemaPositions() {
-        return Stream.concat(
-                Stream.concat(
-                        // Single subschema.
-                        Stream.of(
-                                        "not",
-                                        "if",
-                                        "then",
-                                        "else",
-                                        "items",
-                                        "contains",
-                                        "additionalProperties",
-                                        "propertyNames",
-                                        "unevaluatedItems",
-                                        "unevaluatedProperties",
-                                        "contentSchema")
-                                .map(keyword -> Arguments.of(keyword, "{\"" + keyword + "\":" + CONFLICT + "}")),
-                        // Array of subschemas. `allOf` carries its own, deeper case below.
-                        Stream.of("anyOf", "oneOf", "prefixItems")
-                                .map(keyword -> Arguments.of(keyword, "{\"" + keyword + "\":[" + CONFLICT + "]}"))),
-                Stream.concat(
-                        // Map of subschemas.
-                        Stream.of("properties", "patternProperties", "$defs", "dependentSchemas")
-                                .map(keyword ->
-                                        Arguments.of(keyword, "{\"" + keyword + "\":{\"member\":" + CONFLICT + "}}")),
-                        Stream.of(Arguments.of(
-                                "allOf", "{\"allOf\":[{\"properties\":{\"member\":" + CONFLICT + "}}]}"))));
+        // Single subschema.
+        Stream<Arguments> singles = Stream.of(
+                        "not",
+                        "if",
+                        "then",
+                        "else",
+                        "items",
+                        "contains",
+                        "additionalProperties",
+                        "propertyNames",
+                        "unevaluatedItems",
+                        "unevaluatedProperties",
+                        "contentSchema")
+                .map(keyword -> Arguments.of(keyword, "{\"" + keyword + "\":" + CONFLICT + "}"));
+        // Array of subschemas. `allOf` carries its own, deeper case below.
+        Stream<Arguments> arrays = Stream.of("anyOf", "oneOf", "prefixItems")
+                .map(keyword -> Arguments.of(keyword, "{\"" + keyword + "\":[" + CONFLICT + "]}"));
+        // Map of subschemas.
+        Stream<Arguments> maps = Stream.of("properties", "patternProperties", "$defs", "dependentSchemas")
+                .map(keyword -> Arguments.of(keyword, "{\"" + keyword + "\":{\"member\":" + CONFLICT + "}}"));
+        Arguments allOfCase = Arguments.of("allOf", "{\"allOf\":[{\"properties\":{\"member\":" + CONFLICT + "}}]}");
+
+        return Stream.of(singles, arrays, maps, Stream.<Arguments>of(allOfCase)).flatMap(Function.identity());
     }
 
     // --- Helpers ---
@@ -224,21 +245,6 @@ class GeneratorPostGenerationWalkTest {
         JsonMapperProfile profile = HardeningFixtures.profile(
                 "schema-position-fixture", List.of(JsonSchemaTypeOverride.both(BigDecimal.class, fragment)));
         return AnnotationJsonSchemaGenerator.forInputProfile(profile);
-    }
-
-    /**
-     * Parses a hand-built document. Both walks take a {@code JsonNode}, so a document shape the
-     * generator cannot itself emit is still a legitimate input to prove the walk against.
-     *
-     * @param json the document text
-     * @return the parsed tree
-     */
-    private static JsonNode read(String json) {
-        try {
-            return new ObjectMapper().readTree(json);
-        } catch (JsonProcessingException malformed) {
-            throw new IllegalArgumentException("test document is not valid JSON: " + json, malformed);
-        }
     }
 
     /**
