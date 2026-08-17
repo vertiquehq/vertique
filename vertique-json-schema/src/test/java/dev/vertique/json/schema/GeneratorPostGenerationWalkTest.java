@@ -51,9 +51,13 @@ import org.junit.jupiter.params.provider.MethodSource;
  * an unknown keyword as an annotation — arbitrary JSON data by specification — so a walk that
  * descends into every object member acts on data: the numeric-domain filter mutates it and the
  * disjoint-type detector fails generation on it. Both walks therefore descend only into a closed
- * allowlist of known subschema positions, and both halves of that contract are proven here: data in a
- * {@code default}, {@code const}, or {@code definitions} position is left alone, while a real
- * conflict at <em>every</em> allowlisted position still fails generation.
+ * allowlist of known subschema positions, and both halves of that contract are proven here for both
+ * walks: data at <em>every</em> data position — the defined instance-valued keywords, the Draft-07
+ * spellings, and an unknown annotation keyword — survives byte-for-byte, while at <em>every</em>
+ * allowlisted subschema position a real conflict still fails generation and an inapplicable numeric
+ * keyword is still suppressed. A subschema-map container sits between the two: its keys are member
+ * names, so a member named {@code type} or {@code allOf} is a subschema of its own and never a
+ * declaration about the container.
  *
  * <p>Position awareness covers the <strong>conjunctive closure</strong> as well as the outer
  * traversal. A developer-authored {@code @Schema(ref = "#/...")} reaches the generated document
@@ -116,6 +120,33 @@ class GeneratorPostGenerationWalkTest {
      * disjoint-type detector must refuse; placed in a data position it is inert JSON.
      */
     private static final String CONFLICT = "{\"type\":\"string\",\"allOf\":[{\"type\":\"integer\"}]}";
+
+    /** The numeric-domain keyword the filter's coverage proof places and then looks for. */
+    private static final String NUMERIC_KEYWORD = "minimum";
+
+    /**
+     * A self-contained subschema whose explicit type admits no number, carrying a numeric-domain
+     * keyword that is therefore inapplicable. Placed at a genuine subschema position the filter must
+     * strip the keyword; placed in a data position the keyword is a caller's data and must survive.
+     */
+    private static final String FILTERABLE = "{\"type\":\"string\",\"" + NUMERIC_KEYWORD + "\":1}";
+
+    /**
+     * A JSON <em>data</em> object that is hostile to both walks if read as a schema: its members
+     * conjoin the disjoint types {@code a} and {@code b}, and it carries a numeric-domain keyword the
+     * filter would strip.
+     */
+    private static final String HOSTILE_DATA =
+            "{\"type\":\"a\",\"allOf\":[{\"type\":\"b\"}],\"" + NUMERIC_KEYWORD + "\":3}";
+
+    /**
+     * A document whose {@code properties} container carries member names that are also keywords. The
+     * container's keys are property names, so neither name may be read as a declaration about the
+     * container: the member named {@code type} keeps its numeric bound, because its own schema is
+     * numeric, and the member named {@code allOf} loses its bound, because its own schema is a string.
+     */
+    private static final String CONTAINER_KEY_DOCUMENT = "{\"type\":\"object\",\"properties\":"
+            + "{\"type\":{\"type\":\"integer\",\"minimum\":1},\"allOf\":{\"type\":\"string\",\"minimum\":2}}}";
 
     @Test
     @DisplayName("An $anchor-style #ref generates without throwing and survives into the document")
@@ -203,6 +234,59 @@ class GeneratorPostGenerationWalkTest {
         assertTrue(
                 canonical.contains(HardeningFixtures.DATA_BEARING_DEFINITIONS),
                 "the data-bearing definitions member must survive untouched; was: " + canonical);
+    }
+
+    @ParameterizedTest(name = "schema-shaped data at {0} is neither read nor rewritten")
+    @MethodSource("dataPositions")
+    @DisplayName("Every data position is left to the caller")
+    void everyDataPositionIsLeftAlone(String keyword, String document) {
+        // Given: a document placing an object that is hostile to both walks — disjoint types plus a
+        // numeric bound — at a position Draft 2020-12 fills with data rather than a subschema.
+        JsonNode parsed = HardeningFixtures.read(document);
+        String before = parsed.toString();
+
+        // When/Then: the detector does not read it...
+        assertDoesNotThrow(
+                () -> DisjointTypeDetector.requireNoDisjointTypes(parsed),
+                "data at the '" + keyword + "' position must not be read as a subschema; document: " + document);
+
+        // ...and the filter does not rewrite it. Byte equality is the assertion: the caller's data is
+        // returned exactly as authored, member for member.
+        NumericDomainKeywordFilter.suppressInapplicableNumericKeywords(parsed);
+        assertEquals(
+                before, parsed.toString(), "data at the '" + keyword + "' position must survive both walks untouched");
+    }
+
+    @Test
+    @DisplayName("A subschema-map container's keys are member names, never keywords")
+    void containerKeysAreNotReadAsKeywords() {
+        // Given: a document whose `properties` container carries members literally named `type` and
+        // `allOf` — the two keywords whose misreading would corrupt the container's own location.
+        JsonNode document = HardeningFixtures.read(CONTAINER_KEY_DOCUMENT);
+
+        // When: the schema heads are classified.
+        Set<JsonNode> heads = SchemaPositions.collectSchemaHeads(document);
+
+        // Then: the container is not among them; the document root and both member values are.
+        assertTrue(heads.contains(document), "the document root must be a schema head");
+        assertFalse(
+                heads.contains(document.get("properties")),
+                "a subschema-map container must never be a schema head; was: " + document);
+        assertTrue(heads.contains(document.at("/properties/type")), "a member named 'type' is still a subschema");
+        assertTrue(heads.contains(document.at("/properties/allOf")), "a member named 'allOf' is still a subschema");
+
+        // And: both walks agree. Reading the container's keys as keywords would conjoin its member
+        // named `allOf` with the container, and read its member named `type` as a type declaration.
+        assertDoesNotThrow(
+                () -> DisjointTypeDetector.requireNoDisjointTypes(document),
+                "container member names must not be conjoined as keywords");
+        NumericDomainKeywordFilter.suppressInapplicableNumericKeywords(document);
+        assertTrue(
+                document.at("/properties/type").has(NUMERIC_KEYWORD),
+                "the numeric member named 'type' keeps its applicable bound; was: " + document);
+        assertFalse(
+                document.at("/properties/allOf").has(NUMERIC_KEYWORD),
+                "the string member named 'allOf' loses its inapplicable bound; was: " + document);
     }
 
     // --- The pinned-dialect premise the position allowlist rests on ---
@@ -352,6 +436,25 @@ class GeneratorPostGenerationWalkTest {
                 "a conflict at the '" + keyword + "' position must fail generation; document: " + document);
     }
 
+    @ParameterizedTest(name = "an inapplicable numeric keyword at {0} is still suppressed")
+    @MethodSource("allowlistedFilterPositions")
+    @DisplayName("Every allowlisted subschema position is still filtered")
+    void everySubschemaPositionIsStillFiltered(String keyword, String document) {
+        // Given: a document placing a string-typed subschema carrying an inapplicable numeric bound at
+        // one allowlisted position.
+        JsonNode parsed = HardeningFixtures.read(document);
+
+        // When: the numeric-domain filter runs.
+        NumericDomainKeywordFilter.suppressInapplicableNumericKeywords(parsed);
+
+        // Then: the bound is gone. The detector's coverage above does not prove this: that both walks
+        // share one traversal is an implementation fact, and this pins the filter's own reach so a
+        // future divergence between them fails a test.
+        assertFalse(
+                parsed.toString().contains(NUMERIC_KEYWORD),
+                "an inapplicable numeric keyword at the '" + keyword + "' position must be suppressed; was: " + parsed);
+    }
+
     @Test
     @DisplayName("The subschema-position allowlist and this test's cases name exactly the same keywords")
     void allowlistAndCaseSetAgree() {
@@ -375,18 +478,63 @@ class GeneratorPostGenerationWalkTest {
     }
 
     /**
-     * Supplies one case per keyword on the frozen Draft 2020-12 subschema-position allowlist, each
-     * placing {@link #CONFLICT} at that position.
+     * Supplies one case per <em>data</em> position, each placing {@link #HOSTILE_DATA} there.
      *
-     * <p>The {@code allOf} case is deliberately two levels deep. A conflict placed <em>directly</em>
-     * in an {@code allOf} branch is already part of the enclosing location's conjunctive closure, so
-     * it would fail even if the walk never descended into {@code allOf} at all — which would make the
-     * case unable to detect the hole it exists to detect. Reaching the conflict through the branch's
-     * own {@code properties} makes descent into {@code allOf} load-bearing.
+     * <p>{@code default}, {@code const}, {@code enum}, and {@code examples} are defined keywords whose
+     * values are instances rather than subschemas. {@code $vocabulary} maps URIs to booleans and
+     * {@code dependentRequired} maps property names to name arrays, so neither carries a subschema
+     * either. {@code definitions} is a Draft-07 spelling this dialect does not define, and
+     * {@code x-vendor-extension} stands for the open set of unknown keywords Draft 2020-12 specifies as
+     * annotations — the reason the traversal is an allowlist rather than a denylist.
      *
      * @return the {@code (keyword, document)} cases
      */
+    private static Stream<Arguments> dataPositions() {
+        Stream<Arguments> direct = Stream.of(
+                        "default", "const", "definitions", "$vocabulary", "dependentRequired", "x-vendor-extension")
+                .map(keyword -> Arguments.of(keyword, "{\"" + keyword + "\":" + HOSTILE_DATA + "}"));
+        Stream<Arguments> arrays = Stream.of("enum", "examples")
+                .map(keyword -> Arguments.of(keyword, "{\"" + keyword + "\":[" + HOSTILE_DATA + "]}"));
+        return Stream.concat(direct, arrays);
+    }
+
+    /**
+     * Supplies one case per keyword on the frozen Draft 2020-12 subschema-position allowlist, each
+     * placing {@link #CONFLICT} at that position.
+     *
+     * @return the {@code (keyword, document)} cases the detector's coverage proof consumes
+     */
     private static Stream<Arguments> allowlistedSubschemaPositions() {
+        return positionsCarrying(CONFLICT);
+    }
+
+    /**
+     * Supplies the identical position cases carrying {@link #FILTERABLE} instead, so the numeric-domain
+     * filter's reach is proven over exactly the same positions as the detector's.
+     *
+     * @return the {@code (keyword, document)} cases the filter's coverage proof consumes
+     */
+    private static Stream<Arguments> allowlistedFilterPositions() {
+        return positionsCarrying(FILTERABLE);
+    }
+
+    /**
+     * Builds one {@code (keyword, document)} case per allowlisted subschema position, placing the
+     * given subschema at that position.
+     *
+     * <p>Both coverage proofs share this one builder so they can never drift apart: a position added
+     * to the detector's cases is a position the filter is proven over too.
+     *
+     * <p>The {@code allOf} case is deliberately two levels deep. A subschema placed <em>directly</em>
+     * in an {@code allOf} branch is already part of the enclosing location's conjunctive closure, so
+     * it would be reached even if the walk never descended into {@code allOf} at all — which would make
+     * the case unable to detect the hole it exists to detect. Reaching it through the branch's own
+     * {@code properties} makes descent into {@code allOf} load-bearing.
+     *
+     * @param subschema the subschema text to place at each position
+     * @return the {@code (keyword, document)} cases
+     */
+    private static Stream<Arguments> positionsCarrying(String subschema) {
         // Single subschema.
         Stream<Arguments> singles = Stream.of(
                         "not",
@@ -400,14 +548,14 @@ class GeneratorPostGenerationWalkTest {
                         "unevaluatedItems",
                         "unevaluatedProperties",
                         "contentSchema")
-                .map(keyword -> Arguments.of(keyword, "{\"" + keyword + "\":" + CONFLICT + "}"));
+                .map(keyword -> Arguments.of(keyword, "{\"" + keyword + "\":" + subschema + "}"));
         // Array of subschemas. `allOf` carries its own, deeper case below.
         Stream<Arguments> arrays = Stream.of("anyOf", "oneOf", "prefixItems")
-                .map(keyword -> Arguments.of(keyword, "{\"" + keyword + "\":[" + CONFLICT + "]}"));
+                .map(keyword -> Arguments.of(keyword, "{\"" + keyword + "\":[" + subschema + "]}"));
         // Map of subschemas.
         Stream<Arguments> maps = Stream.of("properties", "patternProperties", "$defs", "dependentSchemas")
-                .map(keyword -> Arguments.of(keyword, "{\"" + keyword + "\":{\"member\":" + CONFLICT + "}}"));
-        Arguments allOfCase = Arguments.of("allOf", "{\"allOf\":[{\"properties\":{\"member\":" + CONFLICT + "}}]}");
+                .map(keyword -> Arguments.of(keyword, "{\"" + keyword + "\":{\"member\":" + subschema + "}}"));
+        Arguments allOfCase = Arguments.of("allOf", "{\"allOf\":[{\"properties\":{\"member\":" + subschema + "}}]}");
 
         return Stream.of(singles, arrays, maps, Stream.<Arguments>of(allOfCase)).flatMap(Function.identity());
     }
