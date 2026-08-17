@@ -416,7 +416,10 @@ public final class AnnotationJsonSchemaGenerator {
      * generation failure with an unrelated one would cost far more than the state it recovers — so
      * anything the reset itself raises is recorded as a suppressed exception on the propagating
      * failure and otherwise ignored. The identity check guards the one input on which {@code
-     * addSuppressed} would itself throw.
+     * addSuppressed} throws by contract, and the bookkeeping is nested inside its own handler
+     * because {@code addSuppressed} <em>allocates</em>: on a heap-exhausted JVM it can raise a
+     * further {@link OutOfMemoryError} of its own, which would otherwise propagate in place of the
+     * failure this method exists to preserve — on exactly the path where that failure matters most.
      *
      * <p>One limitation is stated rather than claimed away: an {@link Error} that lands mid-mutation
      * inside a JDK collection the generator maintains is outside what any reset can restore.
@@ -427,8 +430,14 @@ public final class AnnotationJsonSchemaGenerator {
         try {
             generator.getConfig().resetAfterSchemaGenerationFinished();
         } catch (Throwable resetFailed) {
-            if (resetFailed != aborted) {
-                aborted.addSuppressed(resetFailed);
+            try {
+                if (resetFailed != aborted) {
+                    aborted.addSuppressed(resetFailed);
+                }
+            } catch (Throwable unrecordable) {
+                // The failure that triggered the restoration must win unconditionally: recording the
+                // restoration failure allocates, so it can fail in turn on the very JVM state that
+                // makes this path matter. Losing the record is strictly better than losing the failure.
             }
         }
     }

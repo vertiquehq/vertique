@@ -3,6 +3,7 @@
 
 package dev.vertique.json.schema;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -24,12 +25,13 @@ import org.junit.jupiter.api.Test;
  * Victools generation call itself exits abnormally — as opposed to a failure raised by a
  * post-generation walk, which {@link GeneratorPostGenerationWalkTest} covers.
  *
- * <p>Two properties are proven. First, an aborted generation leaves no per-generation Victools
+ * <p>Three properties are proven. First, an aborted generation leaves no per-generation Victools
  * provider state pinned: the pinned Victools version resets its stateful providers as straight-line
  * code on the success path only, so a generation that throws from inside {@code generateSchema}
  * would otherwise corrupt every later generation on the same instance. Second, stack exhaustion
  * inside Victools' recursive generation — an {@link Error}, not a {@link RuntimeException} —
- * surfaces as the module's single bounded failure type like any other generation failure.
+ * surfaces as the module's single bounded failure type like any other generation failure. Third,
+ * a restoration that itself fails is recorded on the propagating failure rather than replacing it.
  */
 class GeneratorAbnormalExitTest {
 
@@ -105,6 +107,33 @@ class GeneratorAbnormalExitTest {
                 "an aborted generation must consult the Victools config to restore per-generation provider state");
     }
 
+    @Test
+    @DisplayName("A failing provider-state restoration is recorded, never allowed to displace the abort")
+    void failingRestorationIsRecordedRatherThanPropagated() {
+        // Given: a generator whose generation aborts, and whose provider-state restoration then fails
+        // in turn while that abort is propagating.
+        AnnotationJsonSchemaGenerator generator = new AnnotationJsonSchemaGenerator(new RestoreFailingGenerator());
+
+        // When: a document is generated.
+        JsonSchemaGenerationException failure = assertThrows(
+                JsonSchemaGenerationException.class,
+                () -> generator.generateCanonical(HardeningFixtures.SimpleDto.class),
+                "a failing restoration must not replace the generation failure it was triggered by");
+
+        // Then: the caller sees the generation failure with the original abort as its cause, and the
+        // restoration failure is recorded on that abort rather than propagated in its place.
+        Throwable cause = failure.getCause();
+        assertInstanceOf(AbortingFailure.class, cause, "the failure that triggered the restoration must be the cause");
+        assertEquals(
+                1,
+                cause.getSuppressed().length,
+                "the restoration failure must be recorded as a suppressed exception on the abort");
+        assertInstanceOf(
+                IllegalStateException.class,
+                cause.getSuppressed()[0],
+                "the recorded suppressed exception must be the restoration failure itself");
+    }
+
     // --- Probes ---
 
     /**
@@ -139,6 +168,36 @@ class GeneratorAbnormalExitTest {
          */
         private boolean configRequested() {
             return configRequested;
+        }
+    }
+
+    /**
+     * Victools generator whose generation stage aborts with an {@link AbortingFailure} and whose
+     * configuration — the entry point through which per-generation provider state is restored — is
+     * itself unavailable, so the restoration fails while the generation failure is propagating.
+     */
+    private static final class RestoreFailingGenerator extends SchemaGenerator {
+
+        private RestoreFailingGenerator() {
+            super(new SchemaGeneratorConfigBuilder(SchemaVersion.DRAFT_2020_12, OptionPreset.PLAIN_JSON).build());
+        }
+
+        @Override
+        public ObjectNode generateSchema(Type mainTargetType, Type... typeParameters) {
+            throw new AbortingFailure();
+        }
+
+        @Override
+        public SchemaGeneratorConfig getConfig() {
+            throw new IllegalStateException("provider-state restoration is unavailable");
+        }
+    }
+
+    /** The generation failure {@link RestoreFailingGenerator} aborts with, identifiable by its type. */
+    private static final class AbortingFailure extends RuntimeException {
+
+        private AbortingFailure() {
+            super("generation aborted");
         }
     }
 }
