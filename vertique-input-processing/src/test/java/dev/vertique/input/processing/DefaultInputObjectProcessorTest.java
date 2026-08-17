@@ -4,6 +4,7 @@
 package dev.vertique.input.processing;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -663,6 +664,134 @@ class DefaultInputObjectProcessorTest {
         }
     }
 
+    // --- Type classification unification ---
+
+    @Nested
+    @DisplayName("type classification unification across the walker and the resolver")
+    class TypeClassificationUnification {
+
+        @Test
+        @DisplayName("wildcard-bounded collection elements are sanitized exactly like invariant ones")
+        void shouldSanitizeWildcardBoundedCollectionElementsLikeInvariantOnes() throws NoSuchFieldException {
+            // --- Field arms: List<ClassifiedNode> and List<? extends ClassifiedNode> side by side ---
+            Map<String, Object> input = new LinkedHashMap<>();
+            input.put("invariant", new ArrayList<Object>(List.of(nodeMap("a"))));
+            input.put("bounded", new ArrayList<Object>(List.of(nodeMap("b"))));
+
+            Object result = processor.processInput(
+                    input, WildcardChildrenDto.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
+            Map<?, ?> map = (Map<?, ?>) result;
+            assertEquals(
+                    "safe:a",
+                    firstNodeName(map.get("invariant")),
+                    "control: an invariant List<ClassifiedNode> field applies the element type's @Sanitize");
+            assertEquals(
+                    "safe:b",
+                    firstNodeName(map.get("bounded")),
+                    "List<? extends ClassifiedNode> must classify against the wildcard's upper bound, "
+                            + "so its elements are sanitized exactly like the invariant field's");
+
+            // --- Top-level arms: the same two collection types used as the processInput target ---
+            Object invariantOut = processor.processInput(
+                    new ArrayList<Object>(List.of(nodeMap("c"))),
+                    collectionFieldType("invariant"),
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY);
+            assertEquals(
+                    "safe:c",
+                    firstNodeName(invariantOut),
+                    "control: a top-level List<ClassifiedNode> body applies the element type's @Sanitize");
+
+            Object boundedOut = processor.processInput(
+                    new ArrayList<Object>(List.of(nodeMap("d"))),
+                    collectionFieldType("bounded"),
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY);
+            assertEquals(
+                    "safe:d",
+                    firstNodeName(boundedOut),
+                    "a top-level List<? extends ClassifiedNode> body must resolve its element type through "
+                            + "the same bound normalization the resolver uses — one classifier, not two");
+        }
+
+        @Test
+        @DisplayName("a top-level wildcard or type-variable target resolves to its bound and is processed")
+        void shouldSanitizeTopLevelWildcardAndTypeVariableTargets() throws NoSuchFieldException {
+            java.lang.reflect.Type wildcardTarget =
+                    ((java.lang.reflect.ParameterizedType) collectionFieldType("bounded")).getActualTypeArguments()[0];
+            assertInstanceOf(
+                    java.lang.reflect.WildcardType.class,
+                    wildcardTarget,
+                    "fixture guard: the target must really be a WildcardType");
+
+            java.lang.reflect.Type typeVariableTarget =
+                    TypeVariableHolder.class.getDeclaredField("value").getGenericType();
+            assertInstanceOf(
+                    java.lang.reflect.TypeVariable.class,
+                    typeVariableTarget,
+                    "fixture guard: the target must really be a TypeVariable");
+
+            // Both targets are processed before either is asserted, so one failure reports the
+            // outcome of both arms rather than short-circuiting on the wildcard.
+            Object wildcardOut = processor.processInput(
+                    nodeMap("w"), wildcardTarget, EffectiveInputPolicies.NONE, InputLocation.BODY);
+            Object typeVariableOut = processor.processInput(
+                    nodeMap("t"), typeVariableTarget, EffectiveInputPolicies.NONE, InputLocation.BODY);
+
+            assertEquals(
+                    List.of("safe:w", "safe:t"),
+                    List.of(((Map<?, ?>) wildcardOut).get("name"), ((Map<?, ?>) typeVariableOut).get("name")),
+                    "'? extends ClassifiedNode' and 'T extends ClassifiedNode' targets must each resolve to "
+                            + "their bound and run ClassifiedNode's declared policy, instead of being skipped "
+                            + "as unclassifiable shapes");
+        }
+
+        @Test
+        @DisplayName("array-of-DTO elements receive the element policies exactly like collection elements")
+        void shouldSanitizeArrayOfNestedDtoElementsLikeCollectionElements() {
+            Map<String, Object> input = new LinkedHashMap<>();
+            input.put("listChildren", new ArrayList<Object>(List.of(nodeMap("a"))));
+            input.put("arrayChildren", new ArrayList<Object>(List.of(nodeMap("b"))));
+
+            Object result = processor.processInput(
+                    input, ArrayChildrenDto.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
+            Map<?, ?> map = (Map<?, ?>) result;
+
+            assertEquals(
+                    "safe:a",
+                    firstNodeName(map.get("listChildren")),
+                    "control: a List<ClassifiedNode> field applies the element type's @Sanitize");
+            assertEquals(
+                    "safe:b",
+                    firstNodeName(map.get("arrayChildren")),
+                    "a ClassifiedNode[] field carries the same element schema as List<ClassifiedNode> — "
+                            + "the wire shape is the same JSON array, so the element policies must run");
+        }
+
+        /** Builds a one-field intermediate for a {@link ClassifiedNode} element. */
+        private Map<String, Object> nodeMap(String name) {
+            Map<String, Object> node = new LinkedHashMap<>();
+            node.put("name", name);
+            return node;
+        }
+
+        /** Returns the {@code name} value of the first element of a processed node collection. */
+        private Object firstNodeName(Object processedList) {
+            assertNotNull(processedList, "the collection value must survive processing");
+            List<?> list = (List<?>) processedList;
+            return ((Map<?, ?>) list.get(0)).get("name");
+        }
+
+        /**
+         * Returns the declared generic type of a {@link WildcardChildrenDto} collection field, so the
+         * test drives {@code processInput} with a real reflective {@code ParameterizedType} rather
+         * than a hand-built stand-in.
+         */
+        private java.lang.reflect.Type collectionFieldType(String fieldName) throws NoSuchFieldException {
+            return WildcardChildrenDto.class.getDeclaredField(fieldName).getGenericType();
+        }
+    }
+
     // =========================================================================
     // Test DTOs
     // =========================================================================
@@ -872,6 +1001,45 @@ class DefaultInputObjectProcessorTest {
     /** DTO with an unbounded-wildcard collection — its element type carries no schema. */
     static class WildcardValueHolder {
         List<?> values;
+    }
+
+    /**
+     * Nested element type for the classification-unification fixtures. Its single field declares a
+     * sanitizer chain, so "was the element type classified?" is directly observable in the output.
+     */
+    static class ClassifiedNode {
+        @Sanitize(TestPrefixSanitizer.class)
+        String name;
+    }
+
+    /**
+     * DTO holding one element type behind an invariant and a wildcard-bounded collection. The two
+     * fields differ only in variance, so any behavioral difference between them is a classification
+     * divergence. Also the source of the reflective {@code ParameterizedType} /
+     * {@code WildcardType} instances the top-level target tests drive {@code processInput} with.
+     */
+    static class WildcardChildrenDto {
+        List<ClassifiedNode> invariant;
+        List<? extends ClassifiedNode> bounded;
+    }
+
+    /**
+     * DTO holding one element type as a collection and as an array. Both produce the same JSON
+     * array on the wire, so both must apply the element type's declared policies.
+     */
+    static class ArrayChildrenDto {
+        List<ClassifiedNode> listChildren;
+        ClassifiedNode[] arrayChildren;
+    }
+
+    /**
+     * Generic holder supplying a real {@link java.lang.reflect.TypeVariable} whose declared bound is
+     * {@link ClassifiedNode} — the shape a generic resource method's body parameter produces.
+     *
+     * @param <T> the bounded body type
+     */
+    static class TypeVariableHolder<T extends ClassifiedNode> {
+        T value;
     }
 
     /**

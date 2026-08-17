@@ -551,6 +551,90 @@ class GeneratedVsReflectiveEquivalenceTest {
         }
     }
 
+    @Nested
+    @DisplayName("wildcard-bounded and array element fields")
+    class WildcardAndBoundedGenerics {
+
+        @Test
+        @DisplayName("wildcard-bounded and array element fields agree and are canonicalized on both paths")
+        void shouldAgreeForWildcardAndBoundedGenericFields() {
+            Object reflectiveOut = processor.processInput(
+                    variantInput(), WildcardReflective.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
+            Object generatedOut = processor.processInput(
+                    variantInput(), WildcardGenerated.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
+
+            assertEquals(
+                    reflectiveOut,
+                    generatedOut,
+                    "invariant, wildcard-bounded, and array element fields all carry the same element "
+                            + "schema, so the two execution paths must agree byte for byte");
+            // Agreement alone would also hold if both paths skipped the bounded and array elements,
+            // so pin the observable effect on each path independently.
+            assertElementNotesTrimmed(reflectiveOut, "reflective");
+            assertElementNotesTrimmed(generatedOut, "generated");
+        }
+
+        /**
+         * Builds an intermediate whose three keys hold the same JSON-array shape, one per declared
+         * variance: invariant {@code List<Inner>}, wildcard-bounded {@code List<? extends Inner>},
+         * and {@code Inner[]}.
+         */
+        private Map<String, Object> variantInput() {
+            Map<String, Object> input = new LinkedHashMap<>();
+            input.put("invariant", new ArrayList<Object>(List.of(noteMap("  alpha  "))));
+            input.put("bounded", new ArrayList<Object>(List.of(noteMap("  beta  "))));
+            input.put("array", new ArrayList<Object>(List.of(noteMap("  gamma  "))));
+            return input;
+        }
+
+        /** Builds a one-field {@link Inner} element intermediate. */
+        private Map<String, Object> noteMap(String note) {
+            Map<String, Object> element = new LinkedHashMap<>();
+            element.put("note", note);
+            return element;
+        }
+
+        /**
+         * Asserts that the element type's {@code @Canonicalize(TestTrim)} actually ran on every one
+         * of the three fields for a single path, so mutual breakage cannot satisfy the byte-equality
+         * assertion above.
+         */
+        private void assertElementNotesTrimmed(Object output, String pathName) {
+            Map<?, ?> out = (Map<?, ?>) output;
+            assertEquals("alpha", firstNote(out.get("invariant")), pathName + " path: List<Inner> element");
+            assertEquals("beta", firstNote(out.get("bounded")), pathName + " path: List<? extends Inner> element");
+            assertEquals("gamma", firstNote(out.get("array")), pathName + " path: Inner[] element");
+        }
+
+        /** Returns the {@code note} value of the first element of a processed element collection. */
+        private Object firstNote(Object processedList) {
+            List<?> list = (List<?>) processedList;
+            return ((Map<?, ?>) list.get(0)).get("note");
+        }
+    }
+
+    /**
+     * Reflective baseline declaring the same element type under three variances — no companion
+     * processor, so traversal walks reflectively.
+     */
+    static final class WildcardReflective {
+        public List<Inner> invariant;
+        public List<? extends Inner> bounded;
+        public Inner[] array;
+    }
+
+    /**
+     * Generated counterpart paired with the hand-written
+     * {@code GeneratedVsReflectiveEquivalenceTest_WildcardGenerated_InputProcessor} fixture, whose
+     * three arms all dispatch at the element type {@link Inner} — the classification codegen's
+     * APT-time collector already performs.
+     */
+    static final class WildcardGenerated {
+        public List<Inner> invariant;
+        public List<? extends Inner> bounded;
+        public Inner[] array;
+    }
+
     /** Self-referential reflective baseline — no companion processor. */
     static final class RecursiveReflective {
         @Canonicalize(TestTrim.class)
