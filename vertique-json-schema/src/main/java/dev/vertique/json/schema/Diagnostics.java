@@ -33,9 +33,9 @@ final class Diagnostics {
 
     /**
      * Maximum length, in UTF-16 code units, of a short identity fragment inside a message: a profile
-     * id, or the class name of an unknown {@code Type} implementation. These name a single
-     * declaration rather than a whole resolved type graph, so they are bounded more tightly than
-     * {@link #MAX_TYPE_IDENTITY_LENGTH}.
+     * id, a member name, or the class name of an unknown {@code Type} implementation. These name a
+     * single declaration rather than a whole resolved type graph, so they are bounded more tightly
+     * than {@link #MAX_TYPE_IDENTITY_LENGTH}.
      */
     static final int MAX_SHORT_IDENTITY_LENGTH = 128;
 

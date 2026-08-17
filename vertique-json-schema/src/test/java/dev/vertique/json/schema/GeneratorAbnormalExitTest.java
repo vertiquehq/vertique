@@ -28,10 +28,11 @@ import org.junit.jupiter.api.Test;
  * <p>Three properties are proven. First, an aborted generation leaves no per-generation Victools
  * provider state pinned: the pinned Victools version resets its stateful providers as straight-line
  * code on the success path only, so a generation that throws from inside {@code generateSchema}
- * would otherwise corrupt every later generation on the same instance. Second, stack exhaustion
- * inside Victools' recursive generation — an {@link Error}, not a {@link RuntimeException} —
- * surfaces as the module's single bounded failure type like any other generation failure. Third,
- * a restoration that itself fails is recorded on the propagating failure rather than replacing it.
+ * would otherwise corrupt every later generation on the same instance. Second, a {@link
+ * StackOverflowError} raised by the generation stage — an {@link Error}, not a {@link
+ * RuntimeException} — is caught and normalized to the module's single bounded failure type like any
+ * other generation failure. Third, a restoration that itself fails is recorded on the propagating
+ * failure rather than replacing it.
  */
 class GeneratorAbnormalExitTest {
 
@@ -74,10 +75,12 @@ class GeneratorAbnormalExitTest {
     }
 
     @Test
-    @DisplayName("A StackOverflowError inside Victools generation normalizes to a bounded failure")
-    void stackOverflowDuringGenerationNormalizesToBoundedException() {
-        // Given: a generator whose Victools stage exhausts the stack, as a pathologically deep type
-        // graph does inside Victools' recursive generation.
+    @DisplayName("A StackOverflowError raised by the Victools stage is caught and normalized")
+    void stackOverflowFromGenerationStageNormalizesToBoundedException() {
+        // Given: a generator whose Victools stage raises StackOverflowError. The fixture throws it
+        // outright rather than exhausting the stack for real, so it proves the catch clause, the
+        // normalization, and the provider-state restoration — not that a diagnostic can still be
+        // built while the stack is genuinely exhausted, which no in-process fixture can deliver.
         StackExhaustingGenerator probe = new StackExhaustingGenerator();
         AnnotationJsonSchemaGenerator generator = new AnnotationJsonSchemaGenerator(probe);
 
@@ -85,7 +88,7 @@ class GeneratorAbnormalExitTest {
         JsonSchemaGenerationException failure = assertThrows(
                 JsonSchemaGenerationException.class,
                 () -> generator.generateCanonical(HardeningFixtures.SimpleDto.class),
-                "stack exhaustion inside generation must surface as the module's bounded failure type");
+                "a StackOverflowError from the generation stage must surface as the module's bounded failure type");
 
         // Then: the failure is bounded, names the type, and preserves the original Error as its cause.
         String message = failure.getMessage();
@@ -137,9 +140,11 @@ class GeneratorAbnormalExitTest {
     // --- Probes ---
 
     /**
-     * Victools generator whose generation stage exhausts the stack instead of returning a document,
-     * and which records whether {@link #getConfig()} was consulted afterwards — the call through
-     * which {@link AnnotationJsonSchemaGenerator} restores per-generation provider state.
+     * Victools generator whose generation stage raises {@link StackOverflowError} instead of
+     * returning a document — the failure a pathologically deep type graph produces inside Victools'
+     * recursive descent, raised outright rather than by real recursion — and which records whether
+     * {@link #getConfig()} was consulted afterwards, the call through which {@link
+     * AnnotationJsonSchemaGenerator} restores per-generation provider state.
      */
     private static final class StackExhaustingGenerator extends SchemaGenerator {
 
