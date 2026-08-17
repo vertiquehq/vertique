@@ -675,6 +675,35 @@ final class HardeningFixtures {
                 "{\"type\":\"string\",\"definitions\":{\"legacy\":{\"type\":\"a\",\"allOf\":[{\"type\":\"b\"}]}}}");
     }
 
+    // --- Provider-reset fixtures ---
+
+    /**
+     * A <em>type-level</em> {@code @Schema(ref = ...)} value. Victools'
+     * {@code ExternalRefCustomDefinitionProvider} is a type-scope provider keyed on the resolved
+     * type, so only a class-level annotation reaches it; the field-level {@link #ANCHOR_REF} above
+     * never does.
+     */
+    static final String CLASS_LEVEL_REF = "#classLevelAnchor";
+
+    /** A property name unique enough to prove {@link ClassLevelRefDto}'s own schema was published. */
+    static final String CLASS_LEVEL_REF_MARKER = "classLevelRefMarker";
+
+    /**
+     * Root type carrying a type-level {@code @Schema(ref = ...)}.
+     *
+     * <p>Victools' {@code ExternalRefCustomDefinitionProvider} exempts exactly one type per
+     * generation — the {@code mainType} it latches on first use — and publishes every other
+     * {@code ref}-bearing type as a bare external {@code $ref}. Generated as a root type it must
+     * therefore publish its own full schema; it degrades to a bare {@code $ref} only when a
+     * previous generation left {@code mainType} pinned to some other class.
+     */
+    @Schema(ref = CLASS_LEVEL_REF)
+    static final class ClassLevelRefDto {
+
+        /** The marker proving this type's own schema, rather than a bare reference, was published. */
+        public String classLevelRefMarker;
+    }
+
     // --- Map position fixtures ---
 
     /** DTO whose map declares the overridden class as its key type. */
