@@ -473,6 +473,11 @@ public record ProfileMessage(
 // {"display_name": "<b>ada</b>"} -> displayName == "ada"
 ```
 
+Each declared message type's projection is composed at endpoint registration, not on the message
+path, so no Jackson introspection happens on the event loop and a message type whose names cannot be
+projected fails startup (see [Startup failures](#startup-failures)) rather than failing every message
+that reaches it.
+
 Two limitations are not covered by the projection and can still bypass a declared policy:
 `ACCEPT_CASE_INSENSITIVE_PROPERTIES` and `@JsonUnwrapped`. Neither is claimed as supported.
 
@@ -578,6 +583,7 @@ All of these are raised while the router is built, so a misconfigured endpoint n
 | Endpoint needs authentication but no `RouteAuthHandler` is registered | `IllegalStateException` |
 | `authScheme` names no registered `RouteAuthHandler` | `IllegalStateException` |
 | Several `RouteAuthHandler`s registered and no `authScheme` given | `IllegalStateException` |
+| A message type's wire-name projection cannot be composed — two properties claiming one wire name, or two claiming one `@JsonAlias` (checked only when an `InputObjectProcessor` is bound) | `ConfigurationException` |
 
 Every `@RequiresAction` failure mode above is deliberately fail-closed: an action gate that cannot
 be enforced refuses to boot rather than serving traffic with the gate silently missing.

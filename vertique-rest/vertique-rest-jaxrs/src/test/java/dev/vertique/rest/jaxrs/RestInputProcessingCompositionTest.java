@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.fasterxml.jackson.annotation.JsonAlias;
 import dev.vertique.core.exception.ConfigurationException;
 import dev.vertique.core.sanitization.InputFieldNameResolver;
 import dev.vertique.core.sanitization.InputLocation;
@@ -38,6 +39,10 @@ import org.junit.jupiter.api.Test;
  * DTOs declared {@code @Sanitize} booted and served requests with none of it running. Both shapes are
  * covered here: an invocation-level chain declared on the resource method, and a policy declared on
  * the body DTO itself (which only {@link InputObjectProcessor#declaresPolicies} can see).
+ *
+ * <p>The registrar also composes each route's wire &rarr; Java name projection here rather than on the
+ * request path, so a body type whose projection cannot be composed fails startup instead of failing
+ * every request that touches it.
  */
 class RestInputProcessingCompositionTest {
 
@@ -72,6 +77,29 @@ class RestInputProcessingCompositionTest {
 
     /** Body DTO declaring nothing. */
     public record PlainDto(String text) {}
+
+    /**
+     * Body DTO whose two properties claim the same {@code @JsonAlias}. The wire-name projection cannot
+     * decide which property owns the key without disagreeing with Jackson, which resolves the same
+     * collision in hash order — so composing the projection for this type is a configuration failure.
+     */
+    public static class DuplicateAliasDto {
+        @JsonAlias({"shared"})
+        public String alpha;
+
+        @JsonAlias({"shared"})
+        public String beta;
+    }
+
+    /** Resource whose body type carries an unresolvable wire-name projection. */
+    @Path("/projection")
+    static class UnprojectableBodyResource {
+
+        @POST
+        public Future<String> accept(DuplicateAliasDto dto) {
+            return Future.succeededFuture(dto.alpha);
+        }
+    }
 
     /** Resource whose two routes declare policies in the two different ways the gate must see. */
     @Path("/governed")
@@ -177,5 +205,27 @@ class RestInputProcessingCompositionTest {
         assertDoesNotThrow(
                 () -> register(Set.of(new PolicyFreeResource()), null),
                 "the gate must not fire for routes that declare nothing to process");
+    }
+
+    @Test
+    @DisplayName("a body type whose wire-name projection cannot be composed fails startup, not the first request")
+    void shouldFailStartupWhenABodyTypesProjectionCannotBeComposed() {
+        ConfigurationException failure = assertThrows(
+                ConfigurationException.class,
+                () -> register(Set.of(new UnprojectableBodyResource()), new PassThroughProcessor()),
+                "the projection is composed at route registration, so an unresolvable one fails startup");
+
+        String message = failure.getMessage();
+        assertTrue(
+                message.contains(DuplicateAliasDto.class.getName()),
+                "the failure must name the body type whose projection cannot be composed: " + message);
+        assertTrue(message.contains("shared"), "the failure must name the contested wire name: " + message);
+
+        // A body type whose projection composes cleanly still registers, so the warm-up is not a new
+        // blanket startup cost that rejects ordinary DTOs.
+        setUp();
+        assertDoesNotThrow(
+                () -> register(Set.of(new PolicyFreeResource()), new PassThroughProcessor()),
+                "an ordinary body type must register normally");
     }
 }

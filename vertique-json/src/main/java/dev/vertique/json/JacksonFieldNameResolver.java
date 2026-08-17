@@ -12,9 +12,11 @@ import dev.vertique.core.exception.ConfigurationException;
 import dev.vertique.core.sanitization.InputFieldNameResolver;
 import io.vertx.core.json.jackson.DatabindCodec;
 import jakarta.annotation.Nullable;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Jackson-backed {@link InputFieldNameResolver}: projects the <strong>wire</strong> property names a
@@ -41,12 +43,19 @@ import java.util.Map;
  * {@code class Dto { String alpha; @JsonAlias("alpha") String beta; }} a body {@code {"alpha":"V"}}
  * sets {@code alpha} and leaves {@code beta} null. Refusing such a configuration would reject an
  * application Jackson runs correctly, so it is accepted here too. Two colliding <em>primary</em> names
- * are a configuration Jackson rejects itself and fail startup here.
+ * are a configuration Jackson rejects itself and fail startup here. Two <em>different</em> properties
+ * claiming one alias that no primary name claims likewise fails startup: Jackson resolves that
+ * collision in hash order while a projection built from {@code findProperties()} would resolve it in
+ * declaration order, so the property whose policies are applied and the property Jackson binds could
+ * differ non-deterministically.
  *
  * <p><strong>Caching and the identity short circuit.</strong> One instance is created per body mapper
  * at route or endpoint registration and caches its per-type projection in a {@link ClassValue}, so
  * entries are collected with the classloader that owns the DTO rather than pinned in a static
- * {@code Class}-keyed map. When a type's computed projection maps every wire name onto itself — the
+ * {@code Class}-keyed map. Each boundary composes the projection for every body or message type it
+ * knows through {@link #precompute} at that same registration, so {@link #logicalName} neither
+ * introspects nor raises anything on the request path. When a type's computed projection maps every
+ * wire name onto itself — the
  * overwhelmingly common DTO — the entry records that and {@link #logicalName} returns the wire name
  * directly, skipping the per-field lookup entirely. The flag follows the <em>computed</em>
  * projection, never an inference about the mapper's configuration.
@@ -110,6 +119,28 @@ public final class JacksonFieldNameResolver implements InputFieldNameResolver {
     }
 
     /**
+     * Composes {@code ownerType}'s projection now, so {@link #logicalName} serves it from cache.
+     *
+     * <p>Every boundary calls this at registration for each body or message type it already knows.
+     * That placement is the contract, not an optimization: {@link InputFieldNameResolver} publishes
+     * that an implementation never throws and should serve every call from a precomputed projection,
+     * and composing a projection means running a full Jackson bean introspection which can also fail.
+     * Left to the first request, that work — and any failure it raises — would land on an event-loop
+     * thread as a per-request error, and would repeat on every subsequent request, because a
+     * {@link ClassValue} does not memoise a {@code computeValue} that threw.
+     *
+     * <p>Calling this for a type whose projection is already composed is a no-op.
+     *
+     * @param ownerType the body or message type to compose the projection for; must not be {@code null}
+     * @throws ConfigurationException if {@code ownerType}'s projection cannot be composed — two
+     *                                properties claiming one primary wire name, or two properties
+     *                                claiming one alias
+     */
+    public void precompute(Class<?> ownerType) {
+        projections.get(ownerType);
+    }
+
+    /**
      * Returns whether the computed projection for {@code ownerType} is the identity map, in which case
      * {@link #logicalName} short-circuits.
      *
@@ -135,7 +166,8 @@ public final class JacksonFieldNameResolver implements InputFieldNameResolver {
      *
      * @param type the type to introspect
      * @return the projection for {@code type}; never {@code null}
-     * @throws ConfigurationException if two properties claim the same primary wire name
+     * @throws ConfigurationException if two properties claim the same primary wire name, or two
+     *                                different properties claim the same unclaimed alias
      */
     private Projection computeProjection(Class<?> type) {
         BeanDescription description = config.introspect(mapper.getTypeFactory().constructType(type));
@@ -156,12 +188,35 @@ public final class JacksonFieldNameResolver implements InputFieldNameResolver {
             }
         }
 
-        // Pass 2 — aliases, which fill only the keys no primary name and no earlier alias claimed.
-        // Jackson binds the primary on such a collision (it does not reject the configuration), so the
-        // projection must agree with it rather than refuse to boot.
+        // Pass 2 — aliases, which fill only the keys no primary name claimed. Jackson binds the primary
+        // on such a collision (it does not reject the configuration), so the projection must agree with
+        // it rather than refuse to boot; those alias entries are skipped here, and skipping them also
+        // keeps them out of the duplicate check below — a key the primary owns is never contested.
+        //
+        // Two DIFFERENT properties claiming the same remaining key is a configuration error. Resolving
+        // it in findProperties() declaration order would not agree with Jackson, which resolves the same
+        // collision in hash order (BeanDeserializerBuilder._collectAliases builds a HashMap and
+        // BeanPropertyMap._buildAliasMapping iterates its entrySet), so when the two properties carry
+        // different policies, which one is policy-selected and which one Jackson binds can differ
+        // non-deterministically and untestably. One property repeating its own alias is not a collision.
+        Set<String> primaryClaimed = Set.copyOf(names.keySet());
+        Map<String, String> aliasOwners = new HashMap<>();
         for (BeanPropertyDefinition property : properties) {
+            String javaName = property.getInternalName();
             for (PropertyName alias : property.findAliases()) {
-                names.putIfAbsent(alias.getSimpleName(), property.getInternalName());
+                String aliasName = alias.getSimpleName();
+                if (primaryClaimed.contains(aliasName)) {
+                    continue;
+                }
+                String previousOwner = aliasOwners.putIfAbsent(aliasName, javaName);
+                if (previousOwner != null && !previousOwner.equals(javaName)) {
+                    throw new ConfigurationException("Type " + type.getName() + " lets both Java properties '"
+                            + previousOwner + "' and '" + javaName + "' claim the alias '" + aliasName
+                            + "'. Jackson resolves that collision in an unspecified order, so the declared "
+                            + "input policies applied to the key would not reliably be those of the property "
+                            + "Jackson binds it to; give one of them a distinct @JsonAlias.");
+                }
+                names.putIfAbsent(aliasName, javaName);
             }
         }
 

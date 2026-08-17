@@ -294,6 +294,9 @@ JacksonFieldNameResolver resolver = JacksonFieldNameResolver.forMapper(mapper);
 // forRoute(null) is the reserved `vertx` profile: DatabindCodec.mapper().
 JacksonFieldNameResolver vertxProfile = JacksonFieldNameResolver.forRoute(null);
 
+// Compose each body/message type's projection at registration, never on the request path.
+resolver.precompute(RenamedDto.class);
+
 resolver.logicalName(RenamedDto.class, "user_name"); // -> "userName"
 resolver.logicalName(RenamedDto.class, "unknown");   // -> "unknown" (the projection is total)
 ```
@@ -303,9 +306,14 @@ resolver.logicalName(RenamedDto.class, "unknown");   // -> "unknown" (the projec
 | Source of names | `DeserializationConfig.introspect(JavaType)` — never an inference about how the mapper is configured |
 | Primary vs alias | A primary name always claims its key; an alias fills only keys no primary claims — matching what Jackson itself binds |
 | Colliding primary names | `ConfigurationException` naming the type, the wire name, and both Java properties |
+| Two properties claiming one alias | `ConfigurationException` naming the type, the alias, and both Java properties. Jackson resolves such a collision in hash order while a projection built from `findProperties()` resolves it in declaration order, so the property whose policies are applied and the property Jackson binds could differ non-deterministically. An alias colliding with another property's *primary* name is **not** this case: the primary claims the key and the alias is silently unclaimed, exactly as Jackson binds it |
 | Unknown wire name | Returned unchanged — the projection is total and never throws for an unrecognized key |
 | Caching | One `ClassValue`-cached projection per `(mapper, type)`; entries are collected with the DTO's classloader |
+| When the projection is composed | `precompute(Class)` composes it at registration. Every boundary calls it there for each body or message type it knows, so `logicalName` neither introspects nor raises anything on the request path, and a name collision fails startup instead of failing every request that touches the type |
 | Identity short circuit | When the *computed* projection maps every wire name onto itself, `logicalName` returns the wire name directly and no per-field lookup happens |
+
+A type reached only as a *nested* field of a warmed body type is still composed lazily on first use;
+warming covers the types a boundary declares.
 
 Instances are immutable and safe for concurrent use from several event-loop threads. A mapper
 selected for a mounted boundary is treated as immutable afterwards: an application that mutates a

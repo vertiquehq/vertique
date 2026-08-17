@@ -6,6 +6,7 @@ package dev.vertique.rest.jaxrs;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.vertique.core.exception.ConfigurationException;
 import dev.vertique.core.json.JsonMapperProfileRegistry;
+import dev.vertique.core.sanitization.InputFieldNameResolver;
 import dev.vertique.core.validation.BeanValidator;
 import dev.vertique.input.processing.InputObjectProcessor;
 import dev.vertique.json.JacksonFieldNameResolver;
@@ -400,6 +401,22 @@ public class JaxRsRouteRegistrar {
                 }
             }
 
+            // (c-1) Wire → Java name projection for this route's object bodies, composed HERE rather
+            // than on the request path. InputFieldNameResolver publishes that an implementation never
+            // throws and serves every call from a precomputed projection; composing one runs a full
+            // Jackson bean introspection that can also fail on a name collision. Left to the first
+            // request, that work would run on an event-loop thread, a collision would surface as a 500
+            // instead of the documented startup failure, and — because a ClassValue does not memoise a
+            // computeValue that threw — every following request would re-introspect before failing
+            // again. Warming only matters when the engine is bound; without it no projection is ever
+            // consulted, and any declared policy already failed the composition gate below.
+            JacksonFieldNameResolver bodyNameResolver = bodyNameResolvers.computeIfAbsent(
+                    resolvedBodyMapper != null ? resolvedBodyMapper : DatabindCodec.mapper(),
+                    JacksonFieldNameResolver::forMapper);
+            if (objectProcessor != null) {
+                warmBodyNameProjection(meta, bodyNameResolver);
+            }
+
             // (d) Terminal operation invoker. The effective request-body profile mapper resolved at
             // step (a-2) is also handed to the invoker, which reads it for any dispatch path that needs
             // the resolved mapper directly; the per-route handler at (a-2) is what places it on the
@@ -416,9 +433,7 @@ public class JaxRsRouteRegistrar {
                     evidenceCapturers != null ? evidenceCapturers : List.of(),
                     resolvedBodyMapper,
                     paramConversionResolver,
-                    bodyNameResolvers.computeIfAbsent(
-                            resolvedBodyMapper != null ? resolvedBodyMapper : DatabindCodec.mapper(),
-                            JacksonFieldNameResolver::forMapper)));
+                    bodyNameResolver));
 
             // (e) Per-route ERROR-body profile decision (FR-JSON-058/058A). This closes the error-path
             // profiling asymmetry: a failure that fires BEFORE the request-path stash at (a-2) runs
@@ -489,6 +504,56 @@ public class JaxRsRouteRegistrar {
         // Composition gate: declared input processing with no engine bound is a configuration error,
         // never a silent no-op.
         checkInputProcessingComposition(allMethods, objectProcessor);
+    }
+
+    /**
+     * Composes the wire &rarr; Java name projection for every body type this route can hand to the
+     * input-processing engine, so the request path is served entirely from the precomputed projection.
+     *
+     * <p>The body parameter is the only source whose values reach the engine keyed by wire names — a
+     * {@code @BeanParam}'s intermediate is keyed by the framework's own field names and is processed
+     * with {@link InputFieldNameResolver#IDENTITY}, as is every bare-{@code String} parameter — so it
+     * is the only source warmed here. Warming is idempotent and shared: routes that materialize their
+     * bodies with the same {@link ObjectMapper} share one resolver, so a body type used by many routes
+     * is introspected once per router build.
+     *
+     * @param meta             the resource method whose body types to compose projections for
+     * @param bodyNameResolver this route's projection, built from its resolved body mapper
+     * @throws dev.vertique.core.exception.ConfigurationException if a body type's projection cannot be
+     *                                                            composed
+     */
+    private static void warmBodyNameProjection(ResourceMethodMeta meta, JacksonFieldNameResolver bodyNameResolver) {
+        for (ResourceMethodMeta.ParamMeta param : meta.params()) {
+            if (param.source() != ResourceMethodMeta.ParamSource.BODY) {
+                continue;
+            }
+            warmProjection(bodyNameResolver, param.genericType() != null ? param.genericType() : param.type());
+            warmProjection(bodyNameResolver, param.componentType());
+        }
+    }
+
+    /**
+     * Composes the projection for every class reachable from a declared body type: the type itself, an
+     * array's component type, and a parameterized type's raw type and arguments — the same shapes the
+     * engine descends into element-wise at request time. Shapes carrying no class (a wildcard, a type
+     * variable) are skipped; they have no statically known property set to project.
+     *
+     * @param bodyNameResolver the projection to warm
+     * @param type             the declared type to walk, or {@code null}
+     */
+    private static void warmProjection(JacksonFieldNameResolver bodyNameResolver, @Nullable Type type) {
+        if (type instanceof Class<?> rawClass) {
+            if (rawClass.isArray()) {
+                warmProjection(bodyNameResolver, rawClass.getComponentType());
+            } else if (!rawClass.isPrimitive()) {
+                bodyNameResolver.precompute(rawClass);
+            }
+        } else if (type instanceof ParameterizedType parameterized) {
+            warmProjection(bodyNameResolver, parameterized.getRawType());
+            for (Type argument : parameterized.getActualTypeArguments()) {
+                warmProjection(bodyNameResolver, argument);
+            }
+        }
     }
 
     /**

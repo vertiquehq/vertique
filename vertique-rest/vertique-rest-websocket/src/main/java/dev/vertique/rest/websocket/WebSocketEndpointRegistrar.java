@@ -131,9 +131,10 @@ class WebSocketEndpointRegistrar {
      * projection a declared {@code @Canonicalize}/{@code @Sanitize} on such a field silently never
      * runs.
      *
-     * <p>Created once per registrar and internally cached per type, so no introspection happens on
-     * the message path. The bare-{@code String} call sites keep
-     * {@link InputFieldNameResolver#IDENTITY}: there is no object whose fields could be renamed.
+     * <p>Created once per registrar, and every declared message type's projection is composed at
+     * registration by {@link #warmMessageNameProjections}, so no introspection happens on the message
+     * path. The bare-{@code String} call sites keep {@link InputFieldNameResolver#IDENTITY}: there is
+     * no object whose fields could be renamed.
      */
     private final JacksonFieldNameResolver messageNameResolver =
             JacksonFieldNameResolver.forMapper(DatabindCodec.mapper());
@@ -201,8 +202,36 @@ class WebSocketEndpointRegistrar {
             metas.add(scanner.scan(endpoint));
         }
         checkInputProcessingComposition(metas);
+        warmMessageNameProjections(metas);
         for (WebSocketEndpointMeta meta : metas) {
             registerEndpoint(meta, router);
+        }
+    }
+
+    /**
+     * Composes the wire &rarr; Java name projection for every declared message type at registration, so
+     * the message path is served entirely from the precomputed projection.
+     *
+     * <p>{@link InputFieldNameResolver} publishes that an implementation never throws and serves every
+     * call from a precomputed projection; composing one runs a full Jackson bean introspection that can
+     * also fail on a name collision. Left to the first message, that work would run on an event-loop
+     * thread, a collision would surface as a per-message failure instead of a boot failure, and —
+     * because a {@link ClassValue} does not memoise a {@code computeValue} that threw — every following
+     * message would re-introspect before failing again. Warming only matters when the engine is bound:
+     * without it no projection is ever consulted, and any declared policy already failed the
+     * composition gate above.
+     *
+     * @param metas every scanned endpoint's metadata
+     * @throws ConfigurationException if a message type's projection cannot be composed
+     */
+    private void warmMessageNameProjections(List<WebSocketEndpointMeta> metas) {
+        if (objectProcessor == null) {
+            return;
+        }
+        for (WebSocketEndpointMeta meta : metas) {
+            if (meta.onMessage() != null) {
+                messageNameResolver.precompute(meta.messageType());
+            }
         }
     }
 

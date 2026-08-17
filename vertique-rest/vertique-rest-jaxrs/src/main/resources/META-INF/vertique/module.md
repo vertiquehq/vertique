@@ -947,6 +947,15 @@ the `application/problem+json` media type preserved, and logs a WARN. A profile-
 finds a violation, rather than being collected. `JsonProfileConfigurationException` is thrown at
 router-build time for an unknown profile id.
 
+When an `InputObjectProcessor` is bound, route registration also composes each route's body wire-name
+projection (`JacksonFieldNameResolver`, from `dev.vertique:vertique-json`) against that route's
+resolved body mapper — for the body parameter's declared type, an array's component type, and a
+generic body's type arguments. A body type whose projection cannot be composed — two properties
+claiming one wire name, or two properties claiming one `@JsonAlias` — fails router build with
+`ConfigurationException` naming the type and the contested name. Composing at registration is what
+makes that a startup failure rather than a 500 on every request that touches the type, and it keeps
+Jackson bean introspection off the event loop.
+
 ### Request-time failures
 
 Any exception a resource method throws or fails its `Future` with enters the error pipeline and is
