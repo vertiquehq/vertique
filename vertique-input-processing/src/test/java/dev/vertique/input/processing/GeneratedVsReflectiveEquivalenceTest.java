@@ -697,6 +697,117 @@ class GeneratedVsReflectiveEquivalenceTest {
     }
 
     @Nested
+    @DisplayName("composed chain length under a type-level chain")
+    class ComposedChainLength {
+
+        private static final int LEVELS = 3;
+
+        @Test
+        @DisplayName("both paths apply a recursive type's own chain once per value at every depth")
+        void shouldAgreeThatATypeLevelChainAppliesOncePerValue() {
+            RECORDED_CONTEXTS.clear();
+            Object reflectiveOut = processor.processInput(
+                    typeChainInput(),
+                    TypeChainRecursiveReflective.class,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY,
+                    InputFieldNameResolver.IDENTITY);
+            int reflectiveInvocations = RECORDED_CONTEXTS.size();
+
+            RECORDED_CONTEXTS.clear();
+            Object generatedOut = processor.processInput(
+                    typeChainInput(),
+                    TypeChainRecursiveGenerated.class,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY,
+                    InputFieldNameResolver.IDENTITY);
+            int generatedInvocations = RECORDED_CONTEXTS.size();
+
+            assertEquals(reflectiveOut, generatedOut, "both paths must produce the same output");
+            // TestTrim is idempotent, so a chain that grew with depth would produce identical output
+            // and only a different invocation count. Count, do not compare strings.
+            assertEquals(
+                    LEVELS,
+                    reflectiveInvocations,
+                    "reflective path: the type's own chain must apply once per string value, not once "
+                            + "per level of the self-reference");
+            assertEquals(
+                    LEVELS,
+                    generatedInvocations,
+                    "generated path: the type's own chain must apply once per string value, not once "
+                            + "per level of the self-reference");
+        }
+
+        /** Builds a {@value #LEVELS}-level self-referential intermediate with one string per level. */
+        private Map<String, Object> typeChainInput() {
+            Map<String, Object> current = new LinkedHashMap<>();
+            current.put("note", "  note" + LEVELS + "  ");
+            for (int level = LEVELS - 1; level >= 1; level--) {
+                Map<String, Object> node = new LinkedHashMap<>();
+                node.put("note", "  note" + level + "  ");
+                node.put("child", current);
+                current = node;
+            }
+            return current;
+        }
+    }
+
+    @Nested
+    @DisplayName("a field's own chain overrides an object-level skip")
+    class FieldChainOverridesObjectLevelSkip {
+
+        @Test
+        @DisplayName("both paths run a field's own chain on direct, nested and collection fields")
+        void shouldAgreeThatAFieldChainOverridesTheOwnersSkip() {
+            Object reflectiveOut = processor.processInput(
+                    skipOverrideInput(),
+                    SkipOverrideReflective.class,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY,
+                    InputFieldNameResolver.IDENTITY);
+            Object generatedOut = processor.processInput(
+                    skipOverrideInput(),
+                    SkipOverrideGenerated.class,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY,
+                    InputFieldNameResolver.IDENTITY);
+
+            assertEquals(reflectiveOut, generatedOut, "both paths share descend(), so they must agree");
+            // Agreement alone would also hold if both paths dropped the nested chains, so pin the
+            // observable effect on each path independently.
+            assertOverrideApplied(reflectiveOut, "reflective");
+            assertOverrideApplied(generatedOut, "generated");
+        }
+
+        /** Builds an intermediate carrying one value per field kind of the skip-override fixtures. */
+        private Map<String, Object> skipOverrideInput() {
+            Map<String, Object> nested = new LinkedHashMap<>();
+            nested.put("value", "  b  ");
+            Map<String, Object> element = new LinkedHashMap<>();
+            element.put("value", "  c  ");
+            Map<String, Object> input = new LinkedHashMap<>();
+            input.put("direct", "  a  ");
+            input.put("nested", nested);
+            input.put("many", List.of(element));
+            return input;
+        }
+
+        /** Asserts every field kind's own chain ran despite the owner's type-level skip. */
+        private void assertOverrideApplied(Object output, String path) {
+            Map<?, ?> map = (Map<?, ?>) output;
+            assertEquals("a", map.get("direct"), path + " path: a direct String field's own chain must run");
+            assertEquals(
+                    "b",
+                    ((Map<?, ?>) map.get("nested")).get("value"),
+                    path + " path: a nested-object field's own chain must override the owner's skip");
+            assertEquals(
+                    "c",
+                    ((Map<?, ?>) ((List<?>) map.get("many")).get(0)).get("value"),
+                    path + " path: a collection-of-object field's own chain must override the owner's skip");
+        }
+    }
+
+    @Nested
     @DisplayName("wildcard-bounded and array element fields")
     class WildcardAndBoundedGenerics {
 
@@ -1251,6 +1362,67 @@ class GeneratedVsReflectiveEquivalenceTest {
     public static final class Inner {
         @Canonicalize(TestTrim.class)
         public String note;
+    }
+
+    /** Plain nested DTO with no declared policy of its own — used by the skip-override fixtures. */
+    public static final class PlainInner {
+        public String value;
+    }
+
+    /**
+     * Self-referential reflective baseline carrying a <em>type-level</em> chain. Per-type metadata
+     * resolution returns that chain at every level, so this is the shape whose composed chain would
+     * otherwise grow with the intermediate's depth.
+     */
+    @Canonicalize(TestTrim.class)
+    static final class TypeChainRecursiveReflective {
+        public String note;
+
+        public TypeChainRecursiveReflective child;
+    }
+
+    /**
+     * Generated counterpart of {@link TypeChainRecursiveReflective}, paired with the hand-written
+     * {@code GeneratedVsReflectiveEquivalenceTest_TypeChainRecursiveGenerated_InputProcessor}
+     * fixture whose {@code child} arm dispatches back at its own target type.
+     */
+    @Canonicalize(TestTrim.class)
+    static final class TypeChainRecursiveGenerated {
+        public String note;
+
+        public TypeChainRecursiveGenerated child;
+    }
+
+    /**
+     * Reflective baseline for the skip-override case: the owner declares
+     * {@code @SkipCanonicalization} while each field kind declares its own chain.
+     */
+    @SkipCanonicalization
+    static final class SkipOverrideReflective {
+        @Canonicalize(TestTrim.class)
+        public String direct;
+
+        @Canonicalize(TestTrim.class)
+        public PlainInner nested;
+
+        @Canonicalize(TestTrim.class)
+        public List<PlainInner> many;
+    }
+
+    /**
+     * Generated counterpart of {@link SkipOverrideReflective}, paired with the hand-written
+     * {@code GeneratedVsReflectiveEquivalenceTest_SkipOverrideGenerated_InputProcessor} fixture.
+     */
+    @SkipCanonicalization
+    static final class SkipOverrideGenerated {
+        @Canonicalize(TestTrim.class)
+        public String direct;
+
+        @Canonicalize(TestTrim.class)
+        public PlainInner nested;
+
+        @Canonicalize(TestTrim.class)
+        public List<PlainInner> many;
     }
 
     /** Reflective baseline for the sticky-skip equivalence case. */

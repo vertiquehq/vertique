@@ -8,17 +8,18 @@ import dev.vertique.core.sanitization.InputFieldNameResolver;
 import dev.vertique.core.sanitization.Sanitizer;
 import dev.vertique.input.processing.InputPolicyMetadata.FieldPolicyMetadata;
 import jakarta.annotation.Nullable;
-import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 
 /**
  * Carries accumulated processing state through nested object traversal during structured-input
  * processing. Holds inherited ancestor canonicalizer/sanitizer chains and sticky skip flags.
  *
- * <p>Skip flags are sticky: once set by any ancestor, they suppress all descendants even if a
- * descendant type or field declares its own canonicalizer/sanitizer chain. Inherited chains
- * accumulate as recursion descends, mirroring the run-time semantics of
- * {@link DefaultInputObjectProcessor}.
+ * <p>Skip flags are sticky: once set by an <em>ancestor</em>, they suppress all descendants even if
+ * a descendant type or field declares its own canonicalizer/sanitizer chain. An <em>object-level</em>
+ * skip is narrower — it yields to the enclosing field's own declared chain, on every field kind.
+ * Inherited chains accumulate as recursion descends, holding each distinct processor class once, and
+ * mirror the run-time semantics of {@link DefaultInputObjectProcessor}.
  *
  * <p>This is a behavior-bearing public API used by both the reflective walker (via
  * {@link #descend(InputPolicyMetadata, FieldPolicyMetadata)}) and codegen-emitted
@@ -116,9 +117,10 @@ public final class InputTraversalContext {
      * type's object-level chains and the enclosing field's field-level chains and skip flags.
      *
      * <p>Used by the reflective walker inside this module; the metadata carrier records are
-     * internal, so this overload is not part of the module's public surface. Skip flags are
-     * sticky: if any inherited or parent or field-level skip flag is set, the corresponding
-     * chain on the child context is empty.
+     * internal, so this overload is not part of the module's public surface. Skip precedence is the
+     * primitive overload's: an inherited or field-level skip empties the corresponding chain on the
+     * child context, while a parent object-level skip does so only when {@code fieldMeta} declares
+     * no chain of that kind.
      *
      * @param parentMeta annotation metadata for the current parent type; must not be {@code null}
      * @param fieldMeta  annotation metadata for the field that holds the nested object,
@@ -143,10 +145,14 @@ public final class InputTraversalContext {
      * constants and never construct {@link InputPolicyMetadata}/{@link FieldPolicyMetadata}
      * carrier records.
      *
-     * <p>Skip-flag precedence is identical to the metadata overload: any inherited or parent or
-     * field-level skip flag short-circuits the corresponding chain to empty. A sticky skip empties
-     * the chains, never the name projection — a skipped subtree still has to resolve field names to
-     * select the right per-field metadata.
+     * <p>Skip-flag precedence is identical to the metadata overload, and to
+     * {@code DefaultInputObjectProcessor}'s per-value chain composition: an inherited skip from any
+     * ancestor wins outright, a field-level skip wins next, and an object-level skip applies only
+     * when the enclosing field declares no chain of its own. A field that <em>does</em> declare its
+     * own chain therefore overrides its owner type's {@code @SkipCanonicalization} /
+     * {@code @SkipSanitization} — on a nested-object or collection field exactly as on a direct
+     * {@code String} field. A sticky skip empties the chains, never the name projection — a skipped
+     * subtree still has to resolve field names to select the right per-field metadata.
      *
      * @param objectCanon       object-level canonicalizer chain on the parent type; must not be {@code null}
      * @param objectSanit       object-level sanitizer chain on the parent type; must not be {@code null}
@@ -169,8 +175,14 @@ public final class InputTraversalContext {
             boolean fieldSkipCanon,
             boolean fieldSkipSanit) {
 
-        boolean skipCanon = inheritedSkipCanonicalization || objectSkipCanon || fieldSkipCanon;
-        boolean skipSanit = inheritedSkipSanitization || objectSkipSanit || fieldSkipSanit;
+        // An object-level skip is overridden by the enclosing field's own chain, matching
+        // DefaultInputObjectProcessor.buildCanonicalizerChain / buildSanitizerChain. Inherited and
+        // field-level skips are not overridable.
+        boolean fieldDeclaresCanon = fieldCanon != null && !fieldCanon.isEmpty();
+        boolean fieldDeclaresSanit = fieldSanit != null && !fieldSanit.isEmpty();
+
+        boolean skipCanon = inheritedSkipCanonicalization || fieldSkipCanon || (objectSkipCanon && !fieldDeclaresCanon);
+        boolean skipSanit = inheritedSkipSanitization || fieldSkipSanit || (objectSkipSanit && !fieldDeclaresSanit);
 
         List<Class<? extends Canonicalizer>> canon =
                 skipCanon ? List.of() : compose(inheritedCanonicalizerChain, objectCanon, fieldCanon);
@@ -217,11 +229,27 @@ public final class InputTraversalContext {
     }
 
     /**
-     * Returns the effective chain composed of {@code inherited + object + field}, but reuses the
-     * {@code inherited} reference unchanged when {@code object} and {@code field} contribute no
-     * new entries. This avoids per-{@code descend} allocations on the common case where the
-     * nested DTO has no object- or field-level chain — every nested call inherits the parent's
-     * chain unmutated.
+     * Returns the effective chain composed of {@code inherited + object + field}, <strong>with each
+     * distinct processor class kept exactly once, in encounter order</strong>. The
+     * {@code inherited} reference is reused unchanged when {@code object} and {@code field}
+     * contribute no new entries, which avoids per-{@code descend} allocations on the common case
+     * where the nested DTO has no object- or field-level chain.
+     *
+     * <p><strong>Why deduplicate.</strong> Policy metadata is resolved per type, so a type's own
+     * chain is offered afresh at <em>every</em> level of a recursive graph. Without deduplication a
+     * self-referential DTO carrying a type-level chain would apply that chain once per level —
+     * depth <em>N</em> means <em>N</em> applications per string leaf — which an attacker controls
+     * purely by nesting the request body. Bounding the chain by distinct processor class removes
+     * that amplification outright rather than capping it.
+     *
+     * <p><strong>What deduplication costs.</strong> {@code Canonicalizer} and {@code Sanitizer} both
+     * publish idempotence as a MUST, so {@code S(S(x)) == S(x)}: for a single-element chain,
+     * collapsing a repeat is exactly neutral, and it is neutral for every processor family the
+     * framework ships. It is <em>not</em> a general proof for an arbitrary interleaved multi-element
+     * chain — {@code A B A} collapses to {@code A B}, and those agree only when the processors also
+     * commute or {@code B} preserves {@code A}'s fixed point, which the contracts do not require.
+     * The bound is chosen deliberately in that knowledge: a repeated class in a composed chain
+     * indicates the same policy inherited twice, not a deliberately re-ordered pipeline.
      *
      * <p>Package-private because it is the single chain-composition implementation shared by
      * {@link DefaultInputObjectProcessor} and {@link GeneratedSupport}; callers that always have a
@@ -232,19 +260,24 @@ public final class InputTraversalContext {
      * @param field     field-level chain from the enclosing field, or {@code null} when descending
      *                  from a list element
      * @param <T>       the chain class element type
-     * @return a composed list, or {@code inherited} unchanged when no new entries are added
+     * @return a composed list holding each distinct entry once in encounter order, or
+     *         {@code inherited} unchanged when it is already distinct and nothing new is added
      */
     static <T> List<T> compose(List<T> inherited, List<T> object, @Nullable List<T> field) {
         boolean fieldEmpty = field == null || field.isEmpty();
         if (object.isEmpty() && fieldEmpty) {
             return inherited;
         }
-        List<T> result = new ArrayList<>(inherited.size() + object.size() + (field == null ? 0 : field.size()));
-        result.addAll(inherited);
-        result.addAll(object);
+        LinkedHashSet<T> distinct = new LinkedHashSet<>(inherited);
+        boolean grew = distinct.addAll(object);
         if (field != null) {
-            result.addAll(field);
+            grew |= distinct.addAll(field);
         }
-        return result;
+        // Reuse the caller's list only when nothing was added AND it held no duplicates itself;
+        // otherwise its size would not match the distinct set it produced.
+        if (!grew && distinct.size() == inherited.size()) {
+            return inherited;
+        }
+        return List.copyOf(distinct);
     }
 }

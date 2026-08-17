@@ -30,7 +30,9 @@ Three policy layers compose for every string value, in this order:
 2. **Object-level** chains — declared on the target type itself.
 3. **Field-level** chains — declared on the field or record component.
 
-Skip flags (`@SkipCanonicalization` / `@SkipSanitization`) are **sticky**: once set by any ancestor, they suppress the corresponding layer for every descendant. Processing is copy-on-write — the engine never mutates the input structure.
+The composed chain holds **each distinct processor class once**, in the order first encountered. Policies are resolved per type, so a type's own chain is offered again at every level of a recursive graph; keeping one entry per class means a policy applies once per string value no matter how deeply the input nests. This is neutral for a conforming processor — `Canonicalizer` and `Sanitizer` both require idempotence — and it bounds work per value by the number of distinct declared policies rather than by the depth of the request body.
+
+Skip flags (`@SkipCanonicalization` / `@SkipSanitization`) are **sticky**: once set by an ancestor, they suppress the corresponding layer for every descendant, whatever that descendant declares. An **object-level** skip is narrower: it suppresses the layer only for fields that declare no chain of their own. A field carrying its own `@Canonicalize` / `@Sanitize` therefore opts back in despite its owner type's skip — on a nested-object or collection field exactly as on a direct `String` field. Processing is copy-on-write — the engine never mutates the input structure.
 
 The engine resolves a build-time-generated `{DTO}_InputProcessor` for the target type first (see [Extension Points](#extension-points)) and falls back to a reflective walk when none is on the classpath. Both paths produce the same output.
 

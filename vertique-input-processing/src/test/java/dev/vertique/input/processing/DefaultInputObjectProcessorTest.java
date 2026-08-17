@@ -54,6 +54,8 @@ class DefaultInputObjectProcessorTest {
                 cls -> {
                     if (cls == TestStripControlsSanitizer.class) return new TestStripControlsSanitizer();
                     if (cls == TestPrefixSanitizer.class) return new TestPrefixSanitizer();
+                    if (cls == CountingTypeSanitizer.class) return new CountingTypeSanitizer();
+                    if (cls == CountingFieldSanitizer.class) return new CountingFieldSanitizer();
                     throw new IllegalArgumentException("Unknown sanitizer: " + cls);
                 });
     }
@@ -759,6 +761,144 @@ class DefaultInputObjectProcessorTest {
                 node = (Map<?, ?>) node.get("child");
             }
             return node.get("name");
+        }
+    }
+
+    // --- Composed chain length is bounded by distinct processor class ---
+
+    @Nested
+    @DisplayName("composed chain length is bounded by distinct processor class, not by data depth")
+    class ComposedChainLength {
+
+        private static final int LEVELS = 6;
+
+        @Test
+        @DisplayName("a type-level chain on a self-referential DTO applies once per value at every depth")
+        void shouldApplyEachDistinctProcessorOncePerValueRegardlessOfDepth() {
+            RecordingSanitizer.INVOCATIONS.clear();
+
+            Object result = processor.processInput(
+                    typeChainInput(),
+                    TypeChainNode.class,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY,
+                    InputFieldNameResolver.IDENTITY);
+
+            // Two string values per level: the declared 'name' field and an undeclared extra key
+            // that carries only the inherited chain. Both must see the type-level sanitizer once.
+            assertEquals(
+                    2 * LEVELS,
+                    RecordingSanitizer.countFor(CountingTypeSanitizer.class),
+                    "the type-level chain must apply once per string value; composing it afresh at "
+                            + "every level would make the invocation count grow with the intermediate's depth");
+            assertEquals(
+                    LEVELS,
+                    RecordingSanitizer.countFor(CountingFieldSanitizer.class),
+                    "deduplication must not collapse a distinct field-level processor — it applies "
+                            + "once per level, on the one field that declares it");
+            assertEquals(
+                    List.of("CountingTypeSanitizer@name", "CountingFieldSanitizer@name"),
+                    RecordingSanitizer.INVOCATIONS.subList(0, 2),
+                    "deduplication must preserve encounter order: type-level before field-level");
+            assertNotNull(deepestNode(result), "every level of the intermediate must still be traversed");
+        }
+
+        /** Builds a {@value #LEVELS}-level self-referential intermediate with two strings per level. */
+        private Map<String, Object> typeChainInput() {
+            Map<String, Object> deepest = new LinkedHashMap<>();
+            deepest.put("name", "name" + LEVELS);
+            deepest.put("extra", "extra" + LEVELS);
+            Map<String, Object> current = deepest;
+            for (int level = LEVELS - 1; level >= 1; level--) {
+                Map<String, Object> node = new LinkedHashMap<>();
+                node.put("name", "name" + level);
+                node.put("extra", "extra" + level);
+                node.put("child", current);
+                current = node;
+            }
+            return current;
+        }
+
+        /** Returns the deepest node reachable through the {@code child} key. */
+        private Map<?, ?> deepestNode(Object result) {
+            Map<?, ?> node = (Map<?, ?>) result;
+            while (node.get("child") != null) {
+                node = (Map<?, ?>) node.get("child");
+            }
+            return node;
+        }
+    }
+
+    // --- A field's own chain overrides an object-level skip ---
+
+    @Nested
+    @DisplayName("a field's own chain overrides an object-level skip on every field kind")
+    class FieldChainOverridesObjectLevelSkip {
+
+        @Test
+        @DisplayName("@Canonicalize on a direct, nested and collection field all run under a type-level skip")
+        void shouldCanonicalizeEveryFieldKindThatDeclaresItsOwnChain() {
+            Map<String, Object> nested = new LinkedHashMap<>();
+            nested.put("value", "  b  ");
+            Map<String, Object> element = new LinkedHashMap<>();
+            element.put("value", "  c  ");
+            Map<String, Object> input = new LinkedHashMap<>();
+            input.put("direct", "  a  ");
+            input.put("nested", nested);
+            input.put("many", List.of(element));
+
+            Object result = processor.processInput(
+                    input,
+                    SkipCanonOwnerWithFieldChains.class,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY,
+                    InputFieldNameResolver.IDENTITY);
+
+            Map<?, ?> map = (Map<?, ?>) result;
+            assertEquals(
+                    "a", map.get("direct"), "control: a direct String field's own chain already overrides the skip");
+            assertEquals(
+                    "b",
+                    ((Map<?, ?>) map.get("nested")).get("value"),
+                    "a nested-object field's own chain must override the owner's @SkipCanonicalization too");
+            assertEquals(
+                    "c",
+                    ((Map<?, ?>) ((List<?>) map.get("many")).get(0)).get("value"),
+                    "a collection-of-object field's own chain must override the owner's @SkipCanonicalization too");
+        }
+
+        @Test
+        @DisplayName("@Sanitize on a direct, nested and collection field all run under a type-level skip")
+        void shouldSanitizeEveryFieldKindThatDeclaresItsOwnChain() {
+            Map<String, Object> nested = new LinkedHashMap<>();
+            nested.put("value", "b");
+            Map<String, Object> element = new LinkedHashMap<>();
+            element.put("value", "c");
+            Map<String, Object> input = new LinkedHashMap<>();
+            input.put("direct", "a");
+            input.put("nested", nested);
+            input.put("many", List.of(element));
+
+            Object result = processor.processInput(
+                    input,
+                    SkipSanitOwnerWithFieldChains.class,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY,
+                    InputFieldNameResolver.IDENTITY);
+
+            Map<?, ?> map = (Map<?, ?>) result;
+            assertEquals(
+                    "safe:a",
+                    map.get("direct"),
+                    "control: a direct String field's own chain already overrides the skip");
+            assertEquals(
+                    "safe:b",
+                    ((Map<?, ?>) map.get("nested")).get("value"),
+                    "a nested-object field's own chain must override the owner's @SkipSanitization too");
+            assertEquals(
+                    "safe:c",
+                    ((Map<?, ?>) ((List<?>) map.get("many")).get(0)).get("value"),
+                    "a collection-of-object field's own chain must override the owner's @SkipSanitization too");
         }
     }
 
@@ -1505,6 +1645,51 @@ class DefaultInputObjectProcessorTest {
         InnerWithCanon inner;
     }
 
+    /**
+     * Owner type carrying {@code @SkipCanonicalization} while every field kind declares its own
+     * chain. {@code buildCanonicalizerChain} lets a field's own chain override an object-level
+     * skip; the nested and collection arms must honour the same rule through
+     * {@link InputTraversalContext#descend}.
+     */
+    @SkipCanonicalization
+    static class SkipCanonOwnerWithFieldChains {
+        @Canonicalize(TestTrimCanonicalizer.class)
+        String direct;
+
+        @Canonicalize(TestTrimCanonicalizer.class)
+        InnerDto nested;
+
+        @Canonicalize(TestTrimCanonicalizer.class)
+        List<InnerDto> many;
+    }
+
+    /** Sanitization twin of {@link SkipCanonOwnerWithFieldChains}. */
+    @SkipSanitization
+    static class SkipSanitOwnerWithFieldChains {
+        @Sanitize(TestPrefixSanitizer.class)
+        String direct;
+
+        @Sanitize(TestPrefixSanitizer.class)
+        InnerDto nested;
+
+        @Sanitize(TestPrefixSanitizer.class)
+        List<InnerDto> many;
+    }
+
+    /**
+     * Directly self-referential DTO carrying a <em>type-level</em> sanitizer chain plus one field
+     * with its own distinct chain. Per-type resolution returns the type's own chain at every level
+     * of the recursion, so this is the shape whose composed chain would otherwise grow with the
+     * intermediate's depth.
+     */
+    @Sanitize(CountingTypeSanitizer.class)
+    static class TypeChainNode {
+        @Sanitize(CountingFieldSanitizer.class)
+        String name;
+
+        TypeChainNode child;
+    }
+
     /** Directly self-referential DTO — its {@code @Sanitize} chain must apply at every level. */
     static class SelfRefNode {
         @Sanitize(TestPrefixSanitizer.class)
@@ -1761,6 +1946,43 @@ class DefaultInputObjectProcessorTest {
             return value == null ? null : "safe:" + value;
         }
     }
+
+    /**
+     * Records every invocation into {@link #INVOCATIONS} as {@code <simpleName>@<path>} and returns
+     * the value unchanged. Idempotent by construction, so applying it twice produces exactly the
+     * same output as applying it once — the invocation log is the only observable difference, which
+     * is what makes it the right instrument for a chain-length assertion.
+     */
+    abstract static class RecordingSanitizer implements Sanitizer {
+
+        /** Ordered log of every recording-sanitizer invocation, as {@code <simpleName>@<path>}. */
+        static final List<String> INVOCATIONS = new ArrayList<>();
+
+        @Override
+        public String sanitize(String value, InputValueContext context) {
+            INVOCATIONS.add(getClass().getSimpleName() + "@" + (context == null ? "?" : context.path()));
+            return value;
+        }
+
+        /**
+         * Counts logged invocations of one recording-sanitizer class.
+         *
+         * @param type the recording sanitizer to report on
+         * @return how many times that class was invoked since the log was last cleared
+         */
+        static long countFor(Class<? extends RecordingSanitizer> type) {
+            String prefix = type.getSimpleName() + "@";
+            return INVOCATIONS.stream()
+                    .filter(entry -> entry.startsWith(prefix))
+                    .count();
+        }
+    }
+
+    /** Recording sanitizer declared at type level. */
+    static final class CountingTypeSanitizer extends RecordingSanitizer {}
+
+    /** Recording sanitizer declared at field level — a class distinct from the type-level one. */
+    static final class CountingFieldSanitizer extends RecordingSanitizer {}
 
     /**
      * Counts how often each processor class is handed to a caller-supplied resolver function, so a
