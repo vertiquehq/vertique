@@ -178,10 +178,17 @@ class GeneratorAbnormalExitTest {
 
     /**
      * Victools generator whose generation stage aborts with an {@link AbortingFailure} and whose
-     * configuration — the entry point through which per-generation provider state is restored — is
-     * itself unavailable, so the restoration fails while the generation failure is propagating.
+     * configuration — the entry point through which per-generation provider state is restored —
+     * becomes unavailable once generation has run, so the restoration fails while the generation
+     * failure is propagating.
+     *
+     * <p>The unavailability is armed by the aborting {@code generateSchema} call rather than wired
+     * unconditionally: the construction-time dialect check reads {@code getConfig()} too, and a probe
+     * that failed there would never reach the restoration path it exists to exercise.
      */
     private static final class RestoreFailingGenerator extends SchemaGenerator {
+
+        private boolean generationAborted;
 
         private RestoreFailingGenerator() {
             super(new SchemaGeneratorConfigBuilder(SchemaVersion.DRAFT_2020_12, OptionPreset.PLAIN_JSON).build());
@@ -189,12 +196,16 @@ class GeneratorAbnormalExitTest {
 
         @Override
         public ObjectNode generateSchema(Type mainTargetType, Type... typeParameters) {
+            generationAborted = true;
             throw new AbortingFailure();
         }
 
         @Override
         public SchemaGeneratorConfig getConfig() {
-            throw new IllegalStateException("provider-state restoration is unavailable");
+            if (generationAborted) {
+                throw new IllegalStateException("provider-state restoration is unavailable");
+            }
+            return super.getConfig();
         }
     }
 
