@@ -16,8 +16,9 @@ import java.lang.reflect.Type;
  * logged verbatim.
  *
  * <p>Because a message reaches a log verbatim, every bounded fragment is also made loggable: any
- * code point that could terminate a log record, forge a second one, or leave the text ill-formed is
- * replaced before the fragment is bounded. See {@link #truncate(String, int)}.
+ * code point that could terminate a log record, forge a second one, misrepresent the identity it
+ * renders, or leave the text ill-formed is replaced before the fragment is bounded. See {@link
+ * #truncate(String, int)}, which also states the one limitation of that guarantee.
  *
  * <p>Only <em>identity</em> ever reaches a message — a type name, a property name, a profile id.
  * Application values never do.
@@ -85,12 +86,31 @@ final class Diagnostics {
      *       block including {@code NEL} (U+0085). A regular-expression class such as {@code
      *       \p{Cntrl}} covers ASCII only and would let every C1 control through, so the category is
      *       read from {@link Character#getType(char)} instead.
+     *   <li>Unicode general category {@code Cf} — the format characters, which includes the
+     *       Trojan-Source family (CVE-2021-42574): the bidirectional overrides and embeddings
+     *       (U+202A–U+202E), the directional isolates (U+2066–U+2069), the implicit marks
+     *       (U+200E/U+200F), {@code SOFT HYPHEN} (U+00AD), and the byte-order mark (U+FEFF). These
+     *       are reachable, not theoretical: {@link Character#isJavaIdentifierPart(char)} accepts
+     *       every ignorable code point, so a field, method, or class name may legally contain one
+     *       and reach a diagnostic through a member or type identity — and a caller-supplied
+     *       {@code JsonProfileId} is arbitrary text with no constraint at all. A bidi override
+     *       cannot forge a record ({@code Cc} covers that), but it can make one read as naming a
+     *       different type or profile than the one that actually failed, defeating the identity
+     *       guarantee the diagnostic exists to provide; U+FEFF can additionally desynchronize a
+     *       log-shipping parser.
      *   <li>Unicode {@code Zl} (U+2028) and {@code Zp} (U+2029), which several log and JSON readers
      *       treat as line terminators.
      *   <li>Every unpaired surrogate, whether already present in the input or not, so the result is
      *       always well-formed UTF-16 and cannot become a replacement character or an encoder error
      *       downstream.
      * </ul>
+     *
+     * <p>One limitation is stated rather than claimed away: classification is per code unit, so a
+     * <em>supplementary-plane</em> {@code Cf} code point — U+110BD {@code KAITHI NUMBER SIGN} and
+     * U+1D173–U+1D17A, the musical formatting controls — survives inside its well-formed surrogate
+     * pair. None of them reorders or terminates rendered log text, and covering them would require
+     * a code-point walk that no longer preserves the one-for-one length arithmetic below. Every
+     * code point that can reorder or forge log text is BMP and is replaced.
      *
      * <p>The bound is hard: the returned value never exceeds {@code max} code units under any input.
      * That includes the two cases the previous implementation overran — a {@code null} value, whose
@@ -134,8 +154,10 @@ final class Diagnostics {
                     && index + 1 < value.length()
                     && Character.isLowSurrogate(value.charAt(index + 1));
             if (paired) {
-                // Skip the low half: a well-formed pair is never inspected further, and its code
-                // point can be neither Cc, Zl, nor Zp — all three categories are BMP-only.
+                // Skip the low half: a well-formed pair is never inspected further. Cc, Zl, and Zp
+                // are BMP-only, so no pair can carry one; the supplementary Cf code points that a
+                // pair can carry are the stated limitation in truncate's javadoc — they neither
+                // reorder nor terminate rendered log text.
                 index++;
                 continue;
             }
@@ -157,8 +179,8 @@ final class Diagnostics {
      * any surrogate reaching it is unpaired by construction.
      *
      * @param unit the code unit to classify
-     * @return {@code true} for a {@code Cc}, {@code Zl}, or {@code Zp} code point, or an unpaired
-     *     surrogate
+     * @return {@code true} for a {@code Cc}, {@code Cf}, {@code Zl}, or {@code Zp} code point, or an
+     *     unpaired surrogate
      */
     private static boolean mustBeReplaced(char unit) {
         if (Character.isSurrogate(unit)) {
@@ -166,6 +188,7 @@ final class Diagnostics {
         }
         int category = Character.getType(unit);
         return category == Character.CONTROL
+                || category == Character.FORMAT
                 || category == Character.LINE_SEPARATOR
                 || category == Character.PARAGRAPH_SEPARATOR;
     }
@@ -186,6 +209,10 @@ final class Diagnostics {
 
     /**
      * Builds a bounded generation failure.
+     *
+     * <p>The bounding and sanitization apply to the message only. The cause is attached exactly as
+     * received — neither sanitized nor bounded — because its raw text is what makes the failure
+     * diagnosable; a consumer logging the whole exception renders that text too.
      *
      * @param message the value-free message, bounded to {@value #MAX_MESSAGE_LENGTH} code units
      * @param cause   the underlying cause, or {@code null} when none exists

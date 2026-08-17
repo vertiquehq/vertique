@@ -17,11 +17,12 @@ import org.junit.jupiter.api.Test;
  *
  * <p>Three properties are proven. The result never exceeds the requested bound — including for the
  * degenerate {@code null} input and for a bound too small to hold the elision marker. Every Unicode
- * {@code Cc} code point (which includes the C1 block and {@code NEL}), {@code Zl}, and {@code Zp} is
- * replaced one-for-one, so a forged log line cannot be smuggled through a type or profile name; a
- * {@code \p{Cntrl}}-style ASCII-only filter would miss everything from {@code DEL} onwards. And no
- * result ever carries an unpaired surrogate, whether the input already contained one or the cut
- * point would have split a pair.
+ * {@code Cc} code point (which includes the C1 block and {@code NEL}), {@code Cf} format character
+ * (which includes the Trojan-Source bidirectional overrides and isolates), {@code Zl}, and {@code
+ * Zp} is replaced one-for-one, so neither a forged log line nor a misleadingly reordered identity
+ * can be smuggled through a type, member, or profile name; a {@code \p{Cntrl}}-style ASCII-only
+ * filter would miss everything from {@code DEL} onwards. And no result ever carries an unpaired
+ * surrogate, whether the input already contained one or the cut point would have split a pair.
  */
 class DiagnosticsTest {
 
@@ -30,6 +31,9 @@ class DiagnosticsTest {
 
     /** A supplementary-plane code point, so its UTF-16 form is a surrogate pair. */
     private static final String ASTRAL = new String(Character.toChars(0x1F600));
+
+    /** The replacement written in place of a code unit that must not reach a log line. */
+    private static final char REPLACEMENT_CHAR = '?';
 
     @Test
     @DisplayName("truncate never returns more code units than the requested bound")
@@ -73,14 +77,30 @@ class DiagnosticsTest {
         assertEquals("a?b?c?d?e?f?g?h?i?j", bounded, "each control or separator must be replaced 1:1 with '?'");
         assertEquals(hostile.length(), bounded.length(), "the replacement must be one-for-one, never widening");
 
-        for (int index = 0; index < bounded.length(); index++) {
-            int category = Character.getType(bounded.charAt(index));
-            assertTrue(
-                    category != Character.CONTROL
-                            && category != Character.LINE_SEPARATOR
-                            && category != Character.PARAGRAPH_SEPARATOR,
-                    "no Cc, Zl, or Zp code point may survive; index " + index + " of \"" + bounded + "\"");
-        }
+        assertNoSanitizedCategorySurvives(bounded);
+    }
+
+    @Test
+    @DisplayName("truncate replaces every Cf format character, including the Trojan-Source bidi controls")
+    void truncateReplacesFormatCharacters() {
+        // Given: one sample from each Cf family a diagnostic identity can be misread through — the
+        // bidirectional overrides and embeddings (U+202A-U+202E), the directional isolates
+        // (U+2066-U+2069), the implicit marks (U+200E/U+200F), SOFT HYPHEN, and a BOM. A Java field,
+        // method, or class name may legally contain every one of them: Character.isJavaIdentifierPart
+        // accepts an ignorable code point, so `amount<RLO>rebmun` compiles and reaches a diagnostic.
+        String hostile = "a" + (char) 0x202E + "b" + (char) 0x202A + "c" + (char) 0x202B + "d" + (char) 0x202C + "e"
+                + (char) 0x202D + "f" + (char) 0x2066 + "g" + (char) 0x2067 + "h" + (char) 0x2068 + "i" + (char) 0x2069
+                + "j" + (char) 0x200E + "k" + (char) 0x200F + "l" + (char) 0x00AD + "m" + (char) 0xFEFF + "n";
+
+        // When: the value is bounded generously enough that nothing is elided.
+        String bounded = Diagnostics.truncate(hostile, Diagnostics.MAX_MESSAGE_LENGTH);
+
+        // Then: every format character is replaced one-for-one, so a bidi override cannot make one
+        // diagnostic read as naming a different type or profile than the one that actually failed.
+        assertEquals("a?b?c?d?e?f?g?h?i?j?k?l?m?n", bounded, "each format character must be replaced 1:1 with '?'");
+        assertEquals(hostile.length(), bounded.length(), "the replacement must be one-for-one, never widening");
+
+        assertNoSanitizedCategorySurvives(bounded);
     }
 
     @Test
@@ -118,9 +138,37 @@ class DiagnosticsTest {
                 paired,
                 Diagnostics.truncate(paired, Diagnostics.MAX_MESSAGE_LENGTH),
                 "a well-formed surrogate pair must survive verbatim");
+
+        // Given: the two adversarial sequences where an off-by-one in the pair skip would hide — a
+        // lone high immediately followed by a well-formed pair, and a lone low followed by one.
+        assertEquals(
+                "a" + REPLACEMENT_CHAR + ASTRAL + "b",
+                Diagnostics.truncate("a" + (char) 0xD800 + ASTRAL + "b", Diagnostics.MAX_MESSAGE_LENGTH),
+                "in high-high-low the first high is unpaired and the following pair must survive intact");
+        assertEquals(
+                "a" + REPLACEMENT_CHAR + ASTRAL + "b",
+                Diagnostics.truncate("a" + (char) 0xDC00 + ASTRAL + "b", Diagnostics.MAX_MESSAGE_LENGTH),
+                "in low-high-low the lone low is replaced and the following pair must survive intact");
     }
 
     // --- Helpers ---
+
+    /**
+     * Asserts that no code unit of a bounded value belongs to a category sanitization must remove.
+     *
+     * @param bounded the bounded value to inspect
+     */
+    private static void assertNoSanitizedCategorySurvives(String bounded) {
+        for (int index = 0; index < bounded.length(); index++) {
+            int category = Character.getType(bounded.charAt(index));
+            assertTrue(
+                    category != Character.CONTROL
+                            && category != Character.FORMAT
+                            && category != Character.LINE_SEPARATOR
+                            && category != Character.PARAGRAPH_SEPARATOR,
+                    "no Cc, Cf, Zl, or Zp code point may survive; index " + index + " of \"" + bounded + "\"");
+        }
+    }
 
     /**
      * Asserts that every surrogate code unit in a value belongs to a well-formed pair.

@@ -233,12 +233,21 @@ The one bounded failure type this module throws, with a value-free, length-bound
 the original cause preserved when one exists. Consumers catch and translate this exception without
 depending on any Victools exception type.
 
-The message is also safe to log verbatim. It is at most 512 UTF-16 code units — a hard bound, not
-an approximation — and carries no code point that could terminate or forge a log record: every
-Unicode `Cc` control (including the C1 block and `NEL`), `Zl`, `Zp`, and unpaired surrogate is
-replaced one-for-one with `?` before the message is bounded, and an elision never splits a
-surrogate pair. Identity a type, property, or profile contributed therefore stays readable while a
-hostile name cannot inject a line break.
+`getMessage()` is safe to log verbatim. It is at most 512 UTF-16 code units — a hard bound, not an
+approximation — and carries no code point that could terminate a log record, forge a second one, or
+reorder the identity it renders: every Unicode `Cc` control (including the C1 block and `NEL`), `Cf`
+format character (including the Trojan-Source bidirectional overrides and isolates, `SOFT HYPHEN`,
+and the byte-order mark), `Zl`, `Zp`, and unpaired surrogate is replaced one-for-one with `?` before
+the message is bounded, and an elision never splits a surrogate pair. Identity a type, property, or
+profile contributed therefore stays readable while a hostile name can neither inject a line break
+nor make the message read as naming a different type or profile than the one that failed. The one
+stated limitation: a supplementary-plane `Cf` code point (U+110BD, U+1D173–U+1D17A) survives, since
+none of them reorders or terminates rendered log text.
+
+That guarantee covers the message only. The **attached cause is not sanitized or bounded** — it is
+preserved raw, deliberately, because it is what makes a failure diagnosable. A conventional
+`log.error("…", ex)` renders `Caused by: <cause message>`, which may be arbitrary third-party or
+application text. Log the cause where that is acceptable; log `getMessage()` alone where it is not.
 
 ---
 
