@@ -70,7 +70,7 @@ class JwtAuthFactoryTest {
             assertTrue(closed.await(20, TimeUnit.SECONDS), "the test-owned Vertx must close within 20 seconds");
             // The latch alone would count down on a failed close too, so the outcome is asserted
             // separately: this instance deploys no verticle and registers no close hook, and the
-            // gate is released above, so a failed close means something the test did went wrong.
+            // gate is released above, so a failed close is unexpected and worth surfacing.
             assertTrue(close.succeeded(), "the test-owned Vertx must close cleanly");
             ownedVertx = null;
         }
@@ -391,8 +391,9 @@ class JwtAuthFactoryTest {
          * Records the first consultation for the JWKS fixture, whichever lookup method reached it.
          *
          * <p>Both methods are instrumented so that a behavior-preserving change in the factory —
-         * {@code getResource(name).openStream()} instead of {@code getResourceAsStream(name)} — keeps
-         * failing for the right reason rather than reporting that the loader was never consulted.
+         * {@code getResource(name).openStream()} instead of {@code getResourceAsStream(name)} — leaves
+         * the observation intact. Instrumenting only one would turn such a refactor red, with a
+         * message wrongly accusing the read of resolving against the worker thread's classloader.
          *
          * @param name the requested resource name
          */
