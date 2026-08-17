@@ -5,9 +5,11 @@ package dev.vertique.rest.validation;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import dev.vertique.json.schema.JsonSchemaGenerationException;
 import dev.vertique.rest.jaxrs.routing.BodyDescriptor;
 import dev.vertique.rest.jaxrs.routing.JaxRsOperationDescriptor;
 import dev.vertique.rest.jaxrs.routing.ParamDescriptor;
@@ -29,10 +31,12 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Verifies {@link AnnotationSchemaSource}: body schema synthesis via victools (required fields,
- * string constraints, nested objects), parameter schema synthesis from constraint annotations (list
- * params, size/pattern), the swagger-2 {@code ##default} sentinel strip, and that distinct operations
- * sharing an operationId across mounts get distinct schemas (no operationId-keyed cache collision).
+ * Verifies {@link AnnotationSchemaSource}: body schema synthesis via the shared
+ * {@code AnnotationJsonSchemaGenerator} (required fields, string constraints, nested objects,
+ * canonical key ordering, bounded startup failure for an unrepresentable body type), parameter schema
+ * synthesis from constraint annotations (list params, size/pattern), the swagger-2 {@code ##default}
+ * sentinel strip, and that distinct operations sharing an operationId across mounts get distinct
+ * schemas (no operationId-keyed cache collision).
  */
 class AnnotationSchemaSourceTest {
 
@@ -77,6 +81,13 @@ class AnnotationSchemaSourceTest {
 
         public int quantity;
     }
+
+    /**
+     * An unresolved {@link java.lang.reflect.TypeVariable} ({@code E} of {@link List}) used as a body
+     * type. It is outside the shared generator's accepted type grammar, so it exercises the startup
+     * generation-failure path.
+     */
+    private static final Type UNRESOLVED_TYPE_VARIABLE = List.class.getTypeParameters()[0];
 
     /** {@link ParameterizedType} representing {@code List<ItemDto>} for a generic body. */
     private static final Type LIST_OF_ITEM_DTO = new ParameterizedType() {
@@ -365,7 +376,47 @@ class AnnotationSchemaSourceTest {
         assertEquals(2, generateCalls.get(), "each schemasFor call synthesizes the body schema for its own descriptor");
     }
 
+    @Test
+    @DisplayName("A body type outside the accepted grammar fails startup with JsonSchemaGenerationException")
+    void startupGenerationFailureSurfacesAsJsonSchemaGenerationException() {
+        // Body synthesis runs at route registration, so an unrepresentable body type is a startup
+        // failure. It surfaces as the shared generator's single bounded exception type rather than
+        // whatever the underlying generator library happens to throw (PRD FR-JSON-076).
+        AnnotationSchemaSource source = new AnnotationSchemaSource();
+        JaxRsOperationDescriptor descriptor = genericBodyOp("unrepresentable", List.class, UNRESOLVED_TYPE_VARIABLE);
+
+        assertThrows(JsonSchemaGenerationException.class, () -> source.schemasFor(descriptor));
+    }
+
+    @Test
+    @DisplayName("Body schema object keys are recursively ordered canonically")
+    void bodySchemaKeysAreCanonicallyOrdered() {
+        // The shared generator canonicalizes key order; ItemDto's document differs from insertion
+        // order at both levels ($schema/type/properties/required at the root, sku before quantity
+        // among the properties), so an insertion-ordered document fails this assertion.
+        AnnotationSchemaSource source = new AnnotationSchemaSource();
+        JsonObject body = source.schemasFor(bodyOp("canonicalOrder", ItemDto.class))
+                .bodySchema()
+                .orElseThrow();
+
+        assertCanonicallyOrdered(body, "$");
+    }
+
     // --- Assertion helpers ---
+
+    /** Asserts that every object in the tree rooted at {@code value} has its keys in sorted order. */
+    private static void assertCanonicallyOrdered(Object value, String path) {
+        if (value instanceof JsonObject obj) {
+            List<String> actual = List.copyOf(obj.fieldNames());
+            List<String> expected = actual.stream().sorted().toList();
+            assertEquals(expected, actual, "object keys at " + path + " must be canonically ordered");
+            actual.forEach(field -> assertCanonicallyOrdered(obj.getValue(field), path + "." + field));
+        } else if (value instanceof JsonArray arr) {
+            for (int i = 0; i < arr.size(); i++) {
+                assertCanonicallyOrdered(arr.getValue(i), path + "[" + i + "]");
+            }
+        }
+    }
 
     /** Resolves the array {@code items} schema of {@code root}, following a local {@code $ref} if present. */
     private static JsonObject resolveItems(JsonObject root) {

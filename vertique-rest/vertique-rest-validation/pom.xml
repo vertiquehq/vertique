@@ -42,25 +42,13 @@ SPDX-License-Identifier: EUPL-1.2
             <artifactId>vertx-json-schema</artifactId>
         </dependency>
 
-        <!-- victools: annotation -> JSON Schema synthesis -->
+        <!-- Shared transport-neutral annotation -> JSON Schema generator (body-type synthesis) -->
         <dependency>
-            <groupId>com.github.victools</groupId>
-            <artifactId>jsonschema-generator</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>com.github.victools</groupId>
-            <artifactId>jsonschema-module-jackson</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>com.github.victools</groupId>
-            <artifactId>jsonschema-module-jakarta-validation</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>com.github.victools</groupId>
-            <artifactId>jsonschema-module-swagger-2</artifactId>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-json-schema</artifactId>
         </dependency>
 
-        <!-- Annotation sources victools introspects -->
+        <!-- Annotation sources the schema generator introspects -->
         <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>
             <artifactId>jackson-databind</artifactId>

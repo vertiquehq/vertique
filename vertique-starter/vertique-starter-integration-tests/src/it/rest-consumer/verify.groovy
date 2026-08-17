@@ -101,6 +101,7 @@ Set<String> expectedVertique = [
         "vertique-deploy",
         "vertique-input-processing",
         "vertique-json",
+        "vertique-json-schema",
         "vertique-logging",
         "vertique-management",
         "vertique-rest-core",

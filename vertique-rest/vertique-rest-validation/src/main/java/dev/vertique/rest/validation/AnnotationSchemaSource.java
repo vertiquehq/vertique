@@ -3,15 +3,11 @@
 
 package dev.vertique.rest.validation;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
-import com.github.victools.jsonschema.generator.OptionPreset;
-import com.github.victools.jsonschema.generator.SchemaGenerator;
-import com.github.victools.jsonschema.generator.SchemaGeneratorConfigBuilder;
-import com.github.victools.jsonschema.generator.SchemaVersion;
-import com.github.victools.jsonschema.module.jackson.JacksonModule;
-import com.github.victools.jsonschema.module.jakarta.validation.JakartaValidationModule;
-import com.github.victools.jsonschema.module.jakarta.validation.JakartaValidationOption;
-import com.github.victools.jsonschema.module.swagger2.Swagger2Module;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import dev.vertique.json.schema.AnnotationJsonSchemaGenerator;
+import dev.vertique.json.schema.JsonSchemaGenerationException;
 import dev.vertique.rest.jaxrs.routing.BodyDescriptor;
 import dev.vertique.rest.jaxrs.routing.JaxRsOperationDescriptor;
 import dev.vertique.rest.jaxrs.routing.ParamDescriptor;
@@ -35,22 +31,31 @@ import java.util.List;
 
 /**
  * Runtime {@link OperationSchemaSource} that synthesizes JSON schemas from JAX-RS operation
- * annotations using the victools JSON-schema generator (DRAFT 2020-12).
+ * annotations (DRAFT 2020-12).
  *
  * <p>Two synthesis paths feed the produced {@link OperationSchemas}:
  *
  * <ul>
- *   <li><strong>Body</strong> — the body type is handed to victools (Jackson + Jakarta-validation +
- *       Swagger-2 modules), producing a complete object schema (nested objects, required fields,
- *       constraints) which is bridged to vertx-json-schema JSON via {@link JsonObject}.
- *   <li><strong>Parameters</strong> — victools introspects types and fields, not loose method
+ *   <li><strong>Body</strong> — the body type is handed to the shared transport-neutral
+ *       {@link AnnotationJsonSchemaGenerator} (constructed in its
+ *       {@link AnnotationJsonSchemaGenerator#withVictoolsDefaults() victools-defaults} mode), which
+ *       produces a complete object schema (nested objects, required fields, constraints) with
+ *       canonically ordered object keys and the swagger sentinel already removed. The canonical
+ *       document is bridged to vertx-json-schema JSON via {@link JsonObject}.
+ *   <li><strong>Parameters</strong> — the generator introspects types and fields, not loose method
  *       parameters, so each {@link ParamDescriptor} is mapped to a small {@link JsonObject} from its
  *       declared type, optional collection component type, and its constraint annotations
- *       ({@code @Size}, {@code @Pattern}, {@code @Min}/{@code @Max}, Swagger {@code @Schema}).
+ *       ({@code @Size}, {@code @Pattern}, {@code @Min}/{@code @Max}, Swagger {@code @Schema}). This
+ *       path is owned by this module and does not use the shared generator.
  * </ul>
  *
  * <p>The swagger-2 module emits a {@code "default": "##default"} sentinel for unset annotation
  * defaults; that sentinel is stripped recursively from every produced schema.
+ *
+ * <p>Schemas are synthesized at route registration, so a body type the shared generator cannot
+ * represent fails startup with {@link JsonSchemaGenerationException} — a bounded, value-free
+ * diagnostic that preserves the original cause. Request-validation outcomes and error categories are
+ * unaffected.
  *
  * <p><strong>No per-operation schema cache.</strong> This is a {@link Singleton} shared across every
  * route mount, but duplicate-operationId is enforced only <em>within</em> a single registration (by
@@ -58,8 +63,8 @@ import java.util.List;
  * per operation at registration, so an operationId-keyed cache would never dedup within a mount; across
  * mounts it would hand a second operation the first operation's schema — validating against the wrong
  * contract. Re-introducing a cache requires a content-aware or mount-aware key, not the operationId
- * alone. The underlying {@link SchemaGenerator} is built once and reused (it is thread-safe with a
- * fixed configuration).
+ * alone. The underlying generator is built once and reused (calls on one instance are serialized by
+ * the generator itself).
  */
 @Singleton
 public class AnnotationSchemaSource implements OperationSchemaSource {
@@ -67,23 +72,17 @@ public class AnnotationSchemaSource implements OperationSchemaSource {
     /** Swagger-2 sentinel emitted for an unset {@code @Schema} default value. */
     private static final String DEFAULT_SENTINEL = "##default";
 
-    private final SchemaGenerator generator;
+    /** Reads the generator's canonical document back into a {@link JsonNode} for the protected seam. */
+    private static final ObjectMapper CANONICAL_READER = new ObjectMapper();
+
+    private final AnnotationJsonSchemaGenerator generator = AnnotationJsonSchemaGenerator.withVictoolsDefaults();
 
     /**
-     * Creates a schema source backed by the spike-proven victools configuration (DRAFT 2020-12,
-     * Jackson + Jakarta-validation + Swagger-2 modules).
+     * Creates a schema source backed by the shared transport-neutral generator in its
+     * victools-defaults mode (DRAFT 2020-12, Jackson + Jakarta-validation + Swagger-2 modules).
      */
     @Inject
-    public AnnotationSchemaSource() {
-        SchemaGeneratorConfigBuilder builder = new SchemaGeneratorConfigBuilder(
-                        SchemaVersion.DRAFT_2020_12, OptionPreset.PLAIN_JSON)
-                .with(new JacksonModule())
-                .with(new JakartaValidationModule(
-                        JakartaValidationOption.NOT_NULLABLE_FIELD_IS_REQUIRED,
-                        JakartaValidationOption.INCLUDE_PATTERN_EXPRESSIONS))
-                .with(new Swagger2Module());
-        this.generator = new SchemaGenerator(builder.build());
-    }
+    public AnnotationSchemaSource() {}
 
     @Override
     public OperationSchemas schemasFor(JaxRsOperationDescriptor op) {
@@ -111,33 +110,44 @@ public class AnnotationSchemaSource implements OperationSchemaSource {
         return schemas.build();
     }
 
-    // --- Body path (victools) ---
+    // --- Body path (shared generator) ---
 
     /**
-     * Generates the body schema via victools and strips the swagger-2 sentinel. The full generic type
-     * is passed when present (e.g. {@code List<MyDto>}) so victools resolves the element type and
-     * produces an array-of-{@code MyDto} schema rather than a raw-{@code List} schema; otherwise the
-     * raw class is used.
+     * Generates the body schema through the shared generator and strips the swagger-2 sentinel. The
+     * full generic type is passed when present (e.g. {@code List<MyDto>}) so the element type is
+     * resolved and an array-of-{@code MyDto} schema is produced rather than a raw-{@code List}
+     * schema; otherwise the raw class is used.
      *
      * @param body the body descriptor whose type (generic when available) drives generation
      * @return the body schema as vertx-json-schema JSON
+     * @throws JsonSchemaGenerationException if the body type cannot be represented or generation fails
      */
     private JsonObject synthesizeBody(BodyDescriptor body) {
         JsonNode node = generateBodySchema(body.genericType() != null ? body.genericType() : body.type());
         JsonObject schema = new JsonObject(node.toString());
+        // Idempotent for the shared generator (which already removes the sentinel); retained because a
+        // subclass may override the seam and supply a node the generator never canonicalized.
         stripDefaultSentinel(schema);
         return schema;
     }
 
     /**
-     * Runs victools schema generation for the given body type. Package-protected and overridable so
-     * tests can count generation invocations.
+     * Runs schema generation for the given body type. Protected and overridable so tests and
+     * subclasses can count or substitute generation invocations.
      *
      * @param type the body type to generate a schema for
-     * @return the victools-generated schema node
+     * @return the generated schema node, parsed from the generator's canonical document
+     * @throws JsonSchemaGenerationException if the body type cannot be represented or generation fails
      */
     protected JsonNode generateBodySchema(Type type) {
-        return generator.generateSchema(type);
+        String canonical = generator.generateCanonical(type);
+        try {
+            return CANONICAL_READER.readTree(canonical);
+        } catch (JsonProcessingException unreadable) {
+            // The generator guarantees a valid canonical JSON document, so this is unreachable short
+            // of a programming error; the message stays value-free.
+            throw new IllegalStateException("the generated canonical JSON Schema document is unreadable", unreadable);
+        }
     }
 
     // --- Parameter path (constraint mapping) ---
