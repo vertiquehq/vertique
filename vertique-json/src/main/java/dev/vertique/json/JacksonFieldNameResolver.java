@@ -161,7 +161,15 @@ public final class JacksonFieldNameResolver implements InputFieldNameResolver {
      * introspected. The map rule applies to the declared shape itself as well as to a property: a
      * {@code Map<String, Dto>} body warms neither {@code String} nor {@code Dto}. Both walks decide
      * "is this a map?" with the engine's own {@code Map.class.isAssignableFrom} test (see
-     * {@link #isMapKeyed}), so the walk follows exactly the links the engine descends, no more.
+     * {@link #isMapKeyed}).
+     *
+     * <p>The walk is a deliberate <em>superset</em> of the links the engine descends, never a
+     * subset. It is exact for maps, collections, arrays, and {@code Optional}, but a non-map
+     * parameterized type's arguments are warmed even though the engine classifies such a field to
+     * its erased bound and never reaches them — so a {@code Wrapper<Dto>} property warms
+     * {@code Dto}. That direction is the safe one: it can fail startup on a collision the request
+     * path would not consult, but it can never leave a type the engine does descend unwarmed and
+     * introspecting on the event loop.
      *
      * <p>Why transitive rather than only the declared body or message type: the engine resolves the
      * projection for the <em>owner of each nested fragment</em>, so a nested DTO's projection is
@@ -291,6 +299,11 @@ public final class JacksonFieldNameResolver implements InputFieldNameResolver {
             return;
         }
         Class<?> rawClass = propertyType.getRawClass();
+        // Map is tested first, so a class implementing both Map and Collection is treated as
+        // map-keyed. The engine's buildFieldMeta tests element-wise first and would descend such a
+        // type's element instead. No such type is known to exist, and Jackson would bind one as a
+        // MapType regardless; the divergence is recorded here rather than left for a reader to
+        // rediscover, because the two orders agree for every type that is one or the other.
         if (isMapKeyed(rawClass)) {
             return;
         }
