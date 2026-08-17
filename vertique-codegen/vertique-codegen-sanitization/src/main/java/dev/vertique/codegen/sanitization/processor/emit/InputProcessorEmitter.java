@@ -43,15 +43,21 @@ import javax.lang.model.type.TypeMirror;
  *       {@code GeneratedInputProcessorDispatcher}.</li>
  *   <li>Declares {@code static final} chain constants for each object-level and field-level
  *       chain, using {@code SCREAMING_SNAKE_CASE} names.</li>
- *   <li>Implements {@code process(...)} with a {@code switch} over JSON field names, calling
+ *   <li>Implements {@code process(...)} with a {@code switch} whose arms are the DTO's
+ *       <em>Java</em> property names and whose selector is the traversal's projection of the wire
+ *       key ({@code rootCtx.logicalFieldName(Dto.class, k)}), calling
  *       {@code GeneratedSupport.applyString}, {@code applyStringCollection}, or
- *       {@code dispatchObjectCollection} depending on field kind.</li>
+ *       {@code dispatchObjectCollection} depending on field kind. The emitted map keeps the wire
+ *       key, so the projection selects policies without renaming what the codec binds.</li>
  * </ul>
  *
- * <p>The emitted code shape exactly matches the hand-written companions
- * {@code GeneratedVsReflectiveEquivalenceTest_Generated_InputProcessor} and
- * {@code GeneratedVsReflectiveEquivalenceTest_GeneratedSkip_InputProcessor} in
- * {@code vertique-input-processing}'s test tree ({@code dev.vertique.input.processing}).
+ * <p>The emitted code shape matches the hand-written companions in
+ * {@code vertique-input-processing}'s test tree ({@code dev.vertique.input.processing}). The
+ * reference for the projected-switch shape above is
+ * {@code GeneratedVsReflectiveEquivalenceTest_ProjectionGenerated_InputProcessor}; the older
+ * companions such as {@code GeneratedVsReflectiveEquivalenceTest_Generated_InputProcessor} still
+ * switch on the raw key, which is equivalent only because they are exercised under
+ * {@code InputFieldNameResolver.IDENTITY}.
  */
 public final class InputProcessorEmitter {
 
@@ -305,14 +311,21 @@ public final class InputProcessorEmitter {
         // helper). This must happen before the switch / fallback path so it's visible to both.
         body.addStatement("String childPath = parentPath.isEmpty() ? k : parentPath + \".\" + k");
 
-        // Switch on key. Unknown keys flow through applyDefault with empty field-level chain/skip
-        // so route + object-level + ancestor chains still apply to them — matching the reflective
-        // walker. Annotated OTHER-kind fields get their own arm with their declared field-level
-        // constants so a class-level @Canonicalize PLUS a field-level @Canonicalize on an
-        // Object-typed field both compose correctly.
+        // Switch on the PROJECTED key. The intermediate is keyed by wire names while the arms below
+        // are keyed by Java property names, so a non-identity projection (e.g. a @JsonProperty
+        // rename) would match no arm and silently drop the field's declared chain if the raw key
+        // were switched on. The projection selects the arm only — `out` keeps the wire key `k`,
+        // which is what the codec binds. This mirrors the reflective walker, which projects before
+        // its per-field metadata lookup and likewise re-emits the wire key.
+        //
+        // Unknown keys flow through applyDefault with empty field-level chain/skip so route +
+        // object-level + ancestor chains still apply to them — matching the reflective walker.
+        // Annotated OTHER-kind fields get their own arm with their declared field-level constants
+        // so a class-level @Canonicalize PLUS a field-level @Canonicalize on an Object-typed field
+        // both compose correctly.
         boolean anyEmittable = hasEmittableFields(model) || hasAnyAnnotatedOther(model);
         if (!model.fields().isEmpty() && anyEmittable) {
-            body.beginControlFlow("switch (k)");
+            body.beginControlFlow("switch (rootCtx.logicalFieldName($T.class, k))", originClass);
             for (FieldModel field : model.fields().values()) {
                 if (field.kind() == FieldKind.OTHER) {
                     if (hasFieldLevelAnnotations(field)) {
@@ -438,13 +451,14 @@ public final class InputProcessorEmitter {
                         "case $S -> out.put(k, $T.applyDefault(v, rootCtx,"
                                 + " OBJ_CANON, OBJ_SANIT, OBJ_SKIP_CANON, OBJ_SKIP_SANIT,"
                                 + " $L, $L, $L, $L,"
-                                + " resolver, location, childPath, k, $T.class, $T.class, dispatcher))",
+                                + " resolver, location, childPath, $S, $T.class, $T.class, dispatcher))",
                         fieldName,
                         GENERATED_SUPPORT,
                         prefix + "_CANON",
                         prefix + "_SANIT",
                         field.skipCanon(),
                         field.skipSanit(),
+                        fieldName,
                         originClass,
                         nestedMapOwnerName)
                 .build();
@@ -487,16 +501,20 @@ public final class InputProcessorEmitter {
             case STRING -> {
                 // applyString(v, rootCtx, OBJ_CANON, OBJ_SANIT, OBJ_SKIP_CANON, OBJ_SKIP_SANIT,
                 //             FIELD_CANON, FIELD_SANIT, skipCanon, skipSanit,
-                //             resolver, location, childPath, k, OriginClass.class)
+                //             resolver, location, childPath, "fieldName", OriginClass.class)
+                // The InputValueContext's logicalName is the JAVA property name because this arm
+                // matched a declared property; childPath stays the WIRE path (§3.7), so a
+                // diagnostic still points at the key the caller actually sent.
                 arm.addStatement(
                         "case $S -> out.put(k, $L(v, rootCtx, OBJ_CANON, OBJ_SANIT, OBJ_SKIP_CANON, OBJ_SKIP_SANIT, "
-                                + "$L, $L, $L, $L, resolver, location, childPath, k, $T.class))",
+                                + "$L, $L, $L, $L, resolver, location, childPath, $S, $T.class))",
                         fieldName,
                         APPLY_STRING,
                         prefix + "_CANON",
                         prefix + "_SANIT",
                         field.skipCanon(),
                         field.skipSanit(),
+                        fieldName,
                         originClass);
             }
             case COLLECTION_OF_STRINGS -> {

@@ -24,7 +24,7 @@ For each participating DTO type, the processor emits a `{DTO}_InputProcessor` cl
 
 - `public final`, implements `GeneratedInputProcessor<T>`, with a public no-arg constructor for `Class.forName`-based instantiation by `GeneratedInputProcessorDispatcher`.
 - `static final` chain constants — `List<Class<? extends Canonicalizer>>`, `List<Class<? extends Sanitizer>>`, and `boolean` skip flags — for the type-level chain and for each field, resolved once at class-load time.
-- `process(...)` dispatches on a `switch` over JSON field names:
+- `process(...)` dispatches on a `switch` whose `case` labels are the DTO's **Java** property names and whose selector is the traversal's projection of the wire key — `switch (rootCtx.logicalFieldName(Dto.class, k))`. The intermediate is keyed by wire names, so a renamed property (e.g. `@JsonProperty("user_name") String userName`) would match no arm if the raw key were switched on and its declared chain would be silently skipped. The projection selects the arm only: the emitted map keeps the wire key `k`, which is what the codec binds. The `InputValueContext` follows the same split — `path` is the wire path, `logicalName` is the Java property name for a matched arm and the wire name for an unmatched key.
   - String fields call `GeneratedSupport.applyString(...)`.
   - String collection fields call `GeneratedSupport.applyStringCollection(...)`.
   - Nested DTO fields call `rootCtx.descend(...)` then `dispatcher.dispatchNested(...)`.
@@ -100,7 +100,7 @@ public interface GeneratedInputProcessor<T> {
 }
 ```
 
-`parent == null` signals that this is the top-level entry; the generated class seeds from `InputTraversalContext.fromPolicies(policies)`. A non-null `parent` means the caller has already accumulated traversal state (nested dispatch). `parentPath` is the dot-separated path prefix of the field this DTO is nested under — an empty string at the top level — and is composed into the `path` of every `InputValueContext` the processor builds.
+`parent == null` signals that this is the top-level entry; the generated class then seeds from `InputTraversalContext.fromPolicies(policies, InputFieldNameResolver.IDENTITY)`. That fallback exists for direct invocation only — the engine's own entry points always hand over a real `parent`, because a context seeded here can only assume identity naming and would drop a wire-name projection. A non-null `parent` means the caller has already accumulated traversal state (nested dispatch) and carries the traversal's `InputFieldNameResolver`. `parentPath` is the dot-separated path prefix of the field this DTO is nested under — an empty string at the top level — and is composed into the `path` of every `InputValueContext` the processor builds.
 
 ### `ChainResolver`
 
@@ -124,7 +124,11 @@ Public final class (not a record) that carries traversal state across generated 
 
 ```java
 public final class InputTraversalContext {
-    public static InputTraversalContext fromPolicies(EffectiveInputPolicies policies) { ... }
+    public static InputTraversalContext fromPolicies(EffectiveInputPolicies policies,
+                                                     InputFieldNameResolver nameResolver) { ... }
+
+    // Wire → Java property-name projection, called by the generated switch selector
+    public String logicalFieldName(Class<?> ownerType, String wireName) { ... }
 
     // Reflective-walker overload (package-private)
     InputTraversalContext descend(InputPolicyMetadata parentMeta,
