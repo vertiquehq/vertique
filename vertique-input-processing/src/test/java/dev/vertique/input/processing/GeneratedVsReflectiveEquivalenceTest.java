@@ -613,6 +613,152 @@ class GeneratedVsReflectiveEquivalenceTest {
         }
     }
 
+    @Nested
+    @DisplayName("enum and primitive-Optional collection elements")
+    class EnumAndPrimitiveOptionalElements {
+
+        @Test
+        @DisplayName("a type-level chain reaches enum, array and primitive-Optional elements on both paths")
+        void shouldAgreeForEnumAndPrimitiveOptionalElementsUnderATypeLevelChain() {
+            Object reflectiveOut = processor.processInput(
+                    elementInput(), EnumElementReflective.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
+            Object generatedOut = processor.processInput(
+                    elementInput(), EnumElementGenerated.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
+
+            assertEquals(
+                    reflectiveOut,
+                    generatedOut,
+                    "an enum element type, an enum array and the primitive Optional specializations are all "
+                            + "scalar leaves, so the declared chain must reach their string elements on both "
+                            + "execution paths");
+            // Agreement alone would also hold if both paths skipped every element, so pin the
+            // observable effect on each path independently.
+            assertEquals(typeChainOnlyOutput(), reflectiveOut, "reflective path");
+            assertEquals(typeChainOnlyOutput(), generatedOut, "generated path");
+        }
+
+        @Test
+        @DisplayName("invocation-level policies reach enum, array and primitive-Optional elements on both paths")
+        void shouldAgreeForEnumAndPrimitiveOptionalElementsUnderInvocationLevelPolicies() {
+            // The invocation-level canonicalizer uppercases and the type-level one trims, so an
+            // element that is both uppercased AND trimmed proves BOTH layers reached it: trimming
+            // alone would leave 'active', uppercasing alone would leave '  ACTIVE  '.
+            EffectiveInputPolicies routePolicies = new EffectiveInputPolicies(List.of(TestUpper.class), List.of());
+
+            Object reflectiveOut = processor.processInput(
+                    elementInput(), EnumElementReflective.class, routePolicies, InputLocation.BODY);
+            Object generatedOut = processor.processInput(
+                    elementInput(), EnumElementGenerated.class, routePolicies, InputLocation.BODY);
+
+            assertEquals(
+                    reflectiveOut,
+                    generatedOut,
+                    "a non-empty invocation-level chain must reach enum, array and primitive-Optional "
+                            + "elements on both execution paths");
+            assertEquals(invocationAndTypeChainOutput(), reflectiveOut, "reflective path");
+            assertEquals(invocationAndTypeChainOutput(), generatedOut, "generated path");
+        }
+
+        /**
+         * Builds an intermediate whose keys all hold the same JSON-array shape: enum elements, enum
+         * array elements, an explicitly-chained enum collection, the three primitive {@code Optional}
+         * specializations, and the two green controls ({@code List<UUID>}, {@code List<String>}).
+         */
+        private Map<String, Object> elementInput() {
+            Map<String, Object> input = new LinkedHashMap<>();
+            input.put("tags", new ArrayList<Object>(List.of("  active  ", "  inactive  ")));
+            input.put("statuses", new ArrayList<Object>(List.of("  active  ")));
+            input.put("chained", new ArrayList<Object>(List.of("  mixed  ")));
+            input.put("counts", new ArrayList<Object>(List.of("  1  ")));
+            input.put("totals", new ArrayList<Object>(List.of("  2  ")));
+            input.put("ratios", new ArrayList<Object>(List.of("  3.5  ")));
+            input.put("ids", new ArrayList<Object>(List.of("  id-1  ")));
+            input.put("labels", new ArrayList<Object>(List.of("  label  ")));
+            return input;
+        }
+
+        /** Expected output when only the type-level {@code @Canonicalize(TestTrim)} applies. */
+        private Map<String, Object> typeChainOnlyOutput() {
+            Map<String, Object> expected = new LinkedHashMap<>();
+            expected.put("tags", List.of("active", "inactive"));
+            expected.put("statuses", List.of("active"));
+            // chained composes the type chain (trim) with its own field chain (upper).
+            expected.put("chained", List.of("MIXED"));
+            expected.put("counts", List.of("1"));
+            expected.put("totals", List.of("2"));
+            expected.put("ratios", List.of("3.5"));
+            expected.put("ids", List.of("id-1"));
+            expected.put("labels", List.of("label"));
+            return expected;
+        }
+
+        /** Expected output when an invocation-level {@code TestUpper} precedes the type-level trim. */
+        private Map<String, Object> invocationAndTypeChainOutput() {
+            Map<String, Object> expected = new LinkedHashMap<>();
+            expected.put("tags", List.of("ACTIVE", "INACTIVE"));
+            expected.put("statuses", List.of("ACTIVE"));
+            expected.put("chained", List.of("MIXED"));
+            expected.put("counts", List.of("1"));
+            expected.put("totals", List.of("2"));
+            expected.put("ratios", List.of("3.5"));
+            expected.put("ids", List.of("ID-1"));
+            expected.put("labels", List.of("LABEL"));
+            return expected;
+        }
+    }
+
+    /** Enum element type for the {@link EnumElementReflective} / {@link EnumElementGenerated} pair. */
+    public enum Status {
+        /** Active. */
+        ACTIVE,
+        /** Inactive. */
+        INACTIVE
+    }
+
+    /**
+     * Reflective baseline whose collection and array fields all carry a <em>scalar</em> element type
+     * — no companion processor, so traversal walks reflectively.
+     *
+     * <p>{@code List<UUID>} and {@code List<String>} are green controls: their element types were
+     * already classified as scalar leaves by both paths.
+     */
+    @Canonicalize(TestTrim.class)
+    static final class EnumElementReflective {
+        public List<Status> tags;
+        public Status[] statuses;
+
+        @Canonicalize(TestUpper.class)
+        public List<Status> chained;
+
+        public List<java.util.OptionalInt> counts;
+        public List<java.util.OptionalLong> totals;
+        public List<java.util.OptionalDouble> ratios;
+        public List<java.util.UUID> ids;
+        public List<String> labels;
+    }
+
+    /**
+     * Generated counterpart paired with the hand-written
+     * {@code GeneratedVsReflectiveEquivalenceTest_EnumElementGenerated_InputProcessor} fixture. The
+     * APT-time collector treats every element type here as a scalar leaf, so only {@code chained}
+     * (an annotated {@code OTHER}-kind field) and {@code labels} (a collection of strings) get their
+     * own switch arm; the rest flow through the default {@code applyDefault} arm.
+     */
+    @Canonicalize(TestTrim.class)
+    static final class EnumElementGenerated {
+        public List<Status> tags;
+        public Status[] statuses;
+
+        @Canonicalize(TestUpper.class)
+        public List<Status> chained;
+
+        public List<java.util.OptionalInt> counts;
+        public List<java.util.OptionalLong> totals;
+        public List<java.util.OptionalDouble> ratios;
+        public List<java.util.UUID> ids;
+        public List<String> labels;
+    }
+
     /**
      * Reflective baseline declaring the same element type under three variances — no companion
      * processor, so traversal walks reflectively.

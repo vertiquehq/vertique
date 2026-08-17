@@ -212,6 +212,15 @@ class InputPolicyMetadataResolver {
      * descended into element-wise. An array whose component type is itself an array or carries no
      * schema takes the no-element-schema branch, where inherited chains still reach string leaves.
      *
+     * <p><strong>Only a descendable element type is recorded.</strong> An element type that is a
+     * scalar leaf — a primitive or boxed scalar (see {@link #isPrimitiveOrBoxed}) or an enum — takes
+     * the no-element-schema branch instead, exactly as {@link #isDescendableObject} excludes those
+     * types from a field-type descent. Recording one would send the list into element-wise dispatch,
+     * where a JSON-string value (an enum name, or a number Jackson coerces from a string) matches no
+     * nested-object shape and is returned untouched, silently dropping every declared chain. The
+     * APT-time {@code AnnotationCollector} applies the same rule through
+     * {@code isScalarOrEnum}, so the generated and reflective paths agree.
+     *
      * @param genericType the full generic type of the field
      * @param rawType     the raw (erased) class of the field
      * @param canon       {@code @Canonicalize} annotation, or {@code null}
@@ -271,8 +280,11 @@ class InputPolicyMetadataResolver {
                         canonChain, sanitChain, skipCanon, skipSanit, rawType, false, true, null);
             }
             // Collection or array of objects — record the element type; its metadata is resolved at
-            // descent.
-            if (!isPrimitiveOrBoxed(elementType)) {
+            // descent. An enum element is excluded for the same reason isDescendableObject excludes
+            // an enum field type: it carries no property set to descend into, so recording it would
+            // route the list into element-wise dispatch, where a JSON-string enum value is neither a
+            // map nor a list and is returned verbatim with no chain applied.
+            if (!isPrimitiveOrBoxed(elementType) && !elementType.isEnum()) {
                 return new FieldPolicyMetadata(
                         canonChain, sanitChain, skipCanon, skipSanit, rawType, false, false, elementType);
             }
@@ -365,6 +377,13 @@ class InputPolicyMetadataResolver {
      * Returns {@code true} for primitive types and their boxed counterparts, as well as
      * other common immutable scalar types that cannot carry annotations and need no recursion.
      *
+     * <p>The set mirrors {@code AnnotationCollector.SCALAR_FQNS} in
+     * {@code vertique-codegen-sanitization} so the generated and reflective paths classify the same
+     * element and field types as scalar leaves. The two entries that set is allowed to hold without
+     * a counterpart here are {@code java.lang.String} and {@code java.lang.Object}, each of which
+     * this class routes through its own dedicated branch; enums are handled by an explicit
+     * {@link Class#isEnum()} test at each site for the same reason.
+     *
      * @param type the type to test
      * @return {@code true} if the type is a primitive or boxed primitive
      */
@@ -386,6 +405,11 @@ class InputPolicyMetadataResolver {
                 || type == java.time.OffsetDateTime.class
                 || type == java.time.ZonedDateTime.class
                 || type == java.time.Instant.class
-                || type == java.util.UUID.class;
+                || type == java.util.UUID.class
+                // Primitive Optional specializations carry no string payload and have no type
+                // argument to unwrap, so they are scalar leaves rather than descendable objects.
+                || type == java.util.OptionalInt.class
+                || type == java.util.OptionalLong.class
+                || type == java.util.OptionalDouble.class;
     }
 }
