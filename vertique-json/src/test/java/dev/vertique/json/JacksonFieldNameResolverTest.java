@@ -13,12 +13,16 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.annotation.JsonAlias;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.databind.JavaType;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.PropertyName;
 import com.fasterxml.jackson.databind.introspect.Annotated;
 import com.fasterxml.jackson.databind.introspect.AnnotatedField;
 import com.fasterxml.jackson.databind.introspect.JacksonAnnotationIntrospector;
 import com.fasterxml.jackson.databind.json.JsonMapper;
+import com.fasterxml.jackson.databind.type.TypeBindings;
+import com.fasterxml.jackson.databind.type.TypeFactory;
+import com.fasterxml.jackson.databind.type.TypeModifier;
 import dev.vertique.core.exception.ConfigurationException;
 import io.vertx.core.json.jackson.DatabindCodec;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -140,6 +144,43 @@ class JacksonFieldNameResolverTest {
         public java.util.List<DuplicateAliasDto> listBody;
     }
 
+    /**
+     * DTO a registered Jackson module classifies as <em>map-like</em> without it implementing
+     * {@link java.util.Map} — the shape {@code MapLikeType} exists for, and what Scala, Guava and
+     * Kotlin module registrations produce. The engine's descendability test is
+     * {@code !Map.class.isAssignableFrom(type)}, so it descends this type exactly like any other
+     * object and resolves a projection for it on the request path. Its two properties claim one
+     * alias, so composing that projection fails — and must fail at registration.
+     */
+    public static class CustomMapLikeDto {
+        @JsonAlias({"shared"})
+        public String alpha;
+
+        @JsonAlias({"shared"})
+        public String beta;
+    }
+
+    /** DTO reaching {@link CustomMapLikeDto} through a plain declared property. */
+    public static class CustomMapLikeHolderDto {
+        public String label;
+        public CustomMapLikeDto custom;
+    }
+
+    /**
+     * Map-like DTO whose own properties compose cleanly and whose module-declared <em>value</em>
+     * type is {@link DuplicateAliasDto}. The engine descends this type as a plain object and never
+     * consults its value type as a projection owner, so warming that value type would turn a
+     * collision the request path can never reach into a startup failure.
+     */
+    public static class ValueTypedMapLikeDto {
+        public String label;
+    }
+
+    /** DTO reaching {@link ValueTypedMapLikeDto} through a plain declared property. */
+    public static class ValueTypedMapLikeHolderDto {
+        public ValueTypedMapLikeDto custom;
+    }
+
     /** Cyclic DTO graph — the walk must terminate rather than recurse forever. */
     public static class CyclicNodeDto {
         public String name;
@@ -196,6 +237,40 @@ class JacksonFieldNameResolverTest {
                         return super.findNameForDeserialization(annotated);
                     }
                 })
+                .build();
+    }
+
+    /**
+     * Mapper whose registered {@link com.fasterxml.jackson.databind.type.TypeModifier} classifies two
+     * fixtures as map-like without either implementing {@link java.util.Map} — exactly what the Scala,
+     * Guava and Kotlin modules do for their own container abstractions. This is the only way to obtain
+     * a {@code MapLikeType} that is not a {@code MapType}, and it is the configuration under which the
+     * warm-up walks and the engine must still agree on what is descended.
+     *
+     * @return a mapper contributing two module-declared map-like types
+     */
+    private static ObjectMapper mapLikeContributingMapper() {
+        return JsonMapper.builder()
+                .typeFactory(TypeFactory.defaultInstance().withModifier(new TypeModifier() {
+                    @Override
+                    public JavaType modifyType(
+                            JavaType type,
+                            java.lang.reflect.Type jdkType,
+                            TypeBindings bindings,
+                            TypeFactory typeFactory) {
+                        if (type.isMapLikeType()) {
+                            return type;
+                        }
+                        if (type.getRawClass() == CustomMapLikeDto.class) {
+                            return typeFactory.constructMapLikeType(CustomMapLikeDto.class, String.class, String.class);
+                        }
+                        if (type.getRawClass() == ValueTypedMapLikeDto.class) {
+                            return typeFactory.constructMapLikeType(
+                                    ValueTypedMapLikeDto.class, String.class, DuplicateAliasDto.class);
+                        }
+                        return type;
+                    }
+                }))
                 .build();
     }
 
@@ -433,6 +508,68 @@ class JacksonFieldNameResolverTest {
         assertTrue(
                 listed.getMessage().contains(DuplicateAliasDto.class.getName()),
                 "the failure must name the element type: " + listed.getMessage());
+    }
+
+    @Test
+    @DisplayName("precomputeGraph warms a module-contributed map-like type as a declared body and as a property")
+    void shouldWarmAModuleContributedMapLikeTypeTheEngineDescends() {
+        ObjectMapper mapper = mapLikeContributingMapper();
+
+        // Fixture sanity — and the whole reason this shape is a hazard: Jackson calls it map-like,
+        // but it does not implement java.util.Map, which is the engine's own descendability test
+        // (InputPolicyMetadataResolver#isDescendableObject). The engine therefore descends it and
+        // resolves a projection for it on the request path, so the warm-up walks must warm it.
+        JavaType custom = mapper.getTypeFactory().constructType(CustomMapLikeDto.class);
+        assertTrue(custom.isMapLikeType(), "the fixture must be the map-like shape a registered module contributes");
+        assertFalse(
+                java.util.Map.class.isAssignableFrom(custom.getRawClass()),
+                "the fixture must not implement java.util.Map — that is what makes the engine descend it");
+
+        // As a declared body type.
+        ConfigurationException declared = assertThrows(
+                ConfigurationException.class,
+                () -> JacksonFieldNameResolver.forMapper(mapper).precomputeGraph(CustomMapLikeDto.class),
+                "a declared map-like body the engine descends must be warmed at registration");
+        assertTrue(
+                declared.getMessage().contains(CustomMapLikeDto.class.getName()),
+                "the failure must name the map-like type: " + declared.getMessage());
+
+        // As a property of a declared body type — the link the engine actually reaches it through.
+        ConfigurationException nested = assertThrows(
+                ConfigurationException.class,
+                () -> JacksonFieldNameResolver.forMapper(mapper).precomputeGraph(CustomMapLikeHolderDto.class),
+                "a map-like property the engine descends must be warmed at registration, not on first request");
+        assertTrue(
+                nested.getMessage().contains(CustomMapLikeDto.class.getName()),
+                "the failure must name the map-like property type: " + nested.getMessage());
+    }
+
+    @Test
+    @DisplayName("precomputeGraph warms a map-like type as a plain object, never over its module-declared value type")
+    void shouldWarmAMapLikeTypeAsAPlainObjectRatherThanOverItsValueType() {
+        ObjectMapper mapper = mapLikeContributingMapper();
+        JacksonFieldNameResolver resolver = JacksonFieldNameResolver.forMapper(mapper);
+
+        // Fixture sanity — the module declares a value type Jackson would descend as container content.
+        JavaType valueTyped = mapper.getTypeFactory().constructType(ValueTypedMapLikeDto.class);
+        assertEquals(
+                DuplicateAliasDto.class,
+                valueTyped.getContentType().getRawClass(),
+                "the fixture must carry a module-declared value type");
+
+        // The engine descends a map-like type as a plain object: it resolves that type's own
+        // projection and never consults the value type as a projection owner. Warming the value type
+        // would turn a collision the request path can never reach into a startup failure.
+        assertDoesNotThrow(
+                () -> resolver.precomputeGraph(ValueTypedMapLikeHolderDto.class),
+                "a map-like type's module-declared value type is not a projection owner and must not be warmed");
+        assertDoesNotThrow(
+                () -> resolver.precomputeGraph(ValueTypedMapLikeDto.class),
+                "the same rule applies when the map-like type is the declared body shape");
+        assertEquals(
+                "label",
+                resolver.logicalName(ValueTypedMapLikeDto.class, "label"),
+                "the map-like type's own projection still serves");
     }
 
     @Test

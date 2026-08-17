@@ -16,6 +16,7 @@ import jakarta.annotation.Nullable;
 import java.lang.reflect.GenericArrayType;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -158,8 +159,9 @@ public final class JacksonFieldNameResolver implements InputFieldNameResolver {
      * carrying no statically known property set — a wildcard, a type variable, a primitive, an enum,
      * a platform type such as {@link String}, or a map's key and value types — is skipped rather than
      * introspected. The map rule applies to the declared shape itself as well as to a property: a
-     * {@code Map<String, Dto>} body warms neither {@code String} nor {@code Dto}. The walk follows
-     * exactly the links the engine descends, no more.
+     * {@code Map<String, Dto>} body warms neither {@code String} nor {@code Dto}. Both walks decide
+     * "is this a map?" with the engine's own {@code Map.class.isAssignableFrom} test (see
+     * {@link #isMapKeyed}), so the walk follows exactly the links the engine descends, no more.
      *
      * <p>Why transitive rather than only the declared body or message type: the engine resolves the
      * projection for the <em>owner of each nested fragment</em>, so a nested DTO's projection is
@@ -185,7 +187,8 @@ public final class JacksonFieldNameResolver implements InputFieldNameResolver {
      * {@link #warmPropertyType}: a {@code Map<String, Dto>} body is schema-free exactly like a
      * map-typed property, so neither its key nor its value type is ever consulted as a projection
      * owner and warming one would let an ambiguity the request path can never reach fail
-     * registration.
+     * registration. Both walks read "map shape" from {@link #isMapKeyed}, so a module-contributed
+     * map-like type is walked here as the ordinary parameterized shape the engine descends.
      *
      * @param declaredType the shape to walk, or {@code null}
      * @param visited      the classes already warmed on this walk
@@ -196,7 +199,7 @@ public final class JacksonFieldNameResolver implements InputFieldNameResolver {
         } else if (declaredType instanceof ParameterizedType parameterized) {
             Type rawType = parameterized.getRawType();
             warmDeclaredType(rawType, visited);
-            if (isMapLike(rawType)) {
+            if (rawType instanceof Class<?> rawClass && isMapKeyed(rawClass)) {
                 return;
             }
             for (Type argument : parameterized.getActualTypeArguments()) {
@@ -209,17 +212,39 @@ public final class JacksonFieldNameResolver implements InputFieldNameResolver {
     }
 
     /**
-     * Returns whether a raw type is the map-like shape {@link #warmPropertyType} refuses to descend.
-     * The verdict comes from the mapper's own {@link com.fasterxml.jackson.databind.type.TypeFactory}
-     * rather than from an {@code instanceof Map} test, so both walks agree even for a map-like type a
-     * registered module contributes.
+     * Returns whether a raw class is the arbitrarily-keyed shape whose key and value types neither
+     * warm-up walk descends.
      *
-     * @param rawType the parameterized shape's raw type
-     * @return {@code true} when the shape is map-like
+     * <p>This is the engine's own test, character for character: {@code InputPolicyMetadataResolver}
+     * excludes a field type with {@code !Map.class.isAssignableFrom(type)} in
+     * {@code isDescendableObject}, and {@code TypeClassifier} excludes an element type the same way.
+     * Keying both walks on it is what makes the parity claim true — a type a registered module
+     * classifies as <em>map-like</em> without it implementing {@link Map} (what Jackson's
+     * {@code MapLikeType} exists for; Scala, Guava and Kotlin module registrations produce them) is
+     * descended by the engine as a plain object, so both walks must warm it as one rather than treat
+     * it as a schema-free map. Asking Jackson's {@code TypeFactory} instead would answer a different
+     * question than the engine asks, and the two would disagree on exactly those types.
+     *
+     * @param rawClass the raw class to test
+     * @return {@code true} when the shape is keyed by arbitrary map keys
      */
-    private boolean isMapLike(Type rawType) {
-        return rawType instanceof Class<?> rawClass
-                && mapper.getTypeFactory().constructType(rawClass).isMapLikeType();
+    private static boolean isMapKeyed(Class<?> rawClass) {
+        return Map.class.isAssignableFrom(rawClass);
+    }
+
+    /**
+     * Returns whether a raw class is one the engine iterates element-wise rather than descending into
+     * itself — a {@link java.util.Collection} or an array. {@code InputPolicyMetadataResolver} routes
+     * exactly these two through its element-type branch, so for them the element schema is warmed and
+     * the container class is not; every other shape is a plain descendable object whose own class is
+     * warmed. Jackson's {@code JavaType.isContainerType()} is deliberately not used here: it also
+     * answers {@code true} for a map-like type the engine descends as a plain object.
+     *
+     * @param rawClass the raw class to test
+     * @return {@code true} when the shape carries an element schema instead of its own property set
+     */
+    private static boolean isElementWise(Class<?> rawClass) {
+        return Collection.class.isAssignableFrom(rawClass) || rawClass.isArray();
     }
 
     /**
@@ -253,21 +278,33 @@ public final class JacksonFieldNameResolver implements InputFieldNameResolver {
      * schema-free — it carries no statically known property set, so its fragment's policies are keyed
      * against the map type itself and neither the key nor the value type is ever consulted as a
      * projection owner. Warming them anyway would let an ambiguity the request path can never reach
-     * fail registration, which is an availability change with no behavioural payoff.
+     * fail registration, which is an availability change with no behavioural payoff. "Map shape"
+     * means {@link #isMapKeyed} — the engine's own test — so a type a registered module classifies as
+     * map-like without it implementing {@link Map} is warmed here as the plain descendable object the
+     * engine descends, not skipped and not descended over its module-declared content type.
      *
      * @param propertyType the property's resolved Jackson type, or {@code null}
      * @param visited      the classes already warmed on this walk
      */
     private void warmPropertyType(@Nullable JavaType propertyType, Set<Class<?>> visited) {
-        if (propertyType == null || propertyType.isMapLikeType()) {
+        if (propertyType == null) {
             return;
         }
-        warmPropertyType(propertyType.getContentType(), visited);
+        Class<?> rawClass = propertyType.getRawClass();
+        if (isMapKeyed(rawClass)) {
+            return;
+        }
+        if (isElementWise(rawClass)) {
+            // The engine walks a collection or array element-wise, so the element schema is what a
+            // fragment's policies are keyed against — never the container class itself.
+            warmPropertyType(propertyType.getContentType(), visited);
+        } else {
+            warmClass(rawClass, visited);
+        }
+        // Type arguments of any other generic shape are still walked, so an Optional<Dto> — which the
+        // engine treats as transparent — reaches Dto.
         for (int i = 0; i < propertyType.containedTypeCount(); i++) {
             warmPropertyType(propertyType.containedType(i), visited);
-        }
-        if (!propertyType.isContainerType()) {
-            warmClass(propertyType.getRawClass(), visited);
         }
     }
 
