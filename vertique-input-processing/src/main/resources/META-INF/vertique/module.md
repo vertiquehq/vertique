@@ -126,8 +126,8 @@ A generated class that exists but cannot be instantiated is a build defect: the 
 Static helpers that keep chain-application logic in one place instead of inlining it into every generated class:
 
 - `applyString(...)` — one string field
-- `applyStringCollection(...)` — a `Collection<String>` field
-- `dispatchObjectCollection(...)` — a collection of nested DTOs
+- `applyStringCollection(...)` — a `Collection<String>` or `String[]` field
+- `dispatchObjectCollection(...)` — a collection or array of nested DTOs
 - `applyDefault(...)` — the generated `switch`'s `default` arm and annotated `Object`-kind fields
 - `childPath(String parentPath, String key)` — composes the dot-separated field path
 

@@ -6,6 +6,7 @@ package dev.vertique.codegen.sanitization.processor;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 
 import dev.vertique.codegen.test.ProcessorTestHarness;
 import dev.vertique.codegen.test.ProcessorTestHarness.Result;
@@ -249,6 +250,53 @@ class SanitizationProcessorRoundtripTest {
             public class NegProfileResource {
                 @POST
                 public String create(NegProfileDto body) { return null; }
+            }
+            """);
+
+    // --- Array-typed fields ---
+
+    /**
+     * Nested DTO reachable from {@link #ARRAY_ARTICLE_DTO} only as an <em>array component</em>
+     * type. Carries its own {@code @Sanitize} so the scanner must emit
+     * {@code ArrayCommentDto_InputProcessor} for the element-wise dispatch to have a target.
+     */
+    private static final JavaFileObject ARRAY_COMMENT_DTO = SourceFiles.inline("com.example.rt.ArrayCommentDto", """
+            package com.example.rt;
+            import dev.vertique.core.sanitization.Sanitize;
+            import dev.vertique.sanitization.sanitize.StripControlCharsSanitizer;
+            public class ArrayCommentDto {
+                @Sanitize(StripControlCharsSanitizer.class)
+                public String text;
+            }
+            """);
+
+    /**
+     * Root DTO covering the three array shapes the reflective walker distinguishes: an array of
+     * nested DTOs and an array of strings both carry one element schema and descend element-wise,
+     * while an array of arrays carries none and must keep the inherited-chain-only path.
+     */
+    private static final JavaFileObject ARRAY_ARTICLE_DTO = SourceFiles.inline("com.example.rt.ArrayArticleDto", """
+            package com.example.rt;
+            import dev.vertique.core.sanitization.Sanitize;
+            import dev.vertique.sanitization.sanitize.StripControlCharsSanitizer;
+            public class ArrayArticleDto {
+                public ArrayCommentDto[] comments;
+                @Sanitize(StripControlCharsSanitizer.class)
+                public String[] tags;
+                @Sanitize(StripControlCharsSanitizer.class)
+                public String[][] matrix;
+            }
+            """);
+
+    private static final JavaFileObject ARRAY_ARTICLE_RESOURCE =
+            SourceFiles.inline("com.example.rt.ArrayArticleResource", """
+            package com.example.rt;
+            import jakarta.ws.rs.POST;
+            import jakarta.ws.rs.Path;
+            @Path("/array-articles")
+            public class ArrayArticleResource {
+                @POST
+                public String create(ArrayArticleDto body) { return null; }
             }
             """);
 
@@ -826,6 +874,189 @@ class SanitizationProcessorRoundtripTest {
             Map<String, Object> nested = new LinkedHashMap<>();
             nested.put("text", rawText);
             return nested;
+        }
+    }
+
+    // --- Array-typed fields ---
+
+    /**
+     * Proves that array-typed fields descend element-wise on the <em>generated</em> path, matching
+     * the reflective walker's rule that a collection and an array are one shape:
+     * {@code InputPolicyMetadataResolver.buildFieldMeta} routes
+     * {@code Collection.class.isAssignableFrom(rawType) || rawType.isArray()} through a single
+     * branch, with {@code TypeClassifier.elementType} supplying the element schema — and returning
+     * {@code null} when the component type is itself an array, which keeps
+     * {@code String[][]} on the inherited-chain path.
+     *
+     * <p>These assertions run against real generated processor classes, not hand-written
+     * companions, so they pin what the annotation processor actually emits.
+     */
+    @Nested
+    @DisplayName("array-typed fields")
+    class ArrayFields {
+
+        @Test
+        @DisplayName("ArrayCommentDto[] field dispatches each element at the component type")
+        @SuppressWarnings("unchecked")
+        void arrayOfNestedDtoField_eachElementDispatchedAtComponentType() throws Exception {
+            Result result = ProcessorTestHarness.run(
+                    new SanitizationProcessor(), ARRAY_COMMENT_DTO, ARRAY_ARTICLE_DTO, ARRAY_ARTICLE_RESOURCE);
+            result.assertSuccess();
+            result.assertGeneratedSourceContains(
+                    "com.example.rt.ArrayArticleDto_InputProcessor",
+                    "dispatchObjectCollection(v, ArrayCommentDto.class");
+
+            GeneratedInputProcessor<?> articleProcessor =
+                    newProcessor(result, "com.example.rt.ArrayArticleDto_InputProcessor");
+            GeneratedInputProcessor<?> commentProcessor =
+                    newProcessor(result, "com.example.rt.ArrayCommentDto_InputProcessor");
+
+            GeneratedInputProcessorDispatcher dispatcher = GeneratedInputProcessorDispatcher.withoutContinuation();
+            registerProcessor(dispatcher, commentProcessor.targetType(), commentProcessor);
+
+            List<Object> elements = new ArrayList<>(List.of(arrayComment("al\u0001pha"), arrayComment("be\u0001ta")));
+            Map<String, Object> intermediate = new LinkedHashMap<>();
+            intermediate.put("comments", elements);
+
+            Object output = articleProcessor.process(
+                    intermediate,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY,
+                    buildChainResolver(),
+                    dispatcher,
+                    null,
+                    "");
+
+            assertInstanceOf(Map.class, output);
+            Map<String, Object> out = (Map<String, Object>) output;
+            assertInstanceOf(List.class, out.get("comments"));
+            List<Object> processed = (List<Object>) out.get("comments");
+            assertEquals(
+                    List.of("alpha", "beta"),
+                    processed.stream()
+                            .map(e -> ((Map<String, Object>) e).get("text"))
+                            .toList(),
+                    "Each ArrayCommentDto[] element must reach ArrayCommentDto_InputProcessor, "
+                            + "exactly as a List<ArrayCommentDto> element does");
+        }
+
+        @Test
+        @DisplayName("@Sanitize on String[] field — each element sanitized")
+        @SuppressWarnings("unchecked")
+        void arrayOfStringsField_eachElementSanitized() throws Exception {
+            Result result = ProcessorTestHarness.run(
+                    new SanitizationProcessor(), ARRAY_COMMENT_DTO, ARRAY_ARTICLE_DTO, ARRAY_ARTICLE_RESOURCE);
+            result.assertSuccess();
+
+            GeneratedInputProcessor<?> processor =
+                    newProcessor(result, "com.example.rt.ArrayArticleDto_InputProcessor");
+
+            Map<String, Object> intermediate = new LinkedHashMap<>();
+            intermediate.put("tags", new ArrayList<>(List.of("ja\u0001va", "ve\u0001rtx")));
+
+            Object output = processor.process(
+                    intermediate,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY,
+                    buildChainResolver(),
+                    GeneratedInputProcessorDispatcher.withoutContinuation(),
+                    null,
+                    "");
+
+            assertInstanceOf(Map.class, output);
+            Map<String, Object> out = (Map<String, Object>) output;
+            assertEquals(
+                    List.of("java", "vertx"),
+                    out.get("tags"),
+                    "A String[] field carries the same element schema as a List<String> and must be "
+                            + "sanitized element-wise without a reflective fallback");
+        }
+
+        @Test
+        @DisplayName("String[][] field has no element schema — keeps the inherited-chain path")
+        @SuppressWarnings("unchecked")
+        void arrayOfArraysField_keepsInheritedChainPath() throws Exception {
+            Result result = ProcessorTestHarness.run(
+                    new SanitizationProcessor(), ARRAY_COMMENT_DTO, ARRAY_ARTICLE_DTO, ARRAY_ARTICLE_RESOURCE);
+            result.assertSuccess();
+            result.assertGeneratedSourceDoesNotContain(
+                    "com.example.rt.ArrayArticleDto_InputProcessor", "dispatchObjectCollection(v, String[]");
+
+            GeneratedInputProcessor<?> processor =
+                    newProcessor(result, "com.example.rt.ArrayArticleDto_InputProcessor");
+
+            RecordingContinuation continuation = new RecordingContinuation();
+            GeneratedInputProcessorDispatcher dispatcher = new GeneratedInputProcessorDispatcher(continuation);
+
+            List<Object> rows = new ArrayList<>(List.of(new ArrayList<>(List.of("ab"))));
+            Map<String, Object> intermediate = new LinkedHashMap<>();
+            intermediate.put("matrix", rows);
+
+            Object output = processor.process(
+                    intermediate,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY,
+                    buildChainResolver(),
+                    dispatcher,
+                    null,
+                    "");
+
+            assertInstanceOf(Map.class, output);
+            Map<String, Object> out = (Map<String, Object>) output;
+            assertEquals(
+                    List.of("matrix"),
+                    continuation.walkUnknownPaths,
+                    "String[][] has no element schema (TypeClassifier.elementType returns null for an "
+                            + "array component), so it must reach the reflective continuation rather than "
+                            + "dispatching elements at String[]");
+            assertSame(rows, out.get("matrix"), "The continuation's return value is what lands in the output map");
+        }
+
+        /**
+         * Builds a one-field intermediate map standing in for a serialized {@code ArrayCommentDto}.
+         * Callers embed a control character in {@code rawText} so a successful element dispatch is
+         * observable — {@code ArrayCommentDto_InputProcessor} strips it.
+         *
+         * @param rawText the un-sanitized {@code text} wire value
+         * @return the nested intermediate map
+         */
+        private Map<String, Object> arrayComment(String rawText) {
+            Map<String, Object> nested = new LinkedHashMap<>();
+            nested.put("text", rawText);
+            return nested;
+        }
+    }
+
+    /**
+     * Reflective continuation that records the field paths reaching {@code walkUnknown} and returns
+     * the intermediate unchanged. {@code continueAt} throws, so an unexpected typed descent is as
+     * loud as {@link GeneratedInputProcessorDispatcher#withoutContinuation()} makes it.
+     */
+    private static final class RecordingContinuation
+            implements GeneratedInputProcessorDispatcher.ReflectiveContinuation {
+
+        private final List<String> walkUnknownPaths = new ArrayList<>();
+
+        @Override
+        public Object continueAt(
+                Object intermediate,
+                Class<?> targetType,
+                dev.vertique.input.processing.InputTraversalContext ctx,
+                InputLocation location,
+                String fieldPath,
+                Class<?> ownerType) {
+            throw new UnsupportedOperationException("continueAt not expected for " + fieldPath);
+        }
+
+        @Override
+        public Object walkUnknown(
+                Object intermediate,
+                dev.vertique.input.processing.InputTraversalContext ctx,
+                InputLocation location,
+                String fieldPath,
+                Class<?> ownerType) {
+            walkUnknownPaths.add(fieldPath);
+            return intermediate;
         }
     }
 

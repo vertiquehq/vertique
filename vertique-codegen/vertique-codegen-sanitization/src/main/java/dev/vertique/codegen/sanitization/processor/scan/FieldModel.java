@@ -62,7 +62,8 @@ public record FieldModel(
 
         /**
          * A field typed as {@code Collection<String>} (list/set of strings), including
-         * {@code Collection<Optional<String>>}.
+         * {@code Collection<Optional<String>>}, and the array form {@code String[]} — both arrive
+         * as a JSON array of strings.
          */
         COLLECTION_OF_STRINGS,
 
@@ -72,11 +73,15 @@ public record FieldModel(
          */
         NESTED_DTO,
 
-        /** A field typed as {@code Collection<NestedDto>} (list/set of nested DTOs). */
+        /**
+         * A field typed as {@code Collection<NestedDto>} (list/set of nested DTOs) or the array
+         * form {@code NestedDto[]}; elements are dispatched at the element/component type.
+         */
         COLLECTION_OF_DTO,
 
         /**
-         * Any other type: primitives, boxed types, enums, {@code Map}, arrays,
+         * Any other type: primitives, boxed types, enums, {@code Map}, arrays with no element
+         * schema ({@code int[]}, {@code String[][]}),
          * {@code OptionalInt}/{@code OptionalLong}/{@code OptionalDouble}, and raw
          * {@code Optional}. The emitter passes these through unchanged (routing annotated ones
          * through {@code GeneratedSupport.applyDefault}).
