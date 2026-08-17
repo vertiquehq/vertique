@@ -136,13 +136,19 @@ class InputPolicyMetadataResolverTest {
     class NestedDtoResolution {
 
         @Test
-        @DisplayName("nested field has resolved nested metadata")
-        void nestedFieldHasNestedMetadata() {
+        @DisplayName("nested field carries its declared type, whose metadata resolves separately")
+        void nestedFieldCarriesItsDeclaredType() {
             InputPolicyMetadata meta = resolver.resolve(NestedDto.class);
             InputPolicyMetadata.FieldPolicyMetadata nestedField = meta.fields().get("nested");
             assertNotNull(nestedField, "expected 'nested' field metadata");
-            assertNotNull(nestedField.nestedMetadata(), "expected nested metadata to be resolved");
-            assertFalse(nestedField.nestedMetadata().fields().isEmpty());
+            assertEquals(
+                    SimpleDto.class,
+                    nestedField.fieldType(),
+                    "the nested field must carry its declared type — that is what the walker resolves at descent");
+
+            // The nested type's own policies are read back through the same per-type resolution the
+            // walker performs when it descends, not from metadata embedded in the parent.
+            assertFalse(resolver.resolve(nestedField.fieldType()).fields().isEmpty());
         }
 
         @Test

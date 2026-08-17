@@ -52,6 +52,13 @@ import java.util.function.Function;
  *
  * <p>This implementation never mutates the input structure; it returns a new map or list.
  *
+ * <p><strong>Metadata is resolved per type, at descent.</strong> {@link InputPolicyMetadata}
+ * describes only its own type's fields; when the walker descends into a nested field it resolves
+ * that field's declared type through {@link InputPolicyMetadataResolver}'s per-type cache. The
+ * walk therefore terminates on the finite intermediate data rather than on a type-graph budget:
+ * a self-referential type resolves once and applies at every level, direct and mutual recursion
+ * behave identically, and a policy declared behind any number of policy-free links still runs.
+ *
  * <p><strong>Generated-processor fast path.</strong> The processor self-bootstraps a
  * {@link GeneratedInputProcessorDispatcher} in its constructor and consults it before walking
  * reflectively. When a {@code {DTO}_InputProcessor} class exists on the consuming type's
@@ -373,8 +380,9 @@ class DefaultInputObjectProcessor implements InputObjectProcessor {
                 // List<String> — apply the full chain (inherited + object + field) to each element
                 return processCollectionOfStrings(list, parentMeta, fieldMeta, ctx, location, fieldPath, ownerType);
             }
-            if (fieldMeta.nestedMetadata() != null && fieldMeta.collectionElementType() != null) {
-                // List<NestedObject> — process each element as a map with nested metadata
+            if (fieldMeta.collectionElementType() != null) {
+                // List<NestedObject> — dispatch each element at the declared element type, whose
+                // own metadata is resolved at descent.
                 InputTraversalContext childCtx = ctx.descend(parentMeta, fieldMeta);
                 return processListOfObjects(
                         list, childCtx, policies, location, fieldPath, fieldMeta.collectionElementType());

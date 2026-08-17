@@ -20,12 +20,10 @@ import java.lang.reflect.TypeVariable;
 import java.lang.reflect.WildcardType;
 import java.util.Arrays;
 import java.util.Collection;
-import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -37,21 +35,24 @@ import java.util.concurrent.ConcurrentHashMap;
  * declared on the same element (or both {@code @Sanitize} and {@code @SkipSanitization}),
  * an {@link IllegalStateException} is thrown at resolution time.
  *
- * <p>Cycle detection: self-referential or mutually-referential types are handled by tracking
- * visited types and enforcing a maximum traversal depth of {@value #MAX_DEPTH}.
+ * <p><strong>Resolution is per type and non-recursive.</strong> The returned metadata describes
+ * only {@code targetType}'s own fields; a field that holds a nested object records that field's
+ * declared {@link Class}, and {@link DefaultInputObjectProcessor} calls {@link #resolve} again for
+ * that class when it descends into the value. There is consequently no cycle state and no depth
+ * budget: a self-referential type resolves once and applies at every level, direct and mutual
+ * recursion behave identically, and a policy declared behind any number of policy-free links is
+ * still found. Traversal terminates on the finite intermediate data instead.
  *
  * <p>Field classification strips {@code java.util.Optional} layers and normalizes bounded type
  * arguments to their upper bound before deciding a field's shape, so {@code Optional<NestedDto>},
- * {@code Optional<? extends NestedDto>} and {@code List<? extends NestedDto>} all resolve nested
- * metadata from {@code NestedDto}. See {@link #buildFieldMeta} for the full rule; the APT-time
+ * {@code Optional<? extends NestedDto>} and {@code List<? extends NestedDto>} all classify against
+ * {@code NestedDto}. See {@link #buildFieldMeta} for the full rule; the APT-time
  * {@code AnnotationCollector} in {@code vertique-codegen-sanitization} applies the same rules so
  * the generated and reflective paths agree.
  *
  * <p>Thread-safe: metadata is computed once per type and cached via {@link ConcurrentHashMap}.
  */
 class InputPolicyMetadataResolver {
-
-    private static final int MAX_DEPTH = 10;
 
     private final Map<Class<?>, InputPolicyMetadata> cache = new ConcurrentHashMap<>();
 
@@ -63,23 +64,17 @@ class InputPolicyMetadataResolver {
      * @throws IllegalStateException if conflicting annotations are detected on the same element
      */
     public InputPolicyMetadata resolve(Class<?> targetType) {
-        return cache.computeIfAbsent(targetType, t -> resolveInternal(t, new HashSet<>(), 0));
+        return cache.computeIfAbsent(targetType, this::resolveInternal);
     }
 
     /**
-     * Internal recursive resolution with cycle-detection state.
+     * Resolves one type's own metadata. Never recurses into nested types, so this is safe to run
+     * inside {@link ConcurrentHashMap#computeIfAbsent} and terminates on any type graph.
      *
-     * @param type    the type being resolved
-     * @param visited set of types already in the current resolution stack
-     * @param depth   current traversal depth
-     * @return resolved metadata, or {@link InputPolicyMetadata#EMPTY} when a cycle/depth limit is hit
+     * @param type the type being resolved
+     * @return the resolved metadata for {@code type} alone
      */
-    private InputPolicyMetadata resolveInternal(Class<?> type, Set<Class<?>> visited, int depth) {
-        if (visited.contains(type) || depth >= MAX_DEPTH) {
-            return InputPolicyMetadata.EMPTY;
-        }
-        visited.add(type);
-
+    private InputPolicyMetadata resolveInternal(Class<?> type) {
         // --- Type-level annotations ---
         Canonicalize typeCanonicalize = AnnotationResolver.findMetaAnnotation(type, Canonicalize.class);
         Sanitize typeSanitize = AnnotationResolver.findMetaAnnotation(type, Sanitize.class);
@@ -104,9 +99,7 @@ class InputPolicyMetadataResolver {
         boolean skipSanit = typeSkipSanit != null;
 
         // --- Field/component-level annotations ---
-        Map<String, FieldPolicyMetadata> fields = resolveFields(type, visited, depth);
-
-        visited.remove(type);
+        Map<String, FieldPolicyMetadata> fields = resolveFields(type);
 
         return new InputPolicyMetadata(objectCanonChain, objectSanitChain, skipCanon, skipSanit, fields);
     }
@@ -115,17 +108,15 @@ class InputPolicyMetadataResolver {
      * Resolves per-field metadata for the given type, supporting both regular classes (via
      * {@link Field}) and records (via {@link RecordComponent}).
      *
-     * @param type    the type whose fields to inspect
-     * @param visited the current visited set (passed through for recursion)
-     * @param depth   current depth
+     * @param type the type whose fields to inspect
      * @return a map of field name to {@link FieldPolicyMetadata}
      */
-    private Map<String, FieldPolicyMetadata> resolveFields(Class<?> type, Set<Class<?>> visited, int depth) {
+    private Map<String, FieldPolicyMetadata> resolveFields(Class<?> type) {
         Map<String, FieldPolicyMetadata> result = new LinkedHashMap<>();
 
         if (type.isRecord()) {
             for (RecordComponent component : type.getRecordComponents()) {
-                FieldPolicyMetadata meta = resolveRecordComponent(component, visited, depth);
+                FieldPolicyMetadata meta = resolveRecordComponent(component);
                 if (meta != null) {
                     result.put(component.getName(), meta);
                 }
@@ -135,7 +126,7 @@ class InputPolicyMetadataResolver {
             for (Class<?> cls = type; cls != null && cls != Object.class; cls = cls.getSuperclass()) {
                 for (Field field : cls.getDeclaredFields()) {
                     if (result.containsKey(field.getName())) continue; // subclass overrides
-                    FieldPolicyMetadata meta = resolveField(field, visited, depth);
+                    FieldPolicyMetadata meta = resolveField(field);
                     if (meta != null) {
                         result.put(field.getName(), meta);
                     }
@@ -150,12 +141,10 @@ class InputPolicyMetadataResolver {
      * Resolves metadata for a single {@link Field}, returning {@code null} if the field type
      * is a primitive, boxed primitive, or otherwise not worth tracking.
      *
-     * @param field   the field to inspect
-     * @param visited visited type set for recursion
-     * @param depth   current depth
+     * @param field the field to inspect
      * @return metadata, or {@code null} if the field needs no processing
      */
-    private FieldPolicyMetadata resolveField(Field field, Set<Class<?>> visited, int depth) {
+    private FieldPolicyMetadata resolveField(Field field) {
         Canonicalize canon = AnnotationResolver.findMetaAnnotation(field, Canonicalize.class);
         Sanitize sanit = AnnotationResolver.findMetaAnnotation(field, Sanitize.class);
         SkipCanonicalization skipCanon = AnnotationResolver.findMetaAnnotation(field, SkipCanonicalization.class);
@@ -164,14 +153,7 @@ class InputPolicyMetadataResolver {
         checkConflicts(field.getDeclaringClass().getName() + "#" + field.getName(), canon, skipCanon, sanit, skipSanit);
 
         return buildFieldMeta(
-                field.getGenericType(),
-                field.getType(),
-                canon,
-                sanit,
-                skipCanon != null,
-                skipSanit != null,
-                visited,
-                depth);
+                field.getGenericType(), field.getType(), canon, sanit, skipCanon != null, skipSanit != null);
     }
 
     /**
@@ -180,11 +162,9 @@ class InputPolicyMetadataResolver {
      * for annotations.
      *
      * @param component the record component to inspect
-     * @param visited   visited type set for recursion
-     * @param depth     current depth
      * @return metadata, or {@code null} if the component needs no processing
      */
-    private FieldPolicyMetadata resolveRecordComponent(RecordComponent component, Set<Class<?>> visited, int depth) {
+    private FieldPolicyMetadata resolveRecordComponent(RecordComponent component) {
         Canonicalize canon = getAnnotation(component, Canonicalize.class);
         Sanitize sanit = getAnnotation(component, Sanitize.class);
         SkipCanonicalization skipCanon = getAnnotation(component, SkipCanonicalization.class);
@@ -198,14 +178,7 @@ class InputPolicyMetadataResolver {
                 skipSanit);
 
         return buildFieldMeta(
-                component.getGenericType(),
-                component.getType(),
-                canon,
-                sanit,
-                skipCanon != null,
-                skipSanit != null,
-                visited,
-                depth);
+                component.getGenericType(), component.getType(), canon, sanit, skipCanon != null, skipSanit != null);
     }
 
     /**
@@ -213,15 +186,18 @@ class InputPolicyMetadataResolver {
      * Returns {@code null} for types that do not need processing (primitives, boxed types,
      * and non-container non-string types without annotations or skip flags).
      *
+     * <p>A field whose declared type is a <em>descendable object</em> (see
+     * {@link #isDescendableObject}) always yields metadata carrying that declared type, even when
+     * neither the field nor the type declares any policy. That is what lets the walker descend
+     * through policy-free links and still find a policy declared further down; dropping such a
+     * field would strand the whole subtree on {@link InputPolicyMetadata#EMPTY}.
+     *
      * <p>{@code java.util.Optional<T>} is <em>transparent</em> here: the intermediate wire value of
      * an {@code Optional<T>} field is the unwrapped {@code T} (Jackson's {@code Jdk8Module}
      * serializes the payload, not the wrapper), so the field is classified by {@code T}. Without
-     * this normalization, {@code Optional<NestedDto>} recurses into {@code Optional}'s own fields,
-     * yields empty metadata, and returns {@code null} — at which point
-     * {@link DefaultInputObjectProcessor} walks the nested map with
-     * {@link InputPolicyMetadata#EMPTY} and the nested DTO's own chains never run. A raw
-     * {@code Optional} has no type argument to classify against and falls back to the
-     * no-schema branch.
+     * this normalization, {@code Optional<NestedDto>} would classify against {@code Optional}
+     * itself and the nested DTO's own chains would never run. A raw {@code Optional} has no type
+     * argument to classify against and falls back to the no-schema branch.
      *
      * <p>Bounded type arguments are normalized to their upper bound by {@link #normalizeToBound}
      * first, so {@code Optional<? extends NestedDto>} and {@code Optional<T extends NestedDto>}
@@ -236,8 +212,6 @@ class InputPolicyMetadataResolver {
      * @param sanit       {@code @Sanitize} annotation, or {@code null}
      * @param skipCanon   whether {@code @SkipCanonicalization} is present
      * @param skipSanit   whether {@code @SkipSanitization} is present
-     * @param visited     visited type set for recursion
-     * @param depth       current depth
      * @return field metadata, or {@code null}
      */
     private FieldPolicyMetadata buildFieldMeta(
@@ -246,9 +220,7 @@ class InputPolicyMetadataResolver {
             Canonicalize canon,
             Sanitize sanit,
             boolean skipCanon,
-            boolean skipSanit,
-            Set<Class<?>> visited,
-            int depth) {
+            boolean skipSanit) {
 
         List<Class<? extends Canonicalizer>> canonChain = canon != null ? Arrays.asList(canon.value()) : List.of();
         List<Class<? extends Sanitizer>> sanitChain = sanit != null ? Arrays.asList(sanit.value()) : List.of();
@@ -264,17 +236,16 @@ class InputPolicyMetadataResolver {
                 // classify against.
                 if (hasAnnotations) {
                     return new FieldPolicyMetadata(
-                            canonChain, sanitChain, skipCanon, skipSanit, rawType, null, false, false, null);
+                            canonChain, sanitChain, skipCanon, skipSanit, rawType, false, false, null);
                 }
                 return null;
             }
-            return buildFieldMeta(wrapped, wrappedRaw, canon, sanit, skipCanon, skipSanit, visited, depth);
+            return buildFieldMeta(wrapped, wrappedRaw, canon, sanit, skipCanon, skipSanit);
         }
 
         // String field
         if (rawType == String.class) {
-            return new FieldPolicyMetadata(
-                    canonChain, sanitChain, skipCanon, skipSanit, rawType, null, true, false, null);
+            return new FieldPolicyMetadata(canonChain, sanitChain, skipCanon, skipSanit, rawType, true, false, null);
         }
 
         // Collection types
@@ -284,43 +255,57 @@ class InputPolicyMetadataResolver {
                 // Raw collection — can't determine element type
                 if (hasAnnotations) {
                     return new FieldPolicyMetadata(
-                            canonChain, sanitChain, skipCanon, skipSanit, rawType, null, false, false, null);
+                            canonChain, sanitChain, skipCanon, skipSanit, rawType, false, false, null);
                 }
                 return null;
             }
             if (elementType == String.class) {
                 return new FieldPolicyMetadata(
-                        canonChain, sanitChain, skipCanon, skipSanit, rawType, null, false, true, null);
+                        canonChain, sanitChain, skipCanon, skipSanit, rawType, false, true, null);
             }
-            // Collection of objects — recurse for element metadata
+            // Collection of objects — record the element type; its metadata is resolved at descent.
             if (!isPrimitiveOrBoxed(elementType)) {
-                InputPolicyMetadata elementMeta = resolveInternal(elementType, new HashSet<>(visited), depth + 1);
                 return new FieldPolicyMetadata(
-                        canonChain, sanitChain, skipCanon, skipSanit, rawType, elementMeta, false, false, elementType);
+                        canonChain, sanitChain, skipCanon, skipSanit, rawType, false, false, elementType);
             }
             if (hasAnnotations) {
                 return new FieldPolicyMetadata(
-                        canonChain, sanitChain, skipCanon, skipSanit, rawType, null, false, false, elementType);
+                        canonChain, sanitChain, skipCanon, skipSanit, rawType, false, false, null);
             }
             return null;
         }
 
-        // Nested object — recurse
-        if (!isPrimitiveOrBoxed(rawType) && rawType != Object.class && !rawType.isEnum()) {
-            InputPolicyMetadata nestedMeta = resolveInternal(rawType, new HashSet<>(visited), depth + 1);
-            if (hasAnnotations || !nestedMeta.isEmpty()) {
-                return new FieldPolicyMetadata(
-                        canonChain, sanitChain, skipCanon, skipSanit, rawType, nestedMeta, false, false, null);
-            }
-            return null;
+        // Nested object — record the declared type unconditionally so the walker can descend into
+        // it and resolve its own metadata, even across links that declare no policy themselves.
+        if (isDescendableObject(rawType)) {
+            return new FieldPolicyMetadata(canonChain, sanitChain, skipCanon, skipSanit, rawType, false, false, null);
         }
 
-        // Primitives / enums / Object / etc.
+        // Primitives / enums / Object / Map / array / etc. — no statically known property set.
         if (hasAnnotations) {
-            return new FieldPolicyMetadata(
-                    canonChain, sanitChain, skipCanon, skipSanit, rawType, null, false, false, null);
+            return new FieldPolicyMetadata(canonChain, sanitChain, skipCanon, skipSanit, rawType, false, false, null);
         }
         return null;
+    }
+
+    /**
+     * Returns {@code true} when a field of this declared type carries a statically known property
+     * set the walker can descend into and resolve metadata for.
+     *
+     * <p>Excluded, each because it has no such property set and must keep the walker's
+     * inherited-chain-only handling: primitives and boxed/scalar JDK types, {@link Object},
+     * enums, {@link Map} (arbitrary keys), and arrays (element traversal is a collection concern,
+     * handled by the collection branch for {@link Collection} fields).
+     *
+     * @param type the declared field type
+     * @return {@code true} if the walker should resolve {@code type}'s own metadata at descent
+     */
+    private static boolean isDescendableObject(Class<?> type) {
+        return !isPrimitiveOrBoxed(type)
+                && type != Object.class
+                && !type.isEnum()
+                && !type.isArray()
+                && !Map.class.isAssignableFrom(type);
     }
 
     // --- Annotation helpers ---
@@ -378,8 +363,8 @@ class InputPolicyMetadataResolver {
      *
      * <p>{@code java.lang.Object} carries no schema, so an element type that resolves to it —
      * {@code List<Object>}, and {@code List<?>} / {@code List<? super X>} after bound
-     * normalization — is reported as not determinable. That mirrors both the nested-object
-     * branch's {@code rawType != Object.class} guard in {@link #buildFieldMeta} and the
+     * normalization — is reported as not determinable. That mirrors both
+     * {@link #isDescendableObject}'s {@code Object} exclusion and the
      * collector's treatment of {@code Object} as a scalar leaf, and it routes the field to the
      * no-element-schema branch where inherited chains still reach string elements.
      *

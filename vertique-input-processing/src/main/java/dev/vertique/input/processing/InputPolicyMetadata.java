@@ -16,6 +16,14 @@ import java.util.Map;
  * target type, its fields and record components. Used by {@link DefaultInputObjectProcessor}
  * to avoid per-request reflection.
  *
+ * <p><strong>This record describes exactly one type.</strong> It never embeds the expanded
+ * metadata of nested types: a field that holds a nested object records only that field's declared
+ * {@linkplain FieldPolicyMetadata#fieldType() Java type}, and the walker resolves that type's own
+ * metadata from {@link InputPolicyMetadataResolver}'s per-type cache when it descends into the
+ * value. Traversal therefore terminates on the finite intermediate data rather than on a
+ * type-graph budget, so a self-referential type resolves once and applies at every level, and
+ * direct and mutual recursion behave identically.
+ *
  * @param objectCanonicalizerChain canonicalizer chain declared on the type itself
  * @param objectSanitizerChain     sanitizer chain declared on the type itself
  * @param skipCanonicalization     whether the type is annotated with {@code @SkipCanonicalization}
@@ -34,32 +42,23 @@ record InputPolicyMetadata(
             new InputPolicyMetadata(List.of(), List.of(), false, false, Map.of());
 
     /**
-     * Returns {@code true} if no object-level or field-level processors are configured and
-     * no skip flags are set.
-     *
-     * @return {@code true} when this metadata has no active processing declarations
-     */
-    public boolean isEmpty() {
-        return objectCanonicalizerChain.isEmpty()
-                && objectSanitizerChain.isEmpty()
-                && !skipCanonicalization
-                && !skipSanitization
-                && fields.isEmpty();
-    }
-
-    /**
      * Per-field annotation metadata for input processing.
+     *
+     * <p>The shape flags and {@code collectionElementType} classify the field so the walker knows
+     * how to treat the intermediate value it finds there; {@code fieldType} is the declared type
+     * whose own metadata the walker resolves at descent. No nested metadata is embedded here.
      *
      * @param canonicalizerChain    canonicalizer chain declared on this field
      * @param sanitizerChain        sanitizer chain declared on this field
      * @param skipCanonicalization  whether this field opts out of canonicalization
      * @param skipSanitization      whether this field opts out of sanitization
-     * @param fieldType             the Java type of this field (for recursive traversal)
-     * @param nestedMetadata        metadata for nested object types; {@code null} for non-object fields
+     * @param fieldType             the declared Java type of this field; the type whose metadata is
+     *                              resolved when the walker descends into this field's value
      * @param isStringType          whether the field is a {@link String}
      * @param isCollectionOfStrings whether the field is a {@code Collection<String>}
-     * @param collectionElementType for collections of non-string objects, the element type;
-     *                              {@code null} for string collections or non-collection fields
+     * @param collectionElementType the declared element type for a collection of nested objects;
+     *                              {@code null} for string collections, scalar-element collections
+     *                              and non-collection fields
      */
     record FieldPolicyMetadata(
             List<Class<? extends Canonicalizer>> canonicalizerChain,
@@ -67,7 +66,6 @@ record InputPolicyMetadata(
             boolean skipCanonicalization,
             boolean skipSanitization,
             Class<?> fieldType,
-            @Nullable InputPolicyMetadata nestedMetadata,
             boolean isStringType,
             boolean isCollectionOfStrings,
             @Nullable Class<?> collectionElementType) {}
