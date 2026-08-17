@@ -4,12 +4,20 @@
 package dev.vertique.json.schema;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import java.util.Collections;
+import java.util.IdentityHashMap;
 import java.util.Map;
 import java.util.Set;
 
 /**
  * The document traversal both post-generation walks in this package fold over: it visits exactly the
- * nodes that are <strong>schemas</strong> in a generated Draft 2020-12 document, and nothing else.
+ * nodes occupying an <strong>object schema head</strong> position in a generated Draft 2020-12
+ * document, and nothing else.
+ *
+ * <p>A boolean {@code true}/{@code false} is a valid Draft 2020-12 schema, and one <em>is</em> reached
+ * at a subschema position — it is simply not handed to a visitor, because neither walk has a keyword
+ * to read on it: a boolean schema declares no {@code type} and carries no numeric-domain keyword. It
+ * is skipped as a visit target, never as a position.
  *
  * <p><strong>Why an allowlist, not a denylist.</strong> Draft 2020-12 specifies that an unrecognized
  * keyword is an <em>annotation</em> — arbitrary JSON data, with no schema meaning. So are the values
@@ -45,6 +53,17 @@ import java.util.Set;
  * keyword that can never carry data the traversal is shape-tolerant: {@code items} written as an
  * object and {@code items} written as an array are both descended, since neither shape can be
  * anything but a subschema there.
+ *
+ * <p><strong>Why both walks run two passes.</strong> Position awareness of the outer traversal alone
+ * is not enough: {@link ConjunctiveLocations} expands a location through {@code $ref}, and a
+ * developer-authored {@code @Schema(ref = "#/...")} reaches the generated document verbatim and may
+ * point at <em>any</em> node — a {@code default} value, a container, an annotation keyword's data. A
+ * target is therefore conjoined only when it is one of the heads this class classifies, which each
+ * walk obtains up front from {@link #collectSchemaHeads(JsonNode)} and passes into
+ * {@link ConjunctiveLocations#closure(JsonNode, JsonNode, Set)}. The collection pass must complete
+ * <em>before</em> the fold begins, because a {@code $ref} may point forward to a head the fold has
+ * not reached yet; an incrementally populated set would reject such a target for no reason other
+ * than document order.
  *
  * <p>The traversal is call-local, allocates only fresh state, and never mutates the document, so it
  * adds nothing to the generator's locking obligations. Each caller owns its own policy fold and its
@@ -147,6 +166,30 @@ final class SchemaPositions {
      */
     static void visitSchemaHeads(JsonNode document, SchemaHeadVisitor visitor) {
         visitSchema(document, ROOT_PATH, visitor);
+    }
+
+    /**
+     * Collects every node {@link #visitSchemaHeads(JsonNode, SchemaHeadVisitor)} would visit, as the
+     * first of a walk's two passes.
+     *
+     * <p>The returned set compares by <strong>identity</strong>, never by value: two distinct
+     * subschemas in one document are frequently deeply equal — {@code {"type":"string"}} occurs many
+     * times in a generated document — so a value-based set would admit a {@code $ref} target that
+     * merely <em>looks like</em> a head. What a caller needs to know is whether the resolved target
+     * node <em>is</em> one of the document's schema heads.
+     *
+     * <p>Callers must complete this pass before folding, and must not add positions to the set while
+     * folding: a {@code $ref} may point forward to a head later in document order, which an
+     * incrementally populated set would wrongly reject. The set stays valid across the numeric-domain
+     * filter's mutations, which remove only keywords and never a node occupying a schema position.
+     *
+     * @param document the whole generated document
+     * @return a fresh, identity-comparing set of every object schema head in the document
+     */
+    static Set<JsonNode> collectSchemaHeads(JsonNode document) {
+        Set<JsonNode> heads = Collections.newSetFromMap(new IdentityHashMap<>());
+        visitSchemaHeads(document, (schema, path) -> heads.add(schema));
+        return heads;
     }
 
     /**

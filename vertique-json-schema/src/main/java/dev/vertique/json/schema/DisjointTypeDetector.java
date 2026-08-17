@@ -33,7 +33,10 @@ import java.util.Set;
  * traversed through Draft 2020-12 subschema positions only, so a JSON <em>data</em> object sitting in
  * a {@code default}, {@code const}, {@code enum}, or {@code examples} position — or under any
  * annotation keyword the dialect does not define — is never read as a schema and never fails
- * generation.
+ * generation. The same rule governs the closure: a {@code $ref} whose pointer resolves to such a node,
+ * or to a container object, is skipped rather than conjoined, so a developer-authored
+ * {@code @Schema(ref = "#/...")} cannot smuggle data into the conjunction. That requires the complete
+ * set of schema heads up front, which is why this walk runs a collection pass before it folds.
  *
  * <p>A literal {@code "type": []} is caught by the same rule: its value set is empty, so the
  * intersection is empty. Reference cycles are bounded by an identity-based visited set, so a document
@@ -65,21 +68,29 @@ final class DisjointTypeDetector {
      *     intersect to nothing
      */
     static void requireNoDisjointTypes(JsonNode document) {
-        SchemaPositions.visitSchemaHeads(document, (schema, path) -> requireSatisfiableTypes(document, schema, path));
+        // Pass 1 collects every schema head in the document; pass 2 folds each location's closure
+        // against that completed set. The passes cannot be merged: a $ref may point forward to a head
+        // the fold has not reached yet, which an incrementally populated set would wrongly skip.
+        Set<JsonNode> schemaHeads = SchemaPositions.collectSchemaHeads(document);
+        SchemaPositions.visitSchemaHeads(
+                document, (schema, path) -> requireSatisfiableTypes(document, schemaHeads, schema, path));
     }
 
     /**
      * Refines the explicit {@code type} value sets across one conjunctive location into the types an
      * instance may still have there.
      *
-     * @param document the whole document, used to resolve {@code $ref} pointers
-     * @param start    the object node heading the location
-     * @param path     the location's path, used in failure messages
+     * @param document    the whole document, used to resolve {@code $ref} pointers
+     * @param schemaHeads the document's complete set of schema heads, limiting which {@code $ref}
+     *                    targets are conjoined
+     * @param start       the object node heading the location
+     * @param path        the location's path, used in failure messages
      * @throws JsonSchemaGenerationException if the refined set is empty
      */
-    private static void requireSatisfiableTypes(JsonNode document, JsonNode start, String path) {
+    private static void requireSatisfiableTypes(
+            JsonNode document, Set<JsonNode> schemaHeads, JsonNode start, String path) {
         Set<String> intersection = null;
-        for (JsonNode node : ConjunctiveLocations.closure(document, start)) {
+        for (JsonNode node : ConjunctiveLocations.closure(document, start, schemaHeads)) {
             Set<String> declared = ConjunctiveLocations.explicitTypes(node.get(ConjunctiveLocations.TYPE));
             if (declared == null) {
                 continue;
