@@ -5,6 +5,7 @@ package dev.vertique.rest.auth.jwt;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import io.vertx.core.Context;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.core.VertxOptions;
@@ -14,11 +15,13 @@ import io.vertx.ext.auth.authentication.TokenCredentials;
 import io.vertx.ext.auth.jwt.JWTAuth;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
+import java.io.InputStream;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -220,6 +223,122 @@ class JwtAuthFactoryTest {
                         testContext.completeNow();
                     })));
         });
+    }
+
+    /**
+     * Proves that a {@code classpath:} location is resolved through the <em>calling</em> thread's
+     * context classloader, and that the resolution itself still happens on a worker thread.
+     *
+     * <p>The packaged {@code META-INF/vertique/module.md} documents the {@code classpath:} location
+     * kind as "thread-context classloader resource"; before this test nothing in the module's test
+     * sources referenced a {@link ClassLoader} at all, so that contract was stated and unverified.
+     *
+     * <p>The mechanism is a recording loader installed as the thread context classloader for the
+     * duration of the {@code fromJwksAsync} call, and only for that call — Vert.x sets a task's TCCL
+     * from the context, but whether it restores a TCCL replaced <em>inside</em> a task is
+     * undocumented, so the test restores it itself in an immediate {@code finally}.
+     *
+     * <p>What each assertion buys:
+     * <ol>
+     *   <li><b>Non-null {@link JWTAuth}</b> — the read actually went through the recording loader's
+     *       delegation and produced a usable result, rather than the loader merely being touched by
+     *       something unrelated.</li>
+     *   <li><b>The recording loader was consulted</b> — this is the load-bearing assertion. The
+     *       loader is only visible as the TCCL on the <em>calling</em> event-loop thread, so it can
+     *       be consulted only if {@code fromJwksAsync} captured the classloader before dispatching.
+     *       A capture moved inside the {@code executeBlocking} lambda would read the worker thread's
+     *       context classloader instead, resolve the fixture through it, and never touch the
+     *       recorder — silently breaking classpath resolution for any application running under an
+     *       isolated or custom loader.</li>
+     *   <li><b>{@link Context#isOnWorkerThread()} was {@code true} at read time</b> — documented to
+     *       hold inside an {@code executeBlocking} callable, so this pins the read to a worker
+     *       without matching on thread names.</li>
+     *   <li><b>The reading thread is not the calling thread</b> — the read did not run inline on the
+     *       caller's event loop, independently of the predicate above.</li>
+     * </ol>
+     *
+     * <p>This test uses the {@link VertxExtension}-injected {@link Vertx} and owns nothing: it needs
+     * an ordinary worker pool, not the saturated one owned by
+     * {@link #shouldQueueLocalJwksReadsBehindTheWorkerPool(Path, VertxTestContext)}.
+     *
+     * @param vertx       the injected Vert.x instance
+     * @param testContext the async assertion sink
+     */
+    @Test
+    @DisplayName("Should resolve a classpath JWKS location through the caller's thread context classloader")
+    void shouldResolveClasspathLocationThroughTheCallerContextClassLoader(Vertx vertx, VertxTestContext testContext) {
+        RecordingClassLoader recordingLoader = new RecordingClassLoader(JwtAuthFactoryTest.class.getClassLoader());
+        AtomicReference<Thread> callingThread = new AtomicReference<>();
+
+        vertx.runOnContext(ignored -> {
+            Thread caller = Thread.currentThread();
+            callingThread.set(caller);
+
+            ClassLoader previousLoader = caller.getContextClassLoader();
+            Future<JWTAuth> auth;
+            try {
+                caller.setContextClassLoader(recordingLoader);
+                auth = JwtAuthFactory.fromJwksAsync(vertx, "classpath:test-jwks.json");
+            } finally {
+                // Restored in the same task that installed it: Vert.x's own restore behaviour for a
+                // TCCL replaced inside a task is undocumented, so the test does not rely on it.
+                caller.setContextClassLoader(previousLoader);
+            }
+
+            auth.onComplete(testContext.succeeding(jwtAuth -> testContext.verify(() -> {
+                assertNotNull(jwtAuth, "the classpath JWKS read must produce a JWTAuth");
+                assertNotNull(
+                        recordingLoader.readThread.get(),
+                        "fromJwksAsync must capture the caller's thread context classloader before dispatching; the "
+                                + "loader installed on the calling event-loop thread was never consulted for "
+                                + "test-jwks.json, so the classpath: location resolved against the worker thread's "
+                                + "own context classloader instead");
+                assertEquals(
+                        Boolean.TRUE,
+                        recordingLoader.onWorkerThread.get(),
+                        "the classpath JWKS read must run inside an executeBlocking callable, where "
+                                + "Context.isOnWorkerThread() is documented to be true");
+                assertNotSame(
+                        callingThread.get(),
+                        recordingLoader.readThread.get(),
+                        "the classpath JWKS read must not run on the caller's event-loop thread");
+                testContext.completeNow();
+            })));
+        });
+    }
+
+    /**
+     * A {@link ClassLoader} that records the first consultation for the JWKS fixture and then
+     * delegates to its parent, which is the test class's own loader.
+     *
+     * <p>Recording only the <em>first</em> consultation keeps the observation stable: the assertions
+     * are about the thread that performed the documented read, and a later incidental lookup on some
+     * other thread must not overwrite it.
+     */
+    private static final class RecordingClassLoader extends ClassLoader {
+
+        /** The thread that first asked this loader for the JWKS fixture; {@code null} until then. */
+        private final AtomicReference<Thread> readThread = new AtomicReference<>();
+
+        /** {@link Context#isOnWorkerThread()} as observed during that first consultation. */
+        private final AtomicReference<Boolean> onWorkerThread = new AtomicReference<>();
+
+        /**
+         * Creates a recording loader delegating to {@code parent}.
+         *
+         * @param parent the loader that actually resolves the resource
+         */
+        private RecordingClassLoader(ClassLoader parent) {
+            super(parent);
+        }
+
+        @Override
+        public InputStream getResourceAsStream(String name) {
+            if ("test-jwks.json".equals(name) && readThread.compareAndSet(null, Thread.currentThread())) {
+                onWorkerThread.set(Context.isOnWorkerThread());
+            }
+            return super.getResourceAsStream(name);
+        }
     }
 
     /**
