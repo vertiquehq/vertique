@@ -7,7 +7,6 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.util.Collections;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
 
 /**
@@ -80,33 +79,19 @@ final class NumericDomainKeywordFilter {
      * conjunctive location whose effective explicit type excludes both {@code number} and {@code
      * integer}.
      *
+     * <p>The locations visited are the Draft 2020-12 subschema positions {@link SchemaPositions}
+     * classifies, never every object node. That distinction is a correctness requirement, not an
+     * optimization: this pass <em>mutates</em> what it reaches, so a position-blind traversal would
+     * silently delete members out of a caller's JSON data — a {@code minimum} inside a {@code default}
+     * value, for instance — which is not a schema and carries no numeric-domain keyword at all.
+     *
      * <p>{@code document} is never {@code null} in practice: the only caller passes the {@code
      * ObjectNode} a successful Victools generation produced.
      *
      * @param document the freshly generated schema document; mutated in place
      */
     static void suppressInapplicableNumericKeywords(JsonNode document) {
-        walk(document, document);
-    }
-
-    /**
-     * Visits every node of the document, evaluating each object node as the head of its own
-     * conjunctive location.
-     *
-     * @param document the whole document, used to resolve {@code $ref} pointers
-     * @param node     the node currently being visited
-     */
-    private static void walk(JsonNode document, JsonNode node) {
-        if (node.isObject()) {
-            applyAtLocation(document, node);
-            for (Map.Entry<String, JsonNode> member : node.properties()) {
-                walk(document, member.getValue());
-            }
-        } else if (node.isArray()) {
-            for (JsonNode element : node) {
-                walk(document, element);
-            }
-        }
+        SchemaPositions.visitSchemaHeads(document, (schema, path) -> applyAtLocation(document, schema));
     }
 
     /**

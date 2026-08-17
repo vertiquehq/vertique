@@ -4,7 +4,6 @@
 package dev.vertique.json.schema;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import java.util.Map;
 import java.util.Set;
 
 /**
@@ -27,8 +26,14 @@ import java.util.Set;
  * {@code items}, {@code anyOf}, or {@code oneOf}. Those are not unconditional conjunctions: a
  * nullable overridden property, for example, legally produces {@code anyOf: [{"type":"null"},
  * {"type":"string"}]}, which is an alternation and not a contradiction. Each such subschema instead
- * starts its own conjunctive location when the outer walk reaches it, so every object node in the
- * document is checked exactly once as the head of its own location.
+ * starts its own conjunctive location when the outer walk reaches it, so every <em>subschema</em> in
+ * the document is checked exactly once as the head of its own location.
+ *
+ * <p>Which nodes those are is decided by {@link SchemaPositions}, not by this class: the document is
+ * traversed through Draft 2020-12 subschema positions only, so a JSON <em>data</em> object sitting in
+ * a {@code default}, {@code const}, {@code enum}, or {@code examples} position — or under any
+ * annotation keyword the dialect does not define — is never read as a schema and never fails
+ * generation.
  *
  * <p>A literal {@code "type": []} is caught by the same rule: its value set is empty, so the
  * intersection is empty. Reference cycles are bounded by an identity-based visited set, so a document
@@ -60,28 +65,7 @@ final class DisjointTypeDetector {
      *     intersect to nothing
      */
     static void requireNoDisjointTypes(JsonNode document) {
-        walk(document, document, "#");
-    }
-
-    /**
-     * Visits every node of the document, checking each object node as the head of its own conjunctive
-     * location.
-     *
-     * @param document the whole document, used to resolve {@code $ref} pointers
-     * @param node     the node currently being visited
-     * @param path     the JSON-pointer-style path of {@code node}, used in failure messages
-     */
-    private static void walk(JsonNode document, JsonNode node, String path) {
-        if (node.isObject()) {
-            requireSatisfiableTypes(document, node, path);
-            for (Map.Entry<String, JsonNode> member : node.properties()) {
-                walk(document, member.getValue(), path + "/" + member.getKey());
-            }
-        } else if (node.isArray()) {
-            for (int index = 0; index < node.size(); index++) {
-                walk(document, node.get(index), path + "/" + index);
-            }
-        }
+        SchemaPositions.visitSchemaHeads(document, (schema, path) -> requireSatisfiableTypes(document, schema, path));
     }
 
     /**

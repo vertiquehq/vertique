@@ -144,7 +144,7 @@ misdescribes the wire:
   `implementation` only where you intend the declared type's schema — including anything nested
   inside it — to be replaced.
 - **A conjunction of disjoint explicit `type` keywords.** After generation, every conjunctive
-  location — an object node, its direct `allOf` branches, and its locally resolved `$ref`
+  location — a subschema node, its direct `allOf` branches, and its locally resolved `$ref`
   targets — must admit at least one explicit `type` across the declarations found there. The
   types are intersected, refined by the one subtype relation JSON Schema's type vocabulary
   carries: `integer` is the integral subset of `number`, so conjoining the two narrows to
@@ -158,6 +158,27 @@ misdescribes the wire:
 
 `@Schema(type = ...)` has no effect in this module; `implementation` is the supported way for a
 property to contribute a type shape.
+
+### What counts as a schema position
+
+Both post-generation passes — the disjoint-type check above and numeric-keyword suppression —
+traverse the generated document through Draft 2020-12 **subschema positions only**, starting at the
+document root. They descend into `not`, `if`, `then`, `else`, `items`, `contains`,
+`additionalProperties`, `propertyNames`, `unevaluatedItems`, `unevaluatedProperties`,
+`contentSchema`, the branches of `allOf`, `anyOf`, `oneOf`, and `prefixItems`, and the member values
+of `properties`, `patternProperties`, `$defs`, and `dependentSchemas`. Nothing else is descended.
+
+This matters when an override fragment carries JSON **data**. Draft 2020-12 treats an unrecognized
+keyword as an annotation — arbitrary data — and the values of `default`, `const`, `enum`, and
+`examples` are data even though the keywords are defined. Such a value is never read as a schema: an
+object in a `default` position keeps every member it declares, including a `minimum` the numeric
+filter would otherwise strip, and an object in a `const` position that happens to look like an
+unsatisfiable schema does not fail generation. A `definitions` member is data for the same reason —
+this generator publishes definitions under `$defs`, which a fragment may not declare, so a
+`definitions` member can only have come from a fragment as annotation content.
+
+Reaching a real subschema is unaffected: a genuine `type` conflict at any of the positions listed
+above still fails generation.
 
 ---
 
