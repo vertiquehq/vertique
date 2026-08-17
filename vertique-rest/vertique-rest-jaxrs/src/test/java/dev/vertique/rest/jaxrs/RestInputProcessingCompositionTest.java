@@ -104,6 +104,27 @@ class RestInputProcessingCompositionTest {
         }
     }
 
+    /**
+     * Body DTO that projects cleanly itself but reaches {@link DuplicateAliasDto} through a declared
+     * field and a declared collection element — the two shapes the engine descends into at request
+     * time, and therefore the two whose projections must be composed at registration too.
+     */
+    public static class NestedAliasHolderDto {
+        public String label;
+        public DuplicateAliasDto nested;
+        public List<DuplicateAliasDto> many;
+    }
+
+    /** Resource whose body type reaches an unprojectable type only through its declared fields. */
+    @Path("/nested-projection")
+    static class NestedUnprojectableBodyResource {
+
+        @POST
+        public Future<String> accept(NestedAliasHolderDto dto) {
+            return Future.succeededFuture(dto.label);
+        }
+    }
+
     /** Resource whose two routes declare policies in the two different ways the gate must see. */
     @Path("/governed")
     static class PolicyDeclaringResource {
@@ -312,5 +333,21 @@ class RestInputProcessingCompositionTest {
         assertDoesNotThrow(
                 () -> register(Set.of(new PolicyFreeResource()), new PassThroughProcessor()),
                 "an ordinary body type must register normally");
+    }
+
+    @Test
+    @DisplayName("a body type whose NESTED type cannot be projected fails startup, not the first request")
+    void shouldFailStartupWhenANestedTypesProjectionCannotBeComposed() {
+        ConfigurationException failure = assertThrows(
+                ConfigurationException.class,
+                () -> register(Set.of(new NestedUnprojectableBodyResource()), new PassThroughProcessor()),
+                "the engine resolves a nested type's projection on the request path, so warming has to "
+                        + "cover the declared field graph — not only the body type itself");
+
+        String message = failure.getMessage();
+        assertTrue(
+                message.contains(DuplicateAliasDto.class.getName()),
+                "the failure must name the nested type whose projection cannot be composed: " + message);
+        assertTrue(message.contains("shared"), "the failure must name the contested wire name: " + message);
     }
 }

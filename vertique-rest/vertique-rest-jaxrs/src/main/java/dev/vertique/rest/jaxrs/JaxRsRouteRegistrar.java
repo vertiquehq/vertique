@@ -522,42 +522,25 @@ public class JaxRsRouteRegistrar {
      * bodies with the same {@link ObjectMapper} share one resolver, so a body type used by many routes
      * is introspected once per router build.
      *
+     * <p>The walk itself is {@link JacksonFieldNameResolver#precomputeGraph} — the same one
+     * {@code WebSocketEndpointRegistrar} uses for its message types, so both boundaries unwrap arrays
+     * and parameterized shapes and follow declared property types identically. Following the property
+     * graph is what makes the published guarantee true: the engine consults the projection of the
+     * owner of <em>every</em> nested fragment, so a body type's nested DTOs would otherwise introspect
+     * on the request path.
+     *
      * @param meta             the resource method whose body types to compose projections for
      * @param bodyNameResolver this route's projection, built from its resolved body mapper
-     * @throws dev.vertique.core.exception.ConfigurationException if a body type's projection cannot be
-     *                                                            composed
+     * @throws dev.vertique.core.exception.ConfigurationException if a reachable body type's projection
+     *                                                            cannot be composed
      */
     private static void warmBodyNameProjection(ResourceMethodMeta meta, JacksonFieldNameResolver bodyNameResolver) {
         for (ResourceMethodMeta.ParamMeta param : meta.params()) {
             if (param.source() != ResourceMethodMeta.ParamSource.BODY) {
                 continue;
             }
-            warmProjection(bodyNameResolver, param.genericType() != null ? param.genericType() : param.type());
-            warmProjection(bodyNameResolver, param.componentType());
-        }
-    }
-
-    /**
-     * Composes the projection for every class reachable from a declared body type: the type itself, an
-     * array's component type, and a parameterized type's raw type and arguments — the same shapes the
-     * engine descends into element-wise at request time. Shapes carrying no class (a wildcard, a type
-     * variable) are skipped; they have no statically known property set to project.
-     *
-     * @param bodyNameResolver the projection to warm
-     * @param type             the declared type to walk, or {@code null}
-     */
-    private static void warmProjection(JacksonFieldNameResolver bodyNameResolver, @Nullable Type type) {
-        if (type instanceof Class<?> rawClass) {
-            if (rawClass.isArray()) {
-                warmProjection(bodyNameResolver, rawClass.getComponentType());
-            } else if (!rawClass.isPrimitive()) {
-                bodyNameResolver.precompute(rawClass);
-            }
-        } else if (type instanceof ParameterizedType parameterized) {
-            warmProjection(bodyNameResolver, parameterized.getRawType());
-            for (Type argument : parameterized.getActualTypeArguments()) {
-                warmProjection(bodyNameResolver, argument);
-            }
+            bodyNameResolver.precomputeGraph(param.genericType() != null ? param.genericType() : param.type());
+            bodyNameResolver.precomputeGraph(param.componentType());
         }
     }
 

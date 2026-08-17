@@ -8,8 +8,9 @@ import dev.vertique.core.sanitization.InputFieldNameResolver;
 import dev.vertique.core.sanitization.Sanitizer;
 import dev.vertique.input.processing.InputPolicyMetadata.FieldPolicyMetadata;
 import jakarta.annotation.Nullable;
-import java.util.LinkedHashSet;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 
 /**
  * Carries accumulated processing state through nested object traversal during structured-input
@@ -18,8 +19,10 @@ import java.util.List;
  * <p>Skip flags are sticky: once set by an <em>ancestor</em>, they suppress all descendants even if
  * a descendant type or field declares its own canonicalizer/sanitizer chain. An <em>object-level</em>
  * skip is narrower — it yields to the enclosing field's own declared chain, on every field kind.
- * Inherited chains accumulate as recursion descends, holding each distinct processor class once, and
- * mirror the run-time semantics of {@link DefaultInputObjectProcessor}.
+ * Inherited chains accumulate as recursion descends: each level appends its declared chains verbatim
+ * minus the classes an ancestor already contributed, which mirrors the run-time semantics of
+ * {@link DefaultInputObjectProcessor} and bounds the chain by the declared type graph rather than by
+ * the input's depth (see {@link #compose}).
  *
  * <p>This is a behavior-bearing public API used by both the reflective walker (via
  * {@link #descend(InputPolicyMetadata, FieldPolicyMetadata)}) and codegen-emitted
@@ -229,27 +232,33 @@ public final class InputTraversalContext {
     }
 
     /**
-     * Returns the effective chain composed of {@code inherited + object + field}, <strong>with each
-     * distinct processor class kept exactly once, in encounter order</strong>. The
-     * {@code inherited} reference is reused unchanged when {@code object} and {@code field}
-     * contribute no new entries, which avoids per-{@code descend} allocations on the common case
-     * where the nested DTO has no object- or field-level chain.
+     * Returns the effective chain composed of {@code inherited + object + field}, where the
+     * {@code object} and {@code field} entries are appended <strong>in their declared order,
+     * repeats included</strong>, and only entries already present in {@code inherited} are dropped.
+     * The {@code inherited} reference is reused unchanged when {@code object} and {@code field}
+     * contribute nothing new, which avoids per-{@code descend} allocations on the common case where
+     * the nested DTO has no object- or field-level chain.
      *
-     * <p><strong>Why deduplicate.</strong> Policy metadata is resolved per type, so a type's own
-     * chain is offered afresh at <em>every</em> level of a recursive graph. Without deduplication a
-     * self-referential DTO carrying a type-level chain would apply that chain once per level —
-     * depth <em>N</em> means <em>N</em> applications per string leaf — which an attacker controls
-     * purely by nesting the request body. Bounding the chain by distinct processor class removes
-     * that amplification outright rather than capping it.
+     * <p><strong>Why anything is dropped at all.</strong> Policy metadata is resolved per type, so a
+     * type's own chain is offered afresh at <em>every</em> level of a recursive graph. Without the
+     * inherited-side filter a self-referential DTO carrying a type-level chain would apply that
+     * chain once per level — depth <em>N</em> means <em>N</em> applications per string leaf — which
+     * an attacker controls purely by nesting the request body. Filtering the newly offered entries
+     * against {@code inherited} removes that amplification outright: a class already inherited is
+     * never appended again, so the accumulated chain can only grow while <em>new</em> declaration
+     * sites are reached. Both the number of those sites and the length of each declared chain are
+     * fixed by the application's code, never by the request, so the composed chain's length is
+     * bounded by the declared type graph and is independent of the intermediate's depth.
      *
-     * <p><strong>What deduplication costs.</strong> {@code Canonicalizer} and {@code Sanitizer} both
-     * publish idempotence as a MUST, so {@code S(S(x)) == S(x)}: for a single-element chain,
-     * collapsing a repeat is exactly neutral, and it is neutral for every processor family the
-     * framework ships. It is <em>not</em> a general proof for an arbitrary interleaved multi-element
-     * chain — {@code A B A} collapses to {@code A B}, and those agree only when the processors also
-     * commute or {@code B} preserves {@code A}'s fixed point, which the contracts do not require.
-     * The bound is chosen deliberately in that knowledge: a repeated class in a composed chain
-     * indicates the same policy inherited twice, not a deliberately re-ordered pipeline.
+     * <p><strong>Why the declared chains themselves are left alone.</strong> A repeat <em>within</em>
+     * one {@code @Canonicalize}/{@code @Sanitize} declaration — or between a type's chain and its
+     * field's — is a deliberately ordered pipeline, not an accident of inheritance. Idempotence,
+     * which both {@code Canonicalizer} and {@code Sanitizer} publish as a MUST, is not
+     * commutativity: for {@code @Sanitize(StripHtml.class)} on the type and
+     * {@code @Sanitize({DecodeEntities.class, StripHtml.class})} on the field, collapsing the
+     * repeated {@code StripHtml} yields {@code [StripHtml, DecodeEntities]} and leaves
+     * {@code &lt;script} decoded but unstripped. Appending both declared chains verbatim keeps
+     * {@code [StripHtml, DecodeEntities, StripHtml]}, which is what the declarations say.
      *
      * <p>Package-private because it is the single chain-composition implementation shared by
      * {@link DefaultInputObjectProcessor} and {@link GeneratedSupport}; callers that always have a
@@ -260,24 +269,44 @@ public final class InputTraversalContext {
      * @param field     field-level chain from the enclosing field, or {@code null} when descending
      *                  from a list element
      * @param <T>       the chain class element type
-     * @return a composed list holding each distinct entry once in encounter order, or
-     *         {@code inherited} unchanged when it is already distinct and nothing new is added
+     * @return {@code inherited} followed by every {@code object} then {@code field} entry it does
+     *         not already contain, in declared order, or {@code inherited} unchanged when nothing
+     *         new is contributed
      */
     static <T> List<T> compose(List<T> inherited, List<T> object, @Nullable List<T> field) {
         boolean fieldEmpty = field == null || field.isEmpty();
         if (object.isEmpty() && fieldEmpty) {
             return inherited;
         }
-        LinkedHashSet<T> distinct = new LinkedHashSet<>(inherited);
-        boolean grew = distinct.addAll(object);
-        if (field != null) {
-            grew |= distinct.addAll(field);
+        Set<T> alreadyInherited = inherited.isEmpty() ? Set.of() : Set.copyOf(inherited);
+        List<T> composed = new ArrayList<>(inherited.size() + object.size() + (fieldEmpty ? 0 : field.size()));
+        composed.addAll(inherited);
+        appendUninherited(composed, object, alreadyInherited);
+        if (!fieldEmpty) {
+            appendUninherited(composed, field, alreadyInherited);
         }
-        // Reuse the caller's list only when nothing was added AND it held no duplicates itself;
-        // otherwise its size would not match the distinct set it produced.
-        if (!grew && distinct.size() == inherited.size()) {
+        // Reuse the caller's list when the declared chains added nothing an ancestor had not
+        // already contributed — the common case for a recursive type re-offering its own chain.
+        if (composed.size() == inherited.size()) {
             return inherited;
         }
-        return List.copyOf(distinct);
+        return List.copyOf(composed);
+    }
+
+    /**
+     * Appends every entry of {@code declared} that {@code alreadyInherited} does not contain,
+     * preserving {@code declared}'s order and its own repeats.
+     *
+     * @param target           the composed chain being built; must not be {@code null}
+     * @param declared         the object- or field-level chain to append; must not be {@code null}
+     * @param alreadyInherited the classes an ancestor already contributed; must not be {@code null}
+     * @param <T>              the chain class element type
+     */
+    private static <T> void appendUninherited(List<T> target, List<T> declared, Set<T> alreadyInherited) {
+        for (T entry : declared) {
+            if (!alreadyInherited.contains(entry)) {
+                target.add(entry);
+            }
+        }
     }
 }

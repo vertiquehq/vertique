@@ -222,8 +222,14 @@ class WebSocketEndpointRegistrar {
      * without it no projection is ever consulted, and any declared policy already failed the
      * composition gate above.
      *
+     * <p>The walk is {@link dev.vertique.json.JacksonFieldNameResolver#precomputeGraph} — the same one
+     * the JAX-RS registrar uses for body types, rather than a second, narrower one here. It unwraps an
+     * array message type to its component, skips a scalar such as the default {@code String} message
+     * type (neither carries a property set the engine keys against), and follows each message type's
+     * declared property types so a nested DTO is warmed with its owner.
+     *
      * @param metas every scanned endpoint's metadata
-     * @throws ConfigurationException if a message type's projection cannot be composed
+     * @throws ConfigurationException if a reachable message type's projection cannot be composed
      */
     private void warmMessageNameProjections(List<WebSocketEndpointMeta> metas) {
         if (objectProcessor == null) {
@@ -231,7 +237,7 @@ class WebSocketEndpointRegistrar {
         }
         for (WebSocketEndpointMeta meta : metas) {
             if (meta.onMessage() != null) {
-                messageNameResolver.precompute(meta.messageType());
+                messageNameResolver.precomputeGraph(meta.messageType());
             }
         }
     }

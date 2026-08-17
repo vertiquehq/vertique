@@ -109,7 +109,10 @@ form-urlencoded body bound to a POJO, and the schema-free `JsonObject` / `JsonAr
 through the engine — a Vert.x JSON wrapper is already the intermediate the engine walks, so a
 declared chain reaches every string leaf in it, at any nesting depth. A schema-free body carries no
 declared property set, so only route- and parameter-level chains apply to it and no wire-name
-projection is consulted. A raw binary body (`byte[]`, `io.vertx.core.buffer.Buffer`) is the one
+projection is consulted. A payload whose shape does not match the declared wrapper — an object body
+on a `JsonArray` parameter, or an array body on a `JsonObject` one — is not processed at all: it
+falls through to the decoder chain, which answers a shape mismatch with `null` exactly as it does
+without the engine installed. A raw binary body (`byte[]`, `io.vertx.core.buffer.Buffer`) is the one
 shape the engine cannot process at all; declaring a chain on one is rejected at startup rather than
 skipped (see [Startup failures](#startup-failures)).
 
@@ -1001,10 +1004,12 @@ Remove the declaration, or add `@SkipCanonicalization` / `@SkipSanitization` to 
 
 When an `InputObjectProcessor` is bound, route registration also composes each route's body wire-name
 projection (`JacksonFieldNameResolver`, from `dev.vertique:vertique-json`) against that route's
-resolved body mapper — for the body parameter's declared type, an array's component type, and a
-generic body's type arguments. A body type whose projection cannot be composed — two properties
-claiming one wire name, or two properties claiming one `@JsonAlias` — fails router build with
-`ConfigurationException` naming the type and the contested name. Composing at registration is what
+resolved body mapper — for the body parameter's declared type, an array's component type, a generic
+body's type arguments, and every type reachable from those through a declared Jackson-visible
+property. Any type in that graph whose projection cannot be composed — two properties claiming one
+wire name, or two properties claiming one `@JsonAlias` — fails router build with
+`ConfigurationException` naming the type and the contested name, including when it is a nested DTO
+rather than the body type itself. Composing at registration is what
 makes that a startup failure rather than a 500 on every request that touches the type, and it keeps
 Jackson bean introspection off the event loop.
 

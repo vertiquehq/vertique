@@ -5,6 +5,7 @@ package dev.vertique.json;
 
 import com.fasterxml.jackson.databind.BeanDescription;
 import com.fasterxml.jackson.databind.DeserializationConfig;
+import com.fasterxml.jackson.databind.JavaType;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.PropertyName;
 import com.fasterxml.jackson.databind.introspect.BeanPropertyDefinition;
@@ -12,7 +13,11 @@ import dev.vertique.core.exception.ConfigurationException;
 import dev.vertique.core.sanitization.InputFieldNameResolver;
 import io.vertx.core.json.jackson.DatabindCodec;
 import jakarta.annotation.Nullable;
+import java.lang.reflect.GenericArrayType;
+import java.lang.reflect.ParameterizedType;
+import java.lang.reflect.Type;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -52,9 +57,10 @@ import java.util.Set;
  * <p><strong>Caching and the identity short circuit.</strong> One instance is created per body mapper
  * at route or endpoint registration and caches its per-type projection in a {@link ClassValue}, so
  * entries are collected with the classloader that owns the DTO rather than pinned in a static
- * {@code Class}-keyed map. Each boundary composes the projection for every body or message type it
- * knows through {@link #precompute} at that same registration, so {@link #logicalName} neither
- * introspects nor raises anything on the request path. When a type's computed projection maps every
+ * {@code Class}-keyed map. Each boundary composes the projections for every body or message type it
+ * knows — and, through {@link #precomputeGraph}, for every type reachable from one by a declared
+ * property — at that same registration, so {@link #logicalName} neither introspects nor raises
+ * anything on the request path. When a type's computed projection maps every
  * wire name onto itself — the
  * overwhelmingly common DTO — the entry records that and {@link #logicalName} returns the wire name
  * directly, skipping the per-field lookup entirely. The flag follows the <em>computed</em>
@@ -138,6 +144,115 @@ public final class JacksonFieldNameResolver implements InputFieldNameResolver {
      */
     public void precompute(Class<?> ownerType) {
         projections.get(ownerType);
+    }
+
+    /**
+     * Composes the projection for {@code declaredType} and for every type reachable from it through
+     * Jackson-visible properties, so no type the engine can descend into is left to introspect lazily
+     * on the request or message path.
+     *
+     * <p>This is the shared warm-up walk every Jackson-bound boundary uses: it unwraps arrays and
+     * parameterized shapes (a {@code List<Dto>} body warms {@code Dto}, a {@code Dto[]} message warms
+     * {@code Dto}), then follows each visited type's declared property types transitively, including
+     * collection element and map value types. A visited set makes a cyclic type graph terminate, and
+     * a shape carrying no statically known property set — a wildcard, a type variable, a primitive, an
+     * enum, or a platform type such as {@link String} — is skipped rather than introspected.
+     *
+     * <p>Why transitive rather than only the declared body or message type: the engine resolves the
+     * projection for the <em>owner of each nested fragment</em>, so a nested DTO's projection is
+     * consulted on the request path exactly like the root's. Warming only the root would leave that
+     * first consultation to run a bean introspection on an event-loop thread — and, because a
+     * {@link ClassValue} does not memoise a {@code computeValue} that threw, would re-run and re-throw
+     * it for every subsequent request.
+     *
+     * @param declaredType the declared body or message type to walk, or {@code null} for nothing
+     * @throws ConfigurationException if any reachable type's projection cannot be composed — two
+     *                                properties claiming one primary wire name, or two properties
+     *                                claiming one alias
+     */
+    public void precomputeGraph(@Nullable Type declaredType) {
+        warmDeclaredType(declaredType, new HashSet<>());
+    }
+
+    /**
+     * Walks one reflective type shape, unwrapping arrays and parameterized types down to the classes
+     * that carry a property set.
+     *
+     * @param declaredType the shape to walk, or {@code null}
+     * @param visited      the classes already warmed on this walk
+     */
+    private void warmDeclaredType(@Nullable Type declaredType, Set<Class<?>> visited) {
+        if (declaredType instanceof Class<?> rawClass) {
+            warmClass(rawClass, visited);
+        } else if (declaredType instanceof ParameterizedType parameterized) {
+            warmDeclaredType(parameterized.getRawType(), visited);
+            for (Type argument : parameterized.getActualTypeArguments()) {
+                warmDeclaredType(argument, visited);
+            }
+        } else if (declaredType instanceof GenericArrayType genericArray) {
+            warmDeclaredType(genericArray.getGenericComponentType(), visited);
+        }
+        // A wildcard or type variable carries no statically known property set — nothing to project.
+    }
+
+    /**
+     * Warms one class and every type its Jackson-visible properties expose, at most once per class.
+     *
+     * @param rawClass the class to warm
+     * @param visited  the classes already warmed on this walk
+     */
+    private void warmClass(Class<?> rawClass, Set<Class<?>> visited) {
+        if (rawClass.isArray()) {
+            warmClass(rawClass.getComponentType(), visited);
+            return;
+        }
+        if (!carriesProjectableProperties(rawClass) || !visited.add(rawClass)) {
+            return;
+        }
+        precompute(rawClass);
+        // The property walk re-reads the same BeanDescription the projection was composed from;
+        // Jackson serves it from its own type/description caches.
+        BeanDescription description = config.introspect(mapper.getTypeFactory().constructType(rawClass));
+        for (BeanPropertyDefinition property : description.findProperties()) {
+            warmPropertyType(property.getPrimaryType(), visited);
+        }
+    }
+
+    /**
+     * Warms one property's declared type, descending through array, collection, and map shapes to the
+     * element and value types the engine walks element-wise.
+     *
+     * @param propertyType the property's resolved Jackson type, or {@code null}
+     * @param visited      the classes already warmed on this walk
+     */
+    private void warmPropertyType(@Nullable JavaType propertyType, Set<Class<?>> visited) {
+        if (propertyType == null) {
+            return;
+        }
+        warmPropertyType(propertyType.getContentType(), visited);
+        warmPropertyType(propertyType.getKeyType(), visited);
+        for (int i = 0; i < propertyType.containedTypeCount(); i++) {
+            warmPropertyType(propertyType.containedType(i), visited);
+        }
+        if (!propertyType.isContainerType()) {
+            warmClass(propertyType.getRawClass(), visited);
+        }
+    }
+
+    /**
+     * Returns whether a class can carry a wire &rarr; Java projection worth composing. Primitives,
+     * enums, and platform types have no application-declared property set the engine keys policies
+     * against, so introspecting them would cost a full bean introspection for an empty answer.
+     *
+     * @param rawClass the class to test
+     * @return {@code true} when the class is an application type worth introspecting
+     */
+    private static boolean carriesProjectableProperties(Class<?> rawClass) {
+        if (rawClass.isPrimitive() || rawClass.isEnum()) {
+            return false;
+        }
+        String name = rawClass.getName();
+        return !name.startsWith("java.") && !name.startsWith("javax.") && !name.startsWith("jakarta.");
     }
 
     /**

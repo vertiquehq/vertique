@@ -56,6 +56,8 @@ class DefaultInputObjectProcessorTest {
                     if (cls == TestPrefixSanitizer.class) return new TestPrefixSanitizer();
                     if (cls == CountingTypeSanitizer.class) return new CountingTypeSanitizer();
                     if (cls == CountingFieldSanitizer.class) return new CountingFieldSanitizer();
+                    if (cls == TestDecodeEntitiesSanitizer.class) return new TestDecodeEntitiesSanitizer();
+                    if (cls == TestStripHtmlSanitizer.class) return new TestStripHtmlSanitizer();
                     throw new IllegalArgumentException("Unknown sanitizer: " + cls);
                 });
     }
@@ -826,6 +828,59 @@ class DefaultInputObjectProcessorTest {
                 node = (Map<?, ?>) node.get("child");
             }
             return node;
+        }
+    }
+
+    // --- A field's own declared chain keeps its declared order ---
+
+    @Nested
+    @DisplayName("a field's own declared chain keeps its declared order and repeats")
+    class DeclaredChainOrder {
+
+        @Test
+        @DisplayName("a field chain declaring decode-then-strip runs in that order under a type-level strip")
+        void shouldPreserveTheFieldsDeclaredOrderUnderAnObjectLevelChain() {
+            Map<String, Object> input = new LinkedHashMap<>();
+            input.put("value", "&lt;script");
+
+            Object result = processor.processInput(
+                    input,
+                    DeclaredOrderOwner.class,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY,
+                    InputFieldNameResolver.IDENTITY);
+
+            // The pair is order-sensitive on purpose: decode-then-strip yields "script", while the
+            // inverted order leaves "<script" — the entity is decoded after the strip that was meant
+            // to remove its result. Only the OUTPUT can tell the two apart, so assert on it.
+            assertEquals(
+                    "script",
+                    ((Map<?, ?>) result).get("value"),
+                    "the order declared inside one @Sanitize({...}) must survive composition with the "
+                            + "owner type's chain; collapsing the repeated class inverts it");
+        }
+
+        @Test
+        @DisplayName("the same declared order survives on a nested owner reached through a field")
+        void shouldPreserveTheFieldsDeclaredOrderOnANestedOwner() {
+            Map<String, Object> nested = new LinkedHashMap<>();
+            nested.put("value", "&lt;script");
+            Map<String, Object> input = new LinkedHashMap<>();
+            input.put("nested", nested);
+
+            Object result = processor.processInput(
+                    input,
+                    DeclaredOrderHolder.class,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY,
+                    InputFieldNameResolver.IDENTITY);
+
+            Map<?, ?> processedNested = (Map<?, ?>) ((Map<?, ?>) result).get("nested");
+            assertEquals(
+                    "script",
+                    processedNested.get("value"),
+                    "the nested owner's field declares the same decode-then-strip order, which its own "
+                            + "type-level chain must not reorder");
         }
     }
 
@@ -1690,6 +1745,22 @@ class DefaultInputObjectProcessorTest {
         TypeChainNode child;
     }
 
+    /**
+     * Owner type whose {@code value} field declares the order-sensitive pair decode-then-strip while
+     * the type itself declares the strip half. The field's declared order is the whole point of this
+     * fixture: a composition that collapses the repeated {@code TestStripHtmlSanitizer} inverts it.
+     */
+    @Sanitize(TestStripHtmlSanitizer.class)
+    static class DeclaredOrderOwner {
+        @Sanitize({TestDecodeEntitiesSanitizer.class, TestStripHtmlSanitizer.class})
+        String value;
+    }
+
+    /** Holder reaching {@link DeclaredOrderOwner} through an undecorated nested field. */
+    static class DeclaredOrderHolder {
+        DeclaredOrderOwner nested;
+    }
+
     /** Directly self-referential DTO — its {@code @Sanitize} chain must apply at every level. */
     static class SelfRefNode {
         @Sanitize(TestPrefixSanitizer.class)
@@ -1944,6 +2015,25 @@ class DefaultInputObjectProcessorTest {
         @Override
         public String sanitize(String value, InputValueContext context) {
             return value == null ? null : "safe:" + value;
+        }
+    }
+
+    /**
+     * Decodes the one HTML entity these tests use. Paired with {@link TestStripHtmlSanitizer} it forms
+     * an order-sensitive chain: decoding after the strip re-introduces the markup the strip removed.
+     */
+    static class TestDecodeEntitiesSanitizer implements Sanitizer {
+        @Override
+        public String sanitize(String value, InputValueContext context) {
+            return value == null ? null : value.replace("&lt;", "<").replace("&gt;", ">");
+        }
+    }
+
+    /** Removes the markup delimiters a decoded entity produces. Idempotent, and not commutative. */
+    static class TestStripHtmlSanitizer implements Sanitizer {
+        @Override
+        public String sanitize(String value, InputValueContext context) {
+            return value == null ? null : value.replace("<", "").replace(">", "");
         }
     }
 

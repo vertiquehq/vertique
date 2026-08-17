@@ -994,8 +994,17 @@ final class ParameterExtractor {
                         return rawArray;
                     }
                 }
+                // Both Vert.x wrappers are excluded here, not just the one the branch above already
+                // returned for: a declared JsonArray body carrying an OBJECT payload leaves
+                // getJsonArray() null but getJsonObject() non-null, and JsonArray implements neither
+                // Collection nor isArray(), so without this guard the shape mismatch would be handed
+                // to the engine keyed on JsonArray.class and then materialized through
+                // JsonObject.mapTo(JsonArray.class) instead of taking the documented fall-through.
                 JsonObject jsonBody = body.getJsonObject();
-                if (jsonBody != null && !Collection.class.isAssignableFrom(targetType) && !targetType.isArray()) {
+                if (jsonBody != null
+                        && !isVertxJsonWrapper(targetType)
+                        && !Collection.class.isAssignableFrom(targetType)
+                        && !targetType.isArray()) {
                     Map<String, Object> intermediate = jsonBody.getMap();
                     Object processed = objectProcessor.processInput(
                             intermediate, targetType, policies, InputLocation.BODY, bodyNameResolver);
@@ -1098,6 +1107,19 @@ final class ParameterExtractor {
      */
     private static boolean isStructuredBodyTarget(Class<?> targetType) {
         return !isBinaryBodyTarget(targetType);
+    }
+
+    /**
+     * Returns {@code true} for the schema-free Vert.x JSON wrapper targets, which are handled by their
+     * own branches in {@link #deserializeBody} and must never reach the generic-object branch: a body
+     * whose shape does not match the declared wrapper falls through to the decoder chain, which owns
+     * that mismatch.
+     *
+     * @param targetType the raw target class
+     * @return {@code true} when the target is {@link JsonObject} or {@code JsonArray}
+     */
+    private static boolean isVertxJsonWrapper(Class<?> targetType) {
+        return targetType == JsonObject.class || targetType == io.vertx.core.json.JsonArray.class;
     }
 
     // --- Form parameter extraction ---

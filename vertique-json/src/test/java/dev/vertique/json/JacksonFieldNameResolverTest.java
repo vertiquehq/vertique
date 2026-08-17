@@ -107,6 +107,25 @@ class JacksonFieldNameResolverTest {
         public String name;
     }
 
+    /** DTO reaching {@link DuplicateAliasDto} through a plain declared field. */
+    public static class NestedHolderDto {
+        public String label;
+        public DuplicateAliasDto nested;
+    }
+
+    /** DTO reaching {@link DuplicateAliasDto} through a collection and a map value. */
+    public static class ContainerHolderDto {
+        public java.util.List<DuplicateAliasDto> many;
+        public java.util.Map<String, RenamedDto> byKey;
+    }
+
+    /** Cyclic DTO graph — the walk must terminate rather than recurse forever. */
+    public static class CyclicNodeDto {
+        public String name;
+        public CyclicNodeDto child;
+        public java.util.List<CyclicNodeDto> children;
+    }
+
     /** Mapper that renames nothing of its own. */
     private static ObjectMapper vanillaMapper() {
         return JsonMapper.builder().build();
@@ -310,6 +329,58 @@ class JacksonFieldNameResolverTest {
                 afterRegistration,
                 warmIntrospections.get(),
                 "a warmed type must be served from the precomputed projection, never re-introspected");
+    }
+
+    @Test
+    @DisplayName("precomputeGraph warms the declared field graph so a nested type never introspects lazily")
+    void shouldWarmTheDeclaredFieldGraphTransitively() {
+        JacksonFieldNameResolver resolver = JacksonFieldNameResolver.forMapper(vanillaMapper());
+
+        // A nested type reached only through a declared field is resolved on the request path exactly
+        // like the body type itself, so its projection must be composed at registration too.
+        ConfigurationException nested = assertThrows(
+                ConfigurationException.class,
+                () -> resolver.precomputeGraph(NestedHolderDto.class),
+                "a declared field's own type must be warmed with its owner");
+        assertTrue(
+                nested.getMessage().contains(DuplicateAliasDto.class.getName()),
+                "the failure must name the nested type: " + nested.getMessage());
+
+        // Container element and value types are the same case: the engine descends into them.
+        ConfigurationException contained = assertThrows(
+                ConfigurationException.class,
+                () -> resolver.precomputeGraph(ContainerHolderDto.class),
+                "a collection element type must be warmed like a plain field type");
+        assertTrue(
+                contained.getMessage().contains(DuplicateAliasDto.class.getName()),
+                "the failure must name the element type: " + contained.getMessage());
+
+        // An array target is unwrapped to its component type, which is where the property set lives.
+        ConfigurationException arrayed = assertThrows(
+                ConfigurationException.class,
+                () -> resolver.precomputeGraph(DuplicateAliasDto[].class),
+                "an array target must be unwrapped to its component type");
+        assertTrue(
+                arrayed.getMessage().contains(DuplicateAliasDto.class.getName()),
+                "the failure must name the component type, not the array class: " + arrayed.getMessage());
+    }
+
+    @Test
+    @DisplayName("precomputeGraph terminates on a cyclic graph and skips scalar property types")
+    void shouldTerminateOnCyclesAndSkipScalars() {
+        AtomicInteger introspections = new AtomicInteger();
+        JacksonFieldNameResolver resolver = JacksonFieldNameResolver.forMapper(countingMapper(introspections));
+
+        assertDoesNotThrow(
+                () -> resolver.precomputeGraph(CyclicNodeDto.class),
+                "a self-referential type graph must be visited once per type, not followed forever");
+        assertEquals("child", resolver.logicalName(CyclicNodeDto.class, "child"), "the warmed projection still serves");
+
+        // A scalar carries no property set the engine keys against, so warming one must introspect
+        // nothing — the asymmetry that let a String message type be introspected pointlessly.
+        introspections.set(0);
+        assertDoesNotThrow(() -> resolver.precomputeGraph(String.class), "a scalar target is not a projection source");
+        assertEquals(0, introspections.get(), "warming a scalar must not run a bean introspection");
     }
 
     @Test

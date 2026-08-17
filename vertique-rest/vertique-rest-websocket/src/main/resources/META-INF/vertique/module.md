@@ -490,10 +490,12 @@ public record ProfileMessage(
 // {"display_name": "<b>ada</b>"} -> displayName == "ada"
 ```
 
-Each declared message type's projection is composed at endpoint registration, not on the message
-path, so no Jackson introspection happens on the event loop and a message type whose names cannot be
-projected fails startup (see [Startup failures](#startup-failures)) rather than failing every message
-that reaches it.
+Each declared message type's projection — and that of every type reachable from it through a declared
+Jackson-visible property — is composed at endpoint registration, not on the message path, so no
+Jackson introspection happens on the event loop and a type whose names cannot be projected fails
+startup (see [Startup failures](#startup-failures)) rather than failing every message that reaches
+it. An array message type is warmed through its component type; a scalar message type such as the
+default `String` carries no property set and costs no introspection.
 
 **Five shapes a declared policy still does not reach.** A `Map`-typed field, an `Object`-typed field,
 a concrete `@JsonTypeInfo` subtype's own fields, `@JsonUnwrapped` members, and a key matched only by

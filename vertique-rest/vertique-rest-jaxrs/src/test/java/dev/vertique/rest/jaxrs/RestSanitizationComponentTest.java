@@ -6,6 +6,7 @@ package dev.vertique.rest.jaxrs;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -26,6 +27,7 @@ import dev.vertique.rest.jaxrs.convert.ConversionContexts;
 import dev.vertique.rest.jaxrs.request.BoundRequest;
 import dev.vertique.sanitization.SanitizationModule;
 import io.vertx.core.http.HttpServerRequest;
+import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.RoutingContext;
 import jakarta.inject.Singleton;
@@ -234,5 +236,68 @@ class RestSanitizationComponentTest {
                 "CAROL",
                 processed.getJsonArray("list").getString(0),
                 "the declared chain must reach an array element string");
+    }
+
+    /** Resource fixture whose method takes a schema-free {@link JsonArray} body. */
+    static final class JsonArrayBodyResource {
+        @SuppressWarnings("unused")
+        public String accept(JsonArray body) {
+            return body.encode();
+        }
+    }
+
+    @Test
+    @DisplayName("a declared JsonArray body carrying an object payload falls through to the decoder chain")
+    void shouldFallThroughWhenAJsonArrayBodyReceivesAnObjectPayload() throws Exception {
+        WithSanitizationComponent component = DaggerRestSanitizationComponentTest_WithSanitizationComponent.create();
+        InputObjectProcessor processor =
+                component.inputObjectProcessor().orElseThrow(() -> new AssertionError("engine must be bound"));
+
+        Method accept = JsonArrayBodyResource.class.getDeclaredMethod("accept", JsonArray.class);
+        ResourceMethodMeta meta = new ResourceMethodMeta(
+                new JsonArrayBodyResource(),
+                accept,
+                "accept",
+                "POST",
+                "/raw-array",
+                List.of(new ResourceMethodMeta.ParamMeta("body", ResourceMethodMeta.ParamSource.BODY, JsonArray.class)),
+                String.class,
+                false,
+                false,
+                new dev.vertique.rest.core.security.SecurityPolicy.None(),
+                new ResourceMethodMeta.MediaTypes(List.of(), List.of()),
+                null,
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of());
+        ParameterExtractor extractor = new ParameterExtractor(
+                meta,
+                List.of(new JsonRequestBodyDecoder()),
+                new RestContextResolution(Set.of()),
+                processor,
+                ConversionContexts.defaultResolver(),
+                JacksonFieldNameResolver.forRoute(null));
+
+        RoutingContext ctx = mock(RoutingContext.class);
+        HttpServerRequest request = mock(HttpServerRequest.class);
+        when(ctx.request()).thenReturn(request);
+        when(request.getHeader("Content-Type")).thenReturn("application/json");
+        when(ctx.<ObjectMapper>get(BoundRequest.KEY_RESOLVED_BODY_MAPPER)).thenReturn(null);
+
+        // The payload is an object where the declared body type is an array: a shape mismatch the
+        // decoder chain owns. Routing it through the engine instead would target the Vert.x wrapper
+        // class itself and then materialize the processed map as a JsonArray.
+        Object result = extractor.deserializeBody(
+                RequestValue.of(new JsonObject("{\"greeting\":\"ada\"}")),
+                JsonArray.class,
+                null,
+                ctx,
+                new EffectiveInputPolicies(List.of(), List.of(UppercasingSanitizer.class)));
+
+        assertNull(
+                result,
+                "a declared JsonArray body with an object payload must take the documented fall-through to "
+                        + "JsonRequestBodyDecoder, whose mismatch answer is null");
     }
 }

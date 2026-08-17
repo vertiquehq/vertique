@@ -68,6 +68,8 @@ class GeneratedVsReflectiveEquivalenceTest {
                 },
                 cls -> {
                     if (cls == TestStripDots.class) return new TestStripDots();
+                    if (cls == TestDecodeEntities.class) return new TestDecodeEntities();
+                    if (cls == TestStripHtml.class) return new TestStripHtml();
                     throw new IllegalArgumentException("unknown sanitizer: " + cls);
                 });
     }
@@ -753,6 +755,47 @@ class GeneratedVsReflectiveEquivalenceTest {
     }
 
     @Nested
+    @DisplayName("a field's own declared chain keeps its declared order")
+    class DeclaredChainOrder {
+
+        @Test
+        @DisplayName("both paths run a field's declared decode-then-strip order under the owner's strip")
+        void shouldAgreeThatAFieldsDeclaredOrderSurvives() {
+            Object reflectiveOut = processor.processInput(
+                    declaredOrderInput(),
+                    DeclaredOrderReflective.class,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY,
+                    InputFieldNameResolver.IDENTITY);
+            Object generatedOut = processor.processInput(
+                    declaredOrderInput(),
+                    DeclaredOrderGenerated.class,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY,
+                    InputFieldNameResolver.IDENTITY);
+
+            assertEquals(reflectiveOut, generatedOut, "both paths share compose(), so they must agree");
+            // Agreement alone would also hold if both paths inverted the order, so pin the
+            // order-sensitive output on each path independently.
+            assertEquals(
+                    "script",
+                    ((Map<?, ?>) reflectiveOut).get("value"),
+                    "reflective path: the field's declared decode-then-strip order must survive");
+            assertEquals(
+                    "script",
+                    ((Map<?, ?>) generatedOut).get("value"),
+                    "generated path: the field's declared decode-then-strip order must survive");
+        }
+
+        /** Builds an intermediate whose single value only reads correctly under decode-then-strip. */
+        private Map<String, Object> declaredOrderInput() {
+            Map<String, Object> input = new LinkedHashMap<>();
+            input.put("value", "&lt;script");
+            return input;
+        }
+    }
+
+    @Nested
     @DisplayName("a field's own chain overrides an object-level skip")
     class FieldChainOverridesObjectLevelSkip {
 
@@ -1425,6 +1468,27 @@ class GeneratedVsReflectiveEquivalenceTest {
         public List<PlainInner> many;
     }
 
+    /**
+     * Reflective baseline for the declared-order case: the owner declares the strip half of an
+     * order-sensitive pair while its field declares decode-then-strip. Composition must leave the
+     * field's own order alone.
+     */
+    @Sanitize(TestStripHtml.class)
+    static final class DeclaredOrderReflective {
+        @Sanitize({TestDecodeEntities.class, TestStripHtml.class})
+        public String value;
+    }
+
+    /**
+     * Generated counterpart of {@link DeclaredOrderReflective}, paired with the hand-written
+     * {@code GeneratedVsReflectiveEquivalenceTest_DeclaredOrderGenerated_InputProcessor} fixture.
+     */
+    @Sanitize(TestStripHtml.class)
+    static final class DeclaredOrderGenerated {
+        @Sanitize({TestDecodeEntities.class, TestStripHtml.class})
+        public String value;
+    }
+
     /** Reflective baseline for the sticky-skip equivalence case. */
     @SkipCanonicalization
     static final class ReflectiveSkip {
@@ -1468,6 +1532,32 @@ class GeneratedVsReflectiveEquivalenceTest {
                 RECORDED_CONTEXTS.add(context);
             }
             return value == null ? null : value.toUpperCase();
+        }
+    }
+
+    /**
+     * Decodes the one HTML entity these tests use, and records the seen context. Paired with
+     * {@link TestStripHtml} it forms an order-sensitive chain: decoding after the strip re-introduces
+     * the markup the strip removed.
+     */
+    public static final class TestDecodeEntities implements Sanitizer {
+        @Override
+        public String sanitize(@Nullable String value, @Nullable InputValueContext context) {
+            if (context != null) {
+                RECORDED_CONTEXTS.add(context);
+            }
+            return value == null ? null : value.replace("&lt;", "<").replace("&gt;", ">");
+        }
+    }
+
+    /** Removes markup delimiters and records the seen context. Idempotent, and not commutative. */
+    public static final class TestStripHtml implements Sanitizer {
+        @Override
+        public String sanitize(@Nullable String value, @Nullable InputValueContext context) {
+            if (context != null) {
+                RECORDED_CONTEXTS.add(context);
+            }
+            return value == null ? null : value.replace("<", "").replace(">", "");
         }
     }
 

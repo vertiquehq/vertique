@@ -75,10 +75,34 @@ class WebSocketNameProjectionStartupTest {
         void onMessage(WebSocketSession session, DuplicateAliasMessage message) {}
     }
 
+    /** Message type that projects cleanly itself but declares a field of an unprojectable type. */
+    public static class NestedAliasHolderMessage {
+        public String label;
+        public DuplicateAliasMessage nested;
+    }
+
     @WebSocketEndpoint("/ws/plain")
     static class PlainMessageEndpoint {
         @OnMessage
         void onMessage(WebSocketSession session, PlainMessage message) {}
+    }
+
+    @WebSocketEndpoint("/ws/nested")
+    static class NestedUnprojectableMessageEndpoint {
+        @OnMessage
+        void onMessage(WebSocketSession session, NestedAliasHolderMessage message) {}
+    }
+
+    @WebSocketEndpoint("/ws/array")
+    static class ArrayMessageEndpoint {
+        @OnMessage
+        void onMessage(WebSocketSession session, DuplicateAliasMessage[] message) {}
+    }
+
+    @WebSocketEndpoint("/ws/text")
+    static class TextMessageEndpoint {
+        @OnMessage
+        void onMessage(WebSocketSession session, String message) {}
     }
 
     /** Pass-through engine standing in for a bound {@code SanitizationModule}. */
@@ -126,10 +150,48 @@ class WebSocketNameProjectionStartupTest {
     }
 
     @Test
+    @DisplayName("a message type whose NESTED type cannot be projected fails startup, not the first message")
+    void shouldFailStartupWhenANestedMessageTypesProjectionCannotBeComposed() {
+        ConfigurationException failure = assertThrows(
+                ConfigurationException.class,
+                () -> registrar().registerAll(Set.of(new NestedUnprojectableMessageEndpoint()), router),
+                "the engine resolves a nested type's projection on the message path, so warming has to "
+                        + "cover the declared field graph — not only the message type itself");
+
+        String message = failure.getMessage();
+        assertTrue(
+                message.contains(DuplicateAliasMessage.class.getName()),
+                "the failure must name the nested type whose projection cannot be composed: " + message);
+        assertTrue(message.contains("shared"), "the failure must name the contested wire name: " + message);
+    }
+
+    @Test
+    @DisplayName("an array message type is unwrapped to its component type, exactly as the REST path unwraps it")
+    void shouldUnwrapAnArrayMessageTypeToItsComponentType() {
+        ConfigurationException failure = assertThrows(
+                ConfigurationException.class,
+                () -> registrar().registerAll(Set.of(new ArrayMessageEndpoint()), router),
+                "warming an array message type must compose the component type's projection — the array "
+                        + "class itself has no property set the engine ever keys against");
+
+        assertTrue(
+                failure.getMessage().contains(DuplicateAliasMessage.class.getName()),
+                "the failure must name the component type, not the array class: " + failure.getMessage());
+    }
+
+    @Test
     @DisplayName("an ordinary message type registers normally")
     void shouldRegisterAnOrdinaryMessageType() {
         assertDoesNotThrow(
                 () -> registrar().registerAll(Set.of(new PlainMessageEndpoint()), router),
                 "warming the projection must not reject message types whose names project cleanly");
+    }
+
+    @Test
+    @DisplayName("a String message type registers normally — a scalar has no projection to compose")
+    void shouldRegisterAStringMessageType() {
+        assertDoesNotThrow(
+                () -> registrar().registerAll(Set.of(new TextMessageEndpoint()), router),
+                "the default String message type carries no declared property set, so warming it is a no-op");
     }
 }
