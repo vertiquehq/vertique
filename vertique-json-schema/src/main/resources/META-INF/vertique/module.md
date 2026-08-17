@@ -71,6 +71,11 @@ a detected structural conflict, or an unexpected Victools failure — is normali
 `JsonSchemaGenerationException`, a single bounded exception type with no Victools type in its
 signature.
 
+A failed call leaves the generator fully reusable: it restores the per-generation state the
+underlying generator holds before propagating, so a rejected type never changes what a later call
+on the same instance publishes. Reuse a generator freely after a failure — there is no need to
+discard and rebuild one.
+
 ### Profile overrides consumption
 
 A profile's `jsonSchemaTypeOverrides()` (declared in `dev.vertique.core.json.JsonMapperProfile`,
