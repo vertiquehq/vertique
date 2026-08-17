@@ -16,13 +16,15 @@ import org.junit.jupiter.api.Test;
  * safe to write verbatim into a log line, and the bound it advertises is genuinely hard.
  *
  * <p>Three properties are proven. The result never exceeds the requested bound — including for the
- * degenerate {@code null} input and for a bound too small to hold the elision marker. Every Unicode
- * {@code Cc} code point (which includes the C1 block and {@code NEL}), {@code Cf} format character
- * (which includes the Trojan-Source bidirectional overrides and isolates), {@code Zl}, and {@code
- * Zp} is replaced one-for-one, so neither a forged log line nor a misleadingly reordered identity
- * can be smuggled through a type, member, or profile name; a {@code \p{Cntrl}}-style ASCII-only
- * filter would miss everything from {@code DEL} onwards. And no result ever carries an unpaired
- * surrogate, whether the input already contained one or the cut point would have split a pair.
+ * degenerate {@code null} input and for a bound too small to hold the elision marker. Every BMP
+ * Unicode {@code Cc} code point (which includes the C1 block and {@code NEL}), {@code Cf} format
+ * character (which includes the Trojan-Source bidirectional overrides and isolates), {@code Zl},
+ * and {@code Zp} is replaced one-for-one, so neither a forged log line nor a misleadingly reordered
+ * identity can be smuggled through a type, member, or profile name; a {@code \p{Cntrl}}-style
+ * ASCII-only filter would miss everything from {@code DEL} onwards. A supplementary-plane {@code
+ * Cf} code point is a stated, deliberate exception — see {@link Diagnostics#truncate(String, int)}
+ * — and is not covered here. And no result ever carries an unpaired surrogate, whether the input
+ * already contained one or the cut point would have split a pair.
  */
 class DiagnosticsTest {
 
