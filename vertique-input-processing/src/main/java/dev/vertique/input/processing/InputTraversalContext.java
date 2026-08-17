@@ -26,6 +26,13 @@ import java.util.List;
  * that takes raw chain lists and skip flags). The two overloads share a common implementation;
  * the metadata-shape overload is a thin adapter over the primitive one.
  *
+ * <p>The context also carries the traversal's {@link InputFieldNameResolver}. That is what lets a
+ * generated processor consult the wire → Java projection through
+ * {@link #logicalFieldName(Class, String)} without any change to the
+ * {@link GeneratedInputProcessor#process} signature, and it is why the resolver survives every
+ * {@link #descend} and every crossing of the codegen↔reflection boundary — a context that lost it
+ * would silently fall back to identity naming and stop matching renamed fields.
+ *
  * <p>Instances are immutable. {@link #descend} always returns a new context.
  */
 public final class InputTraversalContext {
@@ -34,27 +41,73 @@ public final class InputTraversalContext {
     private final List<Class<? extends Sanitizer>> inheritedSanitizerChain;
     private final boolean inheritedSkipCanonicalization;
     private final boolean inheritedSkipSanitization;
+    private final InputFieldNameResolver nameResolver;
 
     private InputTraversalContext(
             List<Class<? extends Canonicalizer>> inheritedCanonicalizerChain,
             List<Class<? extends Sanitizer>> inheritedSanitizerChain,
             boolean inheritedSkipCanonicalization,
-            boolean inheritedSkipSanitization) {
+            boolean inheritedSkipSanitization,
+            InputFieldNameResolver nameResolver) {
         this.inheritedCanonicalizerChain = inheritedCanonicalizerChain;
         this.inheritedSanitizerChain = inheritedSanitizerChain;
         this.inheritedSkipCanonicalization = inheritedSkipCanonicalization;
         this.inheritedSkipSanitization = inheritedSkipSanitization;
+        this.nameResolver = nameResolver;
     }
 
     /**
-     * Creates a context seeded from the invocation-level policies as the root of a traversal.
+     * Creates a context seeded from the invocation-level policies and the traversal's wire-name
+     * projection, as the root of a traversal.
      *
-     * @param policies the effective invocation-level policies; must not be {@code null}
-     * @return a context whose inherited chains are the invocation-level chains and whose skip flags
-     *         are both {@code false}
+     * <p>There is deliberately no one-argument form: a factory that defaulted the resolver would let
+     * any caller re-seed {@link InputFieldNameResolver#IDENTITY} by omission and silently reinstate
+     * identity naming below that point. Pass {@link InputFieldNameResolver#IDENTITY} explicitly when
+     * the intermediate's keys are already Java property names.
+     *
+     * @param policies     the effective invocation-level policies; must not be {@code null}
+     * @param nameResolver the wire → Java property-name projection for this traversal;
+     *                     must not be {@code null}
+     * @return a context whose inherited chains are the invocation-level chains, whose skip flags
+     *         are both {@code false}, and which carries {@code nameResolver}
      */
-    public static InputTraversalContext fromPolicies(EffectiveInputPolicies policies) {
-        return new InputTraversalContext(policies.canonicalizers(), policies.sanitizers(), false, false);
+    public static InputTraversalContext fromPolicies(
+            EffectiveInputPolicies policies, InputFieldNameResolver nameResolver) {
+        return new InputTraversalContext(policies.canonicalizers(), policies.sanitizers(), false, false, nameResolver);
+    }
+
+    /**
+     * Projects a wire property name onto the Java property name whose declared policies apply to it,
+     * using the {@link InputFieldNameResolver} this traversal was seeded with.
+     *
+     * <p>Called by the reflective walker before every per-field metadata lookup and by generated
+     * processors before their field-name {@code switch}. The returned name selects <em>metadata</em>
+     * only — the emitted intermediate keeps the wire key, which is what the codec will bind.
+     *
+     * <p>Resolution is skipped entirely when the traversal carries
+     * {@link InputFieldNameResolver#IDENTITY}: the projection is known to be the identity map, so a
+     * per-field call could only return the wire name it was given.
+     *
+     * @param ownerType the type declaring the property set this fragment is keyed against;
+     *                  must not be {@code null}
+     * @param wireName  the key as it appeared in the intermediate; must not be {@code null}
+     * @return the Java property name, or {@code wireName} when the projection does not recognize it
+     * @throws IllegalStateException if the resolver breaks its totality contract by returning
+     *                               {@code null}, which would otherwise silently drop the field's
+     *                               declared policies
+     */
+    public String logicalFieldName(Class<?> ownerType, String wireName) {
+        if (nameResolver == InputFieldNameResolver.IDENTITY) {
+            return wireName;
+        }
+        String logicalName = nameResolver.logicalName(ownerType, wireName);
+        if (logicalName == null) {
+            throw new IllegalStateException(
+                    "InputFieldNameResolver " + nameResolver.getClass().getName()
+                            + " returned null for wire name '" + wireName + "' on " + ownerType.getName()
+                            + ". The projection is total: an unrecognized wire name must be returned unchanged.");
+        }
+        return logicalName;
     }
 
     /**
@@ -90,7 +143,9 @@ public final class InputTraversalContext {
      * carrier records.
      *
      * <p>Skip-flag precedence is identical to the metadata overload: any inherited or parent or
-     * field-level skip flag short-circuits the corresponding chain to empty.
+     * field-level skip flag short-circuits the corresponding chain to empty. A sticky skip empties
+     * the chains, never the name projection — a skipped subtree still has to resolve field names to
+     * select the right per-field metadata.
      *
      * @param objectCanon       object-level canonicalizer chain on the parent type; must not be {@code null}
      * @param objectSanit       object-level sanitizer chain on the parent type; must not be {@code null}
@@ -121,7 +176,7 @@ public final class InputTraversalContext {
         List<Class<? extends Sanitizer>> sanit =
                 skipSanit ? List.of() : compose(inheritedSanitizerChain, objectSanit, fieldSanit);
 
-        return new InputTraversalContext(canon, sanit, skipCanon, skipSanit);
+        return new InputTraversalContext(canon, sanit, skipCanon, skipSanit, nameResolver);
     }
 
     /**

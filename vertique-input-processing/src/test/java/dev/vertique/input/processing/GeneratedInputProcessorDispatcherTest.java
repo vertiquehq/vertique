@@ -139,7 +139,7 @@ class GeneratedInputProcessorDispatcherTest {
                     EffectiveInputPolicies.NONE,
                     InputLocation.BODY,
                     (v, c, s, ctx) -> v,
-                    InputTraversalContext.fromPolicies(EffectiveInputPolicies.NONE),
+                    InputTraversalContext.fromPolicies(EffectiveInputPolicies.NONE, InputFieldNameResolver.IDENTITY),
                     "field",
                     NoCompanionDto.class);
 
@@ -182,7 +182,7 @@ class GeneratedInputProcessorDispatcherTest {
                     EffectiveInputPolicies.NONE,
                     InputLocation.BODY,
                     (v, c, s, ctx) -> v,
-                    InputTraversalContext.fromPolicies(EffectiveInputPolicies.NONE),
+                    InputTraversalContext.fromPolicies(EffectiveInputPolicies.NONE, InputFieldNameResolver.IDENTITY),
                     "field",
                     NoCompanionDto.class);
 

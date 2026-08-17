@@ -26,6 +26,7 @@ import dev.vertique.core.sanitization.InputLocation;
 import dev.vertique.core.sanitization.InputValueContext;
 import dev.vertique.core.sanitization.Sanitizer;
 import dev.vertique.input.processing.EffectiveInputPolicies;
+import dev.vertique.input.processing.InputFieldNameResolver;
 import dev.vertique.input.processing.InputObjectProcessor;
 import dev.vertique.rest.core.context.RestContextResolution;
 import dev.vertique.rest.core.request.RequestValue;
@@ -161,7 +162,11 @@ class CollectionParamStateMachineTest {
     static final class UppercasingProcessor implements InputObjectProcessor {
         @Override
         public Object processInput(
-                Object intermediateBody, Type targetType, EffectiveInputPolicies policies, InputLocation location) {
+                Object intermediateBody,
+                Type targetType,
+                EffectiveInputPolicies policies,
+                InputLocation location,
+                InputFieldNameResolver nameResolver) {
             if (intermediateBody instanceof String s) {
                 return s.toUpperCase(Locale.ROOT);
             }

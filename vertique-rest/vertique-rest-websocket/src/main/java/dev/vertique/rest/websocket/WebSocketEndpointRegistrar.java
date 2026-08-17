@@ -14,6 +14,7 @@ import dev.vertique.core.sanitization.Sanitizer;
 import dev.vertique.core.validation.BeanValidationException;
 import dev.vertique.core.validation.BeanValidator;
 import dev.vertique.input.processing.EffectiveInputPolicies;
+import dev.vertique.input.processing.InputFieldNameResolver;
 import dev.vertique.input.processing.InputObjectProcessor;
 import dev.vertique.rest.core.middleware.RequestContextLifecycle;
 import dev.vertique.rest.core.security.RouteAuthHandler;
@@ -980,8 +981,8 @@ class WebSocketEndpointRegistrar {
                 // Apply canonicalization/sanitization to path params if available
                 if (rawValue != null && objectProcessor != null) {
                     EffectiveInputPolicies policies = resolveMethodPolicies(method);
-                    Object processed =
-                            objectProcessor.processInput(rawValue, String.class, policies, InputLocation.PATH);
+                    Object processed = objectProcessor.processInput(
+                            rawValue, String.class, policies, InputLocation.PATH, InputFieldNameResolver.IDENTITY);
                     if (processed instanceof String s) {
                         rawValue = s;
                     }
@@ -1017,7 +1018,8 @@ class WebSocketEndpointRegistrar {
             // For raw String messages, apply scalar processing if available
             if (objectProcessor != null && meta.onMessage() != null) {
                 EffectiveInputPolicies policies = resolveMethodPolicies(meta.onMessage());
-                Object processed = objectProcessor.processInput(text, String.class, policies, InputLocation.PAYLOAD);
+                Object processed = objectProcessor.processInput(
+                        text, String.class, policies, InputLocation.PAYLOAD, InputFieldNameResolver.IDENTITY);
                 if (processed != null) {
                     return processed;
                 }
@@ -1031,8 +1033,12 @@ class WebSocketEndpointRegistrar {
                 // Two-phase: intermediate → process → materialize
                 EffectiveInputPolicies policies = resolveMethodPolicies(meta.onMessage());
                 Object intermediate = messageCodec.decodeToIntermediate(text);
-                Object processed =
-                        objectProcessor.processInput(intermediate, meta.messageType(), policies, InputLocation.PAYLOAD);
+                Object processed = objectProcessor.processInput(
+                        intermediate,
+                        meta.messageType(),
+                        policies,
+                        InputLocation.PAYLOAD,
+                        InputFieldNameResolver.IDENTITY);
                 decoded = messageCodec.convertFromIntermediate(
                         processed != null ? processed : intermediate, meta.messageType());
             } else {

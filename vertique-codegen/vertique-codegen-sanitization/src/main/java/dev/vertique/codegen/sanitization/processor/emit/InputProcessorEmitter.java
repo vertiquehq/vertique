@@ -67,6 +67,8 @@ public final class InputProcessorEmitter {
             ClassName.get("dev.vertique.input.processing", "GeneratedInputProcessorDispatcher");
     private static final ClassName INPUT_TRAVERSAL_CONTEXT =
             ClassName.get("dev.vertique.input.processing", "InputTraversalContext");
+    private static final ClassName INPUT_FIELD_NAME_RESOLVER =
+            ClassName.get("dev.vertique.input.processing", "InputFieldNameResolver");
     private static final ClassName CANONICALIZER = ClassName.get("dev.vertique.core.sanitization", "Canonicalizer");
     private static final ClassName SANITIZER = ClassName.get("dev.vertique.core.sanitization", "Sanitizer");
     private static final ClassName NULLABLE = ClassName.get("jakarta.annotation", "Nullable");
@@ -278,11 +280,14 @@ public final class InputProcessorEmitter {
         body.addStatement("return intermediate");
         body.endControlFlow();
 
-        // Seed root context
+        // Seed root context. A caller with no context of its own can only seed identity naming;
+        // the engine's own entry points always hand over the real parent, so this arm is a
+        // last-resort fallback rather than the normal path.
         body.addStatement(
-                "$T rootCtx = parent != null ? parent : $T.fromPolicies(policies)",
+                "$T rootCtx = parent != null ? parent : $T.fromPolicies(policies, $T.IDENTITY)",
                 INPUT_TRAVERSAL_CONTEXT,
-                INPUT_TRAVERSAL_CONTEXT);
+                INPUT_TRAVERSAL_CONTEXT,
+                INPUT_FIELD_NAME_RESOLVER);
 
         // Build output map
         body.addStatement("$T<String, Object> out = new $T<>(raw.size())", MAP, LINKED_HASH_MAP);

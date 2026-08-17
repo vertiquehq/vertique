@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vertique.core.sanitization.InputLocation;
 import dev.vertique.input.processing.EffectiveInputPolicies;
+import dev.vertique.input.processing.InputFieldNameResolver;
 import dev.vertique.input.processing.InputObjectProcessor;
 import dev.vertique.rest.core.middleware.RequestContextLifecycle;
 import io.vertx.core.Future;
@@ -188,7 +189,11 @@ public class WebSocketInputProcessingIT {
 
         @Override
         public Object processInput(
-                Object input, Type targetType, EffectiveInputPolicies policies, InputLocation location) {
+                Object input,
+                Type targetType,
+                EffectiveInputPolicies policies,
+                InputLocation location,
+                InputFieldNameResolver nameResolver) {
             captures.add(new Capture(input, targetType, location));
             return input;
         }

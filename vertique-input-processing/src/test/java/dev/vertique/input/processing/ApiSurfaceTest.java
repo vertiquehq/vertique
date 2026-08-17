@@ -44,6 +44,7 @@ class ApiSurfaceTest {
     /** Types published to consumers of this module. */
     private static final Set<String> PUBLIC_TYPES = Set.of(
             "InputObjectProcessor",
+            "InputFieldNameResolver",
             "EffectiveInputPolicies",
             "InputTraversalContext",
             "ChainResolver",
@@ -134,9 +135,32 @@ class ApiSurfaceTest {
             assertMethods(
                     InputObjectProcessor.class,
                     "createDefault(Function,Function)",
-                    "processInput(Object,Type,EffectiveInputPolicies,InputLocation)");
+                    "processInput(Object,Type,EffectiveInputPolicies,InputLocation,InputFieldNameResolver)");
             assertNoPublicFields(InputObjectProcessor.class);
             assertNoPublicConstructors(InputObjectProcessor.class);
+        }
+    }
+
+    @Nested
+    @DisplayName("InputFieldNameResolver")
+    class InputFieldNameResolverSurface {
+
+        @Test
+        @DisplayName("public members match the frozen ledger (one abstract method plus IDENTITY)")
+        void inputFieldNameResolverSurface() {
+            assertMethods(InputFieldNameResolver.class, "logicalName(Class,String)");
+            assertFields(InputFieldNameResolver.class, "IDENTITY");
+            assertNoPublicConstructors(InputFieldNameResolver.class);
+        }
+
+        @Test
+        @DisplayName("the contract stays a single-abstract-method interface")
+        void resolverIsFunctional() {
+            assertTrue(
+                    InputFieldNameResolver.class.isAnnotationPresent(FunctionalInterface.class),
+                    "InputFieldNameResolver is published as a lambda target and must stay "
+                            + "@FunctionalInterface — a second abstract method would break every "
+                            + "implementation");
         }
     }
 
@@ -169,7 +193,8 @@ class ApiSurfaceTest {
         void inputTraversalContextSurface() {
             assertMethods(
                     InputTraversalContext.class,
-                    "fromPolicies(EffectiveInputPolicies)",
+                    "fromPolicies(EffectiveInputPolicies,InputFieldNameResolver)",
+                    "logicalFieldName(Class,String)",
                     "descend(List,List,boolean,boolean,List,List,boolean,boolean)",
                     "inheritedCanonicalizerChain()",
                     "inheritedSanitizerChain()",

@@ -80,10 +80,18 @@ class GeneratedVsReflectiveEquivalenceTest {
         void flatStringFields() {
             Map<String, Object> input = inputWithStringFields();
 
-            Object reflectiveOut =
-                    processor.processInput(input, Reflective.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
-            Object generatedOut =
-                    processor.processInput(input, Generated.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
+            Object reflectiveOut = processor.processInput(
+                    input,
+                    Reflective.class,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY,
+                    InputFieldNameResolver.IDENTITY);
+            Object generatedOut = processor.processInput(
+                    input,
+                    Generated.class,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY,
+                    InputFieldNameResolver.IDENTITY);
 
             assertEquals(reflectiveOut, generatedOut);
         }
@@ -96,10 +104,18 @@ class GeneratedVsReflectiveEquivalenceTest {
             nested.put("note", "  hi  "); // Inner.note has @Canonicalize(TestTrim)
             input.put("nested", nested);
 
-            Object reflectiveOut =
-                    processor.processInput(input, Reflective.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
-            Object generatedOut =
-                    processor.processInput(input, Generated.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
+            Object reflectiveOut = processor.processInput(
+                    input,
+                    Reflective.class,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY,
+                    InputFieldNameResolver.IDENTITY);
+            Object generatedOut = processor.processInput(
+                    input,
+                    Generated.class,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY,
+                    InputFieldNameResolver.IDENTITY);
 
             assertEquals(reflectiveOut, generatedOut);
         }
@@ -110,10 +126,18 @@ class GeneratedVsReflectiveEquivalenceTest {
             Map<String, Object> input = inputWithStringFields();
             input.put("tags", new ArrayList<>(List.of("  one  ", "  two  ", 42)));
 
-            Object reflectiveOut =
-                    processor.processInput(input, Reflective.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
-            Object generatedOut =
-                    processor.processInput(input, Generated.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
+            Object reflectiveOut = processor.processInput(
+                    input,
+                    Reflective.class,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY,
+                    InputFieldNameResolver.IDENTITY);
+            Object generatedOut = processor.processInput(
+                    input,
+                    Generated.class,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY,
+                    InputFieldNameResolver.IDENTITY);
 
             assertEquals(reflectiveOut, generatedOut);
         }
@@ -128,10 +152,18 @@ class GeneratedVsReflectiveEquivalenceTest {
             nested2.put("note", "  beta  ");
             input.put("inners", new ArrayList<>(List.of(nested1, nested2)));
 
-            Object reflectiveOut =
-                    processor.processInput(input, Reflective.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
-            Object generatedOut =
-                    processor.processInput(input, Generated.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
+            Object reflectiveOut = processor.processInput(
+                    input,
+                    Reflective.class,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY,
+                    InputFieldNameResolver.IDENTITY);
+            Object generatedOut = processor.processInput(
+                    input,
+                    Generated.class,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY,
+                    InputFieldNameResolver.IDENTITY);
 
             assertEquals(reflectiveOut, generatedOut);
         }
@@ -145,8 +177,10 @@ class GeneratedVsReflectiveEquivalenceTest {
             Map<String, Object> input = new LinkedHashMap<>();
             input.put("unannotated", "  raw  ");
 
-            Object reflectiveOut = processor.processInput(input, Reflective.class, routePolicies, InputLocation.BODY);
-            Object generatedOut = processor.processInput(input, Generated.class, routePolicies, InputLocation.BODY);
+            Object reflectiveOut = processor.processInput(
+                    input, Reflective.class, routePolicies, InputLocation.BODY, InputFieldNameResolver.IDENTITY);
+            Object generatedOut = processor.processInput(
+                    input, Generated.class, routePolicies, InputLocation.BODY, InputFieldNameResolver.IDENTITY);
 
             assertEquals(reflectiveOut, generatedOut);
         }
@@ -160,9 +194,17 @@ class GeneratedVsReflectiveEquivalenceTest {
             input.put("skipped", "  preserved  ");
 
             Object reflectiveOut = processor.processInput(
-                    input, ReflectiveSkip.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
-            Object generatedOut =
-                    processor.processInput(input, GeneratedSkip.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
+                    input,
+                    ReflectiveSkip.class,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY,
+                    InputFieldNameResolver.IDENTITY);
+            Object generatedOut = processor.processInput(
+                    input,
+                    GeneratedSkip.class,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY,
+                    InputFieldNameResolver.IDENTITY);
 
             assertEquals(reflectiveOut, generatedOut);
         }
@@ -183,11 +225,21 @@ class GeneratedVsReflectiveEquivalenceTest {
             input.put("nested", nested);
 
             RECORDED_CONTEXTS.clear();
-            processor.processInput(input, Reflective.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
+            processor.processInput(
+                    input,
+                    Reflective.class,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY,
+                    InputFieldNameResolver.IDENTITY);
             List<InputValueContext> reflectiveContexts = new ArrayList<>(RECORDED_CONTEXTS);
 
             RECORDED_CONTEXTS.clear();
-            processor.processInput(input, Generated.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
+            processor.processInput(
+                    input,
+                    Generated.class,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY,
+                    InputFieldNameResolver.IDENTITY);
             List<InputValueContext> generatedContexts = new ArrayList<>(RECORDED_CONTEXTS);
 
             // Both paths must observe at least one nested.note context entry.
@@ -217,11 +269,21 @@ class GeneratedVsReflectiveEquivalenceTest {
             input.put("inners", new ArrayList<>(List.of(first, second)));
 
             RECORDED_CONTEXTS.clear();
-            processor.processInput(input, Reflective.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
+            processor.processInput(
+                    input,
+                    Reflective.class,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY,
+                    InputFieldNameResolver.IDENTITY);
             List<InputValueContext> reflectiveContexts = new ArrayList<>(RECORDED_CONTEXTS);
 
             RECORDED_CONTEXTS.clear();
-            processor.processInput(input, Generated.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
+            processor.processInput(
+                    input,
+                    Generated.class,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY,
+                    InputFieldNameResolver.IDENTITY);
             List<InputValueContext> generatedContexts = new ArrayList<>(RECORDED_CONTEXTS);
 
             assertEquals(
@@ -239,11 +301,21 @@ class GeneratedVsReflectiveEquivalenceTest {
             input.put("tags", new ArrayList<>(List.of("  one  ", "  two  ")));
 
             RECORDED_CONTEXTS.clear();
-            processor.processInput(input, Reflective.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
+            processor.processInput(
+                    input,
+                    Reflective.class,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY,
+                    InputFieldNameResolver.IDENTITY);
             List<InputValueContext> reflectiveContexts = new ArrayList<>(RECORDED_CONTEXTS);
 
             RECORDED_CONTEXTS.clear();
-            processor.processInput(input, Generated.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
+            processor.processInput(
+                    input,
+                    Generated.class,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY,
+                    InputFieldNameResolver.IDENTITY);
             List<InputValueContext> generatedContexts = new ArrayList<>(RECORDED_CONTEXTS);
 
             assertEquals(paths(reflectiveContexts), paths(generatedContexts));
@@ -285,13 +357,21 @@ class GeneratedVsReflectiveEquivalenceTest {
             input.put("tags", new ArrayList<>(List.of("  one  ", "  two  ")));
 
             RECORDED_CONTEXTS.clear();
-            Object reflectiveOut =
-                    processor.processInput(input, Reflective.class, EffectiveInputPolicies.NONE, InputLocation.PAYLOAD);
+            Object reflectiveOut = processor.processInput(
+                    input,
+                    Reflective.class,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.PAYLOAD,
+                    InputFieldNameResolver.IDENTITY);
             List<InputValueContext> reflectiveContexts = new ArrayList<>(RECORDED_CONTEXTS);
 
             RECORDED_CONTEXTS.clear();
-            Object generatedOut =
-                    processor.processInput(input, Generated.class, EffectiveInputPolicies.NONE, InputLocation.PAYLOAD);
+            Object generatedOut = processor.processInput(
+                    input,
+                    Generated.class,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.PAYLOAD,
+                    InputFieldNameResolver.IDENTITY);
             List<InputValueContext> generatedContexts = new ArrayList<>(RECORDED_CONTEXTS);
 
             assertEquals(reflectiveOut, generatedOut);
@@ -312,13 +392,21 @@ class GeneratedVsReflectiveEquivalenceTest {
             input.put("inners", new ArrayList<>(List.of(first, second)));
 
             RECORDED_CONTEXTS.clear();
-            Object reflectiveOut =
-                    processor.processInput(input, Reflective.class, EffectiveInputPolicies.NONE, InputLocation.PAYLOAD);
+            Object reflectiveOut = processor.processInput(
+                    input,
+                    Reflective.class,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.PAYLOAD,
+                    InputFieldNameResolver.IDENTITY);
             List<InputValueContext> reflectiveContexts = new ArrayList<>(RECORDED_CONTEXTS);
 
             RECORDED_CONTEXTS.clear();
-            Object generatedOut =
-                    processor.processInput(input, Generated.class, EffectiveInputPolicies.NONE, InputLocation.PAYLOAD);
+            Object generatedOut = processor.processInput(
+                    input,
+                    Generated.class,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.PAYLOAD,
+                    InputFieldNameResolver.IDENTITY);
             List<InputValueContext> generatedContexts = new ArrayList<>(RECORDED_CONTEXTS);
 
             assertEquals(reflectiveOut, generatedOut);
@@ -361,9 +449,17 @@ class GeneratedVsReflectiveEquivalenceTest {
             input.put("extras", new ArrayList<>(List.of("  a  ", "  b  ")));
 
             Object reflectiveOut = processor.processInput(
-                    input, ObjLevelReflective.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
+                    input,
+                    ObjLevelReflective.class,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY,
+                    InputFieldNameResolver.IDENTITY);
             Object generatedOut = processor.processInput(
-                    input, ObjLevelGenerated.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
+                    input,
+                    ObjLevelGenerated.class,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY,
+                    InputFieldNameResolver.IDENTITY);
 
             assertEquals(reflectiveOut, generatedOut);
             // Sanity: each list element trimmed in both paths.
@@ -385,9 +481,17 @@ class GeneratedVsReflectiveEquivalenceTest {
             input.put("extra", "  surprise  "); // not declared — flows through default arm
 
             Object reflectiveOut = processor.processInput(
-                    input, ObjLevelReflective.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
+                    input,
+                    ObjLevelReflective.class,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY,
+                    InputFieldNameResolver.IDENTITY);
             Object generatedOut = processor.processInput(
-                    input, ObjLevelGenerated.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
+                    input,
+                    ObjLevelGenerated.class,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY,
+                    InputFieldNameResolver.IDENTITY);
 
             assertEquals(reflectiveOut, generatedOut);
             // Sanity: the extra key was trimmed in both paths.
@@ -410,9 +514,17 @@ class GeneratedVsReflectiveEquivalenceTest {
             input.put("misc", "  alpha  ");
 
             Object reflectiveOut = processor.processInput(
-                    input, AnnObjReflective.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
+                    input,
+                    AnnObjReflective.class,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY,
+                    InputFieldNameResolver.IDENTITY);
             Object generatedOut = processor.processInput(
-                    input, AnnObjGenerated.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
+                    input,
+                    AnnObjGenerated.class,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY,
+                    InputFieldNameResolver.IDENTITY);
 
             assertEquals(reflectiveOut, generatedOut);
             assertEquals("alpha", ((Map<?, ?>) reflectiveOut).get("misc"));
@@ -430,9 +542,17 @@ class GeneratedVsReflectiveEquivalenceTest {
             input.put("misc", nested);
 
             Object reflectiveOut = processor.processInput(
-                    input, AnnObjReflective.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
+                    input,
+                    AnnObjReflective.class,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY,
+                    InputFieldNameResolver.IDENTITY);
             Object generatedOut = processor.processInput(
-                    input, AnnObjGenerated.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
+                    input,
+                    AnnObjGenerated.class,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY,
+                    InputFieldNameResolver.IDENTITY);
 
             assertEquals(reflectiveOut, generatedOut);
             // The field-level @Canonicalize(TestTrim) flows into the nested subtree via descend()
@@ -451,9 +571,17 @@ class GeneratedVsReflectiveEquivalenceTest {
             input.put("misc", new ArrayList<>(List.of("  x  ", "  y  ")));
 
             Object reflectiveOut = processor.processInput(
-                    input, AnnObjReflective.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
+                    input,
+                    AnnObjReflective.class,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY,
+                    InputFieldNameResolver.IDENTITY);
             Object generatedOut = processor.processInput(
-                    input, AnnObjGenerated.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
+                    input,
+                    AnnObjGenerated.class,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY,
+                    InputFieldNameResolver.IDENTITY);
 
             assertEquals(reflectiveOut, generatedOut);
             List<?> rList = (List<?>) ((Map<?, ?>) reflectiveOut).get("misc");
@@ -471,9 +599,17 @@ class GeneratedVsReflectiveEquivalenceTest {
             Map<String, Object> recursiveInput = recursiveInput();
 
             Object reflectiveOut = processor.processInput(
-                    recursiveInput, RecursiveReflective.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
+                    recursiveInput,
+                    RecursiveReflective.class,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY,
+                    InputFieldNameResolver.IDENTITY);
             Object generatedOut = processor.processInput(
-                    recursiveInput, RecursiveGenerated.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
+                    recursiveInput,
+                    RecursiveGenerated.class,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY,
+                    InputFieldNameResolver.IDENTITY);
 
             assertEquals(
                     reflectiveOut,
@@ -488,9 +624,17 @@ class GeneratedVsReflectiveEquivalenceTest {
             Map<String, Object> deepInput = deepInput();
 
             Object deepReflectiveOut = processor.processInput(
-                    deepInput, DeepReflectiveRoot.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
+                    deepInput,
+                    DeepReflectiveRoot.class,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY,
+                    InputFieldNameResolver.IDENTITY);
             Object deepGeneratedOut = processor.processInput(
-                    deepInput, DeepGeneratedRoot.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
+                    deepInput,
+                    DeepGeneratedRoot.class,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY,
+                    InputFieldNameResolver.IDENTITY);
 
             assertEquals(deepReflectiveOut, deepGeneratedOut, "twelve-level chain: the two paths must agree");
             // Agreement alone would also hold if both paths silently skipped the deepest level, so
@@ -559,9 +703,17 @@ class GeneratedVsReflectiveEquivalenceTest {
         @DisplayName("wildcard-bounded and array element fields agree and are canonicalized on both paths")
         void shouldAgreeForWildcardAndBoundedGenericFields() {
             Object reflectiveOut = processor.processInput(
-                    variantInput(), WildcardReflective.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
+                    variantInput(),
+                    WildcardReflective.class,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY,
+                    InputFieldNameResolver.IDENTITY);
             Object generatedOut = processor.processInput(
-                    variantInput(), WildcardGenerated.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
+                    variantInput(),
+                    WildcardGenerated.class,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY,
+                    InputFieldNameResolver.IDENTITY);
 
             assertEquals(
                     reflectiveOut,
@@ -621,9 +773,17 @@ class GeneratedVsReflectiveEquivalenceTest {
         @DisplayName("a type-level chain reaches enum, array and primitive-Optional elements on both paths")
         void shouldAgreeForEnumAndPrimitiveOptionalElementsUnderATypeLevelChain() {
             Object reflectiveOut = processor.processInput(
-                    elementInput(), EnumElementReflective.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
+                    elementInput(),
+                    EnumElementReflective.class,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY,
+                    InputFieldNameResolver.IDENTITY);
             Object generatedOut = processor.processInput(
-                    elementInput(), EnumElementGenerated.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
+                    elementInput(),
+                    EnumElementGenerated.class,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY,
+                    InputFieldNameResolver.IDENTITY);
 
             assertEquals(
                     reflectiveOut,
@@ -646,9 +806,17 @@ class GeneratedVsReflectiveEquivalenceTest {
             EffectiveInputPolicies routePolicies = new EffectiveInputPolicies(List.of(TestUpper.class), List.of());
 
             Object reflectiveOut = processor.processInput(
-                    elementInput(), EnumElementReflective.class, routePolicies, InputLocation.BODY);
+                    elementInput(),
+                    EnumElementReflective.class,
+                    routePolicies,
+                    InputLocation.BODY,
+                    InputFieldNameResolver.IDENTITY);
             Object generatedOut = processor.processInput(
-                    elementInput(), EnumElementGenerated.class, routePolicies, InputLocation.BODY);
+                    elementInput(),
+                    EnumElementGenerated.class,
+                    routePolicies,
+                    InputLocation.BODY,
+                    InputFieldNameResolver.IDENTITY);
 
             assertEquals(
                     reflectiveOut,

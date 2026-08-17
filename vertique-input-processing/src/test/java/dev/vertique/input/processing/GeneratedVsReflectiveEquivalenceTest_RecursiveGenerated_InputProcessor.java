@@ -56,7 +56,8 @@ public final class GeneratedVsReflectiveEquivalenceTest_RecursiveGenerated_Input
         if (!(intermediate instanceof Map<?, ?> raw)) {
             return intermediate;
         }
-        InputTraversalContext rootCtx = parent != null ? parent : InputTraversalContext.fromPolicies(policies);
+        InputTraversalContext rootCtx =
+                parent != null ? parent : InputTraversalContext.fromPolicies(policies, InputFieldNameResolver.IDENTITY);
 
         Map<String, Object> out = new LinkedHashMap<>(raw.size());
         for (Map.Entry<?, ?> e : raw.entrySet()) {

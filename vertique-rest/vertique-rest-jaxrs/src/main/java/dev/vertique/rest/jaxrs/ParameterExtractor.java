@@ -13,6 +13,7 @@ import dev.vertique.core.sanitization.SkipCanonicalization;
 import dev.vertique.core.sanitization.SkipSanitization;
 import dev.vertique.core.util.AnnotationResolver;
 import dev.vertique.input.processing.EffectiveInputPolicies;
+import dev.vertique.input.processing.InputFieldNameResolver;
 import dev.vertique.input.processing.InputObjectProcessor;
 import dev.vertique.rest.core.context.RestContextResolution;
 import dev.vertique.rest.core.convert.ConversionContext;
@@ -465,7 +466,8 @@ final class ParameterExtractor {
         Object value = coerce(rv, paramMeta);
 
         if (value instanceof String s && objectProcessor != null && !policies.isEmpty()) {
-            value = objectProcessor.processInput(s, String.class, policies, toInputLocation(paramMeta.source()));
+            value = objectProcessor.processInput(
+                    s, String.class, policies, toInputLocation(paramMeta.source()), InputFieldNameResolver.IDENTITY);
         }
 
         return value;
@@ -563,11 +565,13 @@ final class ParameterExtractor {
             String rawValue = raw.toString();
             if (processElements && processBeforeConversion) {
                 // Same cast as the FORM scalar branch: a String target must yield a String.
-                rawValue = (String) objectProcessor.processInput(rawValue, String.class, policies, location);
+                rawValue = (String) objectProcessor.processInput(
+                        rawValue, String.class, policies, location, InputFieldNameResolver.IDENTITY);
             }
             Object element = paramConversionResolver.fromString(rawValue, elementContext);
             if (processElements && !processBeforeConversion && element instanceof String s) {
-                element = objectProcessor.processInput(s, String.class, policies, location);
+                element = objectProcessor.processInput(
+                        s, String.class, policies, location, InputFieldNameResolver.IDENTITY);
             }
             coerced.add(element);
         }
@@ -836,8 +840,8 @@ final class ParameterExtractor {
                 JsonObject jsonBody = body.getJsonObject();
                 if (jsonBody != null && !Collection.class.isAssignableFrom(targetType) && !targetType.isArray()) {
                     Map<String, Object> intermediate = jsonBody.getMap();
-                    Object processed =
-                            objectProcessor.processInput(intermediate, targetType, policies, InputLocation.BODY);
+                    Object processed = objectProcessor.processInput(
+                            intermediate, targetType, policies, InputLocation.BODY, InputFieldNameResolver.IDENTITY);
                     if (processed instanceof Map<?, ?> processedMap) {
                         @SuppressWarnings("unchecked")
                         Map<String, Object> typedMap = (Map<String, Object>) processedMap;
@@ -853,7 +857,11 @@ final class ParameterExtractor {
                     if (jsonArray != null) {
                         java.lang.reflect.Type resolvedType = genericType != null ? genericType : targetType;
                         Object processed = objectProcessor.processInput(
-                                jsonArray.getList(), resolvedType, policies, InputLocation.BODY);
+                                jsonArray.getList(),
+                                resolvedType,
+                                policies,
+                                InputLocation.BODY,
+                                InputFieldNameResolver.IDENTITY);
                         if (processed instanceof List<?> processedList) {
                             com.fasterxml.jackson.databind.JavaType javaType =
                                     DatabindCodec.mapper().getTypeFactory().constructType(resolvedType);
@@ -868,7 +876,12 @@ final class ParameterExtractor {
                 if (targetType == String.class) {
                     String stringBody = body.getString();
                     if (stringBody != null && !policies.isEmpty()) {
-                        return objectProcessor.processInput(stringBody, String.class, policies, InputLocation.BODY);
+                        return objectProcessor.processInput(
+                                stringBody,
+                                String.class,
+                                policies,
+                                InputLocation.BODY,
+                                InputFieldNameResolver.IDENTITY);
                     }
                     return stringBody;
                 }
@@ -880,8 +893,8 @@ final class ParameterExtractor {
                     json.put(entry.getKey(), entry.getValue());
                 }
                 if (!json.isEmpty()) {
-                    Object processed =
-                            objectProcessor.processInput(json.getMap(), targetType, policies, InputLocation.BODY);
+                    Object processed = objectProcessor.processInput(
+                            json.getMap(), targetType, policies, InputLocation.BODY, InputFieldNameResolver.IDENTITY);
                     if (processed instanceof Map<?, ?> processedMap) {
                         @SuppressWarnings("unchecked")
                         Map<String, Object> typedMap = (Map<String, Object>) processedMap;
@@ -893,7 +906,8 @@ final class ParameterExtractor {
                 // String body — apply route-level processing
                 String stringBody = body.getString();
                 if (stringBody != null && !policies.isEmpty()) {
-                    return objectProcessor.processInput(stringBody, String.class, policies, InputLocation.BODY);
+                    return objectProcessor.processInput(
+                            stringBody, String.class, policies, InputLocation.BODY, InputFieldNameResolver.IDENTITY);
                 }
                 return stringBody;
             }
@@ -1032,7 +1046,8 @@ final class ParameterExtractor {
             return null;
         }
         if (objectProcessor != null && !policies.isEmpty()) {
-            formValue = (String) objectProcessor.processInput(formValue, String.class, policies, InputLocation.FORM);
+            formValue = (String) objectProcessor.processInput(
+                    formValue, String.class, policies, InputLocation.FORM, InputFieldNameResolver.IDENTITY);
         }
         return coerceString(formValue, pm);
     }
@@ -1096,7 +1111,8 @@ final class ParameterExtractor {
         if (objectProcessor != null) {
             EffectiveInputPolicies policies =
                     new EffectiveInputPolicies(meta.routeCanonicalizerChain(), meta.routeSanitizerChain());
-            Object processed = objectProcessor.processInput(values, beanType, policies, InputLocation.BEAN_PARAM);
+            Object processed = objectProcessor.processInput(
+                    values, beanType, policies, InputLocation.BEAN_PARAM, InputFieldNameResolver.IDENTITY);
             if (processed instanceof Map<?, ?> processedMap) {
                 values = new LinkedHashMap<>();
                 for (var entry2 : processedMap.entrySet()) {
@@ -1167,7 +1183,8 @@ final class ParameterExtractor {
 
         // Apply route-level input processing to the intermediate map before materialization
         if (objectProcessor != null && !routePolicies.isEmpty()) {
-            Object processed = objectProcessor.processInput(values, beanType, routePolicies, InputLocation.BEAN_PARAM);
+            Object processed = objectProcessor.processInput(
+                    values, beanType, routePolicies, InputLocation.BEAN_PARAM, InputFieldNameResolver.IDENTITY);
             if (processed instanceof Map<?, ?> processedMap) {
                 values = new LinkedHashMap<>();
                 for (Map.Entry<?, ?> entry : processedMap.entrySet()) {

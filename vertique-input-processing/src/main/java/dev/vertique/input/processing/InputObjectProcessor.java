@@ -23,11 +23,12 @@ import java.util.function.Function;
  * <pre>{@code
  * Object intermediate = jsonObject.getMap();
  * Object processed = processor.processInput(
- *         intermediate, MyDto.class, policies, InputLocation.BODY);
+ *         intermediate, MyDto.class, policies, InputLocation.BODY, nameResolver);
  * MyDto dto = objectMapper.convertValue(processed, MyDto.class);
  * }</pre>
  *
  * @see EffectiveInputPolicies
+ * @see InputFieldNameResolver
  */
 public interface InputObjectProcessor {
 
@@ -66,6 +67,14 @@ public interface InputObjectProcessor {
      * according to the target type's annotation metadata and the effective invocation-level
      * policies.
      *
+     * <p>The intermediate is keyed by <strong>wire</strong> names while both execution paths key
+     * their per-field metadata on <strong>Java</strong> property names, so {@code nameResolver}
+     * projects one onto the other before every metadata lookup. The processed result keeps the wire
+     * keys unchanged — the projection selects which declared policies apply, it never renames what
+     * the codec will bind. Pass {@link InputFieldNameResolver#IDENTITY} when the intermediate's keys
+     * are already Java property names, which includes every call that processes a bare
+     * {@code String}: there is no object whose fields could be renamed.
+     *
      * <p>{@code targetType} may be any type that reduces to a class: a class, a parameterized type,
      * a bounded wildcard or type variable, an {@code Optional} of any of those, or an array of them.
      * A type that reduces to no class at all — a {@code GenericArrayType} such as
@@ -73,17 +82,24 @@ public interface InputObjectProcessor {
      * call fails when {@code policies} is non-empty, because the caller declared processing that
      * provably cannot run, and returns {@code input} unchanged when {@code policies} is empty.
      *
-     * @param input      the intermediate input — a {@code Map<String, Object>} for objects,
-     *                   a {@code List<Object>} for arrays, or a raw value; may be {@code null}
-     * @param targetType the target Java type to look up annotation metadata from
-     * @param policies   the effective input policies for this invocation
-     *                   (invocation-level canonicalizer and sanitizer chains)
-     * @param location   where the input originated (e.g. {@link InputLocation#BODY},
-     *                   {@link InputLocation#FORM})
+     * @param input        the intermediate input — a {@code Map<String, Object>} for objects,
+     *                     a {@code List<Object>} for arrays, or a raw value; may be {@code null}
+     * @param targetType   the target Java type to look up annotation metadata from
+     * @param policies     the effective input policies for this invocation
+     *                     (invocation-level canonicalizer and sanitizer chains)
+     * @param location     where the input originated (e.g. {@link InputLocation#BODY},
+     *                     {@link InputLocation#FORM})
+     * @param nameResolver the wire → Java property-name projection to match declared policies with;
+     *                     must not be {@code null}
      * @return the processed intermediate input — a new map/list with string values transformed,
      *         or {@code null} if {@code input} was {@code null}
      * @throws IllegalStateException if {@code policies} is non-empty and {@code targetType} reduces
      *                               to no class, so the declared processing cannot be applied
      */
-    Object processInput(Object input, Type targetType, EffectiveInputPolicies policies, InputLocation location);
+    Object processInput(
+            Object input,
+            Type targetType,
+            EffectiveInputPolicies policies,
+            InputLocation location,
+            InputFieldNameResolver nameResolver);
 }

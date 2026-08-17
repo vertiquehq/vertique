@@ -75,6 +75,16 @@ import java.util.function.Function;
  * returned unchanged: whether the type graph declares policies of its own is not answerable without
  * the classification that just failed.
  *
+ * <p><strong>Field names are projected from the wire before every metadata lookup.</strong> The
+ * intermediate is keyed by whatever the codec published while {@link InputPolicyMetadata} is keyed
+ * by Java property names, so each key is resolved through the traversal's
+ * {@link InputFieldNameResolver} (carried on {@link InputTraversalContext}) before its
+ * {@link FieldPolicyMetadata} is looked up. The emitted map keeps the wire key unchanged — the
+ * projection decides which declared policies apply, never what the codec will bind. The
+ * {@link InputValueContext} a policy observes follows the same split: {@code path} is the wire path,
+ * while {@code logicalName} is the Java property name once a property matched and the wire name
+ * otherwise. List elements keep the element path in both components.
+ *
  * <p><strong>Processor resolution is cached per engine instance.</strong> The caller-supplied
  * resolver functions handed to {@link InputObjectProcessor#createDefault} are consulted once per
  * canonicalizer / sanitizer class instead of once per string value, and a resolution that fails is
@@ -145,7 +155,12 @@ class DefaultInputObjectProcessor implements InputObjectProcessor {
     }
 
     @Override
-    public Object processInput(Object input, Type targetType, EffectiveInputPolicies policies, InputLocation location) {
+    public Object processInput(
+            Object input,
+            Type targetType,
+            EffectiveInputPolicies policies,
+            InputLocation location,
+            InputFieldNameResolver nameResolver) {
         if (input == null) {
             return null;
         }
@@ -163,12 +178,16 @@ class DefaultInputObjectProcessor implements InputObjectProcessor {
             return input;
         }
 
-        InputTraversalContext ctx = InputTraversalContext.fromPolicies(policies);
+        InputTraversalContext ctx = InputTraversalContext.fromPolicies(policies, nameResolver);
 
         if (input instanceof Map<?, ?> map) {
             Optional<GeneratedInputProcessor<Object>> generated = dispatcher.resolve(asObjectClass(targetClass));
             if (generated.isPresent()) {
-                return generated.get().process(input, policies, location, chainResolver, dispatcher, null, "");
+                // Pass the REAL root context, never null: a generated processor handed a null parent
+                // re-seeds with IDENTITY naming, and its per-field switch would then stop matching a
+                // renamed wire key — silently disabling the declared policies on exactly the path
+                // REST takes when codegen is active.
+                return generated.get().process(input, policies, location, chainResolver, dispatcher, ctx, "");
             }
             InputPolicyMetadata metadata = metadataResolver.resolve(targetClass);
             return processMap(map, metadata, ctx, policies, location, "", targetClass);
@@ -207,7 +226,8 @@ class DefaultInputObjectProcessor implements InputObjectProcessor {
      * @param generated the generated processor for the element type
      * @param policies  invocation-level policies passed through to the processor
      * @param location  request origin
-     * @param rootCtx   the root traversal context for non-trivial invocation-level chains
+     * @param rootCtx   the root traversal context, handed to the generated processor as its parent
+     *                  so the invocation-level chains <em>and</em> the name projection survive
      * @return a new list with each map element processed
      */
     private Object generatedListWalk(
@@ -221,12 +241,13 @@ class DefaultInputObjectProcessor implements InputObjectProcessor {
         int index = 0;
         for (Object element : list) {
             if (element instanceof Map<?, ?>) {
-                // Pass null parent so the generated processor seeds with fromPolicies(policies);
-                // rootCtx for top-level entries is equivalent to fromPolicies(policies).
+                // Pass the REAL root context, never null — same reason as the top-level map entry
+                // point: a null parent makes the generated processor re-seed IDENTITY naming and
+                // silently stop matching renamed wire keys.
                 // Pass "[N]" as parentPath so field paths inside the processor read as "[N].fieldName".
                 String elementPath = "[" + index + "]";
-                result.add(
-                        generated.process(element, policies, location, chainResolver, dispatcher, null, elementPath));
+                result.add(generated.process(
+                        element, policies, location, chainResolver, dispatcher, rootCtx, elementPath));
             } else {
                 result.add(element);
             }
@@ -240,6 +261,11 @@ class DefaultInputObjectProcessor implements InputObjectProcessor {
     /**
      * Processes a map by applying chains to each string-valued entry and recursing into
      * nested maps and lists.
+     *
+     * <p>Each key is projected through {@code ctx}'s {@link InputFieldNameResolver} before its
+     * per-field metadata is looked up, because the map is keyed by wire names and
+     * {@link InputPolicyMetadata#fields()} by Java property names. The output map is keyed by the
+     * original wire names.
      *
      * @param map        the input map (keys may be any type, values may be any type)
      * @param metadata   annotation metadata for the owner type
@@ -271,10 +297,20 @@ class DefaultInputObjectProcessor implements InputObjectProcessor {
                 continue;
             }
 
-            FieldPolicyMetadata fieldMeta = metadata.fields().get(key);
+            // The intermediate is keyed by WIRE names; metadata.fields() is keyed by JAVA property
+            // names. Project before the lookup, or a renamed field never matches its own policies.
+            // The result map keeps the wire key — the projection selects metadata, it never renames
+            // what the codec will bind.
+            String logicalKey = ctx.logicalFieldName(ownerType, key);
+            FieldPolicyMetadata fieldMeta = metadata.fields().get(logicalKey);
+            // logicalName is the JAVA property name once a property matched, the wire name
+            // otherwise; path stays the wire path so a diagnostic points at what the caller sent.
+            String logicalName = fieldMeta != null ? logicalKey : key;
 
             if (value instanceof String s) {
-                result.put(key, processStringValue(s, metadata, fieldMeta, ctx, location, fieldPath, key, ownerType));
+                result.put(
+                        key,
+                        processStringValue(s, metadata, fieldMeta, ctx, location, fieldPath, logicalName, ownerType));
             } else if (value instanceof Map<?, ?> nestedMap) {
                 result.put(
                         key,
