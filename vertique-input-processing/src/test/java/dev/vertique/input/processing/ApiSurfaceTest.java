@@ -52,8 +52,8 @@ class ApiSurfaceTest {
             "GeneratedSupport");
 
     /** Types that implement the engine but are deliberately not part of the surface. */
-    private static final Set<String> INTERNAL_TYPES =
-            Set.of("DefaultInputObjectProcessor", "InputPolicyMetadata", "InputPolicyMetadataResolver");
+    private static final Set<String> INTERNAL_TYPES = Set.of(
+            "DefaultInputObjectProcessor", "InputPolicyMetadata", "InputPolicyMetadataResolver", "TypeClassifier");
 
     @Nested
     @DisplayName("package inventory")

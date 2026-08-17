@@ -7,6 +7,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vertique.core.sanitization.Canonicalize;
@@ -768,6 +770,51 @@ class DefaultInputObjectProcessorTest {
                             + "the wire shape is the same JSON array, so the element policies must run");
         }
 
+        @Test
+        @DisplayName("a target type that reduces to no class fails when invocation policies are declared")
+        void shouldFailClosedWhenTheTargetTypeReducesToNoClassAndPoliciesAreDeclared() throws NoSuchFieldException {
+            java.lang.reflect.Type unclassifiable =
+                    GenericArrayHolder.class.getDeclaredField("rows").getGenericType();
+            assertInstanceOf(
+                    java.lang.reflect.GenericArrayType.class,
+                    unclassifiable,
+                    "fixture guard: the target must really be a GenericArrayType, the shape that "
+                            + "reduces to no Class even after bound and Optional normalization");
+
+            var policies = new EffectiveInputPolicies(List.of(TestTrimCanonicalizer.class), List.of());
+            Map<String, Object> input = new LinkedHashMap<>();
+            input.put("name", "  hello  ");
+
+            IllegalStateException failure = assertThrows(
+                    IllegalStateException.class,
+                    () -> processor.processInput(input, unclassifiable, policies, InputLocation.BODY),
+                    "the caller declared invocation-level processing that provably cannot run on this "
+                            + "target type — the engine must fail rather than silently return the input");
+            assertTrue(
+                    failure.getMessage().contains(unclassifiable.getTypeName()),
+                    "the diagnostic must name the offending target type, but was: " + failure.getMessage());
+        }
+
+        @Test
+        @DisplayName("a target type that reduces to no class stays a no-op when no policies are declared")
+        void shouldRemainANoOpWhenTheTargetTypeReducesToNoClassAndNoPoliciesAreDeclared() throws NoSuchFieldException {
+            java.lang.reflect.Type unclassifiable =
+                    GenericArrayHolder.class.getDeclaredField("rows").getGenericType();
+            Map<String, Object> input = new LinkedHashMap<>();
+            input.put("name", "  hello  ");
+
+            Object result =
+                    processor.processInput(input, unclassifiable, EffectiveInputPolicies.NONE, InputLocation.BODY);
+
+            assertSame(
+                    input,
+                    result,
+                    "with no invocation-level policies the guard cannot know whether the type graph "
+                            + "declares policies — that answer needs the classification that just failed — "
+                            + "so the no-op is kept rather than failing a caller that declared nothing");
+            assertEquals("  hello  ", input.get("name"), "the no-op path must not process the input either");
+        }
+
         /** Builds a one-field intermediate for a {@link ClassifiedNode} element. */
         private Map<String, Object> nodeMap(String name) {
             Map<String, Object> node = new LinkedHashMap<>();
@@ -1040,6 +1087,15 @@ class DefaultInputObjectProcessorTest {
      */
     static class TypeVariableHolder<T extends ClassifiedNode> {
         T value;
+    }
+
+    /**
+     * Holder supplying a real {@link java.lang.reflect.GenericArrayType} — {@code List<ClassifiedNode>[]}.
+     * It is the entry-point shape that reduces to no {@link Class} even after bound and
+     * {@code Optional} normalization, so it drives the target-type guard.
+     */
+    static class GenericArrayHolder {
+        List<ClassifiedNode>[] rows;
     }
 
     /**

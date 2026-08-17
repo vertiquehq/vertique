@@ -9,7 +9,6 @@ import dev.vertique.core.sanitization.InputValueContext;
 import dev.vertique.core.sanitization.Sanitizer;
 import dev.vertique.input.processing.InputPolicyMetadata.FieldPolicyMetadata;
 import jakarta.annotation.Nullable;
-import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -58,6 +57,21 @@ import java.util.function.Function;
  * walk therefore terminates on the finite intermediate data rather than on a type-graph budget:
  * a self-referential type resolves once and applies at every level, direct and mutual recursion
  * behave identically, and a policy declared behind any number of policy-free links still runs.
+ *
+ * <p><strong>Type classification is shared with the metadata resolver.</strong> The entry-point
+ * target type and its element type are classified by {@link TypeClassifier}, the same rules
+ * {@link InputPolicyMetadataResolver} applies to declared fields, so a wildcard, a type variable or
+ * an {@code Optional} layer reduces to the same class wherever it appears. A collection and an
+ * array of the same element type are therefore processed identically — both are a JSON array on the
+ * wire and carry one element schema.
+ *
+ * <p><strong>Target-type guard.</strong> A target type that reduces to no class at all — a
+ * {@code GenericArrayType} such as {@code List<Inner>[]}, or a non-JDK {@link Type} implementation —
+ * cannot be processed. When the invocation-level policies are non-empty the caller has declared
+ * processing that provably cannot run, so {@link #processInput} throws {@link IllegalStateException}
+ * rather than silently returning the input. With empty invocation-level policies the input is
+ * returned unchanged: whether the type graph declares policies of its own is not answerable without
+ * the classification that just failed.
  *
  * <p><strong>Generated-processor fast path.</strong> The processor self-bootstraps a
  * {@link GeneratedInputProcessorDispatcher} in its constructor and consults it before walking
@@ -124,8 +138,16 @@ class DefaultInputObjectProcessor implements InputObjectProcessor {
             return null;
         }
 
-        Class<?> targetClass = extractClass(targetType);
+        Class<?> targetClass = TypeClassifier.classify(targetType);
         if (targetClass == null) {
+            if (!policies.isEmpty()) {
+                throw new IllegalStateException("Input processing was declared for " + location
+                        + " but the target type " + targetType.getTypeName()
+                        + " reduces to no class, so the declared canonicalizers and sanitizers cannot be "
+                        + "applied. Declare a target type this engine can classify — a class, a "
+                        + "parameterized type, a bounded type variable or wildcard, an Optional of any of "
+                        + "those, or an array of them.");
+            }
             return input;
         }
 
@@ -144,7 +166,7 @@ class DefaultInputObjectProcessor implements InputObjectProcessor {
             // metadata.
             // The runtime fast-path consults the dispatcher for the ELEMENT class — codegen never emits a List<X> or
             // X[] processor; it emits X_InputProcessor and the iteration is handled here.
-            Class<?> elementClass = extractElementType(targetType);
+            Class<?> elementClass = TypeClassifier.elementType(targetType);
             if (elementClass != null) {
                 Optional<GeneratedInputProcessor<Object>> generated = dispatcher.resolve(asObjectClass(elementClass));
                 if (generated.isPresent()) {
@@ -735,37 +757,6 @@ class DefaultInputObjectProcessor implements InputObjectProcessor {
     }
 
     // --- Type extraction ---
-
-    /**
-     * Extracts the raw {@link Class} from a {@link Type}, handling both plain classes and
-     * parameterized types.
-     *
-     * @param type the type to extract from
-     * @return the raw class, or {@code null} if extraction is not possible
-     */
-    private static Class<?> extractClass(Type type) {
-        if (type instanceof Class<?> cls) return cls;
-        if (type instanceof ParameterizedType pt && pt.getRawType() instanceof Class<?> cls) return cls;
-        return null;
-    }
-
-    /**
-     * Extracts the element type from a parameterized collection type or array type.
-     *
-     * <p>For example, given {@code List<MyDto>} returns {@code MyDto.class};
-     * given {@code MyDto[]} returns {@code MyDto.class}.
-     *
-     * @param type the collection or array type
-     * @return the element class, or {@code null} if not determinable
-     */
-    private static Class<?> extractElementType(Type type) {
-        if (type instanceof ParameterizedType pt) {
-            Type[] args = pt.getActualTypeArguments();
-            if (args.length > 0 && args[0] instanceof Class<?> cls) return cls;
-        }
-        if (type instanceof Class<?> cls && cls.isArray()) return cls.getComponentType();
-        return null;
-    }
 
     /**
      * Erases a wildcard-captured class reference to {@code Class<Object>} so the dispatcher's

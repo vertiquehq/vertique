@@ -59,6 +59,13 @@ public interface InputObjectProcessor {
      * according to the target type's annotation metadata and the effective invocation-level
      * policies.
      *
+     * <p>{@code targetType} may be any type that reduces to a class: a class, a parameterized type,
+     * a bounded wildcard or type variable, an {@code Optional} of any of those, or an array of them.
+     * A type that reduces to no class at all — a {@code GenericArrayType} such as
+     * {@code List<Inner>[]}, or a foreign {@link Type} implementation — cannot be processed: the
+     * call fails when {@code policies} is non-empty, because the caller declared processing that
+     * provably cannot run, and returns {@code input} unchanged when {@code policies} is empty.
+     *
      * @param input      the intermediate input — a {@code Map<String, Object>} for objects,
      *                   a {@code List<Object>} for arrays, or a raw value; may be {@code null}
      * @param targetType the target Java type to look up annotation metadata from
@@ -68,6 +75,8 @@ public interface InputObjectProcessor {
      *                   {@link InputLocation#FORM})
      * @return the processed intermediate input — a new map/list with string values transformed,
      *         or {@code null} if {@code input} was {@code null}
+     * @throws IllegalStateException if {@code policies} is non-empty and {@code targetType} reduces
+     *                               to no class, so the declared processing cannot be applied
      */
     Object processInput(Object input, Type targetType, EffectiveInputPolicies policies, InputLocation location);
 }
