@@ -77,6 +77,21 @@ the field kind:
 | `Collection<?>` / `Collection<? super NestedDto>` | `OTHER` — the element normalizes to `java.lang.Object`, a scalar leaf |
 | `Optional<T>` where `T extends A & B` | classified against `A` — javac erases an intersection bound to its leftmost member, and that is the type in the erased field signature Jackson binds against |
 
+**A collection's element type is its `Collection<E>` binding**, not a type argument read off the declared
+type by position. Field classification and `@BODY` discovery both resolve `E` by following the declared
+type's supertypes with its arguments substituted:
+
+| Declared field or body type | Classified as |
+|---------------------|---------------|
+| `Pair<NestedDto, Other>` where `class Pair<A, B> extends ArrayList<A>` | `COLLECTION_OF_DTO` (element type `NestedDto` — the binding is the *first* argument here, whatever the declared arity) |
+| `Weird<Other, NestedDto>` where `class Weird<A, B> extends ArrayList<B>` | `COLLECTION_OF_DTO` (element type `NestedDto` — the binding is the *second* argument) |
+| `Fixed<NestedDto>` where `class Fixed<T> extends ArrayList<String>` | `COLLECTION_OF_STRINGS` — the supertype fixes the element, so the declared argument is not the element type |
+| a raw collection (`List`, `Pair`) | `OTHER` (or omitted when unannotated) — nothing binds `E` |
+
+This is the same rule the reflective `TypeClassifier.elementType` applies, so a `Pair`-shaped body
+parameter is rooted at, dispatched against, and sanitized as the element the codec actually binds,
+whether or not codegen is active.
+
 Without this normalization `Optional` would classify as a nested DTO and emit `dispatcher.dispatchNested(v, Optional.class, …)`; no `Optional_InputProcessor` exists, so the field's chain would be silently dropped and nested DTO metadata would be resolved from `Optional` rather than the wrapped type. Likewise, without bound normalization a bounded nested DTO would fall to the `OTHER` tail and never receive its own generated processor while the runtime still materialized it. This keeps the generated path aligned with the reflective `InputPolicyMetadataResolver`, which applies the same `Optional`-stripping and bound-resolution rules.
 
 ---

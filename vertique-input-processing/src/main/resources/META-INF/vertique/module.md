@@ -36,6 +36,18 @@ What keeps the chain bounded is one narrow rule, applied per **declaration site*
 
 Skip flags (`@SkipCanonicalization` / `@SkipSanitization`) are **sticky**: once set by an ancestor, they suppress the corresponding layer for every descendant, whatever that descendant declares. An **object-level** skip is narrower: it suppresses the layer only for fields that declare no chain of their own. A field carrying its own `@Canonicalize` / `@Sanitize` therefore opts back in despite its owner type's skip — on a nested-object or collection field exactly as on a direct `String` field. Processing is copy-on-write — the engine never mutates the input structure.
 
+**A collection's element type is its `Collection<E>` binding**, not a type argument read off the declared type by position. For a field or body type declared over a collection subtype, the engine resolves `E` by following the type's supertypes with its declared arguments substituted, so:
+
+| Declared type | Element type | Why |
+|---|---|---|
+| `List<NestedDto>`, `Set<NestedDto>` | `NestedDto` | `List<E>` binds `E` directly |
+| `Pair<NestedDto, Other>` where `class Pair<A, B> extends ArrayList<A>` | `NestedDto` | the binding is the *first* argument here — the arity of the declared type is irrelevant |
+| `Weird<Other, NestedDto>` where `class Weird<A, B> extends ArrayList<B>` | `NestedDto` | the binding is the *second* argument |
+| `Fixed<NestedDto>` where `class Fixed<T> extends ArrayList<String>` | `String` | the supertype fixes the element; the declared argument is not the element type and its policies do not run element-wise |
+| a raw collection (`List`, `Pair`) | none | nothing binds `E`, so no element schema is determinable and the field keeps only its inherited chains |
+
+`NestedDto`'s own declared policies therefore run against the elements of a `Pair`- or `Weird`-shaped field, and a `Fixed`-shaped field is processed as a collection of strings — in both cases matching what the codec actually binds.
+
 The engine resolves a build-time-generated `{DTO}_InputProcessor` for the target type first (see [Extension Points](#extension-points)) and falls back to a reflective walk when none is on the classpath. Both paths produce the same output.
 
 ---

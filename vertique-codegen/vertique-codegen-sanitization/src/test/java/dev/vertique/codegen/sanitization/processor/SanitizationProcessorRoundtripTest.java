@@ -1504,8 +1504,9 @@ class SanitizationProcessorRoundtripTest {
             """);
 
     /**
-     * Multi-argument collection subtype. {@code TypeClassifier.elementType} requires exactly one type
-     * argument, so a {@code ConfPair<ConfLeafDto, String>} field yields no element schema reflectively.
+     * Multi-argument collection subtype binding its element to the <em>first</em> argument, so a
+     * {@code ConfPair<ConfLeafDto, String>} field binds {@code ConfLeafDto} elements — the shape where
+     * "type argument 0" happens to be the right answer.
      */
     private static final JavaFileObject CONF_PAIR = SourceFiles.inline("com.example.conf.ConfPair", """
             package com.example.conf;
@@ -1514,11 +1515,33 @@ class SanitizationProcessorRoundtripTest {
             """);
 
     /**
+     * Collection subtype that <em>fixes</em> its element type, so a {@code ConfFixed<ConfLeafDto>}
+     * field binds {@code String} elements and the declared argument is not the element type at all.
+     */
+    private static final JavaFileObject CONF_FIXED = SourceFiles.inline("com.example.conf.ConfFixed", """
+            package com.example.conf;
+            import java.util.ArrayList;
+            public class ConfFixed<T> extends ArrayList<String> {}
+            """);
+
+    /**
+     * Multi-argument collection subtype binding its element to the <em>second</em> argument, so a
+     * {@code ConfWeird<String, ConfLeafDto>} field binds {@code ConfLeafDto} elements and "type
+     * argument 0" is outright wrong.
+     */
+    private static final JavaFileObject CONF_WEIRD = SourceFiles.inline("com.example.conf.ConfWeird", """
+            package com.example.conf;
+            import java.util.ArrayList;
+            public class ConfWeird<A, B> extends ArrayList<B> {}
+            """);
+
+    /**
      * The frozen conformance matrix, in one DTO: a non-container generic wrapper, an
-     * {@code Optional}-wrapped DTO, a multi-argument collection subtype, a nested container, an
-     * accessor-less nested field, a container of maps, a self-reference, and a plain {@code String}
-     * field — the last one being what makes a mismatch-family owner observable when the wire shape
-     * disagrees with the declared shape.
+     * {@code Optional}-wrapped DTO, the three collection-subtype shapes whose element is decided by
+     * the {@code Collection<E>} supertype binding rather than by argument position, a nested
+     * container, an accessor-less nested field, a container of maps, a self-reference, and a plain
+     * {@code String} field — the last one being what makes a mismatch-family owner observable when
+     * the wire shape disagrees with the declared shape.
      */
     private static final JavaFileObject CONF_ROOT_DTO = SourceFiles.inline("com.example.conf.ConfRootDto", """
             package com.example.conf;
@@ -1531,6 +1554,8 @@ class SanitizationProcessorRoundtripTest {
                 public ConfWrapper<ConfLeafDto> wrapped;
                 public Optional<ConfLeafDto> optionalDto;
                 public ConfPair<ConfLeafDto, String> pair;
+                public ConfFixed<ConfLeafDto> fixed;
+                public ConfWeird<String, ConfLeafDto> weird;
                 public List<List<ConfLeafDto>> nestedLists;
                 private ConfNestedDto accessorLess;
                 public List<Map<String, ConfLeafDto>> mapsInList;
@@ -1553,7 +1578,7 @@ class SanitizationProcessorRoundtripTest {
 
     /** The compilation unit shared, byte-identical, by both conformance environments. */
     private static final JavaFileObject[] CONF_SOURCES = {
-        CONF_LEAF_DTO, CONF_NESTED_DTO, CONF_WRAPPER, CONF_PAIR, CONF_ROOT_DTO, CONF_RESOURCE
+        CONF_LEAF_DTO, CONF_NESTED_DTO, CONF_WRAPPER, CONF_PAIR, CONF_FIXED, CONF_WEIRD, CONF_ROOT_DTO, CONF_RESOURCE
     };
 
     /** FQN of the conformance root DTO, loaded separately out of each environment's classloader. */
@@ -1561,6 +1586,67 @@ class SanitizationProcessorRoundtripTest {
 
     /** FQN of the generated companion whose presence distinguishes the two environments. */
     private static final String CONF_ROOT_PROCESSOR_FQN = "com.example.conf.ConfRootDto_InputProcessor";
+
+    // --- Isolated Pair-shape conformance fixtures ---
+
+    /**
+     * The leaf of the isolated matrix. It is reachable from {@link #ISOLATED_ROOT_DTO} through the
+     * {@code ConfPair}-shaped field and through <em>nothing else</em>, which is what makes the
+     * containment assertion about that field's element rather than about a sibling's.
+     */
+    private static final JavaFileObject ISOLATED_LEAF_DTO = SourceFiles.inline("com.example.iso.IsoLeafDto", """
+            package com.example.iso;
+            import dev.vertique.core.sanitization.Sanitize;
+            import dev.vertique.sanitization.sanitize.StripControlCharsSanitizer;
+            public class IsoLeafDto {
+                @Sanitize(StripControlCharsSanitizer.class)
+                public String note;
+            }
+            """);
+
+    /** The multi-argument collection subtype of the isolated matrix. */
+    private static final JavaFileObject ISOLATED_PAIR = SourceFiles.inline("com.example.iso.IsoPair", """
+            package com.example.iso;
+            import java.util.ArrayList;
+            public class IsoPair<A, B> extends ArrayList<A> {}
+            """);
+
+    /**
+     * A root whose only route to {@link #ISOLATED_LEAF_DTO} is the {@code IsoPair}-shaped field. In
+     * the main matrix the same leaf is also reachable through sibling fields, which masks a
+     * divergence on the {@code Pair} shape behind their redundancy; here nothing masks it.
+     */
+    private static final JavaFileObject ISOLATED_ROOT_DTO = SourceFiles.inline("com.example.iso.IsoRootDto", """
+            package com.example.iso;
+            public class IsoRootDto {
+                public IsoPair<IsoLeafDto, String> items;
+            }
+            """);
+
+    private static final JavaFileObject ISOLATED_RESOURCE = SourceFiles.inline("com.example.iso.IsoResource", """
+            package com.example.iso;
+            import jakarta.ws.rs.POST;
+            import jakarta.ws.rs.Path;
+            @Path("/iso")
+            public class IsoResource {
+                @POST
+                public String create(IsoRootDto body) { return null; }
+            }
+            """);
+
+    /** The isolated compilation unit, shared byte-identically by both environments. */
+    private static final JavaFileObject[] ISOLATED_SOURCES = {
+        ISOLATED_LEAF_DTO, ISOLATED_PAIR, ISOLATED_ROOT_DTO, ISOLATED_RESOURCE
+    };
+
+    /** FQN of the isolated root DTO. */
+    private static final String ISOLATED_ROOT_FQN = "com.example.iso.IsoRootDto";
+
+    /** FQN of the isolated root's generated companion. */
+    private static final String ISOLATED_ROOT_PROCESSOR_FQN = "com.example.iso.IsoRootDto_InputProcessor";
+
+    /** FQN of the leaf both paths must reach through the {@code IsoPair}-shaped field alone. */
+    private static final String ISOLATED_LEAF_FQN = "com.example.iso.IsoLeafDto";
 
     // --- Owner-set conformance ---
 
@@ -1608,11 +1694,41 @@ class SanitizationProcessorRoundtripTest {
             // broken (single-compilation) mechanic looks like.
             assertFalse(generated.isEmpty(), "the generated path must prepare at least its own root");
             assertEquals(
-                    Set.of("java.lang.String"),
+                    Set.of(
+                            "java.lang.String",
+                            "com.example.conf.ConfPair",
+                            "com.example.conf.ConfFixed",
+                            "com.example.conf.ConfWeird"),
                     difference(reflective, generated),
-                    "the reflective path's surplus is exactly the mismatch family: a String field's raw"
-                            + " declared class is recorded unconditionally, while the generated path never"
-                            + " asks for an owner on it");
+                    "the reflective path's surplus is exactly the mismatch family: a field's raw declared"
+                            + " class is recorded unconditionally — the String field's, and each collection"
+                            + " subtype's container class — while the generated path's arms dispatch against"
+                            + " the element type or the origin class and never ask for an owner on either");
+        }
+
+        @Test
+        @DisplayName("containment holds on a root whose only route to its leaf is the Pair-shaped field")
+        void generatedOwnerSetIsContainedInTheReflectiveOneForAnIsolatedPairShape() throws Exception {
+            Set<String> generated =
+                    prepareOwners(compileWithCodegen(ISOLATED_SOURCES, ISOLATED_ROOT_PROCESSOR_FQN), ISOLATED_ROOT_FQN);
+            Set<String> reflective = prepareOwners(
+                    compileWithoutCodegen(ISOLATED_SOURCES, ISOLATED_ROOT_PROCESSOR_FQN), ISOLATED_ROOT_FQN);
+
+            assertTrue(
+                    reflective.containsAll(generated),
+                    () -> ("The generated path prepares an owner the reflective path does not on a shape no"
+                                    + " sibling field can mask, so AnnotationCollector and TypeClassifier have"
+                                    + " diverged on the collection element rule."
+                                    + "\n  generated only: %s\n  generated:      %s\n  reflective:     %s")
+                            .formatted(difference(generated, reflective), generated, reflective));
+            assertTrue(
+                    generated.contains(ISOLATED_LEAF_FQN),
+                    () -> "the generated path dispatches the Pair-shaped field's elements against the leaf, so"
+                            + " it must declare it as an owner; generated=" + generated);
+            assertTrue(
+                    reflective.contains(ISOLATED_LEAF_FQN),
+                    () -> "the reflective path binds the same element through the Collection<E> supertype"
+                            + " binding, so it must prepare the leaf too; reflective=" + reflective);
         }
 
         @Test
@@ -1658,11 +1774,23 @@ class SanitizationProcessorRoundtripTest {
      * @return the codegen-active compilation result
      */
     private static Result compileWithCodegen() {
-        Result result = ProcessorTestHarness.run(new SanitizationProcessor(), CONF_SOURCES);
+        return compileWithCodegen(CONF_SOURCES, CONF_ROOT_PROCESSOR_FQN);
+    }
+
+    /**
+     * Compiles {@code sources} with the real {@link SanitizationProcessor} and asserts the named
+     * companion is present, so the dispatcher takes the generated path for classes loaded from this
+     * result's classloader.
+     *
+     * @param sources      the compilation unit
+     * @param processorFqn the generated companion whose presence discriminates this environment
+     * @return the codegen-active compilation result
+     */
+    private static Result compileWithCodegen(JavaFileObject[] sources, String processorFqn) {
+        Result result = ProcessorTestHarness.run(new SanitizationProcessor(), sources);
         result.assertSuccess();
         assertNotNull(
-                result.loadGeneratedClass(CONF_ROOT_PROCESSOR_FQN),
-                "the codegen environment must carry the generated companion");
+                result.loadGeneratedClass(processorFqn), "the codegen environment must carry the generated companion");
         return result;
     }
 
@@ -1674,11 +1802,24 @@ class SanitizationProcessorRoundtripTest {
      * @return the codegen-inactive compilation result
      */
     private static Result compileWithoutCodegen() {
-        Result result = ProcessorTestHarness.run(new NoOpAnnotationProcessor(), CONF_SOURCES);
+        return compileWithoutCodegen(CONF_SOURCES, CONF_ROOT_PROCESSOR_FQN);
+    }
+
+    /**
+     * Compiles {@code sources} with a no-op processor and asserts the named companion does not exist,
+     * so the dispatcher necessarily falls through to the reflective walk for classes loaded from this
+     * result's classloader.
+     *
+     * @param sources      the compilation unit
+     * @param processorFqn the generated companion that must be absent here
+     * @return the codegen-inactive compilation result
+     */
+    private static Result compileWithoutCodegen(JavaFileObject[] sources, String processorFqn) {
+        Result result = ProcessorTestHarness.run(new NoOpAnnotationProcessor(), sources);
         result.assertSuccess();
         assertThrows(
                 AssertionFailedError.class,
-                () -> result.loadGeneratedClass(CONF_ROOT_PROCESSOR_FQN),
+                () -> result.loadGeneratedClass(processorFqn),
                 "the reflective environment must carry no generated companion — otherwise both"
                         + " environments exercise the generated path and the comparison is vacuous");
         return result;
@@ -1696,8 +1837,21 @@ class SanitizationProcessorRoundtripTest {
      * @throws Exception if the root fixture class cannot be loaded
      */
     private static Set<String> prepareOwners(Result result) throws Exception {
+        return prepareOwners(result, CONF_ROOT_FQN);
+    }
+
+    /**
+     * Runs the public precompute entry point over the named root loaded from the given environment's
+     * classloader and returns the prepared owners by binary name.
+     *
+     * @param result  the compilation environment
+     * @param rootFqn the root DTO to precompute
+     * @return the prepared owner binary names, in preparation order
+     * @throws Exception if the root fixture class cannot be loaded
+     */
+    private static Set<String> prepareOwners(Result result, String rootFqn) throws Exception {
         RecordingNameResolver resolver = new RecordingNameResolver();
-        newConformanceEngine().precomputeFieldNameResolution(result.loadGeneratedClass(CONF_ROOT_FQN), resolver);
+        newConformanceEngine().precomputeFieldNameResolution(result.loadGeneratedClass(rootFqn), resolver);
         return resolver.prepared();
     }
 
@@ -1759,6 +1913,8 @@ class SanitizationProcessorRoundtripTest {
         payload.put("wrapped", wireMap("value", " wrapped "));
         payload.put("optionalDto", wireMap("text", " optional "));
         payload.put("pair", wireList(wireMap("text", " pair ")));
+        payload.put("fixed", wireList(" fixed "));
+        payload.put("weird", wireList(wireMap("text", " weird ")));
         payload.put("nestedLists", wireList(wireList(wireMap("text", " nested "))));
         payload.put("accessorLess", wireMap("label", " accessor-less "));
         payload.put("mapsInList", wireList(wireMap("anyKey", wireMap("text", " in map "))));

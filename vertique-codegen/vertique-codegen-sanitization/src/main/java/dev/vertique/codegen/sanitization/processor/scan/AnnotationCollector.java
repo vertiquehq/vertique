@@ -108,6 +108,9 @@ public final class AnnotationCollector {
     /** FQN of the {@code java.util.Optional} wrapper that is transparent for classification. */
     private static final String OPTIONAL_FQN = "java.util.Optional";
 
+    /** FQN of the container interface whose {@code E} binding decides a collection's element type. */
+    static final String COLLECTION_FQN = "java.util.Collection";
+
     private final CodegenContext ctx;
 
     /**
@@ -583,7 +586,7 @@ public final class AnnotationCollector {
      * @return {@code true} for collection types
      */
     private boolean isCollection(TypeMirror type) {
-        return isAssignableTo(type, "java.util.Collection");
+        return isAssignableTo(type, COLLECTION_FQN);
     }
 
     /**
@@ -621,6 +624,11 @@ public final class AnnotationCollector {
      * any {@code java.util.Optional} layers so {@code List<Optional<String>>} yields
      * {@code String} (and therefore classifies as {@link FieldKind#COLLECTION_OF_STRINGS}).
      *
+     * <p>The element comes from the {@code Collection<E>} supertype binding (see
+     * {@link #collectionElementBinding}), never from argument position: a
+     * {@code Fixed<T> extends ArrayList<String>} binds {@code String} elements however it is
+     * parameterized, and a {@code Weird<A, B> extends ArrayList<B>} binds its second argument.
+     *
      * <p>Wildcard and type-variable element types are normalized to their upper bound first (see
      * {@link #normalizeToBound}), so {@code List<? extends Child>} and
      * {@code List<Optional<? extends Child>>} both yield {@code Child} — the element type Jackson
@@ -638,8 +646,53 @@ public final class AnnotationCollector {
      */
     private TypeMirror extractCollectionElementType(TypeMirror type) {
         if (!(type instanceof DeclaredType dt)) return null;
+        // A collection type written without arguments is raw: nothing binds its element, whatever
+        // its supertypes say. This is the same gate TypeClassifier.elementType applies before it
+        // consults the binding.
         if (dt.getTypeArguments().isEmpty()) return null;
-        return normalizeElementType(dt.getTypeArguments().get(0));
+        TypeMirror element = collectionElementBinding(ctx, dt);
+        return element == null ? null : normalizeElementType(element);
+    }
+
+    /**
+     * Resolves {@code E} from the {@code Collection<E>} supertype binding of a collection type.
+     *
+     * <p>Climbs {@link javax.lang.model.util.Types#directSupertypes} until {@code java.util.Collection}
+     * itself is reached and returns its single type argument. {@code directSupertypes} returns the
+     * supertypes of a {@link DeclaredType} <em>already substituted</em> with the arguments seen at the
+     * use site — {@code Weird<Other, Dto>} yields {@code ArrayList<Dto>}, and a nested binding such as
+     * {@code Opt<Dto> extends ArrayList<Optional<T>>} yields {@code ArrayList<Optional<Dto>>} — so no
+     * substitution environment has to be maintained here.
+     *
+     * <p>The result is a type argument as written at its declaration site and may still be a wildcard,
+     * a type variable or an {@code Optional} layer; callers run it through
+     * {@link #normalizeElementType} exactly as they would a directly-declared argument.
+     *
+     * <p>This is the APT counterpart of {@code TypeClassifier}'s reflective supertype walk in
+     * {@code vertique-input-processing}: the two must resolve the same element or the generated and
+     * reflective paths dispatch a collection's elements against different owners.
+     *
+     * @param ctx  the codegen context supplying {@code Types} and {@code Elements}
+     * @param type the collection type mirror
+     * @return the bound element type, or {@code null} when the type is not a collection or carries no
+     *         resolvable binding
+     */
+    static TypeMirror collectionElementBinding(CodegenContext ctx, TypeMirror type) {
+        if (!(type instanceof DeclaredType dt) || !(dt.asElement() instanceof TypeElement element)) return null;
+        if (COLLECTION_FQN.contentEquals(element.getQualifiedName())) {
+            List<? extends TypeMirror> args = dt.getTypeArguments();
+            return args.size() == 1 ? args.get(0) : null;
+        }
+        TypeElement collectionEl = ctx.elements().getTypeElement(COLLECTION_FQN);
+        if (collectionEl == null) return null;
+        TypeMirror erasedCollection = ctx.types().erasure(collectionEl.asType());
+        for (TypeMirror supertype : ctx.types().directSupertypes(dt)) {
+            if (!(supertype instanceof DeclaredType superDeclared)) continue;
+            if (!ctx.types().isAssignable(ctx.types().erasure(superDeclared), erasedCollection)) continue;
+            TypeMirror bound = collectionElementBinding(ctx, superDeclared);
+            if (bound != null) return bound;
+        }
+        return null;
     }
 
     /**

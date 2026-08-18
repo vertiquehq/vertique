@@ -62,14 +62,17 @@ class OwnerTypeWalkTest {
     }
 
     @Test
-    @DisplayName("a collection subtype with two type arguments exposes no element owner")
-    void multiParameterCollectionElementIsNotPrepared() {
+    @DisplayName("a collection subtype with two type arguments exposes the element its supertype binds")
+    void multiParameterCollectionElementIsPreparedFromTheSupertypeBinding() {
         Set<Class<?>> prepared = prepare(PairHolder.class);
 
         assertTrue(prepared.contains(PairHolder.class), "the entry-point class is always an owner");
-        assertFalse(
+        assertTrue(
                 prepared.contains(Dto.class),
-                "elementType requires exactly one type argument, so Pair<A,B> yields no element owner");
+                "Pair<A,B> extends ArrayList<A>, so a Pair<Dto,Other> field binds Dto elements and the "
+                        + "engine dispatches each of them against Dto");
+        assertFalse(
+                prepared.contains(Other.class), "the second argument is not the element type, so it is not an owner");
     }
 
     @Test

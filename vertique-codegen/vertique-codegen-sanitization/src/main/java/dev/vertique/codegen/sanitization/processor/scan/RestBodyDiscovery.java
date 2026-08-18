@@ -288,6 +288,10 @@ public final class RestBodyDiscovery {
      * Returns {@code true} if {@code type} is a parameterized {@link java.util.Collection} type
      * (or {@link java.util.List}) whose element type FQN matches {@code elementFqn}.
      *
+     * <p>The element comes from the {@code Collection<E>} supertype binding
+     * ({@link AnnotationCollector#collectionElementBinding}), so a subtype that binds its element
+     * somewhere other than argument 0 is classified by what it actually holds.
+     *
      * @param type       the type to test
      * @param elementFqn the expected element type FQN
      * @return {@code true} when the type is a collection of the given element type
@@ -300,14 +304,16 @@ public final class RestBodyDiscovery {
             return false;
         }
         if (dt.getTypeArguments().isEmpty()) return false;
-        TypeMirror elementArg = dt.getTypeArguments().get(0);
-        return elementFqn.equals(AnnotationCollector.typeFqn(elementArg));
+        TypeMirror elementArg = AnnotationCollector.collectionElementBinding(ctx, dt);
+        return elementArg != null && elementFqn.equals(AnnotationCollector.typeFqn(elementArg));
     }
 
     /**
      * For a body parameter type, returns the element type to use as the discovery root:
      * <ul>
-     *   <li>{@code Collection<E>} → {@code E}</li>
+     *   <li>{@code Collection<E>} → {@code E}, resolved from the {@code Collection<E>} supertype
+     *       binding ({@link AnnotationCollector#collectionElementBinding}) rather than from argument
+     *       position, so discovery roots the same type the classifier and the decoder bind;</li>
      *   <li>{@code E[]} → {@code E}</li>
      *   <li>Any other type → the type itself</li>
      * </ul>
@@ -324,8 +330,8 @@ public final class RestBodyDiscovery {
                             .isAssignable(
                                     ctx.types().erasure(paramType), ctx.types().erasure(collectionEl.asType()))) {
                 if (!dt.getTypeArguments().isEmpty()) {
-                    TypeMirror arg = dt.getTypeArguments().get(0);
-                    return (arg.getKind() == TypeKind.DECLARED) ? arg : null;
+                    TypeMirror arg = AnnotationCollector.collectionElementBinding(ctx, dt);
+                    return (arg != null && arg.getKind() == TypeKind.DECLARED) ? arg : null;
                 }
                 return null; // raw collection
             }

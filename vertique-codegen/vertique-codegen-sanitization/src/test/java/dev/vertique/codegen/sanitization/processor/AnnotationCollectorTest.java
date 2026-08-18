@@ -218,6 +218,209 @@ class AnnotationCollectorTest {
         }
     }
 
+    // --- Collection element resolution ---
+
+    /**
+     * Pins the element rule of {@code AnnotationCollector.extractCollectionElementType} and of
+     * {@code RestBodyDiscovery}: a collection's element is {@code E} in its {@code Collection<E>}
+     * <em>supertype binding</em>, not "type argument 0" of the declared type.
+     *
+     * <p>The three shapes below separate the two rules. {@code Pair<A, B> extends ArrayList<A>}
+     * makes argument 0 accidentally right; {@code Fixed<T> extends ArrayList<String>} makes it wrong
+     * even at arity one — the element Jackson binds is {@code String}, never the declared argument;
+     * {@code Weird<A, B> extends ArrayList<B>} makes it outright wrong. The reflective
+     * {@code TypeClassifier.elementType} in {@code vertique-input-processing} resolves the same
+     * three shapes the same way, so the generated and reflective paths classify them identically.
+     */
+    @Nested
+    @DisplayName("collection element type resolution")
+    class CollectionElementResolution {
+
+        /** The element type each collection shape must resolve to. */
+        private static final JavaFileObject LEAF_DTO = SourceFiles.inline("com.example.el.ElLeafDto", """
+                package com.example.el;
+                import dev.vertique.core.sanitization.Sanitize;
+                import dev.vertique.sanitization.sanitize.StripControlCharsSanitizer;
+                public class ElLeafDto {
+                    @Sanitize(StripControlCharsSanitizer.class)
+                    public String text;
+                }
+                """);
+
+        /** A second DTO, so a wrong argument index picks a distinguishable class. */
+        private static final JavaFileObject OTHER_DTO = SourceFiles.inline("com.example.el.ElOtherDto", """
+                package com.example.el;
+                import dev.vertique.core.sanitization.Sanitize;
+                import dev.vertique.sanitization.sanitize.StripControlCharsSanitizer;
+                public class ElOtherDto {
+                    @Sanitize(StripControlCharsSanitizer.class)
+                    public String label;
+                }
+                """);
+
+        /** Two type arguments, element bound to the first — argument 0 is accidentally right here. */
+        private static final JavaFileObject PAIR = SourceFiles.inline("com.example.el.ElPair", """
+                package com.example.el;
+                import java.util.ArrayList;
+                public class ElPair<A, B> extends ArrayList<A> {}
+                """);
+
+        /** One type argument, element fixed to {@code String} — argument 0 is wrong at arity one. */
+        private static final JavaFileObject FIXED = SourceFiles.inline("com.example.el.ElFixed", """
+                package com.example.el;
+                import java.util.ArrayList;
+                public class ElFixed<T> extends ArrayList<String> {}
+                """);
+
+        /** Two type arguments, element bound to the second — argument 0 is outright wrong. */
+        private static final JavaFileObject WEIRD = SourceFiles.inline("com.example.el.ElWeird", """
+                package com.example.el;
+                import java.util.ArrayList;
+                public class ElWeird<A, B> extends ArrayList<B> {}
+                """);
+
+        @Test
+        @DisplayName("a multi-argument collection subtype resolves its element through the supertype binding")
+        void pairElementResolvesThroughTheSupertypeBinding() {
+            JavaFileObject dto = SourceFiles.inline("com.example.el.PairFieldDto", """
+                    package com.example.el;
+                    public class PairFieldDto {
+                        public ElPair<ElLeafDto, ElOtherDto> items;
+                    }
+                    """);
+
+            ProcessorTestHarness.run(
+                            new SanitizationProcessor(),
+                            LEAF_DTO,
+                            OTHER_DTO,
+                            PAIR,
+                            dto,
+                            resourceFor("com.example.el.PairFieldDto"))
+                    .assertSuccess()
+                    .assertGeneratedSourceContains(
+                            "com.example.el.PairFieldDto_InputProcessor", "dispatchObjectCollection(v, ElLeafDto.class")
+                    .assertGeneratedSourceContains(
+                            "com.example.el.PairFieldDto_InputProcessor", "owners.add(ElLeafDto.class)");
+        }
+
+        @Test
+        @DisplayName("a collection subtype that fixes its element ignores the declared type argument")
+        void fixedElementIsTheSupertypeArgumentNotTheDeclaredOne() {
+            JavaFileObject dto = SourceFiles.inline("com.example.el.FixedFieldDto", """
+                    package com.example.el;
+                    import dev.vertique.core.sanitization.Canonicalize;
+                    import dev.vertique.sanitization.canonicalize.TrimCanonicalizer;
+                    public class FixedFieldDto {
+                        @Canonicalize(TrimCanonicalizer.class)
+                        public ElFixed<ElLeafDto> items;
+                    }
+                    """);
+
+            ProcessorTestHarness.run(
+                            new SanitizationProcessor(),
+                            LEAF_DTO,
+                            FIXED,
+                            dto,
+                            resourceFor("com.example.el.FixedFieldDto"))
+                    .assertSuccess()
+                    // ElFixed<T> extends ArrayList<String>, so the field is a collection of strings.
+                    .assertGeneratedSourceContains(
+                            "com.example.el.FixedFieldDto_InputProcessor",
+                            "case \"items\" -> out.put(k, applyStringCollection(")
+                    .assertGeneratedSourceDoesNotContain(
+                            "com.example.el.FixedFieldDto_InputProcessor", "ElLeafDto.class");
+        }
+
+        @Test
+        @DisplayName("a collection subtype whose element is its second argument resolves to that argument")
+        void weirdElementResolvesToTheSecondArgument() {
+            JavaFileObject dto = SourceFiles.inline("com.example.el.WeirdFieldDto", """
+                    package com.example.el;
+                    public class WeirdFieldDto {
+                        public ElWeird<ElOtherDto, ElLeafDto> items;
+                    }
+                    """);
+
+            ProcessorTestHarness.run(
+                            new SanitizationProcessor(),
+                            LEAF_DTO,
+                            OTHER_DTO,
+                            WEIRD,
+                            dto,
+                            resourceFor("com.example.el.WeirdFieldDto"))
+                    .assertSuccess()
+                    .assertGeneratedSourceContains(
+                            "com.example.el.WeirdFieldDto_InputProcessor",
+                            "dispatchObjectCollection(v, ElLeafDto.class")
+                    .assertGeneratedSourceDoesNotContain(
+                            "com.example.el.WeirdFieldDto_InputProcessor", "ElOtherDto.class");
+        }
+
+        @Test
+        @DisplayName("ordinary collection and array shapes are unchanged")
+        void ordinaryCollectionShapesAreUnchanged() {
+            JavaFileObject dto = SourceFiles.inline("com.example.el.OrdinaryFieldDto", """
+                    package com.example.el;
+                    import dev.vertique.core.sanitization.Canonicalize;
+                    import dev.vertique.sanitization.canonicalize.TrimCanonicalizer;
+                    import java.util.List;
+                    public class OrdinaryFieldDto {
+                        public List<ElLeafDto> list;
+                        public ElLeafDto[] array;
+                        @Canonicalize(TrimCanonicalizer.class)
+                        public List<String> tags;
+                        @Canonicalize(TrimCanonicalizer.class)
+                        public List raw;
+                        @Canonicalize(TrimCanonicalizer.class)
+                        public List<List<ElLeafDto>> nested;
+                    }
+                    """);
+
+            ProcessorTestHarness.run(
+                            new SanitizationProcessor(), LEAF_DTO, dto, resourceFor("com.example.el.OrdinaryFieldDto"))
+                    .assertSuccess()
+                    .assertGeneratedSourceContains(
+                            "com.example.el.OrdinaryFieldDto_InputProcessor", "case \"list\" -> {")
+                    .assertGeneratedSourceContains(
+                            "com.example.el.OrdinaryFieldDto_InputProcessor",
+                            "dispatchObjectCollection(v, ElLeafDto.class")
+                    .assertGeneratedSourceContains(
+                            "com.example.el.OrdinaryFieldDto_InputProcessor", "case \"array\" -> {")
+                    // A String element routes to the string-collection arm, never element dispatch.
+                    .assertGeneratedSourceContains(
+                            "com.example.el.OrdinaryFieldDto_InputProcessor",
+                            "case \"tags\" -> out.put(k, applyStringCollection(")
+                    // A raw collection and a nested container carry no element schema, so both take
+                    // the annotated-OTHER arm rather than element-wise dispatch.
+                    .assertGeneratedSourceContains(
+                            "com.example.el.OrdinaryFieldDto_InputProcessor",
+                            "case \"raw\" -> out.put(k, GeneratedSupport.applyDefault(")
+                    .assertGeneratedSourceContains(
+                            "com.example.el.OrdinaryFieldDto_InputProcessor",
+                            "case \"nested\" -> out.put(k, GeneratedSupport.applyDefault(");
+        }
+
+        @Test
+        @DisplayName("body discovery resolves a body collection's element through the same rule")
+        void bodyDiscoveryResolvesTheSameElementType() {
+            JavaFileObject resource = SourceFiles.inline("com.example.el.WeirdBodyResource", """
+                    package com.example.el;
+                    import jakarta.ws.rs.POST;
+                    import jakarta.ws.rs.Path;
+                    @Path("/weird")
+                    public class WeirdBodyResource {
+                        @POST
+                        public String create(ElWeird<ElOtherDto, ElLeafDto> body) { return null; }
+                    }
+                    """);
+
+            Result result = ProcessorTestHarness.run(new SanitizationProcessor(), LEAF_DTO, OTHER_DTO, WEIRD, resource);
+            result.assertSuccess()
+                    .assertGeneratedSourceContains("com.example.el.ElLeafDto_InputProcessor", "ElLeafDto");
+            assertNoInputProcessorGenerated(result, "com.example.el.ElOtherDto_InputProcessor");
+        }
+    }
+
     // --- Map-typed fields ---
 
     /**
