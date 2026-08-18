@@ -735,6 +735,9 @@ public interface InputFieldNameResolver {
     InputFieldNameResolver IDENTITY = (ownerType, wireName) -> wireName;
 
     String logicalName(Class<?> ownerType, String wireName);
+
+    /** Composes one owner type's projection at registration; no-op unless overridden. */
+    default void precompute(Class<?> ownerType) {}
 }
 ```
 
@@ -747,13 +750,14 @@ and `Sanitizer` — is what keeps both `vertique-input-processing` and `vertique
 any codec dependency: each codec-backed implementation lives in the module that already owns that
 codec (`JacksonFieldNameResolver` in `dev.vertique:vertique-json`).
 
-Three properties are part of the contract:
+Four properties are part of the contract:
 
 | Property | Contract |
 |---|---|
 | Direction | Wire → Java, the only direction able to express an alias's many-to-one mapping |
 | Totality | An unrecognized `wireName` — an undeclared extra key, a `Map`-typed field's key, or a name that is already the Java property name — is returned **unchanged**; an implementation never returns `null` and never throws |
 | Threading and cost | Stateless (or effectively immutable), reentrant, consulted once per intermediate key on the request path — it must not block and should serve every call from a precomputed projection |
+| Warm-up | `precompute(Class)` composes one owner type's projection ahead of the request path; it defaults to a no-op, so a resolver that needs no per-class state is unaffected. The input-processing engine calls it at registration for every owner type it may consult, and an implementation may fail fast there — the failure is deliberately a startup failure rather than a per-request one |
 
 Use `InputFieldNameResolver.IDENTITY` for any transport whose intermediate keys are already Java
 property names, including every call site that processes a bare `String`, where there is no object
