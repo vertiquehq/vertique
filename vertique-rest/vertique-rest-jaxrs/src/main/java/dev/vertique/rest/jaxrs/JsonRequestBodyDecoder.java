@@ -140,14 +140,31 @@ class JsonRequestBodyDecoder implements RequestBodyDecoder {
      * Uses {@link TypeFactory} to construct the correct {@link JavaType} so that
      * scalar elements (e.g. Integer → Long) are coerced to the declared element type.
      *
-     * <p>For a parameterized collection target the whole declared type is handed to
+     * <p>For a collection target carrying declared type info the whole declared type is handed to
      * {@link TypeFactory#constructType(Type)}, so the element comes from the type's
      * {@code Collection<E>} supertype binding rather than from a type-argument position: a declared
      * argument is not the element type ({@code class Weird<A, B> extends ArrayList<B>} declared
      * {@code Weird<Other, Dto>} binds {@code Dto}). That resolution is memoized in
      * {@link #declaredCollectionTypes}, so the generic-hierarchy walk runs once per declared type
-     * rather than once per request. A raw collection target — no generic type at all — still falls
-     * through to the untyped branch below and is returned unconverted.
+     * rather than once per request.
+     *
+     * <p>The gate for entering that resolution is {@code genericType != null} — <em>not</em> whether
+     * {@code genericType} is itself a {@link ParameterizedType}. A concrete, non-generic collection
+     * subtype ({@code final class Dtos extends ArrayList<Dto> {}} used as the plain field/parameter
+     * type {@code Dtos}) reflects as a plain {@link Class}, not a {@code ParameterizedType} — yet
+     * {@link TypeFactory#constructType(Type)} still walks its generic superclass chain and resolves
+     * {@code Dto} correctly, exactly as it does for a directly-parameterized declaration. Gating on
+     * {@code instanceof ParameterizedType} would reject that use site's own type before ever asking
+     * Jackson, the same mistake the reflective {@code TypeClassifier} and the APT
+     * {@code AnnotationCollector} both had to correct — a use site with no local type argument can
+     * still have its element fixed by its own declaration.
+     *
+     * <p>A resolvable element still requires the {@link JavaType}'s content type to be something other
+     * than plain {@code java.lang.Object}: that is Jackson's own signal for "no binding to report,"
+     * covering both a genuinely raw target ({@code List} with no generic signature at all, whose
+     * content type resolves to {@code Object} the same way a raw {@code Collection} does) and an
+     * unresolvable owner-bound binding. Either falls through to the untyped branch below and is
+     * returned unconverted, exactly as before.
      *
      * <p>The {@link JavaType} is built the same way regardless of profile; the element binding then
      * routes through {@code profileMapper} when a non-{@code vertx} profile applies (FR-JSON-022/023),
@@ -174,13 +191,21 @@ class JsonRequestBodyDecoder implements RequestBodyDecoder {
             return convertList(jsonArray.getList(), arrayType, profileMapper);
         }
 
-        // List<T>, Set<T>, or other Collection<T> with generic type info. The full declared type goes to
-        // Jackson, which binds the element from the Collection<E> supertype binding — a declared type
-        // argument is not the element type (class Weird<A, B> extends ArrayList<B> declared
-        // Weird<Other, Dto> has element Dto, and no argument position is reliably the element).
-        if (genericType instanceof ParameterizedType) {
+        // List<T>, Set<T>, or other Collection<T> with declared type info. The full declared type
+        // goes to Jackson, which binds the element from the Collection<E> supertype binding — a
+        // declared type argument is not the element type (class Weird<A, B> extends ArrayList<B>
+        // declared Weird<Other, Dto> has element Dto, and no argument position is reliably the
+        // element). The gate is genericType != null, not "is a ParameterizedType": a non-generic
+        // fixed subtype (Dtos extends ArrayList<Dto>, used as the plain type Dtos) reflects as a
+        // Class, not a ParameterizedType, yet Jackson still resolves its element from the class's
+        // own generic superclass. A content type of plain Object means Jackson found no binding to
+        // report — a genuinely raw target or an unresolvable owner-bound generic — and both fall
+        // through to the untyped branch below unconverted, exactly as before.
+        if (genericType != null) {
             JavaType declaredType = declaredCollectionTypes.computeIfAbsent(genericType, tf::constructType);
-            if (declaredType.isCollectionLikeType()) {
+            if (declaredType.isCollectionLikeType()
+                    && declaredType.getContentType() != null
+                    && declaredType.getContentType().getRawClass() != Object.class) {
                 return convertList(jsonArray.getList(), declaredType, profileMapper);
             }
         }

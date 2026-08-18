@@ -1708,6 +1708,137 @@ class SanitizationProcessorRoundtripTest {
     /** FQN of the leaf both paths must reach through the {@code WildOpt}-shaped field alone. */
     private static final String WILD_LEAF_FQN = "com.example.wild.WildLeafDto";
 
+    // --- Isolated non-generic-subtype-shape conformance fixtures ---
+
+    /**
+     * The leaf of the non-generic-subtype matrix, reachable from {@link #NONGEN_ROOT_DTO} through
+     * the {@code NonGenDtos}-shaped field and through nothing else.
+     */
+    private static final JavaFileObject NONGEN_LEAF_DTO = SourceFiles.inline("com.example.ng.NonGenLeafDto", """
+            package com.example.ng;
+            import dev.vertique.core.sanitization.Sanitize;
+            import dev.vertique.sanitization.sanitize.StripControlCharsSanitizer;
+            public class NonGenLeafDto {
+                @Sanitize(StripControlCharsSanitizer.class)
+                public String note;
+            }
+            """);
+
+    /**
+     * A concrete, non-generic collection subtype whose element is fixed by its own declaration. A
+     * field declared with this type is a plain {@code Class} use site — not a
+     * {@code ParameterizedType} — carrying no local type argument at all, unlike {@link #CONF_FIXED}.
+     */
+    private static final JavaFileObject NONGEN_DTOS = SourceFiles.inline("com.example.ng.NonGenDtos", """
+            package com.example.ng;
+            import java.util.ArrayList;
+            public final class NonGenDtos extends ArrayList<NonGenLeafDto> {}
+            """);
+
+    /** A root whose only route to {@link #NONGEN_LEAF_DTO} is the {@code NonGenDtos}-shaped field. */
+    private static final JavaFileObject NONGEN_ROOT_DTO = SourceFiles.inline("com.example.ng.NonGenRootDto", """
+            package com.example.ng;
+            public class NonGenRootDto {
+                public NonGenDtos items;
+            }
+            """);
+
+    private static final JavaFileObject NONGEN_RESOURCE = SourceFiles.inline("com.example.ng.NonGenResource", """
+            package com.example.ng;
+            import jakarta.ws.rs.POST;
+            import jakarta.ws.rs.Path;
+            @Path("/nongen")
+            public class NonGenResource {
+                @POST
+                public String create(NonGenRootDto body) { return null; }
+            }
+            """);
+
+    /** The non-generic-subtype compilation unit, shared byte-identically by both environments. */
+    private static final JavaFileObject[] NONGEN_SOURCES = {
+        NONGEN_LEAF_DTO, NONGEN_DTOS, NONGEN_ROOT_DTO, NONGEN_RESOURCE
+    };
+
+    /** FQN of the non-generic-subtype root DTO. */
+    private static final String NONGEN_ROOT_FQN = "com.example.ng.NonGenRootDto";
+
+    /** FQN of the non-generic-subtype root's generated companion. */
+    private static final String NONGEN_ROOT_PROCESSOR_FQN = "com.example.ng.NonGenRootDto_InputProcessor";
+
+    /** FQN of the leaf both paths must reach through the {@code NonGenDtos}-shaped field alone. */
+    private static final String NONGEN_LEAF_FQN = "com.example.ng.NonGenLeafDto";
+
+    // --- Isolated owner-bound-inner-class-shape conformance fixtures ---
+
+    /**
+     * The leaf of the owner-bound matrix, reachable from {@link #OWNERBOUND_ROOT_DTO} through the
+     * {@code OwnerBoundOuter<T>.Inner}-shaped field and through nothing else.
+     */
+    private static final JavaFileObject OWNERBOUND_LEAF_DTO =
+            SourceFiles.inline("com.example.ob.OwnerBoundLeafDto", """
+            package com.example.ob;
+            import dev.vertique.core.sanitization.Sanitize;
+            import dev.vertique.sanitization.sanitize.StripControlCharsSanitizer;
+            public class OwnerBoundLeafDto {
+                @Sanitize(StripControlCharsSanitizer.class)
+                public String note;
+            }
+            """);
+
+    /**
+     * An outer/inner pair where the inner class's {@code Collection<E>} binding comes from the
+     * enclosing instance's type argument rather than from any type argument local to {@code Inner}
+     * itself — {@code Inner} declares no type parameters of its own.
+     */
+    private static final JavaFileObject OWNERBOUND_OUTER = SourceFiles.inline("com.example.ob.OwnerBoundOuter", """
+            package com.example.ob;
+            import java.util.ArrayList;
+            public class OwnerBoundOuter<T> {
+                public class Inner extends ArrayList<T> {}
+            }
+            """);
+
+    /**
+     * A root whose only route to {@link #OWNERBOUND_LEAF_DTO} is the
+     * {@code OwnerBoundOuter<T>.Inner}-shaped field.
+     */
+    private static final JavaFileObject OWNERBOUND_ROOT_DTO =
+            SourceFiles.inline("com.example.ob.OwnerBoundRootDto", """
+            package com.example.ob;
+            public class OwnerBoundRootDto {
+                public OwnerBoundOuter<OwnerBoundLeafDto>.Inner items;
+            }
+            """);
+
+    private static final JavaFileObject OWNERBOUND_RESOURCE =
+            SourceFiles.inline("com.example.ob.OwnerBoundResource", """
+            package com.example.ob;
+            import jakarta.ws.rs.POST;
+            import jakarta.ws.rs.Path;
+            @Path("/ownerbound")
+            public class OwnerBoundResource {
+                @POST
+                public String create(OwnerBoundRootDto body) { return null; }
+            }
+            """);
+
+    /** The owner-bound compilation unit, shared byte-identically by both environments. */
+    private static final JavaFileObject[] OWNERBOUND_SOURCES = {
+        OWNERBOUND_LEAF_DTO, OWNERBOUND_OUTER, OWNERBOUND_ROOT_DTO, OWNERBOUND_RESOURCE
+    };
+
+    /** FQN of the owner-bound root DTO. */
+    private static final String OWNERBOUND_ROOT_FQN = "com.example.ob.OwnerBoundRootDto";
+
+    /** FQN of the owner-bound root's generated companion. */
+    private static final String OWNERBOUND_ROOT_PROCESSOR_FQN = "com.example.ob.OwnerBoundRootDto_InputProcessor";
+
+    /**
+     * FQN of the leaf both paths must reach through the {@code OwnerBoundOuter<T>.Inner}-shaped
+     * field alone.
+     */
+    private static final String OWNERBOUND_LEAF_FQN = "com.example.ob.OwnerBoundLeafDto";
+
     // --- Owner-set conformance ---
 
     /**
@@ -1817,6 +1948,61 @@ class SanitizationProcessorRoundtripTest {
                     () -> "the reflective path must substitute the binding into the wildcard's bound too, or"
                             + " it prepares no owner for an element the generated path dispatches against;"
                             + " reflective=" + reflective);
+        }
+
+        @Test
+        @DisplayName("containment holds on a root whose only route to its leaf is a non-generic collection subtype")
+        void generatedOwnerSetIsContainedInTheReflectiveOneForAnIsolatedNonGenericSubtypeShape() throws Exception {
+            Set<String> generated =
+                    prepareOwners(compileWithCodegen(NONGEN_SOURCES, NONGEN_ROOT_PROCESSOR_FQN), NONGEN_ROOT_FQN);
+            Set<String> reflective =
+                    prepareOwners(compileWithoutCodegen(NONGEN_SOURCES, NONGEN_ROOT_PROCESSOR_FQN), NONGEN_ROOT_FQN);
+
+            assertTrue(
+                    reflective.containsAll(generated),
+                    () -> ("The generated path prepares an owner the reflective path does not on a"
+                                    + " NonGenDtos extends ArrayList<NonGenLeafDto> shape — a plain Class use"
+                                    + " site with no local type argument — so AnnotationCollector and"
+                                    + " TypeClassifier have diverged on the raw-class-alone gate."
+                                    + "\n  generated only: %s\n  generated:      %s\n  reflective:     %s")
+                            .formatted(difference(generated, reflective), generated, reflective));
+            assertTrue(
+                    generated.contains(NONGEN_LEAF_FQN),
+                    () -> "the generated path dispatches the NonGenDtos-shaped field's elements against the"
+                            + " leaf, so it must declare it as an owner; generated=" + generated);
+            assertTrue(
+                    reflective.contains(NONGEN_LEAF_FQN),
+                    () -> "the reflective path binds the same element from the class's own generic superclass,"
+                            + " so it must prepare the leaf too, even though the field's own use site carries no"
+                            + " type argument; reflective=" + reflective);
+        }
+
+        @Test
+        @DisplayName("containment holds on a root whose only route to its leaf is an owner-bound inner class")
+        void generatedOwnerSetIsContainedInTheReflectiveOneForAnIsolatedOwnerBoundInnerClassShape() throws Exception {
+            Set<String> generated = prepareOwners(
+                    compileWithCodegen(OWNERBOUND_SOURCES, OWNERBOUND_ROOT_PROCESSOR_FQN), OWNERBOUND_ROOT_FQN);
+            Set<String> reflective = prepareOwners(
+                    compileWithoutCodegen(OWNERBOUND_SOURCES, OWNERBOUND_ROOT_PROCESSOR_FQN), OWNERBOUND_ROOT_FQN);
+
+            assertTrue(
+                    reflective.containsAll(generated),
+                    () -> ("The generated path prepares an owner the reflective path does not on an"
+                                    + " OwnerBoundOuter<T> { class Inner extends ArrayList<T> {} } shape used as"
+                                    + " OwnerBoundOuter<Leaf>.Inner, so AnnotationCollector and TypeClassifier"
+                                    + " have diverged on resolving the element through the parameterized owner"
+                                    + " type."
+                                    + "\n  generated only: %s\n  generated:      %s\n  reflective:     %s")
+                            .formatted(difference(generated, reflective), generated, reflective));
+            assertTrue(
+                    generated.contains(OWNERBOUND_LEAF_FQN),
+                    () -> "the generated path dispatches the owner-bound field's elements against the leaf, so"
+                            + " it must declare it as an owner; generated=" + generated);
+            assertTrue(
+                    reflective.contains(OWNERBOUND_LEAF_FQN),
+                    () -> "the reflective path binds the same element through the enclosing instance's type"
+                            + " argument, so it must prepare the leaf too, even though Inner carries no local"
+                            + " type argument of its own; reflective=" + reflective);
         }
 
         @Test

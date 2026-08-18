@@ -392,6 +392,65 @@ class JsonRequestBodyDecoderTest {
     }
 
     @Test
+    @DisplayName("Should bind a non-generic subtype body's fixed element type from a plain-Class use site")
+    void nonGenericSubtypeBodyBindsItsFixedElementTypeFromAPlainClassUseSite() {
+        RoutingContext ctx = mock(RoutingContext.class);
+        RequestValue body = RequestValue.of(pojoArray());
+        Type declared = declaredShape("dtosOfPojo");
+        assertFalse(
+                declared instanceof ParameterizedType,
+                "Dtos declares no type parameters of its own, so reflection reports its declared type "
+                        + "as the plain Class Dtos.class rather than a ParameterizedType — confirmed via "
+                        + "a Jackson TypeFactory probe before writing this assertion");
+
+        Object result = decoder.decode(ctx, body, rawTypeOf(declared), declared);
+
+        assertInstanceOf(Dtos.class, result);
+        List<?> elements = (List<?>) result;
+        assertEquals(2, elements.size());
+        assertInstanceOf(
+                SamplePojo.class,
+                elements.get(0),
+                "Dtos extends ArrayList<SamplePojo>, so the element must resolve from the class's own "
+                        + "generic superclass even though the use site carries no local type argument to "
+                        + "read at all");
+        assertEquals("Alice", ((SamplePojo) elements.get(0)).name());
+        assertEquals("Bob", ((SamplePojo) elements.get(1)).name());
+    }
+
+    @Test
+    @DisplayName("An explicitly declared List<Object> body yields the same elements as a raw List")
+    void explicitObjectElementBodyMatchesTheRawFallback() {
+        // The Object-content guard added alongside the genericType != null gate sends this shape to
+        // the untyped fallback, where a directly-parameterized List<Object> previously went through
+        // convertList. Both routes must produce the same elements, or the guard changed behaviour
+        // for a legal declaration rather than only admitting a new one.
+        RoutingContext ctx = mock(RoutingContext.class);
+        Type listOfObject = new ParameterizedType() {
+            @Override
+            public Type[] getActualTypeArguments() {
+                return new Type[] {Object.class};
+            }
+
+            @Override
+            public Type getRawType() {
+                return List.class;
+            }
+
+            @Override
+            public Type getOwnerType() {
+                return null;
+            }
+        };
+
+        Object declared = decoder.decode(ctx, RequestValue.of(pojoArray()), List.class, listOfObject);
+        Object raw = decoder.decode(ctx, RequestValue.of(pojoArray()), List.class, null);
+
+        assertInstanceOf(List.class, declared);
+        assertEquals(raw, declared, "List<Object> must bind exactly as a raw List does");
+    }
+
+    @Test
     @DisplayName("Should bind ordinary collection bodies exactly as before")
     void ordinaryCollectionBodiesBindUnchanged() {
         RoutingContext ctx = mock(RoutingContext.class);
@@ -470,9 +529,13 @@ class JsonRequestBodyDecoderTest {
         }
     }
 
-    /** Returns the erased class a route registrar would pass as the decoder's target type. */
+    /**
+     * Returns the erased class a route registrar would pass as the decoder's target type. Handles
+     * both a {@link ParameterizedType} use site and a plain {@link Class} use site (a non-generic
+     * subtype such as {@link Dtos}, whose declared type carries no type arguments of its own).
+     */
     private static Class<?> rawTypeOf(Type declaredType) {
-        return (Class<?>) ((ParameterizedType) declaredType).getRawType();
+        return declaredType instanceof ParameterizedType pt ? (Class<?>) pt.getRawType() : (Class<?>) declaredType;
     }
 
     // --- helper types ---
@@ -505,6 +568,16 @@ class JsonRequestBodyDecoderTest {
         private static final long serialVersionUID = 1L;
     }
 
+    /**
+     * A concrete, non-generic subtype whose element is fixed by its own declaration. Unlike
+     * {@link Fixed}, this type has no type parameters at all, so a body parameter declared with
+     * this type reflects as a plain {@link Class} use site — not a {@link ParameterizedType} — and
+     * carries no local type argument whatsoever.
+     */
+    static class Dtos extends ArrayList<SamplePojo> {
+        private static final long serialVersionUID = 1L;
+    }
+
     /** Declared body shapes; their generic types are read reflectively by {@link #declaredShape}. */
     @SuppressWarnings("unused")
     private static final class BodyShapes {
@@ -514,5 +587,6 @@ class JsonRequestBodyDecoderTest {
         Weird<OtherPojo, SamplePojo> weirdOfPojo;
         Pair<SamplePojo, OtherPojo> pairOfPojo;
         Fixed<SamplePojo> fixedOfPojo;
+        Dtos dtosOfPojo;
     }
 }

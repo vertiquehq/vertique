@@ -292,6 +292,13 @@ public final class RestBodyDiscovery {
      * ({@link AnnotationCollector#collectionElementBinding}), so a subtype that binds its element
      * somewhere other than argument 0 is classified by what it actually holds.
      *
+     * <p>The gate is assignability to {@code java.util.Collection} on the raw class alone — not
+     * whether {@code dt} itself carries local type arguments. A non-generic subtype
+     * ({@code final class Fixed extends ArrayList<FileUpload> {}}) has an empty
+     * {@code dt.getTypeArguments()} yet still binds a fixed element; a genuinely raw use resolves
+     * through {@code collectionElementBinding}'s own recursion to a raw {@code Collection} base
+     * case and returns {@code null} there, so no separate raw check is needed here.
+     *
      * @param type       the type to test
      * @param elementFqn the expected element type FQN
      * @return {@code true} when the type is a collection of the given element type
@@ -303,7 +310,6 @@ public final class RestBodyDiscovery {
         if (!ctx.types().isAssignable(ctx.types().erasure(type), ctx.types().erasure(collectionEl.asType()))) {
             return false;
         }
-        if (dt.getTypeArguments().isEmpty()) return false;
         TypeMirror elementArg = AnnotationCollector.collectionElementBinding(ctx, dt);
         return elementArg != null && elementFqn.equals(AnnotationCollector.typeFqn(elementArg));
     }
@@ -318,6 +324,14 @@ public final class RestBodyDiscovery {
      *   <li>Any other type → the type itself</li>
      * </ul>
      *
+     * <p>The collection gate is assignability to {@code java.util.Collection} on the raw class
+     * alone — not whether {@code paramType} itself carries local type arguments. A body parameter
+     * declared as a non-generic collection subtype (a plain {@code Class} use site whose element is
+     * fixed by its own declaration) still enters {@link AnnotationCollector#collectionElementBinding},
+     * which returns {@code null} on its own for a genuinely raw use — its recursion bottoms out at
+     * a raw {@code Collection} whose {@code getTypeArguments()} is empty, so no separate raw check
+     * is needed at this call site.
+     *
      * @param paramType the body parameter type mirror
      * @return the root type mirror for discovery, or {@code null} if not determinable
      */
@@ -329,11 +343,8 @@ public final class RestBodyDiscovery {
                     && ctx.types()
                             .isAssignable(
                                     ctx.types().erasure(paramType), ctx.types().erasure(collectionEl.asType()))) {
-                if (!dt.getTypeArguments().isEmpty()) {
-                    TypeMirror arg = AnnotationCollector.collectionElementBinding(ctx, dt);
-                    return (arg != null && arg.getKind() == TypeKind.DECLARED) ? arg : null;
-                }
-                return null; // raw collection
+                TypeMirror arg = AnnotationCollector.collectionElementBinding(ctx, dt);
+                return (arg != null && arg.getKind() == TypeKind.DECLARED) ? arg : null;
             }
         }
         // Array E[]

@@ -279,6 +279,34 @@ class AnnotationCollectorTest {
                 public class ElWeird<A, B> extends ArrayList<B> {}
                 """);
 
+        /**
+         * A concrete, non-generic subtype whose element is fixed by its own declaration. Unlike
+         * {@link #FIXED}, this type has no type parameters at all, so a field declared with this
+         * type is a plain {@code Class} use site — {@code dt.getTypeArguments()} is empty not
+         * because the collection is raw, but because {@code ElDtos} declares no type parameters of
+         * its own to instantiate.
+         */
+        private static final JavaFileObject NON_GENERIC = SourceFiles.inline("com.example.el.ElDtos", """
+                package com.example.el;
+                import java.util.ArrayList;
+                public final class ElDtos extends ArrayList<ElLeafDto> {}
+                """);
+
+        /**
+         * An outer/inner pair where the inner class's {@code Collection<E>} binding comes from the
+         * enclosing instance's type argument rather than from any type argument local to
+         * {@code Inner} itself — {@code Inner} declares no type parameters of its own, so its use
+         * site's own type-argument list is empty even though the owner type {@code ElOuter<Dto>}
+         * carries the binding.
+         */
+        private static final JavaFileObject OWNER_BOUND_OUTER = SourceFiles.inline("com.example.el.ElOuter", """
+                package com.example.el;
+                import java.util.ArrayList;
+                public class ElOuter<T> {
+                    public class Inner extends ArrayList<T> {}
+                }
+                """);
+
         @Test
         @DisplayName("a multi-argument collection subtype resolves its element through the supertype binding")
         void pairElementResolvesThroughTheSupertypeBinding() {
@@ -354,6 +382,93 @@ class AnnotationCollectorTest {
                             "dispatchObjectCollection(v, ElLeafDto.class")
                     .assertGeneratedSourceDoesNotContain(
                             "com.example.el.WeirdFieldDto_InputProcessor", "ElOtherDto.class");
+        }
+
+        @Test
+        @DisplayName("a non-generic subtype resolves its element from a plain-Class use site")
+        void nonGenericSubtypeResolvesItsElementFromAPlainClassUseSite() {
+            JavaFileObject dto = SourceFiles.inline("com.example.el.NonGenericFieldDto", """
+                    package com.example.el;
+                    public class NonGenericFieldDto {
+                        public ElDtos items;
+                    }
+                    """);
+
+            ProcessorTestHarness.run(
+                            new SanitizationProcessor(),
+                            LEAF_DTO,
+                            NON_GENERIC,
+                            dto,
+                            resourceFor("com.example.el.NonGenericFieldDto"))
+                    .assertSuccess()
+                    .assertGeneratedSourceContains(
+                            "com.example.el.NonGenericFieldDto_InputProcessor",
+                            "dispatchObjectCollection(v, ElLeafDto.class")
+                    .assertGeneratedSourceContains(
+                            "com.example.el.NonGenericFieldDto_InputProcessor", "owners.add(ElLeafDto.class)");
+        }
+
+        @Test
+        @DisplayName("an owner-bound inner class resolves its element through the parameterized owner type")
+        void ownerBoundInnerClassResolvesItsElementThroughTheOwnerType() {
+            JavaFileObject dto = SourceFiles.inline("com.example.el.OwnerBoundFieldDto", """
+                    package com.example.el;
+                    public class OwnerBoundFieldDto {
+                        public ElOuter<ElLeafDto>.Inner items;
+                    }
+                    """);
+
+            ProcessorTestHarness.run(
+                            new SanitizationProcessor(),
+                            LEAF_DTO,
+                            OWNER_BOUND_OUTER,
+                            dto,
+                            resourceFor("com.example.el.OwnerBoundFieldDto"))
+                    .assertSuccess()
+                    .assertGeneratedSourceContains(
+                            "com.example.el.OwnerBoundFieldDto_InputProcessor",
+                            "dispatchObjectCollection(v, ElLeafDto.class")
+                    .assertGeneratedSourceContains(
+                            "com.example.el.OwnerBoundFieldDto_InputProcessor", "owners.add(ElLeafDto.class)");
+        }
+
+        @Test
+        @DisplayName("body discovery resolves a non-generic subtype's element through the same rule")
+        void bodyDiscoveryResolvesTheNonGenericSubtypesElement() {
+            JavaFileObject resource = SourceFiles.inline("com.example.el.NonGenericBodyResource", """
+                    package com.example.el;
+                    import jakarta.ws.rs.POST;
+                    import jakarta.ws.rs.Path;
+                    @Path("/non-generic")
+                    public class NonGenericBodyResource {
+                        @POST
+                        public String create(ElDtos body) { return null; }
+                    }
+                    """);
+
+            Result result = ProcessorTestHarness.run(new SanitizationProcessor(), LEAF_DTO, NON_GENERIC, resource);
+            result.assertSuccess()
+                    .assertGeneratedSourceContains("com.example.el.ElLeafDto_InputProcessor", "ElLeafDto");
+        }
+
+        @Test
+        @DisplayName("body discovery resolves an owner-bound inner class's element through the same rule")
+        void bodyDiscoveryResolvesTheOwnerBoundInnerClassesElement() {
+            JavaFileObject resource = SourceFiles.inline("com.example.el.OwnerBoundBodyResource", """
+                    package com.example.el;
+                    import jakarta.ws.rs.POST;
+                    import jakarta.ws.rs.Path;
+                    @Path("/owner-bound")
+                    public class OwnerBoundBodyResource {
+                        @POST
+                        public String create(ElOuter<ElLeafDto>.Inner body) { return null; }
+                    }
+                    """);
+
+            Result result =
+                    ProcessorTestHarness.run(new SanitizationProcessor(), LEAF_DTO, OWNER_BOUND_OUTER, resource);
+            result.assertSuccess()
+                    .assertGeneratedSourceContains("com.example.el.ElLeafDto_InputProcessor", "ElLeafDto");
         }
 
         @Test

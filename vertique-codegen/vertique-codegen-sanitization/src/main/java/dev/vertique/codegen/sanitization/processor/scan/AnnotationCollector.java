@@ -641,15 +641,22 @@ public final class AnnotationCollector {
      * collections, element types that do not normalize to a declared type (e.g. nested arrays or
      * primitives), and raw {@code Optional} elements.
      *
+     * <p>The caller's {@code isCollection} check is the only gate: it tests assignability to
+     * {@code java.util.Collection} on the raw class alone, not whether {@code type} itself carries
+     * local type arguments. A concrete, non-generic subtype such as
+     * {@code final class Dtos extends ArrayList<Dto> {}} used as the plain field type {@code Dtos}
+     * has an empty {@code dt.getTypeArguments()} — it declares no type parameters of its own — yet
+     * its element is still fixed by its declaration. Rejecting on that emptiness here would
+     * conflate "raw use of a generic type" with "non-generic type", and {@link #collectionElementBinding}
+     * already answers "raw" correctly on its own: a genuinely raw use resolves through
+     * {@code directSupertypes} to a raw {@code Collection} whose {@code getTypeArguments()} is
+     * empty, so its own base case returns {@code null} without any gate needed here.
+     *
      * @param type the collection type mirror
      * @return the element type mirror, or {@code null} if not determinable
      */
     private TypeMirror extractCollectionElementType(TypeMirror type) {
         if (!(type instanceof DeclaredType dt)) return null;
-        // A collection type written without arguments is raw: nothing binds its element, whatever
-        // its supertypes say. This is the same gate TypeClassifier.elementType applies before it
-        // consults the binding.
-        if (dt.getTypeArguments().isEmpty()) return null;
         TypeMirror element = collectionElementBinding(ctx, dt);
         return element == null ? null : normalizeElementType(element);
     }
