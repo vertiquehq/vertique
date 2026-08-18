@@ -24,6 +24,7 @@ For each participating DTO type, the processor emits a `{DTO}_InputProcessor` cl
 
 - `public final`, implements `GeneratedInputProcessor<T>`, with a public no-arg constructor for `Class.forName`-based instantiation by `GeneratedInputProcessorDispatcher`.
 - `static final` chain constants — `List<Class<? extends Canonicalizer>>`, `List<Class<? extends Sanitizer>>`, and `boolean` skip flags — for the type-level chain and for each field, resolved once at class-load time.
+- `fieldNameOwnerTypes()` returns a `static final Set<Class<?>>` naming every owner the emitted `process(...)` arms may pass to `InputTraversalContext.logicalFieldName(Class, String)` or dispatch into, so the engine can pre-warm those name projections at registration instead of walking the type reflectively. It holds the DTO's **own class — always, so the engine never mistakes a real owner set for the "not declared" empty default** — plus the erased nested/element type of each nested-DTO and nested-DTO-collection field, and the erased declared type of each annotated schema-free field handed to the reflective continuation. An unannotated schema-free field contributes nothing. The set is flat, not transitive: the engine closes the graph itself. It is **deduplicated** — a self-referential DTO or two fields sharing a nested type name one class twice — and the emitted body accumulates into a `LinkedHashSet` before `Set.copyOf(...)` rather than using a `Set.of(...)` varargs literal, which would reject the repeat with `IllegalArgumentException` and surface it as an `ExceptionInInitializerError` on first dispatch.
 - `process(...)` dispatches on a `switch` whose `case` labels are the DTO's **Java** property names and whose selector is the traversal's projection of the wire key — `switch (rootCtx.logicalFieldName(Dto.class, k))`. The intermediate is keyed by wire names, so a renamed property (e.g. `@JsonProperty("user_name") String userName`) would match no arm if the raw key were switched on and its declared chain would be silently skipped. The projection selects the arm only: the emitted map keeps the wire key `k`, which is what the codec binds. The `InputValueContext` follows the same split — `path` is the wire path, `logicalName` is the Java property name for a matched arm and the wire name for an unmatched key.
   - String fields call `GeneratedSupport.applyString(...)`.
   - String collection fields call `GeneratedSupport.applyStringCollection(...)`.
@@ -99,8 +100,12 @@ public interface GeneratedInputProcessor<T> {
                    GeneratedInputProcessorDispatcher dispatcher,
                    @Nullable InputTraversalContext parent,
                    String parentPath);
+
+    default Set<Class<?>> fieldNameOwnerTypes() { return Set.of(); }
 }
 ```
+
+Every emitted `{DTO}_InputProcessor` overrides `fieldNameOwnerTypes()` (see above). The empty default keeps a hand-written or previously-generated processor working: the engine reads an empty return as "this processor does not declare an owner set" and falls back to its own reflective walk for that type.
 
 `parent == null` signals that this is the top-level entry; the generated class then seeds from `InputTraversalContext.fromPolicies(policies, InputFieldNameResolver.IDENTITY)`. That fallback exists for direct invocation only — the engine's own entry points always hand over a real `parent`, because a context seeded here can only assume identity naming and would drop a wire-name projection. A non-null `parent` means the caller has already accumulated traversal state (nested dispatch) and carries the traversal's `InputFieldNameResolver`. `parentPath` is the dot-separated path prefix of the field this DTO is nested under — an empty string at the top level — and is composed into the `path` of every `InputValueContext` the processor builds.
 

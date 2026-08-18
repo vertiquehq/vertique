@@ -22,8 +22,10 @@ import java.io.IOException;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import javax.annotation.processing.Generated;
 import javax.lang.model.element.Element;
 import javax.lang.model.element.Modifier;
@@ -43,6 +45,12 @@ import javax.lang.model.type.TypeMirror;
  *       {@code GeneratedInputProcessorDispatcher}.</li>
  *   <li>Declares {@code static final} chain constants for each object-level and field-level
  *       chain, using {@code SCREAMING_SNAKE_CASE} names.</li>
+ *   <li>Overrides {@code fieldNameOwnerTypes()} with a deduplicated {@code static final
+ *       Set<Class<?>>} holding every owner its {@code process(...)} arms may consult — always its
+ *       own target type, plus each dispatched nested/element type and each annotated schema-free
+ *       field's erased declared type. See {@link #collectOwnerTypeNames} for the derivation and
+ *       {@link #buildOwnerTypesInitializer} for why the emitted body accumulates rather than
+ *       using a {@code Set.of(...)} varargs literal.</li>
  *   <li>Implements {@code process(...)} with a {@code switch} whose arms are the DTO's
  *       <em>Java</em> property names and whose selector is the traversal's projection of the wire
  *       key ({@code rootCtx.logicalFieldName(Dto.class, k)}), calling
@@ -81,6 +89,11 @@ public final class InputProcessorEmitter {
     private static final ClassName LIST = ClassName.get("java.util", "List");
     private static final ClassName MAP = ClassName.get("java.util", "Map");
     private static final ClassName LINKED_HASH_MAP = ClassName.get("java.util", "LinkedHashMap");
+    private static final ClassName SET = ClassName.get("java.util", "Set");
+    private static final ClassName LINKED_HASH_SET = ClassName.get("java.util", "LinkedHashSet");
+
+    /** Name of the emitted constant holding the processor's field-name owner types. */
+    private static final String OWNER_TYPES_FIELD = "FIELD_NAME_OWNER_TYPES";
 
     // GeneratedSupport static import target
     private static final ClassName GENERATED_SUPPORT =
@@ -135,6 +148,20 @@ public final class InputProcessorEmitter {
                 .addStatement("return $T.class", originClass)
                 .build();
 
+        // --- fieldNameOwnerTypes() constant, initializer and method ---
+        ParameterizedTypeName setOfClass = ParameterizedTypeName.get(
+                SET, ParameterizedTypeName.get(ClassName.get(Class.class), WildcardTypeName.subtypeOf(Object.class)));
+        FieldSpec ownerTypesField = FieldSpec.builder(
+                        setOfClass, OWNER_TYPES_FIELD, Modifier.PRIVATE, Modifier.STATIC, Modifier.FINAL)
+                .build();
+        CodeBlock ownerTypesInitializer = buildOwnerTypesInitializer(model, originClass);
+        MethodSpec fieldNameOwnerTypesMethod = MethodSpec.methodBuilder("fieldNameOwnerTypes")
+                .addAnnotation(Override.class)
+                .addModifiers(Modifier.PUBLIC)
+                .returns(setOfClass)
+                .addStatement("return $L", OWNER_TYPES_FIELD)
+                .build();
+
         // --- process() method ---
         MethodSpec processMethod = buildProcessMethod(model, originClass);
 
@@ -149,8 +176,11 @@ public final class InputProcessorEmitter {
         for (FieldSpec sf : staticFields) {
             classBuilder.addField(sf);
         }
+        classBuilder.addField(ownerTypesField);
+        classBuilder.addStaticBlock(ownerTypesInitializer);
         classBuilder.addMethod(constructor);
         classBuilder.addMethod(targetTypeMethod);
+        classBuilder.addMethod(fieldNameOwnerTypesMethod);
         classBuilder.addMethod(processMethod);
 
         TypeSpec typeSpec = classBuilder.build();
@@ -264,6 +294,100 @@ public final class InputProcessorEmitter {
         return FieldSpec.builder(fieldType, name, Modifier.PRIVATE, Modifier.STATIC, Modifier.FINAL)
                 .initializer(initializer)
                 .build();
+    }
+
+    // --- fieldNameOwnerTypes() building ---
+
+    /**
+     * Collects, in deterministic emission order and free of duplicates, every class the generated
+     * processor may hand to {@code InputTraversalContext.logicalFieldName} or dispatch into. The
+     * set mirrors the owner arguments the emitted {@code process(...)} arms actually pass:
+     *
+     * <ul>
+     *   <li>the origin class — the selector owner of the switch, the owner of every
+     *       {@code applyString} / {@code applyStringCollection} arm, and the owner of the
+     *       {@code default} arm. It is <em>always</em> present: the runtime reads an empty return
+     *       from {@code GeneratedInputProcessor.fieldNameOwnerTypes()} as "this processor declares
+     *       no owner set" and falls back to its reflective walk, so the origin class is what makes
+     *       emptiness a usable sentinel;</li>
+     *   <li>the erased nested/element type of every {@link FieldKind#NESTED_DTO} and
+     *       {@link FieldKind#COLLECTION_OF_DTO} field, which its arm passes to
+     *       {@code dispatchNested} / {@code dispatchObjectCollection} as both target and owner;</li>
+     *   <li>the erased declared type of every <em>annotated</em> {@link FieldKind#OTHER} field —
+     *       the same {@code nestedMapOwnerName} its arm hands to {@code applyDefault} for the
+     *       reflective continuation (see {@link #buildOtherFieldArm}).</li>
+     * </ul>
+     *
+     * <p>An unannotated {@link FieldKind#OTHER} field gets no arm of its own and therefore
+     * contributes nothing. Deduplication happens here as well as in the emitted body: a
+     * {@link java.util.LinkedHashSet} of {@link TypeName} keeps the generated source stable and
+     * repeat-free across builds, while the emitted accumulation guards the case two distinct
+     * {@link TypeMirror}s name one type without comparing equal.
+     *
+     * @param model       the DTO model
+     * @param originClass the {@link ClassName} of the source DTO
+     * @return the owner type names in emission order; never empty (the origin is always present)
+     */
+    private Set<TypeName> collectOwnerTypeNames(DtoModel model, ClassName originClass) {
+        Set<TypeName> owners = new LinkedHashSet<>();
+        owners.add(originClass);
+        for (FieldModel field : model.fields().values()) {
+            switch (field.kind()) {
+                case NESTED_DTO, COLLECTION_OF_DTO -> owners.add(rawTypeName(field.nestedTypeMirror(), originClass));
+                case OTHER -> {
+                    if (hasFieldLevelAnnotations(field)) {
+                        owners.add(otherFieldOwnerName(field, originClass));
+                    }
+                }
+                default -> {
+                    // STRING and COLLECTION_OF_STRINGS arms pass the origin class as owner, which
+                    // is already seeded above.
+                }
+            }
+        }
+        return owners;
+    }
+
+    /**
+     * Builds the static initializer that populates the emitted owner-type constant.
+     *
+     * <p>The body accumulates into an insertion-ordered {@link java.util.LinkedHashSet} and returns
+     * {@link java.util.Set#copyOf}. It deliberately does <em>not</em> emit a
+     * {@code Set.of(a, b, c)} varargs literal: {@code Set.of} rejects a duplicate element with
+     * {@link IllegalArgumentException}, and because the constant is a {@code static final} field
+     * that failure would surface as an {@code ExceptionInInitializerError} during generated-class
+     * initialization — at first dispatch, not at build time.
+     *
+     * @param model       the DTO model
+     * @param originClass the {@link ClassName} of the source DTO
+     * @return the static initializer block
+     */
+    private CodeBlock buildOwnerTypesInitializer(DtoModel model, ClassName originClass) {
+        CodeBlock.Builder init = CodeBlock.builder();
+        init.addStatement("$T<$T<?>> owners = new $T<>()", SET, ClassName.get(Class.class), LINKED_HASH_SET);
+        for (TypeName owner : collectOwnerTypeNames(model, originClass)) {
+            init.addStatement("owners.add($T.class)", owner);
+        }
+        init.addStatement("$L = $T.copyOf(owners)", OWNER_TYPES_FIELD, SET);
+        return init.build();
+    }
+
+    /**
+     * Resolves the owner type an annotated {@link FieldKind#OTHER} field's arm passes to
+     * {@code GeneratedSupport.applyDefault} — the field's erased declared type, falling back to the
+     * enclosing DTO when the declared type is not class-resolvable (e.g. a raw collection with no
+     * element type).
+     *
+     * <p>Single derivation shared by {@link #buildOtherFieldArm} and
+     * {@link #collectOwnerTypeNames}, so the declared owner set cannot drift from the owners the
+     * emitted body actually uses.
+     *
+     * @param field       the OTHER-kind field model with at least one annotation
+     * @param originClass the ClassName of the source DTO
+     * @return the owner {@link TypeName} usable as a {@code .class} literal target
+     */
+    private TypeName otherFieldOwnerName(FieldModel field, ClassName originClass) {
+        return field.declaredType() != null ? rawTypeName(field.declaredType(), originClass) : originClass;
     }
 
     // --- process() method building ---
@@ -443,9 +567,9 @@ public final class InputProcessorEmitter {
         //   processNestedMap → dispatchNested(map, fieldMeta.fieldType(), ...) which then
         //   continues with targetType=fieldType and that same fieldType as ownerType.
         // Fall back to the enclosing DTO when the declared type isn't class-resolvable
-        // (e.g. raw collections without an element type).
-        TypeName nestedMapOwnerName =
-                field.declaredType() != null ? rawTypeName(field.declaredType(), originClass) : originClass;
+        // (e.g. raw collections without an element type). Derived once, in otherFieldOwnerName, so
+        // fieldNameOwnerTypes() declares exactly the owner this arm passes.
+        TypeName nestedMapOwnerName = otherFieldOwnerName(field, originClass);
         return CodeBlock.builder()
                 .addStatement(
                         "case $S -> out.put(k, $T.applyDefault(v, rootCtx,"
