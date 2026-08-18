@@ -256,7 +256,30 @@ final class SchemaPositions {
             return;
         }
         for (Map.Entry<String, JsonNode> member : container.properties()) {
-            visitSchema(member.getValue(), path + "/" + member.getKey(), visitor);
+            visitSchema(member.getValue(), path + "/" + escapePointerToken(member.getKey()), visitor);
         }
+    }
+
+    /**
+     * Escapes a JSON Pointer reference token per RFC 6901 §3.
+     *
+     * <p>A property name is arbitrary text, and a pointer reserves two characters within a token, so
+     * a property literally named {@code a/b~c} must appear as {@code a~1b~0c}. Without this, the
+     * diagnostic path in {@link DisjointTypeDetector}'s failure message names a location that cannot
+     * be resolved back to the node it is about — {@code a/b} would read as two segments.
+     *
+     * <p>Order is load-bearing: {@code ~} is escaped <em>before</em> {@code /}. The reverse order
+     * would rewrite a literal {@code /} to {@code ~1} and then re-escape that token's own {@code ~}
+     * into {@code ~01}, which decodes to {@code ~1} rather than {@code /}.
+     *
+     * <p>Only the container member names appended just above need escaping. The other segments the traversal appends
+     * are a keyword drawn from the frozen allowlists above — no JSON Schema keyword contains either
+     * reserved character — or an array index, which is always decimal digits.
+     *
+     * @param token the raw property name
+     * @return the token with {@code ~} and {@code /} escaped
+     */
+    private static String escapePointerToken(String token) {
+        return token.replace("~", "~0").replace("/", "~1");
     }
 }

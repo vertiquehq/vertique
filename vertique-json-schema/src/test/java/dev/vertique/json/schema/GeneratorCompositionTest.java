@@ -433,6 +433,28 @@ class GeneratorCompositionTest {
             assertConflict("{\"type\":\"number\",\"allOf\":[{\"type\":\"integer\"},{\"type\":\"string\"}]}");
         }
 
+        @Test
+        @DisplayName("A property name containing / or ~ is escaped per RFC 6901 in the diagnostic path")
+        void pointerTokensAreEscapedInTheDiagnosticPath() {
+            // A JSON Pointer reserves '~' and '/', so a property literally named "a/b~c" must appear
+            // in the path as "a~1b~0c" — otherwise the diagnostic names a location that cannot be
+            // resolved back to the node it is about, and "a/b~c" reads as two path segments.
+            JsonSchemaGenerationException failure = assertThrows(
+                    JsonSchemaGenerationException.class,
+                    () -> DisjointTypeDetector.requireNoDisjointTypes(HardeningFixtures.read(
+                            "{\"properties\":{\"a/b~c\":{\"type\":\"string\",\"allOf\":[{\"type\":\"integer\"}]}}}")),
+                    "the conflicting property must still be rejected");
+            assertTrue(
+                    failure.getMessage().contains("#/properties/a~1b~0c"),
+                    "the path must escape both reserved characters; was: " + failure.getMessage());
+            // Pin the specific reversed-order output rather than any "~01": escaping / before ~ would
+            // yield a~01b~0c here, and is also not injective — a property literally named "a~1b"
+            // correctly escapes to a~01b, so a bare "~01" assertion would misfire on that name.
+            assertFalse(
+                    failure.getMessage().contains("a~01b~0c"),
+                    "escaping must apply ~ before /; was: " + failure.getMessage());
+        }
+
         /**
          * Asserts the walk rejects a document with a bounded diagnostic.
          *
