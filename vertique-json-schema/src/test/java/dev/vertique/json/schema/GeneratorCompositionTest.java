@@ -433,6 +433,26 @@ class GeneratorCompositionTest {
             assertConflict("{\"type\":\"number\",\"allOf\":[{\"type\":\"integer\"},{\"type\":\"string\"}]}");
         }
 
+        @Test
+        @DisplayName("A property name containing / or ~ is escaped per RFC 6901 in the diagnostic path")
+        void pointerTokensAreEscapedInTheDiagnosticPath() {
+            // A JSON Pointer reserves '~' and '/', so a property literally named "a/b~c" must appear
+            // in the path as "a~1b~0c" — otherwise the diagnostic names a location that cannot be
+            // resolved back to the node it is about, and "a/b~c" reads as two path segments.
+            JsonSchemaGenerationException failure = assertThrows(
+                    JsonSchemaGenerationException.class,
+                    () -> DisjointTypeDetector.requireNoDisjointTypes(HardeningFixtures.read(
+                            "{\"properties\":{\"a/b~c\":{\"type\":\"string\",\"allOf\":[{\"type\":\"integer\"}]}}}")),
+                    "the conflicting property must still be rejected");
+            assertTrue(
+                    failure.getMessage().contains("#/properties/a~1b~0c"),
+                    "the path must escape both reserved characters; was: " + failure.getMessage());
+            // The escaping must not be applied twice: a literal '/' becomes ~1, never ~01.
+            assertFalse(
+                    failure.getMessage().contains("~01"),
+                    "escaping must not double-encode; was: " + failure.getMessage());
+        }
+
         /**
          * Asserts the walk rejects a document with a bounded diagnostic.
          *
