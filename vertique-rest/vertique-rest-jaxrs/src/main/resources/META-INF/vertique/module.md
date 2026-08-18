@@ -104,6 +104,44 @@ covering all string values in the body plus scalar and collection-element parame
 `@SkipSanitization` opt an individual parameter out. Scalar and collection-element parameters receive
 route-level chains only.
 
+**Which body shapes step 3 reaches.** A DTO body, a collection or array body, a `String` body, a
+form-urlencoded body bound to a POJO, and the schema-free `JsonObject` / `JsonArray` bodies all pass
+through the engine — a Vert.x JSON wrapper is already the intermediate the engine walks, so a
+declared chain reaches every string leaf in it, at any nesting depth. A schema-free body carries no
+declared property set, so only route- and parameter-level chains apply to it and no wire-name
+projection is consulted. A payload whose shape does not match the declared wrapper — an object body
+on a `JsonArray` parameter, or an array body on a `JsonObject` one — is not processed at all: it
+falls through to the decoder chain, which answers a shape mismatch with `null` exactly as it does
+without the engine installed. A raw binary body (`byte[]`, `io.vertx.core.buffer.Buffer`) is the one
+shape the engine cannot process at all; declaring a chain on one is rejected at startup rather than
+skipped (see [Startup failures](#startup-failures)).
+
+A policy declared on a parameter the engine never sees — a `@Context` parameter, a `RequestPreconditions`
+parameter, or a raw multipart `FileUpload` / `EntityPart` parameter — is inert and is neither
+processed nor reported: those values are not caller-supplied string input the chain model applies to.
+
+**Renamed body fields are covered.** A field-level policy is declared on a Java property, while the
+decoded body is keyed by whatever Jackson publishes — `@JsonProperty("user_name")`, a naming
+strategy, `@JsonNaming`, a mix-in, or a `@JsonAlias`. The route's resolved body mapper is introspected
+at route registration and its projection maps each wire key back onto the Java property whose policies
+apply (`JacksonFieldNameResolver`, from `dev.vertique:vertique-json`). A `@Sanitize` on a renamed
+field therefore runs exactly as it would on an unrenamed one, with no extra declaration, and nothing
+is introspected on the request path.
+
+```java
+public record CreateUserRequest(
+    @JsonProperty("display_name") @Sanitize(StripAllHtmlSanitizer.class) String displayName
+) {}
+// {"display_name": "<b>ada</b>"} -> displayName == "ada"
+```
+
+**Five shapes a declared policy still does not reach.** A `Map`-typed field, an `Object`-typed field,
+a concrete `@JsonTypeInfo` subtype's own fields, `@JsonUnwrapped` members, and a key matched only by
+`ACCEPT_CASE_INSENSITIVE_PROPERTIES` all leave the field with its inherited route- and object-level
+chains and nothing else. Nothing fails and nothing is logged, so a stranded policy on one of these is
+invisible until the value that mattered gets through. The `vertique-input-processing` reference
+documents each shape, what still applies, and how to stay inside the covered set.
+
 ### JSON profiles are symmetric
 
 A resource method's request body and its response body use the same effective `ObjectMapper`. The
@@ -947,6 +985,34 @@ the `application/problem+json` media type preserved, and logs a WARN. A profile-
 finds a violation, rather than being collected. `JsonProfileConfigurationException` is thrown at
 router-build time for an unknown profile id.
 
+Route registration also gates declared input processing, raising `ConfigurationException` with one
+aggregated message naming every offending route:
+
+| Condition | When it is checked |
+|---|---|
+| A route declares a canonicalizer or sanitizer chain — on the route, on a processed parameter, or inside a processed parameter's type graph — while no `InputObjectProcessor` is bound | only when the binding is absent |
+| A `byte[]` or `io.vertx.core.buffer.Buffer` body parameter carries a declared chain | always, bound engine or not |
+
+Both are declarations that provably could not run, and there is no opt-out flag: "declared but not
+running" is not a second legitimate mode. The unbound-engine check ignores parameters whose source
+never reaches the engine (`@Context`, `RequestPreconditions`, raw multipart), so it never asks for a
+module that would change nothing. The binary-body check is independent of the binding because no
+Dagger graph can make a chain act on opaque bytes; its message points at `FileContentVerifier` as the
+control that does inspect binary content, while stating that `FileContentVerifier` covers multipart
+`FileUpload` parts rather than a raw binary body parameter — a pointer, not a drop-in replacement.
+Remove the declaration, or add `@SkipCanonicalization` / `@SkipSanitization` to the binary parameter.
+
+When an `InputObjectProcessor` is bound, route registration also composes each route's body wire-name
+projection (`JacksonFieldNameResolver`, from `dev.vertique:vertique-json`) against that route's
+resolved body mapper — for the body parameter's declared type, an array's component type, a generic
+body's type arguments, and every type reachable from those through a declared Jackson-visible
+property. Any type in that graph whose projection cannot be composed — two properties claiming one
+wire name, or two properties claiming one `@JsonAlias` — fails router build with
+`ConfigurationException` naming the type and the contested name, including when it is a nested DTO
+rather than the body type itself. Composing at registration is what
+makes that a startup failure rather than a 500 on every request that touches the type, and it keeps
+Jackson bean introspection off the event loop.
+
 ### Request-time failures
 
 Any exception a resource method throws or fails its `Future` with enters the error pipeline and is
@@ -979,6 +1045,9 @@ as proof of a complete body.
   create a text-part bypass.
 - **Mixing `@Context` with a value-binding annotation.** `CONTEXT_PARAM_CONFLICT` fails the build; the
   two are mutually exclusive by design.
+- **Declaring `@Sanitize`/`@Canonicalize` on a `byte[]` or `Buffer` body.** It fails startup. Both
+  chain phases act on string values, and a raw binary body has none — use `FileContentVerifier` on a
+  multipart `FileUpload` part when the intent is to inspect uploaded content.
 - **Expecting `@FilePart.maxSizeBytes` to prevent a disk write.** It is checked post-spool and returns
   400. The ingress limits are `http.maxBodySize` (total bytes, returns 413) and `http.maxFormFields`
   (part count).
@@ -1023,7 +1092,7 @@ contributes the built-in magic-byte `FileContentVerifier`.
 | `dev.vertique:vertique-rest-core` | every extension SPI this runtime consumes, the `http`/`jaxrs` config objects, `ProblemDetail`, `BoundRequest`'s `RequestValue`, the parameter-conversion stack, and `RestCoreModule` |
 | `dev.vertique:vertique-input-processing` | the neutral `InputObjectProcessor` / `EffectiveInputPolicies` contracts the body pipeline and the optional sanitization binding are typed against |
 | `dev.vertique:vertique-security-core` | `SecurityContext` and the authorization references the security policy resolves against |
-| `dev.vertique:vertique-json` | `JsonMapperProfileRegistry`, `JsonConfig`, and `JsonRuntimeModule` for per-method profile resolution |
+| `dev.vertique:vertique-json` | `JsonMapperProfileRegistry`, `JsonConfig`, and `JsonRuntimeModule` for per-method profile resolution; `JacksonFieldNameResolver` — the `dev.vertique.core.sanitization.InputFieldNameResolver` implementation supplying the body wire-name projection input processing keys its policies on |
 | `io.swagger.core.v3:swagger-annotations-jakarta` | `@Operation` / `@ApiResponse` read at scan time for the operationId and, at build time, by the spec generator |
 | `org.projectlombok:lombok` | `provided` scope — logging and accessors; not a runtime dependency |
 

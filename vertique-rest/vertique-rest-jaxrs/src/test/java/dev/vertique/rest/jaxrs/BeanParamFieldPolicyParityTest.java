@@ -15,6 +15,7 @@ import static org.mockito.Mockito.when;
 
 import dev.vertique.core.sanitization.Canonicalize;
 import dev.vertique.core.sanitization.Canonicalizer;
+import dev.vertique.core.sanitization.InputFieldNameResolver;
 import dev.vertique.core.sanitization.InputLocation;
 import dev.vertique.core.sanitization.InputValueContext;
 import dev.vertique.core.sanitization.Sanitize;
@@ -334,7 +335,8 @@ class BeanParamFieldPolicyParityTest {
         ArgumentCaptor<EffectiveInputPolicies> policyCaptor = ArgumentCaptor.forClass(EffectiveInputPolicies.class);
         ArgumentCaptor<InputLocation> locationCaptor = ArgumentCaptor.forClass(InputLocation.class);
         // verify at least 0 — accommodates the case where the processor was never invoked at all.
-        verify(processor, atLeast(0)).processInput(any(), any(), policyCaptor.capture(), locationCaptor.capture());
+        verify(processor, atLeast(0))
+                .processInput(any(), any(), policyCaptor.capture(), locationCaptor.capture(), any());
         List<EffectiveInputPolicies> allPolicies = policyCaptor.getAllValues();
         List<InputLocation> allLocations = locationCaptor.getAllValues();
         for (int i = 0; i < allLocations.size(); i++) {
@@ -346,14 +348,24 @@ class BeanParamFieldPolicyParityTest {
         // per-field chain was empty; if target was BEAN_PARAM, the route chain was empty.
         if (allLocations.isEmpty()) {
             verify(processor, never())
-                    .processInput(any(), any(), any(EffectiveInputPolicies.class), any(InputLocation.class));
+                    .processInput(
+                            any(),
+                            any(),
+                            any(EffectiveInputPolicies.class),
+                            any(InputLocation.class),
+                            any(InputFieldNameResolver.class));
         }
         return Optional.empty();
     }
 
     private static InputObjectProcessor newProcessorStub() {
         InputObjectProcessor processor = mock(InputObjectProcessor.class);
-        when(processor.processInput(any(), any(), any(EffectiveInputPolicies.class), any(InputLocation.class)))
+        when(processor.processInput(
+                        any(),
+                        any(),
+                        any(EffectiveInputPolicies.class),
+                        any(InputLocation.class),
+                        any(InputFieldNameResolver.class)))
                 .thenAnswer(inv -> inv.getArgument(0));
         return processor;
     }

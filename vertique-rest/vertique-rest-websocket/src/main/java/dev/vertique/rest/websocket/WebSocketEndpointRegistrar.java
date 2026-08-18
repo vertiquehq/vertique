@@ -6,15 +6,19 @@ package dev.vertique.rest.websocket;
 import dev.vertique.context.ContextSnapshot;
 import dev.vertique.context.ContextValues;
 import dev.vertique.core.context.ContextHolder;
+import dev.vertique.core.exception.ConfigurationException;
 import dev.vertique.core.sanitization.Canonicalize;
 import dev.vertique.core.sanitization.Canonicalizer;
+import dev.vertique.core.sanitization.InputFieldNameResolver;
 import dev.vertique.core.sanitization.InputLocation;
 import dev.vertique.core.sanitization.Sanitize;
 import dev.vertique.core.sanitization.Sanitizer;
+import dev.vertique.core.util.AnnotationResolver;
 import dev.vertique.core.validation.BeanValidationException;
 import dev.vertique.core.validation.BeanValidator;
 import dev.vertique.input.processing.EffectiveInputPolicies;
 import dev.vertique.input.processing.InputObjectProcessor;
+import dev.vertique.json.JacksonFieldNameResolver;
 import dev.vertique.rest.core.middleware.RequestContextLifecycle;
 import dev.vertique.rest.core.security.RouteAuthHandler;
 import dev.vertique.rest.core.security.SecurityPolicy;
@@ -27,6 +31,7 @@ import dev.vertique.security.authz.Authorizer;
 import io.vertx.core.Future;
 import io.vertx.core.Handler;
 import io.vertx.core.http.ServerWebSocket;
+import io.vertx.core.json.jackson.DatabindCodec;
 import io.vertx.ext.web.Route;
 import io.vertx.ext.web.Router;
 import io.vertx.ext.web.RoutingContext;
@@ -34,6 +39,7 @@ import jakarta.annotation.Nullable;
 import jakarta.ws.rs.PathParam;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -116,6 +122,25 @@ class WebSocketEndpointRegistrar {
     private final @Nullable Authorizer authorizer;
 
     /**
+     * Wire &rarr; Java property-name projection for object message bodies.
+     *
+     * <p>{@link WebSocketMessageCodec} binds every message through
+     * {@link DatabindCodec#mapper()}, so that is the mapper whose naming decides which declared
+     * policies apply: a field renamed by {@code @JsonProperty}, by a naming strategy, or reached
+     * through a {@code @JsonAlias} arrives in the intermediate under its wire name, while the
+     * input-processing engine keys its per-field metadata on the Java property name. Without this
+     * projection a declared {@code @Canonicalize}/{@code @Sanitize} on such a field silently never
+     * runs.
+     *
+     * <p>Created once per registrar, and every declared message type's projection is composed at
+     * registration by {@link #warmMessageNameProjections}, so no introspection happens on the message
+     * path. The bare-{@code String} call sites keep {@link InputFieldNameResolver#IDENTITY}: there is
+     * no object whose fields could be renamed.
+     */
+    private final JacksonFieldNameResolver messageNameResolver =
+            JacksonFieldNameResolver.forMapper(DatabindCodec.mapper());
+
+    /**
      * Creates a new registrar.
      *
      * @param messageCodec                 codec for JSON message deserialization
@@ -173,10 +198,113 @@ class WebSocketEndpointRegistrar {
      */
     void registerAll(Set<Object> endpoints, Router router) {
         WebSocketEndpointScanner scanner = new WebSocketEndpointScanner(actionRegistry);
+        List<WebSocketEndpointMeta> metas = new ArrayList<>(endpoints.size());
         for (Object endpoint : endpoints) {
-            WebSocketEndpointMeta meta = scanner.scan(endpoint);
+            metas.add(scanner.scan(endpoint));
+        }
+        checkInputProcessingComposition(metas);
+        warmMessageNameProjections(metas);
+        for (WebSocketEndpointMeta meta : metas) {
             registerEndpoint(meta, router);
         }
+    }
+
+    /**
+     * Composes the wire &rarr; Java name projection for every declared message type at registration, so
+     * the message path is served entirely from the precomputed projection.
+     *
+     * <p>{@link InputFieldNameResolver} publishes that an implementation never throws and serves every
+     * call from a precomputed projection; composing one runs a full Jackson bean introspection that can
+     * also fail on a name collision. Left to the first message, that work would run on an event-loop
+     * thread, a collision would surface as a per-message failure instead of a boot failure, and —
+     * because a {@link ClassValue} does not memoise a {@code computeValue} that threw — every following
+     * message would re-introspect before failing again. Warming only matters when the engine is bound:
+     * without it no projection is ever consulted, and any declared policy already failed the
+     * composition gate above.
+     *
+     * <p>The walk is {@link dev.vertique.json.JacksonFieldNameResolver#precomputeGraph} — the same one
+     * the JAX-RS registrar uses for body types, rather than a second, narrower one here. It unwraps an
+     * array message type to its component, skips a scalar such as the default {@code String} message
+     * type (neither carries a property set the engine keys against), and follows each message type's
+     * declared property types so a nested DTO is warmed with its owner.
+     *
+     * @param metas every scanned endpoint's metadata
+     * @throws ConfigurationException if a reachable message type's projection cannot be composed
+     */
+    private void warmMessageNameProjections(List<WebSocketEndpointMeta> metas) {
+        if (objectProcessor == null) {
+            return;
+        }
+        for (WebSocketEndpointMeta meta : metas) {
+            if (meta.onMessage() != null) {
+                messageNameResolver.precomputeGraph(meta.messageType());
+            }
+        }
+    }
+
+    /**
+     * Fails startup when an endpoint declares canonicalization or sanitization while no
+     * {@link InputObjectProcessor} is bound.
+     *
+     * <p>{@code WebSocketModule} declares the engine binding optional and every consumer null-guards
+     * it, so without this gate an endpoint whose {@code @OnMessage} carries {@code @Sanitize} — or
+     * whose message type declares field-level policies — would accept messages with none of that
+     * processing running. This mirrors the REST registrar's gate: every offending endpoint is
+     * collected before throwing, and there is no opt-out flag.
+     *
+     * @param metas every scanned endpoint's metadata
+     * @throws ConfigurationException if any endpoint declares processing that cannot run
+     */
+    private void checkInputProcessingComposition(List<WebSocketEndpointMeta> metas) {
+        if (objectProcessor != null) {
+            return;
+        }
+        List<String> offendingEndpoints = new ArrayList<>();
+        for (WebSocketEndpointMeta meta : metas) {
+            String reason = unboundPolicyReason(meta);
+            if (reason != null) {
+                offendingEndpoints.add(
+                        "  - " + meta.path() + " (" + meta.instance().getClass().getName() + "): " + reason);
+            }
+        }
+        if (offendingEndpoints.isEmpty()) {
+            return;
+        }
+        throw new ConfigurationException(offendingEndpoints.size()
+                + " WebSocket endpoint(s) declare input canonicalization or sanitization, but no "
+                + "InputObjectProcessor is bound, so none of it would run:\n"
+                + String.join("\n", offendingEndpoints)
+                + "\nInstall a module providing an InputObjectProcessor (SanitizationModule) in the Dagger "
+                + "component, or remove the declared policies.");
+    }
+
+    /**
+     * Returns why the given endpoint's declared input processing cannot run, or {@code null} when it
+     * declares none.
+     *
+     * <p>Policy annotations are resolved exactly as {@link #resolveMethodPolicies} resolves them on
+     * the message path — meta-annotation-aware. The two must agree: a gate that saw composed
+     * annotations the runtime ignored would fail startup for policies that still would not run, which
+     * is worse than not gating them at all.
+     *
+     * @param meta the scanned endpoint metadata
+     * @return a human-readable reason naming the declaration, or {@code null}
+     */
+    private static @Nullable String unboundPolicyReason(WebSocketEndpointMeta meta) {
+        for (Method lifecycleMethod : new Method[] {meta.onOpen(), meta.onMessage(), meta.onClose(), meta.onError()}) {
+            if (lifecycleMethod == null) {
+                continue;
+            }
+            if (AnnotationResolver.findMetaAnnotation(lifecycleMethod, Canonicalize.class) != null
+                    || AnnotationResolver.findMetaAnnotation(lifecycleMethod, Sanitize.class) != null) {
+                return "lifecycle method '" + lifecycleMethod.getName()
+                        + "' declares a canonicalizer or sanitizer chain";
+            }
+        }
+        if (meta.onMessage() != null && InputObjectProcessor.declaresPolicies(meta.messageType())) {
+            return "message type " + meta.messageType().getName() + " declares input policies on its own fields";
+        }
+        return null;
     }
 
     // --- Route registration ---
@@ -980,8 +1108,8 @@ class WebSocketEndpointRegistrar {
                 // Apply canonicalization/sanitization to path params if available
                 if (rawValue != null && objectProcessor != null) {
                     EffectiveInputPolicies policies = resolveMethodPolicies(method);
-                    Object processed =
-                            objectProcessor.processInput(rawValue, String.class, policies, InputLocation.PATH);
+                    Object processed = objectProcessor.processInput(
+                            rawValue, String.class, policies, InputLocation.PATH, InputFieldNameResolver.IDENTITY);
                     if (processed instanceof String s) {
                         rawValue = s;
                     }
@@ -1017,7 +1145,8 @@ class WebSocketEndpointRegistrar {
             // For raw String messages, apply scalar processing if available
             if (objectProcessor != null && meta.onMessage() != null) {
                 EffectiveInputPolicies policies = resolveMethodPolicies(meta.onMessage());
-                Object processed = objectProcessor.processInput(text, String.class, policies, InputLocation.PAYLOAD);
+                Object processed = objectProcessor.processInput(
+                        text, String.class, policies, InputLocation.PAYLOAD, InputFieldNameResolver.IDENTITY);
                 if (processed != null) {
                     return processed;
                 }
@@ -1031,8 +1160,8 @@ class WebSocketEndpointRegistrar {
                 // Two-phase: intermediate → process → materialize
                 EffectiveInputPolicies policies = resolveMethodPolicies(meta.onMessage());
                 Object intermediate = messageCodec.decodeToIntermediate(text);
-                Object processed =
-                        objectProcessor.processInput(intermediate, meta.messageType(), policies, InputLocation.PAYLOAD);
+                Object processed = objectProcessor.processInput(
+                        intermediate, meta.messageType(), policies, InputLocation.PAYLOAD, messageNameResolver);
                 decoded = messageCodec.convertFromIntermediate(
                         processed != null ? processed : intermediate, meta.messageType());
             } else {
@@ -1072,14 +1201,19 @@ class WebSocketEndpointRegistrar {
      * Resolves canonicalization and sanitization policies from annotations on the given lifecycle
      * method only. No class-level fallback — avoids cross-method policy contamination.
      *
+     * <p>Resolution is meta-annotation-aware through {@link AnnotationResolver#findMetaAnnotation},
+     * matching REST: a custom annotation itself meta-annotated with {@code @Canonicalize} or
+     * {@code @Sanitize} is the documented way to name a reusable chain, and a bare
+     * {@code Method#getAnnotation} would silently ignore it.
+     *
      * @param method the lifecycle method to inspect for {@code @Canonicalize} and {@code @Sanitize}
-     *               annotations
+     *               annotations, directly or through a composed annotation
      * @return the resolved effective input policies; {@link EffectiveInputPolicies#NONE} when no
      *         annotations are present on the method
      */
     private EffectiveInputPolicies resolveMethodPolicies(Method method) {
-        Canonicalize canonicalize = method.getAnnotation(Canonicalize.class);
-        Sanitize sanitize = method.getAnnotation(Sanitize.class);
+        Canonicalize canonicalize = AnnotationResolver.findMetaAnnotation(method, Canonicalize.class);
+        Sanitize sanitize = AnnotationResolver.findMetaAnnotation(method, Sanitize.class);
 
         if (canonicalize == null && sanitize == null) {
             return EffectiveInputPolicies.NONE;

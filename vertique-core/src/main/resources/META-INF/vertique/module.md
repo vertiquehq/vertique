@@ -714,6 +714,51 @@ WebSocket messages); REST request bodies remain `BODY`. A custom `Canonicalizer`
 `CharacterPolicy` that branches on `InputLocation.BODY` must also handle `PAYLOAD` to keep
 covering message-oriented inputs — WebSocket messages reported `BODY` before `PAYLOAD` existed.
 
+`path` and `logicalName` are deliberately different views of the same value. `path` is the **wire**
+path — the dot-separated keys as the caller sent them — so a diagnostic points at what actually
+arrived. `logicalName` is the **Java** property name whenever the value came from a property the
+processing engine matched, and the wire name otherwise. A `Canonicalizer` or `Sanitizer` that
+branches on `logicalName` is therefore branching on the Java name, not on a `@JsonProperty`-renamed
+key; branch on `path` when the wire form is what matters. Collection elements carry the element path
+in both components.
+
+### `InputFieldNameResolver`
+
+Codec-neutral projection from a **wire** property name to the **Java** property name that declares
+its input policies.
+
+```java
+@FunctionalInterface
+public interface InputFieldNameResolver {
+
+    /** Returns every wire name unchanged, for transports that do not rename. */
+    InputFieldNameResolver IDENTITY = (ownerType, wireName) -> wireName;
+
+    String logicalName(Class<?> ownerType, String wireName);
+}
+```
+
+Policies declared with `@Canonicalize` / `@Sanitize` are keyed by the Java property name, but an
+intermediate parsed from the wire is keyed by whatever the codec published —
+`@JsonProperty("user_name")`, a `SNAKE_CASE` naming strategy, or a `@JsonAlias`. Without a
+projection between the two, a policy declared on a renamed field silently never runs. This contract
+is the seam that closes that gap, and declaring it here — beside `InputLocation`, `Canonicalizer`
+and `Sanitizer` — is what keeps both `vertique-input-processing` and `vertique-sanitization` free of
+any codec dependency: each codec-backed implementation lives in the module that already owns that
+codec (`JacksonFieldNameResolver` in `dev.vertique:vertique-json`).
+
+Three properties are part of the contract:
+
+| Property | Contract |
+|---|---|
+| Direction | Wire → Java, the only direction able to express an alias's many-to-one mapping |
+| Totality | An unrecognized `wireName` — an undeclared extra key, a `Map`-typed field's key, or a name that is already the Java property name — is returned **unchanged**; an implementation never returns `null` and never throws |
+| Threading and cost | Stateless (or effectively immutable), reentrant, consulted once per intermediate key on the request path — it must not block and should serve every call from a precomputed projection |
+
+Use `InputFieldNameResolver.IDENTITY` for any transport whose intermediate keys are already Java
+property names, including every call site that processes a bare `String`, where there is no object
+whose fields could be renamed.
+
 ### `CharacterPolicy`
 
 Validates that a string contains only permitted characters.

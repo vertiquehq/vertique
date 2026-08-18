@@ -9,7 +9,8 @@ import dev.vertique.core.sanitization.Canonicalizer;
 import dev.vertique.core.sanitization.InputFieldNameResolver;
 import dev.vertique.core.sanitization.InputLocation;
 import dev.vertique.core.sanitization.Sanitizer;
-import dev.vertique.input.processing.GeneratedVsReflectiveEquivalenceTest.ObjLevelGenerated;
+import dev.vertique.input.processing.GeneratedVsReflectiveEquivalenceTest.ProjectionGenerated;
+import dev.vertique.input.processing.GeneratedVsReflectiveEquivalenceTest.TestStripDots;
 import dev.vertique.input.processing.GeneratedVsReflectiveEquivalenceTest.TestTrim;
 import jakarta.annotation.Nullable;
 import java.util.LinkedHashMap;
@@ -17,34 +18,39 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Hand-written companion for {@link ObjLevelGenerated}, which carries class-level
- * {@code @Canonicalize(TestTrim.class)}. Mirrors the codegen output: object-level constants
- * carry the type chain; the {@code default} arm calls
- * {@link GeneratedSupport#applyDefault(Object, InputTraversalContext, java.util.List, java.util.List, boolean, boolean, java.util.List, java.util.List, boolean, boolean, ChainResolver, InputLocation, String, String, Class, GeneratedInputProcessorDispatcher) applyDefault}
- * with those object-level constants so unknown Jackson keys still receive the type chain —
- * matching the reflective walker.
+ * Hand-written companion {@link GeneratedInputProcessor} for {@link ProjectionGenerated}, mirroring
+ * the shape {@code vertique-codegen-sanitization} emits once the switch is keyed on the projected
+ * logical name: {@code switch (ctx.logicalFieldName(Dto.class, wireKey))}, with the output map
+ * keeping the wire key so the codec still binds what the caller sent.
  *
- * <p>As the emitter does, the switch selects on the projected logical name
- * ({@code rootCtx.logicalFieldName(ObjLevelGenerated.class, k)}) with arms keyed on Java property
- * names, while the emitted map keeps the wire key {@code k}.
+ * <p>Used by {@link GeneratedVsReflectiveEquivalenceTest} to assert byte-equivalence with the
+ * reflective walker under an identity projection, a {@code @JsonProperty}-style rename, and a
+ * {@code SNAKE_CASE} naming strategy.
+ *
+ * <p>Naming follows the dispatcher's {@code generatedClassName(...)} algorithm: the binary name of
+ * {@link ProjectionGenerated} is
+ * {@code ...GeneratedVsReflectiveEquivalenceTest$ProjectionGenerated}; flattening {@code '$' → '_'}
+ * and appending {@code _InputProcessor} yields this class's FQN.
  */
-public final class GeneratedVsReflectiveEquivalenceTest_ObjLevelGenerated_InputProcessor
-        implements GeneratedInputProcessor<ObjLevelGenerated> {
+public final class GeneratedVsReflectiveEquivalenceTest_ProjectionGenerated_InputProcessor
+        implements GeneratedInputProcessor<ProjectionGenerated> {
 
-    private static final List<Class<? extends Canonicalizer>> OBJ_CANON = List.of(TestTrim.class);
+    private static final List<Class<? extends Canonicalizer>> OBJ_CANON = List.of();
     private static final List<Class<? extends Sanitizer>> OBJ_SANIT = List.of();
     private static final boolean OBJ_SKIP_CANON = false;
     private static final boolean OBJ_SKIP_SANIT = false;
 
-    private static final List<Class<? extends Canonicalizer>> KNOWN_CANON = List.of();
-    private static final List<Class<? extends Sanitizer>> KNOWN_SANIT = List.of();
+    private static final List<Class<? extends Canonicalizer>> USER_NAME_CANON = List.of(TestTrim.class);
+    private static final List<Class<? extends Sanitizer>> USER_NAME_SANIT = List.of();
+    private static final List<Class<? extends Canonicalizer>> HOME_PAGE_CANON = List.of();
+    private static final List<Class<? extends Sanitizer>> HOME_PAGE_SANIT = List.of(TestStripDots.class);
 
-    /** Public no-arg constructor for {@code Class.forName}-based instantiation. */
-    public GeneratedVsReflectiveEquivalenceTest_ObjLevelGenerated_InputProcessor() {}
+    /** Public no-arg constructor for {@code Class.forName}-based instantiation by the dispatcher. */
+    public GeneratedVsReflectiveEquivalenceTest_ProjectionGenerated_InputProcessor() {}
 
     @Override
-    public Class<ObjLevelGenerated> targetType() {
-        return ObjLevelGenerated.class;
+    public Class<ProjectionGenerated> targetType() {
+        return ProjectionGenerated.class;
     }
 
     @Override
@@ -72,8 +78,8 @@ public final class GeneratedVsReflectiveEquivalenceTest_ObjLevelGenerated_InputP
                 continue;
             }
             String childPath = parentPath.isEmpty() ? k : parentPath + "." + k;
-            switch (rootCtx.logicalFieldName(ObjLevelGenerated.class, k)) {
-                case "known" ->
+            switch (rootCtx.logicalFieldName(ProjectionGenerated.class, k)) {
+                case "userName" ->
                     out.put(
                             k,
                             applyString(
@@ -83,15 +89,34 @@ public final class GeneratedVsReflectiveEquivalenceTest_ObjLevelGenerated_InputP
                                     OBJ_SANIT,
                                     OBJ_SKIP_CANON,
                                     OBJ_SKIP_SANIT,
-                                    KNOWN_CANON,
-                                    KNOWN_SANIT,
+                                    USER_NAME_CANON,
+                                    USER_NAME_SANIT,
                                     false,
                                     false,
                                     resolver,
                                     location,
                                     childPath,
-                                    "known",
-                                    ObjLevelGenerated.class));
+                                    "userName",
+                                    ProjectionGenerated.class));
+                case "homePage" ->
+                    out.put(
+                            k,
+                            applyString(
+                                    v,
+                                    rootCtx,
+                                    OBJ_CANON,
+                                    OBJ_SANIT,
+                                    OBJ_SKIP_CANON,
+                                    OBJ_SKIP_SANIT,
+                                    HOME_PAGE_CANON,
+                                    HOME_PAGE_SANIT,
+                                    false,
+                                    false,
+                                    resolver,
+                                    location,
+                                    childPath,
+                                    "homePage",
+                                    ProjectionGenerated.class));
                 default ->
                     out.put(
                             k,
@@ -110,8 +135,8 @@ public final class GeneratedVsReflectiveEquivalenceTest_ObjLevelGenerated_InputP
                                     location,
                                     childPath,
                                     k,
-                                    ObjLevelGenerated.class,
-                                    ObjLevelGenerated.class,
+                                    ProjectionGenerated.class,
+                                    ProjectionGenerated.class,
                                     dispatcher));
             }
         }

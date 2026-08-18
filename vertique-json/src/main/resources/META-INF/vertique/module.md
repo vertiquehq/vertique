@@ -19,7 +19,8 @@ The profile *contracts* (`JsonProfileId`, `JsonMapperProfile`, `JsonMapperProfil
 `JsonProfileConfigurationException`, `@JsonProfile`, `@KeyedBy`) live in `dev.vertique.core.json`, in
 `dev.vertique:vertique-core`, so a boundary module can reference them without depending on this
 artifact. This module supplies the registry, the three built-in profiles, the opinionated-defaults
-helper, the opt-in strict serdes, the keyed-collection Jackson support, and the Dagger wiring.
+helper, the opt-in strict serdes, the keyed-collection Jackson support, the Jackson-backed
+wire-name projection every Jackson-bound transport hands to input processing, and the Dagger wiring.
 
 ---
 
@@ -31,8 +32,10 @@ when it needs to contribute its own named mapper profile.
 
 Most applications never add the dependency directly. The boundary modules
 (`dev.vertique:vertique-rest-jaxrs`, `dev.vertique:vertique-rest-client`,
-`dev.vertique:vertique-kafka-json`) install `JsonRuntimeModule` through their own Dagger modules, and
-`dev.vertique:vertique-config-core` depends on this artifact for keyed-collection config parsing.
+`dev.vertique:vertique-kafka-json`) install `JsonRuntimeModule` through their own Dagger modules,
+`dev.vertique:vertique-config-core` depends on this artifact for keyed-collection config parsing, and
+`dev.vertique:vertique-rest-websocket` depends on it for `JacksonFieldNameResolver` alone (it binds
+messages through Vert.x's shared mapper and installs no profile registry).
 
 ---
 
@@ -289,6 +292,66 @@ and property — never the conflicting values; an equal value is accepted.
 Map<String, Object> fixedProps)` is public so a caller can apply the same injection and conflict rules
 outside Jackson binding; it returns the prepared element node.
 
+### JacksonFieldNameResolver
+
+Projects the **wire** property names a body is keyed by onto the **Java** property names the
+input-processing engine keys its per-field policies on. Implements
+`dev.vertique.core.sanitization.InputFieldNameResolver`.
+
+Input processing (`@Canonicalize` / `@Sanitize`) resolves each field's declared chain by the Java
+property name, while an intermediate parsed from the wire is keyed by whatever Jackson published —
+`@JsonProperty("user_name")`, a `SNAKE_CASE` naming strategy, `@JsonNaming`, a mix-in, a
+`@JsonAlias`, or a name an `AnnotationIntrospector` a registered module installed produced. Without
+the projection, a policy declared on a renamed field silently never runs. The resolver lives here
+because the projection is a pure function of the `ObjectMapper` that binds the body, so REST and
+WebSocket share one implementation rather than each deriving their own. Because the contract is
+declared in `vertique-core`, implementing it adds no dependency on `vertique-input-processing` —
+this module never sees the processing engine.
+
+```java
+// The mapper that materializes the body decides the projection.
+JacksonFieldNameResolver resolver = JacksonFieldNameResolver.forMapper(mapper);
+
+// forRoute(null) is the reserved `vertx` profile: DatabindCodec.mapper().
+JacksonFieldNameResolver vertxProfile = JacksonFieldNameResolver.forRoute(null);
+
+// Compose each body/message type's projection at registration, never on the request path.
+resolver.precompute(RenamedDto.class);
+
+// Or warm the whole declared graph a boundary can descend into: the type itself, an array's or
+// collection's element type, and every type its Jackson-visible properties expose, transitively.
+// Map key and value types are not part of that graph — a map-typed field is schema-free.
+resolver.precomputeGraph(orderBodyType);
+
+resolver.logicalName(RenamedDto.class, "user_name"); // -> "userName"
+resolver.logicalName(RenamedDto.class, "unknown");   // -> "unknown" (the projection is total)
+```
+
+| Behavior | Contract |
+|---|---|
+| Source of names | `DeserializationConfig.introspect(JavaType)` — never an inference about how the mapper is configured |
+| Primary vs alias | A primary name always claims its key; an alias fills only keys no primary claims — matching what Jackson itself binds |
+| Colliding primary names | `ConfigurationException` naming the type, the wire name, and both Java properties |
+| Two properties claiming one alias | `ConfigurationException` naming the type, the alias, and both Java properties. Jackson resolves such a collision in hash order while a projection built from `findProperties()` resolves it in declaration order, so the property whose policies are applied and the property Jackson binds could differ non-deterministically. An alias colliding with another property's *primary* name is **not** this case: the primary claims the key and the alias is silently unclaimed, exactly as Jackson binds it |
+| Unknown wire name | Returned unchanged — the projection is total and never throws for an unrecognized key |
+| Caching | One `ClassValue`-cached projection per `(mapper, type)`; entries are collected with the DTO's classloader |
+| When the projection is composed | `precompute(Class)` composes it for one type at registration; `precomputeGraph(Type)` composes it for a declared type and everything reachable from it. Every boundary calls the latter there for each body or message type it knows, so `logicalName` neither introspects nor raises anything on the request path, and a name collision fails startup instead of failing every request that touches the type |
+| What `precomputeGraph` walks | The declared type, an array component or collection element type, a non-map parameterized type's arguments, and then each visited type's Jackson-visible property types, transitively. The walk is a deliberate **superset** of the links the input-processing engine descends, never a subset: it is exact for maps, collections, arrays, and `Optional`, but a non-map parameterized type's arguments are warmed even though the engine classifies such a field to its erased bound and never reaches them. That direction is the safe one — it can fail startup on a collision the request path would not consult, but never leaves a type the engine does descend unwarmed and introspecting on the event loop. A visited set terminates cyclic graphs; primitives, enums, and platform (`java.*` / `javax.*` / `jakarta.*`) types are skipped, so a `String` body or message type costs no introspection. A **map's key and value types are not walked**, whether the map is the declared shape itself (`Map<String, Dto>`, `List<Map<String, Dto>>`) or a property's type: a map fragment is schema-free, so neither is ever consulted as a projection owner, and warming one would let a collision the request path can never reach fail startup. "Map" means `java.util.Map` — the engine's own test. A type a registered module (Scala, Guava, Kotlin) classifies as *map-like* without it implementing `java.util.Map` is descended by the engine as a plain object, so it is warmed as one: its own projection is composed, and its module-declared key and value types are not walked |
+| Identity short circuit | When the *computed* projection maps every wire name onto itself, `logicalName` returns the wire name directly and no per-field lookup happens |
+
+Nested types are covered: the engine consults the projection of the owner of every nested fragment,
+so `precomputeGraph` follows the declared property graph and leaves nothing for the request path to
+introspect. A type reached only through a shape the declared types do not name — a `Map`- or
+`Object`-typed field's runtime value, or a `@JsonTypeInfo` subtype — is still composed lazily on
+first use, because no static walk can name it.
+
+Instances are immutable and safe for concurrent use from several event-loop threads. A mapper
+selected for a mounted boundary is treated as immutable afterwards: an application that mutates a
+process-global mapper must rebuild the router.
+
+Boundaries that process a bare `String` (a query, header, path, or form parameter) use
+`InputFieldNameResolver.IDENTITY` instead — there is no object whose fields could be renamed.
+
 ---
 
 ## Extension Points
@@ -374,7 +437,7 @@ A validation failure then propagates out of `start()` and the verticle never bec
 
 | Artifact | Scope | Purpose |
 |----------|-------|---------|
-| `dev.vertique:vertique-core` | compile | `JsonProfileId`, `JsonMapperProfile`, `JsonMapperProfileRegistry`, `JsonProfileConfigurationException`, `@JsonProfile`, `@KeyedBy`, `ConfigurationException`, `ConfigParser`, `ComposeValidator` |
+| `dev.vertique:vertique-core` | compile | `JsonProfileId`, `JsonMapperProfile`, `JsonMapperProfileRegistry`, `JsonProfileConfigurationException`, `@JsonProfile`, `@KeyedBy`, `ConfigurationException`, `ConfigParser`, `ComposeValidator`, `InputFieldNameResolver` — the codec-neutral projection contract `JacksonFieldNameResolver` implements |
 | `io.vertx:vertx-core` | compile | `DatabindCodec.mapper()`, the Vert.x Jackson module, `JsonObject`, `JsonArray` |
 | `com.fasterxml.jackson.core:jackson-databind` | compile | `ObjectMapper`, `Module`, `BeanDeserializerModifier`, `ContextualDeserializer` |
 | `com.fasterxml.jackson.datatype:jackson-datatype-jsr310` | compile | `JavaTimeModule` — ISO-8601 `java.time` support in the `vertique` defaults |

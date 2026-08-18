@@ -147,8 +147,13 @@ public abstract class RestModule {
      * Declares an optional binding for {@link InputObjectProcessor}.
      *
      * <p>When a module providing an {@code InputObjectProcessor} is included in the Dagger
-     * component, input canonicalization and sanitization are active. When absent, input
-     * processing is silently skipped.
+     * component, input canonicalization and sanitization are active.
+     *
+     * <p>When absent, an application whose routes declare no policies runs unaffected — but a route
+     * that <em>does</em> declare canonicalization or sanitization, either through its own annotations
+     * or on a parameter type's fields, <strong>fails startup</strong>: {@code JaxRsRouteRegistrar}
+     * raises one aggregated {@code ConfigurationException} naming every such route. Declared
+     * processing is never silently skipped, and there is no opt-out flag.
      *
      * @return the optional {@link InputObjectProcessor} binding declaration
      */

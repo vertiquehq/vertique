@@ -12,16 +12,24 @@ import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.databind.MapperFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.PropertyNamingStrategies;
 import com.fasterxml.jackson.databind.json.JsonMapper;
 import dev.vertique.core.exception.ValidationException;
+import dev.vertique.core.sanitization.InputFieldNameResolver;
 import dev.vertique.core.sanitization.InputLocation;
+import dev.vertique.core.sanitization.InputValueContext;
+import dev.vertique.core.sanitization.Sanitize;
+import dev.vertique.core.sanitization.Sanitizer;
 import dev.vertique.input.processing.EffectiveInputPolicies;
 import dev.vertique.input.processing.InputObjectProcessor;
+import dev.vertique.json.JacksonFieldNameResolver;
 import dev.vertique.json.VertxJsonSupport;
 import dev.vertique.rest.core.context.RestContextResolution;
 import dev.vertique.rest.core.request.RequestBodyDecoder;
 import dev.vertique.rest.core.request.RequestValue;
+import dev.vertique.rest.jaxrs.convert.ConversionContexts;
 import dev.vertique.rest.jaxrs.request.BoundRequest;
+import io.vertx.core.MultiMap;
 import io.vertx.core.http.HttpServerRequest;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.RoutingContext;
@@ -29,6 +37,7 @@ import java.lang.reflect.Method;
 import java.lang.reflect.Type;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import org.junit.jupiter.api.DisplayName;
@@ -69,7 +78,11 @@ class ParameterExtractorTwoPhaseProfileTest {
     private static final class PassThroughProcessor implements InputObjectProcessor {
         @Override
         public Object processInput(
-                Object intermediateBody, Type targetType, EffectiveInputPolicies policies, InputLocation location) {
+                Object intermediateBody,
+                Type targetType,
+                EffectiveInputPolicies policies,
+                InputLocation location,
+                InputFieldNameResolver nameResolver) {
             return intermediateBody;
         }
     }
@@ -171,5 +184,103 @@ class ParameterExtractorTwoPhaseProfileTest {
         assertInstanceOf(Payload.class, result);
         assertEquals("a", ((Payload) result).name, "the vertx path must bind the DTO");
         assertEquals(5, ((Payload) result).count, "the vertx path must coerce the string scalar to the int");
+    }
+
+    // --- Form-urlencoded bodies under a non-vertx profile ---
+
+    /** Sanitizer whose effect on a governed value is unmistakable in an assertion. */
+    public static final class UppercasingSanitizer implements Sanitizer {
+        @Override
+        public String sanitize(String value, InputValueContext context) {
+            return value == null ? null : value.toUpperCase(Locale.ROOT);
+        }
+    }
+
+    /**
+     * Form-body DTO whose governed property is renamed by the route's profile mapper. Under a
+     * {@code SNAKE_CASE} strategy its wire name is {@code user_name}, so the projection and the binder
+     * must both be derived from that mapper or they disagree about which key holds the property.
+     */
+    public static class FormPayload {
+
+        @Sanitize(UppercasingSanitizer.class)
+        public String userName;
+    }
+
+    /** Resource fixture whose method takes the form-urlencoded body. */
+    static final class FormBodyResource {
+        @SuppressWarnings("unused")
+        public String create(FormPayload dto) {
+            return dto.userName;
+        }
+    }
+
+    /**
+     * Builds a mapper renaming every property to {@code snake_case}, mirroring a non-{@code vertx}
+     * {@code @JsonProfile} whose naming strategy the route's projection is built from.
+     *
+     * @return the snake-case materialization mapper
+     */
+    private static ObjectMapper snakeCaseMapper() {
+        return JsonMapper.builder()
+                .propertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE)
+                .addModule(VertxJsonSupport.module())
+                .build();
+    }
+
+    @Test
+    @DisplayName("Form-urlencoded: the profile mapper binds the body its projection selected policies for")
+    void formUrlencodedBody_usesProfileMapperForBothProjectionAndBinding() throws Exception {
+        ObjectMapper profileMapper = snakeCaseMapper();
+        InputObjectProcessor engine = InputObjectProcessor.createDefault(
+                type -> {
+                    throw new AssertionError("no canonicalizer is declared by this fixture: " + type);
+                },
+                type -> new UppercasingSanitizer());
+
+        Method create = FormBodyResource.class.getDeclaredMethod("create", FormPayload.class);
+        ResourceMethodMeta meta = new ResourceMethodMeta(
+                new FormBodyResource(),
+                create,
+                "create",
+                "POST",
+                "/form",
+                List.of(new ResourceMethodMeta.ParamMeta(
+                        "dto", ResourceMethodMeta.ParamSource.BODY, FormPayload.class)),
+                String.class,
+                false,
+                false,
+                new dev.vertique.rest.core.security.SecurityPolicy.None(),
+                new ResourceMethodMeta.MediaTypes(List.of(), List.of()),
+                null,
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of());
+        ParameterExtractor extractor = new ParameterExtractor(
+                meta,
+                List.of(new JsonRequestBodyDecoder()),
+                new RestContextResolution(Set.of()),
+                engine,
+                ConversionContexts.defaultResolver(),
+                JacksonFieldNameResolver.forMapper(profileMapper));
+
+        RoutingContext ctx = mock(RoutingContext.class);
+        HttpServerRequest request = mock(HttpServerRequest.class);
+        when(ctx.request()).thenReturn(request);
+        when(request.getHeader("Content-Type")).thenReturn("application/x-www-form-urlencoded");
+        when(request.formAttributes())
+                .thenReturn(MultiMap.caseInsensitiveMultiMap().add("user_name", "ada"));
+        when(ctx.<ObjectMapper>get(BoundRequest.KEY_RESOLVED_BODY_MAPPER)).thenReturn(profileMapper);
+
+        Object result = extractor.deserializeBody(
+                RequestValue.of("user_name=ada"), FormPayload.class, null, ctx, EffectiveInputPolicies.NONE);
+
+        FormPayload bound = assertInstanceOf(FormPayload.class, result, "the form body must materialize");
+        assertEquals(
+                "ADA",
+                bound.userName,
+                "the projection and the binder must both come from the route's profile mapper, so the "
+                        + "policy the projection selected lands on the property the binder populates");
     }
 }

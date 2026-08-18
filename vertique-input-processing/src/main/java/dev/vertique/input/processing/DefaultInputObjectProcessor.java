@@ -4,18 +4,20 @@
 package dev.vertique.input.processing;
 
 import dev.vertique.core.sanitization.Canonicalizer;
+import dev.vertique.core.sanitization.InputFieldNameResolver;
 import dev.vertique.core.sanitization.InputLocation;
 import dev.vertique.core.sanitization.InputValueContext;
 import dev.vertique.core.sanitization.Sanitizer;
 import dev.vertique.input.processing.InputPolicyMetadata.FieldPolicyMetadata;
 import jakarta.annotation.Nullable;
-import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import java.util.function.Function;
 
 /**
@@ -52,6 +54,55 @@ import java.util.function.Function;
  *
  * <p>This implementation never mutates the input structure; it returns a new map or list.
  *
+ * <p><strong>Metadata is resolved per type, at descent.</strong> {@link InputPolicyMetadata}
+ * describes only its own type's fields; when the walker descends into a nested field it resolves
+ * that field's declared type through {@link InputPolicyMetadataResolver}'s per-type cache. The
+ * walk therefore terminates on the finite intermediate data rather than on a type-graph budget:
+ * a self-referential type resolves once and applies at every level, direct and mutual recursion
+ * behave identically, and a policy declared behind any number of policy-free <em>descendable</em>
+ * links still runs.
+ *
+ * <p>Not every link is descendable. Descent follows a field's <em>declared</em> type, and
+ * {@link InputPolicyMetadataResolver} treats scalar leaves, {@link Object} and {@link Map} as
+ * carrying no statically known property set. A policy declared <em>beyond</em> such a link is
+ * therefore not found however shallow the graph: a chain on {@code Inner}'s field is invisible
+ * across a {@code Map<String, Inner>} or {@code Object} field, and a subtype's own chains are
+ * invisible because the runtime type is never consulted. Values behind those links still receive
+ * the chains they inherit — they simply contribute no declared metadata of their own. See
+ * {@link InputPolicyMetadataResolver} for the full statement of the boundary.
+ *
+ * <p><strong>Type classification is shared with the metadata resolver.</strong> The entry-point
+ * target type and its element type are classified by {@link TypeClassifier}, the same rules
+ * {@link InputPolicyMetadataResolver} applies to declared fields, so a wildcard, a type variable or
+ * an {@code Optional} layer reduces to the same class wherever it appears. A collection and an
+ * array of the same element type are therefore processed identically — both are a JSON array on the
+ * wire and carry one element schema.
+ *
+ * <p><strong>Target-type guard.</strong> A target type that reduces to no class at all — a
+ * {@code GenericArrayType} such as {@code List<Inner>[]}, or a non-JDK {@link Type} implementation —
+ * cannot be processed. When the invocation-level policies are non-empty the caller has declared
+ * processing that provably cannot run, so {@link #processInput} throws {@link IllegalStateException}
+ * rather than silently returning the input. With empty invocation-level policies the input is
+ * returned unchanged: whether the type graph declares policies of its own is not answerable without
+ * the classification that just failed.
+ *
+ * <p><strong>Field names are projected from the wire before every metadata lookup.</strong> The
+ * intermediate is keyed by whatever the codec published while {@link InputPolicyMetadata} is keyed
+ * by Java property names, so each key is resolved through the traversal's
+ * {@link InputFieldNameResolver} (carried on {@link InputTraversalContext}) before its
+ * {@link FieldPolicyMetadata} is looked up. The emitted map keeps the wire key unchanged — the
+ * projection decides which declared policies apply, never what the codec will bind. The
+ * {@link InputValueContext} a policy observes follows the same split: {@code path} is the wire path,
+ * while {@code logicalName} is the Java property name once a property matched and the wire name
+ * otherwise. List elements keep the element path in both components.
+ *
+ * <p><strong>Processor resolution is cached per engine instance.</strong> The caller-supplied
+ * resolver functions handed to {@link InputObjectProcessor#createDefault} are consulted once per
+ * canonicalizer / sanitizer class instead of once per string value, and a resolution that fails is
+ * cached and rethrown so a large payload cannot re-run a failing lookup per value. The engine makes
+ * no assumption about whether those functions cache anything themselves. Retention is bounded by
+ * the engine instance, which is component-scoped and dies with its Dagger component.
+ *
  * <p><strong>Generated-processor fast path.</strong> The processor self-bootstraps a
  * {@link GeneratedInputProcessorDispatcher} in its constructor and consults it before walking
  * reflectively. When a {@code {DTO}_InputProcessor} class exists on the consuming type's
@@ -64,13 +115,16 @@ import java.util.function.Function;
 class DefaultInputObjectProcessor implements InputObjectProcessor {
 
     private final InputPolicyMetadataResolver metadataResolver;
-    private final Function<Class<? extends Canonicalizer>, Canonicalizer> canonicalizerResolver;
-    private final Function<Class<? extends Sanitizer>, Sanitizer> sanitizerResolver;
+    private final ResolutionCache<Canonicalizer> canonicalizers;
+    private final ResolutionCache<Sanitizer> sanitizers;
     private final ChainResolver chainResolver;
     private final GeneratedInputProcessorDispatcher dispatcher;
 
     /**
      * Creates a new processor with the given dependencies.
+     *
+     * <p>Both resolver functions are wrapped in a per-engine {@link ResolutionCache}, so each is
+     * consulted at most once per processor class for the life of this engine.
      *
      * @param metadataResolver      resolves (and caches) annotation metadata for target types
      * @param canonicalizerResolver factory that produces canonicalizer instances by class
@@ -81,8 +135,8 @@ class DefaultInputObjectProcessor implements InputObjectProcessor {
             Function<Class<? extends Canonicalizer>, Canonicalizer> canonicalizerResolver,
             Function<Class<? extends Sanitizer>, Sanitizer> sanitizerResolver) {
         this.metadataResolver = metadataResolver;
-        this.canonicalizerResolver = canonicalizerResolver;
-        this.sanitizerResolver = sanitizerResolver;
+        this.canonicalizers = new ResolutionCache<>(canonicalizerResolver);
+        this.sanitizers = new ResolutionCache<>(sanitizerResolver);
         this.chainResolver = this::applyChainsForResolver;
         this.dispatcher =
                 new GeneratedInputProcessorDispatcher(new GeneratedInputProcessorDispatcher.ReflectiveContinuation() {
@@ -112,22 +166,39 @@ class DefaultInputObjectProcessor implements InputObjectProcessor {
     }
 
     @Override
-    public Object processInput(Object input, Type targetType, EffectiveInputPolicies policies, InputLocation location) {
+    public Object processInput(
+            Object input,
+            Type targetType,
+            EffectiveInputPolicies policies,
+            InputLocation location,
+            InputFieldNameResolver nameResolver) {
         if (input == null) {
             return null;
         }
 
-        Class<?> targetClass = extractClass(targetType);
+        Class<?> targetClass = TypeClassifier.classify(targetType);
         if (targetClass == null) {
+            if (!policies.isEmpty()) {
+                throw new IllegalStateException("Input processing was declared for " + location
+                        + " but the target type " + targetType.getTypeName()
+                        + " reduces to no class, so the declared canonicalizers and sanitizers cannot be "
+                        + "applied. Declare a target type this engine can classify — a class, a "
+                        + "parameterized type, a bounded type variable or wildcard, an Optional of any of "
+                        + "those, or an array of them.");
+            }
             return input;
         }
 
-        InputTraversalContext ctx = InputTraversalContext.fromPolicies(policies);
+        InputTraversalContext ctx = InputTraversalContext.fromPolicies(policies, nameResolver);
 
         if (input instanceof Map<?, ?> map) {
             Optional<GeneratedInputProcessor<Object>> generated = dispatcher.resolve(asObjectClass(targetClass));
             if (generated.isPresent()) {
-                return generated.get().process(input, policies, location, chainResolver, dispatcher, null, "");
+                // Pass the REAL root context, never null: a generated processor handed a null parent
+                // re-seeds with IDENTITY naming, and its per-field switch would then stop matching a
+                // renamed wire key — silently disabling the declared policies on exactly the path
+                // REST takes when codegen is active.
+                return generated.get().process(input, policies, location, chainResolver, dispatcher, ctx, "");
             }
             InputPolicyMetadata metadata = metadataResolver.resolve(targetClass);
             return processMap(map, metadata, ctx, policies, location, "", targetClass);
@@ -137,7 +208,7 @@ class DefaultInputObjectProcessor implements InputObjectProcessor {
             // metadata.
             // The runtime fast-path consults the dispatcher for the ELEMENT class — codegen never emits a List<X> or
             // X[] processor; it emits X_InputProcessor and the iteration is handled here.
-            Class<?> elementClass = extractElementType(targetType);
+            Class<?> elementClass = TypeClassifier.elementType(targetType);
             if (elementClass != null) {
                 Optional<GeneratedInputProcessor<Object>> generated = dispatcher.resolve(asObjectClass(elementClass));
                 if (generated.isPresent()) {
@@ -166,7 +237,8 @@ class DefaultInputObjectProcessor implements InputObjectProcessor {
      * @param generated the generated processor for the element type
      * @param policies  invocation-level policies passed through to the processor
      * @param location  request origin
-     * @param rootCtx   the root traversal context for non-trivial invocation-level chains
+     * @param rootCtx   the root traversal context, handed to the generated processor as its parent
+     *                  so the invocation-level chains <em>and</em> the name projection survive
      * @return a new list with each map element processed
      */
     private Object generatedListWalk(
@@ -180,12 +252,13 @@ class DefaultInputObjectProcessor implements InputObjectProcessor {
         int index = 0;
         for (Object element : list) {
             if (element instanceof Map<?, ?>) {
-                // Pass null parent so the generated processor seeds with fromPolicies(policies);
-                // rootCtx for top-level entries is equivalent to fromPolicies(policies).
+                // Pass the REAL root context, never null — same reason as the top-level map entry
+                // point: a null parent makes the generated processor re-seed IDENTITY naming and
+                // silently stop matching renamed wire keys.
                 // Pass "[N]" as parentPath so field paths inside the processor read as "[N].fieldName".
                 String elementPath = "[" + index + "]";
-                result.add(
-                        generated.process(element, policies, location, chainResolver, dispatcher, null, elementPath));
+                result.add(generated.process(
+                        element, policies, location, chainResolver, dispatcher, rootCtx, elementPath));
             } else {
                 result.add(element);
             }
@@ -199,6 +272,11 @@ class DefaultInputObjectProcessor implements InputObjectProcessor {
     /**
      * Processes a map by applying chains to each string-valued entry and recursing into
      * nested maps and lists.
+     *
+     * <p>Each key is projected through {@code ctx}'s {@link InputFieldNameResolver} before its
+     * per-field metadata is looked up, because the map is keyed by wire names and
+     * {@link InputPolicyMetadata#fields()} by Java property names. The output map is keyed by the
+     * original wire names.
      *
      * @param map        the input map (keys may be any type, values may be any type)
      * @param metadata   annotation metadata for the owner type
@@ -230,10 +308,20 @@ class DefaultInputObjectProcessor implements InputObjectProcessor {
                 continue;
             }
 
-            FieldPolicyMetadata fieldMeta = metadata.fields().get(key);
+            // The intermediate is keyed by WIRE names; metadata.fields() is keyed by JAVA property
+            // names. Project before the lookup, or a renamed field never matches its own policies.
+            // The result map keeps the wire key — the projection selects metadata, it never renames
+            // what the codec will bind.
+            String logicalKey = ctx.logicalFieldName(ownerType, key);
+            FieldPolicyMetadata fieldMeta = metadata.fields().get(logicalKey);
+            // logicalName is the JAVA property name once a property matched, the wire name
+            // otherwise; path stays the wire path so a diagnostic points at what the caller sent.
+            String logicalName = fieldMeta != null ? logicalKey : key;
 
             if (value instanceof String s) {
-                result.put(key, processStringValue(s, metadata, fieldMeta, ctx, location, fieldPath, key, ownerType));
+                result.put(
+                        key,
+                        processStringValue(s, metadata, fieldMeta, ctx, location, fieldPath, logicalName, ownerType));
             } else if (value instanceof Map<?, ?> nestedMap) {
                 result.put(
                         key,
@@ -373,8 +461,9 @@ class DefaultInputObjectProcessor implements InputObjectProcessor {
                 // List<String> — apply the full chain (inherited + object + field) to each element
                 return processCollectionOfStrings(list, parentMeta, fieldMeta, ctx, location, fieldPath, ownerType);
             }
-            if (fieldMeta.nestedMetadata() != null && fieldMeta.collectionElementType() != null) {
-                // List<NestedObject> — process each element as a map with nested metadata
+            if (fieldMeta.collectionElementType() != null) {
+                // List<NestedObject> — dispatch each element at the declared element type, whose
+                // own metadata is resolved at descent.
                 InputTraversalContext childCtx = ctx.descend(parentMeta, fieldMeta);
                 return processListOfObjects(
                         list, childCtx, policies, location, fieldPath, fieldMeta.collectionElementType());
@@ -642,8 +731,10 @@ class DefaultInputObjectProcessor implements InputObjectProcessor {
         if (typeMeta.skipCanonicalization() && !fieldHasOwnChain) {
             return List.of();
         }
-        return InputTraversalContext.compose(
+        return ctx.compose(
                 ctx.inheritedCanonicalizerChain(),
+                typeMeta.ownerType(),
+                fieldMeta != null ? fieldMeta.fieldName() : null,
                 typeMeta.objectCanonicalizerChain(),
                 fieldMeta != null ? fieldMeta.canonicalizerChain() : List.of());
     }
@@ -672,8 +763,10 @@ class DefaultInputObjectProcessor implements InputObjectProcessor {
         if (typeMeta.skipSanitization() && !fieldHasOwnChain) {
             return List.of();
         }
-        return InputTraversalContext.compose(
+        return ctx.compose(
                 ctx.inheritedSanitizerChain(),
+                typeMeta.ownerType(),
+                fieldMeta != null ? fieldMeta.fieldName() : null,
                 typeMeta.objectSanitizerChain(),
                 fieldMeta != null ? fieldMeta.sanitizerChain() : List.of());
     }
@@ -718,46 +811,142 @@ class DefaultInputObjectProcessor implements InputObjectProcessor {
 
         String result = value;
         for (Class<? extends Canonicalizer> cls : canonChain) {
-            result = canonicalizerResolver.apply(cls).canonicalize(result, valueCtx);
+            result = canonicalizers.get(cls).canonicalize(result, valueCtx);
         }
         for (Class<? extends Sanitizer> cls : sanitChain) {
-            result = sanitizerResolver.apply(cls).sanitize(result, valueCtx);
+            result = sanitizers.get(cls).sanitize(result, valueCtx);
         }
         return result;
     }
 
-    // --- Type extraction ---
+    // --- Processor resolution cache ---
 
     /**
-     * Extracts the raw {@link Class} from a {@link Type}, handling both plain classes and
-     * parameterized types.
+     * Memoizes one caller-supplied processor resolver function per engine instance, so the function
+     * is consulted once per processor class rather than once per string value.
      *
-     * @param type the type to extract from
-     * @return the raw class, or {@code null} if extraction is not possible
+     * <p>The cache is <strong>instance-owned</strong>: it is reachable only from the owning
+     * {@link DefaultInputObjectProcessor} and becomes collectible with it. It deliberately does not
+     * use a static or {@link ClassValue} cache — a static {@code Class}-keyed map is the retention
+     * hazard {@link GeneratedInputProcessorDispatcher} avoids, and a per-engine map has no such
+     * problem because its lifetime is already bounded by the component-scoped engine.
+     *
+     * <p><strong>Concurrency.</strong> The engine is shared across requests on several event-loop
+     * threads. Lookups take the lock-free {@link ConcurrentHashMap#get} path and a miss computes the
+     * value <em>outside</em> the map before publishing it with
+     * {@link ConcurrentHashMap#putIfAbsent}, so no request thread ever waits on another while an
+     * arbitrary caller-supplied function runs. {@code computeIfAbsent} is deliberately not used: it
+     * would hold the bin lock across that function and would deadlock if a resolver ever re-entered
+     * the cache. The trade-off is that two threads racing on a cold key may both invoke the
+     * resolver; one result wins and the other is discarded. That is benign — canonicalizers and
+     * sanitizers are stateless, and the existing resolver already allocates a fresh instance per
+     * reflective resolution.
+     *
+     * @param <T> the processor kind — {@link Canonicalizer} or {@link Sanitizer}
      */
-    private static Class<?> extractClass(Type type) {
-        if (type instanceof Class<?> cls) return cls;
-        if (type instanceof ParameterizedType pt && pt.getRawType() instanceof Class<?> cls) return cls;
-        return null;
-    }
+    private static final class ResolutionCache<T> {
 
-    /**
-     * Extracts the element type from a parameterized collection type or array type.
-     *
-     * <p>For example, given {@code List<MyDto>} returns {@code MyDto.class};
-     * given {@code MyDto[]} returns {@code MyDto.class}.
-     *
-     * @param type the collection or array type
-     * @return the element class, or {@code null} if not determinable
-     */
-    private static Class<?> extractElementType(Type type) {
-        if (type instanceof ParameterizedType pt) {
-            Type[] args = pt.getActualTypeArguments();
-            if (args.length > 0 && args[0] instanceof Class<?> cls) return cls;
+        private final Function<Class<? extends T>, T> resolver;
+        private final ConcurrentMap<Class<? extends T>, Resolution<T>> entries = new ConcurrentHashMap<>();
+
+        /**
+         * Creates a cache over the given caller-supplied resolver function.
+         *
+         * @param resolver the function that produces a processor instance from its class
+         */
+        ResolutionCache(Function<Class<? extends T>, T> resolver) {
+            this.resolver = resolver;
         }
-        if (type instanceof Class<?> cls && cls.isArray()) return cls.getComponentType();
-        return null;
+
+        /**
+         * Returns the processor instance for the given class, resolving it through the wrapped
+         * function on first use.
+         *
+         * @param type the processor class to resolve
+         * @return the cached processor instance; never {@code null}
+         * @throws RuntimeException the failure this class resolved to — the exception the resolver
+         *                          raised, or an {@link IllegalStateException} naming the class when
+         *                          the resolver returned {@code null}. Either is captured on the
+         *                          first attempt and rethrown on every later one, so an unresolvable
+         *                          processor still fails the request without re-running a lookup
+         *                          already known to fail
+         */
+        T get(Class<? extends T> type) {
+            Resolution<T> cached = entries.get(type);
+            if (cached == null) {
+                cached = resolve(type);
+                Resolution<T> published = entries.putIfAbsent(type, cached);
+                if (published != null) {
+                    cached = published;
+                }
+            }
+            return switch (cached) {
+                case Resolution.Resolved<T> resolved -> resolved.instance();
+                case Resolution.Failed<T> failed -> throw failed.error();
+            };
+        }
+
+        /**
+         * Invokes the resolver once, capturing either the instance or the failure it raised.
+         *
+         * <p>Only a {@link RuntimeException} is captured. An {@link Error} propagates uncached: it
+         * signals a JVM-level problem (a failing static initializer, a linkage error) whose retry
+         * semantics are not this cache's to decide.
+         *
+         * <p><strong>A null resolution is a failed resolution.</strong> Caching {@code null} as a
+         * success would make every later value for that class die on a bare
+         * {@link NullPointerException} that names no processor class, for the life of the engine —
+         * the resolver having returned null is long out of the stack by then. Rejecting it here
+         * turns an unbound processor into the same named, cached diagnostic a throwing resolver
+         * produces.
+         *
+         * @param type the processor class to resolve
+         * @return the resolution outcome to cache
+         */
+        private Resolution<T> resolve(Class<? extends T> type) {
+            try {
+                T instance = resolver.apply(type);
+                if (instance == null) {
+                    return new Resolution.Failed<>(new IllegalStateException(
+                            "The configured resolver returned no instance for " + type.getName()
+                                    + ". Every canonicalizer and sanitizer named by a declared chain must be "
+                                    + "resolvable; bind it, or remove it from the chain that names it."));
+                }
+                return new Resolution.Resolved<>(instance);
+            } catch (RuntimeException failure) {
+                return new Resolution.Failed<>(failure);
+            }
+        }
     }
+
+    /**
+     * A cached processor-resolution outcome. Mirrors {@link GeneratedInputProcessorDispatcher}'s
+     * lookup-result model: a failure is cached alongside a success so a broken binding costs one
+     * lookup rather than one per value, and the captured exception is rethrown on every retrieval so
+     * consumers still see the failure immediately.
+     *
+     * @param <T> the processor kind
+     */
+    private sealed interface Resolution<T> {
+
+        /**
+         * A successful resolution.
+         *
+         * @param instance the resolved processor instance
+         * @param <T>      the processor kind
+         */
+        record Resolved<T>(T instance) implements Resolution<T> {}
+
+        /**
+         * A resolution that failed. The captured exception is rethrown on every retrieval.
+         *
+         * @param error the failure the resolver raised
+         * @param <T>   the processor kind
+         */
+        record Failed<T>(RuntimeException error) implements Resolution<T> {}
+    }
+
+    // --- Type extraction ---
 
     /**
      * Erases a wildcard-captured class reference to {@code Class<Object>} so the dispatcher's

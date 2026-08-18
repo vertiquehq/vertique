@@ -22,6 +22,7 @@ import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
 import dev.vertique.core.sanitization.Canonicalizer;
+import dev.vertique.core.sanitization.InputFieldNameResolver;
 import dev.vertique.core.sanitization.InputLocation;
 import dev.vertique.core.sanitization.InputValueContext;
 import dev.vertique.core.sanitization.Sanitizer;
@@ -161,7 +162,11 @@ class CollectionParamStateMachineTest {
     static final class UppercasingProcessor implements InputObjectProcessor {
         @Override
         public Object processInput(
-                Object intermediateBody, Type targetType, EffectiveInputPolicies policies, InputLocation location) {
+                Object intermediateBody,
+                Type targetType,
+                EffectiveInputPolicies policies,
+                InputLocation location,
+                InputFieldNameResolver nameResolver) {
             if (intermediateBody instanceof String s) {
                 return s.toUpperCase(Locale.ROOT);
             }

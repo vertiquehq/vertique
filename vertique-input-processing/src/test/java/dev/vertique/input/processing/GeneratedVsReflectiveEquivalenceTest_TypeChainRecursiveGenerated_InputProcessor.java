@@ -4,47 +4,49 @@
 package dev.vertique.input.processing;
 
 import static dev.vertique.input.processing.GeneratedSupport.applyString;
+import static dev.vertique.input.processing.GeneratedSupport.childPath;
 
 import dev.vertique.core.sanitization.Canonicalizer;
 import dev.vertique.core.sanitization.InputFieldNameResolver;
 import dev.vertique.core.sanitization.InputLocation;
 import dev.vertique.core.sanitization.Sanitizer;
-import dev.vertique.input.processing.GeneratedVsReflectiveEquivalenceTest.ObjLevelGenerated;
 import dev.vertique.input.processing.GeneratedVsReflectiveEquivalenceTest.TestTrim;
+import dev.vertique.input.processing.GeneratedVsReflectiveEquivalenceTest.TypeChainRecursiveGenerated;
 import jakarta.annotation.Nullable;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
 /**
- * Hand-written companion for {@link ObjLevelGenerated}, which carries class-level
- * {@code @Canonicalize(TestTrim.class)}. Mirrors the codegen output: object-level constants
- * carry the type chain; the {@code default} arm calls
- * {@link GeneratedSupport#applyDefault(Object, InputTraversalContext, java.util.List, java.util.List, boolean, boolean, java.util.List, java.util.List, boolean, boolean, ChainResolver, InputLocation, String, String, Class, GeneratedInputProcessorDispatcher) applyDefault}
- * with those object-level constants so unknown Jackson keys still receive the type chain —
- * matching the reflective walker.
+ * Hand-written companion {@link GeneratedInputProcessor} for {@link TypeChainRecursiveGenerated},
+ * mirroring the shape {@code vertique-codegen-sanitization} emits for a directly self-referential
+ * DTO that carries a <em>type-level</em> chain: the object-level constant is non-empty and the
+ * {@code child} arm dispatches back at its own target type, so the object-level chain is offered
+ * to {@code descend} once per level of the intermediate.
  *
  * <p>As the emitter does, the switch selects on the projected logical name
- * ({@code rootCtx.logicalFieldName(ObjLevelGenerated.class, k)}) with arms keyed on Java property
- * names, while the emitted map keeps the wire key {@code k}.
+ * ({@code rootCtx.logicalFieldName(TypeChainRecursiveGenerated.class, k)}) with arms keyed on Java
+ * property names, while the emitted map keeps the wire key {@code k}.
+ *
+ * <p>Naming follows the dispatcher's {@code generatedClassName(...)} algorithm.
  */
-public final class GeneratedVsReflectiveEquivalenceTest_ObjLevelGenerated_InputProcessor
-        implements GeneratedInputProcessor<ObjLevelGenerated> {
+public final class GeneratedVsReflectiveEquivalenceTest_TypeChainRecursiveGenerated_InputProcessor
+        implements GeneratedInputProcessor<TypeChainRecursiveGenerated> {
 
     private static final List<Class<? extends Canonicalizer>> OBJ_CANON = List.of(TestTrim.class);
     private static final List<Class<? extends Sanitizer>> OBJ_SANIT = List.of();
     private static final boolean OBJ_SKIP_CANON = false;
     private static final boolean OBJ_SKIP_SANIT = false;
 
-    private static final List<Class<? extends Canonicalizer>> KNOWN_CANON = List.of();
-    private static final List<Class<? extends Sanitizer>> KNOWN_SANIT = List.of();
+    private static final List<Class<? extends Canonicalizer>> NOTE_CANON = List.of();
+    private static final List<Class<? extends Sanitizer>> NOTE_SANIT = List.of();
 
-    /** Public no-arg constructor for {@code Class.forName}-based instantiation. */
-    public GeneratedVsReflectiveEquivalenceTest_ObjLevelGenerated_InputProcessor() {}
+    /** Public no-arg constructor for {@code Class.forName}-based instantiation by the dispatcher. */
+    public GeneratedVsReflectiveEquivalenceTest_TypeChainRecursiveGenerated_InputProcessor() {}
 
     @Override
-    public Class<ObjLevelGenerated> targetType() {
-        return ObjLevelGenerated.class;
+    public Class<TypeChainRecursiveGenerated> targetType() {
+        return TypeChainRecursiveGenerated.class;
     }
 
     @Override
@@ -71,9 +73,9 @@ public final class GeneratedVsReflectiveEquivalenceTest_ObjLevelGenerated_InputP
                 out.put(k, null);
                 continue;
             }
-            String childPath = parentPath.isEmpty() ? k : parentPath + "." + k;
-            switch (rootCtx.logicalFieldName(ObjLevelGenerated.class, k)) {
-                case "known" ->
+            String childPath = childPath(parentPath, k);
+            switch (rootCtx.logicalFieldName(TypeChainRecursiveGenerated.class, k)) {
+                case "note" ->
                     out.put(
                             k,
                             applyString(
@@ -83,15 +85,39 @@ public final class GeneratedVsReflectiveEquivalenceTest_ObjLevelGenerated_InputP
                                     OBJ_SANIT,
                                     OBJ_SKIP_CANON,
                                     OBJ_SKIP_SANIT,
-                                    KNOWN_CANON,
-                                    KNOWN_SANIT,
+                                    NOTE_CANON,
+                                    NOTE_SANIT,
                                     false,
                                     false,
                                     resolver,
                                     location,
                                     childPath,
-                                    "known",
-                                    ObjLevelGenerated.class));
+                                    "note",
+                                    TypeChainRecursiveGenerated.class));
+                case "child" -> {
+                    InputTraversalContext nestedCtx = rootCtx.descend(
+                            TypeChainRecursiveGenerated.class,
+                            "child",
+                            OBJ_CANON,
+                            OBJ_SANIT,
+                            OBJ_SKIP_CANON,
+                            OBJ_SKIP_SANIT,
+                            null,
+                            null,
+                            false,
+                            false);
+                    out.put(
+                            k,
+                            dispatcher.dispatchNested(
+                                    v,
+                                    TypeChainRecursiveGenerated.class,
+                                    policies,
+                                    location,
+                                    resolver,
+                                    nestedCtx,
+                                    childPath,
+                                    TypeChainRecursiveGenerated.class));
+                }
                 default ->
                     out.put(
                             k,
@@ -110,8 +136,8 @@ public final class GeneratedVsReflectiveEquivalenceTest_ObjLevelGenerated_InputP
                                     location,
                                     childPath,
                                     k,
-                                    ObjLevelGenerated.class,
-                                    ObjLevelGenerated.class,
+                                    TypeChainRecursiveGenerated.class,
+                                    TypeChainRecursiveGenerated.class,
                                     dispatcher));
             }
         }

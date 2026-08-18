@@ -3,48 +3,46 @@
 
 package dev.vertique.input.processing;
 
-import static dev.vertique.input.processing.GeneratedSupport.applyString;
+import static dev.vertique.input.processing.GeneratedSupport.childPath;
 
 import dev.vertique.core.sanitization.Canonicalizer;
 import dev.vertique.core.sanitization.InputFieldNameResolver;
 import dev.vertique.core.sanitization.InputLocation;
 import dev.vertique.core.sanitization.Sanitizer;
-import dev.vertique.input.processing.GeneratedVsReflectiveEquivalenceTest.ObjLevelGenerated;
-import dev.vertique.input.processing.GeneratedVsReflectiveEquivalenceTest.TestTrim;
+import dev.vertique.input.processing.GeneratedVsReflectiveEquivalenceTest.DeepGeneratedRoot;
+import dev.vertique.input.processing.GeneratedVsReflectiveEquivalenceTest.DeepLink2;
 import jakarta.annotation.Nullable;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
 /**
- * Hand-written companion for {@link ObjLevelGenerated}, which carries class-level
- * {@code @Canonicalize(TestTrim.class)}. Mirrors the codegen output: object-level constants
- * carry the type chain; the {@code default} arm calls
- * {@link GeneratedSupport#applyDefault(Object, InputTraversalContext, java.util.List, java.util.List, boolean, boolean, java.util.List, java.util.List, boolean, boolean, ChainResolver, InputLocation, String, String, Class, GeneratedInputProcessorDispatcher) applyDefault}
- * with those object-level constants so unknown Jackson keys still receive the type chain —
- * matching the reflective walker.
+ * Hand-written companion {@link GeneratedInputProcessor} for {@link DeepGeneratedRoot}, the root of
+ * the twelve-level chain of distinct types used by
+ * {@link GeneratedVsReflectiveEquivalenceTest}. Its single {@code child} arm mirrors the codegen
+ * NESTED_DTO shape: descend the context, then dispatch the nested value at the declared field type.
+ * The remaining eleven levels have no companion, so they resume on the reflective walker.
  *
  * <p>As the emitter does, the switch selects on the projected logical name
- * ({@code rootCtx.logicalFieldName(ObjLevelGenerated.class, k)}) with arms keyed on Java property
+ * ({@code rootCtx.logicalFieldName(DeepGeneratedRoot.class, k)}) with arms keyed on Java property
  * names, while the emitted map keeps the wire key {@code k}.
+ *
+ * <p>Naming follows the dispatcher's {@code generatedClassName(...)} algorithm.
  */
-public final class GeneratedVsReflectiveEquivalenceTest_ObjLevelGenerated_InputProcessor
-        implements GeneratedInputProcessor<ObjLevelGenerated> {
+public final class GeneratedVsReflectiveEquivalenceTest_DeepGeneratedRoot_InputProcessor
+        implements GeneratedInputProcessor<DeepGeneratedRoot> {
 
-    private static final List<Class<? extends Canonicalizer>> OBJ_CANON = List.of(TestTrim.class);
+    private static final List<Class<? extends Canonicalizer>> OBJ_CANON = List.of();
     private static final List<Class<? extends Sanitizer>> OBJ_SANIT = List.of();
     private static final boolean OBJ_SKIP_CANON = false;
     private static final boolean OBJ_SKIP_SANIT = false;
 
-    private static final List<Class<? extends Canonicalizer>> KNOWN_CANON = List.of();
-    private static final List<Class<? extends Sanitizer>> KNOWN_SANIT = List.of();
-
-    /** Public no-arg constructor for {@code Class.forName}-based instantiation. */
-    public GeneratedVsReflectiveEquivalenceTest_ObjLevelGenerated_InputProcessor() {}
+    /** Public no-arg constructor for {@code Class.forName}-based instantiation by the dispatcher. */
+    public GeneratedVsReflectiveEquivalenceTest_DeepGeneratedRoot_InputProcessor() {}
 
     @Override
-    public Class<ObjLevelGenerated> targetType() {
-        return ObjLevelGenerated.class;
+    public Class<DeepGeneratedRoot> targetType() {
+        return DeepGeneratedRoot.class;
     }
 
     @Override
@@ -71,27 +69,32 @@ public final class GeneratedVsReflectiveEquivalenceTest_ObjLevelGenerated_InputP
                 out.put(k, null);
                 continue;
             }
-            String childPath = parentPath.isEmpty() ? k : parentPath + "." + k;
-            switch (rootCtx.logicalFieldName(ObjLevelGenerated.class, k)) {
-                case "known" ->
+            String childPath = childPath(parentPath, k);
+            switch (rootCtx.logicalFieldName(DeepGeneratedRoot.class, k)) {
+                case "child" -> {
+                    InputTraversalContext nestedCtx = rootCtx.descend(
+                            DeepGeneratedRoot.class,
+                            "child",
+                            OBJ_CANON,
+                            OBJ_SANIT,
+                            OBJ_SKIP_CANON,
+                            OBJ_SKIP_SANIT,
+                            null,
+                            null,
+                            false,
+                            false);
                     out.put(
                             k,
-                            applyString(
+                            dispatcher.dispatchNested(
                                     v,
-                                    rootCtx,
-                                    OBJ_CANON,
-                                    OBJ_SANIT,
-                                    OBJ_SKIP_CANON,
-                                    OBJ_SKIP_SANIT,
-                                    KNOWN_CANON,
-                                    KNOWN_SANIT,
-                                    false,
-                                    false,
-                                    resolver,
+                                    DeepLink2.class,
+                                    policies,
                                     location,
+                                    resolver,
+                                    nestedCtx,
                                     childPath,
-                                    "known",
-                                    ObjLevelGenerated.class));
+                                    DeepLink2.class));
+                }
                 default ->
                     out.put(
                             k,
@@ -110,8 +113,8 @@ public final class GeneratedVsReflectiveEquivalenceTest_ObjLevelGenerated_InputP
                                     location,
                                     childPath,
                                     k,
-                                    ObjLevelGenerated.class,
-                                    ObjLevelGenerated.class,
+                                    DeepGeneratedRoot.class,
+                                    DeepGeneratedRoot.class,
                                     dispatcher));
             }
         }

@@ -4,17 +4,22 @@
 package dev.vertique.codegen.sanitization.processor;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 
 import dev.vertique.codegen.test.ProcessorTestHarness;
 import dev.vertique.codegen.test.ProcessorTestHarness.Result;
 import dev.vertique.codegen.test.fixtures.SourceFiles;
+import dev.vertique.core.sanitization.InputFieldNameResolver;
 import dev.vertique.core.sanitization.InputLocation;
+import dev.vertique.core.sanitization.InputValueContext;
 import dev.vertique.input.processing.ChainResolver;
 import dev.vertique.input.processing.EffectiveInputPolicies;
 import dev.vertique.input.processing.GeneratedInputProcessor;
 import dev.vertique.input.processing.GeneratedInputProcessorDispatcher;
+import dev.vertique.input.processing.InputTraversalContext;
 import dev.vertique.sanitization.canonicalize.TrimCanonicalizer;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -249,6 +254,151 @@ class SanitizationProcessorRoundtripTest {
             public class NegProfileResource {
                 @POST
                 public String create(NegProfileDto body) { return null; }
+            }
+            """);
+
+    // --- Array-typed fields ---
+
+    /**
+     * Nested DTO reachable from {@link #ARRAY_ARTICLE_DTO} only as an <em>array component</em>
+     * type. Carries its own {@code @Sanitize} so the scanner must emit
+     * {@code ArrayCommentDto_InputProcessor} for the element-wise dispatch to have a target.
+     */
+    private static final JavaFileObject ARRAY_COMMENT_DTO = SourceFiles.inline("com.example.rt.ArrayCommentDto", """
+            package com.example.rt;
+            import dev.vertique.core.sanitization.Sanitize;
+            import dev.vertique.sanitization.sanitize.StripControlCharsSanitizer;
+            public class ArrayCommentDto {
+                @Sanitize(StripControlCharsSanitizer.class)
+                public String text;
+            }
+            """);
+
+    /**
+     * Root DTO covering the three array shapes the reflective walker distinguishes: an array of
+     * nested DTOs and an array of strings both carry one element schema and descend element-wise,
+     * while an array of arrays carries none and must keep the inherited-chain-only path.
+     */
+    private static final JavaFileObject ARRAY_ARTICLE_DTO = SourceFiles.inline("com.example.rt.ArrayArticleDto", """
+            package com.example.rt;
+            import dev.vertique.core.sanitization.Sanitize;
+            import dev.vertique.sanitization.sanitize.StripControlCharsSanitizer;
+            public class ArrayArticleDto {
+                public ArrayCommentDto[] comments;
+                @Sanitize(StripControlCharsSanitizer.class)
+                public String[] tags;
+                @Sanitize(StripControlCharsSanitizer.class)
+                public String[][] matrix;
+            }
+            """);
+
+    private static final JavaFileObject ARRAY_ARTICLE_RESOURCE =
+            SourceFiles.inline("com.example.rt.ArrayArticleResource", """
+            package com.example.rt;
+            import jakarta.ws.rs.POST;
+            import jakarta.ws.rs.Path;
+            @Path("/array-articles")
+            public class ArrayArticleResource {
+                @POST
+                public String create(ArrayArticleDto body) { return null; }
+            }
+            """);
+
+    // --- Nested-container and static-field fixtures ---
+
+    /**
+     * Nested DTO used as the innermost element of a doubly-nested container field, and as the type
+     * of {@link #NESTED_CONTAINER_DTO}'s static field. Carries its own {@code @Sanitize} so an
+     * unwanted element-wise dispatch or a resolved static field would be observable as an emitted
+     * {@code NestedTagDto_InputProcessor} reference.
+     */
+    private static final JavaFileObject NESTED_TAG_DTO = SourceFiles.inline("com.example.rt.NestedTagDto", """
+            package com.example.rt;
+            import dev.vertique.core.sanitization.Sanitize;
+            import dev.vertique.sanitization.sanitize.StripControlCharsSanitizer;
+            public class NestedTagDto {
+                @Sanitize(StripControlCharsSanitizer.class)
+                public String text;
+            }
+            """);
+
+    /**
+     * Root DTO covering the shapes whose element type is itself a container ({@code List<List<…>>},
+     * {@code Set<List<…>>}), plus a {@code @Slf4j}-style static field. None of the three is a
+     * dispatchable element schema or a wire property, so all three must keep the
+     * inherited-chain-only path — exactly as the reflective walker classifies them.
+     */
+    private static final JavaFileObject NESTED_CONTAINER_DTO =
+            SourceFiles.inline("com.example.rt.NestedContainerDto", """
+            package com.example.rt;
+            import dev.vertique.core.sanitization.Sanitize;
+            import dev.vertique.sanitization.sanitize.StripControlCharsSanitizer;
+            import java.util.List;
+            import java.util.Set;
+            public class NestedContainerDto {
+                public static final NestedTagDto SHARED = new NestedTagDto();
+                @Sanitize(StripControlCharsSanitizer.class)
+                public List<List<String>> rows;
+                public Set<List<NestedTagDto>> tagGroups;
+            }
+            """);
+
+    private static final JavaFileObject NESTED_CONTAINER_RESOURCE =
+            SourceFiles.inline("com.example.rt.NestedContainerResource", """
+            package com.example.rt;
+            import jakarta.ws.rs.POST;
+            import jakarta.ws.rs.Path;
+            @Path("/nested-containers")
+            public class NestedContainerResource {
+                @POST
+                public String create(NestedContainerDto body) { return null; }
+            }
+            """);
+
+    // --- Wire-name projection fixtures ---
+
+    /**
+     * Nested DTO whose only annotated property is reached under a renamed wire key
+     * ({@code city_name} → {@code cityName}), so the nested generated processor must itself project
+     * before its switch — a projection that only worked at the root would leave this field untouched.
+     */
+    private static final JavaFileObject RENAMED_ADDRESS_DTO =
+            SourceFiles.inline("com.example.rt.RenamedAddressDto", """
+            package com.example.rt;
+            import dev.vertique.core.sanitization.Canonicalize;
+            import dev.vertique.sanitization.canonicalize.TrimCanonicalizer;
+            public class RenamedAddressDto {
+                @Canonicalize(TrimCanonicalizer.class)
+                public String cityName;
+            }
+            """);
+
+    /**
+     * Root DTO whose Java property names differ from the wire keys the intermediate is keyed by.
+     * Covers the {@code STRING} arm ({@code user_name} → {@code userName}) and the
+     * {@code NESTED_DTO} arm ({@code home_address} → {@code homeAddress}).
+     */
+    private static final JavaFileObject RENAMED_PROFILE_DTO =
+            SourceFiles.inline("com.example.rt.RenamedProfileDto", """
+            package com.example.rt;
+            import dev.vertique.core.sanitization.Canonicalize;
+            import dev.vertique.sanitization.canonicalize.TrimCanonicalizer;
+            public class RenamedProfileDto {
+                @Canonicalize(TrimCanonicalizer.class)
+                public String userName;
+                public RenamedAddressDto homeAddress;
+            }
+            """);
+
+    private static final JavaFileObject RENAMED_PROFILE_RESOURCE =
+            SourceFiles.inline("com.example.rt.RenamedProfileResource", """
+            package com.example.rt;
+            import jakarta.ws.rs.POST;
+            import jakarta.ws.rs.Path;
+            @Path("/renamed-profiles")
+            public class RenamedProfileResource {
+                @POST
+                public String create(RenamedProfileDto body) { return null; }
             }
             """);
 
@@ -829,6 +979,189 @@ class SanitizationProcessorRoundtripTest {
         }
     }
 
+    // --- Array-typed fields ---
+
+    /**
+     * Proves that array-typed fields descend element-wise on the <em>generated</em> path, matching
+     * the reflective walker's rule that a collection and an array are one shape:
+     * {@code InputPolicyMetadataResolver.buildFieldMeta} routes
+     * {@code Collection.class.isAssignableFrom(rawType) || rawType.isArray()} through a single
+     * branch, with {@code TypeClassifier.elementType} supplying the element schema — and returning
+     * {@code null} when the component type is itself an array, which keeps
+     * {@code String[][]} on the inherited-chain path.
+     *
+     * <p>These assertions run against real generated processor classes, not hand-written
+     * companions, so they pin what the annotation processor actually emits.
+     */
+    @Nested
+    @DisplayName("array-typed fields")
+    class ArrayFields {
+
+        @Test
+        @DisplayName("ArrayCommentDto[] field dispatches each element at the component type")
+        @SuppressWarnings("unchecked")
+        void arrayOfNestedDtoField_eachElementDispatchedAtComponentType() throws Exception {
+            Result result = ProcessorTestHarness.run(
+                    new SanitizationProcessor(), ARRAY_COMMENT_DTO, ARRAY_ARTICLE_DTO, ARRAY_ARTICLE_RESOURCE);
+            result.assertSuccess();
+            result.assertGeneratedSourceContains(
+                    "com.example.rt.ArrayArticleDto_InputProcessor",
+                    "dispatchObjectCollection(v, ArrayCommentDto.class");
+
+            GeneratedInputProcessor<?> articleProcessor =
+                    newProcessor(result, "com.example.rt.ArrayArticleDto_InputProcessor");
+            GeneratedInputProcessor<?> commentProcessor =
+                    newProcessor(result, "com.example.rt.ArrayCommentDto_InputProcessor");
+
+            GeneratedInputProcessorDispatcher dispatcher = GeneratedInputProcessorDispatcher.withoutContinuation();
+            registerProcessor(dispatcher, commentProcessor.targetType(), commentProcessor);
+
+            List<Object> elements = new ArrayList<>(List.of(arrayComment("al\u0001pha"), arrayComment("be\u0001ta")));
+            Map<String, Object> intermediate = new LinkedHashMap<>();
+            intermediate.put("comments", elements);
+
+            Object output = articleProcessor.process(
+                    intermediate,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY,
+                    buildChainResolver(),
+                    dispatcher,
+                    null,
+                    "");
+
+            assertInstanceOf(Map.class, output);
+            Map<String, Object> out = (Map<String, Object>) output;
+            assertInstanceOf(List.class, out.get("comments"));
+            List<Object> processed = (List<Object>) out.get("comments");
+            assertEquals(
+                    List.of("alpha", "beta"),
+                    processed.stream()
+                            .map(e -> ((Map<String, Object>) e).get("text"))
+                            .toList(),
+                    "Each ArrayCommentDto[] element must reach ArrayCommentDto_InputProcessor, "
+                            + "exactly as a List<ArrayCommentDto> element does");
+        }
+
+        @Test
+        @DisplayName("@Sanitize on String[] field — each element sanitized")
+        @SuppressWarnings("unchecked")
+        void arrayOfStringsField_eachElementSanitized() throws Exception {
+            Result result = ProcessorTestHarness.run(
+                    new SanitizationProcessor(), ARRAY_COMMENT_DTO, ARRAY_ARTICLE_DTO, ARRAY_ARTICLE_RESOURCE);
+            result.assertSuccess();
+
+            GeneratedInputProcessor<?> processor =
+                    newProcessor(result, "com.example.rt.ArrayArticleDto_InputProcessor");
+
+            Map<String, Object> intermediate = new LinkedHashMap<>();
+            intermediate.put("tags", new ArrayList<>(List.of("ja\u0001va", "ve\u0001rtx")));
+
+            Object output = processor.process(
+                    intermediate,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY,
+                    buildChainResolver(),
+                    GeneratedInputProcessorDispatcher.withoutContinuation(),
+                    null,
+                    "");
+
+            assertInstanceOf(Map.class, output);
+            Map<String, Object> out = (Map<String, Object>) output;
+            assertEquals(
+                    List.of("java", "vertx"),
+                    out.get("tags"),
+                    "A String[] field carries the same element schema as a List<String> and must be "
+                            + "sanitized element-wise without a reflective fallback");
+        }
+
+        @Test
+        @DisplayName("String[][] field has no element schema — keeps the inherited-chain path")
+        @SuppressWarnings("unchecked")
+        void arrayOfArraysField_keepsInheritedChainPath() throws Exception {
+            Result result = ProcessorTestHarness.run(
+                    new SanitizationProcessor(), ARRAY_COMMENT_DTO, ARRAY_ARTICLE_DTO, ARRAY_ARTICLE_RESOURCE);
+            result.assertSuccess();
+            result.assertGeneratedSourceDoesNotContain(
+                    "com.example.rt.ArrayArticleDto_InputProcessor", "dispatchObjectCollection(v, String[]");
+
+            GeneratedInputProcessor<?> processor =
+                    newProcessor(result, "com.example.rt.ArrayArticleDto_InputProcessor");
+
+            RecordingContinuation continuation = new RecordingContinuation();
+            GeneratedInputProcessorDispatcher dispatcher = new GeneratedInputProcessorDispatcher(continuation);
+
+            List<Object> rows = new ArrayList<>(List.of(new ArrayList<>(List.of("ab"))));
+            Map<String, Object> intermediate = new LinkedHashMap<>();
+            intermediate.put("matrix", rows);
+
+            Object output = processor.process(
+                    intermediate,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY,
+                    buildChainResolver(),
+                    dispatcher,
+                    null,
+                    "");
+
+            assertInstanceOf(Map.class, output);
+            Map<String, Object> out = (Map<String, Object>) output;
+            assertEquals(
+                    List.of("matrix"),
+                    continuation.walkUnknownPaths,
+                    "String[][] has no element schema (TypeClassifier.elementType returns null for an "
+                            + "array component), so it must reach the reflective continuation rather than "
+                            + "dispatching elements at String[]");
+            assertSame(rows, out.get("matrix"), "The continuation's return value is what lands in the output map");
+        }
+
+        /**
+         * Builds a one-field intermediate map standing in for a serialized {@code ArrayCommentDto}.
+         * Callers embed a control character in {@code rawText} so a successful element dispatch is
+         * observable — {@code ArrayCommentDto_InputProcessor} strips it.
+         *
+         * @param rawText the un-sanitized {@code text} wire value
+         * @return the nested intermediate map
+         */
+        private Map<String, Object> arrayComment(String rawText) {
+            Map<String, Object> nested = new LinkedHashMap<>();
+            nested.put("text", rawText);
+            return nested;
+        }
+    }
+
+    /**
+     * Reflective continuation that records the field paths reaching {@code walkUnknown} and returns
+     * the intermediate unchanged. {@code continueAt} throws, so an unexpected typed descent is as
+     * loud as {@link GeneratedInputProcessorDispatcher#withoutContinuation()} makes it.
+     */
+    private static final class RecordingContinuation
+            implements GeneratedInputProcessorDispatcher.ReflectiveContinuation {
+
+        private final List<String> walkUnknownPaths = new ArrayList<>();
+
+        @Override
+        public Object continueAt(
+                Object intermediate,
+                Class<?> targetType,
+                dev.vertique.input.processing.InputTraversalContext ctx,
+                InputLocation location,
+                String fieldPath,
+                Class<?> ownerType) {
+            throw new UnsupportedOperationException("continueAt not expected for " + fieldPath);
+        }
+
+        @Override
+        public Object walkUnknown(
+                Object intermediate,
+                dev.vertique.input.processing.InputTraversalContext ctx,
+                InputLocation location,
+                String fieldPath,
+                Class<?> ownerType) {
+            walkUnknownPaths.add(fieldPath);
+            return intermediate;
+        }
+    }
+
     // --- Null value passthrough ---
 
     @Nested
@@ -897,6 +1230,224 @@ class SanitizationProcessorRoundtripTest {
             assertEquals(nonMap, output, "Non-Map intermediate should be returned unchanged");
         }
     }
+
+    // --- Nested containers and static fields ---
+
+    /**
+     * Proves the APT-time classifier agrees with {@code TypeClassifier} on the two shapes that are
+     * not wire-dispatchable: a container whose element type is itself a container, and a static
+     * field. Both must reach the reflective continuation's {@code walkUnknown} (or not be emitted
+     * at all) rather than dispatching at a bogus element or field type.
+     *
+     * <p>Divergence here is not cosmetic: the generated and reflective paths must produce
+     * byte-equal output for the same intermediate, so a shape the reflective walker leaves on the
+     * inherited-chain path cannot be element-dispatched by codegen.
+     */
+    @Nested
+    @DisplayName("nested container and static fields")
+    class NestedContainerAndStaticFields {
+
+        @Test
+        @DisplayName("List<List<String>> has no element schema — keeps the inherited-chain path")
+        @SuppressWarnings("unchecked")
+        void nestedListField_keepsInheritedChainPath() throws Exception {
+            Result result = ProcessorTestHarness.run(
+                    new SanitizationProcessor(), NESTED_TAG_DTO, NESTED_CONTAINER_DTO, NESTED_CONTAINER_RESOURCE);
+            result.assertSuccess();
+            result.assertGeneratedSourceDoesNotContain(
+                    "com.example.rt.NestedContainerDto_InputProcessor", "dispatchObjectCollection(v, List");
+
+            GeneratedInputProcessor<?> processor =
+                    newProcessor(result, "com.example.rt.NestedContainerDto_InputProcessor");
+
+            RecordingContinuation continuation = new RecordingContinuation();
+            GeneratedInputProcessorDispatcher dispatcher = new GeneratedInputProcessorDispatcher(continuation);
+
+            List<Object> rows = new ArrayList<>(List.of(new ArrayList<>(List.of("ab"))));
+            Map<String, Object> intermediate = new LinkedHashMap<>();
+            intermediate.put("rows", rows);
+
+            Object output = processor.process(
+                    intermediate,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY,
+                    buildChainResolver(),
+                    dispatcher,
+                    null,
+                    "");
+
+            assertInstanceOf(Map.class, output);
+            Map<String, Object> out = (Map<String, Object>) output;
+            assertEquals(
+                    List.of("rows"),
+                    continuation.walkUnknownPaths,
+                    "List<List<String>> has no element schema (the inner List is itself a container), "
+                            + "so it must reach the reflective continuation rather than dispatching "
+                            + "elements at List");
+            assertSame(rows, out.get("rows"), "the continuation's return value is what lands in the output map");
+        }
+
+        @Test
+        @DisplayName("Set<List<NestedTagDto>> does not dispatch elements at the inner container type")
+        void nestedListInSetField_doesNotDispatchAtTheContainer() throws Exception {
+            Result result = ProcessorTestHarness.run(
+                    new SanitizationProcessor(), NESTED_TAG_DTO, NESTED_CONTAINER_DTO, NESTED_CONTAINER_RESOURCE);
+            result.assertSuccess();
+
+            result.assertGeneratedSourceDoesNotContain(
+                    "com.example.rt.NestedContainerDto_InputProcessor", "dispatchObjectCollection(v, List");
+        }
+
+        @Test
+        @DisplayName("a static field emits no arm — it is not a wire property")
+        void staticField_emitsNoArm() throws Exception {
+            Result result = ProcessorTestHarness.run(
+                    new SanitizationProcessor(), NESTED_TAG_DTO, NESTED_CONTAINER_DTO, NESTED_CONTAINER_RESOURCE);
+            result.assertSuccess();
+
+            result.assertGeneratedSourceDoesNotContain(
+                    "com.example.rt.NestedContainerDto_InputProcessor", "\"SHARED\"");
+        }
+    }
+
+    // --- Wire-name projection ---
+
+    /**
+     * Proves that a <em>genuinely generated</em> {@code _InputProcessor} honors the traversal's
+     * {@link InputFieldNameResolver} projection.
+     *
+     * <p>Every test here hands the processor a real parent {@link InputTraversalContext} seeded with
+     * a non-identity projection ({@code user_name} → {@code userName}) and an intermediate keyed by
+     * the wire names. A processor whose switch keys on the raw wire key matches no arm, so the
+     * declared chain never runs and the value comes back untouched.
+     */
+    @Nested
+    @DisplayName("wire-name projection in generated processors")
+    class WireNameProjection {
+
+        @Test
+        @DisplayName("declared chain applies to a renamed field and the output keeps the wire key")
+        @SuppressWarnings("unchecked")
+        void renamedStringField_chainAppliedAndWireKeyKept() throws Exception {
+            Result result = ProcessorTestHarness.run(
+                    new SanitizationProcessor(), RENAMED_ADDRESS_DTO, RENAMED_PROFILE_DTO, RENAMED_PROFILE_RESOURCE);
+            result.assertSuccess();
+
+            GeneratedInputProcessor<?> processor =
+                    newProcessor(result, "com.example.rt.RenamedProfileDto_InputProcessor");
+
+            Map<String, Object> intermediate = new LinkedHashMap<>();
+            intermediate.put("user_name", "  Ada Lovelace  ");
+
+            Object output = processor.process(
+                    intermediate,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY,
+                    buildChainResolver(),
+                    GeneratedInputProcessorDispatcher.withoutContinuation(),
+                    InputTraversalContext.fromPolicies(EffectiveInputPolicies.NONE, SNAKE_TO_CAMEL),
+                    "");
+
+            assertInstanceOf(Map.class, output);
+            Map<String, Object> out = (Map<String, Object>) output;
+            assertEquals(
+                    "Ada Lovelace",
+                    out.get("user_name"),
+                    "@Canonicalize(TrimCanonicalizer) on userName must apply to the wire key user_name");
+            assertFalse(
+                    out.containsKey("userName"), "The projection selects metadata; it must not rename the wire key");
+        }
+
+        @Test
+        @DisplayName("InputValueContext reports the wire path with the Java logical name")
+        void renamedStringField_valueContextCarriesWirePathAndJavaLogicalName() throws Exception {
+            Result result = ProcessorTestHarness.run(
+                    new SanitizationProcessor(), RENAMED_ADDRESS_DTO, RENAMED_PROFILE_DTO, RENAMED_PROFILE_RESOURCE);
+            result.assertSuccess();
+
+            GeneratedInputProcessor<?> processor =
+                    newProcessor(result, "com.example.rt.RenamedProfileDto_InputProcessor");
+
+            List<InputValueContext> observed = new ArrayList<>();
+            ChainResolver recording = (value, canonicalizers, sanitizers, ctx) -> {
+                observed.add(ctx);
+                return value;
+            };
+
+            Map<String, Object> intermediate = new LinkedHashMap<>();
+            intermediate.put("user_name", "  Ada Lovelace  ");
+
+            processor.process(
+                    intermediate,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY,
+                    recording,
+                    GeneratedInputProcessorDispatcher.withoutContinuation(),
+                    InputTraversalContext.fromPolicies(EffectiveInputPolicies.NONE, SNAKE_TO_CAMEL),
+                    "");
+
+            assertEquals(1, observed.size(), "The renamed field's declared chain should have been applied once");
+            InputValueContext valueCtx = observed.get(0);
+            assertEquals("user_name", valueCtx.path(), "path is the wire path — it points at what the caller sent");
+            assertEquals(
+                    "userName",
+                    valueCtx.logicalName(),
+                    "logicalName is the Java property name once a property matched");
+        }
+
+        @Test
+        @DisplayName("renamed nested DTO field dispatches, and the nested processor projects its own keys")
+        @SuppressWarnings("unchecked")
+        void renamedNestedDtoField_dispatchedAndNestedKeysProjected() throws Exception {
+            Result result = ProcessorTestHarness.run(
+                    new SanitizationProcessor(), RENAMED_ADDRESS_DTO, RENAMED_PROFILE_DTO, RENAMED_PROFILE_RESOURCE);
+            result.assertSuccess();
+
+            GeneratedInputProcessor<?> profileProcessor =
+                    newProcessor(result, "com.example.rt.RenamedProfileDto_InputProcessor");
+            GeneratedInputProcessor<?> addressProcessor =
+                    newProcessor(result, "com.example.rt.RenamedAddressDto_InputProcessor");
+
+            GeneratedInputProcessorDispatcher dispatcher = GeneratedInputProcessorDispatcher.withoutContinuation();
+            registerProcessor(dispatcher, addressProcessor.targetType(), addressProcessor);
+
+            Map<String, Object> nested = new LinkedHashMap<>();
+            nested.put("city_name", "  Espoo  ");
+
+            Map<String, Object> intermediate = new LinkedHashMap<>();
+            intermediate.put("home_address", nested);
+
+            Object output = profileProcessor.process(
+                    intermediate,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY,
+                    buildChainResolver(),
+                    dispatcher,
+                    InputTraversalContext.fromPolicies(EffectiveInputPolicies.NONE, SNAKE_TO_CAMEL),
+                    "");
+
+            assertInstanceOf(Map.class, output);
+            Map<String, Object> out = (Map<String, Object>) output;
+            assertInstanceOf(Map.class, out.get("home_address"), "The nested map must keep its wire key");
+            Map<String, Object> processedAddress = (Map<String, Object>) out.get("home_address");
+            assertEquals(
+                    "Espoo",
+                    processedAddress.get("city_name"),
+                    "RenamedAddressDto.cityName's @Canonicalize must apply under the city_name wire key");
+        }
+    }
+
+    /**
+     * Non-identity projection used by {@link WireNameProjection}: maps the fixtures' snake_case wire
+     * keys onto their Java property names and returns every other key unchanged, honoring the
+     * {@link InputFieldNameResolver} totality contract.
+     */
+    private static final InputFieldNameResolver SNAKE_TO_CAMEL = (ownerType, wireName) -> switch (wireName) {
+        case "user_name" -> "userName";
+        case "home_address" -> "homeAddress";
+        case "city_name" -> "cityName";
+        default -> wireName;
+    };
 
     // --- Helper: chain resolver using real built-in processors ---
 

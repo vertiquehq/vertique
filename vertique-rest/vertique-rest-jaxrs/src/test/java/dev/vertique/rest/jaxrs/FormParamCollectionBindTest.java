@@ -14,6 +14,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import dev.vertique.core.sanitization.Canonicalizer;
+import dev.vertique.core.sanitization.InputFieldNameResolver;
 import dev.vertique.core.sanitization.InputLocation;
 import dev.vertique.core.sanitization.InputValueContext;
 import dev.vertique.core.sanitization.Sanitizer;
@@ -196,7 +197,11 @@ class FormParamCollectionBindTest {
     static final class UppercasingProcessor implements InputObjectProcessor {
         @Override
         public Object processInput(
-                Object intermediateBody, Type targetType, EffectiveInputPolicies policies, InputLocation location) {
+                Object intermediateBody,
+                Type targetType,
+                EffectiveInputPolicies policies,
+                InputLocation location,
+                InputFieldNameResolver nameResolver) {
             if (intermediateBody instanceof String s) {
                 return s.toUpperCase(Locale.ROOT);
             }
@@ -213,7 +218,11 @@ class FormParamCollectionBindTest {
     static final class TrimmingProcessor implements InputObjectProcessor {
         @Override
         public Object processInput(
-                Object intermediateBody, Type targetType, EffectiveInputPolicies policies, InputLocation location) {
+                Object intermediateBody,
+                Type targetType,
+                EffectiveInputPolicies policies,
+                InputLocation location,
+                InputFieldNameResolver nameResolver) {
             if (intermediateBody instanceof String s) {
                 return s.strip();
             }

@@ -41,7 +41,15 @@ import org.junit.jupiter.api.Test;
  */
 class ApiSurfaceTest {
 
-    /** Types published to consumers of this module. */
+    /**
+     * Types published to consumers of this module.
+     *
+     * <p>{@code InputFieldNameResolver} is deliberately absent: the contract is declared in
+     * {@code dev.vertique.core.sanitization} beside its vocabulary siblings ({@code InputLocation},
+     * {@code Canonicalizer}, {@code Sanitizer}), so its surface is frozen by {@code vertique-core}'s
+     * {@code SanitizationContractsTest} rather than here. This module consumes it — every ledgered
+     * signature below that names it still pins the parameter type.
+     */
     private static final Set<String> PUBLIC_TYPES = Set.of(
             "InputObjectProcessor",
             "EffectiveInputPolicies",
@@ -52,8 +60,8 @@ class ApiSurfaceTest {
             "GeneratedSupport");
 
     /** Types that implement the engine but are deliberately not part of the surface. */
-    private static final Set<String> INTERNAL_TYPES =
-            Set.of("DefaultInputObjectProcessor", "InputPolicyMetadata", "InputPolicyMetadataResolver");
+    private static final Set<String> INTERNAL_TYPES = Set.of(
+            "DefaultInputObjectProcessor", "InputPolicyMetadata", "InputPolicyMetadataResolver", "TypeClassifier");
 
     @Nested
     @DisplayName("package inventory")
@@ -134,7 +142,8 @@ class ApiSurfaceTest {
             assertMethods(
                     InputObjectProcessor.class,
                     "createDefault(Function,Function)",
-                    "processInput(Object,Type,EffectiveInputPolicies,InputLocation)");
+                    "declaresPolicies(Type)",
+                    "processInput(Object,Type,EffectiveInputPolicies,InputLocation,InputFieldNameResolver)");
             assertNoPublicFields(InputObjectProcessor.class);
             assertNoPublicConstructors(InputObjectProcessor.class);
         }
@@ -169,8 +178,10 @@ class ApiSurfaceTest {
         void inputTraversalContextSurface() {
             assertMethods(
                     InputTraversalContext.class,
-                    "fromPolicies(EffectiveInputPolicies)",
+                    "fromPolicies(EffectiveInputPolicies,InputFieldNameResolver)",
+                    "logicalFieldName(Class,String)",
                     "descend(List,List,boolean,boolean,List,List,boolean,boolean)",
+                    "descend(Class,String,List,List,boolean,boolean,List,List,boolean,boolean)",
                     "inheritedCanonicalizerChain()",
                     "inheritedSanitizerChain()",
                     "inheritedSkipCanonicalization()",

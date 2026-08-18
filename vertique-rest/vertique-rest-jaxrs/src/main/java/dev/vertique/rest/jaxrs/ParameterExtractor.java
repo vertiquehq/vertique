@@ -6,6 +6,7 @@ package dev.vertique.rest.jaxrs;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.vertique.core.sanitization.Canonicalize;
 import dev.vertique.core.sanitization.Canonicalizer;
+import dev.vertique.core.sanitization.InputFieldNameResolver;
 import dev.vertique.core.sanitization.InputLocation;
 import dev.vertique.core.sanitization.Sanitize;
 import dev.vertique.core.sanitization.Sanitizer;
@@ -77,6 +78,17 @@ final class ParameterExtractor {
     private final List<RequestBodyDecoder> decoders;
     private final RestContextResolution restContextResolution;
     private final @Nullable InputObjectProcessor objectProcessor;
+
+    /**
+     * The wire &rarr; Java property-name projection applied to every OBJECT body this route processes.
+     * Built once per route from the mapper that materializes its body, so a {@code @JsonProperty},
+     * naming strategy or {@code @JsonAlias} rename still selects the field's declared policies. The
+     * bare-{@code String} parameter sites (query, header, path, form) pass
+     * {@link InputFieldNameResolver#IDENTITY} instead: there is no object whose fields could be
+     * renamed. {@code @BeanParam} intermediates likewise stay on {@code IDENTITY} — their keys are the
+     * bean's own Java field and record-component names, not codec-published wire names.
+     */
+    private final InputFieldNameResolver bodyNameResolver;
 
     /**
      * The framework conversion resolver used to coerce every inbound scalar (and collection element)
@@ -163,8 +175,9 @@ final class ParameterExtractor {
     private final Set<ResourceMethodMeta.ParamMeta> multiplicityMismatchLogged = ConcurrentHashMap.newKeySet(2);
 
     /**
-     * Creates a new {@code ParameterExtractor} for the given resource method.
-     * Input object processing is disabled when using this constructor.
+     * Creates a new {@code ParameterExtractor} for the given resource method, coercing scalars through
+     * the built-ins-only default resolver and matching body policies against Java property names
+     * directly. Input object processing is disabled when using this constructor.
      *
      * @param meta                   metadata describing the JAX-RS resource method
      * @param decoders               priority-sorted list of request body decoders
@@ -173,12 +186,19 @@ final class ParameterExtractor {
      */
     ParameterExtractor(
             ResourceMethodMeta meta, List<RequestBodyDecoder> decoders, RestContextResolution restContextResolution) {
-        this(meta, decoders, restContextResolution, null, ConversionContexts.defaultResolver());
+        this(
+                meta,
+                decoders,
+                restContextResolution,
+                null,
+                ConversionContexts.defaultResolver(),
+                InputFieldNameResolver.IDENTITY);
     }
 
     /**
-     * Creates a new {@code ParameterExtractor} for the given resource method with optional
-     * input processing support, coercing scalars through the built-ins-only default resolver.
+     * Creates a new {@code ParameterExtractor} for the given resource method with optional input
+     * processing support, coercing scalars through the built-ins-only default resolver and matching
+     * body policies against Java property names directly.
      *
      * @param meta                   metadata describing the JAX-RS resource method
      * @param decoders               priority-sorted list of request body decoders
@@ -192,13 +212,19 @@ final class ParameterExtractor {
             List<RequestBodyDecoder> decoders,
             RestContextResolution restContextResolution,
             @Nullable InputObjectProcessor objectProcessor) {
-        this(meta, decoders, restContextResolution, objectProcessor, ConversionContexts.defaultResolver());
+        this(
+                meta,
+                decoders,
+                restContextResolution,
+                objectProcessor,
+                ConversionContexts.defaultResolver(),
+                InputFieldNameResolver.IDENTITY);
     }
 
     /**
-     * Creates a new {@code ParameterExtractor} for the given resource method with optional input
-     * processing support and an explicit {@link ParamConversionResolver}. Used by the route-registration
-     * path so application converter bindings and JAX-RS providers participate in coercion.
+     * Creates a new {@code ParameterExtractor} with an explicit body-name projection. Used by the
+     * route-registration path, which knows the {@code ObjectMapper} that materializes this route's
+     * body and therefore the wire names its declared policies must be matched against.
      *
      * @param meta                    metadata describing the JAX-RS resource method
      * @param decoders                priority-sorted list of request body decoders
@@ -208,18 +234,24 @@ final class ParameterExtractor {
      *                                sanitization; {@code null} disables processing
      * @param paramConversionResolver the framework conversion resolver used to coerce inbound scalars
      *                                and collection elements; must not be {@code null}
+     * @param bodyNameResolver        the wire &rarr; Java property-name projection for this route's
+     *                                OBJECT bodies; must not be {@code null}. Pass
+     *                                {@link InputFieldNameResolver#IDENTITY} only when the
+     *                                intermediate's keys are already Java property names
      */
     ParameterExtractor(
             ResourceMethodMeta meta,
             List<RequestBodyDecoder> decoders,
             RestContextResolution restContextResolution,
             @Nullable InputObjectProcessor objectProcessor,
-            ParamConversionResolver paramConversionResolver) {
+            ParamConversionResolver paramConversionResolver,
+            InputFieldNameResolver bodyNameResolver) {
         this.meta = meta;
         this.decoders = decoders;
         this.restContextResolution = restContextResolution;
         this.objectProcessor = objectProcessor;
         this.paramConversionResolver = paramConversionResolver;
+        this.bodyNameResolver = bodyNameResolver;
         this.cachedParamPolicies = computeCachedParamPolicies(meta);
         // Precomputed once for the FR-REST-174 missing-context diagnostic (used only on the
         // exceptional CONTEXT-resolution-failure path). Null-safe: some test fixtures build a
@@ -246,6 +278,89 @@ final class ParameterExtractor {
             cache[i] = resolveParamPolicies(params.get(i), routeCanon, routeSanit);
         }
         return cache;
+    }
+
+    /**
+     * Returns whether any invocation-level canonicalizer or sanitizer chain applies to a parameter
+     * this extractor actually submits to the engine — a chain declared on the route (class or method)
+     * reaches such a parameter, or the parameter declares one itself.
+     *
+     * <p>Exposed for {@link JaxRsRouteRegistrar}'s startup composition gate, which must know whether a
+     * route declares processing before deciding that an absent {@link InputObjectProcessor} binding is
+     * a configuration error. It reuses {@link #computeCachedParamPolicies} — the very derivation the
+     * request path uses — so the gate can never disagree with what would actually run.
+     *
+     * <p>A route-level chain is <em>not</em> reported on its own: {@link #resolveParamPolicies} seeds
+     * every parameter with it, so a route chain that reaches no processed parameter would run nowhere
+     * even with the engine bound. Parameters whose source {@link #isProcessedParamSource} rejects are
+     * skipped for the same reason, which keeps this half of the gate scoped exactly like the
+     * type-graph half in {@link JaxRsRouteRegistrar}.
+     *
+     * @param meta the resource method metadata; must not be {@code null}
+     * @return {@code true} when a chain applies to a parameter whose values reach the engine
+     */
+    static boolean declaresInvocationPolicies(ResourceMethodMeta meta) {
+        List<ResourceMethodMeta.ParamMeta> params = meta.params();
+        EffectiveInputPolicies[] policies = computeCachedParamPolicies(meta);
+        for (int i = 0; i < params.size(); i++) {
+            if (isProcessedParamSource(params.get(i).source()) && !policies[i].isEmpty()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Returns whether values from the given parameter source pass through the input-processing engine
+     * at request time.
+     *
+     * <p>{@code CONTEXT}, {@code PRECONDITIONS}, {@code FILE_UPLOADS}, and {@code ENTITY_PARTS} never
+     * do, and that exclusion is correct rather than incidental: a {@code @Context} value is resolved
+     * from the server, not sent by the caller, and raw multipart parts are
+     * {@code FileContentVerifier} territory — a binary control that inspects uploaded content —
+     * not engine territory, which is canonicalization and sanitization of string values. Do not
+     * "fix" the asymmetry by submitting these sources to the engine; the fix direction is always to
+     * apply this filter wherever the gate reasons about declared policies.
+     *
+     * @param source the parameter source
+     * @return {@code true} when the source's values are submitted to the engine
+     */
+    static boolean isProcessedParamSource(ResourceMethodMeta.ParamSource source) {
+        return switch (source) {
+            case PATH, QUERY, HEADER, COOKIE, BODY, FORM, BEAN_PARAM -> true;
+            case CONTEXT, PRECONDITIONS, FILE_UPLOADS, ENTITY_PARTS -> false;
+        };
+    }
+
+    /**
+     * Returns whether the given body target carries no string values for the engine to act on, so a
+     * declared canonicalizer or sanitizer chain provably cannot run against it.
+     *
+     * <p>A {@code byte[]} or {@link io.vertx.core.buffer.Buffer} body is opaque bytes: it is never
+     * decoded to an intermediate map, and both engine phases operate on strings. Unlike the
+     * schema-free {@link JsonObject}/{@code JsonArray} bodies — which <em>are</em> intermediates and
+     * do route through the engine — there is nothing here for a chain to reach.
+     *
+     * @param targetType the raw body target class
+     * @return {@code true} for a raw binary body target
+     */
+    static boolean isBinaryBodyTarget(Class<?> targetType) {
+        return targetType == byte[].class || targetType == io.vertx.core.buffer.Buffer.class;
+    }
+
+    /**
+     * Returns each parameter's effective invocation-level policies, in declaration order, derived
+     * exactly as the request path derives them.
+     *
+     * <p>Exposed for {@link JaxRsRouteRegistrar}'s startup gates, which must reason per parameter
+     * rather than per route — a binary body carrying a declared chain is a configuration error even
+     * when the route's other parameters are processed normally.
+     *
+     * @param meta the resource method metadata; must not be {@code null}
+     * @return policies indexed by parameter position
+     */
+    static EffectiveInputPolicies[] invocationPolicies(ResourceMethodMeta meta) {
+        return computeCachedParamPolicies(meta);
     }
 
     /**
@@ -465,7 +580,8 @@ final class ParameterExtractor {
         Object value = coerce(rv, paramMeta);
 
         if (value instanceof String s && objectProcessor != null && !policies.isEmpty()) {
-            value = objectProcessor.processInput(s, String.class, policies, toInputLocation(paramMeta.source()));
+            value = objectProcessor.processInput(
+                    s, String.class, policies, toInputLocation(paramMeta.source()), InputFieldNameResolver.IDENTITY);
         }
 
         return value;
@@ -563,11 +679,13 @@ final class ParameterExtractor {
             String rawValue = raw.toString();
             if (processElements && processBeforeConversion) {
                 // Same cast as the FORM scalar branch: a String target must yield a String.
-                rawValue = (String) objectProcessor.processInput(rawValue, String.class, policies, location);
+                rawValue = (String) objectProcessor.processInput(
+                        rawValue, String.class, policies, location, InputFieldNameResolver.IDENTITY);
             }
             Object element = paramConversionResolver.fromString(rawValue, elementContext);
             if (processElements && !processBeforeConversion && element instanceof String s) {
-                element = objectProcessor.processInput(s, String.class, policies, location);
+                element = objectProcessor.processInput(
+                        s, String.class, policies, location, InputFieldNameResolver.IDENTITY);
             }
             coerced.add(element);
         }
@@ -790,9 +908,11 @@ final class ParameterExtractor {
      * <p>Logs a warning if a multipart body is encountered, since multipart content should
      * be handled via {@code @FormParam} or {@code List<EntityPart>} parameters instead.
      *
-     * <p>When an {@link InputObjectProcessor} is active, structured bodies (JSON objects and
-     * JSON arrays) are intercepted before materialization so that canonicalization and
-     * sanitization chains can be applied.
+     * <p>When an {@link InputObjectProcessor} is active, structured bodies are intercepted before
+     * materialization so that canonicalization and sanitization chains can be applied. That includes
+     * the schema-free {@link JsonObject} and {@code JsonArray} targets, whose backing map or list is
+     * itself the intermediate the engine walks. Only raw binary targets are excluded — see
+     * {@link #isStructuredBodyTarget}.
      *
      * <p>This overload is used by {@link GeneratedJaxRsSupport} so that generated execution
      * plans can pass policies computed at codegen time.
@@ -825,19 +945,69 @@ final class ParameterExtractor {
         if (objectProcessor != null && isStructuredBodyTarget(targetType)) {
 
             String lowerContentType = contentType != null ? contentType.toLowerCase() : "";
+            // FR-JSON-024B/022/023: a non-vertx JSON profile resolved for this method (slice 2.1) is
+            // stashed on the routing context under KEY_RESOLVED_BODY_MAPPER. When present it owns the
+            // two-phase MATERIALIZATION of the processed body; when absent (the vertx default) the
+            // calls below are byte-for-byte identical to today (JsonObject.mapTo / DatabindCodec).
+            // Resolved ABOVE the content-type branch: the form-urlencoded body is bound by the same
+            // mapper the JSON body is, and its bodyNameResolver projection was built from that mapper —
+            // binding it through the global codec instead would make the projection and the binder
+            // disagree about property names on any non-vertx profile.
+            ObjectMapper profileMapper = ctx.get(BoundRequest.KEY_RESOLVED_BODY_MAPPER);
 
             // JSON body — intercept intermediate map before materialization
             if (lowerContentType.isEmpty() || lowerContentType.contains("json")) {
-                // FR-JSON-024B/022/023: a non-vertx JSON profile resolved for this method (slice 2.1) is
-                // stashed on the routing context under KEY_RESOLVED_BODY_MAPPER. When present it owns the
-                // two-phase MATERIALIZATION of the processed body; when absent (the vertx default) the
-                // calls below are byte-for-byte identical to today (JsonObject.mapTo / DatabindCodec).
-                ObjectMapper profileMapper = ctx.get(BoundRequest.KEY_RESOLVED_BODY_MAPPER);
+                // A schema-free Vert.x wrapper body is already an intermediate: hand its backing map or
+                // list to the engine so invocation-level chains reach every string leaf, and re-wrap the
+                // result. IDENTITY is the correct projection — there is no declared DTO whose properties
+                // could be renamed, so there is nothing to project (plan 3.5, 3.8). A body that is not
+                // the declared wrapper shape falls through to the decoder chain, which owns that
+                // mismatch exactly as it did before.
+                if (targetType == JsonObject.class) {
+                    JsonObject rawObject = body.getJsonObject();
+                    if (rawObject != null) {
+                        Object processed = objectProcessor.processInput(
+                                rawObject.getMap(),
+                                Map.class,
+                                policies,
+                                InputLocation.BODY,
+                                InputFieldNameResolver.IDENTITY);
+                        if (processed instanceof Map<?, ?> processedMap) {
+                            @SuppressWarnings("unchecked")
+                            Map<String, Object> typedMap = (Map<String, Object>) processedMap;
+                            return new JsonObject(typedMap);
+                        }
+                        return rawObject;
+                    }
+                } else if (targetType == io.vertx.core.json.JsonArray.class) {
+                    io.vertx.core.json.JsonArray rawArray = body.getJsonArray();
+                    if (rawArray != null) {
+                        Object processed = objectProcessor.processInput(
+                                rawArray.getList(),
+                                List.class,
+                                policies,
+                                InputLocation.BODY,
+                                InputFieldNameResolver.IDENTITY);
+                        if (processed instanceof List<?> processedList) {
+                            return new io.vertx.core.json.JsonArray(new ArrayList<>(processedList));
+                        }
+                        return rawArray;
+                    }
+                }
+                // Both Vert.x wrappers are excluded here, not just the one the branch above already
+                // returned for: a declared JsonArray body carrying an OBJECT payload leaves
+                // getJsonArray() null but getJsonObject() non-null, and JsonArray implements neither
+                // Collection nor isArray(), so without this guard the shape mismatch would be handed
+                // to the engine keyed on JsonArray.class and then materialized through
+                // JsonObject.mapTo(JsonArray.class) instead of taking the documented fall-through.
                 JsonObject jsonBody = body.getJsonObject();
-                if (jsonBody != null && !Collection.class.isAssignableFrom(targetType) && !targetType.isArray()) {
+                if (jsonBody != null
+                        && !isVertxJsonWrapper(targetType)
+                        && !Collection.class.isAssignableFrom(targetType)
+                        && !targetType.isArray()) {
                     Map<String, Object> intermediate = jsonBody.getMap();
-                    Object processed =
-                            objectProcessor.processInput(intermediate, targetType, policies, InputLocation.BODY);
+                    Object processed = objectProcessor.processInput(
+                            intermediate, targetType, policies, InputLocation.BODY, bodyNameResolver);
                     if (processed instanceof Map<?, ?> processedMap) {
                         @SuppressWarnings("unchecked")
                         Map<String, Object> typedMap = (Map<String, Object>) processedMap;
@@ -853,7 +1023,7 @@ final class ParameterExtractor {
                     if (jsonArray != null) {
                         java.lang.reflect.Type resolvedType = genericType != null ? genericType : targetType;
                         Object processed = objectProcessor.processInput(
-                                jsonArray.getList(), resolvedType, policies, InputLocation.BODY);
+                                jsonArray.getList(), resolvedType, policies, InputLocation.BODY, bodyNameResolver);
                         if (processed instanceof List<?> processedList) {
                             com.fasterxml.jackson.databind.JavaType javaType =
                                     DatabindCodec.mapper().getTypeFactory().constructType(resolvedType);
@@ -868,7 +1038,12 @@ final class ParameterExtractor {
                 if (targetType == String.class) {
                     String stringBody = body.getString();
                     if (stringBody != null && !policies.isEmpty()) {
-                        return objectProcessor.processInput(stringBody, String.class, policies, InputLocation.BODY);
+                        return objectProcessor.processInput(
+                                stringBody,
+                                String.class,
+                                policies,
+                                InputLocation.BODY,
+                                InputFieldNameResolver.IDENTITY);
                     }
                     return stringBody;
                 }
@@ -880,11 +1055,18 @@ final class ParameterExtractor {
                     json.put(entry.getKey(), entry.getValue());
                 }
                 if (!json.isEmpty()) {
-                    Object processed =
-                            objectProcessor.processInput(json.getMap(), targetType, policies, InputLocation.BODY);
+                    // A form-urlencoded body materialized as a POJO is bound by Jackson exactly like a
+                    // JSON object body, so its keys are wire names and carry the same projection — and
+                    // therefore the same materialization pair: the route's profile mapper when one was
+                    // resolved, the global codec otherwise.
+                    Object processed = objectProcessor.processInput(
+                            json.getMap(), targetType, policies, InputLocation.BODY, bodyNameResolver);
                     if (processed instanceof Map<?, ?> processedMap) {
                         @SuppressWarnings("unchecked")
                         Map<String, Object> typedMap = (Map<String, Object>) processedMap;
+                        if (profileMapper != null) {
+                            return ProfileBodyMaterialization.convertValue(profileMapper, typedMap, targetType);
+                        }
                         return new JsonObject(typedMap).mapTo(targetType);
                     }
                 }
@@ -893,7 +1075,8 @@ final class ParameterExtractor {
                 // String body — apply route-level processing
                 String stringBody = body.getString();
                 if (stringBody != null && !policies.isEmpty()) {
-                    return objectProcessor.processInput(stringBody, String.class, policies, InputLocation.BODY);
+                    return objectProcessor.processInput(
+                            stringBody, String.class, policies, InputLocation.BODY, InputFieldNameResolver.IDENTITY);
                 }
                 return stringBody;
             }
@@ -911,17 +1094,32 @@ final class ParameterExtractor {
 
     /**
      * Returns {@code true} for body target types that support two-phase intermediate processing.
-     * Excludes raw binary types, Vert.x JSON wrappers, collections, and arrays — these bypass
-     * the intermediate map path and go directly to the decoder chain.
+     *
+     * <p>Only raw binary targets are excluded: a {@code byte[]} or {@link io.vertx.core.buffer.Buffer}
+     * body is opaque bytes with no string values for a chain to act on, so it goes directly to the
+     * decoder chain — and a policy declared on one is rejected at startup by {@link JaxRsRouteRegistrar}
+     * rather than silently skipped here. The Vert.x JSON wrappers are <em>not</em> excluded: a
+     * {@link JsonObject} or {@code JsonArray} body is already the intermediate the engine walks, so
+     * routing it through the engine is what makes a declared chain reach its string leaves.
      *
      * @param targetType the raw target class
      * @return {@code true} when the target type supports intermediate map processing
      */
     private static boolean isStructuredBodyTarget(Class<?> targetType) {
-        return targetType != byte[].class
-                && targetType != io.vertx.core.buffer.Buffer.class
-                && targetType != JsonObject.class
-                && targetType != io.vertx.core.json.JsonArray.class;
+        return !isBinaryBodyTarget(targetType);
+    }
+
+    /**
+     * Returns {@code true} for the schema-free Vert.x JSON wrapper targets, which are handled by their
+     * own branches in {@link #deserializeBody} and must never reach the generic-object branch: a body
+     * whose shape does not match the declared wrapper falls through to the decoder chain, which owns
+     * that mismatch.
+     *
+     * @param targetType the raw target class
+     * @return {@code true} when the target is {@link JsonObject} or {@code JsonArray}
+     */
+    private static boolean isVertxJsonWrapper(Class<?> targetType) {
+        return targetType == JsonObject.class || targetType == io.vertx.core.json.JsonArray.class;
     }
 
     // --- Form parameter extraction ---
@@ -1032,7 +1230,8 @@ final class ParameterExtractor {
             return null;
         }
         if (objectProcessor != null && !policies.isEmpty()) {
-            formValue = (String) objectProcessor.processInput(formValue, String.class, policies, InputLocation.FORM);
+            formValue = (String) objectProcessor.processInput(
+                    formValue, String.class, policies, InputLocation.FORM, InputFieldNameResolver.IDENTITY);
         }
         return coerceString(formValue, pm);
     }
@@ -1096,7 +1295,8 @@ final class ParameterExtractor {
         if (objectProcessor != null) {
             EffectiveInputPolicies policies =
                     new EffectiveInputPolicies(meta.routeCanonicalizerChain(), meta.routeSanitizerChain());
-            Object processed = objectProcessor.processInput(values, beanType, policies, InputLocation.BEAN_PARAM);
+            Object processed = objectProcessor.processInput(
+                    values, beanType, policies, InputLocation.BEAN_PARAM, InputFieldNameResolver.IDENTITY);
             if (processed instanceof Map<?, ?> processedMap) {
                 values = new LinkedHashMap<>();
                 for (var entry2 : processedMap.entrySet()) {
@@ -1167,7 +1367,8 @@ final class ParameterExtractor {
 
         // Apply route-level input processing to the intermediate map before materialization
         if (objectProcessor != null && !routePolicies.isEmpty()) {
-            Object processed = objectProcessor.processInput(values, beanType, routePolicies, InputLocation.BEAN_PARAM);
+            Object processed = objectProcessor.processInput(
+                    values, beanType, routePolicies, InputLocation.BEAN_PARAM, InputFieldNameResolver.IDENTITY);
             if (processed instanceof Map<?, ?> processedMap) {
                 values = new LinkedHashMap<>();
                 for (Map.Entry<?, ?> entry : processedMap.entrySet()) {

@@ -4,12 +4,16 @@
 package dev.vertique.input.processing;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vertique.core.sanitization.Canonicalize;
 import dev.vertique.core.sanitization.Canonicalizer;
+import dev.vertique.core.sanitization.InputFieldNameResolver;
 import dev.vertique.core.sanitization.InputLocation;
 import dev.vertique.core.sanitization.InputValueContext;
 import dev.vertique.core.sanitization.Sanitize;
@@ -21,6 +25,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -48,6 +54,10 @@ class DefaultInputObjectProcessorTest {
                 cls -> {
                     if (cls == TestStripControlsSanitizer.class) return new TestStripControlsSanitizer();
                     if (cls == TestPrefixSanitizer.class) return new TestPrefixSanitizer();
+                    if (cls == CountingTypeSanitizer.class) return new CountingTypeSanitizer();
+                    if (cls == CountingFieldSanitizer.class) return new CountingFieldSanitizer();
+                    if (cls == TestDecodeEntitiesSanitizer.class) return new TestDecodeEntitiesSanitizer();
+                    if (cls == TestStripHtmlSanitizer.class) return new TestStripHtmlSanitizer();
                     throw new IllegalArgumentException("Unknown sanitizer: " + cls);
                 });
     }
@@ -61,16 +71,24 @@ class DefaultInputObjectProcessorTest {
         @Test
         @DisplayName("null body returns null")
         void nullBodyReturnsNull() {
-            Object result =
-                    processor.processInput(null, EmptyDto.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
+            Object result = processor.processInput(
+                    null,
+                    EmptyDto.class,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY,
+                    InputFieldNameResolver.IDENTITY);
             assertNull(result);
         }
 
         @Test
         @DisplayName("empty map returns empty map")
         void emptyMapReturnsEmptyMap() {
-            Object result =
-                    processor.processInput(Map.of(), EmptyDto.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
+            Object result = processor.processInput(
+                    Map.of(),
+                    EmptyDto.class,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY,
+                    InputFieldNameResolver.IDENTITY);
             assertTrue(result instanceof Map);
             assertTrue(((Map<?, ?>) result).isEmpty());
         }
@@ -90,7 +108,8 @@ class DefaultInputObjectProcessorTest {
             input.put("name", "  hello  ");
             input.put("description", "  world  ");
 
-            Object result = processor.processInput(input, EmptyDto.class, policies, InputLocation.BODY);
+            Object result = processor.processInput(
+                    input, EmptyDto.class, policies, InputLocation.BODY, InputFieldNameResolver.IDENTITY);
             Map<?, ?> map = (Map<?, ?>) result;
             assertEquals("hello", map.get("name"));
             assertEquals("world", map.get("description"));
@@ -103,7 +122,8 @@ class DefaultInputObjectProcessorTest {
                     List.of(TestTrimCanonicalizer.class), List.of(TestPrefixSanitizer.class));
             Map<String, Object> input = Map.of("name", "  hello  ");
 
-            Object result = processor.processInput(input, EmptyDto.class, policies, InputLocation.BODY);
+            Object result = processor.processInput(
+                    input, EmptyDto.class, policies, InputLocation.BODY, InputFieldNameResolver.IDENTITY);
             Map<?, ?> map = (Map<?, ?>) result;
             assertEquals("safe:hello", map.get("name"));
         }
@@ -121,7 +141,11 @@ class DefaultInputObjectProcessorTest {
             Map<String, Object> input = Map.of("name", "  alice  ", "count", 42);
 
             Object result = processor.processInput(
-                    input, FieldAnnotatedDto.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
+                    input,
+                    FieldAnnotatedDto.class,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY,
+                    InputFieldNameResolver.IDENTITY);
             Map<?, ?> map = (Map<?, ?>) result;
             assertEquals("alice", map.get("name"));
             assertEquals(42, map.get("count"));
@@ -133,7 +157,11 @@ class DefaultInputObjectProcessorTest {
             Map<String, Object> input = Map.of("description", "hello\u0000world");
 
             Object result = processor.processInput(
-                    input, FieldAnnotatedDto.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
+                    input,
+                    FieldAnnotatedDto.class,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY,
+                    InputFieldNameResolver.IDENTITY);
             Map<?, ?> map = (Map<?, ?>) result;
             assertEquals("helloworld", map.get("description"));
         }
@@ -148,8 +176,12 @@ class DefaultInputObjectProcessorTest {
         input.put("a", "  foo  ");
         input.put("b", "  bar  ");
 
-        Object result =
-                processor.processInput(input, ObjectLevelDto.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
+        Object result = processor.processInput(
+                input,
+                ObjectLevelDto.class,
+                EffectiveInputPolicies.NONE,
+                InputLocation.BODY,
+                InputFieldNameResolver.IDENTITY);
         Map<?, ?> map = (Map<?, ?>) result;
         assertEquals("foo", map.get("a"));
         assertEquals("bar", map.get("b"));
@@ -169,7 +201,8 @@ class DefaultInputObjectProcessorTest {
             input.put("raw", "  untouched  ");
             input.put("normal", "  touched  ");
 
-            Object result = processor.processInput(input, SkipFieldDto.class, policies, InputLocation.BODY);
+            Object result = processor.processInput(
+                    input, SkipFieldDto.class, policies, InputLocation.BODY, InputFieldNameResolver.IDENTITY);
             Map<?, ?> map = (Map<?, ?>) result;
             assertEquals("  untouched  ", map.get("raw"));
             assertEquals("touched", map.get("normal"));
@@ -183,7 +216,8 @@ class DefaultInputObjectProcessorTest {
             input.put("raw", "data");
             input.put("normal", "data");
 
-            Object result = processor.processInput(input, SkipSanitizeFieldDto.class, policies, InputLocation.BODY);
+            Object result = processor.processInput(
+                    input, SkipSanitizeFieldDto.class, policies, InputLocation.BODY, InputFieldNameResolver.IDENTITY);
             Map<?, ?> map = (Map<?, ?>) result;
             assertEquals("data", map.get("raw")); // skip
             assertEquals("safe:data", map.get("normal")); // not skipped
@@ -202,7 +236,12 @@ class DefaultInputObjectProcessorTest {
         input.put("outerName", "  outer  ");
         input.put("inner", nested);
 
-        Object result = processor.processInput(input, OuterDto.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
+        Object result = processor.processInput(
+                input,
+                OuterDto.class,
+                EffectiveInputPolicies.NONE,
+                InputLocation.BODY,
+                InputFieldNameResolver.IDENTITY);
         Map<?, ?> map = (Map<?, ?>) result;
         assertEquals("outer", map.get("outerName")); // outer has @Canonicalize on the field
         Map<?, ?> innerMap = (Map<?, ?>) map.get("inner");
@@ -223,7 +262,8 @@ class DefaultInputObjectProcessorTest {
         Map<String, Object> input = new LinkedHashMap<>();
         input.put("tags", listValue);
 
-        Object result = processor.processInput(input, EmptyDto.class, policies, InputLocation.BODY);
+        Object result = processor.processInput(
+                input, EmptyDto.class, policies, InputLocation.BODY, InputFieldNameResolver.IDENTITY);
         Map<?, ?> map = (Map<?, ?>) result;
         List<?> tags = (List<?>) map.get("tags");
         assertEquals("hello", tags.get(0));
@@ -240,7 +280,8 @@ class DefaultInputObjectProcessorTest {
         input.put("count", 42);
         input.put("active", true);
 
-        Object result = processor.processInput(input, EmptyDto.class, policies, InputLocation.BODY);
+        Object result = processor.processInput(
+                input, EmptyDto.class, policies, InputLocation.BODY, InputFieldNameResolver.IDENTITY);
         Map<?, ?> map = (Map<?, ?>) result;
         assertEquals(42, map.get("count"));
         assertEquals(true, map.get("active"));
@@ -254,7 +295,12 @@ class DefaultInputObjectProcessorTest {
         Map<String, Object> input = new LinkedHashMap<>();
         input.put("name", null);
 
-        Object result = processor.processInput(input, EmptyDto.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
+        Object result = processor.processInput(
+                input,
+                EmptyDto.class,
+                EffectiveInputPolicies.NONE,
+                InputLocation.BODY,
+                InputFieldNameResolver.IDENTITY);
         Map<?, ?> map = (Map<?, ?>) result;
         assertTrue(map.containsKey("name"));
         assertNull(map.get("name"));
@@ -269,7 +315,7 @@ class DefaultInputObjectProcessorTest {
         Map<String, Object> input = new LinkedHashMap<>();
         input.put("name", "  hello  ");
 
-        processor.processInput(input, EmptyDto.class, policies, InputLocation.BODY);
+        processor.processInput(input, EmptyDto.class, policies, InputLocation.BODY, InputFieldNameResolver.IDENTITY);
         assertEquals("  hello  ", input.get("name"));
     }
 
@@ -286,7 +332,8 @@ class DefaultInputObjectProcessorTest {
             java.lang.reflect.ParameterizedType listType = new TestParameterizedType(List.class, String.class);
             List<Object> input = new ArrayList<>(List.of("  hello  ", "  world  "));
 
-            Object result = processor.processInput(input, listType, policies, InputLocation.BODY);
+            Object result = processor.processInput(
+                    input, listType, policies, InputLocation.BODY, InputFieldNameResolver.IDENTITY);
             List<?> list = (List<?>) result;
             assertEquals("hello", list.get(0));
             assertEquals("world", list.get(1));
@@ -305,7 +352,8 @@ class DefaultInputObjectProcessorTest {
             elem2.put("description", "clean");
             List<Object> input = new ArrayList<>(List.of(elem1, elem2));
 
-            Object result = processor.processInput(input, listType, EffectiveInputPolicies.NONE, InputLocation.BODY);
+            Object result = processor.processInput(
+                    input, listType, EffectiveInputPolicies.NONE, InputLocation.BODY, InputFieldNameResolver.IDENTITY);
             List<?> list = (List<?>) result;
             Map<?, ?> r1 = (Map<?, ?>) list.get(0);
             assertEquals("alice", r1.get("name")); // @Canonicalize(Trim) on name
@@ -332,7 +380,11 @@ class DefaultInputObjectProcessorTest {
             input.put("inner", nested);
 
             Object result = processor.processInput(
-                    input, OuterWithObjectCanon.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
+                    input,
+                    OuterWithObjectCanon.class,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY,
+                    InputFieldNameResolver.IDENTITY);
             Map<?, ?> map = (Map<?, ?>) result;
             Map<?, ?> innerMap = (Map<?, ?>) map.get("inner");
             assertNotNull(innerMap);
@@ -349,7 +401,11 @@ class DefaultInputObjectProcessorTest {
             input.put("inner", nested);
 
             Object result = processor.processInput(
-                    input, OuterWithFieldCanon.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
+                    input,
+                    OuterWithFieldCanon.class,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY,
+                    InputFieldNameResolver.IDENTITY);
             Map<?, ?> map = (Map<?, ?>) result;
             Map<?, ?> innerMap = (Map<?, ?>) map.get("inner");
             assertNotNull(innerMap);
@@ -368,7 +424,11 @@ class DefaultInputObjectProcessorTest {
             input.put("middle", middle);
 
             Object result = processor.processInput(
-                    input, ThreeLevelRoot.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
+                    input,
+                    ThreeLevelRoot.class,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY,
+                    InputFieldNameResolver.IDENTITY);
             Map<?, ?> map = (Map<?, ?>) result;
             Map<?, ?> middleMap = (Map<?, ?>) map.get("middle");
             assertNotNull(middleMap);
@@ -388,7 +448,11 @@ class DefaultInputObjectProcessorTest {
             input.put("inner", nested);
 
             Object result = processor.processInput(
-                    input, OuterSkipCanon.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
+                    input,
+                    OuterSkipCanon.class,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY,
+                    InputFieldNameResolver.IDENTITY);
             Map<?, ?> map = (Map<?, ?>) result;
             Map<?, ?> innerMap = (Map<?, ?>) map.get("inner");
             assertNotNull(innerMap);
@@ -406,7 +470,11 @@ class DefaultInputObjectProcessorTest {
             input.put("inner", nested);
 
             Object result = processor.processInput(
-                    input, OuterWithSkipField.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
+                    input,
+                    OuterWithSkipField.class,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY,
+                    InputFieldNameResolver.IDENTITY);
             Map<?, ?> map = (Map<?, ?>) result;
             Map<?, ?> innerMap = (Map<?, ?>) map.get("inner");
             assertNotNull(innerMap);
@@ -424,7 +492,8 @@ class DefaultInputObjectProcessorTest {
             Map<String, Object> input = new LinkedHashMap<>();
             input.put("inner", nested);
 
-            Object result = processor.processInput(input, OuterSkipCanon.class, policies, InputLocation.BODY);
+            Object result = processor.processInput(
+                    input, OuterSkipCanon.class, policies, InputLocation.BODY, InputFieldNameResolver.IDENTITY);
             Map<?, ?> map = (Map<?, ?>) result;
             Map<?, ?> innerMap = (Map<?, ?>) map.get("inner");
             assertNotNull(innerMap);
@@ -449,8 +518,12 @@ class DefaultInputObjectProcessorTest {
             Map<String, Object> input = new LinkedHashMap<>();
             input.put("homepage", "example.test");
 
-            Object result =
-                    processor.processInput(input, UriHolder.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
+            Object result = processor.processInput(
+                    input,
+                    UriHolder.class,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY,
+                    InputFieldNameResolver.IDENTITY);
             Map<?, ?> map = (Map<?, ?>) result;
             assertEquals(
                     "safe:example.test",
@@ -465,7 +538,8 @@ class DefaultInputObjectProcessorTest {
             Map<String, Object> input = new LinkedHashMap<>();
             input.put("homepage", "  example.test  ");
 
-            Object result = processor.processInput(input, UriHolder.class, policies, InputLocation.BODY);
+            Object result = processor.processInput(
+                    input, UriHolder.class, policies, InputLocation.BODY, InputFieldNameResolver.IDENTITY);
             Map<?, ?> map = (Map<?, ?>) result;
             assertEquals(
                     "safe:example.test",
@@ -479,8 +553,12 @@ class DefaultInputObjectProcessorTest {
             Map<String, Object> input = new LinkedHashMap<>();
             input.put("homepage", 42);
 
-            Object result =
-                    processor.processInput(input, UriHolder.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
+            Object result = processor.processInput(
+                    input,
+                    UriHolder.class,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY,
+                    InputFieldNameResolver.IDENTITY);
             Map<?, ?> map = (Map<?, ?>) result;
             assertEquals(42, map.get("homepage"), "Non-string fragments are still returned unchanged");
         }
@@ -501,7 +579,11 @@ class DefaultInputObjectProcessorTest {
             input.put("comment", nested);
 
             Object result = processor.processInput(
-                    input, OptionalProfile.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
+                    input,
+                    OptionalProfile.class,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY,
+                    InputFieldNameResolver.IDENTITY);
 
             Map<?, ?> map = (Map<?, ?>) result;
             Map<?, ?> commentMap = (Map<?, ?>) map.get("comment");
@@ -522,7 +604,11 @@ class DefaultInputObjectProcessorTest {
             input.put("comment", nested);
 
             Object result = processor.processInput(
-                    input, BoundedOptionalProfile.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
+                    input,
+                    BoundedOptionalProfile.class,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY,
+                    InputFieldNameResolver.IDENTITY);
 
             Map<?, ?> map = (Map<?, ?>) result;
             Map<?, ?> commentMap = (Map<?, ?>) map.get("comment");
@@ -544,7 +630,11 @@ class DefaultInputObjectProcessorTest {
             input.put("comments", new ArrayList<Object>(List.of(first, second)));
 
             Object result = processor.processInput(
-                    input, BoundedCommentList.class, EffectiveInputPolicies.NONE, InputLocation.BODY);
+                    input,
+                    BoundedCommentList.class,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY,
+                    InputFieldNameResolver.IDENTITY);
 
             Map<?, ?> map = (Map<?, ?>) result;
             List<?> comments = (List<?>) map.get("comments");
@@ -560,7 +650,8 @@ class DefaultInputObjectProcessorTest {
             Map<String, Object> input = new LinkedHashMap<>();
             input.put("values", new ArrayList<Object>(List.of("  a  ", "  b  ")));
 
-            Object result = processor.processInput(input, WildcardValueHolder.class, policies, InputLocation.BODY);
+            Object result = processor.processInput(
+                    input, WildcardValueHolder.class, policies, InputLocation.BODY, InputFieldNameResolver.IDENTITY);
 
             Map<?, ?> map = (Map<?, ?>) result;
             assertEquals(
@@ -568,6 +659,1107 @@ class DefaultInputObjectProcessorTest {
                     map.get("values"),
                     "An Object-resolving element type must not be treated as a nested DTO schema — "
                             + "that would pass string elements through untouched");
+        }
+    }
+
+    // --- Recursive and deeply nested DTOs ---
+
+    @Nested
+    @DisplayName("recursive and deeply nested DTOs")
+    class RecursiveAndDeepDtos {
+
+        @Test
+        @DisplayName("self-referential DTO is sanitized at every level, not only the top")
+        void shouldSanitizeEveryLevelOfASelfReferentialDto() {
+            Map<String, Object> level4 = new LinkedHashMap<>();
+            level4.put("name", "d");
+            Map<String, Object> level3 = new LinkedHashMap<>();
+            level3.put("name", "c");
+            level3.put("child", level4);
+            Map<String, Object> level2 = new LinkedHashMap<>();
+            level2.put("name", "b");
+            level2.put("child", level3);
+            Map<String, Object> level1 = new LinkedHashMap<>();
+            level1.put("name", "a");
+            level1.put("child", level2);
+
+            Object result = processor.processInput(
+                    level1,
+                    SelfRefNode.class,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY,
+                    InputFieldNameResolver.IDENTITY);
+
+            assertEquals(
+                    List.of("safe:a", "safe:b", "safe:c", "safe:d"),
+                    namesAlongChain(result),
+                    "SelfRefNode.name declares @Sanitize, so every level reached through the "
+                            + "self-referential 'child' field must be sanitized — not just the top level");
+        }
+
+        @Test
+        @DisplayName("a chain of twelve distinct types is sanitized at its deepest level")
+        void shouldSanitizeBeyondTenNestingLevelsOfDistinctTypes() {
+            Map<String, Object> deepest = new LinkedHashMap<>();
+            deepest.put("name", "leaf");
+            Map<String, Object> current = deepest;
+            List<Map<String, Object>> levels = new ArrayList<>();
+            levels.add(deepest);
+            for (int level = 11; level >= 1; level--) {
+                Map<String, Object> node = new LinkedHashMap<>();
+                if (level == 1) {
+                    node.put("name", "root");
+                }
+                node.put("child", current);
+                levels.add(0, node);
+                current = node;
+            }
+
+            // Control: entering the same chain at level 4 leaves nine links to the deepest level,
+            // which is inside the resolver's ten-level budget — so this arm passes today and pins
+            // the failure below to the depth budget rather than to the fixture.
+            Object shallowResult = processor.processInput(
+                    levels.get(3),
+                    Depth4.class,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY,
+                    InputFieldNameResolver.IDENTITY);
+            assertEquals(
+                    "safe:leaf",
+                    deepestName(shallowResult),
+                    "control: the same chain entered nine levels above the leaf must be sanitized");
+
+            Object result = processor.processInput(
+                    levels.get(0),
+                    Depth1.class,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY,
+                    InputFieldNameResolver.IDENTITY);
+
+            Map<?, ?> map = (Map<?, ?>) result;
+            assertEquals("safe:root", map.get("name"), "the root level's own @Sanitize must still run");
+            assertEquals(
+                    "safe:leaf",
+                    deepestName(result),
+                    "Depth12.name declares @Sanitize twelve levels below the root; traversal must "
+                            + "terminate on the finite intermediate, not on a fixed type-graph depth budget");
+        }
+
+        /** Collects the {@code name} value of every level reachable through the {@code child} key. */
+        private List<Object> namesAlongChain(Object result) {
+            List<Object> names = new ArrayList<>();
+            Map<?, ?> node = (Map<?, ?>) result;
+            while (node != null) {
+                names.add(node.get("name"));
+                node = (Map<?, ?>) node.get("child");
+            }
+            return names;
+        }
+
+        /** Returns the {@code name} value of the deepest level reachable through {@code child}. */
+        private Object deepestName(Object result) {
+            Map<?, ?> node = (Map<?, ?>) result;
+            while (node.get("child") != null) {
+                node = (Map<?, ?>) node.get("child");
+            }
+            return node.get("name");
+        }
+    }
+
+    // --- Composed chain length is bounded by distinct processor class ---
+
+    @Nested
+    @DisplayName("composed chain length is bounded by distinct processor class, not by data depth")
+    class ComposedChainLength {
+
+        private static final int LEVELS = 6;
+
+        @Test
+        @DisplayName("a type-level chain on a self-referential DTO applies once per value at every depth")
+        void shouldApplyEachDistinctProcessorOncePerValueRegardlessOfDepth() {
+            RecordingSanitizer.INVOCATIONS.clear();
+
+            Object result = processor.processInput(
+                    typeChainInput(),
+                    TypeChainNode.class,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY,
+                    InputFieldNameResolver.IDENTITY);
+
+            // Two string values per level: the declared 'name' field and an undeclared extra key
+            // that carries only the inherited chain. Both must see the type-level sanitizer once.
+            assertEquals(
+                    2 * LEVELS,
+                    RecordingSanitizer.countFor(CountingTypeSanitizer.class),
+                    "the type-level chain must apply once per string value; composing it afresh at "
+                            + "every level would make the invocation count grow with the intermediate's depth");
+            assertEquals(
+                    LEVELS,
+                    RecordingSanitizer.countFor(CountingFieldSanitizer.class),
+                    "deduplication must not collapse a distinct field-level processor — it applies "
+                            + "once per level, on the one field that declares it");
+            assertEquals(
+                    List.of("CountingTypeSanitizer@name", "CountingFieldSanitizer@name"),
+                    RecordingSanitizer.INVOCATIONS.subList(0, 2),
+                    "deduplication must preserve encounter order: type-level before field-level");
+            assertNotNull(deepestNode(result), "every level of the intermediate must still be traversed");
+        }
+
+        /** Builds a {@value #LEVELS}-level self-referential intermediate with two strings per level. */
+        private Map<String, Object> typeChainInput() {
+            Map<String, Object> deepest = new LinkedHashMap<>();
+            deepest.put("name", "name" + LEVELS);
+            deepest.put("extra", "extra" + LEVELS);
+            Map<String, Object> current = deepest;
+            for (int level = LEVELS - 1; level >= 1; level--) {
+                Map<String, Object> node = new LinkedHashMap<>();
+                node.put("name", "name" + level);
+                node.put("extra", "extra" + level);
+                node.put("child", current);
+                current = node;
+            }
+            return current;
+        }
+
+        /** Returns the deepest node reachable through the {@code child} key. */
+        private Map<?, ?> deepestNode(Object result) {
+            Map<?, ?> node = (Map<?, ?>) result;
+            while (node.get("child") != null) {
+                node = (Map<?, ?>) node.get("child");
+            }
+            return node;
+        }
+    }
+
+    // --- The same bound holds for a chain declared on the recursive link itself ---
+
+    @Nested
+    @DisplayName("a field-level chain on a recursive link contributes once per descent path")
+    class ComposedChainLengthUnderFieldLevelRecursion {
+
+        private static final int LEVELS = 6;
+
+        @Test
+        @DisplayName("a chain on the self-referential field applies once per string value at every depth")
+        void shouldContributeTheRecursiveFieldsChainOnceAlongTheDescentPath() {
+            RecordingSanitizer.INVOCATIONS.clear();
+
+            Object result = processor.processInput(
+                    fieldChainInput(),
+                    FieldChainNode.class,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY,
+                    InputFieldNameResolver.IDENTITY);
+
+            // One string value per level. `child` is a single declaration site that per-type metadata
+            // re-offers at every level, so composing it afresh each time makes level d's value carry
+            // it d-1 times — 0+1+…+(LEVELS-1) applications in total, a count the request's nesting
+            // depth alone controls. Keyed by declaration site it is contributed once, on the descent
+            // from level 1, and every level below sees exactly that one application.
+            assertEquals(
+                    LEVELS - 1L,
+                    RecordingSanitizer.countFor(CountingFieldSanitizer.class),
+                    "the recursive field's declared chain must apply once per string value from the "
+                            + "level below the field down; re-offering it at each level would grow the "
+                            + "count with the intermediate's depth");
+            assertNotNull(deepestNode(result), "every level of the intermediate must still be traversed");
+        }
+
+        /** Builds a {@value #LEVELS}-level self-referential intermediate with one string per level. */
+        private Map<String, Object> fieldChainInput() {
+            Map<String, Object> deepest = new LinkedHashMap<>();
+            deepest.put("name", "name" + LEVELS);
+            Map<String, Object> current = deepest;
+            for (int level = LEVELS - 1; level >= 1; level--) {
+                Map<String, Object> node = new LinkedHashMap<>();
+                node.put("name", "name" + level);
+                node.put("child", current);
+                current = node;
+            }
+            return current;
+        }
+
+        /** Returns the deepest node reachable through the {@code child} key. */
+        private Map<?, ?> deepestNode(Object result) {
+            Map<?, ?> node = (Map<?, ?>) result;
+            while (node.get("child") != null) {
+                node = (Map<?, ?>) node.get("child");
+            }
+            return node;
+        }
+    }
+
+    // --- The same bound holds when the recursion runs through two types ---
+
+    @Nested
+    @DisplayName("mutually recursive types each contribute their type-level chain once per path")
+    class ComposedChainLengthUnderMutualRecursion {
+
+        private static final int LEVELS = 6;
+
+        @Test
+        @DisplayName("two alternating types apply each type-level chain once per value at every depth")
+        void shouldContributeEachTypesChainOnceAlongTheDescentPath() {
+            RecordingSanitizer.INVOCATIONS.clear();
+
+            Object result = processor.processInput(
+                    alternatingInput(),
+                    PingNode.class,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY,
+                    InputFieldNameResolver.IDENTITY);
+
+            // One string per level. Ping's chain is inherited from level 1 down, Pong's from level 2
+            // down, and neither is re-offered on re-entry, so each applies exactly once per value.
+            assertEquals(
+                    LEVELS,
+                    RecordingSanitizer.countFor(CountingTypeSanitizer.class),
+                    "PingNode's chain must apply once per string value at every depth; re-offering it "
+                            + "each time the recursion re-enters PingNode would grow with the input");
+            assertEquals(
+                    LEVELS - 1L,
+                    RecordingSanitizer.countFor(CountingFieldSanitizer.class),
+                    "PongNode's chain must apply once per string value from the level it is first "
+                            + "reached — the root is above it, so it sees one value fewer");
+            assertNotNull(deepestNode(result), "every level of the intermediate must still be traversed");
+        }
+
+        /** Builds a {@value #LEVELS}-level intermediate alternating {@code PingNode}/{@code PongNode}. */
+        private Map<String, Object> alternatingInput() {
+            Map<String, Object> deepest = new LinkedHashMap<>();
+            deepest.put("name", "name" + LEVELS);
+            Map<String, Object> current = deepest;
+            for (int level = LEVELS - 1; level >= 1; level--) {
+                Map<String, Object> node = new LinkedHashMap<>();
+                node.put("name", "name" + level);
+                node.put("child", current);
+                current = node;
+            }
+            return current;
+        }
+
+        /** Returns the deepest node reachable through the {@code child} key. */
+        private Map<?, ?> deepestNode(Object result) {
+            Map<?, ?> node = (Map<?, ?>) result;
+            while (node.get("child") != null) {
+                node = (Map<?, ?>) node.get("child");
+            }
+            return node;
+        }
+    }
+
+    // --- A field's own declared chain keeps its declared order ---
+
+    @Nested
+    @DisplayName("a field's own declared chain keeps its declared order and repeats")
+    class DeclaredChainOrder {
+
+        @Test
+        @DisplayName("a field chain declaring decode-then-strip runs in that order under a type-level strip")
+        void shouldPreserveTheFieldsDeclaredOrderUnderAnObjectLevelChain() {
+            Map<String, Object> input = new LinkedHashMap<>();
+            input.put("value", "&lt;script");
+
+            Object result = processor.processInput(
+                    input,
+                    DeclaredOrderOwner.class,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY,
+                    InputFieldNameResolver.IDENTITY);
+
+            // The pair is order-sensitive on purpose: decode-then-strip yields "script", while the
+            // inverted order leaves "<script" — the entity is decoded after the strip that was meant
+            // to remove its result. Only the OUTPUT can tell the two apart, so assert on it.
+            assertEquals(
+                    "script",
+                    ((Map<?, ?>) result).get("value"),
+                    "the order declared inside one @Sanitize({...}) must survive composition with the "
+                            + "owner type's chain; collapsing the repeated class inverts it");
+        }
+
+        @Test
+        @DisplayName("the same declared order survives on a nested owner reached through a field")
+        void shouldPreserveTheFieldsDeclaredOrderOnANestedOwner() {
+            Map<String, Object> nested = new LinkedHashMap<>();
+            nested.put("value", "&lt;script");
+            Map<String, Object> input = new LinkedHashMap<>();
+            input.put("nested", nested);
+
+            Object result = processor.processInput(
+                    input,
+                    DeclaredOrderHolder.class,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY,
+                    InputFieldNameResolver.IDENTITY);
+
+            Map<?, ?> processedNested = (Map<?, ?>) ((Map<?, ?>) result).get("nested");
+            assertEquals(
+                    "script",
+                    processedNested.get("value"),
+                    "the nested owner's field declares the same decode-then-strip order, which its own "
+                            + "type-level chain must not reorder");
+        }
+    }
+
+    // --- A route-level chain must not consume a declared chain's own entries ---
+
+    @Nested
+    @DisplayName("an invocation-level chain never suppresses an entry a declared chain repeats")
+    class RoutePolicyDeclaredChainOrder {
+
+        /**
+         * The invocation-level shape codegen emits for a route annotated
+         * {@code @Sanitize(StripHtml.class)}. Every {@code DeclaredChainOrder} case runs with
+         * {@link EffectiveInputPolicies#NONE}, so this is the arm that sees what a real route sees.
+         */
+        private final EffectiveInputPolicies routePolicies =
+                new EffectiveInputPolicies(List.of(), List.of(TestStripHtmlSanitizer.class));
+
+        @Test
+        @DisplayName("a field's trailing strip still runs when the route declares the same sanitizer")
+        void shouldKeepTheFieldsTrailingStripUnderARouteLevelStrip() {
+            Map<String, Object> input = new LinkedHashMap<>();
+            input.put("value", "&lt;script");
+
+            Object result = processor.processInput(
+                    input,
+                    DeclaredOrderOwner.class,
+                    routePolicies,
+                    InputLocation.BODY,
+                    InputFieldNameResolver.IDENTITY);
+
+            // Declared intent is [StripHtml(route), StripHtml(type), DecodeEntities, StripHtml(field)].
+            // Dropping the field's trailing strip because the route already named that class leaves
+            // the decoded "<script" in the value the application receives — the strip that was meant
+            // to remove it ran while the markup was still entity-encoded.
+            assertEquals(
+                    "script",
+                    ((Map<?, ?>) result).get("value"),
+                    "the field's declared decode-then-strip must survive an invocation-level chain "
+                            + "that names the same sanitizer class");
+        }
+
+        @Test
+        @DisplayName("the same holds for a nested owner reached under the route-level chain")
+        void shouldKeepTheFieldsTrailingStripOnANestedOwnerUnderARouteLevelStrip() {
+            Map<String, Object> nested = new LinkedHashMap<>();
+            nested.put("value", "&lt;script");
+            Map<String, Object> input = new LinkedHashMap<>();
+            input.put("nested", nested);
+
+            Object result = processor.processInput(
+                    input,
+                    DeclaredOrderHolder.class,
+                    routePolicies,
+                    InputLocation.BODY,
+                    InputFieldNameResolver.IDENTITY);
+
+            Map<?, ?> processedNested = (Map<?, ?>) ((Map<?, ?>) result).get("nested");
+            assertEquals(
+                    "script",
+                    processedNested.get("value"),
+                    "a chain inherited from an enclosing level must not consume entries of a chain "
+                            + "declared below it either");
+        }
+    }
+
+    // --- A field's own chain overrides an object-level skip ---
+
+    @Nested
+    @DisplayName("a field's own chain overrides an object-level skip on every field kind")
+    class FieldChainOverridesObjectLevelSkip {
+
+        @Test
+        @DisplayName("@Canonicalize on a direct, nested and collection field all run under a type-level skip")
+        void shouldCanonicalizeEveryFieldKindThatDeclaresItsOwnChain() {
+            Map<String, Object> nested = new LinkedHashMap<>();
+            nested.put("value", "  b  ");
+            Map<String, Object> element = new LinkedHashMap<>();
+            element.put("value", "  c  ");
+            Map<String, Object> input = new LinkedHashMap<>();
+            input.put("direct", "  a  ");
+            input.put("nested", nested);
+            input.put("many", List.of(element));
+
+            Object result = processor.processInput(
+                    input,
+                    SkipCanonOwnerWithFieldChains.class,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY,
+                    InputFieldNameResolver.IDENTITY);
+
+            Map<?, ?> map = (Map<?, ?>) result;
+            assertEquals(
+                    "a", map.get("direct"), "control: a direct String field's own chain already overrides the skip");
+            assertEquals(
+                    "b",
+                    ((Map<?, ?>) map.get("nested")).get("value"),
+                    "a nested-object field's own chain must override the owner's @SkipCanonicalization too");
+            assertEquals(
+                    "c",
+                    ((Map<?, ?>) ((List<?>) map.get("many")).get(0)).get("value"),
+                    "a collection-of-object field's own chain must override the owner's @SkipCanonicalization too");
+        }
+
+        @Test
+        @DisplayName("@Sanitize on a direct, nested and collection field all run under a type-level skip")
+        void shouldSanitizeEveryFieldKindThatDeclaresItsOwnChain() {
+            Map<String, Object> nested = new LinkedHashMap<>();
+            nested.put("value", "b");
+            Map<String, Object> element = new LinkedHashMap<>();
+            element.put("value", "c");
+            Map<String, Object> input = new LinkedHashMap<>();
+            input.put("direct", "a");
+            input.put("nested", nested);
+            input.put("many", List.of(element));
+
+            Object result = processor.processInput(
+                    input,
+                    SkipSanitOwnerWithFieldChains.class,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY,
+                    InputFieldNameResolver.IDENTITY);
+
+            Map<?, ?> map = (Map<?, ?>) result;
+            assertEquals(
+                    "safe:a",
+                    map.get("direct"),
+                    "control: a direct String field's own chain already overrides the skip");
+            assertEquals(
+                    "safe:b",
+                    ((Map<?, ?>) map.get("nested")).get("value"),
+                    "a nested-object field's own chain must override the owner's @SkipSanitization too");
+            assertEquals(
+                    "safe:c",
+                    ((Map<?, ?>) ((List<?>) map.get("many")).get(0)).get("value"),
+                    "a collection-of-object field's own chain must override the owner's @SkipSanitization too");
+        }
+    }
+
+    // --- Type classification unification ---
+
+    @Nested
+    @DisplayName("type classification unification across the walker and the resolver")
+    class TypeClassificationUnification {
+
+        @Test
+        @DisplayName("wildcard-bounded collection elements are sanitized exactly like invariant ones")
+        void shouldSanitizeWildcardBoundedCollectionElementsLikeInvariantOnes() throws NoSuchFieldException {
+            // --- Field arms: List<ClassifiedNode> and List<? extends ClassifiedNode> side by side ---
+            Map<String, Object> input = new LinkedHashMap<>();
+            input.put("invariant", new ArrayList<Object>(List.of(nodeMap("a"))));
+            input.put("bounded", new ArrayList<Object>(List.of(nodeMap("b"))));
+
+            Object result = processor.processInput(
+                    input,
+                    WildcardChildrenDto.class,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY,
+                    InputFieldNameResolver.IDENTITY);
+            Map<?, ?> map = (Map<?, ?>) result;
+            assertEquals(
+                    "safe:a",
+                    firstNodeName(map.get("invariant")),
+                    "control: an invariant List<ClassifiedNode> field applies the element type's @Sanitize");
+            assertEquals(
+                    "safe:b",
+                    firstNodeName(map.get("bounded")),
+                    "List<? extends ClassifiedNode> must classify against the wildcard's upper bound, "
+                            + "so its elements are sanitized exactly like the invariant field's");
+
+            // --- Top-level arms: the same two collection types used as the processInput target ---
+            Object invariantOut = processor.processInput(
+                    new ArrayList<Object>(List.of(nodeMap("c"))),
+                    collectionFieldType("invariant"),
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY,
+                    InputFieldNameResolver.IDENTITY);
+            assertEquals(
+                    "safe:c",
+                    firstNodeName(invariantOut),
+                    "control: a top-level List<ClassifiedNode> body applies the element type's @Sanitize");
+
+            Object boundedOut = processor.processInput(
+                    new ArrayList<Object>(List.of(nodeMap("d"))),
+                    collectionFieldType("bounded"),
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY,
+                    InputFieldNameResolver.IDENTITY);
+            assertEquals(
+                    "safe:d",
+                    firstNodeName(boundedOut),
+                    "a top-level List<? extends ClassifiedNode> body must resolve its element type through "
+                            + "the same bound normalization the resolver uses — one classifier, not two");
+        }
+
+        @Test
+        @DisplayName("a top-level wildcard or type-variable target resolves to its bound and is processed")
+        void shouldSanitizeTopLevelWildcardAndTypeVariableTargets() throws NoSuchFieldException {
+            java.lang.reflect.Type wildcardTarget =
+                    ((java.lang.reflect.ParameterizedType) collectionFieldType("bounded")).getActualTypeArguments()[0];
+            assertInstanceOf(
+                    java.lang.reflect.WildcardType.class,
+                    wildcardTarget,
+                    "fixture guard: the target must really be a WildcardType");
+
+            java.lang.reflect.Type typeVariableTarget =
+                    TypeVariableHolder.class.getDeclaredField("value").getGenericType();
+            assertInstanceOf(
+                    java.lang.reflect.TypeVariable.class,
+                    typeVariableTarget,
+                    "fixture guard: the target must really be a TypeVariable");
+
+            // Both targets are processed before either is asserted, so one failure reports the
+            // outcome of both arms rather than short-circuiting on the wildcard.
+            Object wildcardOut = processor.processInput(
+                    nodeMap("w"),
+                    wildcardTarget,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY,
+                    InputFieldNameResolver.IDENTITY);
+            Object typeVariableOut = processor.processInput(
+                    nodeMap("t"),
+                    typeVariableTarget,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY,
+                    InputFieldNameResolver.IDENTITY);
+
+            assertEquals(
+                    List.of("safe:w", "safe:t"),
+                    List.of(((Map<?, ?>) wildcardOut).get("name"), ((Map<?, ?>) typeVariableOut).get("name")),
+                    "'? extends ClassifiedNode' and 'T extends ClassifiedNode' targets must each resolve to "
+                            + "their bound and run ClassifiedNode's declared policy, instead of being skipped "
+                            + "as unclassifiable shapes");
+        }
+
+        @Test
+        @DisplayName("array-of-DTO elements receive the element policies exactly like collection elements")
+        void shouldSanitizeArrayOfNestedDtoElementsLikeCollectionElements() {
+            Map<String, Object> input = new LinkedHashMap<>();
+            input.put("listChildren", new ArrayList<Object>(List.of(nodeMap("a"))));
+            input.put("arrayChildren", new ArrayList<Object>(List.of(nodeMap("b"))));
+
+            Object result = processor.processInput(
+                    input,
+                    ArrayChildrenDto.class,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY,
+                    InputFieldNameResolver.IDENTITY);
+            Map<?, ?> map = (Map<?, ?>) result;
+
+            assertEquals(
+                    "safe:a",
+                    firstNodeName(map.get("listChildren")),
+                    "control: a List<ClassifiedNode> field applies the element type's @Sanitize");
+            assertEquals(
+                    "safe:b",
+                    firstNodeName(map.get("arrayChildren")),
+                    "a ClassifiedNode[] field carries the same element schema as List<ClassifiedNode> — "
+                            + "the wire shape is the same JSON array, so the element policies must run");
+        }
+
+        @Test
+        @DisplayName("a target type that reduces to no class fails when invocation policies are declared")
+        void shouldFailClosedWhenTheTargetTypeReducesToNoClassAndPoliciesAreDeclared() throws NoSuchFieldException {
+            java.lang.reflect.Type unclassifiable =
+                    GenericArrayHolder.class.getDeclaredField("rows").getGenericType();
+            assertInstanceOf(
+                    java.lang.reflect.GenericArrayType.class,
+                    unclassifiable,
+                    "fixture guard: the target must really be a GenericArrayType, the shape that "
+                            + "reduces to no Class even after bound and Optional normalization");
+
+            var policies = new EffectiveInputPolicies(List.of(TestTrimCanonicalizer.class), List.of());
+            Map<String, Object> input = new LinkedHashMap<>();
+            input.put("name", "  hello  ");
+
+            IllegalStateException failure = assertThrows(
+                    IllegalStateException.class,
+                    () -> processor.processInput(
+                            input, unclassifiable, policies, InputLocation.BODY, InputFieldNameResolver.IDENTITY),
+                    "the caller declared invocation-level processing that provably cannot run on this "
+                            + "target type — the engine must fail rather than silently return the input");
+            assertTrue(
+                    failure.getMessage().contains(unclassifiable.getTypeName()),
+                    "the diagnostic must name the offending target type, but was: " + failure.getMessage());
+        }
+
+        @Test
+        @DisplayName("a target type that reduces to no class stays a no-op when no policies are declared")
+        void shouldRemainANoOpWhenTheTargetTypeReducesToNoClassAndNoPoliciesAreDeclared() throws NoSuchFieldException {
+            java.lang.reflect.Type unclassifiable =
+                    GenericArrayHolder.class.getDeclaredField("rows").getGenericType();
+            Map<String, Object> input = new LinkedHashMap<>();
+            input.put("name", "  hello  ");
+
+            Object result = processor.processInput(
+                    input,
+                    unclassifiable,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BODY,
+                    InputFieldNameResolver.IDENTITY);
+
+            assertSame(
+                    input,
+                    result,
+                    "with no invocation-level policies the guard cannot know whether the type graph "
+                            + "declares policies — that answer needs the classification that just failed — "
+                            + "so the no-op is kept rather than failing a caller that declared nothing");
+            assertEquals("  hello  ", input.get("name"), "the no-op path must not process the input either");
+        }
+
+        /** Builds a one-field intermediate for a {@link ClassifiedNode} element. */
+        private Map<String, Object> nodeMap(String name) {
+            Map<String, Object> node = new LinkedHashMap<>();
+            node.put("name", name);
+            return node;
+        }
+
+        /** Returns the {@code name} value of the first element of a processed node collection. */
+        private Object firstNodeName(Object processedList) {
+            assertNotNull(processedList, "the collection value must survive processing");
+            List<?> list = (List<?>) processedList;
+            return ((Map<?, ?>) list.get(0)).get("name");
+        }
+
+        /**
+         * Returns the declared generic type of a {@link WildcardChildrenDto} collection field, so the
+         * test drives {@code processInput} with a real reflective {@code ParameterizedType} rather
+         * than a hand-built stand-in.
+         */
+        private java.lang.reflect.Type collectionFieldType(String fieldName) throws NoSuchFieldException {
+            return WildcardChildrenDto.class.getDeclaredField(fieldName).getGenericType();
+        }
+    }
+
+    // --- Processor resolution caching ---
+
+    @Nested
+    @DisplayName("processor resolution caching")
+    class ProcessorResolutionCaching {
+
+        @Test
+        @DisplayName("each processor class is resolved once per engine, not once per string value")
+        void shouldResolveEachProcessorClassAtMostOncePerEngineInstance() {
+            ResolutionCounter counter = new ResolutionCounter();
+            DefaultInputObjectProcessor engine = new DefaultInputObjectProcessor(
+                    new InputPolicyMetadataResolver(),
+                    cls -> {
+                        counter.record(cls);
+                        if (cls == TestTrimCanonicalizer.class) {
+                            return new TestTrimCanonicalizer();
+                        }
+                        if (cls == TestUpperCanonicalizer.class) {
+                            return new TestUpperCanonicalizer();
+                        }
+                        throw new IllegalArgumentException("Unknown canonicalizer: " + cls);
+                    },
+                    cls -> {
+                        counter.record(cls);
+                        if (cls == TestStripControlsSanitizer.class) {
+                            return new TestStripControlsSanitizer();
+                        }
+                        if (cls == TestPrefixSanitizer.class) {
+                            return new TestPrefixSanitizer();
+                        }
+                        throw new IllegalArgumentException("Unknown sanitizer: " + cls);
+                    });
+
+            var policies = new EffectiveInputPolicies(
+                    List.of(TestTrimCanonicalizer.class, TestUpperCanonicalizer.class),
+                    List.of(TestStripControlsSanitizer.class, TestPrefixSanitizer.class));
+            Map<String, Object> input = new LinkedHashMap<>();
+            for (int i = 0; i < 25; i++) {
+                input.put("field" + i, "  value" + i + "  ");
+            }
+
+            Map<?, ?> first = (Map<?, ?>) engine.processInput(
+                    input, EmptyDto.class, policies, InputLocation.BODY, InputFieldNameResolver.IDENTITY);
+            Map<?, ?> second = (Map<?, ?>) engine.processInput(
+                    input, EmptyDto.class, policies, InputLocation.BODY, InputFieldNameResolver.IDENTITY);
+
+            assertEquals("safe:VALUE0", first.get("field0"), "the cached instances must still be applied in order");
+            assertEquals("safe:VALUE0", second.get("field0"), "a second call must produce the same processed output");
+
+            assertEquals(
+                    1,
+                    counter.count(TestTrimCanonicalizer.class),
+                    "the caller-supplied canonicalizer resolver must be consulted once per class across "
+                            + "both calls, not once per string value");
+            assertEquals(
+                    1,
+                    counter.count(TestUpperCanonicalizer.class),
+                    "every distinct canonicalizer class is resolved exactly once per engine instance");
+            assertEquals(
+                    1,
+                    counter.count(TestStripControlsSanitizer.class),
+                    "the caller-supplied sanitizer resolver must be consulted once per class across "
+                            + "both calls, not once per string value");
+            assertEquals(
+                    1,
+                    counter.count(TestPrefixSanitizer.class),
+                    "every distinct sanitizer class is resolved exactly once per engine instance");
+        }
+
+        @Test
+        @DisplayName("a failed resolution is cached and rethrown without re-invoking the resolver")
+        void shouldCacheAndRethrowAFailedProcessorResolution() {
+            ResolutionCounter counter = new ResolutionCounter();
+            DefaultInputObjectProcessor engine = new DefaultInputObjectProcessor(
+                    new InputPolicyMetadataResolver(),
+                    cls -> {
+                        counter.record(cls);
+                        throw new IllegalArgumentException("no canonicalizer bound for " + cls.getName());
+                    },
+                    cls -> {
+                        counter.record(cls);
+                        throw new IllegalArgumentException("no sanitizer bound for " + cls.getName());
+                    });
+
+            var policies = new EffectiveInputPolicies(List.of(TestUpperCanonicalizer.class), List.of());
+            Map<String, Object> input = Map.of("name", "hello");
+
+            RuntimeException firstFailure = assertThrows(
+                    RuntimeException.class,
+                    () -> engine.processInput(
+                            input, EmptyDto.class, policies, InputLocation.BODY, InputFieldNameResolver.IDENTITY),
+                    "an unresolvable processor must surface as a failure on the first call");
+            assertEquals(
+                    1,
+                    counter.count(TestUpperCanonicalizer.class),
+                    "fixture guard: the first call consults the resolver exactly once");
+
+            RuntimeException secondFailure = assertThrows(
+                    RuntimeException.class,
+                    () -> engine.processInput(
+                            input, EmptyDto.class, policies, InputLocation.BODY, InputFieldNameResolver.IDENTITY),
+                    "a cached failure must keep failing — it must not silently degrade to a no-op");
+
+            assertEquals(
+                    1,
+                    counter.count(TestUpperCanonicalizer.class),
+                    "the failed resolution must be served from the engine's cache: the caller-supplied "
+                            + "resolver must not be invoked a second time for a class already known to fail");
+            assertEquals(
+                    firstFailure.getClass(),
+                    secondFailure.getClass(),
+                    "the rethrown failure must be equivalent to the first, so callers that map on "
+                            + "exception type see no difference between a cold and a warm cache");
+            assertEquals(
+                    firstFailure.getMessage(),
+                    secondFailure.getMessage(),
+                    "the rethrown failure must carry the original diagnostic message");
+        }
+
+        @Test
+        @DisplayName("a null canonicalizer resolution is rejected at the cache boundary, naming the class")
+        void shouldRejectANullCanonicalizerResolutionNamingTheProcessorClass() {
+            DefaultInputObjectProcessor engine =
+                    new DefaultInputObjectProcessor(new InputPolicyMetadataResolver(), cls -> null, cls -> {
+                        throw new IllegalArgumentException("no sanitizer expected: " + cls);
+                    });
+
+            var policies = new EffectiveInputPolicies(List.of(TestUpperCanonicalizer.class), List.of());
+            Map<String, Object> input = Map.of("name", "hello");
+
+            RuntimeException failure = assertThrows(
+                    RuntimeException.class,
+                    () -> engine.processInput(
+                            input, EmptyDto.class, policies, InputLocation.BODY, InputFieldNameResolver.IDENTITY),
+                    "a resolver that returns null must fail at the cache boundary rather than caching a "
+                            + "null instance that NPEs on every later value for the life of the engine");
+            assertTrue(
+                    failure.getMessage() != null
+                            && failure.getMessage().contains(TestUpperCanonicalizer.class.getName()),
+                    "the failure must name the processor class that resolved to null, which a bare NPE "
+                            + "from the cached null never does. Message was: " + failure.getMessage());
+        }
+
+        @Test
+        @DisplayName("a null sanitizer resolution is rejected at the cache boundary, naming the class")
+        void shouldRejectANullSanitizerResolutionNamingTheProcessorClass() {
+            DefaultInputObjectProcessor engine = new DefaultInputObjectProcessor(
+                    new InputPolicyMetadataResolver(),
+                    cls -> {
+                        throw new IllegalArgumentException("no canonicalizer expected: " + cls);
+                    },
+                    cls -> null);
+
+            var policies = new EffectiveInputPolicies(List.of(), List.of(TestPrefixSanitizer.class));
+            Map<String, Object> input = Map.of("name", "hello");
+
+            RuntimeException failure = assertThrows(
+                    RuntimeException.class,
+                    () -> engine.processInput(
+                            input, EmptyDto.class, policies, InputLocation.BODY, InputFieldNameResolver.IDENTITY),
+                    "the sanitizer cache must reject a null resolution on the same terms as the "
+                            + "canonicalizer one");
+            assertTrue(
+                    failure.getMessage() != null && failure.getMessage().contains(TestPrefixSanitizer.class.getName()),
+                    "the failure must name the sanitizer class that resolved to null. Message was: "
+                            + failure.getMessage());
+        }
+
+        @Test
+        @DisplayName("a null resolution keeps failing on every later call, like any other bad binding")
+        void shouldKeepFailingOnASubsequentCallAfterANullResolution() {
+            ResolutionCounter counter = new ResolutionCounter();
+            DefaultInputObjectProcessor engine = new DefaultInputObjectProcessor(
+                    new InputPolicyMetadataResolver(),
+                    cls -> {
+                        counter.record(cls);
+                        return null;
+                    },
+                    cls -> {
+                        throw new IllegalArgumentException("no sanitizer expected: " + cls);
+                    });
+
+            var policies = new EffectiveInputPolicies(List.of(TestUpperCanonicalizer.class), List.of());
+            Map<String, Object> input = Map.of("name", "hello");
+
+            RuntimeException first = assertThrows(
+                    RuntimeException.class,
+                    () -> engine.processInput(
+                            input, EmptyDto.class, policies, InputLocation.BODY, InputFieldNameResolver.IDENTITY));
+            RuntimeException second = assertThrows(
+                    RuntimeException.class,
+                    () -> engine.processInput(
+                            input, EmptyDto.class, policies, InputLocation.BODY, InputFieldNameResolver.IDENTITY),
+                    "a null resolution must not silently degrade to a no-op on a warm cache");
+
+            assertEquals(first.getMessage(), second.getMessage(), "the same diagnostic must be raised every time");
+            assertEquals(
+                    1,
+                    counter.count(TestUpperCanonicalizer.class),
+                    "the rejection is cached like any other failed resolution — the caller-supplied "
+                            + "resolver is not consulted again for a class already known to be unusable");
+        }
+    }
+
+    // --- Nested container fields ---
+
+    /**
+     * A field whose element type is itself a container ({@code List<List<String>>},
+     * {@code Set<List<Tag>>}, {@code List<Inner>[]}) carries no single element schema: the outer
+     * container's element is another JSON array, not an object the walker can dispatch at a
+     * declared type.
+     *
+     * <p>Such a field must therefore take the no-element-schema path, where the accumulated
+     * inherited chain — including the invocation-level one — still reaches every string leaf
+     * through the reflective unknown-subtree walk. Recording the inner container as the element
+     * type instead routes the field into element-wise dispatch, whose non-map arm returns each
+     * inner list verbatim and silently drops every chain that applied to the leaves beneath it.
+     */
+    @Nested
+    @DisplayName("nested container fields")
+    class NestedContainerFields {
+
+        @Test
+        @DisplayName("List<List<String>> leaves still receive the invocation-level chain")
+        void shouldApplyInvocationChainToListOfListOfStringLeaves() {
+            var policies = new EffectiveInputPolicies(List.of(TestTrimCanonicalizer.class), List.of());
+            Map<String, Object> input = new LinkedHashMap<>();
+            input.put("rows", new ArrayList<>(List.of(new ArrayList<>(List.of("  alpha  ", "  beta  ")))));
+
+            Map<?, ?> out = (Map<?, ?>) processor.processInput(
+                    input, NestedContainerDto.class, policies, InputLocation.BODY, InputFieldNameResolver.IDENTITY);
+
+            assertEquals(
+                    List.of(List.of("alpha", "beta")),
+                    out.get("rows"),
+                    "List<List<String>> has no single element schema, so it must keep the "
+                            + "inherited-chain path and trim every string leaf beneath it");
+        }
+
+        @Test
+        @DisplayName("Set<List<Tag>> leaves still receive the invocation-level chain")
+        void shouldApplyInvocationChainToSetOfListOfObjectLeaves() {
+            var policies = new EffectiveInputPolicies(List.of(TestTrimCanonicalizer.class), List.of());
+            Map<String, Object> input = new LinkedHashMap<>();
+            input.put("tagGroups", new ArrayList<>(List.of(new ArrayList<>(List.of(tag("  release  "))))));
+
+            Map<?, ?> out = (Map<?, ?>) processor.processInput(
+                    input, NestedContainerDto.class, policies, InputLocation.BODY, InputFieldNameResolver.IDENTITY);
+
+            assertEquals(
+                    "release",
+                    firstNestedLeaf(out.get("tagGroups"), "label"),
+                    "a Set whose element is itself a List carries no element schema, so the inner "
+                            + "objects' string leaves must still be reached by the invocation chain");
+        }
+
+        @Test
+        @DisplayName("List<Inner>[] leaves still receive the invocation-level chain")
+        void shouldApplyInvocationChainToArrayOfListLeaves() {
+            var policies = new EffectiveInputPolicies(List.of(TestTrimCanonicalizer.class), List.of());
+            Map<String, Object> input = new LinkedHashMap<>();
+            input.put("grid", new ArrayList<>(List.of(new ArrayList<>(List.of(inner("  cell  "))))));
+
+            Map<?, ?> out = (Map<?, ?>) processor.processInput(
+                    input, NestedContainerDto.class, policies, InputLocation.BODY, InputFieldNameResolver.IDENTITY);
+
+            assertEquals(
+                    "cell",
+                    firstNestedLeaf(out.get("grid"), "value"),
+                    "a generic array whose component is itself a List carries no element schema, so "
+                            + "the invocation chain must still reach the leaves beneath it");
+        }
+
+        /**
+         * Builds the intermediate map a serialized {@code TagDto} arrives as.
+         *
+         * @param label the raw {@code label} wire value
+         * @return the one-entry intermediate map
+         */
+        private Map<String, Object> tag(String label) {
+            Map<String, Object> node = new LinkedHashMap<>();
+            node.put("label", label);
+            return node;
+        }
+
+        /**
+         * Builds the intermediate map a serialized {@code InnerDto} arrives as.
+         *
+         * @param value the raw {@code value} wire value
+         * @return the one-entry intermediate map
+         */
+        private Map<String, Object> inner(String value) {
+            Map<String, Object> node = new LinkedHashMap<>();
+            node.put("value", value);
+            return node;
+        }
+
+        /**
+         * Reads one key of the first object nested two container levels down, so a test asserts on
+         * the leaf rather than on the container shape that carries it.
+         *
+         * @param processed the processed value of the doubly-nested container field
+         * @param key       the leaf key to read
+         * @return the processed leaf value
+         */
+        private Object firstNestedLeaf(Object processed, String key) {
+            assertNotNull(processed, "the nested container value must survive processing");
+            List<?> outer = (List<?>) processed;
+            List<?> middle = (List<?>) outer.get(0);
+            return ((Map<?, ?>) middle.get(0)).get(key);
+        }
+    }
+
+    // --- Wire-name projection ---
+
+    @Nested
+    @DisplayName("wire-name projection")
+    class WireNameProjection {
+
+        @Test
+        @DisplayName("top-level generated dispatch receives the real context, so the projection still applies")
+        void shouldPassTheRealContextToTopLevelGeneratedDispatch() {
+            // ProjectedDto has a hand-written companion whose switch keys on
+            // ctx.logicalFieldName(ProjectedDto.class, wireKey) — the shape codegen emits. A
+            // top-level dispatch that hands the generated processor a null parent makes it re-seed
+            // an IDENTITY resolver, the "userName" arm stops matching the "user_name" wire key, and
+            // the declared @Sanitize silently does not run on exactly the path REST takes when
+            // codegen is active.
+            InputFieldNameResolver projection =
+                    (ownerType, wireName) -> "user_name".equals(wireName) ? "userName" : wireName;
+
+            Map<String, Object> body = new LinkedHashMap<>();
+            body.put("user_name", "alice");
+
+            Map<?, ?> mapOut = (Map<?, ?>) processor.processInput(
+                    body, ProjectedDto.class, EffectiveInputPolicies.NONE, InputLocation.BODY, projection);
+
+            assertEquals(
+                    "safe:alice",
+                    mapOut.get("user_name"),
+                    "the top-level MAP entry point must pass the real traversal context to the generated "
+                            + "processor, so the projection selects the renamed field's arm");
+            assertNull(
+                    mapOut.get("userName"),
+                    "the projection selects the switch arm — it must not rename the emitted key, which "
+                            + "still has to match what the codec will bind");
+
+            java.lang.reflect.ParameterizedType listType = new TestParameterizedType(List.class, ProjectedDto.class);
+            Map<String, Object> element = new LinkedHashMap<>();
+            element.put("user_name", "bob");
+            List<Object> listBody = new ArrayList<>(List.of(element));
+
+            List<?> listOut = (List<?>) processor.processInput(
+                    listBody, listType, EffectiveInputPolicies.NONE, InputLocation.BODY, projection);
+
+            Map<?, ?> processedElement = (Map<?, ?>) listOut.get(0);
+            assertEquals(
+                    "safe:bob",
+                    processedElement.get("user_name"),
+                    "the top-level LIST entry point must pass the real traversal context too — it is the "
+                            + "second null-parent dispatch site and fails independently of the map one");
+            assertNull(processedElement.get("userName"), "list elements keep their wire keys as well");
+        }
+
+        @Test
+        @DisplayName("InputValueContext carries the wire path with the Java logical name")
+        void shouldReportWirePathAndJavaLogicalNameInValueContext() {
+            List<InputValueContext> seen = new ArrayList<>();
+            DefaultInputObjectProcessor engine = new DefaultInputObjectProcessor(
+                    new InputPolicyMetadataResolver(),
+                    cls -> (value, context) -> {
+                        seen.add(context);
+                        return value;
+                    },
+                    cls -> {
+                        throw new IllegalArgumentException("no sanitizer expected: " + cls);
+                    });
+
+            InputFieldNameResolver projection = (ownerType, wireName) -> switch (wireName) {
+                case "user_name" -> "userName";
+                case "tag_list" -> "tags";
+                default -> wireName;
+            };
+
+            Map<String, Object> body = new LinkedHashMap<>();
+            body.put("user_name", "alice");
+            body.put("tag_list", new ArrayList<>(List.of("first")));
+
+            engine.processInput(
+                    body, RenamedFieldDto.class, EffectiveInputPolicies.NONE, InputLocation.BODY, projection);
+
+            InputValueContext scalar = contextWithPath(seen, "user_name");
+            assertEquals(
+                    "user_name",
+                    scalar.path(),
+                    "path stays the WIRE path, so a diagnostic points at the key the caller actually sent");
+            assertEquals(
+                    "userName",
+                    scalar.logicalName(),
+                    "logicalName becomes the JAVA property name once a declared property matched the "
+                            + "projected wire key");
+            assertEquals(
+                    RenamedFieldDto.class,
+                    scalar.ownerType(),
+                    "ownerType stays the declaring class of the matched property");
+
+            InputValueContext elementContext = contextWithPath(seen, "tag_list[0]");
+            assertEquals("tag_list[0]", elementContext.path(), "a collection element's path is the wire element path");
+            assertEquals(
+                    "tag_list[0]",
+                    elementContext.logicalName(),
+                    "list elements keep today's behavior: the element path occupies both components, so "
+                            + "the projection does not change what an element-level sanitizer observes");
+        }
+
+        /**
+         * Returns the single recorded context for the given path.
+         *
+         * @param contexts every {@link InputValueContext} the recording canonicalizer observed
+         * @param path     the wire path to look for
+         * @return the matching context
+         */
+        private InputValueContext contextWithPath(List<InputValueContext> contexts, String path) {
+            return contexts.stream()
+                    .filter(context -> path.equals(context.path()))
+                    .findFirst()
+                    .orElseThrow(() -> new AssertionError("no InputValueContext was recorded for wire path '" + path
+                            + "' — the declared chain never ran on that key; recorded: " + contexts));
         }
     }
 
@@ -615,6 +1807,24 @@ class DefaultInputObjectProcessorTest {
         String outerName;
 
         FieldAnnotatedDto inner;
+    }
+
+    /** Leaf DTO used as the innermost element of a doubly-nested container field. */
+    static class TagDto {
+        String label;
+    }
+
+    /**
+     * DTO whose fields are containers of containers — the three shapes whose element type is
+     * itself a {@link java.util.Collection}: a nested {@code List}, a {@code Set} of {@code List},
+     * and a generic array of {@code List}. None carries a single element schema.
+     */
+    static class NestedContainerDto {
+        List<List<String>> rows;
+
+        java.util.Set<List<TagDto>> tagGroups;
+
+        List<InnerDto>[] grid;
     }
 
     /** Plain DTO with a single string field — no annotations. */
@@ -670,6 +1880,178 @@ class DefaultInputObjectProcessorTest {
     }
 
     /**
+     * Owner type carrying {@code @SkipCanonicalization} while every field kind declares its own
+     * chain. {@code buildCanonicalizerChain} lets a field's own chain override an object-level
+     * skip; the nested and collection arms must honour the same rule through
+     * {@link InputTraversalContext#descend}.
+     */
+    @SkipCanonicalization
+    static class SkipCanonOwnerWithFieldChains {
+        @Canonicalize(TestTrimCanonicalizer.class)
+        String direct;
+
+        @Canonicalize(TestTrimCanonicalizer.class)
+        InnerDto nested;
+
+        @Canonicalize(TestTrimCanonicalizer.class)
+        List<InnerDto> many;
+    }
+
+    /** Sanitization twin of {@link SkipCanonOwnerWithFieldChains}. */
+    @SkipSanitization
+    static class SkipSanitOwnerWithFieldChains {
+        @Sanitize(TestPrefixSanitizer.class)
+        String direct;
+
+        @Sanitize(TestPrefixSanitizer.class)
+        InnerDto nested;
+
+        @Sanitize(TestPrefixSanitizer.class)
+        List<InnerDto> many;
+    }
+
+    /**
+     * Directly self-referential DTO carrying a <em>type-level</em> sanitizer chain plus one field
+     * with its own distinct chain. Per-type resolution returns the type's own chain at every level
+     * of the recursion, so this is the shape whose composed chain would otherwise grow with the
+     * intermediate's depth.
+     */
+    @Sanitize(CountingTypeSanitizer.class)
+    static class TypeChainNode {
+        @Sanitize(CountingFieldSanitizer.class)
+        String name;
+
+        TypeChainNode child;
+    }
+
+    /**
+     * Directly self-referential DTO whose chain is declared on the <em>recursive link itself</em>
+     * rather than on the type. A type-level chain on a self-referential type is one declaration site
+     * re-offered per level; so is a chain on the field that closes the cycle, which is why both are
+     * bounded by the same declaration-site key.
+     */
+    static class FieldChainNode {
+        String name;
+
+        @Sanitize(CountingFieldSanitizer.class)
+        FieldChainNode child;
+    }
+
+    /**
+     * First half of a mutually recursive pair, each half carrying its own <em>type-level</em> chain.
+     * Neither type is its own field's type, so the recursion re-enters each of them only through the
+     * other — the shape that proves the object-chain bound is keyed on the declaring type rather than
+     * on "the type I just came from".
+     */
+    @Sanitize(CountingTypeSanitizer.class)
+    static class PingNode {
+        String name;
+
+        PongNode child;
+    }
+
+    /** Second half of the mutually recursive pair; declares a distinct type-level chain. */
+    @Sanitize(CountingFieldSanitizer.class)
+    static class PongNode {
+        String name;
+
+        PingNode child;
+    }
+
+    /**
+     * Owner type whose {@code value} field declares the order-sensitive pair decode-then-strip while
+     * the type itself declares the strip half. The field's declared order is the whole point of this
+     * fixture: a composition that collapses the repeated {@code TestStripHtmlSanitizer} inverts it.
+     */
+    @Sanitize(TestStripHtmlSanitizer.class)
+    static class DeclaredOrderOwner {
+        @Sanitize({TestDecodeEntitiesSanitizer.class, TestStripHtmlSanitizer.class})
+        String value;
+    }
+
+    /** Holder reaching {@link DeclaredOrderOwner} through an undecorated nested field. */
+    static class DeclaredOrderHolder {
+        DeclaredOrderOwner nested;
+    }
+
+    /** Directly self-referential DTO — its {@code @Sanitize} chain must apply at every level. */
+    static class SelfRefNode {
+        @Sanitize(TestPrefixSanitizer.class)
+        String name;
+
+        SelfRefNode child;
+    }
+
+    // Twelve distinct types forming an acyclic chain deeper than the resolver's ten-level budget.
+    // Only the outermost and the deepest level declare a policy: an annotated intermediate would
+    // re-anchor resolution at its own level (each nested descent re-resolves from depth zero), so
+    // the depth budget would never be observable.
+
+    /** Level 1 of the twelve-level chain. */
+    static class Depth1 {
+        @Sanitize(TestPrefixSanitizer.class)
+        String name;
+
+        Depth2 child;
+    }
+
+    /** Level 2 of the twelve-level chain. */
+    static class Depth2 {
+        Depth3 child;
+    }
+
+    /** Level 3 of the twelve-level chain. */
+    static class Depth3 {
+        Depth4 child;
+    }
+
+    /** Level 4 of the twelve-level chain; also the control entry point. */
+    static class Depth4 {
+        Depth5 child;
+    }
+
+    /** Level 5 of the twelve-level chain. */
+    static class Depth5 {
+        Depth6 child;
+    }
+
+    /** Level 6 of the twelve-level chain. */
+    static class Depth6 {
+        Depth7 child;
+    }
+
+    /** Level 7 of the twelve-level chain. */
+    static class Depth7 {
+        Depth8 child;
+    }
+
+    /** Level 8 of the twelve-level chain. */
+    static class Depth8 {
+        Depth9 child;
+    }
+
+    /** Level 9 of the twelve-level chain. */
+    static class Depth9 {
+        Depth10 child;
+    }
+
+    /** Level 10 of the twelve-level chain. */
+    static class Depth10 {
+        Depth11 child;
+    }
+
+    /** Level 11 of the twelve-level chain. */
+    static class Depth11 {
+        Depth12 child;
+    }
+
+    /** Level 12 of the twelve-level chain — carries the deepest declared policy. */
+    static class Depth12 {
+        @Sanitize(TestPrefixSanitizer.class)
+        String name;
+    }
+
+    /**
      * Nested DTO whose own {@code @Sanitize} chain must survive an {@code Optional} wrapper or a
      * bounded type argument on the enclosing field.
      */
@@ -706,6 +2088,54 @@ class DefaultInputObjectProcessorTest {
     }
 
     /**
+     * Nested element type for the classification-unification fixtures. Its single field declares a
+     * sanitizer chain, so "was the element type classified?" is directly observable in the output.
+     */
+    static class ClassifiedNode {
+        @Sanitize(TestPrefixSanitizer.class)
+        String name;
+    }
+
+    /**
+     * DTO holding one element type behind an invariant and a wildcard-bounded collection. The two
+     * fields differ only in variance, so any behavioral difference between them is a classification
+     * divergence. Also the source of the reflective {@code ParameterizedType} /
+     * {@code WildcardType} instances the top-level target tests drive {@code processInput} with.
+     */
+    static class WildcardChildrenDto {
+        List<ClassifiedNode> invariant;
+        List<? extends ClassifiedNode> bounded;
+    }
+
+    /**
+     * DTO holding one element type as a collection and as an array. Both produce the same JSON
+     * array on the wire, so both must apply the element type's declared policies.
+     */
+    static class ArrayChildrenDto {
+        List<ClassifiedNode> listChildren;
+        ClassifiedNode[] arrayChildren;
+    }
+
+    /**
+     * Generic holder supplying a real {@link java.lang.reflect.TypeVariable} whose declared bound is
+     * {@link ClassifiedNode} — the shape a generic resource method's body parameter produces.
+     *
+     * @param <T> the bounded body type
+     */
+    static class TypeVariableHolder<T extends ClassifiedNode> {
+        T value;
+    }
+
+    /**
+     * Holder supplying a real {@link java.lang.reflect.GenericArrayType} — {@code List<ClassifiedNode>[]}.
+     * It is the entry-point shape that reduces to no {@link Class} even after bound and
+     * {@code Optional} normalization, so it drives the target-type guard.
+     */
+    static class GenericArrayHolder {
+        List<ClassifiedNode>[] rows;
+    }
+
+    /**
      * DTO whose {@code @Sanitize}d field has an opaque, string-backed declared type with no
      * generated processor. Paired with the hand-written
      * {@link DefaultInputObjectProcessorTest_UriHolder_InputProcessor} companion, this is the
@@ -714,6 +2144,29 @@ class DefaultInputObjectProcessorTest {
     static class UriHolder {
         @Sanitize(TestPrefixSanitizer.class)
         java.net.URI homepage;
+    }
+
+    /**
+     * DTO whose Java property name differs from the wire key a projection maps onto it. Paired with
+     * the hand-written {@link DefaultInputObjectProcessorTest_ProjectedDto_InputProcessor} companion,
+     * so every entry point that reaches it goes through generated dispatch.
+     */
+    static class ProjectedDto {
+        @Sanitize(TestPrefixSanitizer.class)
+        String userName;
+    }
+
+    /**
+     * Reflective-path DTO with a renamed scalar property and a renamed {@code List<String>} property,
+     * used to observe what {@link InputValueContext} reports for each shape under a projection. It
+     * has no companion processor, so traversal walks reflectively.
+     */
+    static class RenamedFieldDto {
+        @Canonicalize(TestTrimCanonicalizer.class)
+        String userName;
+
+        @Canonicalize(TestTrimCanonicalizer.class)
+        List<String> tags;
     }
 
     // =========================================================================
@@ -775,6 +2228,91 @@ class DefaultInputObjectProcessorTest {
         @Override
         public String sanitize(String value, InputValueContext context) {
             return value == null ? null : "safe:" + value;
+        }
+    }
+
+    /**
+     * Decodes the one HTML entity these tests use. Paired with {@link TestStripHtmlSanitizer} it forms
+     * an order-sensitive chain: decoding after the strip re-introduces the markup the strip removed.
+     */
+    static class TestDecodeEntitiesSanitizer implements Sanitizer {
+        @Override
+        public String sanitize(String value, InputValueContext context) {
+            return value == null ? null : value.replace("&lt;", "<").replace("&gt;", ">");
+        }
+    }
+
+    /** Removes the markup delimiters a decoded entity produces. Idempotent, and not commutative. */
+    static class TestStripHtmlSanitizer implements Sanitizer {
+        @Override
+        public String sanitize(String value, InputValueContext context) {
+            return value == null ? null : value.replace("<", "").replace(">", "");
+        }
+    }
+
+    /**
+     * Records every invocation into {@link #INVOCATIONS} as {@code <simpleName>@<path>} and returns
+     * the value unchanged. Idempotent by construction, so applying it twice produces exactly the
+     * same output as applying it once — the invocation log is the only observable difference, which
+     * is what makes it the right instrument for a chain-length assertion.
+     */
+    abstract static class RecordingSanitizer implements Sanitizer {
+
+        /** Ordered log of every recording-sanitizer invocation, as {@code <simpleName>@<path>}. */
+        static final List<String> INVOCATIONS = new ArrayList<>();
+
+        @Override
+        public String sanitize(String value, InputValueContext context) {
+            INVOCATIONS.add(getClass().getSimpleName() + "@" + (context == null ? "?" : context.path()));
+            return value;
+        }
+
+        /**
+         * Counts logged invocations of one recording-sanitizer class.
+         *
+         * @param type the recording sanitizer to report on
+         * @return how many times that class was invoked since the log was last cleared
+         */
+        static long countFor(Class<? extends RecordingSanitizer> type) {
+            String prefix = type.getSimpleName() + "@";
+            return INVOCATIONS.stream()
+                    .filter(entry -> entry.startsWith(prefix))
+                    .count();
+        }
+    }
+
+    /** Recording sanitizer declared at type level. */
+    static final class CountingTypeSanitizer extends RecordingSanitizer {}
+
+    /** Recording sanitizer declared at field level — a class distinct from the type-level one. */
+    static final class CountingFieldSanitizer extends RecordingSanitizer {}
+
+    /**
+     * Counts how often each processor class is handed to a caller-supplied resolver function, so a
+     * test can assert the engine consults it once per class rather than once per string value.
+     */
+    static final class ResolutionCounter {
+
+        private final Map<Class<?>, AtomicInteger> counts = new ConcurrentHashMap<>();
+
+        /**
+         * Records one resolver invocation for the given processor class.
+         *
+         * @param type the processor class handed to the resolver
+         */
+        void record(Class<?> type) {
+            counts.computeIfAbsent(type, ignored -> new AtomicInteger()).incrementAndGet();
+        }
+
+        /**
+         * Returns how many times the resolver was invoked for the given processor class.
+         *
+         * @param type the processor class to report on
+         * @return the invocation count, or {@code 0} when the class was never resolved
+         */
+        int count(Class<?> type) {
+            AtomicInteger counter = counts.get(type);
+            return counter == null ? 0 : counter.get();
         }
     }
 }

@@ -4,6 +4,7 @@
 package dev.vertique.input.processing;
 
 import dev.vertique.core.sanitization.Canonicalizer;
+import dev.vertique.core.sanitization.InputFieldNameResolver;
 import dev.vertique.core.sanitization.InputLocation;
 import dev.vertique.core.sanitization.Sanitizer;
 import dev.vertique.input.processing.DefaultInputObjectProcessorTest.TestPrefixSanitizer;
@@ -24,6 +25,10 @@ import java.util.Map;
  * {@code DefaultInputObjectProcessor.continueAt} with the raw wire string. This fixture exists so
  * {@link DefaultInputObjectProcessorTest} can prove that path applies the inherited chain instead
  * of returning the value untouched.
+ *
+ * <p>As the emitter does, the switch selects on the projected logical name
+ * ({@code rootCtx.logicalFieldName(UriHolder.class, k)}) with arms keyed on Java property names,
+ * while the emitted map keeps the wire key {@code k}.
  *
  * <p>Naming follows the dispatcher's {@code generatedClassName(...)} algorithm: the binary name of
  * {@link UriHolder} is {@code ...DefaultInputObjectProcessorTest$UriHolder}; flattening
@@ -61,7 +66,8 @@ public final class DefaultInputObjectProcessorTest_UriHolder_InputProcessor
         if (!(intermediate instanceof Map<?, ?> raw)) {
             return intermediate;
         }
-        InputTraversalContext rootCtx = parent != null ? parent : InputTraversalContext.fromPolicies(policies);
+        InputTraversalContext rootCtx =
+                parent != null ? parent : InputTraversalContext.fromPolicies(policies, InputFieldNameResolver.IDENTITY);
 
         Map<String, Object> out = new LinkedHashMap<>(raw.size());
         for (Map.Entry<?, ?> e : raw.entrySet()) {
@@ -72,9 +78,11 @@ public final class DefaultInputObjectProcessorTest_UriHolder_InputProcessor
                 continue;
             }
             String childPath = parentPath.isEmpty() ? k : parentPath + "." + k;
-            switch (k) {
+            switch (rootCtx.logicalFieldName(UriHolder.class, k)) {
                 case "homepage" -> {
                     InputTraversalContext nestedCtx = rootCtx.descend(
+                            UriHolder.class,
+                            "homepage",
                             OBJ_CANON,
                             OBJ_SANIT,
                             OBJ_SKIP_CANON,

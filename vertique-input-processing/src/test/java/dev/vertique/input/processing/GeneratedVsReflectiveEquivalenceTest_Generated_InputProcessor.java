@@ -8,6 +8,7 @@ import static dev.vertique.input.processing.GeneratedSupport.applyStringCollecti
 import static dev.vertique.input.processing.GeneratedSupport.dispatchObjectCollection;
 
 import dev.vertique.core.sanitization.Canonicalizer;
+import dev.vertique.core.sanitization.InputFieldNameResolver;
 import dev.vertique.core.sanitization.InputLocation;
 import dev.vertique.core.sanitization.Sanitizer;
 import dev.vertique.input.processing.GeneratedVsReflectiveEquivalenceTest.Generated;
@@ -25,6 +26,10 @@ import java.util.Map;
  * {@link GeneratedVsReflectiveEquivalenceTest} to assert byte-equivalence with the reflective
  * walker on the structurally-identical {@link GeneratedVsReflectiveEquivalenceTest.Reflective}
  * fixture.
+ *
+ * <p>As the emitter does, the switch selects on the projected logical name
+ * ({@code rootCtx.logicalFieldName(Generated.class, k)}) with arms keyed on Java property names,
+ * while the emitted map keeps the wire key {@code k}.
  *
  * <p>Naming follows the dispatcher's {@code generatedClassName(...)} algorithm: binary name of
  * {@link Generated} is {@code ...GeneratedVsReflectiveEquivalenceTest$Generated}; flattening
@@ -68,7 +73,8 @@ public final class GeneratedVsReflectiveEquivalenceTest_Generated_InputProcessor
         if (!(intermediate instanceof Map<?, ?> raw)) {
             return intermediate;
         }
-        InputTraversalContext rootCtx = parent != null ? parent : InputTraversalContext.fromPolicies(policies);
+        InputTraversalContext rootCtx =
+                parent != null ? parent : InputTraversalContext.fromPolicies(policies, InputFieldNameResolver.IDENTITY);
 
         Map<String, Object> out = new LinkedHashMap<>(raw.size());
         for (Map.Entry<?, ?> e : raw.entrySet()) {
@@ -79,7 +85,7 @@ public final class GeneratedVsReflectiveEquivalenceTest_Generated_InputProcessor
                 continue;
             }
             String childPath = parentPath.isEmpty() ? k : parentPath + "." + k;
-            switch (k) {
+            switch (rootCtx.logicalFieldName(Generated.class, k)) {
                 case "trimmed" ->
                     out.put(
                             k,
@@ -97,7 +103,7 @@ public final class GeneratedVsReflectiveEquivalenceTest_Generated_InputProcessor
                                     resolver,
                                     location,
                                     childPath,
-                                    k,
+                                    "trimmed",
                                     Generated.class));
                 case "dotty" ->
                     out.put(
@@ -116,7 +122,7 @@ public final class GeneratedVsReflectiveEquivalenceTest_Generated_InputProcessor
                                     resolver,
                                     location,
                                     childPath,
-                                    k,
+                                    "dotty",
                                     Generated.class));
                 case "unannotated" ->
                     out.put(
@@ -135,11 +141,20 @@ public final class GeneratedVsReflectiveEquivalenceTest_Generated_InputProcessor
                                     resolver,
                                     location,
                                     childPath,
-                                    k,
+                                    "unannotated",
                                     Generated.class));
                 case "nested" -> {
                     InputTraversalContext nestedCtx = rootCtx.descend(
-                            OBJ_CANON, OBJ_SANIT, OBJ_SKIP_CANON, OBJ_SKIP_SANIT, null, null, false, false);
+                            Generated.class,
+                            "nested",
+                            OBJ_CANON,
+                            OBJ_SANIT,
+                            OBJ_SKIP_CANON,
+                            OBJ_SKIP_SANIT,
+                            null,
+                            null,
+                            false,
+                            false);
                     out.put(
                             k,
                             dispatcher.dispatchNested(
@@ -165,7 +180,16 @@ public final class GeneratedVsReflectiveEquivalenceTest_Generated_InputProcessor
                                     Generated.class));
                 case "inners" -> {
                     InputTraversalContext innerCtx = rootCtx.descend(
-                            OBJ_CANON, OBJ_SANIT, OBJ_SKIP_CANON, OBJ_SKIP_SANIT, null, null, false, false);
+                            Generated.class,
+                            "inners",
+                            OBJ_CANON,
+                            OBJ_SANIT,
+                            OBJ_SKIP_CANON,
+                            OBJ_SKIP_SANIT,
+                            null,
+                            null,
+                            false,
+                            false);
                     out.put(
                             k,
                             dispatchObjectCollection(
@@ -195,7 +219,7 @@ public final class GeneratedVsReflectiveEquivalenceTest_Generated_InputProcessor
                                     false,
                                     resolver,
                                     location,
-                                    parentPath.isEmpty() ? k : parentPath + "." + k,
+                                    childPath,
                                     k,
                                     Generated.class,
                                     Generated.class,

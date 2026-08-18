@@ -29,15 +29,18 @@ import javax.lang.model.type.TypeMirror;
  *       or on a meta-annotation) or any reachable nested field's type participates.</li>
  *   <li>Types outside the current compilation unit are excluded — the runtime falls back to the
  *       reflective continuation for those.</li>
- *   <li>Cycle protection via max depth {@value #MAX_DEPTH}, mirroring
- *       {@code InputPolicyMetadataResolver.MAX_DEPTH}.</li>
+ *   <li>Cycle protection via max depth {@value #MAX_DEPTH}. This is an APT-time bound on walking
+ *       the <em>type graph</em>, which has no other terminator here; it has no runtime
+ *       counterpart, because {@code InputPolicyMetadataResolver} resolves one type at a time and
+ *       the runtime walk terminates on the finite intermediate data instead.</li>
  * </ul>
  */
 public final class DtoScanner {
 
     /**
      * Maximum traversal depth before a depth-exceeded warning is emitted and recursion stops.
-     * Mirrors {@code InputPolicyMetadataResolver.MAX_DEPTH}.
+     * APT-time only: this scan walks the type graph, so it needs its own terminator. The runtime
+     * resolver has no depth budget — see the class javadoc.
      */
     static final int MAX_DEPTH = 10;
 

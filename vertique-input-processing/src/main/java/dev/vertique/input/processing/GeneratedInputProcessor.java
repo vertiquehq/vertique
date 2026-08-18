@@ -3,6 +3,7 @@
 
 package dev.vertique.input.processing;
 
+import dev.vertique.core.sanitization.InputFieldNameResolver;
 import dev.vertique.core.sanitization.InputLocation;
 import jakarta.annotation.Nullable;
 
@@ -47,9 +48,16 @@ public interface GeneratedInputProcessor<T> {
      * @param resolver     applies canonicalizer and sanitizer chains to string values
      * @param dispatcher   looks up generated processors for nested DTO types and falls back
      *                     reflectively when none exist for an external-jar nested type
-     * @param parent       the accumulated traversal context from the caller, or {@code null} when
-     *                     invoked at the top level (in which case the processor seeds with
-     *                     {@link InputTraversalContext#fromPolicies(EffectiveInputPolicies)})
+     * @param parent       the accumulated traversal context from the caller, which also carries the
+     *                     traversal's {@link InputFieldNameResolver} — consult it through
+     *                     {@link InputTraversalContext#logicalFieldName(Class, String)} before
+     *                     matching a wire key against a Java field name. It is {@code null} only
+     *                     when a caller has no context at all, in which case the processor seeds
+     *                     with
+     *                     {@link InputTraversalContext#fromPolicies(EffectiveInputPolicies, InputFieldNameResolver)}
+     *                     and {@link InputFieldNameResolver#IDENTITY}; the engine's own entry points
+     *                     always pass the real context, because re-seeding identity naming would
+     *                     silently drop a renamed field's declared policies
      * @param parentPath   the dot-separated path prefix of the field this DTO is nested under,
      *                     or an empty string when invoked at the top level; used to compose
      *                     correct {@code path} values in {@link dev.vertique.core.sanitization.InputValueContext}

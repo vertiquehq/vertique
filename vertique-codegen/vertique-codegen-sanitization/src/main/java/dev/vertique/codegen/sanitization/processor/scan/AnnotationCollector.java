@@ -15,6 +15,7 @@ import javax.lang.model.element.AnnotationMirror;
 import javax.lang.model.element.AnnotationValue;
 import javax.lang.model.element.Element;
 import javax.lang.model.element.ElementKind;
+import javax.lang.model.element.Modifier;
 import javax.lang.model.element.RecordComponentElement;
 import javax.lang.model.element.TypeElement;
 import javax.lang.model.element.VariableElement;
@@ -24,6 +25,7 @@ import javax.lang.model.type.TypeKind;
 import javax.lang.model.type.TypeMirror;
 import javax.lang.model.type.TypeVariable;
 import javax.lang.model.type.WildcardType;
+import javax.lang.model.util.Elements;
 import javax.tools.Diagnostic;
 
 /**
@@ -50,6 +52,13 @@ import javax.tools.Diagnostic;
  * {@code Optional<? extends NestedDto>} and {@code List<? extends NestedDto>} classify against
  * {@code NestedDto}. See {@link #buildFieldModel} for the full rule, including raw
  * {@code Optional} handling.
+ *
+ * <p>Arrays classify exactly like collections — a {@code NestedDto[]} field is
+ * {@link FieldKind#COLLECTION_OF_DTO} and a {@code String[]} field is
+ * {@link FieldKind#COLLECTION_OF_STRINGS} — because both shapes arrive as a JSON array carrying
+ * one element schema. An array whose component is itself an array ({@code String[][]}) has no
+ * element schema and stays {@link FieldKind#OTHER}, matching
+ * {@code TypeClassifier.elementType} in {@code vertique-input-processing}.
  */
 public final class AnnotationCollector {
 
@@ -136,6 +145,14 @@ public final class AnnotationCollector {
      * Resolves field models for both records (record components) and regular classes (declared
      * fields walked up the supertype hierarchy).
      *
+     * <p><strong>Only instance properties are resolved.</strong> Static and synthetic fields are
+     * skipped, mirroring {@code InputPolicyMetadataResolver.resolveFields} in
+     * {@code vertique-input-processing}: neither is part of the type's wire shape, so emitting an
+     * arm for one would let a crafted wire key drive a Lombok {@code @Slf4j} {@code log} field's or
+     * a synthetic {@code this$0}'s type — and would make the generated path disagree with the
+     * reflective one on the same DTO. Record components need no such filter; the record's component
+     * list holds only its declared components.
+     *
      * @param type the type to inspect
      * @return ordered map of field name to {@link FieldModel}
      */
@@ -157,6 +174,7 @@ public final class AnnotationCollector {
                 if ("java.lang.Object".equals(fqn)) continue;
                 for (Element enclosed : te.getEnclosedElements()) {
                     if (enclosed.getKind() != ElementKind.FIELD) continue;
+                    if (isStaticOrSynthetic(enclosed)) continue;
                     VariableElement field = (VariableElement) enclosed;
                     String fieldName = field.getSimpleName().toString();
                     if (result.containsKey(fieldName)) continue; // subclass overrides
@@ -168,6 +186,24 @@ public final class AnnotationCollector {
             }
         }
         return result;
+    }
+
+    /**
+     * Returns {@code true} for a field that is not an instance property of its declaring type.
+     *
+     * <p>The {@link Elements#getOrigin(Element) origin} test matters for a supertype read from a
+     * class file rather than from source — a source {@code TypeElement} does not carry the
+     * synthetic {@code this$0} in its element model, but a compiled one does.
+     *
+     * @param field the enclosed field element
+     * @return {@code true} when the field is static, synthetic, or compiler-mandated
+     */
+    private boolean isStaticOrSynthetic(Element field) {
+        if (field.getModifiers().contains(Modifier.STATIC)) {
+            return true;
+        }
+        Elements.Origin origin = ctx.elements().getOrigin(field);
+        return origin == Elements.Origin.SYNTHETIC || origin == Elements.Origin.MANDATED;
     }
 
     /**
@@ -301,11 +337,19 @@ public final class AnnotationCollector {
             return new FieldModel(name, FieldKind.STRING, canonChain, sanitChain, skipCanon, skipSanit, null, type);
         }
 
-        // Collection types
-        if (isCollection(type)) {
-            TypeMirror elementType = extractCollectionElementType(type);
+        // Collection and array types — both arrive as a JSON array on the wire and carry exactly
+        // one element schema, so they classify through one branch. This mirrors
+        // InputPolicyMetadataResolver.buildFieldMeta, which routes
+        // `Collection.class.isAssignableFrom(rawType) || rawType.isArray()` the same way; without
+        // it a `NestedDto[]` field would emit an applyDefault arm and only ever apply inherited
+        // chains, while the reflective walker descended into each element.
+        boolean isArray = type.getKind() == TypeKind.ARRAY;
+        if (isArray || isCollection(type)) {
+            TypeMirror elementType =
+                    isArray ? normalizeElementType(arrayElementType(type)) : extractCollectionElementType(type);
             if (elementType == null) {
-                // Raw collection — cannot determine element type
+                // Raw collection, or an array whose component carries no element schema —
+                // cannot determine element type
                 return hasAnnotations
                         ? new FieldModel(
                                 name, FieldKind.OTHER, canonChain, sanitChain, skipCanon, skipSanit, null, type)
@@ -333,7 +377,7 @@ public final class AnnotationCollector {
                         ctx.types().erasure(elementType),
                         type);
             }
-            // Collection of scalars with annotations
+            // Collection or array of scalars, with annotations
             return hasAnnotations
                     ? new FieldModel(
                             name,
@@ -347,18 +391,11 @@ public final class AnnotationCollector {
                     : null;
         }
 
-        // Nested object (non-scalar, non-collection, non-array)
+        // Nested object (non-scalar, non-collection, non-array — arrays returned above)
         if (type.getKind() == TypeKind.DECLARED && !isScalarOrEnum(type)) {
             TypeMirror erasedType = ctx.types().erasure(type);
             return new FieldModel(
                     name, FieldKind.NESTED_DTO, canonChain, sanitChain, skipCanon, skipSanit, erasedType, erasedType);
-        }
-
-        // Arrays — treated as OTHER (not in scope per the plan)
-        if (type.getKind() == TypeKind.ARRAY) {
-            return hasAnnotations
-                    ? new FieldModel(name, FieldKind.OTHER, canonChain, sanitChain, skipCanon, skipSanit, null, type)
-                    : null;
         }
 
         // Primitives / enums / other scalars
@@ -514,10 +551,22 @@ public final class AnnotationCollector {
      * @return {@code true} for collection types
      */
     private boolean isCollection(TypeMirror type) {
+        return isAssignableTo(type, "java.util.Collection");
+    }
+
+    /**
+     * Returns {@code true} if the type mirror is assignable to the named supertype, comparing
+     * erasures so a parameterized {@code List<Foo>} matches {@code java.util.Collection}.
+     *
+     * @param type       the type mirror to test
+     * @param supertypeFqn the fully-qualified name of the supertype to test against
+     * @return {@code true} when {@code type} is a declared type assignable to {@code supertypeFqn}
+     */
+    private boolean isAssignableTo(TypeMirror type, String supertypeFqn) {
         if (type.getKind() != TypeKind.DECLARED) return false;
-        TypeElement collectionElement = ctx.elements().getTypeElement("java.util.Collection");
-        if (collectionElement == null) return false;
-        return ctx.types().isAssignable(ctx.types().erasure(type), ctx.types().erasure(collectionElement.asType()));
+        TypeElement supertype = ctx.elements().getTypeElement(supertypeFqn);
+        if (supertype == null) return false;
+        return ctx.types().isAssignable(ctx.types().erasure(type), ctx.types().erasure(supertype.asType()));
     }
 
     /**
@@ -543,13 +592,41 @@ public final class AnnotationCollector {
     private TypeMirror extractCollectionElementType(TypeMirror type) {
         if (!(type instanceof DeclaredType dt)) return null;
         if (dt.getTypeArguments().isEmpty()) return null;
-        TypeMirror arg = normalizeToBound(dt.getTypeArguments().get(0));
+        return normalizeElementType(dt.getTypeArguments().get(0));
+    }
+
+    /**
+     * Normalizes a candidate element type — a collection's type argument or an array's component
+     * type — to the declared type Jackson materializes for it, or {@code null} when no element
+     * schema is determinable.
+     *
+     * <p>Wildcards and type variables resolve through {@link #normalizeToBound} and
+     * {@code Optional} layers are unwrapped, so {@code ? extends Child},
+     * {@code Optional<? extends Child>} and {@code Optional<Child>} all yield {@code Child}.
+     *
+     * <p>Returns {@code null} for anything that does not reduce to a declared type — a primitive
+     * component ({@code int[]}), a nested array component ({@code String[][]}, {@code List<String[]>})
+     * and a raw {@code Optional} — and for an element that is itself a container: a
+     * {@link Collection} ({@code List<List<String>>}, {@code Set<List<Tag>>}) or a {@link java.util.Map}
+     * ({@code List<Map<String, String>>}). A container element's wire value is another JSON array
+     * or object rather than a dispatchable nested DTO, and a {@code Map}'s keys are arbitrary, so
+     * neither carries a statically known property set. This is exactly
+     * {@code TypeClassifier.elementType}'s rule in {@code vertique-input-processing}, whose null
+     * result likewise keeps the field on the inherited-chain path instead of descending
+     * element-wise — the two paths must classify these shapes identically or their output diverges.
+     *
+     * @param candidate the element type argument or array component type; may be {@code null}
+     * @return the normalized declared element type, or {@code null} if not determinable
+     */
+    private TypeMirror normalizeElementType(TypeMirror candidate) {
+        TypeMirror arg = normalizeToBound(candidate);
         if (arg == null || arg.getKind() != TypeKind.DECLARED) return null;
         while (isOptionalWrapper(arg)) {
             TypeMirror wrapped = normalizeToBound(optionalTypeArgument(arg));
             if (wrapped == null || wrapped.getKind() != TypeKind.DECLARED) return null;
             arg = wrapped;
         }
+        if (isCollection(arg) || isAssignableTo(arg, "java.util.Map")) return null;
         return arg;
     }
 
@@ -666,15 +743,15 @@ public final class AnnotationCollector {
     }
 
     /**
-     * Extracts the element type from an array type mirror.
+     * Extracts the raw component type from an array type mirror. Applies no normalization —
+     * {@link #buildFieldModel} passes the result through {@link #normalizeElementType}, which is
+     * what rejects a nested-array or primitive component.
      *
-     * @param type the array type mirror
-     * @return the component type mirror, or {@code null}
+     * @param type the array type mirror; the caller must have established that its kind is
+     *     {@link TypeKind#ARRAY}
+     * @return the component type mirror
      */
     static TypeMirror arrayElementType(TypeMirror type) {
-        if (type.getKind() == TypeKind.ARRAY) {
-            return ((ArrayType) type).getComponentType();
-        }
-        return null;
+        return ((ArrayType) type).getComponentType();
     }
 }

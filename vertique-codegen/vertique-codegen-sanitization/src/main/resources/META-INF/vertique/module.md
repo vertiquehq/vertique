@@ -24,7 +24,7 @@ For each participating DTO type, the processor emits a `{DTO}_InputProcessor` cl
 
 - `public final`, implements `GeneratedInputProcessor<T>`, with a public no-arg constructor for `Class.forName`-based instantiation by `GeneratedInputProcessorDispatcher`.
 - `static final` chain constants — `List<Class<? extends Canonicalizer>>`, `List<Class<? extends Sanitizer>>`, and `boolean` skip flags — for the type-level chain and for each field, resolved once at class-load time.
-- `process(...)` dispatches on a `switch` over JSON field names:
+- `process(...)` dispatches on a `switch` whose `case` labels are the DTO's **Java** property names and whose selector is the traversal's projection of the wire key — `switch (rootCtx.logicalFieldName(Dto.class, k))`. The intermediate is keyed by wire names, so a renamed property (e.g. `@JsonProperty("user_name") String userName`) would match no arm if the raw key were switched on and its declared chain would be silently skipped. The projection selects the arm only: the emitted map keeps the wire key `k`, which is what the codec binds. The `InputValueContext` follows the same split — `path` is the wire path, `logicalName` is the Java property name for a matched arm and the wire name for an unmatched key.
   - String fields call `GeneratedSupport.applyString(...)`.
   - String collection fields call `GeneratedSupport.applyStringCollection(...)`.
   - Nested DTO fields call `rootCtx.descend(...)` then `dispatcher.dispatchNested(...)`.
@@ -42,7 +42,9 @@ For a `@BODY` resource-method parameter typed `Collection<E>` or `E[]`, the elem
 
 **Which nested DTOs get a generated processor.** A nested DTO type is included in the generated set only if its subtree carries at least one of `@Canonicalize`, `@Sanitize`, `@SkipCanonicalization`, or `@SkipSanitization` — directly on the type, on a field/component, or via a meta-annotation. A discovery-root DTO is always included regardless of local annotations, so route- and parameter-level policies still flow through the generated path. Field classification walks the superclass chain (stopping at `Object`) to collect inherited fields, mirroring `FR-CG008-005`, so they participate alongside a DTO's own fields.
 
-**External-jar and array-field limits.** A field or record component whose declared type is not in the current compilation unit (an external-jar type) is not scanned for nested annotations; the generated processor calls `dispatcher.dispatchNested(...)` for that field instead, routing it to the reflective continuation (see "Codegen↔Reflection Handoff" below). An array field at the nested level (e.g. `NestedDto[]`) is never emitted — only `Collection<E>` field types are supported for nested objects, matching the reflective baseline.
+**External-jar limit.** A field or record component whose declared type is not in the current compilation unit (an external-jar type) is not scanned for nested annotations; the generated processor calls `dispatcher.dispatchNested(...)` for that field instead, routing it to the reflective continuation (see "Codegen↔Reflection Handoff" below).
+
+**Array fields classify like collections.** Both shapes arrive as a JSON array carrying exactly one element schema, so a `NestedDto[]` field is treated as `COLLECTION_OF_DTO` and a `String[]` field as `COLLECTION_OF_STRINGS` — elements are processed at the component type, exactly as for `Collection<E>`, matching the reflective baseline. An array whose component is itself an array (`String[][]`) carries no element schema and stays `OTHER`, keeping the inherited-chain path.
 
 **Context parameters are never request bodies.** A resource method parameter annotated `@Context`, or one whose declared type is assignable to `dev.vertique.core.context.ContextValue`, is excluded from discovery — these are auto-classified as `CONTEXT` by the runtime regardless of whether `@Context` is present, and are never treated as request-body roots.
 
@@ -80,6 +82,8 @@ Without this normalization `Optional` would classify as a nested DTO and emit `d
 
 The following types live in `dev.vertique.input.processing` (artifact `vertique-input-processing`) as the stable public SPI. They are available at runtime regardless of whether `vertique-codegen-sanitization` is on the processor path.
 
+One type the emitted source references is **not** in that package: `InputFieldNameResolver` — the wire → Java property-name projection — is declared in `dev.vertique.core.sanitization` (artifact `vertique-core`) beside `InputLocation`, `Canonicalizer` and `Sanitizer`, and the emitter imports it from there.
+
 ### `GeneratedInputProcessor<T>`
 
 Interface implemented by every emitted `{DTO}_InputProcessor`.
@@ -98,7 +102,7 @@ public interface GeneratedInputProcessor<T> {
 }
 ```
 
-`parent == null` signals that this is the top-level entry; the generated class seeds from `InputTraversalContext.fromPolicies(policies)`. A non-null `parent` means the caller has already accumulated traversal state (nested dispatch). `parentPath` is the dot-separated path prefix of the field this DTO is nested under — an empty string at the top level — and is composed into the `path` of every `InputValueContext` the processor builds.
+`parent == null` signals that this is the top-level entry; the generated class then seeds from `InputTraversalContext.fromPolicies(policies, InputFieldNameResolver.IDENTITY)`. That fallback exists for direct invocation only — the engine's own entry points always hand over a real `parent`, because a context seeded here can only assume identity naming and would drop a wire-name projection. A non-null `parent` means the caller has already accumulated traversal state (nested dispatch) and carries the traversal's `InputFieldNameResolver`. `parentPath` is the dot-separated path prefix of the field this DTO is nested under — an empty string at the top level — and is composed into the `path` of every `InputValueContext` the processor builds.
 
 ### `ChainResolver`
 
@@ -118,18 +122,26 @@ Built once by the default engine (`InputObjectProcessor.createDefault(...)`) fro
 
 ### `InputTraversalContext`
 
-Public final class (not a record) that carries traversal state across generated and reflective dispatch. Two `descend(...)` overloads preserve the metadata-shape for the reflective walker (package-private — the walker shares the package) and provide a public primitive-shape for generated callers (avoiding metadata allocation on the hot path).
+Public final class (not a record) that carries traversal state across generated and reflective dispatch. Its `descend(...)` overloads preserve the metadata-shape for the reflective walker (package-private — the walker shares the package) and provide a public primitive-shape for generated callers (avoiding metadata allocation on the hot path). Emitted code calls the **site-keyed** primitive overload, naming both declaration sites the descent folds in: the enclosing DTO — the type that declared `OBJ_CANON` / `OBJ_SANIT` — and that DTO paired with the arm's own field name, which declared the per-field constants. Those keys are how a self-referential DTO's chains are contributed once per descent path rather than once per level of the request body, whether the chain sits on the recursive type or on the recursive link itself. The unkeyed overload still exists for processors emitted before it, and does not bound that growth.
 
 ```java
 public final class InputTraversalContext {
-    public static InputTraversalContext fromPolicies(EffectiveInputPolicies policies) { ... }
+    public static InputTraversalContext fromPolicies(EffectiveInputPolicies policies,
+                                                     InputFieldNameResolver nameResolver) { ... }
+
+    // Wire → Java property-name projection, called by the generated switch selector
+    public String logicalFieldName(Class<?> ownerType, String wireName) { ... }
 
     // Reflective-walker overload (package-private)
     InputTraversalContext descend(InputPolicyMetadata parentMeta,
                                   @Nullable FieldPolicyMetadata fieldMeta) { ... }
 
-    // Generated-caller overload — no metadata allocation
+    // Generated-caller overload — no metadata allocation. ownerType is the enclosing DTO, the
+    // declaration site of objectCanon / objectSanit; ownerType + fieldName is the declaration
+    // site of fieldCanon / fieldSanit.
     public InputTraversalContext descend(
+            Class<?> ownerType,
+            String fieldName,
             List<Class<? extends Canonicalizer>> objectCanon,
             List<Class<? extends Sanitizer>> objectSanit,
             boolean objectSkipCanon, boolean objectSkipSanit,
@@ -255,6 +267,7 @@ None. `vertique-codegen-sanitization` is a compile-time annotation processor wit
 |----------|-------|---------|
 | `vertique-codegen-core` | compile | `CodegenContext`, `TypeResolver`, `AnnotationMirrors`, `Diagnostics`, `Identifiers` |
 | `vertique-input-processing` | compile | Runtime SPI the emitted source references (`GeneratedInputProcessor`, `GeneratedSupport`, `GeneratedInputProcessorDispatcher`, `ChainResolver`, `EffectiveInputPolicies`, `InputTraversalContext`) |
+| `vertique-core` | compile (transitive) | `InputLocation`, `Canonicalizer`, `Sanitizer`, and `InputFieldNameResolver` — the sanitization vocabulary the emitted source imports |
 | `vertique-rest-core` | compile | REST-rooted discovery: `RestBodyDiscovery` uses `RestContextTypes` and the `RequestPreconditions`/`RequestParams` FQNs to classify resource-method parameters |
 | `com.palantir.javapoet:javapoet` | compile | Source generation (not on runtime classpath) |
 
