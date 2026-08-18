@@ -60,12 +60,25 @@ import java.util.Iterator;
  * {@link java.util.regex.Matcher#matches()}, which the deserializer uses, is implicitly anchored to
  * the whole input, so it needs no {@code ^}/{@code $}. Anchoring the spec pattern is what makes
  * generated client validation reject the malformed inputs the server would reject — but honestly,
- * it is not a perfect substitute for the runtime check: a JVM-based ECMA/Java regex validator can
- * still accept a value with a trailing newline (e.g. {@code "1.50\n"}), because Java's {@code $} — by
- * default — matches either at the end of input or immediately before a final line terminator. The
- * deserializer's own unanchored {@code matches()} call has no such gap: it requires the entire input,
- * including the trailing {@code \n}, to fall inside the grammar, so that same value is rejected with
- * a 400.
+ * it is not a perfect substitute for the runtime check, and the gap is <strong>engine-dependent</strong>.
+ *
+ * <p>A <em>Java</em>-based validator can still accept a value carrying one trailing line terminator
+ * (e.g. {@code "1.50\n"}), because Java's {@code $} — without {@code MULTILINE} — matches either at
+ * the end of input or immediately before a final line terminator. Java's notion of a line terminator
+ * is wider than {@code \n} alone: {@code \n}, {@code \r\n}, {@code \r}, {@code U+0085} (NEL),
+ * {@code U+2028} (LS), and {@code U+2029} (PS) all slip through, and all six were measured against
+ * this exact pattern. Only a <em>single</em> final terminator slips through — {@code "1.50\n\n"} and
+ * {@code "1.50\nX"} are both rejected.
+ *
+ * <p>An <em>ECMA-262</em> validator has no such gap: without the {@code m} flag its {@code $} matches
+ * only at the very end of input, so a JavaScript client rejects all six. A generated JS client is
+ * therefore <em>stricter</em> here than a JVM one, which is why this residual cannot be stated as a
+ * property of "the spec pattern" — it is a property of the engine evaluating it.
+ *
+ * <p>In every case the direction is safe: the deserializer's own unanchored {@code matches()} call
+ * requires the entire input, terminator included, to fall inside the grammar, so a value a lenient
+ * JVM-side validator let through is still rejected with a 400 at the boundary. The residual costs a
+ * client-side rejection that never happens, never a server-side acceptance that should not.
  *
  * <p><strong>Chain-end contract:</strong> delegates to the next converter via {@link
  * ConverterChain#delegate}, which returns {@code null} rather than throwing when this converter is
