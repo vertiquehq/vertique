@@ -43,8 +43,16 @@ class OwnerTypeWalkTest {
     void wrapperTypeArgumentIsNotPrepared() {
         Set<Class<?>> prepared = prepare(WrapperHolder.class);
 
-        assertTrue(prepared.contains(WrapperHolder.class), "the entry-point class is always an owner");
-        assertTrue(prepared.contains(Wrapper.class), "the field's declared type is an owner");
+        assertTrue(
+                prepared.contains(WrapperHolder.class),
+                "the entry point's 'w' field is a nested-object field and is recorded unconditionally, so "
+                        + "WrapperHolder's own metadata is non-empty");
+        assertFalse(
+                prepared.contains(Wrapper.class),
+                "Wrapper<T>'s own field erases to Object and carries no annotation, so Wrapper's own "
+                        + "metadata declares no fields — DefaultInputObjectProcessor's schema-free branch "
+                        + "can never call logicalFieldName against it, so it is not prepared either, even "
+                        + "though the engine does reach it as a nested-object dispatch target");
         assertFalse(
                 prepared.contains(Dto.class),
                 "Wrapper<T>'s own field erases to Object, so the engine never reaches Dto and it must "
@@ -76,11 +84,15 @@ class OwnerTypeWalkTest {
     }
 
     @Test
-    @DisplayName("a nested container element is not prepared")
+    @DisplayName("a nested container element is not prepared, and neither is the schema-free entry point")
     void nestedContainerElementIsNotPrepared() {
         Set<Class<?>> prepared = prepare(NestedListHolder.class);
 
-        assertTrue(prepared.contains(NestedListHolder.class), "the entry-point class is always an owner");
+        assertFalse(
+                prepared.contains(NestedListHolder.class),
+                "the entry point's only field is an unannotated nested container with no determinable "
+                        + "element schema, so it is not recorded and NestedListHolder's own metadata "
+                        + "declares no fields — it is itself a schema-free dispatch target");
         assertFalse(
                 prepared.contains(Dto.class),
                 "a container element carries no element schema, so List<List<Dto>> never reaches Dto");
@@ -173,24 +185,67 @@ class OwnerTypeWalkTest {
     }
 
     @Test
-    @DisplayName("an annotated schema-free field contributes its declared type as an owner")
-    void annotatedSchemaFreeFieldTypeIsPrepared() {
+    @DisplayName("an annotated schema-free field's raw declared class is not prepared")
+    void annotatedSchemaFreeFieldTypeIsNotPrepared() {
         Set<Class<?>> prepared = prepare(AttributesHolder.class);
 
         assertTrue(
+                prepared.contains(AttributesHolder.class),
+                "the field declares policy, so AttributesHolder's own metadata records it and the entry "
+                        + "point itself remains an owner");
+        assertFalse(
                 prepared.contains(Map.class),
-                "the field declares policy, so the engine records it and dispatches against Map.class");
+                "Map's own metadata declares no fields of its own — an interface has no declared "
+                        + "instance fields — so DefaultInputObjectProcessor's schema-free branch can never "
+                        + "call logicalFieldName against Map.class even though the annotated field records "
+                        + "it as a dispatch target; precomputing it would only ever fail, never help");
     }
 
     @Test
-    @DisplayName("an unannotated schema-free field contributes no owner")
+    @DisplayName("an unannotated scalar field contributes no owner, and the schema-free entry point is not "
+            + "prepared either")
     void unannotatedSchemaFreeFieldContributesNothing() {
         Set<Class<?>> prepared = prepare(ScalarHolder.class);
 
         assertEquals(
-                Set.of(ScalarHolder.class),
+                Set.of(),
                 prepared,
-                "an unannotated scalar field is not recorded at all, so it adds no owner");
+                "an unannotated scalar field is not recorded at all, so ScalarHolder's own metadata "
+                        + "declares no fields either — it is itself a schema-free dispatch target, exactly "
+                        + "like any other reachable class whose own metadata is empty");
+    }
+
+    @Test
+    @DisplayName("a reachable schema-free type is walked but never passed to precompute")
+    void schemaFreeOwnerIsNotPrecomputed() {
+        Set<Class<?>> prepared = prepare(SchemaFreeNestedHolder.class);
+
+        assertTrue(
+                prepared.contains(SchemaFreeNestedHolder.class),
+                "the entry point's 'nested' field is a nested-object field and is recorded "
+                        + "unconditionally, so SchemaFreeNestedHolder's own metadata is non-empty");
+        assertFalse(
+                prepared.contains(SchemaFreeNested.class),
+                "SchemaFreeNested is reachable — the walk resolves its metadata and, being descendable "
+                        + "and non-platform, would follow its own fields if it had any — but its only field "
+                        + "is an unannotated scalar, so its own metadata declares no fields; "
+                        + "DefaultInputObjectProcessor's schema-free branch can therefore never call "
+                        + "logicalFieldName against it, and precomputing it would only ever fail, never "
+                        + "help — a genuine startup collision on this class is not possible");
+    }
+
+    @Test
+    @DisplayName("a collection subtype that declares its own field is still precomputed")
+    void fieldDeclaringCollectionSubtypeIsStillPrecomputed() {
+        Set<Class<?>> prepared = prepare(FieldDeclaringCollectionHolder.class);
+
+        assertTrue(
+                prepared.contains(FieldDeclaringCollection.class),
+                "FieldDeclaringCollection declares its own 'label' field alongside extending "
+                        + "ArrayList<Dto>, so its own metadata is genuinely non-empty and it remains a "
+                        + "legitimate owner — a blanket collection-subtype exclusion would wrongly skip it "
+                        + "even though a wire/declared shape mismatch can dispatch a key against it");
+        assertTrue(prepared.contains(Dto.class), "the collection's element type is still an owner too");
     }
 
     @Test
@@ -446,6 +501,37 @@ class OwnerTypeWalkTest {
     /** Entry point for an unannotated scalar field. */
     static class ScalarHolder {
         int count;
+    }
+
+    /**
+     * A descendable nested-object owner whose only field is an unannotated scalar, so its own
+     * metadata declares no fields at all — the schema-free-dispatch-target shape the walk must not
+     * precompute even though the type itself is genuinely reachable.
+     */
+    static class SchemaFreeNested {
+        int code;
+    }
+
+    /** Entry point whose only field targets {@link SchemaFreeNested}. */
+    static class SchemaFreeNestedHolder {
+        SchemaFreeNested nested;
+    }
+
+    /**
+     * A collection subtype that also declares its own {@code String} field — unlike {@link Pair},
+     * which contributes no field of its own and is therefore genuinely schema-free, this type's own
+     * metadata is non-empty, so it remains a legitimate owner even though it is also a collection
+     * subtype. This is the fixture that makes a blanket collection-subtype exclusion wrong: the gate
+     * must be "has declared fields", not "is a collection".
+     */
+    static class FieldDeclaringCollection extends ArrayList<Dto> {
+        private static final long serialVersionUID = 1L;
+        String label;
+    }
+
+    /** Entry point for {@link FieldDeclaringCollection}. */
+    static class FieldDeclaringCollectionHolder {
+        FieldDeclaringCollection items;
     }
 
     /** A self-referential type graph. */

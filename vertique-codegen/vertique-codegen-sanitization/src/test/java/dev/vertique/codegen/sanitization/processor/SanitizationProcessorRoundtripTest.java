@@ -1858,14 +1858,21 @@ class SanitizationProcessorRoundtripTest {
      * {@link #compileWithCodegen()} and {@link #compileWithoutCodegen()} each assert their own
      * environment's companion presence, so the discriminating mechanic cannot silently degrade.
      *
-     * <p><strong>Containment, not equality.</strong> Equality is provably false: a collection subtype
-     * field's raw container class ({@code ConfPair}, {@code ConfFixed}, {@code ConfWeird} below) is a
-     * genuine owner on the reflective side — the engine dispatches against it whenever the wire shape
-     * disagrees with the declared collection shape — while the generated path's
-     * {@code dispatchObjectCollection} arm dispatches only against the element type and never asks for
-     * an owner on the raw container. A {@code String} field's raw declared class is <em>not</em> part
-     * of this surplus: {@code String}'s own metadata declares no fields, so a mismatch dispatch
-     * against it is schema-free on both paths and neither prepares it.
+     * <p><strong>Containment, not equality — but this matrix no longer demonstrates a surplus.</strong>
+     * A collection subtype's raw container class ({@code ConfPair}, {@code ConfFixed}, {@code
+     * ConfWeird} below) is still the class the reflective engine would dispatch against whenever the
+     * wire shape disagrees with the declared collection shape, and the generated path's {@code
+     * dispatchObjectCollection} arm still never asks for an owner on the raw container — the asymmetry
+     * in what each path <em>dispatches against</em> is unchanged. What changed is the precondition for
+     * being <em>prepared</em> at all: {@link OwnerTypeWalk} now gates preparation on a class's own
+     * resolved metadata declaring at least one field, and none of {@code ConfPair}/{@code
+     * ConfFixed}/{@code ConfWeird} declare one of their own (their instance fields come from {@code
+     * ArrayList}/{@code AbstractList}, which the resolver excludes) — so that mismatch dispatch is
+     * schema-free on both paths, exactly like the {@code String} field's raw declared class already
+     * was, and neither path prepares any of the four. The generated and reflective owner sets are
+     * therefore equal over this particular matrix; containment remains the invariant this test proves
+     * (a shape where the raw container genuinely declares its own field would still show a reflective
+     * surplus), it is simply not exercised by this fixture set any longer.
      */
     @Nested
     @DisplayName("reflective ↔ generated owner-set conformance")
@@ -1889,15 +1896,17 @@ class SanitizationProcessorRoundtripTest {
             // broken (single-compilation) mechanic looks like.
             assertFalse(generated.isEmpty(), "the generated path must prepare at least its own root");
             assertEquals(
-                    Set.of("com.example.conf.ConfPair", "com.example.conf.ConfFixed", "com.example.conf.ConfWeird"),
+                    Set.of(),
                     difference(reflective, generated),
-                    "the reflective path's surplus is exactly the mismatch family that still has a"
-                            + " determinable element schema: each collection subtype's raw container class"
-                            + " is recorded unconditionally, while the generated path's arms dispatch against"
-                            + " the element type or the origin class and never ask for an owner on the raw"
-                            + " container. The String field's raw declared class is no longer part of this"
-                            + " surplus — String's own metadata declares no fields, so neither path treats it"
-                            + " as a field-name owner");
+                    "the reflective path's surplus must now be empty: ConfPair, ConfFixed, and ConfWeird's raw"
+                            + " container classes each declare no fields of their own (their instance fields"
+                            + " come from ArrayList/AbstractList, which the collector excludes), so"
+                            + " OwnerTypeWalk's fields()-emptiness gate now skips preparing them on the"
+                            + " reflective side exactly as the generated path's arms already skip asking for"
+                            + " an owner on the raw container. The String field's raw declared class was"
+                            + " already outside this surplus before this gate existed — String's own metadata"
+                            + " declares no fields either — so neither path ever treated it as a field-name"
+                            + " owner");
         }
 
         @Test
@@ -2030,13 +2039,22 @@ class SanitizationProcessorRoundtripTest {
 
             assertTrue(resolver.prepared().containsAll(resolver.observed()), () -> "observed but never prepared: %s"
                     .formatted(difference(resolver.observed(), resolver.prepared())));
+            // Non-vacuity: containment over an empty observed set would prove nothing — it would pass
+            // just as well if the generated traversal never ran at all. ConfRootDto's own generated
+            // switch projects every top-level wire key through rootCtx.logicalFieldName(ConfRootDto.class,
+            // k) (see conformancePayload's "name" entry among others), so a real traversal genuinely
+            // observes it; this is the execution proof ConfWrapper's prepared()-only membership check
+            // stopped providing once ConfWrapper's schema-free metadata took it out of the observed set.
+            assertFalse(
+                    resolver.observed().isEmpty(),
+                    "the generated path must genuinely observe at least one"
+                            + " owner during traversal — an empty set here would mean the generated traversal never ran,"
+                            + " which containment against prepared() alone cannot catch");
             assertTrue(
-                    resolver.prepared().contains("com.example.conf.ConfWrapper"),
-                    () -> "the generated root's declared owner set must still name its non-container generic"
-                            + " field's raw type — so a name collision there is still caught at registration"
-                            + " — even though ConfWrapper's own metadata declares no fields and its"
-                            + " schema-free traversal therefore never calls logicalName; prepared="
-                            + resolver.prepared());
+                    resolver.observed().contains("com.example.conf.ConfRootDto"),
+                    () -> "the generated root's own switch dispatches every top-level wire key through"
+                            + " rootCtx.logicalFieldName(ConfRootDto.class, k), so a real generated-path"
+                            + " traversal must observe ConfRootDto; observed=" + resolver.observed());
             assertFalse(
                     resolver.observed().contains("java.lang.String"),
                     () -> "the generated path returns a shape-mismatched String value unchanged, so it must"

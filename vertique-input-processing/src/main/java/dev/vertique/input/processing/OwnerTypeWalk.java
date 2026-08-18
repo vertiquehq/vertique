@@ -28,17 +28,23 @@ import org.slf4j.LoggerFactory;
  * startup failure) and misses types the engine does reach (leaving the projection to introspect on
  * an event loop, per request, forever).
  *
- * <p>A class is prepared here only when it is a <strong>field-name owner</strong> — a class whose
- * declared property schema an execution path may project a wire key against. A raw collection
- * reached only because no element schema is determinable, and a field's raw declared class reached
- * only because the wire shape disagrees with the declared shape (the {@code String} field mismatch
- * family), are <strong>schema-free dispatch targets</strong>: {@link DefaultInputObjectProcessor}
- * never projects a key against them ({@code metadata.fields()} is empty for both, so the projection
- * would be provably discarded), so this walk does not prepare them either. Everything else a field
- * unconditionally records — a nested-object field's declared type, an annotated schema-free field's
- * declared type ({@code Map}, {@code Object}, an enum), a collection-of-strings field's raw
- * container class, and a collection-of-objects field's raw container class alongside its element
- * type — stays prepared, because the engine genuinely may dispatch a Map-shaped fragment against it.
+ * <p>A class is prepared — handed to {@link InputFieldNameResolver#precompute} — only when it is a
+ * <strong>field-name owner</strong>: a class whose <em>own</em> resolved {@link InputPolicyMetadata}
+ * declares at least one field. That is the exact condition under which
+ * {@link DefaultInputObjectProcessor#processMap} ever calls
+ * {@link InputTraversalContext#logicalFieldName(Class, String)} against it — its {@code schemaFree}
+ * branch skips the projection whenever {@code metadata.fields()} is empty, so a class whose own
+ * metadata declares no fields can provably never reach that call. Precomputing it anyway would only
+ * ever cost, never help: a Jackson projection collision on such a class would fail startup for a
+ * wire-key lookup no execution path can perform. A raw collection reached only because no element
+ * schema is determinable, a field's raw declared class reached only because the wire shape disagrees
+ * with the declared shape (the {@code String} field mismatch family), a non-container generic whose
+ * own field erases to {@code Object}, and any other class whose declared shape carries no
+ * annotation-eligible or descendable field of its own are all instances of this same
+ * <strong>schema-free dispatch target</strong> rule — not a family of special cases. Every class is
+ * still <em>walked</em> (its metadata is resolved and, for a descendable non-platform type, its own
+ * fields are followed) regardless of this gate, so genuine conflict detection and reachability are
+ * unaffected; only the resolver warm-up is conditional.
  *
  * <p>The rule, in full:
  *
@@ -46,15 +52,19 @@ import org.slf4j.LoggerFactory;
  *   <li><strong>Seed</strong> — {@link TypeClassifier#classify} of the declared type, unless it is
  *       itself a raw container (a {@link Collection} or an array) with no determinable
  *       {@link TypeClassifier#elementType} — that combination is the entry-point shape of a
- *       schema-free dispatch target and is not prepared. {@link TypeClassifier#elementType} of the
- *       declared type is always prepared when non-{@code null}.</li>
- *   <li><strong>Every frontier class is prepared, except a schema-free dispatch target.</strong> A
- *       field's raw declared type ({@link FieldPolicyMetadata#fieldType()}) is prepared unless the
+ *       schema-free dispatch target and is not even enqueued. {@link TypeClassifier#elementType} of
+ *       the declared type is always enqueued when non-{@code null}. Whether either is ultimately
+ *       <em>prepared</em> is still decided by the fields()-emptiness rule above once it is dequeued.</li>
+ *   <li><strong>Every enqueued class is walked; whether it is prepared follows the rule above.</strong>
+ *       A field's raw declared type ({@link FieldPolicyMetadata#fieldType()}) is enqueued unless the
  *       field is {@linkplain FieldPolicyMetadata#isStringType() string-typed} — a {@code String}
  *       field's raw class is dispatched against only on a wire/declared shape mismatch, never in the
- *       field's own normal path, so it is schema-free by the same rule as the seed. {@code Map}, an
- *       enum and {@code Object} remain legitimate owners: an annotated field of one of those types
- *       genuinely is dispatched against its raw declared class whenever the wire value is a Map.</li>
+ *       field's own normal path, so it would resolve schema-free even if enqueued; skipping the
+ *       enqueue keeps it out of the reachable graph entirely instead of relying on that gate a second
+ *       time. {@code Map}, an enum and {@code Object} are enqueued the same way as any other declared
+ *       field type; whether each is then prepared depends on whether its own metadata declares
+ *       fields — an enum's inherited {@code java.lang.Enum#name} makes every enum type prepared in
+ *       practice, while {@code Map} and {@code Object} declare no fields of their own and are not.</li>
  *   <li><strong>Descent</strong> follows only a class that {@link InputPolicyMetadataResolver#isDescendableObject}
  *       accepts and that is not a platform type. Contributions are <em>both</em>
  *       {@link FieldPolicyMetadata#fieldType()} (subject to the string-type exclusion above) and
@@ -140,7 +150,20 @@ final class OwnerTypeWalk {
             if (!visited.add(owner)) {
                 continue;
             }
-            resolver.precompute(owner);
+            // Metadata is resolved for every reachable class regardless of what follows below — that
+            // is what keeps genuine startup conflict detection (two Java properties of THIS class
+            // claiming one wire name) intact for the whole graph. Only the resolver warm-up is
+            // conditional: a class whose own metadata declares no fields can never be the target of
+            // InputTraversalContext#logicalFieldName (DefaultInputObjectProcessor.processMap's
+            // schemaFree branch skips the projection whenever metadata.fields() is empty — see the
+            // class javadoc), so precomputing its Jackson projection is pure dead weight that can only
+            // ever fail, never help: a projection collision on a class that is never dispatched against
+            // would reject a valid application at startup for a wire-key lookup no execution path can
+            // ever perform.
+            InputPolicyMetadata metadata = metadataResolver.resolve(owner);
+            if (!metadata.fields().isEmpty()) {
+                resolver.precompute(owner);
+            }
             if (!InputPolicyMetadataResolver.isDescendableObject(owner) || isPlatformType(owner)) {
                 continue;
             }
@@ -154,21 +177,17 @@ final class OwnerTypeWalk {
                 }
                 continue;
             }
-            for (FieldPolicyMetadata field :
-                    metadataResolver.resolve(owner).fields().values()) {
+            for (FieldPolicyMetadata field : metadata.fields().values()) {
                 // Both, never one or the other: the engine dispatches a nested fragment against the
                 // field's raw declared type and each element of a collection fragment against the
                 // element type, and the two are independently reachable from the same field. The raw
                 // declared type is skipped for a string-typed field alone: DefaultInputObjectProcessor
                 // dispatches String.class only on a wire/declared shape mismatch (never in the field's
-                // own normal path, which handles the value directly), and String's own metadata
-                // carries no declared fields, so that dispatch is provably a schema-free no-op — the
-                // exact defect this walk exists to stop warming. A collection-of-strings or
-                // collection-of-objects field's raw container class is NOT excluded here: the engine
-                // reaches it the same way (a wire/declared Map mismatch) and its own metadata is
-                // equally schema-free, but no fixture forces that narrower exclusion yet — see the
-                // frozen conformance matrix in SanitizationProcessorRoundtripTest, which still pins
-                // ConfPair/ConfFixed/ConfWeird as reflective-only surplus.
+                // own normal path, which handles the value directly). Recording it anyway would still
+                // resolve harmlessly under the fields()-emptiness gate above — String's own metadata
+                // carries no declared fields either — but skipping the enqueue keeps the mismatch
+                // family out of the reachable graph entirely rather than relying on that gate a second
+                // time.
                 if (!field.isStringType()) {
                     enqueue(pending, field.fieldType());
                 }

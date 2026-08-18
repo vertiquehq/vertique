@@ -159,6 +159,20 @@ class TypeClassifierTest {
         }
 
         @Test
+        @DisplayName("an owner binding is substituted transitively through an inherited use of the owner-bound "
+                + "inner class")
+        void composedInheritedOwnerBindingSubstitutesTransitively() {
+            assertEquals(
+                    Dto.class,
+                    TypeClassifier.elementType(declaredTypeOf("composedOwnerBound")),
+                    "Child<T> extends Outer<T>.Inner, and Outer<T> { class Inner extends ArrayList<T> {} }, so "
+                            + "a Child<Dto> binds Dto elements — the owner binding for Outer.T must be "
+                            + "substituted through Child's own extends-clause type variable (read off "
+                            + "Inner's supertype via ParameterizedType#getOwnerType()), not left unresolved "
+                            + "and normalized away to Object");
+        }
+
+        @Test
         @DisplayName("ordinary collection and array shapes are unchanged")
         void ordinaryCollectionShapesAreUnchanged() {
             assertEquals(Dto.class, TypeClassifier.elementType(declaredTypeOf("list")), "List<Dto> binds Dto");
@@ -273,6 +287,23 @@ class TypeClassifierTest {
         }
     }
 
+    /**
+     * A top-level (non-inner) subtype of {@link Outer.Inner}, so the {@code Outer.T} binding for
+     * {@code Inner}'s {@code ArrayList<T>} supertype is not read directly off a use-site owner
+     * type — it must be recovered by substituting {@code Child}'s own extends-clause type
+     * variable through {@link Outer.Inner}'s inherited {@link ParameterizedType#getOwnerType()}.
+     * {@code Child} carries no local type arguments of its own reaching {@link Outer.Inner} — its
+     * only type argument binds {@code Child}'s own {@code T}, one substitution hop away from
+     * {@code Outer.T}.
+     */
+    static class Child<T> extends Outer<T>.Inner {
+        private static final long serialVersionUID = 1L;
+
+        Child(Outer<T> outer) {
+            outer.super();
+        }
+    }
+
     /** Every declared shape the element rule is pinned against. */
     @SuppressWarnings("rawtypes")
     static class Shapes {
@@ -292,5 +323,6 @@ class TypeClassifierTest {
         List<Optional<Dto>> optionalElements;
         Dtos dtos;
         Outer<Dto>.Inner ownerBound;
+        Child<Dto> composedOwnerBound;
     }
 }

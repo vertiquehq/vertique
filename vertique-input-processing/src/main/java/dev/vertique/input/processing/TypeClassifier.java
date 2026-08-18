@@ -281,16 +281,20 @@ final class TypeClassifier {
 
     /**
      * Rewrites {@code type} with every type variable the environment binds replaced by its argument,
-     * recursing into type arguments and wildcard bounds so a supertype written
-     * {@code ArrayList<Optional<T>>} resolves to {@code ArrayList<Optional<Dto>>} and one written
-     * {@code ArrayList<Optional<? extends T>>} resolves to {@code ArrayList<Optional<? extends Dto>>}.
+     * recursing into type arguments, the owner type and wildcard bounds so a supertype written
+     * {@code ArrayList<Optional<T>>} resolves to {@code ArrayList<Optional<Dto>>}, one written
+     * {@code ArrayList<Optional<? extends T>>} resolves to {@code ArrayList<Optional<? extends Dto>>},
+     * and one written {@code Outer<T>.Inner} resolves to {@code Outer<Dto>.Inner}.
      *
      * <p>A wildcard's bounds are ordinary types written at a declaration site, so a variable inside
      * one binds exactly like a variable in a type-argument position. Leaving it unsubstituted would
      * strand the variable, {@link #normalizeToBound} would resolve it to its declared bound
      * ({@code Object} for an unbounded parameter), and the element schema would be lost — while the
      * APT-time {@code AnnotationCollector} unwraps the same bound <em>after</em> substituting and
-     * still finds the element, which is precisely the divergence the two paths must not have.
+     * still finds the element, which is precisely the divergence the two paths must not have. The
+     * owner type is substituted for the same reason: {@link #bindingsOf} reads a use site's owner
+     * type to resolve an inherited inner class's enclosing binding, so a supertype's own owner type
+     * must carry that same substitution forward or the binding it names is stranded one hop early.
      *
      * <p>A variable the environment does not bind is left as-is: it is the raw-use-site case, and
      * {@link #normalizeToBound} later resolves it to its declared bound. A generic array component is
@@ -308,9 +312,11 @@ final class TypeClassifier {
         if (type instanceof ParameterizedType parameterized) {
             Type[] arguments = parameterized.getActualTypeArguments();
             Type[] substituted = substituteAll(arguments, bindings);
-            return substituted == arguments
+            Type ownerType = parameterized.getOwnerType();
+            Type substitutedOwner = ownerType == null ? null : substitute(ownerType, bindings);
+            return substituted == arguments && substitutedOwner == ownerType
                     ? parameterized
-                    : new SubstitutedParameterizedType(parameterized.getRawType(), substituted);
+                    : new SubstitutedParameterizedType(parameterized.getRawType(), substituted, substitutedOwner);
         }
         if (type instanceof WildcardType wildcard) {
             Type[] upperBounds = wildcard.getUpperBounds();
@@ -344,15 +350,17 @@ final class TypeClassifier {
     }
 
     /**
-     * A {@link ParameterizedType} whose arguments have been resolved against a substitution
-     * environment. Only the raw type and the arguments are meaningful — {@code getOwnerType} is a
-     * {@code null} stub, because instances never escape {@link #collectionElementBinding}'s walk and
-     * are consumed by {@link #classify} alone.
+     * A {@link ParameterizedType} whose arguments and owner type have been resolved against a
+     * substitution environment. {@link #bindingsOf} consults {@link #getOwnerType()} to recover an
+     * inherited inner class's enclosing-instance binding, so the owner type is carried and returned
+     * like any other component rather than stubbed to {@code null}.
      *
      * @param rawType   the erased class of the parameterized type
      * @param arguments the resolved type arguments
+     * @param ownerType the resolved owner type, or {@code null} when the source type has none
      */
-    private record SubstitutedParameterizedType(Type rawType, Type[] arguments) implements ParameterizedType {
+    private record SubstitutedParameterizedType(
+            Type rawType, Type[] arguments, @Nullable Type ownerType) implements ParameterizedType {
 
         @Override
         public Type[] getActualTypeArguments() {
@@ -367,8 +375,7 @@ final class TypeClassifier {
         @Override
         @Nullable
         public Type getOwnerType() {
-            // No caller in this module consults the owner type — rawClassOf reads getRawType alone.
-            return null;
+            return ownerType;
         }
     }
 
