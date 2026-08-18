@@ -4,8 +4,10 @@
 package dev.vertique.input.processing;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
+import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
 import java.util.ArrayList;
 import java.util.List;
@@ -103,6 +105,60 @@ class TypeClassifierTest {
         }
 
         @Test
+        @DisplayName("a non-generic fixed subtype resolves its element from a plain Class-typed use site")
+        void nonGenericFixedSubtypeResolvesItsElement() {
+            Type declared = declaredTypeOf("dtos");
+            assertInstanceOf(
+                    Class.class,
+                    declared,
+                    "Dtos declares no type parameters of its own, so reflection reports the field's "
+                            + "generic type as the plain Class Dtos.class rather than a ParameterizedType — "
+                            + "confirmed by javap/jshell before writing this assertion");
+            assertEquals(
+                    Dto.class,
+                    TypeClassifier.elementType(declared),
+                    "Dtos extends ArrayList<Dto>, so the element must resolve from the class's own "
+                            + "generic superclass even though the use site carries no local type argument "
+                            + "to read at all");
+        }
+
+        @Test
+        @DisplayName("an owner-bound inner class resolves its element through the parameterized owner type")
+        void ownerBoundInnerClassResolvesItsElement() {
+            Type declared = declaredTypeOf("ownerBound");
+            // Observed via reflection before writing the assertions below: the field's generic type is
+            // a ParameterizedType for Outer<Dto>.Inner whose own getActualTypeArguments() is empty
+            // (Inner declares no type parameters of its own) and whose getOwnerType() is the
+            // ParameterizedType Outer<Dto>. Inner.class.getGenericSuperclass() is ArrayList<T>, where T
+            // is Outer's own TypeVariable — reflection caches TypeVariable instances per declaration and
+            // name, so that T is reference-equal to Outer.class.getTypeParameters()[0]. The element
+            // binding therefore is resolvable, but only by reading it off the owner type, never off
+            // Inner's own (empty) actual type arguments.
+            assertInstanceOf(
+                    ParameterizedType.class,
+                    declared,
+                    "Outer<Dto>.Inner is a ParameterizedType use site even though Inner has no type "
+                            + "parameters of its own");
+            ParameterizedType parameterized = (ParameterizedType) declared;
+            assertEquals(
+                    0,
+                    parameterized.getActualTypeArguments().length,
+                    "Inner declares no type parameters of its own, so its use site carries no local type "
+                            + "argument — the T binding cannot come from getActualTypeArguments()");
+            assertInstanceOf(
+                    ParameterizedType.class,
+                    parameterized.getOwnerType(),
+                    "the T binding for Inner's ArrayList<T> supertype is only observable through the "
+                            + "owner type Outer<Dto>");
+            assertEquals(
+                    Dto.class,
+                    TypeClassifier.elementType(declared),
+                    "Outer<T> { class Inner extends ArrayList<T> {} } used as Outer<Dto>.Inner binds Dto "
+                            + "elements — the binding for T arrives through the parameterized owner, since "
+                            + "Inner carries no local type argument of its own");
+        }
+
+        @Test
         @DisplayName("ordinary collection and array shapes are unchanged")
         void ordinaryCollectionShapesAreUnchanged() {
             assertEquals(Dto.class, TypeClassifier.elementType(declaredTypeOf("list")), "List<Dto> binds Dto");
@@ -196,6 +252,27 @@ class TypeClassifierTest {
         private static final long serialVersionUID = 1L;
     }
 
+    /**
+     * A concrete, non-generic subtype whose element is fixed by its own declaration. Unlike
+     * {@link Fixed}, this type has no type parameters at all, so a field declared with this type is a
+     * plain {@code Class} use site — not a {@code ParameterizedType} — and carries no local type
+     * argument whatsoever.
+     */
+    static final class Dtos extends ArrayList<Dto> {
+        private static final long serialVersionUID = 1L;
+    }
+
+    /**
+     * An outer/inner pair where the inner class's {@code Collection<E>} binding comes from the
+     * enclosing instance's type argument rather than from any type argument local to {@code Inner}
+     * itself — {@code Inner} declares no type parameters of its own.
+     */
+    static class Outer<T> {
+        class Inner extends ArrayList<T> {
+            private static final long serialVersionUID = 1L;
+        }
+    }
+
     /** Every declared shape the element rule is pinned against. */
     @SuppressWarnings("rawtypes")
     static class Shapes {
@@ -213,5 +290,7 @@ class TypeClassifierTest {
         List<List<Dto>> nested;
         Dto[] array;
         List<Optional<Dto>> optionalElements;
+        Dtos dtos;
+        Outer<Dto>.Inner ownerBound;
     }
 }

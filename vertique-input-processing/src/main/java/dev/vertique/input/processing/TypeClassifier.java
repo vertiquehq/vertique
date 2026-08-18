@@ -102,13 +102,16 @@ final class TypeClassifier {
      * <p>So {@code List<Node>}, {@code List<? extends Node>}, {@code List<Optional<Node>>} and
      * {@code Node[]} all yield {@code Node}.
      *
-     * <p><strong>Only a genuine container yields an element type.</strong> A parameterized type is
-     * consulted for an element only when its raw type is a {@link Collection} — the same gate
-     * {@link InputPolicyMetadataResolver} applies before it reaches this method. Without it any
+     * <p><strong>Only a genuine container yields an element type.</strong> A type — parameterized or
+     * not — is consulted for an element only when its raw type is a {@link Collection} — the same
+     * gate {@link InputPolicyMetadataResolver} applies before it reaches this method. Without it any
      * single-argument generic ({@code Wrapper<Node>}, {@code Holder<Node>}) would report as a
      * container, and the startup gate that calls this method directly would claim a policy the
      * walker cannot reach: the walker classifies {@code Wrapper}'s own field to its {@code Object}
-     * bound and stops there.
+     * bound and stops there. A use site with no local type arguments — a plain {@code Class} such as
+     * {@code final class Dtos extends ArrayList<Dto> {}} used as the field type {@code Dtos} — still
+     * enters this gate: the element binding comes from the class's own generic superclass, not from
+     * anything the use site writes locally.
      *
      * <p><strong>The element is the {@code Collection<E>} supertype binding</strong>, resolved by
      * {@link #collectionElementBinding} — never "type argument 0" of the declared type. Argument
@@ -144,15 +147,19 @@ final class TypeClassifier {
             candidate = classify(genericArray.getGenericComponentType());
         } else if (container instanceof Class<?> cls && cls.isArray()) {
             candidate = cls.getComponentType();
-        } else if (container instanceof ParameterizedType parameterized) {
-            Class<?> rawType = rawClassOf(parameterized);
-            // Array raw types are impossible for a ParameterizedType, so the array half of the
-            // caller-side gate is covered by the two branches above rather than repeated here.
+        } else {
+            Class<?> rawType = rawClassOf(container);
+            // Array raw types are impossible here (a Class array is caught above, and a
+            // ParameterizedType can never erase to an array), so the array half of the caller-side
+            // gate is covered by the two branches above rather than repeated here. The gate itself is
+            // the raw class alone — it does not require the use site to carry its own type arguments,
+            // so a plain Class whose declaration fixes its element (Dtos extends ArrayList<Dto>)
+            // enters here exactly like a ParameterizedType use site does.
             if (rawType != null && Collection.class.isAssignableFrom(rawType)) {
                 // The binding may itself be a wildcard or a type variable — it is a type argument
                 // written at some use site like any other — so it goes through classify, which
                 // resolves it to its bound exactly as a directly-declared argument would be.
-                candidate = classify(collectionElementBinding(parameterized));
+                candidate = classify(collectionElementBinding(container));
             }
         }
         if (candidate == null
@@ -221,24 +228,37 @@ final class TypeClassifier {
     }
 
     /**
-     * Maps a class's type parameters to the arguments its use site supplies.
+     * Maps a class's type parameters to the arguments its use site supplies, including any bound
+     * carried by an enclosing instance's type.
+     *
+     * <p>An inner class's own {@link Class#getTypeParameters()} do not include its enclosing class's
+     * parameters — {@code class Outer<T> { class Inner extends ArrayList<T> {} }} declares no type
+     * parameter of its own on {@code Inner}, yet {@code Inner}'s generic superclass reads {@code T}
+     * from {@code Outer}. That binding arrives through {@link ParameterizedType#getOwnerType()} at
+     * the use site (e.g. {@code Outer<Dto>.Inner}), not through {@code getActualTypeArguments()},
+     * which covers only type arguments local to {@code Inner} itself. So this method folds the
+     * environment for {@code rawType}'s enclosing class — resolved the same way, recursively — into
+     * the environment it returns for {@code rawType} itself.
      *
      * @param rawType the erased class
      * @param useSite the type as written at the use site
-     * @return the substitution environment, empty for a raw use site
+     * @return the substitution environment, empty for a raw use site with no enclosing binding
      */
     private static Map<TypeVariable<?>, Type> bindingsOf(Class<?> rawType, @Nullable Type useSite) {
-        TypeVariable<?>[] parameters = rawType.getTypeParameters();
         if (!(useSite instanceof ParameterizedType parameterized)) {
             return Map.of();
         }
-        Type[] arguments = parameterized.getActualTypeArguments();
-        if (arguments.length != parameters.length) {
-            return Map.of();
-        }
         Map<TypeVariable<?>, Type> bindings = new HashMap<>();
-        for (int i = 0; i < parameters.length; i++) {
-            bindings.put(parameters[i], arguments[i]);
+        TypeVariable<?>[] parameters = rawType.getTypeParameters();
+        Type[] arguments = parameterized.getActualTypeArguments();
+        if (arguments.length == parameters.length) {
+            for (int i = 0; i < parameters.length; i++) {
+                bindings.put(parameters[i], arguments[i]);
+            }
+        }
+        Class<?> enclosingClass = rawType.getEnclosingClass();
+        if (enclosingClass != null) {
+            bindings.putAll(bindingsOf(enclosingClass, parameterized.getOwnerType()));
         }
         return bindings;
     }
