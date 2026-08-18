@@ -146,9 +146,6 @@ import java.util.function.Supplier;
  */
 final class SchemaImplementationGuard<M extends MemberScope<?, ?>> implements CustomPropertyDefinitionProvider<M> {
 
-    /** Maximum length, in UTF-16 code units, of the member identity rendered in a failure message. */
-    private static final int MAX_MEMBER_NAME_LENGTH = 128;
-
     /** The validated, direction-filtered override declarations the guard tests the graph against. */
     private final ValidatedProfile profile;
 
@@ -189,7 +186,7 @@ final class SchemaImplementationGuard<M extends MemberScope<?, ?>> implements Cu
         }
 
         Member rawMember = member.getRawMember();
-        String boundedName = Diagnostics.truncate(memberName(member, rawMember), MAX_MEMBER_NAME_LENGTH);
+        String boundedName = Diagnostics.truncate(memberName(member, rawMember), Diagnostics.MAX_SHORT_IDENTITY_LENGTH);
         Class<?> overridden = firstOverriddenClass(member.getDeclaredType(), 0, boundedName);
         if (overridden == null) {
             return null;

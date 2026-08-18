@@ -69,7 +69,8 @@ final class ValidatedProfile {
         if (id == null || id.value() == null) {
             throw Diagnostics.failure("cannot construct a JSON Schema generator: the profile declares a null id", null);
         }
-        String profileLabel = "profile '" + Diagnostics.truncate(id.value(), 128) + "'";
+        String profileLabel =
+                "profile '" + Diagnostics.truncate(id.value(), Diagnostics.MAX_SHORT_IDENTITY_LENGTH) + "'";
 
         ObjectMapper mapper = profile.mapper();
         if (mapper == null) {

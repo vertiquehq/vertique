@@ -87,6 +87,11 @@ import java.util.Objects;
  * canonicalization operation is serialized per instance through an instance-local lock. Different
  * instances share no lock and may generate concurrently. This class exposes no Victools type in
  * its public signature.
+ *
+ * <p>A failed call leaves the instance fully reusable. Any abnormal exit from the underlying
+ * generator restores the per-generation provider state that generator resets on its own success
+ * path, so a rejected type never changes what a later call on the same instance publishes — see
+ * {@link #restoreProviderStateAfterAbortedGeneration(Throwable)}.
  */
 public final class AnnotationJsonSchemaGenerator {
 
@@ -311,13 +316,23 @@ public final class AnnotationJsonSchemaGenerator {
      *
      * <p>Equal resolved types, annotations, construction mode, mapper configuration, selected
      * profile direction, and canonical override fragments produce byte-identical canonical
-     * documents across independent generator instances and repeated calls.
+     * documents across independent generator instances and repeated calls. That holds across a
+     * failure too: a call that fails restores the underlying generator's per-generation provider
+     * state before propagating, so it leaves no trace in what later calls on this instance publish.
+     *
+     * <p>Stack exhaustion inside the underlying generator's recursive descent — the way a
+     * pathologically deep type graph fails — is normalized like any other generation failure, so a
+     * deep type does not escape the bounded failure contract merely because the JVM reports it as an
+     * {@link Error}. A VM-level {@code Error} such as {@link OutOfMemoryError} or a {@link
+     * LinkageError} is deliberately not normalized: it reports a condition of the runtime rather than
+     * of the requested type, and propagates unchanged.
      *
      * @param type the resolved Java type to generate a schema for; must not be {@code null}
      * @return the canonical, compact Draft 2020-12 JSON Schema document as a {@code String}
-     * @throws JsonSchemaGenerationException if {@code type} is outside the accepted grammar, or if
-     *                                        generation, override application, conflict detection,
-     *                                        or canonicalization fails
+     * @throws JsonSchemaGenerationException if {@code type} is outside the accepted grammar, if
+     *                                        generation exhausts the stack, or if generation,
+     *                                        override application, conflict detection, or
+     *                                        canonicalization fails
      */
     public String generateCanonical(Type type) {
         TypeGrammar.requireGeneratable(type);
@@ -328,11 +343,24 @@ public final class AnnotationJsonSchemaGenerator {
             ObjectNode generated;
             try {
                 generated = generator.generateSchema(type);
-            } catch (JsonSchemaGenerationException alreadyBounded) {
-                throw alreadyBounded;
-            } catch (RuntimeException failed) {
+            } catch (RuntimeException | StackOverflowError aborted) {
+                // StackOverflowError is caught with the runtime failures on purpose: exhausting the
+                // stack is how a pathologically deep type graph fails inside the generator's own
+                // recursive descent, which makes it a generation failure like any other. It is
+                // unrelated to the VM-level conditions the next clause deliberately leaves alone.
+                restoreProviderStateAfterAbortedGeneration(aborted);
+                if (aborted instanceof JsonSchemaGenerationException alreadyBounded) {
+                    throw alreadyBounded;
+                }
                 throw Diagnostics.failure(
-                        "JSON Schema generation failed for " + Diagnostics.typeIdentity(type), failed);
+                        "JSON Schema generation failed for " + Diagnostics.typeIdentity(type), aborted);
+            } catch (Throwable aborted) {
+                // Any other Error — OutOfMemoryError, a LinkageError — reports a VM-level condition
+                // this module can neither describe nor recover from, and building a diagnostic for it
+                // may well fail in turn, so it propagates unchanged. The provider state it aborted is
+                // still restored on the way out.
+                restoreProviderStateAfterAbortedGeneration(aborted);
+                throw aborted;
             }
             try {
                 // Structural safety net: a document that conjoins disjoint explicit types is
@@ -359,6 +387,57 @@ public final class AnnotationJsonSchemaGenerator {
                 throw Diagnostics.failure(
                         "canonicalization of the generated JSON Schema failed for " + Diagnostics.typeIdentity(type),
                         failed);
+            }
+        }
+    }
+
+    /**
+     * Restores the per-generation state the underlying generator's stateful providers hold, after a
+     * generation call that exited abnormally.
+     *
+     * <p>At the pinned Victools version the configuration's {@code
+     * resetAfterSchemaGenerationFinished()} is invoked as straight-line code immediately before the
+     * finished document is returned, and the builder performing that generation carries no exception
+     * handler anywhere — so the reset runs on the <em>success path only</em>. Some of the providers
+     * the Swagger 2 module registers are stateful across exactly that boundary: the external-reference
+     * provider latches the generation's <em>main</em> type on first use and clears it in that reset
+     * and nowhere else. An aborted generation would therefore leave the main type pinned to the type
+     * it failed on, and a later generation of a <em>different</em> root type carrying a type-level
+     * {@code @Schema(ref = ...)} would publish a bare external {@code $ref} in place of that type's
+     * schema — silently, with no exception, and for every later call until one succeeds. Since this
+     * package's own {@link SchemaImplementationGuard} aborts generation by design, that is a
+     * reachable outcome, not a theoretical one.
+     *
+     * <p>Calling the reset here restores exactly the invariant the success path maintains, through
+     * the same public entry point and driving the same cascade. It cannot double-reset: the success
+     * path never reaches this method.
+     *
+     * <p>The restoration must never displace the failure that triggered it — replacing a precise
+     * generation failure with an unrelated one would cost far more than the state it recovers — so
+     * anything the reset itself raises is recorded as a suppressed exception on the propagating
+     * failure and otherwise ignored. The identity check guards the one input on which {@code
+     * addSuppressed} throws by contract, and the bookkeeping is nested inside its own handler
+     * because {@code addSuppressed} <em>allocates</em>: on a heap-exhausted JVM it can raise a
+     * further {@link OutOfMemoryError} of its own, which would otherwise propagate in place of the
+     * failure this method exists to preserve — on exactly the path where that failure matters most.
+     *
+     * <p>One limitation is stated rather than claimed away: an {@link Error} that lands mid-mutation
+     * inside a JDK collection the generator maintains is outside what any reset can restore.
+     *
+     * @param aborted the failure that ended the generation and is about to propagate
+     */
+    private void restoreProviderStateAfterAbortedGeneration(Throwable aborted) {
+        try {
+            generator.getConfig().resetAfterSchemaGenerationFinished();
+        } catch (Throwable resetFailed) {
+            try {
+                if (resetFailed != aborted) {
+                    aborted.addSuppressed(resetFailed);
+                }
+            } catch (Throwable unrecordable) {
+                // The failure that triggered the restoration must win unconditionally: recording the
+                // restoration failure allocates, so it can fail in turn on the very JVM state that
+                // makes this path matter. Losing the record is strictly better than losing the failure.
             }
         }
     }

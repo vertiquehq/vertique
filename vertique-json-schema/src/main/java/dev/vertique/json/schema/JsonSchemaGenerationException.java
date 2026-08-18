@@ -15,7 +15,10 @@ package dev.vertique.json.schema;
  *
  * <p>The message is bounded to at most 512 UTF-16 code units, including at most 256 code units of
  * resolved type identity, and never includes application values — only the identity of the type,
- * property, or profile involved in the failure.
+ * property, or profile involved in the failure. That bounding and the loggability sanitization
+ * behind it apply to {@link #getMessage()} alone: the preserved cause is attached raw, so a
+ * consumer that logs the whole exception also renders unsanitized, unbounded third-party or
+ * application text from that cause.
  *
  * <p>Only this package constructs instances; consumers catch and translate this exception without
  * depending on the underlying Victools exception types.
