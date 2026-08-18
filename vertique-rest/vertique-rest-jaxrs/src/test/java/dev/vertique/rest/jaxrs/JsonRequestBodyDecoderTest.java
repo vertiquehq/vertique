@@ -495,8 +495,11 @@ class JsonRequestBodyDecoderTest {
 
     /**
      * A one-argument collection that <em>fixes</em> its {@code Collection} element to {@code String},
-     * so its declared argument is not the element type. This is the shape that silently mis-bound
-     * when the decoder read type argument 0 — a multi-argument shape failed loudly instead.
+     * so its declared argument is not the element type. The old arg-0 decoder happened to bind this
+     * shape correctly — Jackson resolves the element from the real supertype chain whenever the raw
+     * class carries type parameters, consulting the element hint only when the bindings come out
+     * empty (jackson-databind #1604) — so this fixture guards against a <em>future</em> naive
+     * reimplementation that feeds argument 0 into a raw collection class, not a past defect.
      */
     static class Fixed<T> extends ArrayList<String> {
         private static final long serialVersionUID = 1L;

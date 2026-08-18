@@ -371,6 +371,22 @@ final class TypeClassifier {
         public Type[] getLowerBounds() {
             return lowerBounds.clone();
         }
+
+        // A record's generated equals/hashCode compares Type[] components by array identity, which
+        // no WildcardType implementation uses. Instances never escape collectionElementBinding's
+        // walk today, but structural equality removes the trap for whoever first lets one reach a
+        // map key or an assertion.
+        @Override
+        public boolean equals(Object other) {
+            return other instanceof SubstitutedWildcardType that
+                    && java.util.Arrays.equals(upperBounds, that.upperBounds)
+                    && java.util.Arrays.equals(lowerBounds, that.lowerBounds);
+        }
+
+        @Override
+        public int hashCode() {
+            return 31 * java.util.Arrays.hashCode(upperBounds) + java.util.Arrays.hashCode(lowerBounds);
+        }
     }
 
     /**
