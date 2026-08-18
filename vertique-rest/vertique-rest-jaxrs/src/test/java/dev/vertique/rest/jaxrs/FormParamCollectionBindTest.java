@@ -207,6 +207,11 @@ class FormParamCollectionBindTest {
             }
             return intermediateBody;
         }
+
+        @Override
+        public void precomputeFieldNameResolution(Type declaredType, InputFieldNameResolver resolver) {
+            // This double resolves no per-type metadata, so there is nothing to precompute.
+        }
     }
 
     /**
@@ -227,6 +232,11 @@ class FormParamCollectionBindTest {
                 return s.strip();
             }
             return intermediateBody;
+        }
+
+        @Override
+        public void precomputeFieldNameResolution(Type declaredType, InputFieldNameResolver resolver) {
+            // This double resolves no per-type metadata, so there is nothing to precompute.
         }
     }
 

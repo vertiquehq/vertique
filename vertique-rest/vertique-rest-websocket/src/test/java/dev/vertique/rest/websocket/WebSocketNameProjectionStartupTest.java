@@ -116,6 +116,11 @@ class WebSocketNameProjectionStartupTest {
                 InputFieldNameResolver nameResolver) {
             return input;
         }
+
+        @Override
+        public void precomputeFieldNameResolution(Type declaredType, InputFieldNameResolver resolver) {
+            // This double resolves no per-type metadata, so there is nothing to precompute.
+        }
     }
 
     private static WebSocketEndpointRegistrar registrar() {

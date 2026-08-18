@@ -1,0 +1,320 @@
+// SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
+// SPDX-License-Identifier: EUPL-1.2
+
+package dev.vertique.input.processing;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import dev.vertique.core.sanitization.InputFieldNameResolver;
+import dev.vertique.core.sanitization.InputValueContext;
+import dev.vertique.core.sanitization.Sanitize;
+import dev.vertique.core.sanitization.Sanitizer;
+import java.lang.reflect.Type;
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
+import java.util.concurrent.TimeUnit;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
+
+/**
+ * Verifies the owner set {@link OwnerTypeWalk} hands to an {@link InputFieldNameResolver}.
+ *
+ * <p>The set must be exactly what {@link DefaultInputObjectProcessor} can pass to
+ * {@code InputTraversalContext#logicalFieldName(Class, String)} while processing the declared type
+ * — no wider (the over-warm defects) and no narrower (the under-warm defects). Each test below
+ * pins one shape where a re-derived, Jackson-side guess disagreed with the engine's own descent.
+ *
+ * <p>The walk is driven by a recording resolver that captures every {@code precompute} call, so the
+ * assertions are about the classes the engine <em>declares</em> it may consult, not about any
+ * particular payload.
+ */
+class OwnerTypeWalkTest {
+
+    @Test
+    @DisplayName("a single-argument non-container generic does not expose its type argument as an owner")
+    void wrapperTypeArgumentIsNotPrepared() {
+        Set<Class<?>> prepared = prepare(WrapperHolder.class);
+
+        assertTrue(prepared.contains(WrapperHolder.class), "the entry-point class is always an owner");
+        assertTrue(prepared.contains(Wrapper.class), "the field's declared type is an owner");
+        assertFalse(
+                prepared.contains(Dto.class),
+                "Wrapper<T>'s own field erases to Object, so the engine never reaches Dto and it must "
+                        + "not be prepared");
+    }
+
+    @Test
+    @DisplayName("an Optional payload is unwrapped and prepared")
+    void optionalPayloadIsPrepared() {
+        Set<Class<?>> prepared = prepare(OptionalHolder.class);
+
+        assertTrue(
+                prepared.contains(Dto.class),
+                "Optional is transparent to the classifier, so the engine descends into the payload");
+    }
+
+    @Test
+    @DisplayName("a collection subtype with two type arguments exposes no element owner")
+    void multiParameterCollectionElementIsNotPrepared() {
+        Set<Class<?>> prepared = prepare(PairHolder.class);
+
+        assertTrue(prepared.contains(PairHolder.class), "the entry-point class is always an owner");
+        assertFalse(
+                prepared.contains(Dto.class),
+                "elementType requires exactly one type argument, so Pair<A,B> yields no element owner");
+    }
+
+    @Test
+    @DisplayName("a nested container element is not prepared")
+    void nestedContainerElementIsNotPrepared() {
+        Set<Class<?>> prepared = prepare(NestedListHolder.class);
+
+        assertTrue(prepared.contains(NestedListHolder.class), "the entry-point class is always an owner");
+        assertFalse(
+                prepared.contains(Dto.class),
+                "a container element carries no element schema, so List<List<Dto>> never reaches Dto");
+    }
+
+    @Test
+    @DisplayName("a field with no accessor still contributes its declared type as an owner")
+    void accessorLessFieldTargetIsPrepared() {
+        Set<Class<?>> prepared = prepare(AccessorLessHolder.class);
+
+        assertTrue(
+                prepared.contains(Nested.class),
+                "the engine walks declared fields, so a field no bean introspector exposes is still "
+                        + "descended and its target must be prepared");
+    }
+
+    @Test
+    @DisplayName("the raw container class is an owner when the element type is not determinable")
+    void rawContainerOwnerIsPrepared() {
+        Set<Class<?>> prepared = prepare(declaredTypeOf(RawContainerHolder.class, "items"));
+
+        assertTrue(
+                prepared.contains(List.class),
+                "with no element schema the engine dispatches the list against the raw container class");
+        assertFalse(prepared.contains(Dto.class), "a Map element carries no property set to descend into");
+    }
+
+    @Test
+    @DisplayName("a String field's raw declared class is an owner")
+    void rawDeclaredClassOfAStringFieldIsPrepared() {
+        Set<Class<?>> prepared = prepare(StringFieldHolder.class);
+
+        assertTrue(
+                prepared.contains(String.class),
+                "a wire fragment whose shape disagrees with the declared String shape is dispatched "
+                        + "against String.class");
+    }
+
+    @Test
+    @DisplayName("a platform class is prepared but never descended into")
+    void platformClassIsPreparedButNotDescended() {
+        Set<Class<?>> prepared = prepare(PlatformHolder.class);
+
+        assertTrue(prepared.contains(Throwable.class), "the field's declared type is an owner like any other");
+        assertFalse(
+                prepared.contains(StackTraceElement.class),
+                "Throwable is descendable and would contribute StackTraceElement through its "
+                        + "stackTrace field, so only the platform guard can keep it out of the owner set");
+    }
+
+    @Test
+    @DisplayName("an annotated schema-free field contributes its declared type as an owner")
+    void annotatedSchemaFreeFieldTypeIsPrepared() {
+        Set<Class<?>> prepared = prepare(AttributesHolder.class);
+
+        assertTrue(
+                prepared.contains(Map.class),
+                "the field declares policy, so the engine records it and dispatches against Map.class");
+    }
+
+    @Test
+    @DisplayName("an unannotated schema-free field contributes no owner")
+    void unannotatedSchemaFreeFieldContributesNothing() {
+        Set<Class<?>> prepared = prepare(ScalarHolder.class);
+
+        assertEquals(
+                Set.of(ScalarHolder.class),
+                prepared,
+                "an unannotated scalar field is not recorded at all, so it adds no owner");
+    }
+
+    @Test
+    @DisplayName("a null declared type prepares nothing")
+    void nullDeclaredTypePreparesNothing() {
+        Set<Class<?>> prepared = prepare(null);
+
+        assertEquals(Set.of(), prepared, "a null declared type names no owner, so the resolver is never called");
+    }
+
+    @Test
+    @Timeout(value = 10, unit = TimeUnit.SECONDS)
+    @DisplayName("a self-referential type graph terminates")
+    void cyclicGraphTerminates() {
+        Set<Class<?>> prepared = prepare(Node.class);
+
+        assertEquals(Set.of(Node.class), prepared, "the visited set closes the cycle after one visit");
+    }
+
+    // --- Harness ---
+
+    /**
+     * Runs the walk for {@code declaredType} and returns every class it prepared.
+     *
+     * @param declaredType the body or message type
+     * @return the prepared owner types, in the order the walk emitted them
+     */
+    private static Set<Class<?>> prepare(Type declaredType) {
+        RecordingResolver resolver = new RecordingResolver();
+        OwnerTypeWalk.prepare(declaredType, resolver, new InputPolicyMetadataResolver());
+        return resolver.owners();
+    }
+
+    /**
+     * Reads a fixture field's full generic type, so a shape such as {@code List<Map<String, Dto>>}
+     * can be handed to the walk as a declared type without a type-token helper.
+     *
+     * @param owner     the fixture class declaring the field
+     * @param fieldName the field's name
+     * @return the field's generic type
+     */
+    private static Type declaredTypeOf(Class<?> owner, String fieldName) {
+        try {
+            return owner.getDeclaredField(fieldName).getGenericType();
+        } catch (NoSuchFieldException e) {
+            throw new AssertionError("fixture field " + owner.getSimpleName() + "#" + fieldName + " is missing", e);
+        }
+    }
+
+    /** Captures every owner type the walk prepares. */
+    private static final class RecordingResolver implements InputFieldNameResolver {
+
+        private final List<Class<?>> precomputed = new ArrayList<>();
+
+        @Override
+        public String logicalName(Class<?> ownerType, String wireName) {
+            return wireName;
+        }
+
+        @Override
+        public void precompute(Class<?> ownerType) {
+            precomputed.add(ownerType);
+        }
+
+        /**
+         * Returns the prepared owner types in emission order.
+         *
+         * @return the distinct prepared classes
+         */
+        Set<Class<?>> owners() {
+            return new LinkedHashSet<>(precomputed);
+        }
+    }
+
+    // --- Fixtures ---
+
+    /** A nested DTO that must be prepared only when the engine can actually reach it. */
+    static class Dto {
+        String value;
+    }
+
+    /** A second DTO used to give {@link Pair} a distinct second type argument. */
+    static class Other {
+        String value;
+    }
+
+    /** A single-argument generic that is not a container — its field erases to {@link Object}. */
+    static class Wrapper<T> {
+        T value;
+    }
+
+    /** Entry point for the reported issue: the type argument of a non-container generic. */
+    static class WrapperHolder {
+        Wrapper<Dto> w;
+    }
+
+    /** Entry point for the {@code Optional} unwrap. */
+    static class OptionalHolder {
+        Optional<Dto> o;
+    }
+
+    /** A collection subtype carrying two type arguments. */
+    static class Pair<A, B> extends ArrayList<A> {
+        private static final long serialVersionUID = 1L;
+    }
+
+    /** Entry point for the two-type-argument collection subtype. */
+    static class PairHolder {
+        Pair<Dto, Other> pair;
+    }
+
+    /** Entry point for the nested-container element. */
+    static class NestedListHolder {
+        List<List<Dto>> nested;
+    }
+
+    /** The target of a field no bean introspector exposes. */
+    static class Nested {
+        String value;
+    }
+
+    /** Entry point for a field with neither getter nor setter. */
+    static class AccessorLessHolder {
+        private Nested n;
+    }
+
+    /** Declares the {@code List<Map<String, Dto>>} shape handed to the walk directly. */
+    static class RawContainerHolder {
+        List<Map<String, Dto>> items;
+    }
+
+    /** Entry point for the mismatch family: a plain {@code String} field. */
+    static class StringFieldHolder {
+        String name;
+    }
+
+    /**
+     * Entry point for the platform bound. {@link Throwable} is descendable — not a scalar leaf, not
+     * {@link Object}, not an array, not a {@link Map} — so nothing but the platform guard stops the
+     * walk from descending it and picking up {@link StackTraceElement} off its {@code stackTrace}
+     * field.
+     */
+    static class PlatformHolder {
+        Throwable failure;
+    }
+
+    /** Entry point for an annotated field whose declared type carries no property set. */
+    static class AttributesHolder {
+
+        @Sanitize(TestSanitizer.class)
+        Map<String, String> attrs;
+    }
+
+    /** Entry point for an unannotated scalar field. */
+    static class ScalarHolder {
+        int count;
+    }
+
+    /** A self-referential type graph. */
+    static class Node {
+        Node child;
+    }
+
+    /** Sanitizer referenced by {@link AttributesHolder}; never invoked by these tests. */
+    static final class TestSanitizer implements Sanitizer {
+
+        @Override
+        public String sanitize(String value, InputValueContext context) {
+            return value;
+        }
+    }
+}
