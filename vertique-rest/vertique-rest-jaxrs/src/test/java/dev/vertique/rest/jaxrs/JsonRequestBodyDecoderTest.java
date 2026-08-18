@@ -22,6 +22,8 @@ import io.vertx.ext.web.RequestBody;
 import io.vertx.ext.web.RoutingContext;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -332,8 +334,150 @@ class JsonRequestBodyDecoderTest {
                 .build();
     }
 
+    // --- collection element resolution ---
+
+    @Test
+    @DisplayName("Should bind a multi-argument collection body's real element type, not type argument 0")
+    void multiArgumentCollectionBodyBindsItsRealElementType() {
+        RoutingContext ctx = mock(RoutingContext.class);
+        RequestValue body = RequestValue.of(pojoArray());
+        Type declared = declaredShape("weirdOfPojo");
+
+        Object result = decoder.decode(ctx, body, rawTypeOf(declared), declared);
+
+        assertInstanceOf(Weird.class, result);
+        List<?> elements = (List<?>) result;
+        assertEquals(2, elements.size());
+        assertInstanceOf(SamplePojo.class, elements.get(0), "Weird<OtherPojo, SamplePojo> binds SamplePojo");
+        assertEquals("Alice", ((SamplePojo) elements.get(0)).name());
+        assertEquals("Bob", ((SamplePojo) elements.get(1)).name());
+    }
+
+    @Test
+    @DisplayName("Should bind a Pair-shaped body from its first argument, which is its Collection element")
+    void pairShapedBodyBindsItsFirstArgumentElement() {
+        RoutingContext ctx = mock(RoutingContext.class);
+        RequestValue body = RequestValue.of(pojoArray());
+        Type declared = declaredShape("pairOfPojo");
+
+        Object result = decoder.decode(ctx, body, rawTypeOf(declared), declared);
+
+        assertInstanceOf(Pair.class, result);
+        List<?> elements = (List<?>) result;
+        assertEquals(2, elements.size());
+        assertInstanceOf(SamplePojo.class, elements.get(0), "Pair<SamplePojo, OtherPojo> binds SamplePojo");
+        assertEquals("Alice", ((SamplePojo) elements.get(0)).name());
+    }
+
+    @Test
+    @DisplayName("Should bind ordinary collection bodies exactly as before")
+    void ordinaryCollectionBodiesBindUnchanged() {
+        RoutingContext ctx = mock(RoutingContext.class);
+
+        // List<SamplePojo> — typed element binding
+        Type listShape = declaredShape("listOfPojo");
+        Object list = decoder.decode(ctx, RequestValue.of(pojoArray()), rawTypeOf(listShape), listShape);
+        assertInstanceOf(List.class, list);
+        assertEquals(2, ((List<?>) list).size());
+        assertInstanceOf(SamplePojo.class, ((List<?>) list).get(0));
+        assertEquals("Alice", ((SamplePojo) ((List<?>) list).get(0)).name());
+
+        // Set<String> — typed element binding into a Set
+        Type setShape = declaredShape("setOfString");
+        JsonArray strings = new JsonArray().add("a").add("b");
+        Object set = decoder.decode(ctx, RequestValue.of(strings), rawTypeOf(setShape), setShape);
+        assertInstanceOf(Set.class, set);
+        assertEquals(Set.of("a", "b"), set);
+
+        // SamplePojo[] — array target, resolved from the component type
+        Object array = decoder.decode(ctx, RequestValue.of(pojoArray()), SamplePojo[].class, null);
+        assertInstanceOf(SamplePojo[].class, array);
+        assertEquals("Alice", ((SamplePojo[]) array)[0].name());
+
+        // raw List — the untyped fallback still returns the JsonArray's own backing list
+        JsonArray rawArray = pojoArray();
+        Object rawList = decoder.decode(ctx, RequestValue.of(rawArray), List.class, null);
+        assertSame(rawArray.getList(), rawList, "raw List must still reach the untyped fallback");
+
+        // raw Set — the untyped fallback still copies into a LinkedHashSet of unconverted values
+        JsonArray rawSetArray = pojoArray();
+        Object rawSet = decoder.decode(ctx, RequestValue.of(rawSetArray), Set.class, null);
+        assertInstanceOf(LinkedHashSet.class, rawSet, "raw Set must still reach the untyped fallback");
+        assertEquals(2, ((Set<?>) rawSet).size());
+        assertSame(
+                rawSetArray.getList().get(0),
+                ((Set<?>) rawSet).iterator().next(),
+                "fallback values are copied unconverted");
+    }
+
+    @Test
+    @DisplayName("Should bind a nested container body's inner elements instead of degrading to a raw list")
+    void nestedContainerBodyBindsItsInnerElements() {
+        RoutingContext ctx = mock(RoutingContext.class);
+        JsonArray nested = new JsonArray()
+                .add(new JsonArray().add(new JsonObject().put("name", "Alice")))
+                .add(new JsonArray().add(new JsonObject().put("name", "Bob")));
+        RequestValue body = RequestValue.of(nested);
+        Type declared = declaredShape("listOfListOfPojo");
+
+        Object result = decoder.decode(ctx, body, rawTypeOf(declared), declared);
+
+        assertInstanceOf(List.class, result);
+        List<?> outer = (List<?>) result;
+        assertEquals(2, outer.size());
+        assertInstanceOf(List.class, outer.get(0));
+        List<?> inner = (List<?>) outer.get(0);
+        assertEquals(1, inner.size());
+        assertInstanceOf(SamplePojo.class, inner.get(0), "the inner element type must be bound, not left raw");
+        assertEquals("Alice", ((SamplePojo) inner.get(0)).name());
+    }
+
+    // --- declared-shape helpers ---
+
+    /** A JSON array of two {@link SamplePojo}-shaped objects. */
+    private static JsonArray pojoArray() {
+        return new JsonArray().add(new JsonObject().put("name", "Alice")).add(new JsonObject().put("name", "Bob"));
+    }
+
+    /** Reads a declared body shape off {@link BodyShapes} so the test sees a real generic type. */
+    private static Type declaredShape(String fieldName) {
+        try {
+            return BodyShapes.class.getDeclaredField(fieldName).getGenericType();
+        } catch (NoSuchFieldException e) {
+            throw new AssertionError("unknown body shape: " + fieldName, e);
+        }
+    }
+
+    /** Returns the erased class a route registrar would pass as the decoder's target type. */
+    private static Class<?> rawTypeOf(Type declaredType) {
+        return (Class<?>) ((ParameterizedType) declaredType).getRawType();
+    }
+
     // --- helper types ---
 
     /** Simple POJO record used for JSON mapping tests. */
     record SamplePojo(String name) {}
+
+    /** A second POJO with a disjoint property set, so binding the wrong element type cannot pass. */
+    record OtherPojo(int id) {}
+
+    /** A two-argument collection whose {@code Collection} element is its <em>second</em> argument. */
+    static class Weird<A, B> extends ArrayList<B> {
+        private static final long serialVersionUID = 1L;
+    }
+
+    /** A two-argument collection whose {@code Collection} element is its <em>first</em> argument. */
+    static class Pair<A, B> extends ArrayList<A> {
+        private static final long serialVersionUID = 1L;
+    }
+
+    /** Declared body shapes; their generic types are read reflectively by {@link #declaredShape}. */
+    @SuppressWarnings("unused")
+    private static final class BodyShapes {
+        List<SamplePojo> listOfPojo;
+        Set<String> setOfString;
+        List<List<SamplePojo>> listOfListOfPojo;
+        Weird<OtherPojo, SamplePojo> weirdOfPojo;
+        Pair<SamplePojo, OtherPojo> pairOfPojo;
+    }
 }

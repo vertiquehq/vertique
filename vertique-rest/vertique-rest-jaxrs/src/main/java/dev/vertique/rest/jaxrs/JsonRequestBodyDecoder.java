@@ -64,8 +64,8 @@ class JsonRequestBodyDecoder implements RequestBodyDecoder {
     /**
      * Decodes the request body to the target type using JSON deserialization.
      *
-     * <p>Handles both JSON objects and JSON arrays. For {@code List<T>} target types,
-     * the generic type parameter is used to determine the element class for mapping.
+     * <p>Handles both JSON objects and JSON arrays. For collection target types the full declared
+     * generic type drives element binding (see {@link #decodeArray}).
      *
      * @param ctx         the current routing context (unused by this decoder)
      * @param body        the request body value
@@ -120,6 +120,13 @@ class JsonRequestBodyDecoder implements RequestBodyDecoder {
      * Uses {@link TypeFactory} to construct the correct {@link JavaType} so that
      * scalar elements (e.g. Integer → Long) are coerced to the declared element type.
      *
+     * <p>For a parameterized collection target the whole declared type is handed to
+     * {@link TypeFactory#constructType(Type)}, so the element comes from the type's
+     * {@code Collection<E>} supertype binding rather than from a type-argument position: a declared
+     * argument is not the element type ({@code class Weird<A, B> extends ArrayList<B>} declared
+     * {@code Weird<Other, Dto>} binds {@code Dto}). A raw collection target — no generic type at all —
+     * still falls through to the untyped branch below and is returned unconverted.
+     *
      * <p>The {@link JavaType} is built the same way regardless of profile; the element binding then
      * routes through {@code profileMapper} when a non-{@code vertx} profile applies (FR-JSON-022/023),
      * or {@code DatabindCodec.mapper()} when {@code profileMapper} is {@code null} (the unchanged vertx
@@ -145,14 +152,14 @@ class JsonRequestBodyDecoder implements RequestBodyDecoder {
             return convertList(jsonArray.getList(), arrayType, profileMapper);
         }
 
-        // List<T>, Set<T>, or other Collection<T> with generic type info
-        if (genericType instanceof ParameterizedType pt) {
-            Type elementType = pt.getActualTypeArguments()[0];
-            if (elementType instanceof Class<?> elementClass) {
-                @SuppressWarnings("unchecked")
-                Class<? extends Collection<?>> collType = (Class<? extends Collection<?>>) targetType;
-                JavaType javaType = tf.constructCollectionType(collType, elementClass);
-                return convertList(jsonArray.getList(), javaType, profileMapper);
+        // List<T>, Set<T>, or other Collection<T> with generic type info. The full declared type goes to
+        // Jackson, which binds the element from the Collection<E> supertype binding — a declared type
+        // argument is not the element type (class Weird<A, B> extends ArrayList<B> declared
+        // Weird<Other, Dto> has element Dto, and no argument position is reliably the element).
+        if (genericType instanceof ParameterizedType) {
+            JavaType declaredType = tf.constructType(genericType);
+            if (declaredType.isCollectionLikeType()) {
+                return convertList(jsonArray.getList(), declaredType, profileMapper);
             }
         }
 
