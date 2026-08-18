@@ -231,7 +231,8 @@ class ApiSurfaceTest {
                     GeneratedInputProcessor.class,
                     "targetType()",
                     "process(Object,EffectiveInputPolicies,InputLocation,ChainResolver,"
-                            + "GeneratedInputProcessorDispatcher,InputTraversalContext,String)");
+                            + "GeneratedInputProcessorDispatcher,InputTraversalContext,String)",
+                    "fieldNameOwnerTypes()");
             assertNoPublicFields(GeneratedInputProcessor.class);
             assertNoPublicConstructors(GeneratedInputProcessor.class);
         }

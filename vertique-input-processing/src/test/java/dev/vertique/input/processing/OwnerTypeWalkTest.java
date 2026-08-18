@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vertique.core.sanitization.InputFieldNameResolver;
+import dev.vertique.core.sanitization.InputLocation;
 import dev.vertique.core.sanitization.InputValueContext;
 import dev.vertique.core.sanitization.Sanitize;
 import dev.vertique.core.sanitization.Sanitizer;
@@ -165,17 +166,83 @@ class OwnerTypeWalkTest {
         assertEquals(Set.of(Node.class), prepared, "the visited set closes the cycle after one visit");
     }
 
+    @Test
+    @DisplayName("a generated processor's declared owner types replace the reflective contributions")
+    void generatedProcessorOwnerTypesArePreferred() {
+        GeneratedInputProcessorDispatcher dispatcher = GeneratedInputProcessorDispatcher.withoutContinuation();
+        dispatcher.register(
+                GeneratedOwner.class,
+                new DeclaringProcessor<>(GeneratedOwner.class, Set.of(GeneratedOwner.class, Declared.class)));
+
+        Set<Class<?>> prepared = prepare(GeneratedOwner.class, dispatcher);
+
+        assertTrue(prepared.contains(GeneratedOwner.class), "the entry-point class is always an owner");
+        assertTrue(
+                prepared.contains(Declared.class),
+                "a class the generated processor declares is an owner even though no declared field names it");
+        assertFalse(
+                prepared.contains(Other.class),
+                "the generated owner set replaces the reflective contributions rather than adding to them, "
+                        + "so a reflective field target the processor does not declare is not prepared");
+    }
+
+    @Test
+    @DisplayName("an empty generated owner set falls back to the reflective walk")
+    void emptyOwnerTypesFallsBackToTheReflectiveWalk() {
+        GeneratedInputProcessorDispatcher dispatcher = GeneratedInputProcessorDispatcher.withoutContinuation();
+        dispatcher.register(GeneratedOwner.class, new DeclaringProcessor<>(GeneratedOwner.class, Set.of()));
+
+        Set<Class<?>> prepared = prepare(GeneratedOwner.class, dispatcher);
+
+        assertEquals(
+                prepare(GeneratedOwner.class),
+                prepared,
+                "an empty set is the sentinel for \"declares no owner set\", so the walk prepares exactly "
+                        + "what it would with no processor at all");
+        assertTrue(prepared.contains(Other.class), "the reflective field target is prepared by the fallback");
+    }
+
+    @Test
+    @DisplayName("a generated owner set is closed transitively by the engine")
+    void generatedOwnerTypesAreClosedTransitively() {
+        GeneratedInputProcessorDispatcher dispatcher = GeneratedInputProcessorDispatcher.withoutContinuation();
+        dispatcher.register(
+                GeneratedOwner.class,
+                new DeclaringProcessor<>(GeneratedOwner.class, Set.of(GeneratedOwner.class, GeneratedNested.class)));
+
+        Set<Class<?>> prepared = prepare(GeneratedOwner.class, dispatcher);
+
+        assertTrue(prepared.contains(GeneratedNested.class), "a declared owner is prepared");
+        assertTrue(
+                prepared.contains(Deep.class),
+                "the generated set is flat, so the engine must descend a declared owner and prepare its "
+                        + "own field targets");
+    }
+
     // --- Harness ---
 
     /**
-     * Runs the walk for {@code declaredType} and returns every class it prepared.
+     * Runs the walk for {@code declaredType} with no generated processor registered and returns every
+     * class it prepared.
      *
      * @param declaredType the body or message type
      * @return the prepared owner types, in the order the walk emitted them
      */
     private static Set<Class<?>> prepare(Type declaredType) {
+        return prepare(declaredType, GeneratedInputProcessorDispatcher.withoutContinuation());
+    }
+
+    /**
+     * Runs the walk for {@code declaredType} against {@code dispatcher} and returns every class it
+     * prepared.
+     *
+     * @param declaredType the body or message type
+     * @param dispatcher   the dispatcher the walk consults for generated owner sets
+     * @return the prepared owner types, in the order the walk emitted them
+     */
+    private static Set<Class<?>> prepare(Type declaredType, GeneratedInputProcessorDispatcher dispatcher) {
         RecordingResolver resolver = new RecordingResolver();
-        OwnerTypeWalk.prepare(declaredType, resolver, new InputPolicyMetadataResolver());
+        OwnerTypeWalk.prepare(declaredType, resolver, new InputPolicyMetadataResolver(), dispatcher);
         return resolver.owners();
     }
 
@@ -217,6 +284,39 @@ class OwnerTypeWalkTest {
          */
         Set<Class<?>> owners() {
             return new LinkedHashSet<>(precomputed);
+        }
+    }
+
+    /**
+     * A generated-processor stand-in that declares a fixed owner set. Registered through the
+     * dispatcher's public {@code register} entry so the walk resolves it exactly as it would a class
+     * emitted by the annotation processor.
+     *
+     * @param <T> the target DTO type
+     */
+    private record DeclaringProcessor<T>(Class<T> target, Set<Class<?>> ownerTypes)
+            implements GeneratedInputProcessor<T> {
+
+        @Override
+        public Class<T> targetType() {
+            return target;
+        }
+
+        @Override
+        public Set<Class<?>> fieldNameOwnerTypes() {
+            return ownerTypes;
+        }
+
+        @Override
+        public Object process(
+                Object intermediate,
+                EffectiveInputPolicies policies,
+                InputLocation location,
+                ChainResolver resolver,
+                GeneratedInputProcessorDispatcher dispatcher,
+                InputTraversalContext parent,
+                String parentPath) {
+            throw new UnsupportedOperationException("the warm-up walk never processes input");
         }
     }
 
@@ -307,6 +407,26 @@ class OwnerTypeWalkTest {
     /** A self-referential type graph. */
     static class Node {
         Node child;
+    }
+
+    /** Entry point for the generated path: its only declared field targets {@link Other}. */
+    static class GeneratedOwner {
+        Other other;
+    }
+
+    /** A DTO reachable only through a generated processor's declared owner set. */
+    static class Declared {
+        String value;
+    }
+
+    /** A declared owner whose own field target the engine must close over. */
+    static class GeneratedNested {
+        Deep deep;
+    }
+
+    /** The transitively reachable target of {@link GeneratedNested}. */
+    static class Deep {
+        String value;
     }
 
     /** Sanitizer referenced by {@link AttributesHolder}; never invoked by these tests. */

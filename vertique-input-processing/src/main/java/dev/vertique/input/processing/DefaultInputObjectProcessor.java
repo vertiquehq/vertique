@@ -167,7 +167,7 @@ class DefaultInputObjectProcessor implements InputObjectProcessor {
 
     @Override
     public void precomputeFieldNameResolution(@Nullable Type declaredType, InputFieldNameResolver resolver) {
-        OwnerTypeWalk.prepare(declaredType, resolver, metadataResolver);
+        OwnerTypeWalk.prepare(declaredType, resolver, metadataResolver, dispatcher);
     }
 
     @Override

@@ -10,7 +10,10 @@ import java.lang.reflect.Type;
 import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.HashSet;
+import java.util.Optional;
 import java.util.Set;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Computes the set of classes {@link DefaultInputObjectProcessor} may pass to
@@ -40,6 +43,16 @@ import java.util.Set;
  *       {@link FieldPolicyMetadata#fieldType()} and {@link FieldPolicyMetadata#collectionElementType()}
  *       of every recorded field — both, never one or the other, because the engine can dispatch
  *       against either depending on the wire shape it meets.</li>
+ *   <li><strong>A generated processor answers for its own type.</strong> When one exists for the
+ *       frontier class and its {@link GeneratedInputProcessor#fieldNameOwnerTypes()} is non-empty,
+ *       that set <em>replaces</em> the reflective contributions — the generated path dispatches
+ *       against what it was emitted to dispatch against, not against what reflection infers. An
+ *       empty set is the documented sentinel for "declares no owner set" and falls back to the
+ *       reflective contributions, which is how a hand-written or previously-generated processor
+ *       keeps working; that fallback is logged at debug, naming the processor class, so a stale
+ *       generated class on the classpath is diagnosable rather than silent. The declared set is
+ *       flat — the engine closes it transitively and bounds it with the same descent rule as any
+ *       other contribution.</li>
  *   <li>A visited set terminates cycles, so a self-referential or mutually recursive graph closes.</li>
  * </ul>
  *
@@ -57,6 +70,8 @@ import java.util.Set;
  */
 final class OwnerTypeWalk {
 
+    private static final Logger log = LoggerFactory.getLogger(OwnerTypeWalk.class);
+
     private OwnerTypeWalk() {}
 
     /**
@@ -68,12 +83,19 @@ final class OwnerTypeWalk {
      *                         {@code null}
      * @param metadataResolver the engine's own metadata resolver, so the walk warms the cache the
      *                         request path reads; must not be {@code null}
+     * @param dispatcher       the engine's own dispatcher, consulted so a generated processor can
+     *                         answer for its own type instead of having reflection infer it; must
+     *                         not be {@code null}
      * @throws IllegalStateException if a reachable type declares conflicting policy annotations
+     * @throws RuntimeException      if a reachable type has a generated processor that exists but
+     *                               cannot be instantiated — a build defect, and failing at
+     *                               registration is the point
      */
     static void prepare(
             @Nullable Type declaredType,
             InputFieldNameResolver resolver,
-            InputPolicyMetadataResolver metadataResolver) {
+            InputPolicyMetadataResolver metadataResolver,
+            GeneratedInputProcessorDispatcher dispatcher) {
         if (declaredType == null) {
             return;
         }
@@ -94,6 +116,16 @@ final class OwnerTypeWalk {
             if (!InputPolicyMetadataResolver.isDescendableObject(owner) || isPlatformType(owner)) {
                 continue;
             }
+            Set<Class<?>> declared = declaredOwnerTypes(owner, dispatcher);
+            if (!declared.isEmpty()) {
+                // The generated path answers for itself: it dispatches against what it was emitted to
+                // dispatch against, so its set replaces — never supplements — the reflective one. Each
+                // entry still goes through the frontier, so the descent rule bounds it like any other.
+                for (Class<?> declaredOwner : declared) {
+                    enqueue(pending, declaredOwner);
+                }
+                continue;
+            }
             for (FieldPolicyMetadata field :
                     metadataResolver.resolve(owner).fields().values()) {
                 // Both, never one or the other: the engine dispatches a nested fragment against the
@@ -103,6 +135,39 @@ final class OwnerTypeWalk {
                 enqueue(pending, field.collectionElementType());
             }
         }
+    }
+
+    /**
+     * Returns the owner set a generated processor declares for {@code owner}, or an empty set when
+     * the reflective contributions apply — either because no generated processor exists, or because
+     * the one that does declares no owner set.
+     *
+     * <p>The two empty outcomes are deliberately reported differently. No processor at all is the
+     * ordinary reflective case and is silent; a processor that returns an empty set is a
+     * hand-written or previously-generated class predating the owner-set contract, and is logged at
+     * debug naming the class, so a stale generated processor on the classpath is diagnosable rather
+     * than silent.
+     *
+     * @param owner      the frontier class
+     * @param dispatcher the engine's own dispatcher
+     * @return the declared owner types, or an empty set to fall back to the reflective walk
+     */
+    private static Set<Class<?>> declaredOwnerTypes(Class<?> owner, GeneratedInputProcessorDispatcher dispatcher) {
+        // A Broken lookup — a generated class that exists but cannot be instantiated — propagates
+        // deliberately: that is a build defect, and failing at registration is correct.
+        Optional<? extends GeneratedInputProcessor<?>> generated = dispatcher.resolve(owner);
+        if (generated.isEmpty()) {
+            return Set.of();
+        }
+        Set<Class<?>> declared = generated.get().fieldNameOwnerTypes();
+        if (declared.isEmpty()) {
+            log.debug(
+                    "Generated input processor {} declares no field-name owner types for {}; "
+                            + "falling back to the reflective owner walk for this type",
+                    generated.get().getClass().getName(),
+                    owner.getName());
+        }
+        return declared;
     }
 
     /**

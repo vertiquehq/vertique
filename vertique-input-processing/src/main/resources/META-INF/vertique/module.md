@@ -99,6 +99,8 @@ The prepared set is deliberately **wider** than the declared type graph. A field
 
 Two bounds are deliberate. A platform (`java.*` / `javax.*` / `jakarta.*`) class is precomputed but never descended: a JDK container cannot yield an application type through a declared field, so descending one would introspect JDK internals for nothing. And an owner no declared type can name — a `@JsonTypeInfo` subtype, or the runtime value of a `Map`- or `Object`-typed field — is composed lazily on first use, because no static walk can enumerate it.
 
+When a generated processor exists for a type it answers for itself: its `fieldNameOwnerTypes()` **replaces** the reflective contributions rather than supplementing them, so each execution path prepares what it actually dispatches against. An empty return means "declares no owner set" and falls back to the reflective walk, which keeps a hand-written or previously-generated processor working. That fallback is logged at `DEBUG` on `dev.vertique.input.processing.OwnerTypeWalk`, naming the processor and the type — enable it when a stale generated class on the classpath is suspected, since the fallback is otherwise indistinguishable from the ordinary reflective case.
+
 Composing a projection can fail, and failing here is the point: a wire-name collision that would otherwise throw on every request instead fails registration once. The call also resolves each reachable type's policy metadata, so conflicting annotations (`@Canonicalize` with `@SkipCanonicalization`) surface at registration as `IllegalStateException` rather than on the first request.
 
 Both shifts are **consumer-visible**: an application carrying either fault boots today and fails on the request that reaches it. After this change it fails at startup instead. That is the intended direction — the fault was always there, and a startup failure is the one you can act on.
@@ -194,3 +196,4 @@ The default engine implementation, the annotation-metadata resolver and its meta
 ## Dependencies
 
 - `dev.vertique:vertique-core` — the canonicalization and sanitization contracts and annotation model this module executes, including `InputFieldNameResolver`, the wire-name projection every entry point takes.
+- `org.slf4j:slf4j-api` — the registration-time diagnostic described under `precomputeFieldNameResolution`. Nothing on the request path logs.
