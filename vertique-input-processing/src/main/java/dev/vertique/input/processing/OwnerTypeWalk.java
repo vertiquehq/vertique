@@ -188,10 +188,27 @@ final class OwnerTypeWalk {
      * not descend into.
      *
      * @param type the candidate owner
-     * @return {@code true} for a {@code java.*}, {@code javax.*} or {@code jakarta.*} class
+     * @return {@code true} for a {@code java.*} class
      */
     private static boolean isPlatformType(Class<?> type) {
-        String binaryName = type.getName();
-        return binaryName.startsWith("java.") || binaryName.startsWith("javax.") || binaryName.startsWith("jakarta.");
+        return isPlatformType(type.getName());
+    }
+
+    /**
+     * Returns whether {@code binaryName} belongs to the Java platform (the JDK itself, not the wider
+     * {@code javax.*}/{@code jakarta.*} namespaces, which carry ordinary third-party and
+     * application-owned types).
+     *
+     * <p>The bound is {@code java.*} only, and only because a JDK class's generic containers erase to
+     * {@code Object} or to platform interfaces, so a JDK class cannot yield an application type
+     * through a declared field. That argument does not extend to {@code javax.*} or {@code
+     * jakarta.*}: both namespaces hold ordinary classes with ordinary declared fields, including
+     * application DTOs, so skipping their descent would leave a reachable owner unprepared.
+     *
+     * @param binaryName the candidate owner's binary name, as returned by {@link Class#getName()}
+     * @return {@code true} for a {@code java.*} binary name
+     */
+    static boolean isPlatformType(String binaryName) {
+        return binaryName.startsWith("java.");
     }
 }

@@ -131,6 +131,45 @@ class OwnerTypeWalkTest {
                         + "stackTrace field, so only the platform guard can keep it out of the owner set");
     }
 
+    /*
+     * Attempting to prove the class-graph-level shape directly — a real class whose binary name
+     * starts with `jakarta.` and which declares a field targeting an application DTO — would require
+     * either adding a real jakarta.* source directory (not allowed for this fixture set) or
+     * fabricating one at runtime via in-memory compilation or hand-patched class bytes. Both are
+     * disproportionate machinery for pinning a one-line prefix check, and every jakarta.* class
+     * already reachable from this module's classpath (e.g. jakarta.annotation.Nullable) is an
+     * annotation with no DTO-shaped declared fields, so it cannot stand in for the walk-level
+     * scenario either. The three tests below pin the predicate OwnerTypeWalk.prepare actually
+     * consults, which is an honest and sufficient proof of the same defect.
+     */
+
+    @Test
+    @DisplayName("a jakarta.-prefixed binary name is not a platform type")
+    void jakartaPrefixedBinaryNameIsNotAPlatformType() {
+        assertFalse(
+                OwnerTypeWalk.isPlatformType("jakarta.example.SomeDto"),
+                "jakarta.* holds ordinary third-party and application-owned types with declared "
+                        + "fields, so it must not be treated as a platform namespace");
+    }
+
+    @Test
+    @DisplayName("a javax.-prefixed binary name is not a platform type")
+    void javaxPrefixedBinaryNameIsNotAPlatformType() {
+        assertFalse(
+                OwnerTypeWalk.isPlatformType("javax.example.SomeDto"),
+                "javax.* holds ordinary third-party and application-owned types with declared "
+                        + "fields, so it must not be treated as a platform namespace");
+    }
+
+    @Test
+    @DisplayName("a java.-prefixed binary name is a platform type")
+    void javaPrefixedBinaryNameIsAPlatformType() {
+        assertTrue(
+                OwnerTypeWalk.isPlatformType("java.lang.String"),
+                "java.* is the JDK itself, whose generic containers erase and so cannot yield an "
+                        + "application type through a declared field");
+    }
+
     @Test
     @DisplayName("an annotated schema-free field contributes its declared type as an owner")
     void annotatedSchemaFreeFieldTypeIsPrepared() {
