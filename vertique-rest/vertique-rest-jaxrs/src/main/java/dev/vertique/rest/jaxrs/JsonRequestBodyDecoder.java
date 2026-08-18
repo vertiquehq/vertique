@@ -16,6 +16,8 @@ import io.vertx.ext.web.RoutingContext;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
 import java.util.Collection;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 
 /**
  * Fallback {@link RequestBodyDecoder} that decodes JSON request bodies.
@@ -43,6 +45,24 @@ import java.util.Collection;
  * <p>Priority: {@code 1100} (fallback, runs last among framework defaults).
  */
 class JsonRequestBodyDecoder implements RequestBodyDecoder {
+
+    /**
+     * Resolved {@link JavaType}s for declared parameterized collection body types, keyed by the
+     * declared {@link Type} itself.
+     *
+     * <p>{@link TypeFactory#constructType(Type)} walks the declared type's generic hierarchy to bind
+     * {@code Collection<E>}, and Jackson's own type cache does not amortize a
+     * {@link ParameterizedType} input, so the walk would otherwise run per request. The
+     * {@link TypeFactory} it resolves against is always {@code DatabindCodec.mapper()}'s — a
+     * {@link JavaType} is mapper-independent, so the cached value is valid whatever profile mapper
+     * binds the elements.
+     *
+     * <p>Retention is bounded by the set of distinct declared body parameter types, which is fixed
+     * at route registration; the reflective {@link ParameterizedType} implementations define
+     * {@code equals}/{@code hashCode}, so routes declaring the same type share one entry. This
+     * decoder is a singleton, so the map dies with its Dagger component.
+     */
+    private final ConcurrentMap<Type, JavaType> declaredCollectionTypes = new ConcurrentHashMap<>();
 
     @Override
     public int priority() {
@@ -124,8 +144,10 @@ class JsonRequestBodyDecoder implements RequestBodyDecoder {
      * {@link TypeFactory#constructType(Type)}, so the element comes from the type's
      * {@code Collection<E>} supertype binding rather than from a type-argument position: a declared
      * argument is not the element type ({@code class Weird<A, B> extends ArrayList<B>} declared
-     * {@code Weird<Other, Dto>} binds {@code Dto}). A raw collection target — no generic type at all —
-     * still falls through to the untyped branch below and is returned unconverted.
+     * {@code Weird<Other, Dto>} binds {@code Dto}). That resolution is memoized in
+     * {@link #declaredCollectionTypes}, so the generic-hierarchy walk runs once per declared type
+     * rather than once per request. A raw collection target — no generic type at all — still falls
+     * through to the untyped branch below and is returned unconverted.
      *
      * <p>The {@link JavaType} is built the same way regardless of profile; the element binding then
      * routes through {@code profileMapper} when a non-{@code vertx} profile applies (FR-JSON-022/023),
@@ -157,7 +179,7 @@ class JsonRequestBodyDecoder implements RequestBodyDecoder {
         // argument is not the element type (class Weird<A, B> extends ArrayList<B> declared
         // Weird<Other, Dto> has element Dto, and no argument position is reliably the element).
         if (genericType instanceof ParameterizedType) {
-            JavaType declaredType = tf.constructType(genericType);
+            JavaType declaredType = declaredCollectionTypes.computeIfAbsent(genericType, tf::constructType);
             if (declaredType.isCollectionLikeType()) {
                 return convertList(jsonArray.getList(), declaredType, profileMapper);
             }

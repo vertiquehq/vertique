@@ -285,25 +285,21 @@ final class TypeClassifier {
                 substituted[i] = substitute(arguments[i], bindings);
                 changed |= substituted[i] != arguments[i];
             }
-            return changed
-                    ? new SubstitutedParameterizedType(
-                            parameterized.getRawType(), parameterized.getOwnerType(), substituted)
-                    : parameterized;
+            return changed ? new SubstitutedParameterizedType(parameterized.getRawType(), substituted) : parameterized;
         }
         return type;
     }
 
     /**
      * A {@link ParameterizedType} whose arguments have been resolved against a substitution
-     * environment. Only the three interface methods are meaningful; instances never escape
-     * {@link #collectionElementBinding}'s walk and are consumed by {@link #classify} alone.
+     * environment. Only the raw type and the arguments are meaningful — {@code getOwnerType} is a
+     * {@code null} stub, because instances never escape {@link #collectionElementBinding}'s walk and
+     * are consumed by {@link #classify} alone.
      *
      * @param rawType   the erased class of the parameterized type
-     * @param ownerType the enclosing type, or {@code null}
      * @param arguments the resolved type arguments
      */
-    private record SubstitutedParameterizedType(
-            Type rawType, @Nullable Type ownerType, Type[] arguments) implements ParameterizedType {
+    private record SubstitutedParameterizedType(Type rawType, Type[] arguments) implements ParameterizedType {
 
         @Override
         public Type[] getActualTypeArguments() {
@@ -318,7 +314,8 @@ final class TypeClassifier {
         @Override
         @Nullable
         public Type getOwnerType() {
-            return ownerType;
+            // No caller in this module consults the owner type — rawClassOf reads getRawType alone.
+            return null;
         }
     }
 

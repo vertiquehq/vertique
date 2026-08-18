@@ -70,6 +70,17 @@ class TypeClassifierTest {
         }
 
         @Test
+        @DisplayName("a binding nested inside a supertype's type argument is substituted transitively")
+        void nestedParameterizedBindingSubstitutesTransitively() {
+            assertEquals(
+                    Dto.class,
+                    TypeClassifier.elementType(declaredTypeOf("nestedBinding")),
+                    "Opt<T> extends ArrayList<Optional<T>>, so an Opt<Dto> binds Optional<Dto> elements — "
+                            + "the substitution must recurse into the supertype's nested type argument, and "
+                            + "the Optional layer then normalizes away to Dto");
+        }
+
+        @Test
         @DisplayName("ordinary collection and array shapes are unchanged")
         void ordinaryCollectionShapesAreUnchanged() {
             assertEquals(Dto.class, TypeClassifier.elementType(declaredTypeOf("list")), "List<Dto> binds Dto");
@@ -138,6 +149,14 @@ class TypeClassifierTest {
         private static final long serialVersionUID = 1L;
     }
 
+    /**
+     * The element variable sits <em>inside</em> the supertype's type argument, so resolving it needs
+     * substitution to recurse into nested arguments rather than only rewriting top-level variables.
+     */
+    static class Opt<T> extends ArrayList<Optional<T>> {
+        private static final long serialVersionUID = 1L;
+    }
+
     /** Every declared shape the element rule is pinned against. */
     @SuppressWarnings("rawtypes")
     static class Shapes {
@@ -146,6 +165,7 @@ class TypeClassifierTest {
         Fixed<Dto> fixed;
         Weird<Other, Dto> weird;
         Deep<Dto> deep;
+        Opt<Dto> nestedBinding;
         List<Dto> list;
         Set<String> strings;
         List raw;
