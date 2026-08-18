@@ -447,10 +447,12 @@ class GeneratorCompositionTest {
             assertTrue(
                     failure.getMessage().contains("#/properties/a~1b~0c"),
                     "the path must escape both reserved characters; was: " + failure.getMessage());
-            // The escaping must not be applied twice: a literal '/' becomes ~1, never ~01.
+            // Pin the specific reversed-order output rather than any "~01": escaping / before ~ would
+            // yield a~01b~0c here, and is also not injective — a property literally named "a~1b"
+            // correctly escapes to a~01b, so a bare "~01" assertion would misfire on that name.
             assertFalse(
-                    failure.getMessage().contains("~01"),
-                    "escaping must not double-encode; was: " + failure.getMessage());
+                    failure.getMessage().contains("a~01b~0c"),
+                    "escaping must apply ~ before /; was: " + failure.getMessage());
         }
 
         /**
