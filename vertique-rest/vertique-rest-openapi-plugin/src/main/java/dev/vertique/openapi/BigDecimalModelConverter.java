@@ -65,9 +65,9 @@ import java.util.Iterator;
  * <p>A <em>Java</em>-based validator can still accept a value carrying one trailing line terminator
  * (e.g. {@code "1.50\n"}), because Java's {@code $} — without {@code MULTILINE} — matches either at
  * the end of input or immediately before a final line terminator. Java's notion of a line terminator
- * is wider than {@code \n} alone: {@code \n}, {@code \r\n}, {@code \r}, {@code \u0085} (NEL),
- * {@code \u2028} (LS), and {@code \u2029} (PS) all slip through, and all six were measured against
- * this exact pattern. Only a <em>single</em> final terminator does — {@code "1.50\n\n"} and
+ * is wider than {@code \n} alone: {@code \n}, {@code \r\n}, {@code \r}, {@code U+0085} (NEL),
+ * {@code U+2028} (LS), and {@code U+2029} (PS) all slip through, and all six were measured against
+ * this exact pattern. Only a <em>single</em> final terminator slips through — {@code "1.50\n\n"} and
  * {@code "1.50\nX"} are both rejected.
  *
  * <p>An <em>ECMA-262</em> validator has no such gap: without the {@code m} flag its {@code $} matches

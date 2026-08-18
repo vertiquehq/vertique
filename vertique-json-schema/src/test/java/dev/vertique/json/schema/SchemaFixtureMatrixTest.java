@@ -409,9 +409,12 @@ class SchemaFixtureMatrixTest {
      * match immediately before a single trailing line terminator (a `Pattern.matches`-vs-`find`
      * divergence that does not exist for `find` with `\z`), {@code "1\n"} validates successfully
      * against the anchored pattern {@code ^-?[0-9]+(\.[0-9]+)?$}, exactly as {@code "1"} does. The
-     * residual is the one the plan already characterizes as safe: the *published* schema is marginally
-     * over-permissive relative to {@code BigDecimalStrictStringDeserializer}, which uses {@code
-     * matches()} and rejects the trailing newline — the serde stays the strict boundary.
+     * residual is safe, and it belongs to the <em>evaluating engine</em> rather than to the published
+     * schema: a Java-based validator is marginally over-permissive here, while an ECMA-262 one is not
+     * — without the {@code m} flag its {@code $} matches only at end of input, so a generated
+     * JavaScript client rejects what this JVM validator accepts. Either way
+     * {@code BigDecimalStrictStringDeserializer} uses {@code matches()} and rejects the trailing
+     * terminator, so the serde stays the strict boundary.
      */
     @Test
     @DisplayName(
