@@ -222,14 +222,23 @@ class WebSocketEndpointRegistrar {
      * without it no projection is ever consulted, and any declared policy already failed the
      * composition gate above.
      *
-     * <p>The walk is {@link dev.vertique.json.JacksonFieldNameResolver#precomputeGraph} — the same one
-     * the JAX-RS registrar uses for body types, rather than a second, narrower one here. It unwraps an
-     * array message type to its component, skips a scalar such as the default {@code String} message
-     * type (neither carries a property set the engine keys against), and follows each message type's
-     * declared property types so a nested DTO is warmed with its owner.
+     * <p>The engine owns the walk: {@link InputObjectProcessor#precomputeFieldNameResolution} hands the
+     * resolver every owner type the engine's <em>own</em> descent may pass to
+     * {@link InputFieldNameResolver#logicalName} for that message type, and this registrar contributes
+     * only the declared type — the same seam the JAX-RS registrar uses for body types, rather than a
+     * second, narrower walk here. That is what makes the postcondition true rather than approximated:
+     * on return, every statically knowable owner reachable from the message type has had its projection
+     * composed, including the ones no property-based walk can see (a field with no accessor) and the raw
+     * declared classes a shape-mismatched fragment is dispatched against. An array message type reduces
+     * to its component and a scalar such as the default {@code String} message type simply has nothing
+     * beneath it, both by the engine's own classification rather than by a rule restated here.
+     *
+     * <p>Two failures therefore move from the message path to registration, which is the point: a
+     * projection that cannot be composed, and a reachable type whose policy annotations conflict.
      *
      * @param metas every scanned endpoint's metadata
-     * @throws ConfigurationException if a reachable message type's projection cannot be composed
+     * @throws ConfigurationException if a reachable owner's projection cannot be composed
+     * @throws IllegalStateException if a reachable type declares conflicting policy annotations
      */
     private void warmMessageNameProjections(List<WebSocketEndpointMeta> metas) {
         if (objectProcessor == null) {
@@ -237,7 +246,7 @@ class WebSocketEndpointRegistrar {
         }
         for (WebSocketEndpointMeta meta : metas) {
             if (meta.onMessage() != null) {
-                messageNameResolver.precomputeGraph(meta.messageType());
+                objectProcessor.precomputeFieldNameResolution(meta.messageType(), messageNameResolver);
             }
         }
     }

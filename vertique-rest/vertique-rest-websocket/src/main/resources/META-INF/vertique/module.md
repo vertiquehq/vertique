@@ -490,12 +490,18 @@ public record ProfileMessage(
 // {"display_name": "<b>ada</b>"} -> displayName == "ada"
 ```
 
-Each declared message type's projection — and that of every type reachable from it through a declared
-Jackson-visible property — is composed at endpoint registration, not on the message path, so no
-Jackson introspection happens on the event loop and a type whose names cannot be projected fails
-startup (see [Startup failures](#startup-failures)) rather than failing every message that reaches
-it. An array message type is warmed through its component type; a scalar message type such as the
-default `String` carries no property set and costs no introspection.
+Each declared message type's projection is composed at endpoint registration, not on the message path.
+**The engine decides which types get composed**, not the registrar: registration hands each declared
+message type to `InputObjectProcessor.precomputeFieldNameResolution`, which prepares the resolver for
+every owner type its own descent may consult for that message. The postcondition is that no statically
+knowable owner is left to introspect on the event loop — an array message type reduces to its
+component and a scalar such as the default `String` simply has nothing beneath it, both by the engine's
+own classification. The `vertique-input-processing` reference documents the owner set and its bounds in
+full.
+
+Two startup failures follow (see [Startup failures](#startup-failures)), both of which previously
+surfaced per message: a type in that set whose names cannot be projected, and a reachable type whose
+policy annotations conflict — preparing the owner set resolves that type's policy metadata.
 
 **Five shapes a declared policy still does not reach.** A `Map`-typed field, an `Object`-typed field,
 a concrete `@JsonTypeInfo` subtype's own fields, `@JsonUnwrapped` members, and a key matched only by
@@ -606,7 +612,8 @@ All of these are raised while the router is built, so a misconfigured endpoint n
 | Endpoint needs authentication but no `RouteAuthHandler` is registered | `IllegalStateException` |
 | `authScheme` names no registered `RouteAuthHandler` | `IllegalStateException` |
 | Several `RouteAuthHandler`s registered and no `authScheme` given | `IllegalStateException` |
-| A message type's wire-name projection cannot be composed — two properties claiming one wire name, or two claiming one `@JsonAlias` (checked only when an `InputObjectProcessor` is bound) | `ConfigurationException` |
+| A wire-name projection in a message type's owner set cannot be composed — two properties claiming one wire name, or two claiming one `@JsonAlias` (checked only when an `InputObjectProcessor` is bound) | `ConfigurationException` |
+| A type in a message type's owner set declares conflicting policy annotations (checked only when an `InputObjectProcessor` is bound) | `IllegalStateException` |
 | A lifecycle method declares a canonicalizer or sanitizer chain — directly or through a composed annotation — or the message type declares field-level policies, while no `InputObjectProcessor` is bound | `ConfigurationException` |
 
 Every `@RequiresAction` failure mode above is deliberately fail-closed: an action gate that cannot
