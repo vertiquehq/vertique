@@ -218,6 +218,98 @@ class AnnotationCollectorTest {
         }
     }
 
+    // --- Map-typed fields ---
+
+    /**
+     * Pins the {@code Map} rule of {@code AnnotationCollector.buildFieldModel}: a {@code Map}-typed
+     * field is <em>schema-free</em>, not a nested DTO.
+     *
+     * <p>The reflective engine's {@code InputPolicyMetadataResolver.isDescendableObject} excludes
+     * {@code Map} deliberately — its keys are arbitrary, so it carries no statically known property
+     * set — and drops an unannotated {@code Map} field entirely. When APT classified the same field
+     * as {@code NESTED_DTO} the generated path emitted a {@code dispatchNested(v, Map.class, …)} arm
+     * and declared {@code Map} as an owner, so one application reported a different
+     * {@code InputValueContext.ownerType} for keys inside a {@code Map} field depending on whether
+     * codegen was active. {@code FieldKind.OTHER}'s javadoc already listed {@code Map} among its
+     * kinds; these tests hold the two paths together.
+     */
+    @Nested
+    @DisplayName("Map-typed field classification")
+    class MapTypedFields {
+
+        @Test
+        @DisplayName("unannotated Map field is not classified as a nested DTO — no field model at all")
+        void mapTypedFieldIsNotClassifiedAsANestedDto() {
+            JavaFileObject dto = SourceFiles.inline("com.example.MapDto", """
+                    package com.example;
+                    import dev.vertique.core.sanitization.Canonicalize;
+                    import dev.vertique.sanitization.canonicalize.TrimCanonicalizer;
+                    import java.util.Map;
+                    public class MapDto {
+                        @Canonicalize(TrimCanonicalizer.class)
+                        public String name;
+                        public Map<String, String> attrs;
+                    }
+                    """);
+
+            ProcessorTestHarness.run(new SanitizationProcessor(), dto, resourceFor("com.example.MapDto"))
+                    .assertSuccess()
+                    .assertGeneratedSourceContains("com.example.MapDto_InputProcessor", "case \"name\"")
+                    .assertGeneratedSourceDoesNotContain("com.example.MapDto_InputProcessor", "\"attrs\"")
+                    .assertGeneratedSourceDoesNotContain("com.example.MapDto_InputProcessor", "owners.add(Map.class)");
+        }
+
+        @Test
+        @DisplayName("annotated Map field is schema-free (OTHER) carrying its erased declared type")
+        void annotatedMapTypedFieldIsSchemaFreeWithItsDeclaredType() {
+            JavaFileObject dto = SourceFiles.inline("com.example.AnnotatedMapDto", """
+                    package com.example;
+                    import dev.vertique.core.sanitization.Sanitize;
+                    import dev.vertique.sanitization.sanitize.StripControlCharsSanitizer;
+                    import java.util.Map;
+                    public class AnnotatedMapDto {
+                        @Sanitize(StripControlCharsSanitizer.class)
+                        public Map<String, String> attrs;
+                    }
+                    """);
+
+            ProcessorTestHarness.run(new SanitizationProcessor(), dto, resourceFor("com.example.AnnotatedMapDto"))
+                    .assertSuccess()
+                    // The OTHER arm routes through applyDefault, never dispatchNested.
+                    .assertGeneratedSourceContains(
+                            "com.example.AnnotatedMapDto_InputProcessor",
+                            "case \"attrs\" -> out.put(k, GeneratedSupport.applyDefault(")
+                    .assertGeneratedSourceDoesNotContain(
+                            "com.example.AnnotatedMapDto_InputProcessor", "dispatchNested(")
+                    // The erased declared type is the owner the arm hands to applyDefault.
+                    .assertGeneratedSourceContains(
+                            "com.example.AnnotatedMapDto_InputProcessor", "owners.add(Map.class)");
+        }
+
+        @Test
+        @DisplayName("Map subtype field classifies like Map — the test is assignability, not an FQN match")
+        void mapSubtypeFieldIsClassifiedLikeMap() {
+            JavaFileObject dto = SourceFiles.inline("com.example.MapSubtypeDto", """
+                    package com.example;
+                    import dev.vertique.core.sanitization.Canonicalize;
+                    import dev.vertique.sanitization.canonicalize.TrimCanonicalizer;
+                    import java.util.HashMap;
+                    public class MapSubtypeDto {
+                        @Canonicalize(TrimCanonicalizer.class)
+                        public String name;
+                        public HashMap<String, String> attrs;
+                    }
+                    """);
+
+            ProcessorTestHarness.run(new SanitizationProcessor(), dto, resourceFor("com.example.MapSubtypeDto"))
+                    .assertSuccess()
+                    .assertGeneratedSourceContains("com.example.MapSubtypeDto_InputProcessor", "case \"name\"")
+                    .assertGeneratedSourceDoesNotContain("com.example.MapSubtypeDto_InputProcessor", "\"attrs\"")
+                    .assertGeneratedSourceDoesNotContain(
+                            "com.example.MapSubtypeDto_InputProcessor", "owners.add(HashMap.class)");
+        }
+    }
+
     // --- Conflict detection ---
 
     @Nested

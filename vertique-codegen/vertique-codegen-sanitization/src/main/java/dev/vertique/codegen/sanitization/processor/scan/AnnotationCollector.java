@@ -53,6 +53,13 @@ import javax.tools.Diagnostic;
  * {@code NestedDto}. See {@link #buildFieldModel} for the full rule, including raw
  * {@code Optional} handling.
  *
+ * <p>A {@code Map}-typed field is <em>schema-free</em> ({@link FieldKind#OTHER}), never a nested
+ * DTO: its keys are arbitrary, so it carries no statically known property set. The test is
+ * assignability to {@code java.util.Map}, so a {@code HashMap}-typed field classifies identically.
+ * This mirrors {@code InputPolicyMetadataResolver.isDescendableObject} in
+ * {@code vertique-input-processing}, which excludes {@code Map} from descent — an unannotated
+ * {@code Map} field therefore yields no {@link FieldModel} on either path.
+ *
  * <p>Arrays classify exactly like collections — a {@code NestedDto[]} field is
  * {@link FieldKind#COLLECTION_OF_DTO} and a {@code String[]} field is
  * {@link FieldKind#COLLECTION_OF_STRINGS} — because both shapes arrive as a JSON array carrying
@@ -391,7 +398,32 @@ public final class AnnotationCollector {
                     : null;
         }
 
-        // Nested object (non-scalar, non-collection, non-array — arrays returned above)
+        // Map fields are schema-free — never nested DTOs. A Map's keys are arbitrary, so it carries
+        // no statically known property set to generate a switch over. This mirrors
+        // InputPolicyMetadataResolver.isDescendableObject in vertique-input-processing, which
+        // excludes Map from descent and therefore drops an unannotated Map field entirely; without
+        // this branch the DECLARED fallthrough below would classify the field as NESTED_DTO and
+        // emit a `dispatchNested(v, Map.class, …)` arm, so the generated path would report
+        // Map (or a Map subtype) as the InputValueContext.ownerType for keys inside the field
+        // while the reflective path reused the enclosing DTO. The test is assignability, not an
+        // FQN match, so a HashMap-typed field classifies identically — exactly the reflective
+        // resolver's `Map.class.isAssignableFrom(rawType)`. Placed after the collection/array
+        // branch, which owns element-wise handling for anything that is also a Collection.
+        if (isMap(type)) {
+            return hasAnnotations
+                    ? new FieldModel(
+                            name,
+                            FieldKind.OTHER,
+                            canonChain,
+                            sanitChain,
+                            skipCanon,
+                            skipSanit,
+                            null,
+                            ctx.types().erasure(type))
+                    : null;
+        }
+
+        // Nested object (non-scalar, non-collection, non-array, non-map — arrays returned above)
         if (type.getKind() == TypeKind.DECLARED && !isScalarOrEnum(type)) {
             TypeMirror erasedType = ctx.types().erasure(type);
             return new FieldModel(
@@ -555,6 +587,21 @@ public final class AnnotationCollector {
     }
 
     /**
+     * Returns {@code true} if the type mirror is assignable to {@link java.util.Map}.
+     *
+     * <p>Assignability rather than an FQN comparison, so a {@code HashMap}-typed field classifies
+     * like a {@code Map}-typed one — the same test
+     * ({@code Map.class.isAssignableFrom(rawType)}) the reflective
+     * {@code InputPolicyMetadataResolver} applies.
+     *
+     * @param type the type mirror to test
+     * @return {@code true} for map types
+     */
+    private boolean isMap(TypeMirror type) {
+        return isAssignableTo(type, "java.util.Map");
+    }
+
+    /**
      * Returns {@code true} if the type mirror is assignable to the named supertype, comparing
      * erasures so a parameterized {@code List<Foo>} matches {@code java.util.Collection}.
      *
@@ -626,7 +673,7 @@ public final class AnnotationCollector {
             if (wrapped == null || wrapped.getKind() != TypeKind.DECLARED) return null;
             arg = wrapped;
         }
-        if (isCollection(arg) || isAssignableTo(arg, "java.util.Map")) return null;
+        if (isCollection(arg) || isMap(arg)) return null;
         return arg;
     }
 

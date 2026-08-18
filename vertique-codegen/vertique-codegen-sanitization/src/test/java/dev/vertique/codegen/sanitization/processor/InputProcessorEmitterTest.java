@@ -180,10 +180,10 @@ class InputProcessorEmitterTest {
      * DTO with two <em>annotated</em> schema-free fields, covering both shapes whose owner is the
      * field's erased declared type rather than a nested DTO:
      * <ul>
-     *   <li>{@code attrs} — a {@code Map<String, String>}. {@code AnnotationCollector} classifies
-     *       any non-scalar {@code DECLARED} type as {@code FieldKind.NESTED_DTO}, so
-     *       this emits a {@code dispatchNested(v, Map.class, …, Map.class)} arm whose owner is
-     *       {@code Map} — the erased declared type either way.</li>
+     *   <li>{@code attrs} — a {@code Map<String, String>}. A {@code Map} carries no statically
+     *       known property set, so {@code AnnotationCollector} classifies it as
+     *       {@code FieldKind.OTHER}. Its arm passes the erased declared type ({@code Map}) as the
+     *       {@code applyDefault} owner.</li>
      *   <li>{@code codes} — an annotated collection of non-string scalars, which <em>is</em>
      *       {@code FieldKind.OTHER}. Its arm passes the erased declared type
      *       ({@code List}) as the {@code applyDefault} owner handed to the reflective
@@ -213,6 +213,36 @@ class InputProcessorEmitterTest {
             public class AttributesResource {
                 @POST
                 public String create(AttributesDto body) { return null; }
+            }
+            """);
+
+    /**
+     * DTO with an <em>unannotated</em> {@code Map}-typed field alongside an annotated string.
+     * {@code Map} is schema-free — the reflective engine's {@code isDescendableObject} excludes it,
+     * so no arm asks for an owner on {@code attrs} and it must contribute nothing to the declared
+     * owner set.
+     */
+    private static final JavaFileObject PLAIN_MAP_DTO = SourceFiles.inline("com.example.owner.PlainMapDto", """
+            package com.example.owner;
+            import dev.vertique.core.sanitization.Canonicalize;
+            import dev.vertique.sanitization.canonicalize.TrimCanonicalizer;
+            import java.util.Map;
+            public class PlainMapDto {
+                @Canonicalize(TrimCanonicalizer.class)
+                public String name;
+                public Map<String, String> attrs;
+            }
+            """);
+
+    private static final JavaFileObject PLAIN_MAP_RESOURCE =
+            SourceFiles.inline("com.example.owner.PlainMapResource", """
+            package com.example.owner;
+            import jakarta.ws.rs.POST;
+            import jakarta.ws.rs.Path;
+            @Path("/plain-maps")
+            public class PlainMapResource {
+                @POST
+                public String create(PlainMapDto body) { return null; }
             }
             """);
 
@@ -634,6 +664,17 @@ class InputProcessorEmitterTest {
                             "com.example.owner.PlainDto_InputProcessor", "owners.add(int.class)")
                     .assertGeneratedSourceDoesNotContain(
                             "com.example.owner.PlainDto_InputProcessor", "owners.add(Object.class)");
+        }
+
+        @Test
+        @DisplayName("emitted owner types omit unannotated Map fields")
+        void emittedOwnerTypesOmitUnannotatedMapFields() {
+            ProcessorTestHarness.run(new SanitizationProcessor(), PLAIN_MAP_DTO, PLAIN_MAP_RESOURCE)
+                    .assertSuccess()
+                    .assertGeneratedSourceContains(
+                            "com.example.owner.PlainMapDto_InputProcessor", "owners.add(PlainMapDto.class)")
+                    .assertGeneratedSourceDoesNotContain(
+                            "com.example.owner.PlainMapDto_InputProcessor", "owners.add(Map.class)");
         }
 
         @Test
