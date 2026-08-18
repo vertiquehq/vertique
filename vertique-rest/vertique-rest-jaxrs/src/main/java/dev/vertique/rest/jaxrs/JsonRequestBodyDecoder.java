@@ -159,12 +159,20 @@ class JsonRequestBodyDecoder implements RequestBodyDecoder {
      * {@code AnnotationCollector} both had to correct — a use site with no local type argument can
      * still have its element fixed by its own declaration.
      *
-     * <p>A resolvable element still requires the {@link JavaType}'s content type to be something other
-     * than plain {@code java.lang.Object}: that is Jackson's own signal for "no binding to report,"
-     * covering both a genuinely raw target ({@code List} with no generic signature at all, whose
-     * content type resolves to {@code Object} the same way a raw {@code Collection} does) and an
-     * unresolvable owner-bound binding. Either falls through to the untyped branch below and is
-     * returned unconverted, exactly as before.
+     * <p>A resolved {@link JavaType} content type of plain {@code java.lang.Object} is <em>not</em> by
+     * itself a signal that there is "no binding to report" — {@code List<Object>}, {@code List<?>},
+     * and {@code Bag<Object>} (a concrete subtype parameterized with {@code Object}) all legitimately
+     * resolve their content type to {@code Object} and must still route through {@link #convertList}
+     * exactly as any other explicitly declared collection does. What distinguishes those from a
+     * genuinely raw target is {@link JavaType#getBindings()}: a directly-parameterized or
+     * generic-supertype-fixed declaration always leaves a non-empty binding behind (verified against
+     * {@code List<Object>}, {@code List<?>}, and {@code Bag<Object>}), while a raw {@code List} with no
+     * generic signature at all — whose content type also resolves to {@code Object} the same way a raw
+     * {@code Collection} does — leaves {@code getBindings()} empty. The gate therefore falls through to
+     * the untyped branch only when content type is {@code Object} <em>and</em> bindings are empty
+     * together; either signal alone is unsafe ({@code Dtos extends ArrayList<SamplePojo>} has empty
+     * bindings too, since its element comes from its own generic superclass rather than a use-site
+     * argument, yet its content type is correctly {@code SamplePojo}, not {@code Object}).
      *
      * <p>The {@link JavaType} is built the same way regardless of profile; the element binding then
      * routes through {@code profileMapper} when a non-{@code vertx} profile applies (FR-JSON-022/023),
@@ -198,14 +206,23 @@ class JsonRequestBodyDecoder implements RequestBodyDecoder {
         // element). The gate is genericType != null, not "is a ParameterizedType": a non-generic
         // fixed subtype (Dtos extends ArrayList<Dto>, used as the plain type Dtos) reflects as a
         // Class, not a ParameterizedType, yet Jackson still resolves its element from the class's
-        // own generic superclass. A content type of plain Object means Jackson found no binding to
-        // report — a genuinely raw target or an unresolvable owner-bound generic — and both fall
-        // through to the untyped branch below unconverted, exactly as before.
+        // own generic superclass.
+        //
+        // A content type of plain Object is NOT by itself "no binding to report" — List<Object>,
+        // List<?>, and Bag<Object> all legitimately resolve to Object and must still convert. The
+        // discriminator is content type == Object AND getBindings().isEmpty() together: a genuinely
+        // raw target (List with no generic signature at all) or an unresolvable owner-bound generic
+        // leaves both signals empty, while every explicitly declared shape leaves at least one of
+        // them non-trivial (a directly-parameterized declaration leaves bindings non-empty; a
+        // generic-supertype-fixed declaration like Dtos leaves content type non-Object even with
+        // empty bindings). Only the fully-empty combination falls through to the untyped branch
+        // below unconverted.
         if (genericType != null) {
             JavaType declaredType = declaredCollectionTypes.computeIfAbsent(genericType, tf::constructType);
             if (declaredType.isCollectionLikeType()
                     && declaredType.getContentType() != null
-                    && declaredType.getContentType().getRawClass() != Object.class) {
+                    && (declaredType.getContentType().getRawClass() != Object.class
+                            || !declaredType.getBindings().isEmpty())) {
                 return convertList(jsonArray.getList(), declaredType, profileMapper);
             }
         }

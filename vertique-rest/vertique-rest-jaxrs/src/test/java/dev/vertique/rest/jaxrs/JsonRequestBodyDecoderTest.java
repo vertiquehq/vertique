@@ -6,6 +6,7 @@ package dev.vertique.rest.jaxrs;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
+import com.fasterxml.jackson.databind.JavaType;
 import dev.vertique.rest.core.request.RequestValue;
 import dev.vertique.rest.jaxrs.request.BoundRequest;
 import dev.vertique.rest.jaxrs.request.DefaultBoundRequest;
@@ -18,6 +19,7 @@ import io.vertx.core.http.HttpServerRequest;
 import io.vertx.core.json.Json;
 import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
+import io.vertx.core.json.jackson.DatabindCodec;
 import io.vertx.ext.web.RequestBody;
 import io.vertx.ext.web.RoutingContext;
 import java.lang.reflect.ParameterizedType;
@@ -419,12 +421,16 @@ class JsonRequestBodyDecoderTest {
     }
 
     @Test
-    @DisplayName("An explicitly declared List<Object> body yields the same elements as a raw List")
-    void explicitObjectElementBodyMatchesTheRawFallback() {
-        // The Object-content guard added alongside the genericType != null gate sends this shape to
-        // the untyped fallback, where a directly-parameterized List<Object> previously went through
-        // convertList. Both routes must produce the same elements, or the guard changed behaviour
-        // for a legal declaration rather than only admitting a new one.
+    @DisplayName("An explicitly declared List<Object> body converts via convertList, not the raw fallback")
+    void explicitObjectElementBodyConvertsRatherThanFallingThrough() {
+        // A List<Object> declaration resolves its JavaType content type to plain Object, the same
+        // signal Jackson reports for a genuinely raw target — but its bindings are non-empty (it was
+        // directly parameterized), so it must still route through convertList exactly as it did
+        // before the Object-content guard was added alongside the genericType != null gate widening.
+        // Pinning against Jackson's own convertValue output (rather than the raw fallback) is what
+        // makes this test able to fail: the raw fallback and convertList happen to agree on which
+        // Map implementation nested JSON objects land in, so a same-elements comparison against the
+        // raw path is a near-tautology that both the old and new code satisfy.
         RoutingContext ctx = mock(RoutingContext.class);
         Type listOfObject = new ParameterizedType() {
             @Override
@@ -442,12 +448,32 @@ class JsonRequestBodyDecoderTest {
                 return null;
             }
         };
+        JsonArray jsonArray = pojoArray();
 
-        Object declared = decoder.decode(ctx, RequestValue.of(pojoArray()), List.class, listOfObject);
-        Object raw = decoder.decode(ctx, RequestValue.of(pojoArray()), List.class, null);
+        Object result = decoder.decode(ctx, RequestValue.of(jsonArray), List.class, listOfObject);
 
-        assertInstanceOf(List.class, declared);
-        assertEquals(raw, declared, "List<Object> must bind exactly as a raw List does");
+        JavaType listOfObjectType = DatabindCodec.mapper().getTypeFactory().constructType(listOfObject);
+        Object expected = DatabindCodec.mapper().convertValue(jsonArray.getList(), listOfObjectType);
+
+        assertEquals(
+                expected,
+                result,
+                "List<Object> must bind exactly as Jackson's convertValue produces for a List<Object> JavaType");
+        assertNotSame(
+                jsonArray.getList(),
+                result,
+                "a declared List<Object> body must not alias the JsonArray's own backing list");
+    }
+
+    @Test
+    @DisplayName("A raw List target still returns the JsonArray's own backing list unconverted")
+    void rawListTargetStillReturnsTheUntypedFallback() {
+        RoutingContext ctx = mock(RoutingContext.class);
+        JsonArray jsonArray = pojoArray();
+
+        Object result = decoder.decode(ctx, RequestValue.of(jsonArray), List.class, null);
+
+        assertSame(jsonArray.getList(), result, "raw List target must still reach the untyped fallback");
     }
 
     @Test
