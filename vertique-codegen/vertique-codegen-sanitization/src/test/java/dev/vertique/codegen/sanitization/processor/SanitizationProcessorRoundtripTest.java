@@ -8,27 +8,41 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vertique.codegen.test.ProcessorTestHarness;
 import dev.vertique.codegen.test.ProcessorTestHarness.Result;
 import dev.vertique.codegen.test.fixtures.SourceFiles;
+import dev.vertique.core.sanitization.Canonicalizer;
 import dev.vertique.core.sanitization.InputFieldNameResolver;
 import dev.vertique.core.sanitization.InputLocation;
 import dev.vertique.core.sanitization.InputValueContext;
+import dev.vertique.core.sanitization.Sanitizer;
 import dev.vertique.input.processing.ChainResolver;
 import dev.vertique.input.processing.EffectiveInputPolicies;
 import dev.vertique.input.processing.GeneratedInputProcessor;
 import dev.vertique.input.processing.GeneratedInputProcessorDispatcher;
+import dev.vertique.input.processing.InputObjectProcessor;
 import dev.vertique.input.processing.InputTraversalContext;
 import dev.vertique.sanitization.canonicalize.TrimCanonicalizer;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import javax.annotation.processing.AbstractProcessor;
+import javax.annotation.processing.RoundEnvironment;
+import javax.annotation.processing.SupportedAnnotationTypes;
+import javax.annotation.processing.SupportedSourceVersion;
+import javax.lang.model.SourceVersion;
+import javax.lang.model.element.TypeElement;
 import javax.tools.JavaFileObject;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.opentest4j.AssertionFailedError;
 
 /**
  * End-to-end roundtrip integration test for {@link SanitizationProcessor}.
@@ -1448,6 +1462,426 @@ class SanitizationProcessorRoundtripTest {
         case "city_name" -> "cityName";
         default -> wireName;
     };
+
+    // --- Owner-set conformance fixtures (one matrix, compiled twice) ---
+
+    /**
+     * Leaf DTO reached from {@link #CONF_ROOT_DTO} through several container shapes. Carries its own
+     * {@code @Sanitize} so the scanner emits {@code ConfLeafDto_InputProcessor}, which is what makes
+     * it an owner on the generated path as well as the reflective one.
+     */
+    private static final JavaFileObject CONF_LEAF_DTO = SourceFiles.inline("com.example.conf.ConfLeafDto", """
+            package com.example.conf;
+            import dev.vertique.core.sanitization.Sanitize;
+            import dev.vertique.sanitization.sanitize.StripControlCharsSanitizer;
+            public class ConfLeafDto {
+                @Sanitize(StripControlCharsSanitizer.class)
+                public String text;
+            }
+            """);
+
+    /** Target of the accessor-less field: reachable only through a {@code private} field with no accessor. */
+    private static final JavaFileObject CONF_NESTED_DTO = SourceFiles.inline("com.example.conf.ConfNestedDto", """
+            package com.example.conf;
+            import dev.vertique.core.sanitization.Sanitize;
+            import dev.vertique.sanitization.sanitize.StripControlCharsSanitizer;
+            public class ConfNestedDto {
+                @Sanitize(StripControlCharsSanitizer.class)
+                public String label;
+            }
+            """);
+
+    /**
+     * Single-argument generic that is <em>not</em> a container. Both paths must classify a
+     * {@code ConfWrapper<ConfLeafDto>} field to the erased {@code ConfWrapper} and stop — the type
+     * argument is not reachable, which is issue #383's shape.
+     */
+    private static final JavaFileObject CONF_WRAPPER = SourceFiles.inline("com.example.conf.ConfWrapper", """
+            package com.example.conf;
+            public class ConfWrapper<T> {
+                public T value;
+            }
+            """);
+
+    /**
+     * Multi-argument collection subtype. {@code TypeClassifier.elementType} requires exactly one type
+     * argument, so a {@code ConfPair<ConfLeafDto, String>} field yields no element schema reflectively.
+     */
+    private static final JavaFileObject CONF_PAIR = SourceFiles.inline("com.example.conf.ConfPair", """
+            package com.example.conf;
+            import java.util.ArrayList;
+            public class ConfPair<A, B> extends ArrayList<A> {}
+            """);
+
+    /**
+     * The frozen conformance matrix, in one DTO: a non-container generic wrapper, an
+     * {@code Optional}-wrapped DTO, a multi-argument collection subtype, a nested container, an
+     * accessor-less nested field, a container of maps, a self-reference, and a plain {@code String}
+     * field — the last one being what makes a mismatch-family owner observable when the wire shape
+     * disagrees with the declared shape.
+     */
+    private static final JavaFileObject CONF_ROOT_DTO = SourceFiles.inline("com.example.conf.ConfRootDto", """
+            package com.example.conf;
+            import dev.vertique.core.sanitization.Sanitize;
+            import dev.vertique.sanitization.sanitize.StripControlCharsSanitizer;
+            import java.util.List;
+            import java.util.Map;
+            import java.util.Optional;
+            public class ConfRootDto {
+                public ConfWrapper<ConfLeafDto> wrapped;
+                public Optional<ConfLeafDto> optionalDto;
+                public ConfPair<ConfLeafDto, String> pair;
+                public List<List<ConfLeafDto>> nestedLists;
+                private ConfNestedDto accessorLess;
+                public List<Map<String, ConfLeafDto>> mapsInList;
+                public ConfRootDto self;
+                @Sanitize(StripControlCharsSanitizer.class)
+                public String name;
+            }
+            """);
+
+    private static final JavaFileObject CONF_RESOURCE = SourceFiles.inline("com.example.conf.ConfResource", """
+            package com.example.conf;
+            import jakarta.ws.rs.POST;
+            import jakarta.ws.rs.Path;
+            @Path("/conf")
+            public class ConfResource {
+                @POST
+                public String create(ConfRootDto body) { return null; }
+            }
+            """);
+
+    /** The compilation unit shared, byte-identical, by both conformance environments. */
+    private static final JavaFileObject[] CONF_SOURCES = {
+        CONF_LEAF_DTO, CONF_NESTED_DTO, CONF_WRAPPER, CONF_PAIR, CONF_ROOT_DTO, CONF_RESOURCE
+    };
+
+    /** FQN of the conformance root DTO, loaded separately out of each environment's classloader. */
+    private static final String CONF_ROOT_FQN = "com.example.conf.ConfRootDto";
+
+    /** FQN of the generated companion whose presence distinguishes the two environments. */
+    private static final String CONF_ROOT_PROCESSOR_FQN = "com.example.conf.ConfRootDto_InputProcessor";
+
+    // --- Owner-set conformance ---
+
+    /**
+     * Pins the invariant the empty-owner-set fallback rests on: the set of owner types the
+     * <em>generated</em> path prepares is contained in the set the <em>reflective</em> path prepares,
+     * over one fixture matrix compiled identically by both.
+     *
+     * <p><strong>Why two compilations.</strong> {@code GeneratedInputProcessorDispatcher} resolves a
+     * companion through the target class's own classloader behind a {@code ClassValue}, so once real
+     * APT output is loaded the public entry point selects the <em>generated</em> path for that
+     * {@code Class}. A single compilation would therefore exercise the generated path twice and
+     * report agreement no matter how far {@code AnnotationCollector} and {@code TypeClassifier} had
+     * drifted — a false-positive proof of exactly the claim these tests exist to make. The identical
+     * sources are compiled twice into two isolated harness classloaders: once with
+     * {@link SanitizationProcessor}, once with a {@link NoOpAnnotationProcessor} so no companion
+     * exists and the dispatcher necessarily falls through to reflection.
+     * {@link #compileWithCodegen()} and {@link #compileWithoutCodegen()} each assert their own
+     * environment's companion presence, so the discriminating mechanic cannot silently degrade.
+     *
+     * <p><strong>Containment, not equality.</strong> Equality is provably false: the reflective walk
+     * records a field's raw declared class unconditionally, so {@code java.lang.String} is a genuine
+     * owner there, while the generated path's {@code applyString} arm returns a shape-mismatched
+     * value unchanged and never asks for an owner on the mismatch family.
+     */
+    @Nested
+    @DisplayName("reflective ↔ generated owner-set conformance")
+    class OwnerSetConformance {
+
+        @Test
+        @DisplayName("the generated path's owner set is contained in the reflective path's")
+        void generatedOwnerSetIsContainedInTheReflectiveOne() throws Exception {
+            Set<String> generated = prepareOwners(compileWithCodegen());
+            Set<String> reflective = prepareOwners(compileWithoutCodegen());
+
+            assertTrue(
+                    reflective.containsAll(generated),
+                    () -> ("The generated path prepares an owner the reflective path does not, so"
+                                    + " AnnotationCollector and TypeClassifier have diverged."
+                                    + "\n  generated only: %s\n  generated:      %s\n  reflective:     %s")
+                            .formatted(difference(generated, reflective), generated, reflective));
+
+            // Non-vacuity: containment over an empty generated set would prove nothing, and the two
+            // sets being equal would mean the two environments never diverged — which is what a
+            // broken (single-compilation) mechanic looks like.
+            assertFalse(generated.isEmpty(), "the generated path must prepare at least its own root");
+            assertEquals(
+                    Set.of("java.lang.String"),
+                    difference(reflective, generated),
+                    "the reflective path's surplus is exactly the mismatch family: a String field's raw"
+                            + " declared class is recorded unconditionally, while the generated path never"
+                            + " asks for an owner on it");
+        }
+
+        @Test
+        @DisplayName("every owner observed on the reflective path was prepared before traversal")
+        void everyObservedOwnerWasPreparedOnTheReflectivePath() throws Exception {
+            RecordingNameResolver resolver = traverse(compileWithoutCodegen());
+
+            assertTrue(resolver.prepared().containsAll(resolver.observed()), () -> "observed but never prepared: %s"
+                    .formatted(difference(resolver.observed(), resolver.prepared())));
+            assertTrue(
+                    resolver.observed().contains("java.lang.String"),
+                    () -> "the deliberately mismatched {\"name\": {\"x\": 1}} payload must dispatch against the"
+                            + " String field's raw declared class, or this assertion is vacuous; observed="
+                            + resolver.observed());
+        }
+
+        @Test
+        @DisplayName("every owner observed on the generated path was prepared before traversal")
+        void everyObservedOwnerWasPreparedOnTheGeneratedPath() throws Exception {
+            RecordingNameResolver resolver = traverse(compileWithCodegen());
+
+            assertTrue(resolver.prepared().containsAll(resolver.observed()), () -> "observed but never prepared: %s"
+                    .formatted(difference(resolver.observed(), resolver.prepared())));
+            assertTrue(
+                    resolver.observed().contains("com.example.conf.ConfWrapper"),
+                    () -> "the generated root must hand its non-container generic field to the reflective"
+                            + " continuation, or the codegen↔reflection boundary is untested; observed="
+                            + resolver.observed());
+            assertFalse(
+                    resolver.observed().contains("java.lang.String"),
+                    () -> "the generated path returns a shape-mismatched String value unchanged, so it must"
+                            + " never ask for an owner on the mismatch family; observed=" + resolver.observed());
+        }
+    }
+
+    // --- Owner-set conformance helpers ---
+
+    /**
+     * Compiles the conformance matrix with the real {@link SanitizationProcessor} and asserts the
+     * root's generated companion is present, so the dispatcher takes the generated path for classes
+     * loaded from this result's classloader.
+     *
+     * @return the codegen-active compilation result
+     */
+    private static Result compileWithCodegen() {
+        Result result = ProcessorTestHarness.run(new SanitizationProcessor(), CONF_SOURCES);
+        result.assertSuccess();
+        assertNotNull(
+                result.loadGeneratedClass(CONF_ROOT_PROCESSOR_FQN),
+                "the codegen environment must carry the generated companion");
+        return result;
+    }
+
+    /**
+     * Compiles the same sources with a no-op processor and asserts no generated companion exists, so
+     * the dispatcher necessarily falls through to the reflective walk for classes loaded from this
+     * result's classloader.
+     *
+     * @return the codegen-inactive compilation result
+     */
+    private static Result compileWithoutCodegen() {
+        Result result = ProcessorTestHarness.run(new NoOpAnnotationProcessor(), CONF_SOURCES);
+        result.assertSuccess();
+        assertThrows(
+                AssertionFailedError.class,
+                () -> result.loadGeneratedClass(CONF_ROOT_PROCESSOR_FQN),
+                "the reflective environment must carry no generated companion — otherwise both"
+                        + " environments exercise the generated path and the comparison is vacuous");
+        return result;
+    }
+
+    /**
+     * Runs the public precompute entry point over the conformance root loaded from the given
+     * environment's classloader and returns the prepared owners by binary name.
+     *
+     * <p>Names, not {@code Class} instances: the two environments load the same fixture sources
+     * through different classloaders, so their {@code Class} objects are never {@code equals}.
+     *
+     * @param result the compilation environment
+     * @return the prepared owner binary names, in preparation order
+     * @throws Exception if the root fixture class cannot be loaded
+     */
+    private static Set<String> prepareOwners(Result result) throws Exception {
+        RecordingNameResolver resolver = new RecordingNameResolver();
+        newConformanceEngine().precomputeFieldNameResolution(result.loadGeneratedClass(CONF_ROOT_FQN), resolver);
+        return resolver.prepared();
+    }
+
+    /**
+     * Precomputes, seals the resolver, then drives a real traversal of the mismatch-carrying payload
+     * through the public {@code processInput} entry point. The resolver throws on any
+     * {@code logicalName} for an owner that was not prepared, so the postcondition is enforced at the
+     * call site rather than only asserted afterwards.
+     *
+     * @param result the compilation environment
+     * @return the resolver, carrying both the prepared and the observed owner names
+     * @throws Exception if the root fixture class cannot be loaded
+     */
+    private static RecordingNameResolver traverse(Result result) throws Exception {
+        Class<?> root = result.loadGeneratedClass(CONF_ROOT_FQN);
+        RecordingNameResolver resolver = new RecordingNameResolver();
+        InputObjectProcessor engine = newConformanceEngine();
+        engine.precomputeFieldNameResolution(root, resolver);
+        resolver.seal();
+        engine.processInput(conformancePayload(), root, EffectiveInputPolicies.NONE, InputLocation.BODY, resolver);
+        return resolver;
+    }
+
+    /**
+     * Builds a default engine whose canonicalizer and sanitizer factories instantiate the built-in
+     * processors reflectively.
+     *
+     * @return a fresh engine; each environment gets its own so their dispatcher caches never mix
+     */
+    private static InputObjectProcessor newConformanceEngine() {
+        return InputObjectProcessor.createDefault(
+                cls -> (Canonicalizer) instantiate(cls), cls -> (Sanitizer) instantiate(cls));
+    }
+
+    /**
+     * Instantiates a chain processor class through its public no-arg constructor.
+     *
+     * @param cls the processor class
+     * @return the new instance
+     */
+    private static Object instantiate(Class<?> cls) {
+        try {
+            return cls.getDeclaredConstructor().newInstance();
+        } catch (ReflectiveOperationException e) {
+            throw new IllegalStateException("Failed to instantiate " + cls.getName(), e);
+        }
+    }
+
+    /**
+     * Builds the wire payload that reaches every shape in the conformance matrix, including the
+     * deliberate {@code {"name": {"x": 1}}} mismatch against the {@code String name} field. That
+     * mismatch is the only way a mismatch-family owner becomes observable at all —
+     * {@code logicalFieldName} is called from one site, inside {@code processMap}.
+     *
+     * @return a mutable, insertion-ordered intermediate
+     */
+    private static Map<String, Object> conformancePayload() {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("wrapped", wireMap("value", " wrapped "));
+        payload.put("optionalDto", wireMap("text", " optional "));
+        payload.put("pair", wireList(wireMap("text", " pair ")));
+        payload.put("nestedLists", wireList(wireList(wireMap("text", " nested "))));
+        payload.put("accessorLess", wireMap("label", " accessor-less "));
+        payload.put("mapsInList", wireList(wireMap("anyKey", wireMap("text", " in map "))));
+        payload.put("self", wireMap("name", " self "));
+        payload.put("name", wireMap("x", 1));
+        return payload;
+    }
+
+    /**
+     * Builds a single-entry mutable map, mirroring a one-key JSON object fragment.
+     *
+     * @param key   the wire key
+     * @param value the wire value
+     * @return a new mutable map
+     */
+    private static Map<String, Object> wireMap(String key, Object value) {
+        Map<String, Object> map = new LinkedHashMap<>();
+        map.put(key, value);
+        return map;
+    }
+
+    /**
+     * Builds a single-element mutable list, mirroring a one-element JSON array fragment.
+     *
+     * @param element the sole element
+     * @return a new mutable list
+     */
+    private static List<Object> wireList(Object element) {
+        List<Object> list = new ArrayList<>();
+        list.add(element);
+        return list;
+    }
+
+    /**
+     * Returns the elements of {@code left} that {@code right} does not contain, for failure messages
+     * that name the divergence rather than dumping two sets and leaving the reader to diff them.
+     *
+     * @param left  the set to subtract from
+     * @param right the set to subtract
+     * @return a new set holding {@code left \ right}
+     */
+    private static Set<String> difference(Set<String> left, Set<String> right) {
+        Set<String> result = new LinkedHashSet<>(left);
+        result.removeAll(right);
+        return result;
+    }
+
+    /**
+     * Tracing {@link InputFieldNameResolver} that records every owner handed to {@code precompute}
+     * and every owner handed to {@code logicalName}, keyed by binary class name so owners loaded by
+     * two different harness classloaders compare.
+     *
+     * <p>Once {@link #seal()} has been called, an unprepared owner reaching {@code logicalName} —
+     * or a late {@code precompute} — throws. Both are contract violations of
+     * {@code precomputeFieldNameResolution}'s postcondition, and failing at the call site names the
+     * offending owner instead of leaving a set difference to be interpreted afterwards.
+     */
+    private static final class RecordingNameResolver implements InputFieldNameResolver {
+
+        private final Set<String> prepared = new LinkedHashSet<>();
+        private final Set<String> observed = new LinkedHashSet<>();
+        private boolean sealed;
+
+        @Override
+        public void precompute(Class<?> ownerType) {
+            if (sealed) {
+                throw new AssertionFailedError("precompute(" + ownerType.getName()
+                        + ") arrived after precomputeFieldNameResolution returned; the postcondition is that"
+                        + " every statically knowable owner is prepared before it returns");
+            }
+            prepared.add(ownerType.getName());
+        }
+
+        @Override
+        public String logicalName(Class<?> ownerType, String wireName) {
+            String owner = ownerType.getName();
+            observed.add(owner);
+            if (sealed && !prepared.contains(owner)) {
+                throw new AssertionFailedError("Owner " + owner + " reached logicalName(\"" + wireName
+                        + "\") without having been precomputed; prepared=" + prepared);
+            }
+            return wireName;
+        }
+
+        /** Marks preparation complete, after which an unprepared owner is a failure rather than a record. */
+        void seal() {
+            sealed = true;
+        }
+
+        /**
+         * Returns the owners handed to {@code precompute}, by binary name.
+         *
+         * @return the prepared owner names in preparation order
+         */
+        Set<String> prepared() {
+            return prepared;
+        }
+
+        /**
+         * Returns the owners handed to {@code logicalName}, by binary name.
+         *
+         * @return the observed owner names in observation order
+         */
+        Set<String> observed() {
+            return observed;
+        }
+    }
+
+    /**
+     * Annotation processor that claims every annotation and does nothing, so the conformance matrix
+     * can be compiled through the same harness with codegen switched off. Passing an explicit
+     * processor also suppresses javac's service-loader discovery, which would otherwise pick
+     * {@link SanitizationProcessor} back up off the test classpath.
+     */
+    @SupportedAnnotationTypes("*")
+    @SupportedSourceVersion(SourceVersion.RELEASE_21)
+    private static final class NoOpAnnotationProcessor extends AbstractProcessor {
+
+        @Override
+        public boolean process(Set<? extends TypeElement> annotations, RoundEnvironment roundEnv) {
+            return false;
+        }
+    }
 
     // --- Helper: chain resolver using real built-in processors ---
 
