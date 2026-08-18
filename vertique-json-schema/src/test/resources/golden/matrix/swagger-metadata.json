@@ -1,0 +1,1 @@
+{"$schema":"https://json-schema.org/draft/2020-12/schema","properties":{"code":{"minLength":3,"type":"string"},"label":{"description":"the item label","title":"Label","type":"string"}},"type":"object"}

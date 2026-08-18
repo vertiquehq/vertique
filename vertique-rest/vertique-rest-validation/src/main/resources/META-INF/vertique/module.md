@@ -8,7 +8,7 @@ SPDX-License-Identifier: EUPL-1.2
 > **Status:** Alpha
 > **Package:** `dev.vertique.rest.validation`
 > **Artifact:** `vertique-rest-validation`
-> **Depends on:** rest-jaxrs
+> **Depends on:** rest-jaxrs, json-schema
 
 Default annotation-driven request-validation strategy for the REST framework. Synthesizes JSON Schemas from JAX-RS and Bean Validation annotations at startup and validates incoming requests against those schemas using `vertx-json-schema`. This is the `web-validation` strategy — the default path that carries no dependency on the preview `vertx-openapi` artifact. The opt-in `openapi-contract` strategy, which validates against the generated `openapi.json`, lives in the sibling `vertique-rest-openapi-validation` module.
 
@@ -40,7 +40,7 @@ validation error; a synchronous throw, failed future, null future, or null resul
 infrastructure error. The built-in magic-byte verifier is opt-in through
 `MagicBytesVerifierModule`.
 
-**Schema synthesis** happens at startup: `AnnotationSchemaSource` reads JAX-RS (`@PathParam`, `@QueryParam`, `@NotNull`, `@Pattern`, `@Size`, etc.) and Bean Validation annotations from each resource method and emits JSON Schema fragments. The `victools` integration translates Java type and constraint annotations into JSON Schema 2020-12 vocabulary. Each operation's schemas are synthesized once at registration — no per-request reflection. There is deliberately no per-operationId schema cache: duplicate-operationId is enforced only within a single mount, so two mounts may legitimately reuse an operationId for different operations, and an operationId-keyed cache would hand the second mount the first mount's schema.
+**Schema synthesis** happens at startup: `AnnotationSchemaSource` reads JAX-RS (`@PathParam`, `@QueryParam`, `@NotNull`, `@Pattern`, `@Size`, etc.) and Bean Validation annotations from each resource method and emits JSON Schema fragments. Body-type generation delegates to `dev.vertique:vertique-json-schema`'s `AnnotationJsonSchemaGenerator` in its `withVictoolsDefaults()` mode — a behavior-preserving translation of Java type and constraint annotations into JSON Schema 2020-12 vocabulary, with object keys canonically ordered. Loose-parameter schema assembly remains owned by this module: the generator introspects types and fields, not individual method parameters. A body type the generator cannot represent fails startup with a bounded `JsonSchemaGenerationException`; request-validation outcomes and error categories are unaffected. Each operation's schemas are synthesized once at registration — no per-request reflection. There is deliberately no per-operationId schema cache: duplicate-operationId is enforced only within a single mount, so two mounts may legitimately reuse an operationId for different operations, and an operationId-keyed cache would hand the second mount the first mount's schema.
 
 **Strict boolean coercion.** The `web-validation` gate enforces that boolean parameters accept only the literal strings `"true"` or `"false"`. Values such as `"1"`, `"yes"`, `"on"`, or `""` are rejected with a 400 type-violation error. This prevents silent coercion ambiguity for boolean query/path/header parameters.
 
@@ -141,7 +141,9 @@ Contribute a custom schema source via `@Provides @IntoSet OperationSchemaSource`
 
 ### AnnotationSchemaSource
 
-Default `OperationSchemaSource` that synthesizes JSON Schema from JAX-RS and Bean Validation annotations. Uses `victools` (`jackson-module-jsonSchema` / JSON Schema generator) to translate Java types and constraint annotations into JSON Schema 2020-12.
+Default `OperationSchemaSource` that synthesizes JSON Schema from JAX-RS and Bean Validation annotations. Body types are handed to the shared `AnnotationJsonSchemaGenerator` (`dev.vertique:vertique-json-schema`, `withVictoolsDefaults()` mode), which translates Java types and constraint annotations into canonically ordered JSON Schema 2020-12. Parameter schemas are assembled by this class from each parameter's declared type, collection component type, and constraint annotations.
+
+The protected `generateBodySchema(Type)` seam is overridable: its default implementation parses the generator's canonical document into a fresh `JsonNode`, and a subclass may substitute its own node.
 
 **What it covers:**
 - `@PathParam`, `@QueryParam`, `@HeaderParam` — type coercion + nullability
@@ -255,7 +257,7 @@ validation; unmapped declared types are accepted without I/O.
 ## Dependencies
 
 - `dev.vertique:vertique-rest-jaxrs`
+- `dev.vertique:vertique-json-schema`
 - `io.vertx:vertx-json-schema`
-- `com.github.victools:jsonschema-generator`
 - `com.google.dagger:dagger`
 - `jakarta.inject:jakarta.inject-api`

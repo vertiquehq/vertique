@@ -1,0 +1,738 @@
+// SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
+// SPDX-License-Identifier: EUPL-1.2
+
+package dev.vertique.json.schema;
+
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import dev.vertique.core.json.JsonMapperProfile;
+import dev.vertique.core.json.JsonProfileId;
+import dev.vertique.core.json.JsonSchemaFragment;
+import dev.vertique.core.json.JsonSchemaTypeOverride;
+import dev.vertique.json.DefaultJsonMapperProfileRegistry;
+import io.swagger.v3.oas.annotations.media.ArraySchema;
+import io.swagger.v3.oas.annotations.media.Schema;
+import java.lang.reflect.ParameterizedType;
+import java.lang.reflect.Type;
+import java.math.BigDecimal;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+/**
+ * Fixtures for the generator hardening contracts: the accepted and rejected {@link Type} grammar,
+ * profile construction validation, direction filtering, exact-class matching, map-key exclusion, the
+ * {@code @Schema(implementation = ...)} × override guard, and disjoint-type conflict detection.
+ *
+ * <p>Every schema-override fragment used here carries a unique {@code format} marker so a test can
+ * assert the fragment's presence or absence by looking for that marker in the canonical document,
+ * without depending on the exact post-{@code ALLOF_CLEANUP_AT_THE_END} normal form.
+ */
+final class HardeningFixtures {
+
+    /**
+     * A value carried by a fixture's Swagger metadata. No bounded diagnostic may ever echo it — the
+     * rejection messages carry type identity only.
+     */
+    static final String SENTINEL_VALUE = "s3cr3t-fixture-value";
+
+    /** Marker in the fragment declared for the {@code INPUT} direction only. */
+    static final String INPUT_MARKER = "input-only-marker";
+
+    /** Marker in the fragment declared for the {@code OUTPUT} direction only. */
+    static final String OUTPUT_MARKER = "output-only-marker";
+
+    /** Marker in the fragment declared for the exact-class matching fixture. */
+    static final String EXACT_CLASS_MARKER = "exact-class-marker";
+
+    /** Marker in the fragment declared for the map key/value position fixture. */
+    static final String MAP_POSITION_MARKER = "map-position-marker";
+
+    /** Marker in a fragment whose declared JSON type is deliberately disjoint from an object. */
+    static final String DISJOINT_MARKER = "disjoint-marker";
+
+    private HardeningFixtures() {}
+
+    // --- Profiles ---
+
+    /**
+     * Resolves the real built-in {@code vertique-strict} profile, whose only declared override is a
+     * {@code BOTH}-direction {@code BigDecimal} decimal-string fragment.
+     *
+     * @return the {@code vertique-strict} profile
+     */
+    static JsonMapperProfile strictProfile() {
+        return new DefaultJsonMapperProfileRegistry(Set.of()).profile(JsonProfileId.of("vertique-strict"));
+    }
+
+    /**
+     * Builds a well-formed profile declaring the given overrides.
+     *
+     * @param id        the profile id
+     * @param overrides the declared overrides
+     * @return the profile
+     */
+    static JsonMapperProfile profile(String id, List<JsonSchemaTypeOverride> overrides) {
+        return new JsonMapperProfile() {
+
+            @Override
+            public JsonProfileId id() {
+                return JsonProfileId.of(id);
+            }
+
+            @Override
+            public ObjectMapper mapper() {
+                return new ObjectMapper();
+            }
+
+            @Override
+            public List<JsonSchemaTypeOverride> jsonSchemaTypeOverrides() {
+                return overrides;
+            }
+        };
+    }
+
+    /**
+     * Builds a deliberately malformed profile: any of its three members may be {@code null}.
+     *
+     * @param id        the profile id, possibly {@code null}
+     * @param mapper    the mapper, possibly {@code null}
+     * @param overrides the override list, possibly {@code null} or containing {@code null}
+     * @return the malformed profile
+     */
+    static JsonMapperProfile malformedProfile(
+            JsonProfileId id, ObjectMapper mapper, List<JsonSchemaTypeOverride> overrides) {
+        return new JsonMapperProfile() {
+
+            @Override
+            public JsonProfileId id() {
+                return id;
+            }
+
+            @Override
+            public ObjectMapper mapper() {
+                return mapper;
+            }
+
+            @Override
+            public List<JsonSchemaTypeOverride> jsonSchemaTypeOverrides() {
+                return overrides;
+            }
+        };
+    }
+
+    /**
+     * Builds a single-keyword string fragment carrying a unique {@code format} marker.
+     *
+     * @param marker the marker value
+     * @return the parsed fragment
+     */
+    static JsonSchemaFragment markerFragment(String marker) {
+        return JsonSchemaFragment.parse("{\"type\":\"string\",\"format\":\"" + marker + "\"}");
+    }
+
+    // --- Document parsing ---
+
+    /**
+     * Parses a hand-built document. Both post-generation walks take a {@code JsonNode}, so a document
+     * shape the generator cannot itself emit is still a legitimate input to prove a walk against.
+     *
+     * @param json the document text
+     * @return the parsed tree
+     */
+    static JsonNode read(String json) {
+        try {
+            return new ObjectMapper().readTree(json);
+        } catch (JsonProcessingException malformed) {
+            throw new IllegalArgumentException("test document is not valid JSON: " + json, malformed);
+        }
+    }
+
+    // --- Accepted-grammar fixtures ---
+
+    /** Plain body DTO used as the accepted {@code Class} form. */
+    static final class SimpleDto {
+
+        /** An ordinary string property. */
+        public String label;
+    }
+
+    /** Declaring type of the {@code Owner.Nested<String>} owner-type fixture. */
+    static final class Owner {
+
+        private Owner() {}
+
+        /**
+         * A static member class, so a parameterized reference to it carries {@link Owner} as its
+         * reflection owner type.
+         *
+         * @param <T> the element type
+         */
+        static final class Nested<T> {
+
+            /** The single carried value. */
+            public T value;
+        }
+    }
+
+    /** Holder whose fields supply the reflection-derived {@link Type} forms the contract tests use. */
+    static final class TypeHolder {
+
+        /** Supplies a {@link java.lang.reflect.GenericArrayType} through {@code getGenericType()}. */
+        public List<String>[] matrix;
+
+        /** Supplies a {@code List<?>} and, through its argument, a {@link java.lang.reflect.WildcardType}. */
+        public List<?> wildcards;
+
+        /** Supplies a {@link ParameterizedType} with a non-null owner type. */
+        public Owner.Nested<String> nested;
+
+        /** Carries a Swagger value no bounded diagnostic may echo. */
+        @Schema(defaultValue = SENTINEL_VALUE)
+        public String labelled;
+    }
+
+    /**
+     * Generic type whose single parameter supplies a {@link java.lang.reflect.TypeVariable}.
+     *
+     * @param <T> the unresolved parameter
+     */
+    static final class Generic<T> {
+
+        /** The unresolved property. */
+        public T value;
+    }
+
+    // --- Override matching fixtures ---
+
+    /** Supertype an override is declared for. */
+    static class Money {
+
+        /** The amount in minor units. */
+        public long minorUnits;
+    }
+
+    /** Subtype of {@link Money}, which exact-class matching must not cover. */
+    static final class TaxedMoney extends Money {
+
+        /** The applied tax rate in basis points. */
+        public int taxBasisPoints;
+    }
+
+    /** Control DTO whose property type is exactly the overridden class. */
+    static final class MoneyDto {
+
+        /** A {@link Money}-typed property. */
+        public Money money;
+    }
+
+    /** DTO whose property type is a subclass of the overridden class. */
+    static final class TaxedMoneyDto {
+
+        /** A {@link TaxedMoney}-typed property. */
+        public TaxedMoney money;
+    }
+
+    // --- Schema.implementation guard fixtures ---
+
+    /** Replacement type a {@code @Schema(implementation = ...)} property redirects to. */
+    static final class ReplacementPojo {
+
+        /** A property name unique enough to prove the redirect took effect. */
+        public String replacementMarker;
+    }
+
+    /** Property whose declared type is directly an overridden class. */
+    static final class ImplementationOnOverriddenDto {
+
+        /** Directly overridden declared type. */
+        @Schema(implementation = String.class)
+        public BigDecimal amount;
+    }
+
+    /** Property whose declared type graph carries an overridden class as a collection element. */
+    static final class ImplementationOnNestedOverriddenDto {
+
+        /** Nested overridden declared type. */
+        @Schema(implementation = String.class)
+        public List<BigDecimal> amounts;
+    }
+
+    /** Property whose {@code @Schema} lives on the accessor rather than the field. */
+    static final class ImplementationOnGetterDto {
+
+        /** The declared, overridden property type. */
+        public BigDecimal amount;
+
+        /**
+         * Carries the annotation the field deliberately does not, proving the guard resolves
+         * annotations with the same field/getter visibility as the Swagger module.
+         *
+         * @return the amount
+         */
+        @Schema(implementation = String.class)
+        public BigDecimal getAmount() {
+            return amount;
+        }
+    }
+
+    /** Property with an implementation redirect whose declared type carries no override. */
+    static final class ImplementationWithoutOverrideDto {
+
+        /** Redirected to {@link ReplacementPojo}; {@code String} carries no override. */
+        @Schema(implementation = ReplacementPojo.class)
+        public String label;
+    }
+
+    /** Property whose only overridden class occupies a map-key position. */
+    static final class ImplementationOnMapKeyDto {
+
+        /** Overridden class in the excluded key position only. */
+        @Schema(implementation = String.class)
+        public Map<BigDecimal, String> byAmount;
+    }
+
+    /**
+     * Property whose element redirect is declared through {@code @ArraySchema(schema = ...)}, the
+     * form the Swagger module resolves only in a fake container item scope.
+     */
+    static final class ArraySchemaItemImplementationDto {
+
+        /** Element redirect over an overridden element type. */
+        @ArraySchema(schema = @Schema(implementation = Number.class))
+        public List<BigDecimal> amounts;
+    }
+
+    /**
+     * Property whose redirect is declared through {@code @ArraySchema(arraySchema = ...)} on a
+     * non-container declared type, the form the Swagger module falls back to when no direct
+     * {@code @Schema} is present.
+     */
+    static final class ArraySchemaContainerImplementationDto {
+
+        /** Container-level redirect over an overridden declared type. */
+        @ArraySchema(arraySchema = @Schema(implementation = String.class))
+        public BigDecimal amount;
+    }
+
+    /** Property whose {@code @ArraySchema} element redirect targets an element carrying no override. */
+    static final class ArraySchemaWithoutOverrideDto {
+
+        /** Element redirect over a non-overridden element type; must redirect, not fail. */
+        @ArraySchema(schema = @Schema(implementation = ReplacementPojo.class))
+        public List<String> labels;
+    }
+
+    /**
+     * A {@link List} subclass that binds its element type in the {@code extends} clause. Classmate
+     * reports <em>no</em> self-declared type parameters for it — {@code getTypeParameters()} returns a
+     * type's own declared parameters, and this class declares none — while
+     * {@code typeParametersFor(Iterable.class)} still resolves the element to {@link BigDecimal}.
+     * Victools publishes it as an array whose items carry the element's schema, so the element is a
+     * real position an override applies to.
+     */
+    static final class DecimalList extends java.util.ArrayList<BigDecimal> {}
+
+    /**
+     * A {@link Map} subclass binding both its key and value types in the {@code extends} clause, with
+     * the overridden class in the <em>value</em> position. Like {@link DecimalList} it declares no type
+     * parameters of its own, so only {@code typeParametersFor(Map.class)} reaches the value.
+     */
+    static final class DecimalValuedMap extends java.util.HashMap<String, BigDecimal> {}
+
+    /**
+     * A {@link Map} subclass whose only overridden class sits in the excluded <em>key</em> position, so
+     * the inherited-container descent must not turn the key exclusion into a false positive.
+     */
+    static final class DecimalKeyedMap extends java.util.HashMap<BigDecimal, String> {}
+
+    /** Property whose redirect covers a {@link List} subclass carrying the override as its element. */
+    static final class ContainerSubclassImplementationDto {
+
+        /** Inherited element position — reachable only through the container's supertype bindings. */
+        @Schema(implementation = Number.class)
+        public DecimalList amounts;
+    }
+
+    /** Property whose redirect covers a {@link Map} subclass carrying the override as its value. */
+    static final class MapSubclassValueImplementationDto {
+
+        /** Inherited value position — reachable only through the map's supertype bindings. */
+        @Schema(implementation = Number.class)
+        public DecimalValuedMap rates;
+    }
+
+    /** Property whose redirect covers a {@link Map} subclass carrying the override as its key only. */
+    static final class MapSubclassKeyOnlyImplementationDto {
+
+        /** Inherited key position — excluded from the walk, so this must redirect rather than fail. */
+        @Schema(implementation = String.class)
+        public DecimalKeyedMap keys;
+    }
+
+    /** Property whose redirect covers a container subclass nested inside another generic type. */
+    static final class NestedContainerSubclassImplementationDto {
+
+        /** The overridden element is two descents away: through the wrapper, then through the subclass. */
+        @Schema(implementation = Number.class)
+        public java.util.Optional<DecimalList> batch;
+    }
+
+    /**
+     * A concrete {@link java.util.function.Supplier} implementor binding its payload in the
+     * {@code implements} clause. Like {@link DecimalList} it declares no type parameters of its own,
+     * and it is neither an {@link Iterable} nor a {@link Map} — so only
+     * {@code typeParametersFor(Supplier.class)} reaches {@link BigDecimal}. Victools flattens the
+     * wrapper under {@code Option.FLATTENED_SUPPLIERS} and publishes the payload's schema in its
+     * place, so the payload is a real position an override applies to.
+     */
+    static final class DecimalSupplier implements java.util.function.Supplier<BigDecimal> {
+
+        /** Never invoked: the fixture exists for its declared type graph only. */
+        @Override
+        public BigDecimal get() {
+            return BigDecimal.ZERO;
+        }
+    }
+
+    /** Property whose redirect covers a supplier implementor carrying the override as its payload. */
+    static final class SupplierImplementorImplementationDto {
+
+        /** Inherited supplier payload — reachable only through the implementor's supertype bindings. */
+        @Schema(implementation = String.class)
+        public DecimalSupplier amount;
+    }
+
+    /** Property whose redirect covers a supplier implementor nested inside another container. */
+    static final class NestedSupplierImplementorImplementationDto {
+
+        /** The overridden payload is two descents away: through the list, then through the supplier. */
+        @Schema(implementation = String.class)
+        public List<DecimalSupplier> amounts;
+    }
+
+    /**
+     * Declares the redirected property as an unresolved type variable, so plain JDK reflection reads
+     * a {@code TypeVariable} and only a declaring-context resolution recovers the actual class.
+     *
+     * @param <T> the parameter a subtype binds to the overridden class
+     */
+    static class InheritedImplementationBase<T> {
+
+        /** Redirected property whose declared class is known only through the binding subtype. */
+        @Schema(implementation = Number.class)
+        public T amount;
+    }
+
+    /** Binds {@link InheritedImplementationBase}'s parameter to the overridden class. */
+    static final class InheritedImplementationDto extends InheritedImplementationBase<BigDecimal> {}
+
+    /**
+     * Single-parameter holder used to nest a declared type past
+     * {@code TypeGrammar.MAX_DEPTH} without hand-writing one class per level.
+     *
+     * @param <T> the carried type
+     */
+    static final class Nest<T> {
+
+        /** The carried value. */
+        public T value;
+    }
+
+    /**
+     * Property whose declared type graph nests the overridden class deeper than the guard's supported
+     * walk depth, so the bound — not the override — decides the outcome.
+     */
+    static final class DeeplyNestedImplementationDto {
+
+        /** Overridden class at nesting depth 70, past the supported walk depth of 64. */
+        @Schema(implementation = String.class)
+        public Nest<
+                        Nest<
+                                Nest<
+                                        Nest<
+                                                Nest<
+                                                        Nest<
+                                                                Nest<
+                                                                        Nest<
+                                                                                Nest<
+                                                                                        Nest<
+                                                                                                Nest<
+                                                                                                        Nest<
+                                                                                                                Nest<
+                                                                                                                        Nest<
+                                                                                                                                Nest<
+                                                                                                                                        Nest<
+                                                                                                                                                Nest<
+                                                                                                                                                        Nest<
+                                                                                                                                                                Nest<
+                                                                                                                                                                        Nest<
+                                                                                                                                                                                Nest<
+                                                                                                                                                                                        Nest<
+                                                                                                                                                                                                Nest<
+                                                                                                                                                                                                        Nest<
+                                                                                                                                                                                                                Nest<
+                                                                                                                                                                                                                        Nest<
+                                                                                                                                                                                                                                Nest<
+                                                                                                                                                                                                                                        Nest<
+                                                                                                                                                                                                                                                Nest<
+                                                                                                                                                                                                                                                        Nest<
+                                                                                                                                                                                                                                                                Nest<
+                                                                                                                                                                                                                                                                        Nest<
+                                                                                                                                                                                                                                                                                Nest<
+                                                                                                                                                                                                                                                                                        Nest<
+                                                                                                                                                                                                                                                                                                Nest<
+                                                                                                                                                                                                                                                                                                        Nest<
+                                                                                                                                                                                                                                                                                                                Nest<
+                                                                                                                                                                                                                                                                                                                        Nest<
+                                                                                                                                                                                                                                                                                                                                Nest<
+                                                                                                                                                                                                                                                                                                                                        Nest<
+                                                                                                                                                                                                                                                                                                                                                Nest<
+                                                                                                                                                                                                                                                                                                                                                        Nest<
+                                                                                                                                                                                                                                                                                                                                                                Nest<
+                                                                                                                                                                                                                                                                                                                                                                        Nest<
+                                                                                                                                                                                                                                                                                                                                                                                Nest<
+                                                                                                                                                                                                                                                                                                                                                                                        Nest<
+                                                                                                                                                                                                                                                                                                                                                                                                Nest<
+                                                                                                                                                                                                                                                                                                                                                                                                        Nest<
+                                                                                                                                                                                                                                                                                                                                                                                                                Nest<
+                                                                                                                                                                                                                                                                                                                                                                                                                        Nest<
+                                                                                                                                                                                                                                                                                                                                                                                                                                Nest<
+                                                                                                                                                                                                                                                                                                                                                                                                                                        Nest<
+                                                                                                                                                                                                                                                                                                                                                                                                                                                Nest<
+                                                                                                                                                                                                                                                                                                                                                                                                                                                        Nest<
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                Nest<
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                        Nest<
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                Nest<
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        Nest<
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                Nest<
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        Nest<
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                Nest<
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        Nest<
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                Nest<
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        Nest<
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                Nest<
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        Nest<
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                Nest<
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        Nest<
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                Nest<
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        Nest<
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                BigDecimal>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+                deep;
+    }
+
+    // --- Composition fixtures ---
+
+    /**
+     * Property whose Swagger {@code allOf} contribution is an object type, disjoint with the
+     * string-typed profile fragment its declared type carries.
+     */
+    static final class DisjointAllOfDto {
+
+        /** Overridden as a string by the profile, conjoined with an object schema by the property. */
+        @Schema(allOf = {ReplacementPojo.class})
+        public BigDecimal amount;
+    }
+
+    /**
+     * DTO whose properties conjoin {@code number} with {@code integer} in both directions through
+     * {@code @Schema(allOf = ...)}. JSON Schema defines {@code integer} as the integral subset of
+     * {@code number}, so each conjunction narrows to {@code integer} rather than emptying: none of
+     * these properties is a structural conflict, and every one of them must still generate.
+     */
+    static final class NumericRefinementDto {
+
+        /** {@code number} (the Java {@code double}) conjoined with {@code integer}. */
+        @Schema(allOf = {Integer.class})
+        public double narrowedDouble;
+
+        /** {@code number} (the Java {@link BigDecimal}) conjoined with {@code integer}. */
+        @Schema(allOf = {Integer.class})
+        public BigDecimal narrowedDecimal;
+
+        /** {@code integer} (the Java {@code int}) conjoined with {@code number}. */
+        @Schema(allOf = {Double.class})
+        public int widenedInt;
+    }
+
+    /**
+     * Builds a fragment declaring numeric bounds and deliberately <em>no</em> {@code type}, so it is
+     * conjoinable with any type a property contributes.
+     *
+     * @return the parsed fragment
+     */
+    static JsonSchemaFragment boundedNumberFragment() {
+        return JsonSchemaFragment.parse("{\"minimum\":0,\"maximum\":1000}");
+    }
+
+    /**
+     * DTO whose two properties share one generated definition for the overridden class, and only the
+     * <em>first</em> of which conjoins an object-shaped schema with it. Whatever that first property's
+     * effective type causes must stay local to that property: the second property's contract is not
+     * the first one's to narrow.
+     */
+    static final class SharedDefinitionAllOfDto {
+
+        /** Conjoins an object-shaped branch with the shared definition. */
+        @Schema(allOf = {ReplacementPojo.class})
+        public BigDecimal constrained;
+
+        /** Carries no property-level metadata at all; sees the shared definition unchanged. */
+        public BigDecimal plain;
+    }
+
+    /**
+     * Property whose {@code nullable} metadata produces an {@code anyOf} alternation rather than a
+     * conjunction, so its {@code "null"} and {@code "string"} branches are not in conflict.
+     */
+    static final class NullableOverriddenDto {
+
+        /** Nullable overridden decimal. */
+        @Schema(nullable = true)
+        public BigDecimal amount;
+    }
+
+    // --- Post-generation walk fixtures ---
+
+    /**
+     * An {@code $anchor}-style reference: {@code #}-rooted, but not a JSON pointer. The Swagger module
+     * publishes a {@code @Schema(ref = ...)} value verbatim, so this reaches the generated document
+     * unchanged and any walk that treats it as a pointer would fail on it.
+     */
+    static final String ANCHOR_REF = "#anchorName";
+
+    /** Property whose Swagger metadata publishes an {@code $anchor}-style reference. */
+    static final class AnchorRefDto {
+
+        /** Carries the {@code $anchor}-style reference into the generated document. */
+        @Schema(ref = ANCHOR_REF)
+        public String label;
+    }
+
+    // --- Schema-position fixtures ---
+
+    /**
+     * The canonical rendering of the JSON <em>data</em> object a fragment declares as its
+     * {@code default} value. It is annotation data, not a subschema: no walk may descend into it, and
+     * in particular no walk may strip its {@code minimum} member.
+     */
+    static final String DATA_BEARING_DEFAULT = "\"default\":{\"minimum\":3,\"type\":\"gold\"}";
+
+    /**
+     * The canonical rendering of the JSON <em>data</em> object a fragment declares as its {@code const}
+     * value. Read as a schema it would conjoin two disjoint types and fail generation; read as data —
+     * which is what Draft 2020-12 says it is — it is inert.
+     */
+    static final String DATA_BEARING_CONST = "\"const\":{\"allOf\":[{\"type\":\"b\"}],\"type\":\"a\"}";
+
+    /**
+     * The canonical rendering of a fragment-authored {@code definitions} member. Under the pinned
+     * fixed {@code DRAFT_2020_12} dialect the generator emits {@code $defs}, and
+     * {@code JsonSchemaFragment} rejects {@code $defs} but not {@code definitions} — so a
+     * {@code definitions} member can only ever be annotation data.
+     */
+    static final String DATA_BEARING_DEFINITIONS =
+            "\"definitions\":{\"legacy\":{\"allOf\":[{\"type\":\"b\"}],\"type\":\"a\"}}";
+
+    /** DTO with a single, plainly declared property of the class a profile override replaces. */
+    static final class OverriddenDecimalDto {
+
+        /** The overridden property; carries no property-level metadata of its own. */
+        public BigDecimal amount;
+    }
+
+    /**
+     * Builds an override fragment whose {@code default} value is a JSON data object carrying keywords
+     * a position-blind walk would act on: a {@code type} no JSON Schema vocabulary defines, and a
+     * {@code minimum} the numeric-domain filter would strip.
+     *
+     * @return the parsed fragment
+     */
+    static JsonSchemaFragment dataBearingDefaultFragment() {
+        return JsonSchemaFragment.parse("{\"type\":\"string\",\"default\":{\"type\":\"gold\",\"minimum\":3}}");
+    }
+
+    /**
+     * Builds an override fragment whose {@code const} value is a JSON data object that, read as a
+     * schema, would conjoin the disjoint types {@code a} and {@code b}.
+     *
+     * @return the parsed fragment
+     */
+    static JsonSchemaFragment dataBearingConstFragment() {
+        return JsonSchemaFragment.parse(
+                "{\"type\":\"string\",\"const\":{\"type\":\"a\",\"allOf\":[{\"type\":\"b\"}]}}");
+    }
+
+    /**
+     * Builds an override fragment carrying a {@code definitions} member whose content, read as a
+     * schema, would conjoin the disjoint types {@code a} and {@code b}.
+     *
+     * @return the parsed fragment
+     */
+    static JsonSchemaFragment legacyDefinitionsFragment() {
+        return JsonSchemaFragment.parse(
+                "{\"type\":\"string\",\"definitions\":{\"legacy\":{\"type\":\"a\",\"allOf\":[{\"type\":\"b\"}]}}}");
+    }
+
+    // --- Provider-reset fixtures ---
+
+    /**
+     * A <em>type-level</em> {@code @Schema(ref = ...)} value. Victools'
+     * {@code ExternalRefCustomDefinitionProvider} is a type-scope provider keyed on the resolved
+     * type, so only a class-level annotation reaches it; the field-level {@link #ANCHOR_REF} above
+     * never does.
+     */
+    static final String CLASS_LEVEL_REF = "#classLevelAnchor";
+
+    /** A property name unique enough to prove {@link ClassLevelRefDto}'s own schema was published. */
+    static final String CLASS_LEVEL_REF_MARKER = "classLevelRefMarker";
+
+    /**
+     * Root type carrying a type-level {@code @Schema(ref = ...)}.
+     *
+     * <p>Victools' {@code ExternalRefCustomDefinitionProvider} exempts exactly one type per
+     * generation — the {@code mainType} it latches on first use — and publishes every other
+     * {@code ref}-bearing type as a bare external {@code $ref}. Generated as a root type it must
+     * therefore publish its own full schema; it degrades to a bare {@code $ref} only when a
+     * previous generation left {@code mainType} pinned to some other class.
+     */
+    @Schema(ref = CLASS_LEVEL_REF)
+    static final class ClassLevelRefDto {
+
+        /** The marker proving this type's own schema, rather than a bare reference, was published. */
+        public String classLevelRefMarker;
+    }
+
+    // --- Map position fixtures ---
+
+    /** DTO whose map declares the overridden class as its key type. */
+    static final class DecimalKeyedMapDto {
+
+        /** Key position — never receives the fragment. */
+        public Map<BigDecimal, String> byAmount;
+    }
+
+    /** DTO whose map declares the overridden class as its value type. */
+    static final class DecimalValuedMapDto {
+
+        /** Value position — receives the fragment. */
+        public Map<String, BigDecimal> amounts;
+    }
+
+    // --- Resolved generic types ---
+
+    /**
+     * Reads a declared field's generic type from {@link TypeHolder}.
+     *
+     * @param field the field name
+     * @return the field's generic type
+     */
+    static Type holderType(String field) {
+        try {
+            return TypeHolder.class.getField(field).getGenericType();
+        } catch (NoSuchFieldException missing) {
+            throw new IllegalStateException("fixture field '" + field + "' is missing", missing);
+        }
+    }
+}

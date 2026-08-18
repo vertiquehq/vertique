@@ -164,6 +164,19 @@ scale (`"1.50"` re-reads with scale 2). A **negative**-scale value — including
 
 Clients of a `vertique-strict` endpoint must expect decimals as JSON **strings**, not numbers.
 
+**Declared JSON Schema override.** `vertique-strict` declares exactly one entry from
+`JsonMapperProfile#jsonSchemaTypeOverrides()`: a `BigDecimal` override applying to both the input and
+output construction directions, whose fragment is
+
+```json
+{"format":"decimal","maxLength":100,"pattern":"^-?[0-9]+(\\.[0-9]+)?$","type":"string"}
+```
+
+The fragment is built from the same `BigDecimalStrictStringDeserializer` grammar constants the
+deserializer itself enforces — the bound and the pattern are never duplicated as a second literal —
+so a schema generator consuming this profile's overrides cannot drift from the wire grammar above
+(FR-JSON-089). The `vertx` and `vertique` built-in profiles declare no overrides.
+
 ### Invariants & Gotchas
 
 **Untyped decimals deliberately stay JSON numbers.** `USE_BIG_DECIMAL_FOR_FLOATS` is disabled on this
@@ -215,6 +228,14 @@ mapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, true);
 
 Factory pairing an id with a mapper: `JsonMapperProfiles.of(JsonProfileId, ObjectMapper)`. Both
 arguments must be non-null. The mapper is exposed as-is — the factory never copies or mutates it.
+
+An overload additionally declares JSON Schema type overrides:
+`JsonMapperProfiles.of(JsonProfileId, ObjectMapper, Collection<JsonSchemaTypeOverride>)`. All three
+arguments must be non-null and the collection must not contain a `null` element; the collection is
+defensively copied into an immutable list, so the caller's collection may be freely mutated after the
+call returns, and the returned profile's `jsonSchemaTypeOverrides()` is unmodifiable and stable —
+the same list instance on every call. The two-argument overload's behavior is unchanged: it declares
+no overrides.
 
 ### VertxJsonSupport
 

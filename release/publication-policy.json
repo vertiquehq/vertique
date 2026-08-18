@@ -35,7 +35,7 @@
       "packaging": "pom"
     }
   ],
-  "expectedPublishableGavCount": 95,
+  "expectedPublishableGavCount": 96,
   "expectedPublishableGavs": [
     "dev.vertique:vertique-aop",
     "dev.vertique:vertique-app-parent",
@@ -86,6 +86,7 @@
     "dev.vertique:vertique-job-delayed",
     "dev.vertique:vertique-job-postgresql",
     "dev.vertique:vertique-json",
+    "dev.vertique:vertique-json-schema",
     "dev.vertique:vertique-kafka-avro",
     "dev.vertique:vertique-kafka-core",
     "dev.vertique:vertique-kafka-json",

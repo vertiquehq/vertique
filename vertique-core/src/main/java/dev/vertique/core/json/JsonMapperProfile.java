@@ -4,6 +4,7 @@
 package dev.vertique.core.json;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.util.List;
 
 /**
  * SPI for a code-owned, named JSON mapper profile.
@@ -30,4 +31,18 @@ public interface JsonMapperProfile {
      * @return the non-null {@link ObjectMapper} backing this profile
      */
     ObjectMapper mapper();
+
+    /**
+     * Returns the JSON Schema overrides this profile declares for the schema generator — the wire
+     * contract the profile's mapper actually produces or accepts for specific Java classes.
+     *
+     * <p>Implementations return the same stable, non-null, unmodifiable list on each call and must
+     * defensively copy any caller-supplied collection. The empty default preserves every profile
+     * implementation written before overrides existed.
+     *
+     * @return the non-null, unmodifiable list of declared overrides; empty by default
+     */
+    default List<JsonSchemaTypeOverride> jsonSchemaTypeOverrides() {
+        return List.of();
+    }
 }

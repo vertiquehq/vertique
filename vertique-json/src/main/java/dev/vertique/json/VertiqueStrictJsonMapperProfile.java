@@ -12,10 +12,15 @@ import com.fasterxml.jackson.databind.KeyDeserializer;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializerProvider;
 import com.fasterxml.jackson.databind.module.SimpleModule;
+import com.fasterxml.jackson.databind.node.JsonNodeFactory;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import dev.vertique.core.json.JsonMapperProfile;
 import dev.vertique.core.json.JsonProfileId;
+import dev.vertique.core.json.JsonSchemaFragment;
+import dev.vertique.core.json.JsonSchemaTypeOverride;
 import java.io.IOException;
 import java.math.BigDecimal;
+import java.util.List;
 
 /**
  * Built-in {@code vertique-strict} profile: the {@code vertique} opinionated defaults plus the
@@ -100,6 +105,39 @@ final class VertiqueStrictJsonMapperProfile implements JsonMapperProfile {
      * It is never the shared Vert.x {@code DatabindCodec.mapper()} (json-004).
      */
     private final ObjectMapper mapper = buildMapper();
+
+    /**
+     * The single JSON Schema type override this profile declares (FR-JSON-089): a {@code BigDecimal}
+     * {@link JsonSchemaTypeOverride.Direction#BOTH} override describing the bounded, string-typed
+     * wire form {@link BigDecimalAsStringSerializer} and {@link BigDecimalStrictStringDeserializer}
+     * actually produce and accept. Built once, statically, and returned as the same stable,
+     * unmodifiable one-element list on every call to {@link #jsonSchemaTypeOverrides()}.
+     */
+    private static final List<JsonSchemaTypeOverride> SCHEMA_OVERRIDES =
+            List.of(JsonSchemaTypeOverride.both(BigDecimal.class, buildBigDecimalFragment()));
+
+    /**
+     * Builds the {@code BigDecimal} schema fragment {@link #SCHEMA_OVERRIDES} declares, from the
+     * shared {@link BigDecimalStrictStringDeserializer} grammar constants — never a second,
+     * independently maintained copy of the bound or the pattern, so the published schema and the
+     * serde's accepted grammar cannot drift apart (FR-JSON-089).
+     *
+     * <p>The fragment describes the wire form both strict {@code BigDecimal} serdes agree on: a JSON
+     * string ({@code "type":"string"}), tagged {@code "format":"decimal"}, bounded to
+     * {@link BigDecimalStrictStringDeserializer#MAX_LENGTH} characters, matching
+     * {@link BigDecimalStrictStringDeserializer#ANCHORED_PLAIN_DECIMAL_PATTERN}.
+     *
+     * @return the immutable {@link JsonSchemaFragment} describing the strict {@code BigDecimal} wire
+     *     form
+     */
+    private static JsonSchemaFragment buildBigDecimalFragment() {
+        ObjectNode node = JsonNodeFactory.instance.objectNode();
+        node.put("type", "string");
+        node.put("format", "decimal");
+        node.put("maxLength", BigDecimalStrictStringDeserializer.MAX_LENGTH);
+        node.put("pattern", BigDecimalStrictStringDeserializer.ANCHORED_PLAIN_DECIMAL_PATTERN);
+        return JsonSchemaFragment.parse(node.toString());
+    }
 
     /**
      * Builds this profile's mapper: the {@code vertique} defaults, then the strict overlay.
@@ -241,5 +279,19 @@ final class VertiqueStrictJsonMapperProfile implements JsonMapperProfile {
     @Override
     public ObjectMapper mapper() {
         return mapper;
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>Returns the same stable, unmodifiable one-element list on every call: a single
+     * {@code BigDecimal} {@link JsonSchemaTypeOverride.Direction#BOTH} override built from the
+     * {@link BigDecimalStrictStringDeserializer} grammar constants (FR-JSON-089).
+     *
+     * @return the single-element list containing the {@code BigDecimal} override
+     */
+    @Override
+    public List<JsonSchemaTypeOverride> jsonSchemaTypeOverrides() {
+        return SCHEMA_OVERRIDES;
     }
 }

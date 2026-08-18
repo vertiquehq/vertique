@@ -468,6 +468,61 @@ supports it. `JsonProfileId` trims its value and rejects `null` or blank. Lookin
 throws `JsonProfileConfigurationException`, which extends `ConfigurationException`. The registry
 implementation ships in `dev.vertique:vertique-json`.
 
+### JSON schema overrides on a profile
+
+A profile may declare, per Java class, the JSON Schema fragment describing the wire form its mapper
+actually produces or accepts — so a generated schema matches the profile's serialization instead of
+the Java type's default shape.
+
+```java
+public final class JsonSchemaFragment {
+    public static JsonSchemaFragment parse(String schemaJson);
+    public String canonicalJson();
+}
+
+public final class JsonSchemaTypeOverride {
+    public enum Direction { INPUT, OUTPUT, BOTH }
+
+    public static JsonSchemaTypeOverride input(Class<?> javaType, JsonSchemaFragment fragment);
+    public static JsonSchemaTypeOverride output(Class<?> javaType, JsonSchemaFragment fragment);
+    public static JsonSchemaTypeOverride both(Class<?> javaType, JsonSchemaFragment fragment);
+
+    public Class<?> javaType();
+    public Direction direction();
+    public JsonSchemaFragment fragment();
+}
+```
+
+```java
+JsonSchemaTypeOverride.both(
+        BigDecimal.class,
+        JsonSchemaFragment.parse(
+                """
+                {"type":"string","format":"decimal","maxLength":100}
+                """));
+```
+
+`parse` takes a non-null, non-blank JSON **object** holding one self-contained Draft 2020-12
+fragment. It orders object keys recursively by `String.compareTo` (never reordering arrays), retains
+only the canonical compact string, and returns an immutable value; `canonicalJson()` returns that
+string and two fragments are equal when their canonical JSON is equal. Parsing is syntactic plus
+bounded structural validation — the consuming validator still compiles the completed schema.
+
+`parse` rejects — with an `IllegalArgumentException` whose bounded message names the violated rule
+and never echoes the fragment — a `null` or blank input, malformed JSON, a non-object root, and any
+occurrence of `$schema`, `$id`, `$anchor`, `$dynamicAnchor`, `$ref`, `$dynamicRef`, or `$defs`. The
+schema generator owns the document dialect and definition graph, so a fragment-local reference would
+change meaning once embedded. That rejection is **structural and deliberately over-broad**: those key
+names are rejected at any depth, including where one is merely a property name inside a `properties`
+object.
+
+`JsonSchemaTypeOverride` requires non-null arguments and describes one **exact raw class** — no
+assignability or subtype matching, and never a map key. An override for `BigDecimal` reaches a
+`BigDecimal` property and the element of a resolved `List<BigDecimal>`, but not a `BigDecimal`
+subclass nor the key type of `Map<BigDecimal, String>`. `INPUT` and `OUTPUT` select one generation
+direction; `BOTH` selects both, and conflicts with a direction-specific declaration for the same
+class. The generator that consumes these values ships in `dev.vertique:vertique-json-schema`.
+
 ---
 
 ## Extension Points
@@ -805,12 +860,19 @@ Contributes one named `ObjectMapper` profile.
 public interface JsonMapperProfile {
     JsonProfileId id();
     ObjectMapper mapper();
+    default List<JsonSchemaTypeOverride> jsonSchemaTypeOverrides();
 }
 ```
 
 The registry that collects profiles ships in `dev.vertique:vertique-json`; contribute a profile
 through that module's multibinding. `JsonProfileId.VERTX` (`"vertx"`) is reserved for the Vert.x
 shared mapper.
+
+`jsonSchemaTypeOverrides()` declares the schema overrides described under
+[JSON schema overrides on a profile](#json-schema-overrides-on-a-profile). It defaults to an empty
+list, so a profile that only implements `id()` and `mapper()` stays valid. An implementation that
+overrides it returns the same stable, non-null, unmodifiable list on every call and defensively
+copies any caller-supplied collection.
 
 ### Context-propagation SPIs
 

@@ -1,0 +1,1 @@
+{"$schema":"https://json-schema.org/draft/2020-12/schema","properties":{"amount":{"format":"decimal","maxLength":100,"pattern":"^-?[0-9]+(\\.[0-9]+)?$","type":"string"}},"type":"object"}

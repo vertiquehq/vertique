@@ -51,6 +51,7 @@ SPDX-License-Identifier: EUPL-1.2
 | `vertique-job-delayed` | [module.md](../vertique-job/vertique-job-delayed/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-job-postgresql` | [module.md](../vertique-job/vertique-job-postgresql/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-json` | [module.md](../vertique-json/src/main/resources/META-INF/vertique/module.md) |
+| `vertique-json-schema` | [module.md](../vertique-json-schema/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-kafka-avro` | [module.md](../vertique-kafka/vertique-kafka-avro/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-kafka-core` | [module.md](../vertique-kafka/vertique-kafka-core/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-kafka-json` | [module.md](../vertique-kafka/vertique-kafka-json/src/main/resources/META-INF/vertique/module.md) |
