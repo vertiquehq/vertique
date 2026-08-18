@@ -8,6 +8,7 @@ import dev.vertique.input.processing.InputPolicyMetadata.FieldPolicyMetadata;
 import jakarta.annotation.Nullable;
 import java.lang.reflect.Type;
 import java.util.ArrayDeque;
+import java.util.Collection;
 import java.util.Deque;
 import java.util.HashSet;
 import java.util.Optional;
@@ -27,22 +28,39 @@ import org.slf4j.LoggerFactory;
  * startup failure) and misses types the engine does reach (leaving the projection to introspect on
  * an event loop, per request, forever).
  *
+ * <p>A class is prepared here only when it is a <strong>field-name owner</strong> — a class whose
+ * declared property schema an execution path may project a wire key against. A raw collection
+ * reached only because no element schema is determinable, and a field's raw declared class reached
+ * only because the wire shape disagrees with the declared shape (the {@code String} field mismatch
+ * family), are <strong>schema-free dispatch targets</strong>: {@link DefaultInputObjectProcessor}
+ * never projects a key against them ({@code metadata.fields()} is empty for both, so the projection
+ * would be provably discarded), so this walk does not prepare them either. Everything else a field
+ * unconditionally records — a nested-object field's declared type, an annotated schema-free field's
+ * declared type ({@code Map}, {@code Object}, an enum), a collection-of-strings field's raw
+ * container class, and a collection-of-objects field's raw container class alongside its element
+ * type — stays prepared, because the engine genuinely may dispatch a Map-shaped fragment against it.
+ *
  * <p>The rule, in full:
  *
  * <ul>
- *   <li><strong>Seed</strong> — {@link TypeClassifier#classify} and {@link TypeClassifier#elementType}
- *       of the declared type. Together these reproduce {@link DefaultInputObjectProcessor}'s
- *       entry-point classification, <em>including</em> the raw container class it uses as owner when
- *       no element schema is determinable.</li>
- *   <li><strong>Every frontier class is prepared</strong>, with no filtering. {@code String},
- *       {@code List}, {@code Map}, an enum and {@code Object} are all legitimate owners: a field's
- *       raw declared type is recorded unconditionally, and a wire fragment whose shape disagrees
- *       with the declared shape is dispatched against that raw class.</li>
+ *   <li><strong>Seed</strong> — {@link TypeClassifier#classify} of the declared type, unless it is
+ *       itself a raw container (a {@link Collection} or an array) with no determinable
+ *       {@link TypeClassifier#elementType} — that combination is the entry-point shape of a
+ *       schema-free dispatch target and is not prepared. {@link TypeClassifier#elementType} of the
+ *       declared type is always prepared when non-{@code null}.</li>
+ *   <li><strong>Every frontier class is prepared, except a schema-free dispatch target.</strong> A
+ *       field's raw declared type ({@link FieldPolicyMetadata#fieldType()}) is prepared unless the
+ *       field is {@linkplain FieldPolicyMetadata#isStringType() string-typed} — a {@code String}
+ *       field's raw class is dispatched against only on a wire/declared shape mismatch, never in the
+ *       field's own normal path, so it is schema-free by the same rule as the seed. {@code Map}, an
+ *       enum and {@code Object} remain legitimate owners: an annotated field of one of those types
+ *       genuinely is dispatched against its raw declared class whenever the wire value is a Map.</li>
  *   <li><strong>Descent</strong> follows only a class that {@link InputPolicyMetadataResolver#isDescendableObject}
  *       accepts and that is not a platform type. Contributions are <em>both</em>
- *       {@link FieldPolicyMetadata#fieldType()} and {@link FieldPolicyMetadata#collectionElementType()}
- *       of every recorded field — both, never one or the other, because the engine can dispatch
- *       against either depending on the wire shape it meets.</li>
+ *       {@link FieldPolicyMetadata#fieldType()} (subject to the string-type exclusion above) and
+ *       {@link FieldPolicyMetadata#collectionElementType()} of every recorded field — both, never one
+ *       or the other, because the engine can dispatch against either depending on the wire shape it
+ *       meets.</li>
  *   <li><strong>A generated processor answers for its own type.</strong> When one exists for the
  *       frontier class and its {@link GeneratedInputProcessor#fieldNameOwnerTypes()} is non-empty,
  *       that set <em>replaces</em> the reflective contributions — the generated path dispatches
@@ -102,10 +120,20 @@ final class OwnerTypeWalk {
 
         Deque<Class<?>> pending = new ArrayDeque<>();
         Set<Class<?>> visited = new HashSet<>();
-        enqueue(pending, TypeClassifier.classify(declaredType));
-        // A collection or array entry point is dispatched against its element class, or — when no
-        // element schema is determinable — against the raw container class classify already yielded.
-        enqueue(pending, TypeClassifier.elementType(declaredType));
+        Class<?> classified = TypeClassifier.classify(declaredType);
+        Class<?> elementClassified = TypeClassifier.elementType(declaredType);
+        // A collection or array entry point is dispatched against its element class when one is
+        // determinable. When it is not, the engine falls back to the raw container class classify()
+        // yielded — but that fallback owner's own metadata carries no declared fields (Collection/
+        // array types declare none the resolver records), so the fallback dispatch is provably a
+        // schema-free no-op and the raw container class is not prepared. A raw container WITH a
+        // determinable element schema is unaffected: outside this fallback, its raw class is still a
+        // genuine mismatch-dispatch target (a top-level Map received where the collection was
+        // declared), so it is prepared like any other frontier class below.
+        if (classified != null && !(elementClassified == null && isCollectionOrArray(classified))) {
+            enqueue(pending, classified);
+        }
+        enqueue(pending, elementClassified);
 
         while (!pending.isEmpty()) {
             Class<?> owner = pending.poll();
@@ -130,8 +158,20 @@ final class OwnerTypeWalk {
                     metadataResolver.resolve(owner).fields().values()) {
                 // Both, never one or the other: the engine dispatches a nested fragment against the
                 // field's raw declared type and each element of a collection fragment against the
-                // element type, and the two are independently reachable from the same field.
-                enqueue(pending, field.fieldType());
+                // element type, and the two are independently reachable from the same field. The raw
+                // declared type is skipped for a string-typed field alone: DefaultInputObjectProcessor
+                // dispatches String.class only on a wire/declared shape mismatch (never in the field's
+                // own normal path, which handles the value directly), and String's own metadata
+                // carries no declared fields, so that dispatch is provably a schema-free no-op — the
+                // exact defect this walk exists to stop warming. A collection-of-strings or
+                // collection-of-objects field's raw container class is NOT excluded here: the engine
+                // reaches it the same way (a wire/declared Map mismatch) and its own metadata is
+                // equally schema-free, but no fixture forces that narrower exclusion yet — see the
+                // frozen conformance matrix in SanitizationProcessorRoundtripTest, which still pins
+                // ConfPair/ConfFixed/ConfWeird as reflective-only surplus.
+                if (!field.isStringType()) {
+                    enqueue(pending, field.fieldType());
+                }
                 enqueue(pending, field.collectionElementType());
             }
         }
@@ -171,8 +211,9 @@ final class OwnerTypeWalk {
     }
 
     /**
-     * Adds {@code type} to the frontier when it is a class at all. No further filtering: every
-     * frontier class is a legitimate owner.
+     * Adds {@code type} to the frontier when it is a class at all. The caller decides whether
+     * {@code type} is a legitimate field-name owner before calling this — see the seed and per-field
+     * exclusions in {@link #prepare}.
      *
      * @param pending the traversal queue
      * @param type    the candidate owner; may be {@code null}
@@ -181,6 +222,18 @@ final class OwnerTypeWalk {
         if (type != null) {
             pending.add(type);
         }
+    }
+
+    /**
+     * Returns whether {@code type} is the wire-array shape — a {@link Collection} or an array —
+     * the same test {@code InputPolicyMetadataResolver.buildFieldMeta} applies before deciding
+     * whether a field carries an element schema.
+     *
+     * @param type the candidate class
+     * @return {@code true} for a {@link Collection} implementation or an array class
+     */
+    private static boolean isCollectionOrArray(Class<?> type) {
+        return Collection.class.isAssignableFrom(type) || type.isArray();
     }
 
     /**

@@ -177,17 +177,20 @@ class InputProcessorEmitterTest {
             """);
 
     /**
-     * DTO with two <em>annotated</em> schema-free fields, covering both shapes whose owner is the
-     * field's erased declared type rather than a nested DTO:
+     * DTO with two <em>annotated</em> schema-free fields, covering both shapes whose {@code
+     * applyDefault} owner is the field's erased declared type rather than a nested DTO — and which
+     * therefore contribute nothing to {@code fieldNameOwnerTypes()} (see
+     * {@link FieldNameOwnerTypes#emittedOwnerTypesOmitAnnotatedSchemaFreeDeclaredTypes}):
      * <ul>
      *   <li>{@code attrs} — a {@code Map<String, String>}. A {@code Map} carries no statically
      *       known property set, so {@code AnnotationCollector} classifies it as
      *       {@code FieldKind.OTHER}. Its arm passes the erased declared type ({@code Map}) as the
-     *       {@code applyDefault} owner.</li>
+     *       {@code applyDefault} owner, but only as {@code InputValueContext} provenance for the
+     *       reflective continuation — never as a projection owner.</li>
      *   <li>{@code codes} — an annotated collection of non-string scalars, which <em>is</em>
      *       {@code FieldKind.OTHER}. Its arm passes the erased declared type
      *       ({@code List}) as the {@code applyDefault} owner handed to the reflective
-     *       continuation.</li>
+     *       continuation, for the same schema-free reason.</li>
      * </ul>
      */
     private static final JavaFileObject ATTRIBUTES_DTO = SourceFiles.inline("com.example.owner.AttributesDto", """
@@ -641,15 +644,20 @@ class InputProcessorEmitterTest {
         }
 
         @Test
-        @DisplayName("emitted owner types contain the erased declared type of an annotated schema-free field")
-        void emittedOwnerTypesContainAnnotatedSchemaFreeDeclaredTypes() {
+        @DisplayName("emitted owner types omit an annotated schema-free field's erased declared type")
+        void emittedOwnerTypesOmitAnnotatedSchemaFreeDeclaredTypes() {
+            // attrs (Map) and codes (List) are both annotated OTHER-kind fields — their arms hand
+            // the erased declared type to applyDefault only as InputValueContext provenance for the
+            // reflective continuation (dispatcher.walkUnknown), which walks with
+            // InputPolicyMetadata.EMPTY and therefore never projects a wire key against either type.
+            // Neither is a field-name owner, so neither belongs in fieldNameOwnerTypes().
             ProcessorTestHarness.run(new SanitizationProcessor(), ATTRIBUTES_DTO, ATTRIBUTES_RESOURCE)
                     .assertSuccess()
                     .assertGeneratedSourceContains(
                             "com.example.owner.AttributesDto_InputProcessor", "owners.add(AttributesDto.class)")
-                    .assertGeneratedSourceContains(
+                    .assertGeneratedSourceDoesNotContain(
                             "com.example.owner.AttributesDto_InputProcessor", "owners.add(Map.class)")
-                    .assertGeneratedSourceContains(
+                    .assertGeneratedSourceDoesNotContain(
                             "com.example.owner.AttributesDto_InputProcessor", "owners.add(List.class)");
         }
 

@@ -98,25 +98,27 @@ class OwnerTypeWalkTest {
     }
 
     @Test
-    @DisplayName("the raw container class is an owner when the element type is not determinable")
-    void rawContainerOwnerIsPrepared() {
+    @DisplayName("the raw container class is not an owner when the element type is not determinable")
+    void rawContainerOwnerIsNotPrepared() {
         Set<Class<?>> prepared = prepare(declaredTypeOf(RawContainerHolder.class, "items"));
 
-        assertTrue(
+        assertFalse(
                 prepared.contains(List.class),
-                "with no element schema the engine dispatches the list against the raw container class");
+                "with no element schema the raw container's own metadata declares no fields, so the "
+                        + "engine never projects a key against it and it has no field-name owner");
         assertFalse(prepared.contains(Dto.class), "a Map element carries no property set to descend into");
     }
 
     @Test
-    @DisplayName("a String field's raw declared class is an owner")
-    void rawDeclaredClassOfAStringFieldIsPrepared() {
+    @DisplayName("a String field's raw declared class is not an owner")
+    void rawDeclaredClassOfAStringFieldIsNotPrepared() {
         Set<Class<?>> prepared = prepare(StringFieldHolder.class);
 
-        assertTrue(
+        assertFalse(
                 prepared.contains(String.class),
-                "a wire fragment whose shape disagrees with the declared String shape is dispatched "
-                        + "against String.class");
+                "a wire/declared shape mismatch dispatches against String.class, but String's own "
+                        + "metadata declares no fields, so that dispatch is schema-free and String is not "
+                        + "a field-name owner");
     }
 
     @Test

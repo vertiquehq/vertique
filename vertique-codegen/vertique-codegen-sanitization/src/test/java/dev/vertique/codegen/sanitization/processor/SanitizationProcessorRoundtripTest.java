@@ -1858,10 +1858,14 @@ class SanitizationProcessorRoundtripTest {
      * {@link #compileWithCodegen()} and {@link #compileWithoutCodegen()} each assert their own
      * environment's companion presence, so the discriminating mechanic cannot silently degrade.
      *
-     * <p><strong>Containment, not equality.</strong> Equality is provably false: the reflective walk
-     * records a field's raw declared class unconditionally, so {@code java.lang.String} is a genuine
-     * owner there, while the generated path's {@code applyString} arm returns a shape-mismatched
-     * value unchanged and never asks for an owner on the mismatch family.
+     * <p><strong>Containment, not equality.</strong> Equality is provably false: a collection subtype
+     * field's raw container class ({@code ConfPair}, {@code ConfFixed}, {@code ConfWeird} below) is a
+     * genuine owner on the reflective side — the engine dispatches against it whenever the wire shape
+     * disagrees with the declared collection shape — while the generated path's
+     * {@code dispatchObjectCollection} arm dispatches only against the element type and never asks for
+     * an owner on the raw container. A {@code String} field's raw declared class is <em>not</em> part
+     * of this surplus: {@code String}'s own metadata declares no fields, so a mismatch dispatch
+     * against it is schema-free on both paths and neither prepares it.
      */
     @Nested
     @DisplayName("reflective ↔ generated owner-set conformance")
@@ -1885,16 +1889,15 @@ class SanitizationProcessorRoundtripTest {
             // broken (single-compilation) mechanic looks like.
             assertFalse(generated.isEmpty(), "the generated path must prepare at least its own root");
             assertEquals(
-                    Set.of(
-                            "java.lang.String",
-                            "com.example.conf.ConfPair",
-                            "com.example.conf.ConfFixed",
-                            "com.example.conf.ConfWeird"),
+                    Set.of("com.example.conf.ConfPair", "com.example.conf.ConfFixed", "com.example.conf.ConfWeird"),
                     difference(reflective, generated),
-                    "the reflective path's surplus is exactly the mismatch family: a field's raw declared"
-                            + " class is recorded unconditionally — the String field's, and each collection"
-                            + " subtype's container class — while the generated path's arms dispatch against"
-                            + " the element type or the origin class and never ask for an owner on either");
+                    "the reflective path's surplus is exactly the mismatch family that still has a"
+                            + " determinable element schema: each collection subtype's raw container class"
+                            + " is recorded unconditionally, while the generated path's arms dispatch against"
+                            + " the element type or the origin class and never ask for an owner on the raw"
+                            + " container. The String field's raw declared class is no longer part of this"
+                            + " surplus — String's own metadata declares no fields, so neither path treats it"
+                            + " as a field-name owner");
         }
 
         @Test
@@ -2012,11 +2015,12 @@ class SanitizationProcessorRoundtripTest {
 
             assertTrue(resolver.prepared().containsAll(resolver.observed()), () -> "observed but never prepared: %s"
                     .formatted(difference(resolver.observed(), resolver.prepared())));
-            assertTrue(
+            assertFalse(
                     resolver.observed().contains("java.lang.String"),
-                    () -> "the deliberately mismatched {\"name\": {\"x\": 1}} payload must dispatch against the"
-                            + " String field's raw declared class, or this assertion is vacuous; observed="
-                            + resolver.observed());
+                    () -> "the deliberately mismatched {\"name\": {\"x\": 1}} payload dispatches against the"
+                            + " String field's raw declared class, but String's own metadata declares no"
+                            + " fields, so that dispatch is schema-free and must never call logicalName;"
+                            + " observed=" + resolver.observed());
         }
 
         @Test
@@ -2027,10 +2031,12 @@ class SanitizationProcessorRoundtripTest {
             assertTrue(resolver.prepared().containsAll(resolver.observed()), () -> "observed but never prepared: %s"
                     .formatted(difference(resolver.observed(), resolver.prepared())));
             assertTrue(
-                    resolver.observed().contains("com.example.conf.ConfWrapper"),
-                    () -> "the generated root must hand its non-container generic field to the reflective"
-                            + " continuation, or the codegen↔reflection boundary is untested; observed="
-                            + resolver.observed());
+                    resolver.prepared().contains("com.example.conf.ConfWrapper"),
+                    () -> "the generated root's declared owner set must still name its non-container generic"
+                            + " field's raw type — so a name collision there is still caught at registration"
+                            + " — even though ConfWrapper's own metadata declares no fields and its"
+                            + " schema-free traversal therefore never calls logicalName; prepared="
+                            + resolver.prepared());
             assertFalse(
                     resolver.observed().contains("java.lang.String"),
                     () -> "the generated path returns a shape-mismatched String value unchanged, so it must"

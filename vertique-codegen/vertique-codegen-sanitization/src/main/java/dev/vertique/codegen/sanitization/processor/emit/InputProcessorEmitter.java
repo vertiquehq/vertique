@@ -46,9 +46,12 @@ import javax.lang.model.type.TypeMirror;
  *   <li>Declares {@code static final} chain constants for each object-level and field-level
  *       chain, using {@code SCREAMING_SNAKE_CASE} names.</li>
  *   <li>Overrides {@code fieldNameOwnerTypes()} with a deduplicated {@code static final
- *       Set<Class<?>>} holding every owner its {@code process(...)} arms may consult — always its
- *       own target type, plus each dispatched nested/element type and each annotated schema-free
- *       field's erased declared type. See {@link #collectOwnerTypeNames} for the derivation and
+ *       Set<Class<?>>} holding every field-name owner its {@code process(...)} arms may project a
+ *       wire key against — always its own target type, plus each dispatched nested/element type. A
+ *       schema-free field's erased declared type (an annotated {@code Map}, {@code Object}, or
+ *       collection with no per-object element) is not included: its arm only ever hands that type
+ *       to the reflective continuation as {@code InputValueContext} provenance, never as a
+ *       projection owner. See {@link #collectOwnerTypeNames} for the derivation and
  *       {@link #buildOwnerTypesInitializer} for why the emitted body accumulates rather than
  *       using a {@code Set.of(...)} varargs literal.</li>
  *   <li>Implements {@code process(...)} with a {@code switch} whose arms are the DTO's
@@ -312,14 +315,17 @@ public final class InputProcessorEmitter {
      *       emptiness a usable sentinel;</li>
      *   <li>the erased nested/element type of every {@link FieldKind#NESTED_DTO} and
      *       {@link FieldKind#COLLECTION_OF_DTO} field, which its arm passes to
-     *       {@code dispatchNested} / {@code dispatchObjectCollection} as both target and owner;</li>
-     *   <li>the erased declared type of every <em>annotated</em> {@link FieldKind#OTHER} field —
-     *       the same {@code nestedMapOwnerName} its arm hands to {@code applyDefault} for the
-     *       reflective continuation (see {@link #buildOtherFieldArm}).</li>
+     *       {@code dispatchNested} / {@code dispatchObjectCollection} as both target and owner.</li>
      * </ul>
      *
-     * <p>An unannotated {@link FieldKind#OTHER} field gets no arm of its own and therefore
-     * contributes nothing. Deduplication happens here as well as in the emitted body: a
+     * <p><strong>An annotated {@link FieldKind#OTHER} field's erased declared type is not an
+     * owner.</strong> Its arm hands that type to {@code GeneratedSupport.applyDefault} only as the
+     * {@code InputValueContext} owner for the reflective continuation
+     * ({@code dispatcher.walkUnknown}), which walks with {@code InputPolicyMetadata.EMPTY} — a
+     * schema-free traversal that never projects a wire key against it (see
+     * {@code dev.vertique.input.processing.OwnerTypeWalk} for the matching reflective-side rule).
+     * An unannotated {@link FieldKind#OTHER} field gets no arm at all and likewise contributes
+     * nothing. Deduplication happens here as well as in the emitted body: a
      * {@link java.util.LinkedHashSet} of {@link TypeName} keeps the generated source stable and
      * repeat-free across builds, while the emitted accumulation guards the case two distinct
      * {@link TypeMirror}s name one type without comparing equal.
@@ -332,18 +338,12 @@ public final class InputProcessorEmitter {
         Set<TypeName> owners = new LinkedHashSet<>();
         owners.add(originClass);
         for (FieldModel field : model.fields().values()) {
-            switch (field.kind()) {
-                case NESTED_DTO, COLLECTION_OF_DTO -> owners.add(rawTypeName(field.nestedTypeMirror(), originClass));
-                case OTHER -> {
-                    if (hasFieldLevelAnnotations(field)) {
-                        owners.add(otherFieldOwnerName(field, originClass));
-                    }
-                }
-                default -> {
-                    // STRING and COLLECTION_OF_STRINGS arms pass the origin class as owner, which
-                    // is already seeded above.
-                }
+            if (field.kind() == FieldKind.NESTED_DTO || field.kind() == FieldKind.COLLECTION_OF_DTO) {
+                owners.add(rawTypeName(field.nestedTypeMirror(), originClass));
             }
+            // STRING and COLLECTION_OF_STRINGS arms pass the origin class as owner, which is
+            // already seeded above. OTHER — annotated or not — contributes nothing; see the class
+            // javadoc above.
         }
         return owners;
     }

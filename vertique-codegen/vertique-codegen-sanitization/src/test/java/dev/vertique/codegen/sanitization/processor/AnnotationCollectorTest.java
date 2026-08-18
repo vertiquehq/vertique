@@ -599,8 +599,10 @@ class AnnotationCollectorTest {
                             "case \"attrs\" -> out.put(k, GeneratedSupport.applyDefault(")
                     .assertGeneratedSourceDoesNotContain(
                             "com.example.AnnotatedMapDto_InputProcessor", "dispatchNested(")
-                    // The erased declared type is the owner the arm hands to applyDefault.
-                    .assertGeneratedSourceContains(
+                    // The erased declared type is handed to applyDefault as InputValueContext
+                    // provenance for the reflective continuation, never as a field-name owner — its
+                    // own metadata declares no fields, so no projection could ever be run against it.
+                    .assertGeneratedSourceDoesNotContain(
                             "com.example.AnnotatedMapDto_InputProcessor", "owners.add(Map.class)");
         }
 
