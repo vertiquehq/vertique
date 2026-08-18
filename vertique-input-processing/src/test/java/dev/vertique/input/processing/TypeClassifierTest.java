@@ -81,6 +81,28 @@ class TypeClassifierTest {
         }
 
         @Test
+        @DisplayName("a binding nested inside a wildcard bound is substituted too")
+        void wildcardNestedBindingSubstitutesIntoItsBounds() {
+            assertEquals(
+                    Dto.class,
+                    TypeClassifier.elementType(declaredTypeOf("wildcardNestedBinding")),
+                    "WildOpt<T> extends ArrayList<Optional<? extends T>>, so a WildOpt<Dto> binds "
+                            + "Optional<? extends Dto> elements — the substitution must recurse into the "
+                            + "wildcard's bound as well as into nested type arguments, or T is left "
+                            + "unbound and normalizes to its Object bound instead of Dto");
+        }
+
+        @Test
+        @DisplayName("a lower-bounded wildcard still resolves through its Object upper bound")
+        void lowerBoundedWildcardStillResolvesToObject() {
+            assertNull(
+                    TypeClassifier.elementType(declaredTypeOf("wildcardSuperBinding")),
+                    "a ? super T element has no upper bound beyond Object, so it resolves to Object and "
+                            + "carries no element schema — substituting into the lower bound must not "
+                            + "change that documented outcome");
+        }
+
+        @Test
         @DisplayName("ordinary collection and array shapes are unchanged")
         void ordinaryCollectionShapesAreUnchanged() {
             assertEquals(Dto.class, TypeClassifier.elementType(declaredTypeOf("list")), "List<Dto> binds Dto");
@@ -157,6 +179,23 @@ class TypeClassifierTest {
         private static final long serialVersionUID = 1L;
     }
 
+    /**
+     * The element variable sits inside a <em>wildcard bound</em> nested in the supertype's type
+     * argument, so resolving it needs substitution to recurse through the wildcard as well — a
+     * wildcard left unsubstituted keeps {@code T}, which normalizes to its {@code Object} bound.
+     */
+    static class WildOpt<T> extends ArrayList<Optional<? extends T>> {
+        private static final long serialVersionUID = 1L;
+    }
+
+    /**
+     * The lower-bounded sibling of {@link WildOpt}. Its element has no upper bound beyond
+     * {@code Object}, so it resolves to {@code Object} whether or not the bound is substituted.
+     */
+    static class WildSuper<T> extends ArrayList<Optional<? super T>> {
+        private static final long serialVersionUID = 1L;
+    }
+
     /** Every declared shape the element rule is pinned against. */
     @SuppressWarnings("rawtypes")
     static class Shapes {
@@ -166,6 +205,8 @@ class TypeClassifierTest {
         Weird<Other, Dto> weird;
         Deep<Dto> deep;
         Opt<Dto> nestedBinding;
+        WildOpt<Dto> wildcardNestedBinding;
+        WildSuper<Dto> wildcardSuperBinding;
         List<Dto> list;
         Set<String> strings;
         List raw;

@@ -261,8 +261,16 @@ final class TypeClassifier {
 
     /**
      * Rewrites {@code type} with every type variable the environment binds replaced by its argument,
-     * recursing into type arguments so a supertype written {@code ArrayList<Optional<T>>} resolves to
-     * {@code ArrayList<Optional<Dto>>}.
+     * recursing into type arguments and wildcard bounds so a supertype written
+     * {@code ArrayList<Optional<T>>} resolves to {@code ArrayList<Optional<Dto>>} and one written
+     * {@code ArrayList<Optional<? extends T>>} resolves to {@code ArrayList<Optional<? extends Dto>>}.
+     *
+     * <p>A wildcard's bounds are ordinary types written at a declaration site, so a variable inside
+     * one binds exactly like a variable in a type-argument position. Leaving it unsubstituted would
+     * strand the variable, {@link #normalizeToBound} would resolve it to its declared bound
+     * ({@code Object} for an unbounded parameter), and the element schema would be lost — while the
+     * APT-time {@code AnnotationCollector} unwraps the same bound <em>after</em> substituting and
+     * still finds the element, which is precisely the divergence the two paths must not have.
      *
      * <p>A variable the environment does not bind is left as-is: it is the raw-use-site case, and
      * {@link #normalizeToBound} later resolves it to its declared bound. A generic array component is
@@ -279,15 +287,40 @@ final class TypeClassifier {
         }
         if (type instanceof ParameterizedType parameterized) {
             Type[] arguments = parameterized.getActualTypeArguments();
-            Type[] substituted = new Type[arguments.length];
-            boolean changed = false;
-            for (int i = 0; i < arguments.length; i++) {
-                substituted[i] = substitute(arguments[i], bindings);
-                changed |= substituted[i] != arguments[i];
-            }
-            return changed ? new SubstitutedParameterizedType(parameterized.getRawType(), substituted) : parameterized;
+            Type[] substituted = substituteAll(arguments, bindings);
+            return substituted == arguments
+                    ? parameterized
+                    : new SubstitutedParameterizedType(parameterized.getRawType(), substituted);
+        }
+        if (type instanceof WildcardType wildcard) {
+            Type[] upperBounds = wildcard.getUpperBounds();
+            Type[] lowerBounds = wildcard.getLowerBounds();
+            Type[] substitutedUpper = substituteAll(upperBounds, bindings);
+            Type[] substitutedLower = substituteAll(lowerBounds, bindings);
+            return substitutedUpper == upperBounds && substitutedLower == lowerBounds
+                    ? wildcard
+                    : new SubstitutedWildcardType(substitutedUpper, substitutedLower);
         }
         return type;
+    }
+
+    /**
+     * Substitutes every element of a type array, returning the <em>same</em> array instance when no
+     * element changed so the caller can leave the enclosing type untouched — identity of the result
+     * is the "nothing changed" signal.
+     *
+     * @param types    the types to rewrite
+     * @param bindings the substitution environment
+     * @return a new array holding the rewritten types, or {@code types} itself when nothing changed
+     */
+    private static Type[] substituteAll(Type[] types, Map<TypeVariable<?>, Type> bindings) {
+        Type[] substituted = new Type[types.length];
+        boolean changed = false;
+        for (int i = 0; i < types.length; i++) {
+            substituted[i] = substitute(types[i], bindings);
+            changed |= substituted[i] != types[i];
+        }
+        return changed ? substituted : types;
     }
 
     /**
@@ -316,6 +349,27 @@ final class TypeClassifier {
         public Type getOwnerType() {
             // No caller in this module consults the owner type — rawClassOf reads getRawType alone.
             return null;
+        }
+    }
+
+    /**
+     * A {@link WildcardType} whose bounds have been resolved against a substitution environment.
+     * Instances never escape {@link #collectionElementBinding}'s walk and are consumed by
+     * {@link #normalizeToBound}, which reads {@code getUpperBounds} alone.
+     *
+     * @param upperBounds the resolved {@code extends} bounds, never empty for a JDK-sourced wildcard
+     * @param lowerBounds the resolved {@code super} bounds, empty unless the wildcard is lower-bounded
+     */
+    private record SubstitutedWildcardType(Type[] upperBounds, Type[] lowerBounds) implements WildcardType {
+
+        @Override
+        public Type[] getUpperBounds() {
+            return upperBounds.clone();
+        }
+
+        @Override
+        public Type[] getLowerBounds() {
+            return lowerBounds.clone();
         }
     }
 

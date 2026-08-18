@@ -1648,6 +1648,66 @@ class SanitizationProcessorRoundtripTest {
     /** FQN of the leaf both paths must reach through the {@code IsoPair}-shaped field alone. */
     private static final String ISOLATED_LEAF_FQN = "com.example.iso.IsoLeafDto";
 
+    // --- Isolated wildcard-bound-shape conformance fixtures ---
+
+    /**
+     * The leaf of the wildcard matrix, reachable from {@link #WILD_ROOT_DTO} through the
+     * {@code WildOpt}-shaped field and through nothing else.
+     */
+    private static final JavaFileObject WILD_LEAF_DTO = SourceFiles.inline("com.example.wild.WildLeafDto", """
+            package com.example.wild;
+            import dev.vertique.core.sanitization.Sanitize;
+            import dev.vertique.sanitization.sanitize.StripControlCharsSanitizer;
+            public class WildLeafDto {
+                @Sanitize(StripControlCharsSanitizer.class)
+                public String note;
+            }
+            """);
+
+    /**
+     * A collection subtype whose element variable sits inside a <em>wildcard bound</em> nested in the
+     * supertype's type argument. Resolving it needs the substitution to recurse through the wildcard;
+     * a wildcard left unsubstituted keeps {@code T}, which normalizes to its {@code Object} bound and
+     * loses the element entirely.
+     */
+    private static final JavaFileObject WILD_OPT = SourceFiles.inline("com.example.wild.WildOpt", """
+            package com.example.wild;
+            import java.util.ArrayList;
+            import java.util.Optional;
+            public class WildOpt<T> extends ArrayList<Optional<? extends T>> {}
+            """);
+
+    /** A root whose only route to {@link #WILD_LEAF_DTO} is the {@code WildOpt}-shaped field. */
+    private static final JavaFileObject WILD_ROOT_DTO = SourceFiles.inline("com.example.wild.WildRootDto", """
+            package com.example.wild;
+            public class WildRootDto {
+                public WildOpt<WildLeafDto> items;
+            }
+            """);
+
+    private static final JavaFileObject WILD_RESOURCE = SourceFiles.inline("com.example.wild.WildResource", """
+            package com.example.wild;
+            import jakarta.ws.rs.POST;
+            import jakarta.ws.rs.Path;
+            @Path("/wild")
+            public class WildResource {
+                @POST
+                public String create(WildRootDto body) { return null; }
+            }
+            """);
+
+    /** The wildcard compilation unit, shared byte-identically by both environments. */
+    private static final JavaFileObject[] WILD_SOURCES = {WILD_LEAF_DTO, WILD_OPT, WILD_ROOT_DTO, WILD_RESOURCE};
+
+    /** FQN of the wildcard root DTO. */
+    private static final String WILD_ROOT_FQN = "com.example.wild.WildRootDto";
+
+    /** FQN of the wildcard root's generated companion. */
+    private static final String WILD_ROOT_PROCESSOR_FQN = "com.example.wild.WildRootDto_InputProcessor";
+
+    /** FQN of the leaf both paths must reach through the {@code WildOpt}-shaped field alone. */
+    private static final String WILD_LEAF_FQN = "com.example.wild.WildLeafDto";
+
     // --- Owner-set conformance ---
 
     /**
@@ -1729,6 +1789,34 @@ class SanitizationProcessorRoundtripTest {
                     reflective.contains(ISOLATED_LEAF_FQN),
                     () -> "the reflective path binds the same element through the Collection<E> supertype"
                             + " binding, so it must prepare the leaf too; reflective=" + reflective);
+        }
+
+        @Test
+        @DisplayName("containment holds on a root whose only route to its leaf is a wildcard-bound element")
+        void generatedOwnerSetIsContainedInTheReflectiveOneForAnIsolatedWildcardShape() throws Exception {
+            Set<String> generated =
+                    prepareOwners(compileWithCodegen(WILD_SOURCES, WILD_ROOT_PROCESSOR_FQN), WILD_ROOT_FQN);
+            Set<String> reflective =
+                    prepareOwners(compileWithoutCodegen(WILD_SOURCES, WILD_ROOT_PROCESSOR_FQN), WILD_ROOT_FQN);
+
+            assertTrue(
+                    reflective.containsAll(generated),
+                    () -> ("The generated path prepares an owner the reflective path does not on a"
+                                    + " WildOpt<T> extends ArrayList<Optional<? extends T>> shape, so"
+                                    + " AnnotationCollector substitutes into a wildcard bound where"
+                                    + " TypeClassifier does not."
+                                    + "\n  generated only: %s\n  generated:      %s\n  reflective:     %s")
+                            .formatted(difference(generated, reflective), generated, reflective));
+            assertTrue(
+                    generated.contains(WILD_LEAF_FQN),
+                    () -> "the generated path unwraps the wildcard bound after substitution, so it dispatches"
+                            + " the field's elements against the leaf and must declare it as an owner;"
+                            + " generated=" + generated);
+            assertTrue(
+                    reflective.contains(WILD_LEAF_FQN),
+                    () -> "the reflective path must substitute the binding into the wildcard's bound too, or"
+                            + " it prepares no owner for an element the generated path dispatches against;"
+                            + " reflective=" + reflective);
         }
 
         @Test

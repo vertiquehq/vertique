@@ -370,6 +370,28 @@ class JsonRequestBodyDecoderTest {
     }
 
     @Test
+    @DisplayName("Should bind a Fixed-shaped body's String elements from the supertype, not its declared argument")
+    void fixedShapedBodyBindsStringElementsFromTheSupertype() {
+        RoutingContext ctx = mock(RoutingContext.class);
+        JsonArray strings = new JsonArray().add("Alice").add("Bob");
+        RequestValue body = RequestValue.of(strings);
+        Type declared = declaredShape("fixedOfPojo");
+
+        Object result = decoder.decode(ctx, body, rawTypeOf(declared), declared);
+
+        assertInstanceOf(Fixed.class, result);
+        List<?> elements = (List<?>) result;
+        assertEquals(2, elements.size());
+        assertInstanceOf(
+                String.class,
+                elements.get(0),
+                "Fixed<T> extends ArrayList<String>, so a Fixed<SamplePojo> body binds String elements — "
+                        + "the declared type argument is not the element type at any arity");
+        assertEquals("Alice", elements.get(0));
+        assertEquals("Bob", elements.get(1));
+    }
+
+    @Test
     @DisplayName("Should bind ordinary collection bodies exactly as before")
     void ordinaryCollectionBodiesBindUnchanged() {
         RoutingContext ctx = mock(RoutingContext.class);
@@ -471,6 +493,15 @@ class JsonRequestBodyDecoderTest {
         private static final long serialVersionUID = 1L;
     }
 
+    /**
+     * A one-argument collection that <em>fixes</em> its {@code Collection} element to {@code String},
+     * so its declared argument is not the element type. This is the shape that silently mis-bound
+     * when the decoder read type argument 0 — a multi-argument shape failed loudly instead.
+     */
+    static class Fixed<T> extends ArrayList<String> {
+        private static final long serialVersionUID = 1L;
+    }
+
     /** Declared body shapes; their generic types are read reflectively by {@link #declaredShape}. */
     @SuppressWarnings("unused")
     private static final class BodyShapes {
@@ -479,5 +510,6 @@ class JsonRequestBodyDecoderTest {
         List<List<SamplePojo>> listOfListOfPojo;
         Weird<OtherPojo, SamplePojo> weirdOfPojo;
         Pair<SamplePojo, OtherPojo> pairOfPojo;
+        Fixed<SamplePojo> fixedOfPojo;
     }
 }
