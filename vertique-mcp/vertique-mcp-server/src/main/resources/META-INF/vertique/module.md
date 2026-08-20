@@ -55,11 +55,12 @@ allowed to escape.
 Over that reader, the codec validates the final-2026 JSON-RPC request envelope — `jsonrpc` must be
 `"2.0"`, `method` must name one of the bounded supported set (`server/discover`, `tools/list`,
 `tools/call`), the request `id` must be present and a string or integer (all three supported methods
-are requests, never notifications), and `params`, when present, must be an object — and classifies
-failures deterministically to the standard JSON-RPC codes with the standard messages and no `data`:
+are requests, never notifications), and `params` must be present and an object (the vendored
+final-2026 request schema marks it required for every supported method) — and classifies failures
+deterministically to the standard JSON-RPC codes with the standard messages and no `data`:
 `-32700` *Parse error* (malformed JSON, or a strict-reader rejection such as a duplicate key or
 trailing token; null id), `-32600` *Invalid Request* (bad envelope — wrong version, a missing or
-non-string/non-integer id, a missing method, or a non-object `params`; original usable id when the
+non-string/non-integer id, a missing method, or a missing or non-object `params`; original usable id when the
 id itself is a trustworthy string or integer, else null), and `-32601` *Method not found* (unknown
 method; original usable id). Header/body-mismatch
 (`-32020`) and tool-level authorization (`-32602`) classification belong to the HTTP-contract and
