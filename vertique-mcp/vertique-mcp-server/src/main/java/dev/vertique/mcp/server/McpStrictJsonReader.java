@@ -56,11 +56,16 @@ final class McpStrictJsonReader {
     private static final int MAX_NUMBER_CHARS = 1000;
 
     /**
-     * Fixed internal cap on the magnitude of a decimal's scale. A short token such as
-     * {@code 1e999999999} passes any length bound yet decodes to a {@link java.math.BigDecimal} whose
-     * plain-form encode would exhaust memory; bounding the scale magnitude rejects it before that.
+     * Fixed internal cap on the magnitude of a decimal's scale, aligned exactly with the encoder's
+     * {@code WRITE_BIGDECIMAL_AS_PLAIN} plain-form guard. Jackson's {@code GeneratorBase} rejects a
+     * plain-form encode when {@code scale < -9999 || scale > 9999}, so the reader's admitted set is the
+     * encoder's safe set precisely when it rejects a scale magnitude greater than this bound — a decimal
+     * whose scale magnitude is {@code 9999} is admitted and re-encodes cleanly, while {@code 10000} (in
+     * either direction) is rejected. A short token such as {@code 1e999999999} passes any length bound
+     * yet would otherwise decode to a {@link java.math.BigDecimal} whose plain-form encode exhausts
+     * memory; bounding the scale magnitude rejects it before that.
      */
-    private static final int MAX_DECIMAL_SCALE = 10_000;
+    private static final int MAX_DECIMAL_SCALE = 9_999;
 
     /**
      * Streaming factory whose stream-read constraints are raised above every configured MCP bound so

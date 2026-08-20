@@ -4,6 +4,7 @@
 package dev.vertique.mcp.server;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import java.math.BigDecimal;
@@ -85,6 +86,29 @@ class McpStrictJsonReaderTest {
                     .as("row %s preserves the exact decimal", name)
                     .isEqualByComparingTo((BigDecimal) expected);
         }
+    }
+
+    @Test
+    @DisplayName("a decimal at the encoder's plain-form scale limit is admitted and re-encodes without throwing")
+    void shouldEncodeDecimalAtEncoderScaleLimitWithoutThrowing() {
+        McpStrictJsonReader reader = new McpStrictJsonReader(McpServerConfig.defaults());
+        McpProtocolCodec codec = new McpProtocolCodec(McpServerConfig.defaults());
+
+        McpStrictJsonReader.Result accepted = reader.read("1e-9999".getBytes(StandardCharsets.UTF_8));
+        assertThat(accepted.isRejected())
+                .as("a decimal whose scale magnitude is exactly 9999 is admitted")
+                .isFalse();
+        assertThat(accepted.value().decimalValue().scale())
+                .as("the admitted decimal carries scale 9999")
+                .isEqualTo(9999);
+        assertThatCode(() -> codec.encode(accepted.value()))
+                .as("the admitted scale-9999 decimal re-encodes under WRITE_BIGDECIMAL_AS_PLAIN without throwing")
+                .doesNotThrowAnyException();
+
+        McpStrictJsonReader.Result rejected = reader.read("1e-10000".getBytes(StandardCharsets.UTF_8));
+        assertThat(rejected.rejection())
+                .as("a decimal one step past the encoder-safe scale limit is rejected")
+                .isEqualTo(McpStrictJsonReader.Rejection.NUMBER_OUT_OF_BOUNDS);
     }
 
     private static void assertExactPrecision(McpStrictJsonReader reader) {
@@ -170,7 +194,32 @@ class McpStrictJsonReaderTest {
                             McpStrictJsonReader.Rejection.NUMBER_OUT_OF_BOUNDS),
                     // F2: an exponent that overflows int makes Jackson's decimal materialization throw
                     // NumberFormatException; it must settle as a classified MALFORMED, never escape.
-                    new Row("decimalExponentOverflow", utf8("1E2147483649"), McpStrictJsonReader.Rejection.MALFORMED));
+                    new Row("decimalExponentOverflow", utf8("1E2147483649"), McpStrictJsonReader.Rejection.MALFORMED),
+                    // W1: the admitted decimal-scale set is exactly the encoder's WRITE_BIGDECIMAL_AS_PLAIN
+                    // safe set (|scale| <= 9999). A scale magnitude of exactly 9999 is accepted; the first
+                    // step past it — |scale| == 10000, in both the positive-exponent (negative-scale) and
+                    // negative-exponent (positive-scale) directions — is rejected before a plain-form encode.
+                    new Row("decimalScaleAtEncoderLimitAccepted", utf8("1e-9999"), null),
+                    new Row(
+                            "decimalScaleJustOverEncoderLimitRejected",
+                            utf8("1e-10000"),
+                            McpStrictJsonReader.Rejection.NUMBER_OUT_OF_BOUNDS),
+                    new Row(
+                            "decimalScaleNegativeJustOverEncoderLimitRejected",
+                            utf8("1e10000"),
+                            McpStrictJsonReader.Rejection.NUMBER_OUT_OF_BOUNDS),
+                    // W1: the numeric-length bound admits a token of exactly MAX_NUMBER_CHARS (1000) and
+                    // rejects the first char past it (1001), in both integer and decimal lexical forms.
+                    new Row("integerToken1000CharsAccepted", utf8("1".repeat(1000)), null),
+                    new Row(
+                            "integerToken1001CharsRejected",
+                            utf8("1".repeat(1001)),
+                            McpStrictJsonReader.Rejection.NUMBER_OUT_OF_BOUNDS),
+                    new Row("decimalToken1000CharsAccepted", utf8("0." + "1".repeat(998)), null),
+                    new Row(
+                            "decimalToken1001CharsRejected",
+                            utf8("0." + "1".repeat(999)),
+                            McpStrictJsonReader.Rejection.NUMBER_OUT_OF_BOUNDS));
         }
 
         private static byte[] utf8(String literal) {

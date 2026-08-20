@@ -68,9 +68,10 @@ class McpGoldenWireTest {
         }
 
         byte[] pinnedError = McpGoldenWireTestFixture.firstErrorResponse(codec, invalidCases);
-        assertThat(McpGoldenWireTestFixture.flipFirstByte(pinnedError))
-                .as("a one-byte mutation of a pinned error response fails byte equality")
-                .isNotEqualTo(pinnedError);
+        byte[] mutatedError = McpGoldenWireTestFixture.flipFirstByte(pinnedError);
+        assertThat(reader.read(mutatedError).isRejected())
+                .as("a one-byte mutation of a pinned canonical error response is no longer a decodable frame")
+                .isTrue();
 
         byte[] valid = validFrames.getFirst();
         byte[] mutant = McpGoldenWireTestFixture.appendTrailingByte(valid);

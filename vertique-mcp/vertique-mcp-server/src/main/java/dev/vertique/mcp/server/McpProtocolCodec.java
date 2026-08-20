@@ -153,14 +153,18 @@ final class McpProtocolCodec {
         if (method == null || !method.isTextual()) {
             return new Analysis(node, id, new CodecError(INVALID_REQUEST, MSG_INVALID_REQUEST, null));
         }
-        // params is optional (absent is normalized elsewhere), but when present it must be an object —
-        // a structured params of any other shape is a structurally invalid request.
-        JsonNode params = node.get("params");
-        if (params != null && !params.isObject()) {
-            return new Analysis(node, id, new CodecError(INVALID_REQUEST, MSG_INVALID_REQUEST, null));
-        }
         if (!SUPPORTED_METHODS.contains(method.asText())) {
             return new Analysis(node, id, new CodecError(METHOD_NOT_FOUND, MSG_METHOD_NOT_FOUND, null));
+        }
+        // Every supported final-2026 request method (CallToolRequest, DiscoverRequest, ListToolsRequest)
+        // lists params in its schema-required set: the mandatory request _meta — protocol version and
+        // client capabilities — lives inside params, so an absent or non-object params is a structurally
+        // invalid request. Only structural presence and shape are validated here; params content stays a
+        // later slice's concern. This check runs after the supported-method check so an unknown method
+        // with an absent params still classifies as -32601, not -32600.
+        JsonNode params = node.get("params");
+        if (params == null || !params.isObject()) {
+            return new Analysis(node, id, new CodecError(INVALID_REQUEST, MSG_INVALID_REQUEST, null));
         }
         return new Analysis(node, id, null);
     }
