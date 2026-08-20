@@ -56,7 +56,11 @@ final class McpRouterMount implements RouterMount {
         if (!config.enabled()) {
             return Future.succeededFuture(router);
         }
-        router.route().order(Integer.MIN_VALUE).handler(BodyHandler.create().setBodyLimit(httpConfig.maxBodySize()));
+        // create(false): the MCP contract carries only JSON bodies, so file uploads are never handled
+        // and nothing is written to the default upload directory.
+        router.route()
+                .order(Integer.MIN_VALUE)
+                .handler(BodyHandler.create(false).setBodyLimit(httpConfig.maxBodySize()));
         router.route()
                 .handler(dispatcher::begin)
                 .handler(identityEstablisher::admit)

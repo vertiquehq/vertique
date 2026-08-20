@@ -11,6 +11,7 @@ import dev.vertique.mcp.lifecycle.McpRequestTerminalEvent;
 import dev.vertique.mcp.lifecycle.McpTransportOutcome;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.http.HttpMethod;
+import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.RoutingContext;
 import jakarta.inject.Inject;
@@ -20,6 +21,15 @@ import java.util.Set;
 /** Dispatches the bounded T001 discovery endpoint without exposing tool registration or invocation. */
 final class McpRequestDispatcher {
     private static final String DISCOVER_METHOD = "server/discover";
+    private static final String PROTOCOL_VERSION = "2026-07-28";
+
+    /** The official schema treats an absent {@code resultType} as this completed-result value. */
+    private static final String COMPLETE_RESULT_TYPE = "complete";
+
+    /** Discovery results are never shared across authorization contexts. */
+    private static final String PRIVATE_CACHE_SCOPE = "private";
+
+    private static final String SERVER_INFO_META_KEY = "io.modelcontextprotocol/serverInfo";
     private static final String COMPLETION_COORDINATOR_KEY =
             McpRequestDispatcher.class.getName() + ".completionCoordinator";
     private final McpServerConfig config;
@@ -60,20 +70,30 @@ final class McpRequestDispatcher {
             reject(context, McpMethod.OTHER, McpErrorType.PROTOCOL, 400);
             return;
         }
+        if (request == null) {
+            // An absent, empty, or literal-null body decodes to no envelope at all: a protocol
+            // failure, not an internal one.
+            reject(context, McpMethod.OTHER, McpErrorType.PROTOCOL, 400);
+            return;
+        }
         if (!DISCOVER_METHOD.equals(request.getString("method"))) {
             reject(context, McpMethod.OTHER, McpErrorType.PROTOCOL, 404);
             return;
         }
         JsonObject serverInfo =
                 new JsonObject().put("name", config.serverName()).put("version", config.serverVersion());
+        // The official DiscoverResult requires resultType, supportedVersions, capabilities, ttlMs,
+        // and cacheScope; the configured server identity is stamped into result _meta.
         JsonObject result = new JsonObject()
-                .put("protocolVersion", "2026-07-28")
+                .put("resultType", COMPLETE_RESULT_TYPE)
+                .put("supportedVersions", new JsonArray().add(PROTOCOL_VERSION))
                 .put("capabilities", new JsonObject())
-                .put("serverInfo", serverInfo)
-                .put("_meta", new JsonObject().put("io.modelcontextprotocol/serverInfo", serverInfo));
+                .put("ttlMs", config.toolsTtlMs())
+                .put("cacheScope", PRIVATE_CACHE_SCOPE)
+                .put("_meta", new JsonObject().put(SERVER_INFO_META_KEY, serverInfo));
         JsonObject response =
                 new JsonObject().put("jsonrpc", "2.0").put("result", result).put("id", request.getValue("id"));
-        context.response().putHeader("content-type", "application/json").putHeader("x-mcp-dispatched", "true");
+        context.response().putHeader("content-type", "application/json");
         write(
                 context,
                 200,

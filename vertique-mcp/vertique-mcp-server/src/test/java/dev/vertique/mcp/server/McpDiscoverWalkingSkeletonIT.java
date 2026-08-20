@@ -8,6 +8,9 @@ import static org.assertj.core.api.Assertions.fail;
 
 import dev.vertique.core.context.ContextHolder;
 import dev.vertique.core.context.ContextValue;
+import dev.vertique.mcp.lifecycle.McpErrorType;
+import dev.vertique.mcp.lifecycle.McpMethod;
+import dev.vertique.mcp.lifecycle.McpOutcome;
 import dev.vertique.mcp.lifecycle.McpRequestCompletedEvent;
 import dev.vertique.mcp.lifecycle.McpRequestLifecycleObserver;
 import dev.vertique.mcp.lifecycle.McpRequestObservation;
@@ -43,7 +46,12 @@ import io.vertx.ext.web.client.HttpRequest;
 import io.vertx.ext.web.client.HttpResponse;
 import io.vertx.ext.web.client.WebClient;
 import io.vertx.ext.web.impl.UserContextInternal;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Instant;
+import java.util.Comparator;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -78,6 +86,25 @@ public class McpDiscoverWalkingSkeletonIT {
             "shouldDiscoverWithAbsentCredentialsAndCanonicalAnonymousContext";
     private static final String VALID_CREDENTIALS_ROW = "shouldDiscoverWithValidCredentialsAndAuthenticatedContext";
     private static final String DENIED_CREDENTIALS_ROW = "shouldObserveAuthenticationDenialBeforeAnyToolExists";
+    private static final String MULTIPART_UPLOAD_ROW = "shouldRejectMultipartUploadWithoutPersistingAnyFile";
+    private static final String NULL_JSON_BODY_ROW = "shouldRejectLiteralNullJsonBodyAsProtocolFailure";
+    private static final String BODYLESS_REQUEST_ROW = "shouldRejectBodylessPostAsProtocolFailure";
+
+    /**
+     * Vert.x's default {@code BodyHandler} upload directory, resolved against the surefire/failsafe
+     * working directory (the module base directory). The mount must never create it, because file
+     * uploads are not part of the MCP HTTP contract.
+     */
+    private static final Path DEFAULT_UPLOADS_DIRECTORY = Path.of("file-uploads");
+
+    /** The one protocol version this walking skeleton pins, per the vendored official schema. */
+    private static final String PROTOCOL_VERSION = "2026-07-28";
+
+    /**
+     * A deliberately non-default {@code mcp.tools.ttlMs}, so the discovery TTL assertion proves the
+     * value is sourced from configuration rather than written as a literal.
+     */
+    private static final long CONFIGURED_TTL_MS = 120_000L;
 
     private final Vertx vertx = Vertx.vertx();
 
@@ -87,7 +114,13 @@ public class McpDiscoverWalkingSkeletonIT {
     private WebClient client;
 
     private static Stream<String> t001ContractRows() {
-        return Stream.of(ABSENT_CREDENTIALS_ROW, VALID_CREDENTIALS_ROW, DENIED_CREDENTIALS_ROW);
+        return Stream.of(
+                ABSENT_CREDENTIALS_ROW,
+                VALID_CREDENTIALS_ROW,
+                DENIED_CREDENTIALS_ROW,
+                MULTIPART_UPLOAD_ROW,
+                NULL_JSON_BODY_ROW,
+                BODYLESS_REQUEST_ROW);
     }
 
     /**
@@ -129,17 +162,10 @@ public class McpDiscoverWalkingSkeletonIT {
                 HttpResponse<Buffer> response = await(request.sendBuffer(discoverRequest.toBuffer()));
 
                 assertThat(response.statusCode()).isEqualTo(200);
-                assertThat(response.getHeader("x-mcp-dispatched")).isEqualTo("true");
+                assertNoMcpHeaders(response);
                 JsonObject body = new JsonObject(response.bodyAsString());
                 assertThat(body.getString("jsonrpc")).isEqualTo("2.0");
-                assertThat(body.getJsonObject("result")
-                                .getJsonObject("serverInfo")
-                                .getString("name"))
-                        .isEqualTo("test-mcp");
-                assertThat(body.getJsonObject("result")
-                                .getJsonObject("serverInfo")
-                                .getString("version"))
-                        .isEqualTo("1.0.0");
+                assertDiscoverResult(body);
                 SecurityContext bound = fixture.boundSecurityContext();
                 assertThat(bound).isNotNull();
                 assertThat(bound.identity().actor().type()).isEqualTo(PrincipalType.ANONYMOUS);
@@ -147,6 +173,7 @@ public class McpDiscoverWalkingSkeletonIT {
                 assertThat(bound.authentication().primaryMethod().normalizedKind())
                         .isEqualTo(AuthMethodKind.NONE);
                 assertThat(bound.authentication().evidence()).isEmpty();
+                assertDispatchedDiscovery(fixture.awaitCompleted());
             }
             case VALID_CREDENTIALS_ROW -> {
                 // Given: the one bearer credential the fixture's scheme accepts for principal alice.
@@ -154,17 +181,10 @@ public class McpDiscoverWalkingSkeletonIT {
                 HttpResponse<Buffer> response = await(request.sendBuffer(discoverRequest.toBuffer()));
 
                 assertThat(response.statusCode()).isEqualTo(200);
-                assertThat(response.getHeader("x-mcp-dispatched")).isEqualTo("true");
+                assertNoMcpHeaders(response);
                 JsonObject body = new JsonObject(response.bodyAsString());
                 assertThat(body.getString("jsonrpc")).isEqualTo("2.0");
-                assertThat(body.getJsonObject("result")
-                                .getJsonObject("serverInfo")
-                                .getString("name"))
-                        .isEqualTo("test-mcp");
-                assertThat(body.getJsonObject("result")
-                                .getJsonObject("serverInfo")
-                                .getString("version"))
-                        .isEqualTo("1.0.0");
+                assertDiscoverResult(body);
                 SecurityContext bound = fixture.boundSecurityContext();
                 assertThat(bound).isNotNull();
                 assertThat(bound.identity().actor().type()).isEqualTo(PrincipalType.USER);
@@ -172,6 +192,7 @@ public class McpDiscoverWalkingSkeletonIT {
                 assertThat(bound.authentication().primaryMethod().normalizedKind())
                         .isEqualTo(AuthMethodKind.JWT);
                 assertThat(bound.authentication().evidence()).hasSize(1);
+                assertDispatchedDiscovery(fixture.awaitCompleted());
             }
             case DENIED_CREDENTIALS_ROW -> {
                 // Given: a tampered bearer credential for the same scheme.
@@ -180,12 +201,52 @@ public class McpDiscoverWalkingSkeletonIT {
 
                 assertThat(response.statusCode()).isEqualTo(401);
                 // No tool exists and dispatch never ran: the bounded authentication error carries no
-                // discovery result and no dispatch marker.
-                assertThat(response.getHeader("x-mcp-dispatched")).isNull();
+                // discovery result.
+                assertNoMcpHeaders(response);
                 assertThat(response.bodyAsString()).isNullOrEmpty();
                 McpRequestCompletedEvent completed = fixture.awaitCompleted();
                 assertThat(completed.terminal().httpStatus()).isEqualTo(401);
                 assertThat(fixture.boundSecurityContext()).isNull();
+            }
+            case MULTIPART_UPLOAD_ROW -> {
+                // Given: a multipart body carrying a file part, which the MCP contract never accepts.
+                deleteRecursively(DEFAULT_UPLOADS_DIRECTORY);
+                String boundary = "vertique-mcp-boundary";
+                Buffer multipartBody = Buffer.buffer()
+                        .appendString("--" + boundary + "\r\n")
+                        .appendString("Content-Disposition: form-data; name=\"payload\";"
+                                + " filename=\"discover-upload.bin\"\r\n")
+                        .appendString("Content-Type: application/octet-stream\r\n\r\n")
+                        .appendString("uploaded-bytes\r\n")
+                        .appendString("--" + boundary + "--\r\n");
+                request.putHeader("content-type", "multipart/form-data; boundary=" + boundary);
+
+                HttpResponse<Buffer> response = await(request.sendBuffer(multipartBody));
+
+                assertThat(Files.exists(DEFAULT_UPLOADS_DIRECTORY))
+                        .as("the MCP mount must not persist uploads into %s", DEFAULT_UPLOADS_DIRECTORY)
+                        .isFalse();
+                assertThat(response.statusCode())
+                        .as("a multipart body is a protocol rejection, not a discovery result")
+                        .isBetween(400, 499);
+            }
+            case NULL_JSON_BODY_ROW -> {
+                // Given: a syntactically valid JSON document that decodes to no envelope at all.
+                HttpResponse<Buffer> response = await(request.sendBuffer(Buffer.buffer("null")));
+
+                assertThat(response.statusCode()).isEqualTo(400);
+                McpRequestCompletedEvent completed = fixture.awaitCompleted();
+                assertThat(completed.terminal().httpStatus()).isEqualTo(400);
+                assertThat(completed.terminal().errorType()).isEqualTo(McpErrorType.PROTOCOL);
+            }
+            case BODYLESS_REQUEST_ROW -> {
+                // Given: a POST that carries no JSON-RPC envelope at all.
+                HttpResponse<Buffer> response = await(request.send());
+
+                assertThat(response.statusCode()).isEqualTo(400);
+                McpRequestCompletedEvent completed = fixture.awaitCompleted();
+                assertThat(completed.terminal().httpStatus()).isEqualTo(400);
+                assertThat(completed.terminal().errorType()).isEqualTo(McpErrorType.PROTOCOL);
             }
             default -> fail("unknown T001 contract row: " + row);
         }
@@ -193,6 +254,55 @@ public class McpDiscoverWalkingSkeletonIT {
 
     private static <T> T await(Future<T> future) throws Exception {
         return future.toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS);
+    }
+
+    /** Asserts the mount leaks no {@code x-mcp-*} response header, which Phase 1 never emits. */
+    private static void assertNoMcpHeaders(HttpResponse<Buffer> response) {
+        assertThat(response.headers().names())
+                .as("Phase 1 emits no x-mcp-* response header")
+                .noneMatch(name -> name.toLowerCase(Locale.ROOT).startsWith("x-mcp-"));
+    }
+
+    /**
+     * Asserts the discovery payload is a conformant {@code DiscoverResult} per the vendored
+     * {@code mcp/schema/2026-07-28/schema.json}: every required field is present, the cache scope is
+     * the contract's fixed {@code private}, the TTL is the configured one rather than a literal, and
+     * the configured server identity is stamped into result {@code _meta}.
+     */
+    private static void assertDiscoverResult(JsonObject body) {
+        JsonObject result = body.getJsonObject("result");
+        assertThat(result).isNotNull();
+        assertThat(result.fieldNames())
+                .as("DiscoverResult requires every schema-mandated field")
+                .contains("cacheScope", "capabilities", "resultType", "supportedVersions", "ttlMs");
+        assertThat(result.getString("resultType")).isEqualTo("complete");
+        assertThat(result.getJsonArray("supportedVersions")).containsExactly(PROTOCOL_VERSION);
+        assertThat(result.getJsonObject("capabilities")).isNotNull();
+        assertThat(result.getString("cacheScope")).isEqualTo("private");
+        assertThat(result.getLong("ttlMs")).isEqualTo(CONFIGURED_TTL_MS);
+        JsonObject stampedServerInfo =
+                result.getJsonObject("_meta").getJsonObject("io.modelcontextprotocol/serverInfo");
+        assertThat(stampedServerInfo.getString("name")).isEqualTo("test-mcp");
+        assertThat(stampedServerInfo.getString("version")).isEqualTo("1.0.0");
+    }
+
+    /** Asserts dispatch actually ran, using the recorded terminal facts rather than a wire marker. */
+    private static void assertDispatchedDiscovery(McpRequestCompletedEvent completed) {
+        assertThat(completed.terminal().method()).isEqualTo(McpMethod.SERVER_DISCOVER);
+        assertThat(completed.terminal().outcome()).isEqualTo(McpOutcome.SUCCESS);
+        assertThat(completed.terminal().httpStatus()).isEqualTo(200);
+    }
+
+    /** Removes {@code path} and everything below it, so an upload assertion starts from a known state. */
+    private static void deleteRecursively(Path path) throws IOException {
+        if (!Files.exists(path)) {
+            return;
+        }
+        try (Stream<Path> entries = Files.walk(path)) {
+            for (Path entry : entries.sorted(Comparator.reverseOrder()).toList()) {
+                Files.deleteIfExists(entry);
+            }
+        }
     }
 
     // --- Fixture ---
@@ -217,6 +327,7 @@ public class McpDiscoverWalkingSkeletonIT {
                     .serverName("test-mcp")
                     .serverVersion("1.0.0")
                     .authenticationScheme("bearer")
+                    .toolsTtlMs(CONFIGURED_TTL_MS)
                     .build();
             McpRouterMount mount = new McpRouterMount(
                     config,

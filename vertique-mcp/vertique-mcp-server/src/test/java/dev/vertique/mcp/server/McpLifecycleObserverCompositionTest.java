@@ -88,7 +88,10 @@ class McpLifecycleObserverCompositionTest {
 
         JsonObject response = discover(port);
 
-        assertThat(response.getJsonObject("result").getJsonObject("serverInfo").getString("name"))
+        assertThat(response.getJsonObject("result")
+                        .getJsonObject("_meta")
+                        .getJsonObject("io.modelcontextprotocol/serverInfo")
+                        .getString("name"))
                 .isEqualTo("lifecycle-test");
         for (RecordingObserver healthyObserver : healthyObservers) {
             healthyObserver.awaitCallbacks();
