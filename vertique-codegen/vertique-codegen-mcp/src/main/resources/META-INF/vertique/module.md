@@ -29,10 +29,11 @@ Add this processor whenever an application publishes MCP tools with `@McpTool`. 
 source implements) and `vertique-mcp-server` (which injects the generated multibindings and composes
 the runtime).
 
-Applications inheriting `vertique-app-parent` receive the processor facade automatically. A
-custom-parent application imports `vertique-bom` and adds `vertique-codegen-all` to its
-`annotationProcessorPaths` alongside Dagger; the facade supplies `vertique-codegen-core`
-transitively.
+This processor is **not** part of the `vertique-codegen-all` facade, so neither
+`vertique-app-parent` nor a `vertique-codegen-all` entry activates it. Every application that uses
+`@McpTool` adds `vertique-codegen-mcp` explicitly to its `annotationProcessorPaths` alongside
+Dagger (the version comes from `vertique-bom`); without that entry no MCP source is generated and
+the application composes with an empty tool set.
 
 The processor emits no runtime Dagger module of its own and contributes nothing to the application
 classpath beyond its generated source.
@@ -76,9 +77,10 @@ dispatchable invoker set cannot drift apart.
 
 ### Where the generated module lands
 
-The module is emitted into the longest common package prefix of every tool's declaring type. Because
-the generated invokers are package-private, every tool has to resolve to that same package. When
-tools are spread across sibling packages, set the output package explicitly:
+The module is emitted into the longest common package prefix of every tool's declaring type.
+Because the generated invokers are package-private and always land in their declaring type's own
+package, **every tool's declaring type must live in one single package** — the module's package.
+Tools spread across sibling packages cannot compile, and no output-package override changes that:
 
 ```xml
 <compilerArgs>
@@ -86,20 +88,23 @@ tools are spread across sibling packages, set the output package explicitly:
 </compilerArgs>
 ```
 
-A tool outside the resolved package is a compile error that names this option, rather than a
-generated module that does not compile.
+The override only pins which single package the module (and therefore every tool) must use. A tool
+outside the resolved package is a compile error that names this option, rather than a generated
+module that does not compile.
 
 ### Deterministic, all-or-nothing emission
 
 Tools are grouped by declaring type and ordered by declaring type and method name, so repeated builds
-of the same inputs produce byte-identical source. When any diagnostic is reported the processor emits
-**nothing at all** — a partial registry would silently bind a subset of the application's tools.
+of the same inputs produce byte-identical source. When any validation diagnostic is reported the
+processor emits nothing; a package-resolution failure discovered during module emission can leave
+already-written invoker sources behind, but the compilation still fails, so a partial registry can
+never bind.
 
 ### Effective JSON profile is resolved at compile time
 
-The processor resolves the tool's `@JsonProfile` method-over-type, validates the id through
-`JsonProfileId`, and emits it as a nullable literal on the invoker. A blank annotation value is a
-compile error. Resolving the remaining tail of the precedence chain — the MCP boundary default, the
+The processor resolves the tool's `@JsonProfile` method-over-type, validates and normalizes the id
+through `JsonProfileId`, and emits the normalized id as a nullable string literal on the invoker.
+A blank annotation value is a compile error. Resolving the remaining tail of the precedence chain — the MCP boundary default, the
 global default, then the reserved `vertx` profile — and rejecting an unknown id belongs to
 composition in `vertique-mcp-server`.
 
@@ -151,8 +156,9 @@ design: an MCP tool either dispatches directly or does not ship.
 
 ### Tools spread across unrelated packages
 
-Generated invokers are package-private, so every tool must resolve into the one generated-module
-package. Either keep tool types under a common package or set `-Avertique.codegen.package`.
+Generated invokers are package-private and always land in their declaring type's package, so every
+tool's declaring type must live in the one generated-module package. Keep tool types in a single
+package; `-Avertique.codegen.package` only pins which package that is.
 
 ### Forgetting to install `GeneratedMcpToolsModule`
 
