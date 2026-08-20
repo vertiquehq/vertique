@@ -11,13 +11,19 @@ import com.fasterxml.jackson.annotation.JsonTypeInfo;
 import com.fasterxml.jackson.annotation.JsonTypeInfo.Id;
 import com.fasterxml.jackson.core.JsonGenerator;
 import com.fasterxml.jackson.core.JsonParser;
+import com.fasterxml.jackson.databind.AnnotationIntrospector;
 import com.fasterxml.jackson.databind.DatabindContext;
 import com.fasterxml.jackson.databind.DeserializationContext;
 import com.fasterxml.jackson.databind.JavaType;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializerProvider;
 import com.fasterxml.jackson.databind.annotation.JsonTypeIdResolver;
+import com.fasterxml.jackson.databind.cfg.MapperConfig;
 import com.fasterxml.jackson.databind.deser.std.StdDeserializer;
+import com.fasterxml.jackson.databind.introspect.Annotated;
+import com.fasterxml.jackson.databind.introspect.AnnotatedClass;
+import com.fasterxml.jackson.databind.introspect.AnnotatedMember;
+import com.fasterxml.jackson.databind.introspect.JacksonAnnotationIntrospector;
 import com.fasterxml.jackson.databind.jsontype.BasicPolymorphicTypeValidator;
 import com.fasterxml.jackson.databind.jsontype.NamedType;
 import com.fasterxml.jackson.databind.jsontype.impl.TypeIdResolverBase;
@@ -44,7 +50,7 @@ import org.junit.jupiter.params.provider.MethodSource;
  * discovery, a custom type-id resolver, a polymorphism-supplying mix-in, and a trusted custom
  * serializer/deserializer pair. Every row traverses one reachable type graph once with the validator.
  *
- * <p>Five rows isolate five boundaries, one each:
+ * <p>Seven rows isolate seven boundaries, one each:
  *
  * <ol>
  *   <li>{@link #shouldTraverseMapperDerivedPrimitiveEnumContainerPropertyAndCyclicBoundaries()} — the
@@ -63,6 +69,12 @@ import org.junit.jupiter.params.provider.MethodSource;
  *   <li>{@link #shouldBoundMemberLevelAllowlistsAndTraverseTheirSubtypes()} — a member-declared
  *       {@code Id.NAME} allowlist is bounded exactly like a class-level one, and its subtypes are
  *       traversed instead of escaping the walk.</li>
+ *   <li>{@link #shouldApplyEverySafetyRulePerMapperSideUnderSplitIntrospectors()} — a mapper with
+ *       independent serialization and deserialization introspectors is checked on both sides, so
+ *       unsafe metadata visible to only one of them is still rejected.</li>
+ *   <li>{@link #shouldRejectRawMemberDeclarationsReachableFromToolTypes()} — a raw generic
+ *       declaration on a reachable DTO member erases its contents to {@code Object} and is a bounded
+ *       composition failure, while an explicit {@code List<Object>} stays accepted.</li>
  * </ol>
  */
 @DisplayName("MCP JSON profile safety — T002 contract matrix")
@@ -71,7 +83,7 @@ class McpJsonProfileSafetyTest {
     // --- Matrix ---
 
     /**
-     * The five named rows of the T002 profile-safety matrix.
+     * The seven named rows of the T002 profile-safety matrix.
      *
      * @return one row per boundary, named exactly as the proof contract lists it
      */
@@ -95,7 +107,13 @@ class McpJsonProfileSafetyTest {
                                 ::shouldRejectMemberLevelCustomResolversOnPropertiesAndContainerContent),
                 new MatrixRow(
                         "shouldBoundMemberLevelAllowlistsAndTraverseTheirSubtypes",
-                        McpJsonProfileSafetyTest::shouldBoundMemberLevelAllowlistsAndTraverseTheirSubtypes));
+                        McpJsonProfileSafetyTest::shouldBoundMemberLevelAllowlistsAndTraverseTheirSubtypes),
+                new MatrixRow(
+                        "shouldApplyEverySafetyRulePerMapperSideUnderSplitIntrospectors",
+                        McpJsonProfileSafetyTest::shouldApplyEverySafetyRulePerMapperSideUnderSplitIntrospectors),
+                new MatrixRow(
+                        "shouldRejectRawMemberDeclarationsReachableFromToolTypes",
+                        McpJsonProfileSafetyTest::shouldRejectRawMemberDeclarationsReachableFromToolTypes));
     }
 
     @ParameterizedTest(name = "{0}")
@@ -257,6 +275,85 @@ class McpJsonProfileSafetyTest {
                 .doesNotThrowAnyException();
     }
 
+    // --- Row 6: every rule applied per mapper side under split introspectors ---
+
+    /**
+     * A mapper configured through {@link ObjectMapper#setAnnotationIntrospectors} uses one
+     * introspector for serialization and another for deserialization, so unsafe metadata can be
+     * visible to only one side. Both sides are checked with their own config/introspector pair: a
+     * class-level and a member-level mechanism seen only by the deserialization introspector are
+     * rejected exactly like the mirrored serialization-only case, while split introspectors that both
+     * see only safe metadata stay accepted.
+     */
+    private static void shouldApplyEverySafetyRulePerMapperSideUnderSplitIntrospectors() {
+        McpJsonProfileSafetyValidator validator = new McpJsonProfileSafetyValidator();
+
+        assertThatThrownBy(() -> validator.validate(
+                        McpJsonProfileSafetyTestFixture.deserializationOnlyClassPolymorphismProfile(),
+                        SplitIntrospectorCarrier.class,
+                        null))
+                .as("class-level metadata visible only to the deserialization introspector is rejected")
+                .isInstanceOf(JsonProfileConfigurationException.class)
+                .hasMessageContaining("CLASS")
+                .hasMessageContaining("SplitBase");
+
+        assertThatThrownBy(() -> validator.validate(
+                        McpJsonProfileSafetyTestFixture.deserializationOnlyMemberPolymorphismProfile(),
+                        SplitIntrospectorCarrier.class,
+                        null))
+                .as("member-level metadata visible only to the deserialization introspector is rejected")
+                .isInstanceOf(JsonProfileConfigurationException.class)
+                .hasMessageContaining("CLASS")
+                .hasMessageContaining("value");
+
+        assertThatThrownBy(() -> validator.validate(
+                        McpJsonProfileSafetyTestFixture.serializationOnlyClassPolymorphismProfile(),
+                        SplitIntrospectorCarrier.class,
+                        null))
+                .as("the mirrored serialization-only visibility stays rejected")
+                .isInstanceOf(JsonProfileConfigurationException.class)
+                .hasMessageContaining("CLASS")
+                .hasMessageContaining("SplitBase");
+
+        assertThatCode(() -> validator.validate(
+                        McpJsonProfileSafetyTestFixture.splitSafeIntrospectorProfile(),
+                        SafeCarrier.class,
+                        ClosedShapeCarrier.class))
+                .as("split introspectors that both see only safe metadata are accepted, not double-reported")
+                .doesNotThrowAnyException();
+    }
+
+    // --- Row 7: raw member declarations reachable from a tool type ---
+
+    /**
+     * A raw generic declaration on a reachable DTO member erases its contents to {@code Object}, so
+     * Jackson resolves it to an unconstrained container that the walk would otherwise traverse as a
+     * silent leaf. It is a bounded composition failure naming the reachable path and the property. An
+     * explicitly declared {@code List<Object>} is the application's own choice and stays accepted.
+     */
+    private static void shouldRejectRawMemberDeclarationsReachableFromToolTypes() {
+        McpJsonProfileSafetyValidator validator = new McpJsonProfileSafetyValidator();
+        JsonMapperProfile safeProfile = McpJsonProfileSafetyTestFixture.safeClosedProfile();
+
+        assertThatThrownBy(() -> validator.validate(safeProfile, RawListCarrier.class, null))
+                .as("a raw List declared on a reachable DTO member is a bounded composition failure")
+                .isInstanceOf(JsonProfileConfigurationException.class)
+                .hasMessageContaining("raw")
+                .hasMessageContaining("java.util.List")
+                .hasMessageContaining("values");
+
+        assertThatThrownBy(() -> validator.validate(safeProfile, RawMapCarrier.class, null))
+                .as("a raw Map declared on a reachable DTO member is a bounded composition failure")
+                .isInstanceOf(JsonProfileConfigurationException.class)
+                .hasMessageContaining("raw")
+                .hasMessageContaining("java.util.Map")
+                .hasMessageContaining("entries");
+
+        assertThatCode(() -> validator.validate(safeProfile, ObjectListCarrier.class, null))
+                .as("an explicitly declared List<Object> is the application's own choice and stays accepted")
+                .doesNotThrowAnyException();
+    }
+
     // --- Fixtures ---
 
     /** Framework wiring for the safety proof: the profile variants and the raw/wildcard root tokens. */
@@ -303,6 +400,42 @@ class McpJsonProfileSafetyTest {
             trusted.addSerializer(TrustedValue.class, new TrustedValueSerializer());
             trusted.addDeserializer(TrustedValue.class, new TrustedValueDeserializer());
             return new StubProfile("trusted-serde", new ObjectMapper().registerModule(trusted));
+        }
+
+        /** Split introspectors where only the deserialization side sees class-level polymorphism. */
+        static JsonMapperProfile deserializationOnlyClassPolymorphismProfile() {
+            return splitIntrospectorProfile(
+                    "deser-only-class",
+                    new JacksonAnnotationIntrospector(),
+                    new ScopedClassNameIntrospector(AnnotatedClass.class));
+        }
+
+        /** Split introspectors where only the deserialization side sees member-level polymorphism. */
+        static JsonMapperProfile deserializationOnlyMemberPolymorphismProfile() {
+            return splitIntrospectorProfile(
+                    "deser-only-member",
+                    new JacksonAnnotationIntrospector(),
+                    new ScopedClassNameIntrospector(AnnotatedMember.class));
+        }
+
+        /** The mirrored control: only the serialization side sees the same class-level polymorphism. */
+        static JsonMapperProfile serializationOnlyClassPolymorphismProfile() {
+            return splitIntrospectorProfile(
+                    "ser-only-class",
+                    new ScopedClassNameIntrospector(AnnotatedClass.class),
+                    new JacksonAnnotationIntrospector());
+        }
+
+        /** The positive control: two independent introspectors that both see only safe metadata. */
+        static JsonMapperProfile splitSafeIntrospectorProfile() {
+            return splitIntrospectorProfile(
+                    "split-safe", new JacksonAnnotationIntrospector(), new JacksonAnnotationIntrospector());
+        }
+
+        private static JsonMapperProfile splitIntrospectorProfile(
+                String id, AnnotationIntrospector serialization, AnnotationIntrospector deserialization) {
+            ObjectMapper mapper = new ObjectMapper().setAnnotationIntrospectors(serialization, deserialization);
+            return new StubProfile(id, mapper);
         }
 
         /** A raw {@code List} root, taken from a declared field so the erasure is genuine. */
@@ -393,6 +526,57 @@ class McpJsonProfileSafetyTest {
     /** The mix-in supplying class-name polymorphism to {@link MixedInBase}. */
     @JsonTypeInfo(use = Id.CLASS)
     private interface ClassNamePolymorphismMixIn {}
+
+    /** A plain base that only one mapper side's introspector reports as polymorphic. */
+    private interface SplitBase {}
+
+    private record SplitIntrospectorCarrier(SplitBase value) {}
+
+    /**
+     * Reports class-name polymorphism for {@link SplitBase} in exactly one annotated scope.
+     *
+     * <p>Installed on one mapper side only through {@link ObjectMapper#setAnnotationIntrospectors},
+     * it models the effective metadata a real split-introspector mapper can expose to serialization
+     * or deserialization alone. Scoping to {@link AnnotatedClass} exercises the class-level gate and
+     * scoping to {@link AnnotatedMember} exercises the member-level one, since Jackson's
+     * {@code _findTypeResolver} installs a member resolver exactly when the member reports type info.
+     */
+    private static final class ScopedClassNameIntrospector extends JacksonAnnotationIntrospector {
+
+        private static final JsonTypeInfo.Value CLASS_NAME_TYPE_INFO =
+                JsonTypeInfo.Value.from(ClassNamePolymorphismMixIn.class.getAnnotation(JsonTypeInfo.class));
+
+        private final Class<? extends Annotated> scope;
+
+        private ScopedClassNameIntrospector(Class<? extends Annotated> scope) {
+            this.scope = scope;
+        }
+
+        @Override
+        public JsonTypeInfo.Value findPolymorphicTypeInfo(MapperConfig<?> config, Annotated annotated) {
+            if (scope.isInstance(annotated) && SplitBase.class.equals(annotated.getRawType())) {
+                return CLASS_NAME_TYPE_INFO;
+            }
+            return super.findPolymorphicTypeInfo(config, annotated);
+        }
+    }
+
+    /** A DTO one hop from the carrier whose raw member declaration erases its contents to Object. */
+    @SuppressWarnings("rawtypes")
+    private record RawListDto(List values) {}
+
+    private record RawListCarrier(RawListDto argument0) {}
+
+    /** The same erasure through a raw map declaration. */
+    @SuppressWarnings("rawtypes")
+    private record RawMapDto(Map entries) {}
+
+    private record RawMapCarrier(RawMapDto argument0) {}
+
+    /** The positive control: {@code Object} contents the application declared deliberately. */
+    private record ObjectListDto(List<Object> values) {}
+
+    private record ObjectListCarrier(ObjectListDto argument0) {}
 
     /** A base whose declared allowlist repeats one logical name. */
     @JsonTypeInfo(use = Id.NAME, property = "kind")
