@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
+SPDX-License-Identifier: EUPL-1.2
+-->
+
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
+
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>dev.vertique</groupId>
+        <artifactId>vertique-parent</artifactId>
+        <version>${revision}</version>
+        <relativePath>../../pom.xml</relativePath>
+    </parent>
+
+    <artifactId>vertique-codegen-mcp</artifactId>
+    <name>Vertique Codegen MCP</name>
+    <description>Annotation processor (MCP-001) that turns @McpTool-annotated methods into a direct package-private
+        invoker with a typed input carrier, an immutable tool descriptor, and an explicit GeneratedMcpToolsModule
+        Dagger multibinding — so tool dispatch needs no runtime scanning and no reflective invocation.</description>
+
+    <dependencies>
+        <!-- APT helpers from CG-001 -->
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-codegen-core</artifactId>
+        </dependency>
+
+        <!-- Annotations and descriptor/invoker contracts the processor reads and the generated
+             source implements: @McpTool, @McpToolParam, McpToolDescriptor, McpToolInvoker. -->
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-mcp-core</artifactId>
+        </dependency>
+
+        <!-- @JsonProfile: the processor resolves the effective method-over-type JSON profile. -->
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-core</artifactId>
+        </dependency>
+
+        <!-- @RequiresAction / ActionRef: McpAuthorizationAnnotationResolver derives McpToolAccess. -->
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-security-core</artifactId>
+        </dependency>
+
+        <!-- JavaPoet for code generation -->
+        <dependency>
+            <groupId>com.palantir.javapoet</groupId>
+            <artifactId>javapoet</artifactId>
+        </dependency>
+
+        <!-- Test -->
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-codegen-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <!-- Compile-testing fixtures declare Dagger-managed tool types (@Inject constructors) and
+             Jakarta base policies (@PermitAll) that the processor must resolve. -->
+        <dependency>
+            <groupId>jakarta.inject</groupId>
+            <artifactId>jakarta.inject-api</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>jakarta.annotation</groupId>
+            <artifactId>jakarta.annotation-api</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+</project>

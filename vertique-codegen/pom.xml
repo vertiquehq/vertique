@@ -36,6 +36,7 @@ SPDX-License-Identifier: EUPL-1.2
         <module>vertique-codegen-services</module>
         <module>vertique-codegen-sanitization</module>
         <module>vertique-codegen-jaxrs</module>
+        <module>vertique-codegen-mcp</module>
         <module>vertique-codegen-all</module>
         <module>vertique-codegen-integration-tests</module>
     </modules>
