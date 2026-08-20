@@ -68,21 +68,40 @@ jobs:
           distribution: temurin
           java-version: "21"
 
+      # GitHub's hashFiles('**/pom.xml') is a live expression that would
+      # match target/ files the archetype and invoker integration tests
+      # generate mid-build, changing the hash between an early step and a
+      # late step of the SAME run. This script hashes only the checked-out
+      # source tree, so its output is stable regardless of when it runs.
+      - id: pom-hash
+        run: bash scripts/compute-maven-cache-key.sh >> "$GITHUB_OUTPUT"
+
       # setup-java's own "cache: maven" only saves on a cache miss — once a
       # cache exists for the current pom.xml hash it is never refreshed, so
       # any dependency first resolved in a later commit (most commonly a
       # plugin's own transitive, e.g. httpclient/qdox/common-java5) is never
       # persisted and stays permanently exposed to Maven Central on every
-      # run. restore/save as separate steps instead, keyed per run with a
-      # restore-keys fallback to the most recent save: every run's downloads
-      # get captured, so the cache grows toward completeness instead of
-      # freezing at whatever existed when the cache was first created.
+      # run. restore/save as separate steps instead: every run's downloads
+      # get captured under its own key, so the cache grows toward
+      # completeness instead of freezing at whatever existed when it was
+      # first created.
+      #
+      # No separate "stable main key": GitHub's cache restore already
+      # retries the full restore-keys chain against the default branch when
+      # nothing matches on the current branch, so the broad
+      # maven-${{ runner.os }}- fallback below already resolves to main's
+      # most recent per-run save for a pull request branch that has none of
+      # its own yet. A deliberately-refreshed stable key would need
+      # `gh cache delete`, which needs actions: write — forbidden in this
+      # job by PublicCiContractTest's pullRequestBuildHasReadOnlyPermissions
+      # AndNoSecrets (FR-REL-014, NFR-REL-001): required CI holds read-only
+      # permissions, no exceptions.
       - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ~/.m2/repository
-          key: maven-${{ runner.os }}-${{ hashFiles('**/pom.xml') }}-${{ github.run_id }}
+          key: maven-${{ runner.os }}-${{ steps.pom-hash.outputs.value }}-${{ github.run_id }}
           restore-keys: |
-            maven-${{ runner.os }}-${{ hashFiles('**/pom.xml') }}-
+            maven-${{ runner.os }}-${{ steps.pom-hash.outputs.value }}-
             maven-${{ runner.os }}-
 
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
@@ -162,4 +181,4 @@ jobs:
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ~/.m2/repository
-          key: maven-${{ runner.os }}-${{ hashFiles('**/pom.xml') }}-${{ github.run_id }}
+          key: maven-${{ runner.os }}-${{ steps.pom-hash.outputs.value }}-${{ github.run_id }}
