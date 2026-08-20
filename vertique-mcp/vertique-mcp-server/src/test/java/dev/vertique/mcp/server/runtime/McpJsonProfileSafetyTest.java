@@ -44,7 +44,7 @@ import org.junit.jupiter.params.provider.MethodSource;
  * discovery, a custom type-id resolver, a polymorphism-supplying mix-in, and a trusted custom
  * serializer/deserializer pair. Every row traverses one reachable type graph once with the validator.
  *
- * <p>Three rows isolate three boundaries, one each:
+ * <p>Five rows isolate five boundaries, one each:
  *
  * <ol>
  *   <li>{@link #shouldTraverseMapperDerivedPrimitiveEnumContainerPropertyAndCyclicBoundaries()} — the
@@ -57,6 +57,12 @@ import org.junit.jupiter.params.provider.MethodSource;
  *   <li>{@link #shouldAllowTrustedCustomSerdeButRejectEveryNamedPolymorphismMechanism()} — trusted
  *       custom serde is accepted while default typing, open subtype discovery, and custom type-id
  *       resolvers are each rejected with their mechanism and type path.</li>
+ *   <li>{@link #shouldRejectMemberLevelCustomResolversOnPropertiesAndContainerContent()} — a custom
+ *       resolver declared on a property or on a container's content is rejected, including when it
+ *       overrides an otherwise safe class-level base.</li>
+ *   <li>{@link #shouldBoundMemberLevelAllowlistsAndTraverseTheirSubtypes()} — a member-declared
+ *       {@code Id.NAME} allowlist is bounded exactly like a class-level one, and its subtypes are
+ *       traversed instead of escaping the walk.</li>
  * </ol>
  */
 @DisplayName("MCP JSON profile safety — T002 contract matrix")
@@ -65,7 +71,7 @@ class McpJsonProfileSafetyTest {
     // --- Matrix ---
 
     /**
-     * The three named rows of the T002 profile-safety matrix.
+     * The five named rows of the T002 profile-safety matrix.
      *
      * @return one row per boundary, named exactly as the proof contract lists it
      */
@@ -82,7 +88,14 @@ class McpJsonProfileSafetyTest {
                 new MatrixRow(
                         "shouldAllowTrustedCustomSerdeButRejectEveryNamedPolymorphismMechanism",
                         McpJsonProfileSafetyTest
-                                ::shouldAllowTrustedCustomSerdeButRejectEveryNamedPolymorphismMechanism));
+                                ::shouldAllowTrustedCustomSerdeButRejectEveryNamedPolymorphismMechanism),
+                new MatrixRow(
+                        "shouldRejectMemberLevelCustomResolversOnPropertiesAndContainerContent",
+                        McpJsonProfileSafetyTest
+                                ::shouldRejectMemberLevelCustomResolversOnPropertiesAndContainerContent),
+                new MatrixRow(
+                        "shouldBoundMemberLevelAllowlistsAndTraverseTheirSubtypes",
+                        McpJsonProfileSafetyTest::shouldBoundMemberLevelAllowlistsAndTraverseTheirSubtypes));
     }
 
     @ParameterizedTest(name = "{0}")
@@ -184,6 +197,64 @@ class McpJsonProfileSafetyTest {
                 .as("a custom type-id resolver is rejected")
                 .isInstanceOf(JsonProfileConfigurationException.class)
                 .hasMessageContaining("resolver");
+    }
+
+    // --- Row 4: member-level custom resolvers on properties and container content ---
+
+    /**
+     * Jackson installs a member-declared type resolver ahead of the declared base type's class-level
+     * one, so a custom {@code @JsonTypeIdResolver} on a property, on a property whose base type is
+     * otherwise safely closed, or on a container's content each reopen the whole subtype space. All
+     * three are rejected naming the property path and the custom-resolver mechanism.
+     */
+    private static void shouldRejectMemberLevelCustomResolversOnPropertiesAndContainerContent() {
+        McpJsonProfileSafetyValidator validator = new McpJsonProfileSafetyValidator();
+        JsonMapperProfile safeProfile = McpJsonProfileSafetyTestFixture.safeClosedProfile();
+
+        assertThatThrownBy(() -> validator.validate(safeProfile, MemberCustomResolverCarrier.class, null))
+                .as("a custom type-id resolver declared on a property is rejected")
+                .isInstanceOf(JsonProfileConfigurationException.class)
+                .hasMessageContaining("value")
+                .hasMessageContaining("@JsonTypeIdResolver");
+
+        assertThatThrownBy(() -> validator.validate(safeProfile, MemberOverriddenShapeCarrier.class, null))
+                .as("a member resolver overriding a safe class-level base is rejected")
+                .isInstanceOf(JsonProfileConfigurationException.class)
+                .hasMessageContaining("shape")
+                .hasMessageContaining("@JsonTypeIdResolver");
+
+        assertThatThrownBy(() -> validator.validate(safeProfile, MemberContentResolverCarrier.class, null))
+                .as("a custom type-id resolver declared on a container's content is rejected")
+                .isInstanceOf(JsonProfileConfigurationException.class)
+                .hasMessageContaining("values")
+                .hasMessageContaining("@JsonTypeIdResolver");
+    }
+
+    // --- Row 5: member-declared allowlists are bounded and traversed ---
+
+    /**
+     * A member-declared {@code Id.NAME} allowlist is the one accepted member-level shape: its logical
+     * names must be unique and its subtypes are enqueued into the walk, so an unsafe subtype reachable
+     * only through the member allowlist is still rejected instead of escaping the traversal.
+     */
+    private static void shouldBoundMemberLevelAllowlistsAndTraverseTheirSubtypes() {
+        McpJsonProfileSafetyValidator validator = new McpJsonProfileSafetyValidator();
+        JsonMapperProfile safeProfile = McpJsonProfileSafetyTestFixture.safeClosedProfile();
+
+        assertThatThrownBy(() -> validator.validate(safeProfile, MemberUnsafeSubtypeCarrier.class, null))
+                .as("a member-allowlisted subtype carrying a class-name discriminator is traversed and rejected")
+                .isInstanceOf(JsonProfileConfigurationException.class)
+                .hasMessageContaining("CLASS")
+                .hasMessageContaining("MemberScopedUnsafe");
+
+        assertThatThrownBy(() -> validator.validate(safeProfile, MemberDuplicateNameCarrier.class, null))
+                .as("duplicate logical names in a member-declared allowlist are rejected")
+                .isInstanceOf(JsonProfileConfigurationException.class)
+                .hasMessageContaining("duplicate");
+
+        assertThatCode(() -> validator.validate(safeProfile, MemberClosedAllowlistCarrier.class, null))
+                .as("a finite, unique member-declared Id.NAME allowlist of safe subtypes stays accepted")
+                .doesNotThrowAnyException();
     }
 
     // --- Fixtures ---
@@ -375,6 +446,59 @@ class McpJsonProfileSafetyTest {
             return Id.CUSTOM;
         }
     }
+
+    /** A plain base whose polymorphism is declared by the referring member, not by the class. */
+    private interface MemberScoped {}
+
+    private record MemberScopedFirst(String first) implements MemberScoped {}
+
+    private record MemberScopedSecond(String second) implements MemberScoped {}
+
+    /** A subtype reachable only through a member allowlist, carrying a class-name discriminator. */
+    @JsonTypeInfo(use = Id.CLASS)
+    private record MemberScopedUnsafe(String value) implements MemberScoped {}
+
+    /** A property whose type ids are resolved by application code. */
+    private record MemberCustomResolverCarrier(
+            @JsonTypeInfo(use = Id.NAME, property = "kind") @JsonTypeIdResolver(ApplicationTypeIdResolver.class)
+            MemberScoped value) {}
+
+    /** A safely closed class-level base whose referring property overrides it with a custom resolver. */
+    private record MemberOverriddenShapeCarrier(
+            @JsonTypeInfo(use = Id.NAME, property = "kind") @JsonTypeIdResolver(ApplicationTypeIdResolver.class)
+            Shape shape) {}
+
+    /** A container property whose content type ids are resolved by application code. */
+    private record MemberContentResolverCarrier(
+            @JsonTypeInfo(use = Id.NAME, property = "kind") @JsonTypeIdResolver(ApplicationTypeIdResolver.class)
+            List<MemberScoped> values) {}
+
+    /** A member-declared allowlist whose subtype graph reaches an unsafe discriminator. */
+    private record MemberUnsafeSubtypeCarrier(
+            @JsonTypeInfo(use = Id.NAME, property = "kind")
+            @JsonSubTypes({
+                @JsonSubTypes.Type(value = MemberScopedFirst.class, name = "first"),
+                @JsonSubTypes.Type(value = MemberScopedUnsafe.class, name = "unsafe")
+            })
+            MemberScoped value) {}
+
+    /** A member-declared allowlist that repeats one logical name. */
+    private record MemberDuplicateNameCarrier(
+            @JsonTypeInfo(use = Id.NAME, property = "kind")
+            @JsonSubTypes({
+                @JsonSubTypes.Type(value = MemberScopedFirst.class, name = "dup"),
+                @JsonSubTypes.Type(value = MemberScopedSecond.class, name = "dup")
+            })
+            MemberScoped value) {}
+
+    /** The one accepted member-level shape: a finite, unique allowlist of safe subtypes. */
+    private record MemberClosedAllowlistCarrier(
+            @JsonTypeInfo(use = Id.NAME, property = "kind")
+            @JsonSubTypes({
+                @JsonSubTypes.Type(value = MemberScopedFirst.class, name = "first"),
+                @JsonSubTypes.Type(value = MemberScopedSecond.class, name = "second")
+            })
+            MemberScoped value) {}
 
     /** A value carried by a trusted custom serializer/deserializer pair. */
     private record TrustedValue(String raw) {}

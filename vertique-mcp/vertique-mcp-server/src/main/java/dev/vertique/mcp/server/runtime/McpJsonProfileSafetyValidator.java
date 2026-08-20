@@ -55,6 +55,13 @@ import java.util.concurrent.atomic.AtomicReference;
  * subtype mappings equal to that allowlist. Custom serializers and deserializers are trusted
  * application code and are accepted; they are not claimed to be statically proven safe.
  *
+ * <p>The same three rules apply to class, property and container-content scopes alike. Jackson
+ * installs a member-declared resolver ahead of the declared base type's class-level one, so a
+ * property or container content that declares its own type information is validated as its own
+ * polymorphic base — including its effective allowlist, which is the member's own
+ * {@code @JsonSubTypes} when present and the declared base type's class-level allowlist otherwise —
+ * and every subtype it allows is enqueued into the same walk.
+ *
  * <p>A failure names the bounded profile id, the reachable type path, and the violated rule; it never
  * carries a payload or serialized value, and the message is capped at 1,024 UTF-16 code units.
  */
@@ -214,40 +221,57 @@ final class McpJsonProfileSafetyValidator {
                         "type id mechanism 'Id." + typeInfo.getIdType()
                                 + "' is not an accepted mechanism; only Id.NAME with an explicit @JsonSubTypes allowlist is");
             }
-            Map<String, Class<?>> allowlist = declaredAllowlist(reachable, classInfo);
+            Map<String, Class<?>> allowlist = declaredAllowlist(reachable.path(), introspector.findSubtypes(classInfo));
+            Class<?> baseClass = reachable.type().getRawClass();
             requireResolvedSubtypesMatch(
-                    reachable, allowlist, subtypesByClass(classInfo), "serialization-facing subtype mapping");
+                    reachable.path(),
+                    baseClass,
+                    allowlist,
+                    subtypesByClass(classInfo),
+                    "serialization-facing subtype mapping");
             requireResolvedSubtypesMatch(
-                    reachable, allowlist, subtypesByTypeId(classInfo), "deserialization-facing subtype mapping");
-            allowlist.forEach((logicalName, subtype) ->
-                    enqueue(typeFactory.constructType(subtype), reachable.path(), "@" + logicalName));
+                    reachable.path(),
+                    baseClass,
+                    allowlist,
+                    subtypesByTypeId(classInfo),
+                    "deserialization-facing subtype mapping");
+            enqueueAllowlist(reachable.path(), allowlist);
         }
 
-        /** Reads the explicit {@code @JsonSubTypes} allowlist and rejects an unbounded or ambiguous one. */
-        private Map<String, Class<?>> declaredAllowlist(ReachableType reachable, AnnotatedClass classInfo) {
-            List<NamedType> declared = introspector.findSubtypes(classInfo);
+        /**
+         * Validates the explicit {@code @JsonSubTypes} allowlist and rejects an unbounded or ambiguous one.
+         *
+         * @param path the bounded reachable path of the polymorphic base being validated
+         * @param declared the subtypes Jackson's introspection declared for that base, possibly {@code null}
+         * @return the allowlist as a logical-name to concrete-class mapping
+         */
+        private Map<String, Class<?>> declaredAllowlist(String path, @Nullable List<NamedType> declared) {
             if (declared == null || declared.isEmpty()) {
                 throw failure(
-                        reachable.path(),
+                        path,
                         "polymorphic base declares no explicit @JsonSubTypes allowlist, so its subtype graph is unbounded");
             }
             Map<String, Class<?>> allowlist = new LinkedHashMap<>();
             Set<Class<?>> allowlistedClasses = new LinkedHashSet<>();
             for (NamedType subtype : declared) {
                 if (!subtype.hasName() || subtype.getName().isBlank()) {
-                    throw failure(
-                            reachable.path(), "subtype " + subtype.getType().getName() + " declares no logical name");
+                    throw failure(path, "subtype " + subtype.getType().getName() + " declares no logical name");
                 }
                 if (allowlist.putIfAbsent(subtype.getName(), subtype.getType()) != null) {
-                    throw failure(reachable.path(), "duplicate logical subtype name '" + subtype.getName() + "'");
+                    throw failure(path, "duplicate logical subtype name '" + subtype.getName() + "'");
                 }
                 if (!allowlistedClasses.add(subtype.getType())) {
                     throw failure(
-                            reachable.path(),
-                            "duplicate subtype class " + subtype.getType().getName() + " in the allowlist");
+                            path, "duplicate subtype class " + subtype.getType().getName() + " in the allowlist");
                 }
             }
             return allowlist;
+        }
+
+        /** Enqueues every allowlisted subtype so no branch of the subtype graph escapes the walk. */
+        private void enqueueAllowlist(String path, Map<String, Class<?>> allowlist) {
+            allowlist.forEach(
+                    (logicalName, subtype) -> enqueue(typeFactory.constructType(subtype), path, "@" + logicalName));
         }
 
         private Collection<NamedType> subtypesByClass(AnnotatedClass classInfo) {
@@ -262,9 +286,30 @@ final class McpJsonProfileSafetyValidator {
                     .collectAndResolveSubtypesByTypeId(deserializationConfig, classInfo);
         }
 
-        /** Requires one resolved Jackson mapping to equal the explicit allowlist, name and class alike. */
+        private Collection<NamedType> subtypesByClass(AnnotatedMember member, JavaType baseType) {
+            return serializationConfig
+                    .getSubtypeResolver()
+                    .collectAndResolveSubtypesByClass(serializationConfig, member, baseType);
+        }
+
+        private Collection<NamedType> subtypesByTypeId(AnnotatedMember member, JavaType baseType) {
+            return deserializationConfig
+                    .getSubtypeResolver()
+                    .collectAndResolveSubtypesByTypeId(deserializationConfig, member, baseType);
+        }
+
+        /**
+         * Requires one resolved Jackson mapping to equal the explicit allowlist, name and class alike.
+         *
+         * @param path the bounded reachable path of the polymorphic base being validated
+         * @param baseClass the raw class the mapping was resolved for, whose unnamed entry is the base
+         * @param allowlist the explicit allowlist the mapping must equal
+         * @param resolved the mapping Jackson resolved
+         * @param mappingName the side of the mapper the mapping came from, for the failure message
+         */
         private void requireResolvedSubtypesMatch(
-                ReachableType reachable,
+                String path,
+                Class<?> baseClass,
                 Map<String, Class<?>> allowlist,
                 Collection<NamedType> resolved,
                 String mappingName) {
@@ -272,25 +317,25 @@ final class McpJsonProfileSafetyValidator {
             for (NamedType subtype : resolved) {
                 // Jackson returns the base itself as an unnamed entry; a named entry is a real subtype,
                 // including when the visited type is one of the allowlisted subtypes of its own base.
-                if (subtype.getType().equals(reachable.type().getRawClass()) && !subtype.hasName()) {
+                if (subtype.getType().equals(baseClass) && !subtype.hasName()) {
                     continue;
                 }
                 if (!subtype.hasName() || subtype.getName().isBlank()) {
                     throw failure(
-                            reachable.path(),
+                            path,
                             mappingName + " resolves unnamed subtype "
                                     + subtype.getType().getName());
                 }
                 Class<?> previous = normalized.putIfAbsent(subtype.getName(), subtype.getType());
                 if (previous != null && !previous.equals(subtype.getType())) {
                     throw failure(
-                            reachable.path(),
+                            path,
                             mappingName + " resolves logical name '" + subtype.getName() + "' to conflicting types");
                 }
             }
             if (!normalized.equals(allowlist)) {
                 throw failure(
-                        reachable.path(),
+                        path,
                         mappingName + " " + describe(normalized)
                                 + " disagrees with the explicit @JsonSubTypes allowlist " + describe(allowlist));
             }
@@ -337,7 +382,7 @@ final class McpJsonProfileSafetyValidator {
             return byName;
         }
 
-        /** Rejects member-level type information that is anything but closed {@code Id.NAME}. */
+        /** Applies the closed polymorphism rules to every property and container-content scope. */
         private void rejectPropertyLevelResolvers(
                 ReachableType reachable, BeanDescription description, MapperConfig<?> config) {
             for (BeanPropertyDefinition property : description.findProperties()) {
@@ -346,19 +391,74 @@ final class McpJsonProfileSafetyValidator {
                     continue;
                 }
                 JavaType propertyType = property.getPrimaryType();
-                boolean declaresResolver = introspector.findPropertyTypeResolver(config, member, propertyType) != null
-                        || (hasContent(propertyType)
-                                && introspector.findPropertyContentTypeResolver(config, member, propertyType) != null);
-                if (!declaresResolver) {
-                    continue;
+                String propertyPath = reachable.path() + " -> " + property.getName();
+                if (introspector.findPropertyTypeResolver(config, member, propertyType) != null) {
+                    requireClosedMemberPolymorphism(propertyPath, member, propertyType, config);
                 }
-                JsonTypeInfo.Value memberTypeInfo = introspector.findPolymorphicTypeInfo(config, member);
-                if (memberTypeInfo == null || memberTypeInfo.getIdType() != JsonTypeInfo.Id.NAME) {
-                    throw failure(
-                            reachable.path() + " -> " + property.getName(),
-                            "property-level type resolver is not an accepted mechanism");
+                if (hasContent(propertyType)
+                        && introspector.findPropertyContentTypeResolver(config, member, propertyType) != null) {
+                    requireClosedMemberPolymorphism(
+                            propertyPath + " -> <content>", member, propertyType.getContentType(), config);
                 }
             }
+        }
+
+        /**
+         * Requires one member-declared polymorphism scope to be the closed {@code Id.NAME} shape.
+         *
+         * <p>Jackson installs a member-declared resolver ahead of the declared base type's class-level
+         * one, so a safe class-level base is no defense: the member scope repeats every class-level rule.
+         * Its effective allowlist is the member's own {@code @JsonSubTypes} when it declares one and the
+         * declared base type's class-level allowlist otherwise, exactly as Jackson's member-scoped
+         * subtype resolution falls back.
+         *
+         * @param path the bounded reachable path of this member scope
+         * @param member the annotated member declaring the type information
+         * @param baseType the type the member-declared resolver is installed for
+         * @param config the mapper side whose introspection declared the resolver
+         */
+        private void requireClosedMemberPolymorphism(
+                String path, AnnotatedMember member, JavaType baseType, MapperConfig<?> config) {
+            if (member.getAnnotation(JsonTypeResolver.class) != null) {
+                throw failure(path, "a custom @JsonTypeResolver resolver is not an accepted mechanism");
+            }
+            if (member.getAnnotation(JsonTypeIdResolver.class) != null) {
+                throw failure(path, "a custom @JsonTypeIdResolver resolver is not an accepted mechanism");
+            }
+            JsonTypeInfo.Value memberTypeInfo = introspector.findPolymorphicTypeInfo(config, member);
+            if (memberTypeInfo == null || memberTypeInfo.getIdType() != JsonTypeInfo.Id.NAME) {
+                throw failure(
+                        path,
+                        "type id mechanism '"
+                                + (memberTypeInfo == null ? "unknown" : "Id." + memberTypeInfo.getIdType())
+                                + "' is not an accepted mechanism; only Id.NAME with an explicit @JsonSubTypes allowlist is");
+            }
+            Map<String, Class<?>> allowlist = declaredAllowlist(path, memberSubtypes(member, baseType, config));
+            Class<?> baseClass = baseType.getRawClass();
+            requireResolvedSubtypesMatch(
+                    path,
+                    baseClass,
+                    allowlist,
+                    subtypesByClass(member, baseType),
+                    "serialization-facing subtype mapping");
+            requireResolvedSubtypesMatch(
+                    path,
+                    baseClass,
+                    allowlist,
+                    subtypesByTypeId(member, baseType),
+                    "deserialization-facing subtype mapping");
+            enqueueAllowlist(path, allowlist);
+        }
+
+        /** Reads the member's own allowlist, falling back to the declared base type's as Jackson does. */
+        @Nullable
+        private List<NamedType> memberSubtypes(AnnotatedMember member, JavaType baseType, MapperConfig<?> config) {
+            List<NamedType> declared = introspector.findSubtypes(member);
+            if (declared != null && !declared.isEmpty()) {
+                return declared;
+            }
+            return introspector.findSubtypes(
+                    config.introspectClassAnnotations(baseType).getClassInfo());
         }
 
         /** Jackson only resolves a content type resolver for container and reference types. */
