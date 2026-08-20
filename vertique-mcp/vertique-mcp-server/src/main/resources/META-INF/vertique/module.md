@@ -20,5 +20,11 @@ bounded JSON parsing arrive with the codec and HTTP-contract capabilities. Reque
 enforced today, from `http.maxBodySize`. A configured `jsonProfile` is validated during composition
 even if MCP is disabled, preventing a latent invalid deployment configuration.
 
+The mount handles no file uploads of its own, but it does not rely on that alone: an
+application-composed ancestor `BodyHandler` with uploads enabled spools multipart parts to disk
+before any MCP handler runs, so such files do exist for the duration of the request. The mount
+deletes every request-scoped upload once the request settles — on completion, failure, or connection
+reset — so an MCP request leaves no upload file behind after it ends.
+
 The module does not use an MCP Java SDK. It depends on `vertique-mcp-core` for the stable lifecycle
 boundary and owns the HTTP/router composition only.

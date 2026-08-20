@@ -61,6 +61,15 @@ final class McpRouterMount implements RouterMount {
         router.route()
                 .order(Integer.MIN_VALUE)
                 .handler(BodyHandler.create(false).setBodyLimit(httpConfig.maxBodySize()));
+        // Always-on cleanup of request-scoped uploads. This mount never spools a file itself, but an
+        // application-composed ancestor BodyHandler with uploads enabled runs before the sub-router and
+        // materialises multipart parts on disk; the cleanup call is delegated to the root routing
+        // context, so it deletes those ancestor-spooled uploads too. Routing context end handlers cover
+        // normal completion, failures, and connection/stream resets (see JaxRsRouterMount).
+        router.route().order(Integer.MIN_VALUE + 1).handler(context -> {
+            context.addEndHandler(v -> context.cancelAndCleanupFileUploads());
+            context.next();
+        });
         router.route()
                 .handler(dispatcher::begin)
                 .handler(identityEstablisher::admit)

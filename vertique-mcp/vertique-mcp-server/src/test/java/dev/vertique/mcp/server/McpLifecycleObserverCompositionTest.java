@@ -17,20 +17,27 @@ import dev.vertique.rest.security.IdentityResolutionMiddleware;
 import io.vertx.core.Context;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
+import io.vertx.core.buffer.Buffer;
 import io.vertx.core.http.HttpClient;
 import io.vertx.core.http.HttpServer;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.Router;
+import io.vertx.ext.web.client.HttpResponse;
 import io.vertx.ext.web.client.WebClient;
 import io.vertx.ext.web.handler.BodyHandler;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -103,6 +110,33 @@ class McpLifecycleObserverCompositionTest {
         healthyListeners.forEach(RecordingListener::assertExactlyOneCompletionOnOwningContext);
     }
 
+    /**
+     * Given an application composes a root {@link BodyHandler} with uploads enabled ahead of the MCP
+     * mount, when a multipart request reaches the mount, then the mount still rejects the request and
+     * leaves no spooled upload file behind once the response has settled.
+     *
+     * @param uploadsDirectory the ancestor handler's spool directory, owned by JUnit
+     * @throws Exception if the exchange or the bounded cleanup wait does not complete
+     */
+    @Test
+    @DisplayName("deletes the uploads an application-composed ancestor BodyHandler spooled")
+    void shouldDeleteAncestorSpooledUploadsAfterRequestEnd(@TempDir Path uploadsDirectory) throws Exception {
+        vertx = Vertx.vertx();
+        List<Path> spooled = new CopyOnWriteArrayList<>();
+        int port = mountServer(
+                Set.of(), Set.of(), BodyHandler.create().setUploadsDirectory(uploadsDirectory.toString()), spooled);
+
+        HttpResponse<Buffer> response = postMultipart(port);
+
+        assertThat(spooled)
+                .as("the ancestor BodyHandler must spool the multipart part before any MCP handler runs")
+                .isNotEmpty();
+        assertThat(response.statusCode())
+                .as("a multipart body is an MCP protocol rejection, not a discovery result")
+                .isBetween(400, 499);
+        awaitSpooledUploadsDeleted(uploadsDirectory, spooled);
+    }
+
     private static Stream<Arguments> compositionRows() {
         RecordingObserver firstObserver = new RecordingObserver();
         RecordingObserver secondObserver = new RecordingObserver();
@@ -128,6 +162,19 @@ class McpLifecycleObserverCompositionTest {
 
     private int mountDiscoveryServer(
             Set<McpRequestLifecycleObserver> observers, Set<McpRequestCompletedListener> listeners) throws Exception {
+        return mountServer(observers, listeners, BodyHandler.create(), new CopyOnWriteArrayList<>());
+    }
+
+    /**
+     * Mounts the MCP sub-router behind an application-composed root {@code bodyHandler}, recording the
+     * paths that handler spooled so a test can prove cleanup rather than absence of uploads.
+     */
+    private int mountServer(
+            Set<McpRequestLifecycleObserver> observers,
+            Set<McpRequestCompletedListener> listeners,
+            BodyHandler rootBodyHandler,
+            List<Path> spooledUploads)
+            throws Exception {
         McpServerConfig config = McpServerConfig.builder()
                 .enabled(true)
                 .serverName("lifecycle-test")
@@ -143,7 +190,11 @@ class McpLifecycleObserverCompositionTest {
                 identity,
                 HttpConfig.builder().build());
         Router router = Router.router(vertx);
-        router.route().handler(BodyHandler.create());
+        router.route().handler(rootBodyHandler);
+        router.route().handler(context -> {
+            context.fileUploads().forEach(upload -> spooledUploads.add(Path.of(upload.uploadedFileName())));
+            context.next();
+        });
         router.route(config.mountPath()).subRouter(await(mount.createRouter(vertx)));
         server = await(vertx.createHttpServer().requestHandler(router).listen(0, "127.0.0.1"));
         return server.actualPort();
@@ -157,6 +208,52 @@ class McpLifecycleObserverCompositionTest {
                 .putHeader("content-type", "application/json")
                 .sendBuffer(request.toBuffer()));
         return response.bodyAsJsonObject();
+    }
+
+    /** Posts a multipart body carrying one file part, which the MCP contract never accepts. */
+    private HttpResponse<Buffer> postMultipart(int port) throws Exception {
+        String boundary = "vertique-mcp-boundary";
+        Buffer multipartBody = Buffer.buffer()
+                .appendString("--" + boundary + "\r\n")
+                .appendString(
+                        "Content-Disposition: form-data; name=\"payload\";" + " filename=\"ancestor-upload.bin\"\r\n")
+                .appendString("Content-Type: application/octet-stream\r\n\r\n")
+                .appendString("uploaded-bytes\r\n")
+                .appendString("--" + boundary + "--\r\n");
+        rawClient = vertx.createHttpClient();
+        client = WebClient.wrap(rawClient);
+        return await(client.post(port, "127.0.0.1", "/mcp/")
+                .putHeader("content-type", "multipart/form-data; boundary=" + boundary)
+                .sendBuffer(multipartBody));
+    }
+
+    /**
+     * Waits, within a bounded deadline, for every recorded spool path and the whole directory to be
+     * gone — the mount's cleanup runs off a routing-context end handler, so it settles after the
+     * response the test already observed.
+     */
+    private static void awaitSpooledUploadsDeleted(Path uploadsDirectory, List<Path> spooled) throws Exception {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        List<Path> remaining = remainingUploads(uploadsDirectory);
+        while (!remaining.isEmpty() && System.nanoTime() < deadline) {
+            Thread.sleep(25);
+            remaining = remainingUploads(uploadsDirectory);
+        }
+        assertThat(remaining)
+                .as("the MCP mount must delete every ancestor-spooled upload at request end")
+                .isEmpty();
+        assertThat(spooled).allSatisfy(path -> assertThat(Files.exists(path))
+                .as("spooled upload %s must not survive the request", path)
+                .isFalse());
+    }
+
+    private static List<Path> remainingUploads(Path uploadsDirectory) throws Exception {
+        if (!Files.exists(uploadsDirectory)) {
+            return List.of();
+        }
+        try (Stream<Path> entries = Files.list(uploadsDirectory)) {
+            return entries.toList();
+        }
     }
 
     private static McpRequestLifecycleObserver throwingObserver() {
