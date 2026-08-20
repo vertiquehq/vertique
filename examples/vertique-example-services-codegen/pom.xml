@@ -137,6 +137,21 @@ SPDX-License-Identifier: EUPL-1.2
                         <groupId>dev.vertique</groupId>
                         <artifactId>vertique-rest-openapi-plugin</artifactId>
                         <version>${project.version}</version>
+                        <!--
+                          Realm-isolation salt, not dependency hygiene. Maven keys its plugin realm cache on the
+                          plugin's coordinates AND its dependency list, exclusions included
+                          (CacheUtils.dependenciesEquals in maven-core 3.9.9). A per-module exclusion therefore
+                          forces this module its own ClassRealm, so it does not share Swagger's static
+                          ModelConverters singleton with the other example modules under -T1C. The coordinate is
+                          reserved and matches nothing, so it excludes no real artifact. See ADR-0013 and the guard
+                          in release/tests/openapi-realm-isolation-contract.test.mjs.
+                        -->
+                        <exclusions>
+                            <exclusion>
+                                <groupId>dev.vertique.build.plugin-realm-salt</groupId>
+                                <artifactId>vertique-example-services-codegen</artifactId>
+                            </exclusion>
+                        </exclusions>
                     </dependency>
                 </dependencies>
                 <executions>
