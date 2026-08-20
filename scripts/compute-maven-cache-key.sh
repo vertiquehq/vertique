@@ -23,9 +23,14 @@ set -euo pipefail
 # `>> "$GITHUB_OUTPUT"` the result.
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$root"
 
+# Relative paths only: an absolute-path prefix embedded in the per-file hash
+# lines would make the digest depend on the checkout location rather than
+# file content, needlessly differing between a developer's machine and CI
+# (or between CI providers) even when nothing actually changed.
 digest="$(
-  find "$root" -name pom.xml \
+  find . -name pom.xml \
       -not -path '*/target/*' \
       -not -path '*/.git/*' \
     | LC_ALL=C sort \
