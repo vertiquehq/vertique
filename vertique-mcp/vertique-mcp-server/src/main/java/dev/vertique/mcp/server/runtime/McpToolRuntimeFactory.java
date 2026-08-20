@@ -4,7 +4,6 @@
 package dev.vertique.mcp.server.runtime;
 
 import dev.vertique.core.exception.ConfigurationException;
-import dev.vertique.core.json.JsonMapperProfile;
 import dev.vertique.core.json.JsonMapperProfileRegistry;
 import dev.vertique.core.json.JsonProfileId;
 import dev.vertique.json.JsonConfig;
@@ -27,18 +26,22 @@ import java.util.TreeMap;
  * The sole construction path for generated tool descriptors and their profile bindings.
  *
  * <p>One generated invoker obtains exactly one {@link McpToolRuntime} from this factory during
- * application composition. The factory resolves the effective JSON profile once, proves the selected
- * mapper safe for remote input, and returns an immutable binding that privately retains the exact
- * stable mapper. No profile lookup, generator construction, or descriptor assembly happens on the
- * request path. Application code neither calls nor implements this type; its injected constructor is
- * package-private so Dagger can create the binding without adding an application-callable
- * construction path.
+ * application composition. The factory resolves the effective JSON profile once and returns an
+ * immutable binding that privately retains the exact stable mapper. No profile lookup, generator
+ * construction, or descriptor assembly happens on the request path. Application code neither calls
+ * nor implements this type; its injected constructor is package-private so Dagger can create the
+ * binding without adding an application-callable construction path.
+ *
+ * <p>The framework does not statically prove the selected mapper safe for remote input: a profile
+ * exposes an application-owned {@link com.fasterxml.jackson.databind.ObjectMapper}, and the
+ * framework-shipped profiles are safe by default. The unsafe mapper configurations an
+ * application-supplied profile must not enable for a remotely reachable tool are documented in the
+ * module reference, not enforced here.
  */
 @Singleton
 public final class McpToolRuntimeFactory {
 
     private final McpJsonProfileResolver profileResolver;
-    private final McpJsonProfileSafetyValidator safetyValidator;
 
     /**
      * Binds the factory to the registries and configuration that select an effective profile.
@@ -50,16 +53,14 @@ public final class McpToolRuntimeFactory {
     @Inject
     McpToolRuntimeFactory(JsonMapperProfileRegistry profiles, JsonConfig jsonConfig, McpServerConfig mcpConfig) {
         this.profileResolver = new McpJsonProfileResolver(profiles, jsonConfig, mcpConfig);
-        this.safetyValidator = new McpJsonProfileSafetyValidator();
     }
 
     /**
      * Builds the one immutable runtime binding of a generated tool.
      *
-     * <p>The effective JSON profile is resolved once and its mapper is proven safe for remote input
-     * before any schema exists. Binding the proven profile to the profile-aware schema generator, and
-     * with it the returned {@link McpToolRuntime}, lands with the schema slice; until then this method
-     * performs the composition-time checks and then reports the unbound step.
+     * <p>The effective JSON profile is resolved once. Binding the resolved profile to the
+     * profile-aware schema generator, and with it the returned {@link McpToolRuntime}, lands with the
+     * schema slice; until then this method resolves the profile and then reports the unbound step.
      *
      * @param <I> the generated input-carrier record type
      * @param name the unique published tool name
@@ -85,8 +86,7 @@ public final class McpToolRuntimeFactory {
             List<McpToolParameterMetadata> parameters,
             @Nullable JsonProfileId declaredJsonProfile,
             McpToolAccess access) {
-        JsonMapperProfile effectiveProfile = profileResolver.resolve(declaredJsonProfile);
-        safetyValidator.validate(effectiveProfile, inputCarrierType, structuredOutputType);
+        profileResolver.resolve(declaredJsonProfile);
         throw new UnsupportedOperationException(
                 "MCP tool schema generation is bound to the profile-aware schema generator in a later slice");
     }

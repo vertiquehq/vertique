@@ -46,9 +46,9 @@ method directly.
 
 `McpToolRuntimeFactory` is the single construction path for a generated tool's descriptor and
 profile binding. It is a generated-runtime contract: application code neither calls nor implements
-it, and `McpToolRuntime` has no public constructor. Per tool it resolves the effective profile,
-validates the profile's mapper, and returns an immutable binding that privately retains the exact
-stable mapper. No profile lookup happens on the request path.
+it, and `McpToolRuntime` has no public constructor. Per tool it resolves the effective profile and
+returns an immutable binding that privately retains the exact stable mapper. No profile lookup
+happens on the request path.
 
 ### Effective profile resolution
 
@@ -66,30 +66,38 @@ explicitly selected profile that is not registered fails composition, before the
 The configured `mcp.jsonProfile` default is validated independently, even when MCP is disabled or
 its mount is shadowed — so an invalid deployment configuration cannot lie dormant.
 
-### Profile mapper safety validation
+### JSON mapper safety is the profile's responsibility
 
-Before any tool's binding is built, the server validates each selected profile mapper together with
-every type reachable from that tool's arguments and structured result. Reachability is derived from
-the mapper itself — its `TypeFactory` and its effective serialization/deserialization introspection,
-mix-ins included — rather than from raw reflection or a hand-maintained type allowlist, so records,
-inherited properties, containers, map keys, temporals, and cyclic graphs are all covered.
+A JSON profile exposes an application-owned `ObjectMapper`, and MCP binds a tool's payloads to
+whichever profile it selects. Vertique does **not** statically inspect that mapper to prove it safe
+for remote input — proving an arbitrary application `ObjectMapper` cannot deserialize an
+attacker-chosen type is not a guarantee this framework (or any mainstream one) makes. Instead the
+framework-shipped profiles are safe by default, and an application that supplies its own profile for
+a remotely reachable tool owns keeping it safe.
 
-A reachable type is rejected when it enables Jackson default typing, or when its polymorphism is
-anything other than a closed `@JsonTypeInfo(use = Id.NAME)` graph with a finite, unique, explicit
-`@JsonSubTypes` logical-name allowlist that Jackson's own resolved subtype mappings agree with.
-`Id.CLASS`, `Id.MINIMAL_CLASS`, `Id.CUSTOM`, `Id.DEDUCTION`, custom type resolvers or id resolvers,
-duplicate or blank logical names, and unbounded base contracts all fail composition. Raw, wildcard,
-type-variable, unresolved, or introspection-failing types fail as bounded composition errors.
+The framework profiles (`vertx`, `vertique`, `vertique-strict`) ship with none of the unsafe
+configurations below, so the zero-config path is safe. When you author your own profile for an MCP
+tool, do **not** enable, on its mapper, any configuration that lets the wire choose the concrete
+Java type to instantiate:
 
-Custom serializers and deserializers on otherwise supported types are **trusted application code**
-and remain accepted; they are bounded by schema-first input and by size- and schema-checked output.
-Vertique does not claim to statically prove them semantically safe. Failure messages name the
-profile id, the resolved tool type, and the violated rule, are capped at 1,024 UTF-16 code units,
-and never include a payload or serialized value. Profile selection cannot opt out of this check.
+- **Jackson default typing** — `activateDefaultTyping(...)` / `enableDefaultTyping(...)` in any
+  form. This is the single setting that turns a mapper into a polymorphic-deserialization (gadget)
+  vector for every type; leave it off.
+- **Open polymorphism** on any type reachable from a tool's arguments — `@JsonTypeInfo` with
+  `Id.CLASS`, `Id.MINIMAL_CLASS`, `Id.CUSTOM`, `Id.DEDUCTION`, or a custom
+  `@JsonTypeResolver`/`@JsonTypeIdResolver`. Prefer a closed `@JsonTypeInfo(use = Id.NAME)` with a
+  finite, explicit `@JsonSubTypes` allowlist so the wire can only select a class you named.
+- **`@JsonTypeInfo(defaultImpl = …)`, `addAbstractTypeMapping(…)`, or a
+  `DeserializationProblemHandler`** that resolves an unknown or absent type id to a class outside
+  that allowlist.
+
+Custom serializers and deserializers on otherwise-supported types are ordinary trusted application
+code and need no special treatment. If a tool has no application-supplied profile, it inherits a
+framework profile and this section does not apply.
 
 ### What is not here yet
 
-This version composes the tool registry, the effective profile, and the mapper safety gate. Two
+This version composes the tool registry and the effective profile. Two
 things are deliberately still absent, and both arrive with their owning slices:
 
 - **Schema generation.** Descriptors carry a minimal, valid object input schema rather than a
