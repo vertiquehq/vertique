@@ -14,6 +14,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import jakarta.annotation.Nullable;
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.nio.CharBuffer;
 import java.nio.charset.CharacterCodingException;
 import java.nio.charset.CharsetDecoder;
 import java.nio.charset.CodingErrorAction;
@@ -86,7 +87,7 @@ final class McpStrictJsonReader {
         if (utf8 == null) {
             return Result.rejected(Rejection.MALFORMED);
         }
-        String json;
+        CharBuffer json;
         try {
             json = decodeStrictUtf8(utf8);
         } catch (CharacterCodingException invalidUtf8) {
@@ -101,15 +102,15 @@ final class McpStrictJsonReader {
      * Decodes bytes as strict UTF-8, reporting malformed sequences and lone surrogates.
      *
      * @param utf8 the raw request bytes
-     * @return the decoded text
+     * @return the decoded characters as an array-backed buffer
      * @throws CharacterCodingException when the bytes are not valid UTF-8
      */
-    private static String decodeStrictUtf8(byte[] utf8) throws CharacterCodingException {
+    private static CharBuffer decodeStrictUtf8(byte[] utf8) throws CharacterCodingException {
         CharsetDecoder decoder = StandardCharsets.UTF_8
                 .newDecoder()
                 .onMalformedInput(CodingErrorAction.REPORT)
                 .onUnmappableCharacter(CodingErrorAction.REPORT);
-        return decoder.decode(ByteBuffer.wrap(utf8)).toString();
+        return decoder.decode(ByteBuffer.wrap(utf8));
     }
 
     // --- Bounded explicit-stack parse ---
@@ -117,11 +118,11 @@ final class McpStrictJsonReader {
     /**
      * Parses one complete JSON value from decoded text using an explicit container stack.
      *
-     * @param json the strict-UTF-8-decoded request text
+     * @param json the strict-UTF-8-decoded request characters
      * @return the bounded value, or a classified rejection
      */
-    private Result parse(String json) {
-        try (JsonParser parser = PARSE_FACTORY.createParser(json)) {
+    private Result parse(CharBuffer json) {
+        try (JsonParser parser = PARSE_FACTORY.createParser(json.array(), json.arrayOffset(), json.remaining())) {
             Deque<Frame> stack = new ArrayDeque<>();
             JsonNode root = null;
 
@@ -156,21 +157,14 @@ final class McpStrictJsonReader {
                 JsonNode value;
                 Frame opened = null;
                 switch (token) {
-                    case START_OBJECT -> {
+                    case START_OBJECT, START_ARRAY -> {
                         if (stack.size() + 1 > maxDepth) {
                             return Result.rejected(Rejection.MAX_DEPTH);
                         }
-                        ObjectNode object = NODE_FACTORY.objectNode();
-                        value = object;
-                        opened = new Frame(object);
-                    }
-                    case START_ARRAY -> {
-                        if (stack.size() + 1 > maxDepth) {
-                            return Result.rejected(Rejection.MAX_DEPTH);
-                        }
-                        ArrayNode array = NODE_FACTORY.arrayNode();
-                        value = array;
-                        opened = new Frame(array);
+                        JsonNode container =
+                                token == JsonToken.START_OBJECT ? NODE_FACTORY.objectNode() : NODE_FACTORY.arrayNode();
+                        value = container;
+                        opened = new Frame(container);
                     }
                     case VALUE_STRING -> {
                         String text = parser.getText();
