@@ -3,6 +3,7 @@
 
 package dev.vertique.input.processing;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -1763,6 +1764,120 @@ class DefaultInputObjectProcessorTest {
         }
     }
 
+    // --- Schema-free traversal (S6d) ---
+
+    /**
+     * Pins the frozen contract: schema-free traversal — a raw collection, a Map/Object target, a
+     * wire/declared shape mismatch, an unknown subtree — has no field-name owner and never invokes
+     * {@link InputFieldNameResolver#logicalName}, while {@link InputValueContext#ownerType()} still
+     * carries the traversal's processing provenance.
+     */
+    @Nested
+    @DisplayName("schema-free traversal")
+    class SchemaFreeTraversal {
+
+        @Test
+        @DisplayName("a raw-collection body and an unknown subtree never consult the field-name resolver")
+        void schemaFreeFragmentNeverConsultsTheResolver() {
+            InputFieldNameResolver failing = new InputFieldNameResolver() {
+                @Override
+                public String logicalName(Class<?> ownerType, String wireName) {
+                    throw new AssertionError("logicalName(" + ownerType.getName() + ", \"" + wireName
+                            + "\") must not be called for a schema-free fragment — no key sent to it "
+                            + "could ever match a declared field, so the projection is provably a no-op");
+                }
+            };
+
+            // Raw-collection body: List (no element schema — the element is a Map, which carries no
+            // property set), so each Map element is dispatched against List.class's own metadata,
+            // which itself declares no fields.
+            Map<String, Object> rawElement = new LinkedHashMap<>();
+            rawElement.put("key", "value");
+            List<Object> rawListBody = new ArrayList<>(List.of(rawElement));
+
+            assertDoesNotThrow(
+                    () -> processor.processInput(
+                            rawListBody, List.class, EffectiveInputPolicies.NONE, InputLocation.BODY, failing),
+                    "a raw-collection body must never call logicalName");
+
+            // Unknown subtree: an unannotated Object field is not recorded in its owner's metadata at
+            // all, so neither the outer key nor anything inside its Map value can ever match a
+            // declared property.
+            Map<String, Object> unknownValue = new LinkedHashMap<>();
+            unknownValue.put("anyKey", "anyValue");
+            Map<String, Object> unknownSubtreeBody = new LinkedHashMap<>();
+            unknownSubtreeBody.put("misc", unknownValue);
+
+            assertDoesNotThrow(
+                    () -> processor.processInput(
+                            unknownSubtreeBody,
+                            UnknownSubtreeHolder.class,
+                            EffectiveInputPolicies.NONE,
+                            InputLocation.BODY,
+                            failing),
+                    "an unknown subtree must never call logicalName");
+        }
+
+        @Test
+        @DisplayName("a schema-free fragment still reports its provenance owner to policies")
+        void provenanceOwnerIsStillReportedToPolicies() {
+            List<InputValueContext> seen = new ArrayList<>();
+            DefaultInputObjectProcessor engine = new DefaultInputObjectProcessor(
+                    new InputPolicyMetadataResolver(),
+                    cls -> (value, context) -> {
+                        seen.add(context);
+                        return value;
+                    },
+                    cls -> {
+                        throw new IllegalArgumentException("no sanitizer expected: " + cls);
+                    });
+            var policies = new EffectiveInputPolicies(List.of(TestTrimCanonicalizer.class), List.of());
+
+            Map<String, Object> rawElement = new LinkedHashMap<>();
+            rawElement.put("key", "  hello  ");
+            List<Object> rawListBody = new ArrayList<>(List.of(rawElement));
+
+            engine.processInput(rawListBody, List.class, policies, InputLocation.BODY, InputFieldNameResolver.IDENTITY);
+
+            InputValueContext listLeaf = seen.stream()
+                    .filter(c -> "[0].key".equals(c.path()))
+                    .findFirst()
+                    .orElseThrow(() ->
+                            new AssertionError("no InputValueContext was recorded for the raw-collection leaf; the "
+                                    + "invocation-level chain never reached it; recorded: " + seen));
+            assertEquals(
+                    List.class,
+                    listLeaf.ownerType(),
+                    "the raw container class is still reported as processing provenance even though it "
+                            + "is no longer a field-name owner");
+
+            seen.clear();
+            Map<String, Object> unknownValue = new LinkedHashMap<>();
+            unknownValue.put("anyKey", "  world  ");
+            Map<String, Object> unknownSubtreeBody = new LinkedHashMap<>();
+            unknownSubtreeBody.put("misc", unknownValue);
+
+            engine.processInput(
+                    unknownSubtreeBody,
+                    UnknownSubtreeHolder.class,
+                    policies,
+                    InputLocation.BODY,
+                    InputFieldNameResolver.IDENTITY);
+
+            InputValueContext subtreeLeaf = seen.stream()
+                    .filter(c -> "misc.anyKey".equals(c.path()))
+                    .findFirst()
+                    .orElseThrow(() ->
+                            new AssertionError("no InputValueContext was recorded for the unknown-subtree leaf; the "
+                                    + "invocation-level chain never reached it; recorded: " + seen));
+            assertEquals(
+                    UnknownSubtreeHolder.class,
+                    subtreeLeaf.ownerType(),
+                    "the enclosing type is still reported as processing provenance for a value behind an "
+                            + "unannotated Object field");
+        }
+    }
+
     // =========================================================================
     // Test DTOs
     // =========================================================================
@@ -2167,6 +2282,17 @@ class DefaultInputObjectProcessorTest {
 
         @Canonicalize(TestTrimCanonicalizer.class)
         List<String> tags;
+    }
+
+    /**
+     * DTO whose sole field is unannotated and {@code Object}-typed. {@code misc} carries no policy of
+     * its own and no statically known property set, so it is not recorded in
+     * {@link InputPolicyMetadataResolver#resolve} at all — this class's own metadata therefore
+     * declares no fields, making both the {@code misc} key and everything inside its {@code Map}
+     * value an "unknown subtree" schema-free fragment.
+     */
+    static class UnknownSubtreeHolder {
+        Object misc;
     }
 
     // =========================================================================

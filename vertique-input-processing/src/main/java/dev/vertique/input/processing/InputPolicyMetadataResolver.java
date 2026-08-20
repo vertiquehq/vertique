@@ -434,10 +434,15 @@ class InputPolicyMetadataResolver {
      * through the {@link Collection} branch before this test is reached, because element traversal
      * is a collection concern.
      *
+     * <p>Package-private rather than private because {@link OwnerTypeWalk} must decide descent by
+     * exactly this rule: the owner set it publishes is only correct if it stops where the walker
+     * stops, and a second copy of the predicate is precisely the duplicated-classification defect
+     * that walk exists to remove.
+     *
      * @param type the declared field type
      * @return {@code true} if the walker should resolve {@code type}'s own metadata at descent
      */
-    private static boolean isDescendableObject(Class<?> type) {
+    static boolean isDescendableObject(Class<?> type) {
         return !TypeClassifier.isScalarLeaf(type)
                 && type != Object.class
                 && !type.isArray()

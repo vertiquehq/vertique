@@ -53,6 +53,13 @@ import javax.tools.Diagnostic;
  * {@code NestedDto}. See {@link #buildFieldModel} for the full rule, including raw
  * {@code Optional} handling.
  *
+ * <p>A {@code Map}-typed field is <em>schema-free</em> ({@link FieldKind#OTHER}), never a nested
+ * DTO: its keys are arbitrary, so it carries no statically known property set. The test is
+ * assignability to {@code java.util.Map}, so a {@code HashMap}-typed field classifies identically.
+ * This mirrors {@code InputPolicyMetadataResolver.isDescendableObject} in
+ * {@code vertique-input-processing}, which excludes {@code Map} from descent — an unannotated
+ * {@code Map} field therefore yields no {@link FieldModel} on either path.
+ *
  * <p>Arrays classify exactly like collections — a {@code NestedDto[]} field is
  * {@link FieldKind#COLLECTION_OF_DTO} and a {@code String[]} field is
  * {@link FieldKind#COLLECTION_OF_STRINGS} — because both shapes arrive as a JSON array carrying
@@ -100,6 +107,9 @@ public final class AnnotationCollector {
 
     /** FQN of the {@code java.util.Optional} wrapper that is transparent for classification. */
     private static final String OPTIONAL_FQN = "java.util.Optional";
+
+    /** FQN of the container interface whose {@code E} binding decides a collection's element type. */
+    static final String COLLECTION_FQN = "java.util.Collection";
 
     private final CodegenContext ctx;
 
@@ -391,7 +401,32 @@ public final class AnnotationCollector {
                     : null;
         }
 
-        // Nested object (non-scalar, non-collection, non-array — arrays returned above)
+        // Map fields are schema-free — never nested DTOs. A Map's keys are arbitrary, so it carries
+        // no statically known property set to generate a switch over. This mirrors
+        // InputPolicyMetadataResolver.isDescendableObject in vertique-input-processing, which
+        // excludes Map from descent and therefore drops an unannotated Map field entirely; without
+        // this branch the DECLARED fallthrough below would classify the field as NESTED_DTO and
+        // emit a `dispatchNested(v, Map.class, …)` arm, so the generated path would report
+        // Map (or a Map subtype) as the InputValueContext.ownerType for keys inside the field
+        // while the reflective path reused the enclosing DTO. The test is assignability, not an
+        // FQN match, so a HashMap-typed field classifies identically — exactly the reflective
+        // resolver's `Map.class.isAssignableFrom(rawType)`. Placed after the collection/array
+        // branch, which owns element-wise handling for anything that is also a Collection.
+        if (isMap(type)) {
+            return hasAnnotations
+                    ? new FieldModel(
+                            name,
+                            FieldKind.OTHER,
+                            canonChain,
+                            sanitChain,
+                            skipCanon,
+                            skipSanit,
+                            null,
+                            ctx.types().erasure(type))
+                    : null;
+        }
+
+        // Nested object (non-scalar, non-collection, non-array, non-map — arrays returned above)
         if (type.getKind() == TypeKind.DECLARED && !isScalarOrEnum(type)) {
             TypeMirror erasedType = ctx.types().erasure(type);
             return new FieldModel(
@@ -551,7 +586,22 @@ public final class AnnotationCollector {
      * @return {@code true} for collection types
      */
     private boolean isCollection(TypeMirror type) {
-        return isAssignableTo(type, "java.util.Collection");
+        return isAssignableTo(type, COLLECTION_FQN);
+    }
+
+    /**
+     * Returns {@code true} if the type mirror is assignable to {@link java.util.Map}.
+     *
+     * <p>Assignability rather than an FQN comparison, so a {@code HashMap}-typed field classifies
+     * like a {@code Map}-typed one — the same test
+     * ({@code Map.class.isAssignableFrom(rawType)}) the reflective
+     * {@code InputPolicyMetadataResolver} applies.
+     *
+     * @param type the type mirror to test
+     * @return {@code true} for map types
+     */
+    private boolean isMap(TypeMirror type) {
+        return isAssignableTo(type, "java.util.Map");
     }
 
     /**
@@ -574,6 +624,11 @@ public final class AnnotationCollector {
      * any {@code java.util.Optional} layers so {@code List<Optional<String>>} yields
      * {@code String} (and therefore classifies as {@link FieldKind#COLLECTION_OF_STRINGS}).
      *
+     * <p>The element comes from the {@code Collection<E>} supertype binding (see
+     * {@link #collectionElementBinding}), never from argument position: a
+     * {@code Fixed<T> extends ArrayList<String>} binds {@code String} elements however it is
+     * parameterized, and a {@code Weird<A, B> extends ArrayList<B>} binds its second argument.
+     *
      * <p>Wildcard and type-variable element types are normalized to their upper bound first (see
      * {@link #normalizeToBound}), so {@code List<? extends Child>} and
      * {@code List<Optional<? extends Child>>} both yield {@code Child} — the element type Jackson
@@ -586,13 +641,65 @@ public final class AnnotationCollector {
      * collections, element types that do not normalize to a declared type (e.g. nested arrays or
      * primitives), and raw {@code Optional} elements.
      *
+     * <p>The caller's {@code isCollection} check is the only gate: it tests assignability to
+     * {@code java.util.Collection} on the raw class alone, not whether {@code type} itself carries
+     * local type arguments. A concrete, non-generic subtype such as
+     * {@code final class Dtos extends ArrayList<Dto> {}} used as the plain field type {@code Dtos}
+     * has an empty {@code dt.getTypeArguments()} — it declares no type parameters of its own — yet
+     * its element is still fixed by its declaration. Rejecting on that emptiness here would
+     * conflate "raw use of a generic type" with "non-generic type", and {@link #collectionElementBinding}
+     * already answers "raw" correctly on its own: a genuinely raw use resolves through
+     * {@code directSupertypes} to a raw {@code Collection} whose {@code getTypeArguments()} is
+     * empty, so its own base case returns {@code null} without any gate needed here.
+     *
      * @param type the collection type mirror
      * @return the element type mirror, or {@code null} if not determinable
      */
     private TypeMirror extractCollectionElementType(TypeMirror type) {
         if (!(type instanceof DeclaredType dt)) return null;
-        if (dt.getTypeArguments().isEmpty()) return null;
-        return normalizeElementType(dt.getTypeArguments().get(0));
+        TypeMirror element = collectionElementBinding(ctx, dt);
+        return element == null ? null : normalizeElementType(element);
+    }
+
+    /**
+     * Resolves {@code E} from the {@code Collection<E>} supertype binding of a collection type.
+     *
+     * <p>Climbs {@link javax.lang.model.util.Types#directSupertypes} until {@code java.util.Collection}
+     * itself is reached and returns its single type argument. {@code directSupertypes} returns the
+     * supertypes of a {@link DeclaredType} <em>already substituted</em> with the arguments seen at the
+     * use site — {@code Weird<Other, Dto>} yields {@code ArrayList<Dto>}, and a nested binding such as
+     * {@code Opt<Dto> extends ArrayList<Optional<T>>} yields {@code ArrayList<Optional<Dto>>} — so no
+     * substitution environment has to be maintained here.
+     *
+     * <p>The result is a type argument as written at its declaration site and may still be a wildcard,
+     * a type variable or an {@code Optional} layer; callers run it through
+     * {@link #normalizeElementType} exactly as they would a directly-declared argument.
+     *
+     * <p>This is the APT counterpart of {@code TypeClassifier}'s reflective supertype walk in
+     * {@code vertique-input-processing}: the two must resolve the same element or the generated and
+     * reflective paths dispatch a collection's elements against different owners.
+     *
+     * @param ctx  the codegen context supplying {@code Types} and {@code Elements}
+     * @param type the collection type mirror
+     * @return the bound element type, or {@code null} when the type is not a collection or carries no
+     *         resolvable binding
+     */
+    static TypeMirror collectionElementBinding(CodegenContext ctx, TypeMirror type) {
+        if (!(type instanceof DeclaredType dt) || !(dt.asElement() instanceof TypeElement element)) return null;
+        if (COLLECTION_FQN.contentEquals(element.getQualifiedName())) {
+            List<? extends TypeMirror> args = dt.getTypeArguments();
+            return args.size() == 1 ? args.get(0) : null;
+        }
+        TypeElement collectionEl = ctx.elements().getTypeElement(COLLECTION_FQN);
+        if (collectionEl == null) return null;
+        TypeMirror erasedCollection = ctx.types().erasure(collectionEl.asType());
+        for (TypeMirror supertype : ctx.types().directSupertypes(dt)) {
+            if (!(supertype instanceof DeclaredType superDeclared)) continue;
+            if (!ctx.types().isAssignable(ctx.types().erasure(superDeclared), erasedCollection)) continue;
+            TypeMirror bound = collectionElementBinding(ctx, superDeclared);
+            if (bound != null) return bound;
+        }
+        return null;
     }
 
     /**
@@ -626,7 +733,7 @@ public final class AnnotationCollector {
             if (wrapped == null || wrapped.getKind() != TypeKind.DECLARED) return null;
             arg = wrapped;
         }
-        if (isCollection(arg) || isAssignableTo(arg, "java.util.Map")) return null;
+        if (isCollection(arg) || isMap(arg)) return null;
         return arg;
     }
 

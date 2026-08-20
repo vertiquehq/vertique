@@ -214,7 +214,7 @@ class SanitizationContractsTest {
     class InputFieldNameResolverTest {
 
         @Test
-        @DisplayName("public members match the frozen ledger (one abstract method plus IDENTITY)")
+        @DisplayName("public members match the frozen ledger (one abstract method, one default method, plus IDENTITY)")
         void publicMembersMatchLedger() {
             Set<String> methods = Arrays.stream(InputFieldNameResolver.class.getDeclaredMethods())
                     .filter(method -> Modifier.isPublic(method.getModifiers()))
@@ -225,7 +225,7 @@ class SanitizationContractsTest {
                                     .collect(Collectors.joining(","))
                             + ")")
                     .collect(Collectors.toCollection(TreeSet::new));
-            assertEquals(new TreeSet<>(Set.of("logicalName(Class,String)")), methods);
+            assertEquals(new TreeSet<>(Set.of("logicalName(Class,String)", "precompute(Class)")), methods);
 
             Set<String> fields = Arrays.stream(InputFieldNameResolver.class.getDeclaredFields())
                     .filter(field -> Modifier.isPublic(field.getModifiers()))
@@ -245,6 +245,12 @@ class SanitizationContractsTest {
                     "InputFieldNameResolver is published as a lambda target and must stay "
                             + "@FunctionalInterface — a second abstract method would break every "
                             + "implementation");
+        }
+
+        @Test
+        @DisplayName("IDENTITY inherits the no-op precompute")
+        void identityPrecomputeIsANoOp() {
+            assertDoesNotThrow(() -> InputFieldNameResolver.IDENTITY.precompute(Object.class));
         }
     }
 

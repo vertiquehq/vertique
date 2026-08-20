@@ -16,6 +16,8 @@ import io.vertx.ext.web.RoutingContext;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
 import java.util.Collection;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 
 /**
  * Fallback {@link RequestBodyDecoder} that decodes JSON request bodies.
@@ -44,6 +46,24 @@ import java.util.Collection;
  */
 class JsonRequestBodyDecoder implements RequestBodyDecoder {
 
+    /**
+     * Resolved {@link JavaType}s for declared parameterized collection body types, keyed by the
+     * declared {@link Type} itself.
+     *
+     * <p>{@link TypeFactory#constructType(Type)} walks the declared type's generic hierarchy to bind
+     * {@code Collection<E>}, and Jackson's own type cache does not amortize a
+     * {@link ParameterizedType} input, so the walk would otherwise run per request. The
+     * {@link TypeFactory} it resolves against is always {@code DatabindCodec.mapper()}'s — a
+     * {@link JavaType} is mapper-independent, so the cached value is valid whatever profile mapper
+     * binds the elements.
+     *
+     * <p>Retention is bounded by the set of distinct declared body parameter types, which is fixed
+     * at route registration; the reflective {@link ParameterizedType} implementations define
+     * {@code equals}/{@code hashCode}, so routes declaring the same type share one entry. This
+     * decoder is a singleton, so the map dies with its Dagger component.
+     */
+    private final ConcurrentMap<Type, JavaType> declaredCollectionTypes = new ConcurrentHashMap<>();
+
     @Override
     public int priority() {
         return 1100;
@@ -64,8 +84,8 @@ class JsonRequestBodyDecoder implements RequestBodyDecoder {
     /**
      * Decodes the request body to the target type using JSON deserialization.
      *
-     * <p>Handles both JSON objects and JSON arrays. For {@code List<T>} target types,
-     * the generic type parameter is used to determine the element class for mapping.
+     * <p>Handles both JSON objects and JSON arrays. For collection target types the full declared
+     * generic type drives element binding (see {@link #decodeArray}).
      *
      * @param ctx         the current routing context (unused by this decoder)
      * @param body        the request body value
@@ -120,6 +140,40 @@ class JsonRequestBodyDecoder implements RequestBodyDecoder {
      * Uses {@link TypeFactory} to construct the correct {@link JavaType} so that
      * scalar elements (e.g. Integer → Long) are coerced to the declared element type.
      *
+     * <p>For a collection target carrying declared type info the whole declared type is handed to
+     * {@link TypeFactory#constructType(Type)}, so the element comes from the type's
+     * {@code Collection<E>} supertype binding rather than from a type-argument position: a declared
+     * argument is not the element type ({@code class Weird<A, B> extends ArrayList<B>} declared
+     * {@code Weird<Other, Dto>} binds {@code Dto}). That resolution is memoized in
+     * {@link #declaredCollectionTypes}, so the generic-hierarchy walk runs once per declared type
+     * rather than once per request.
+     *
+     * <p>The gate for entering that resolution is {@code genericType != null} — <em>not</em> whether
+     * {@code genericType} is itself a {@link ParameterizedType}. A concrete, non-generic collection
+     * subtype ({@code final class Dtos extends ArrayList<Dto> {}} used as the plain field/parameter
+     * type {@code Dtos}) reflects as a plain {@link Class}, not a {@code ParameterizedType} — yet
+     * {@link TypeFactory#constructType(Type)} still walks its generic superclass chain and resolves
+     * {@code Dto} correctly, exactly as it does for a directly-parameterized declaration. Gating on
+     * {@code instanceof ParameterizedType} would reject that use site's own type before ever asking
+     * Jackson, the same mistake the reflective {@code TypeClassifier} and the APT
+     * {@code AnnotationCollector} both had to correct — a use site with no local type argument can
+     * still have its element fixed by its own declaration.
+     *
+     * <p>A resolved {@link JavaType} content type of plain {@code java.lang.Object} is <em>not</em> by
+     * itself a signal that there is "no binding to report" — {@code List<Object>}, {@code List<?>},
+     * and {@code Bag<Object>} (a concrete subtype parameterized with {@code Object}) all legitimately
+     * resolve their content type to {@code Object} and must still route through {@link #convertList}
+     * exactly as any other explicitly declared collection does. What distinguishes those from a
+     * genuinely raw target is {@link JavaType#getBindings()}: a directly-parameterized or
+     * generic-supertype-fixed declaration always leaves a non-empty binding behind (verified against
+     * {@code List<Object>}, {@code List<?>}, and {@code Bag<Object>}), while a raw {@code List} with no
+     * generic signature at all — whose content type also resolves to {@code Object} the same way a raw
+     * {@code Collection} does — leaves {@code getBindings()} empty. The gate therefore falls through to
+     * the untyped branch only when content type is {@code Object} <em>and</em> bindings are empty
+     * together; either signal alone is unsafe ({@code Dtos extends ArrayList<SamplePojo>} has empty
+     * bindings too, since its element comes from its own generic superclass rather than a use-site
+     * argument, yet its content type is correctly {@code SamplePojo}, not {@code Object}).
+     *
      * <p>The {@link JavaType} is built the same way regardless of profile; the element binding then
      * routes through {@code profileMapper} when a non-{@code vertx} profile applies (FR-JSON-022/023),
      * or {@code DatabindCodec.mapper()} when {@code profileMapper} is {@code null} (the unchanged vertx
@@ -145,14 +199,31 @@ class JsonRequestBodyDecoder implements RequestBodyDecoder {
             return convertList(jsonArray.getList(), arrayType, profileMapper);
         }
 
-        // List<T>, Set<T>, or other Collection<T> with generic type info
-        if (genericType instanceof ParameterizedType pt) {
-            Type elementType = pt.getActualTypeArguments()[0];
-            if (elementType instanceof Class<?> elementClass) {
-                @SuppressWarnings("unchecked")
-                Class<? extends Collection<?>> collType = (Class<? extends Collection<?>>) targetType;
-                JavaType javaType = tf.constructCollectionType(collType, elementClass);
-                return convertList(jsonArray.getList(), javaType, profileMapper);
+        // List<T>, Set<T>, or other Collection<T> with declared type info. The full declared type
+        // goes to Jackson, which binds the element from the Collection<E> supertype binding — a
+        // declared type argument is not the element type (class Weird<A, B> extends ArrayList<B>
+        // declared Weird<Other, Dto> has element Dto, and no argument position is reliably the
+        // element). The gate is genericType != null, not "is a ParameterizedType": a non-generic
+        // fixed subtype (Dtos extends ArrayList<Dto>, used as the plain type Dtos) reflects as a
+        // Class, not a ParameterizedType, yet Jackson still resolves its element from the class's
+        // own generic superclass.
+        //
+        // A content type of plain Object is NOT by itself "no binding to report" — List<Object>,
+        // List<?>, and Bag<Object> all legitimately resolve to Object and must still convert. The
+        // discriminator is content type == Object AND getBindings().isEmpty() together: a genuinely
+        // raw target (List with no generic signature at all) or an unresolvable owner-bound generic
+        // leaves both signals empty, while every explicitly declared shape leaves at least one of
+        // them non-trivial (a directly-parameterized declaration leaves bindings non-empty; a
+        // generic-supertype-fixed declaration like Dtos leaves content type non-Object even with
+        // empty bindings). Only the fully-empty combination falls through to the untyped branch
+        // below unconverted.
+        if (genericType != null) {
+            JavaType declaredType = declaredCollectionTypes.computeIfAbsent(genericType, tf::constructType);
+            if (declaredType.isCollectionLikeType()
+                    && declaredType.getContentType() != null
+                    && (declaredType.getContentType().getRawClass() != Object.class
+                            || !declaredType.getBindings().isEmpty())) {
+                return convertList(jsonArray.getList(), declaredType, profileMapper);
             }
         }
 

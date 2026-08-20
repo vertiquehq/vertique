@@ -58,4 +58,17 @@ public interface InputFieldNameResolver {
      *         recognize it; never {@code null}
      */
     String logicalName(Class<?> ownerType, String wireName);
+
+    /**
+     * Composes and caches the projection for {@code ownerType} now, so {@link #logicalName} serves it
+     * without introspecting on the request path. The default is a no-op, for a resolver that needs no
+     * per-class state.
+     *
+     * <p>Called at registration by {@code InputObjectProcessor#precomputeFieldNameResolution}, once per
+     * owner type. Implementations must be idempotent and may fail fast: a failure here is a startup
+     * failure, which is the point.
+     *
+     * @param ownerType the type whose projection to compose; must not be {@code null}
+     */
+    default void precompute(Class<?> ownerType) {}
 }

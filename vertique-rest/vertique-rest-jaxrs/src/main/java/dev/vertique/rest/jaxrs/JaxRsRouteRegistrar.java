@@ -415,7 +415,7 @@ public class JaxRsRouteRegistrar {
                     resolvedBodyMapper != null ? resolvedBodyMapper : DatabindCodec.mapper(),
                     JacksonFieldNameResolver::forMapper);
             if (objectProcessor != null) {
-                warmBodyNameProjection(meta, bodyNameResolver);
+                warmBodyNameProjection(meta, objectProcessor, bodyNameResolver);
             }
 
             // (d) Terminal operation invoker. The effective request-body profile mapper resolved at
@@ -522,25 +522,34 @@ public class JaxRsRouteRegistrar {
      * bodies with the same {@link ObjectMapper} share one resolver, so a body type used by many routes
      * is introspected once per router build.
      *
-     * <p>The walk itself is {@link JacksonFieldNameResolver#precomputeGraph} — the same one
-     * {@code WebSocketEndpointRegistrar} uses for its message types, so both boundaries unwrap arrays
-     * and parameterized shapes and follow declared property types identically. Following the property
-     * graph is what makes the published guarantee true: the engine consults the projection of the
-     * owner of <em>every</em> nested fragment, so a body type's nested DTOs would otherwise introspect
-     * on the request path.
+     * <p>The engine owns the walk: {@link InputObjectProcessor#precomputeFieldNameResolution} hands the
+     * resolver every owner type the engine's <em>own</em> descent may pass to
+     * {@link InputFieldNameResolver#logicalName} for that body type, and the registrar contributes only
+     * the declared type. That is what makes the postcondition true rather than approximated — on
+     * return, every statically knowable owner reachable from the body type has had its projection
+     * composed, including the ones no property-based walk can see (a field with no accessor) and the
+     * raw declared classes a shape-mismatched fragment is dispatched against. A boundary that re-derived
+     * the descent rules diverged from them in both directions.
+     *
+     * <p>Two failures therefore move from the request path to registration, which is the point: a
+     * projection that cannot be composed, and a reachable type whose policy annotations conflict.
      *
      * @param meta             the resource method whose body types to compose projections for
+     * @param objectProcessor  the bound engine, whose descent defines the owner set; must not be
+     *                         {@code null}
      * @param bodyNameResolver this route's projection, built from its resolved body mapper
-     * @throws dev.vertique.core.exception.ConfigurationException if a reachable body type's projection
+     * @throws dev.vertique.core.exception.ConfigurationException if a reachable owner's projection
      *                                                            cannot be composed
+     * @throws IllegalStateException if a reachable type declares conflicting policy annotations
      */
-    private static void warmBodyNameProjection(ResourceMethodMeta meta, JacksonFieldNameResolver bodyNameResolver) {
+    private static void warmBodyNameProjection(
+            ResourceMethodMeta meta, InputObjectProcessor objectProcessor, JacksonFieldNameResolver bodyNameResolver) {
         for (ResourceMethodMeta.ParamMeta param : meta.params()) {
             if (param.source() != ResourceMethodMeta.ParamSource.BODY) {
                 continue;
             }
-            bodyNameResolver.precomputeGraph(param.genericType() != null ? param.genericType() : param.type());
-            bodyNameResolver.precomputeGraph(param.componentType());
+            objectProcessor.precomputeFieldNameResolution(
+                    param.genericType() != null ? param.genericType() : param.type(), bodyNameResolver);
         }
     }
 

@@ -8,27 +8,41 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vertique.codegen.test.ProcessorTestHarness;
 import dev.vertique.codegen.test.ProcessorTestHarness.Result;
 import dev.vertique.codegen.test.fixtures.SourceFiles;
+import dev.vertique.core.sanitization.Canonicalizer;
 import dev.vertique.core.sanitization.InputFieldNameResolver;
 import dev.vertique.core.sanitization.InputLocation;
 import dev.vertique.core.sanitization.InputValueContext;
+import dev.vertique.core.sanitization.Sanitizer;
 import dev.vertique.input.processing.ChainResolver;
 import dev.vertique.input.processing.EffectiveInputPolicies;
 import dev.vertique.input.processing.GeneratedInputProcessor;
 import dev.vertique.input.processing.GeneratedInputProcessorDispatcher;
+import dev.vertique.input.processing.InputObjectProcessor;
 import dev.vertique.input.processing.InputTraversalContext;
 import dev.vertique.sanitization.canonicalize.TrimCanonicalizer;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import javax.annotation.processing.AbstractProcessor;
+import javax.annotation.processing.RoundEnvironment;
+import javax.annotation.processing.SupportedAnnotationTypes;
+import javax.annotation.processing.SupportedSourceVersion;
+import javax.lang.model.SourceVersion;
+import javax.lang.model.element.TypeElement;
 import javax.tools.JavaFileObject;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.opentest4j.AssertionFailedError;
 
 /**
  * End-to-end roundtrip integration test for {@link SanitizationProcessor}.
@@ -1448,6 +1462,880 @@ class SanitizationProcessorRoundtripTest {
         case "city_name" -> "cityName";
         default -> wireName;
     };
+
+    // --- Owner-set conformance fixtures (one matrix, compiled twice) ---
+
+    /**
+     * Leaf DTO reached from {@link #CONF_ROOT_DTO} through several container shapes. Carries its own
+     * {@code @Sanitize} so the scanner emits {@code ConfLeafDto_InputProcessor}, which is what makes
+     * it an owner on the generated path as well as the reflective one.
+     */
+    private static final JavaFileObject CONF_LEAF_DTO = SourceFiles.inline("com.example.conf.ConfLeafDto", """
+            package com.example.conf;
+            import dev.vertique.core.sanitization.Sanitize;
+            import dev.vertique.sanitization.sanitize.StripControlCharsSanitizer;
+            public class ConfLeafDto {
+                @Sanitize(StripControlCharsSanitizer.class)
+                public String text;
+            }
+            """);
+
+    /** Target of the accessor-less field: reachable only through a {@code private} field with no accessor. */
+    private static final JavaFileObject CONF_NESTED_DTO = SourceFiles.inline("com.example.conf.ConfNestedDto", """
+            package com.example.conf;
+            import dev.vertique.core.sanitization.Sanitize;
+            import dev.vertique.sanitization.sanitize.StripControlCharsSanitizer;
+            public class ConfNestedDto {
+                @Sanitize(StripControlCharsSanitizer.class)
+                public String label;
+            }
+            """);
+
+    /**
+     * Single-argument generic that is <em>not</em> a container. Both paths must classify a
+     * {@code ConfWrapper<ConfLeafDto>} field to the erased {@code ConfWrapper} and stop — the type
+     * argument is not reachable, which is issue #383's shape.
+     */
+    private static final JavaFileObject CONF_WRAPPER = SourceFiles.inline("com.example.conf.ConfWrapper", """
+            package com.example.conf;
+            public class ConfWrapper<T> {
+                public T value;
+            }
+            """);
+
+    /**
+     * Multi-argument collection subtype binding its element to the <em>first</em> argument, so a
+     * {@code ConfPair<ConfLeafDto, String>} field binds {@code ConfLeafDto} elements — the shape where
+     * "type argument 0" happens to be the right answer.
+     */
+    private static final JavaFileObject CONF_PAIR = SourceFiles.inline("com.example.conf.ConfPair", """
+            package com.example.conf;
+            import java.util.ArrayList;
+            public class ConfPair<A, B> extends ArrayList<A> {}
+            """);
+
+    /**
+     * Collection subtype that <em>fixes</em> its element type, so a {@code ConfFixed<ConfLeafDto>}
+     * field binds {@code String} elements and the declared argument is not the element type at all.
+     */
+    private static final JavaFileObject CONF_FIXED = SourceFiles.inline("com.example.conf.ConfFixed", """
+            package com.example.conf;
+            import java.util.ArrayList;
+            public class ConfFixed<T> extends ArrayList<String> {}
+            """);
+
+    /**
+     * Multi-argument collection subtype binding its element to the <em>second</em> argument, so a
+     * {@code ConfWeird<String, ConfLeafDto>} field binds {@code ConfLeafDto} elements and "type
+     * argument 0" is outright wrong.
+     */
+    private static final JavaFileObject CONF_WEIRD = SourceFiles.inline("com.example.conf.ConfWeird", """
+            package com.example.conf;
+            import java.util.ArrayList;
+            public class ConfWeird<A, B> extends ArrayList<B> {}
+            """);
+
+    /**
+     * The frozen conformance matrix, in one DTO: a non-container generic wrapper, an
+     * {@code Optional}-wrapped DTO, the three collection-subtype shapes whose element is decided by
+     * the {@code Collection<E>} supertype binding rather than by argument position, a nested
+     * container, an accessor-less nested field, a container of maps, a self-reference, and a plain
+     * {@code String} field — the last one being what makes a mismatch-family owner observable when
+     * the wire shape disagrees with the declared shape.
+     */
+    private static final JavaFileObject CONF_ROOT_DTO = SourceFiles.inline("com.example.conf.ConfRootDto", """
+            package com.example.conf;
+            import dev.vertique.core.sanitization.Sanitize;
+            import dev.vertique.sanitization.sanitize.StripControlCharsSanitizer;
+            import java.util.List;
+            import java.util.Map;
+            import java.util.Optional;
+            public class ConfRootDto {
+                public ConfWrapper<ConfLeafDto> wrapped;
+                public Optional<ConfLeafDto> optionalDto;
+                public ConfPair<ConfLeafDto, String> pair;
+                public ConfFixed<ConfLeafDto> fixed;
+                public ConfWeird<String, ConfLeafDto> weird;
+                public List<List<ConfLeafDto>> nestedLists;
+                private ConfNestedDto accessorLess;
+                public List<Map<String, ConfLeafDto>> mapsInList;
+                public ConfRootDto self;
+                @Sanitize(StripControlCharsSanitizer.class)
+                public String name;
+            }
+            """);
+
+    private static final JavaFileObject CONF_RESOURCE = SourceFiles.inline("com.example.conf.ConfResource", """
+            package com.example.conf;
+            import jakarta.ws.rs.POST;
+            import jakarta.ws.rs.Path;
+            @Path("/conf")
+            public class ConfResource {
+                @POST
+                public String create(ConfRootDto body) { return null; }
+            }
+            """);
+
+    /** The compilation unit shared, byte-identical, by both conformance environments. */
+    private static final JavaFileObject[] CONF_SOURCES = {
+        CONF_LEAF_DTO, CONF_NESTED_DTO, CONF_WRAPPER, CONF_PAIR, CONF_FIXED, CONF_WEIRD, CONF_ROOT_DTO, CONF_RESOURCE
+    };
+
+    /** FQN of the conformance root DTO, loaded separately out of each environment's classloader. */
+    private static final String CONF_ROOT_FQN = "com.example.conf.ConfRootDto";
+
+    /** FQN of the generated companion whose presence distinguishes the two environments. */
+    private static final String CONF_ROOT_PROCESSOR_FQN = "com.example.conf.ConfRootDto_InputProcessor";
+
+    // --- Isolated Pair-shape conformance fixtures ---
+
+    /**
+     * The leaf of the isolated matrix. It is reachable from {@link #ISOLATED_ROOT_DTO} through the
+     * {@code ConfPair}-shaped field and through <em>nothing else</em>, which is what makes the
+     * containment assertion about that field's element rather than about a sibling's.
+     */
+    private static final JavaFileObject ISOLATED_LEAF_DTO = SourceFiles.inline("com.example.iso.IsoLeafDto", """
+            package com.example.iso;
+            import dev.vertique.core.sanitization.Sanitize;
+            import dev.vertique.sanitization.sanitize.StripControlCharsSanitizer;
+            public class IsoLeafDto {
+                @Sanitize(StripControlCharsSanitizer.class)
+                public String note;
+            }
+            """);
+
+    /** The multi-argument collection subtype of the isolated matrix. */
+    private static final JavaFileObject ISOLATED_PAIR = SourceFiles.inline("com.example.iso.IsoPair", """
+            package com.example.iso;
+            import java.util.ArrayList;
+            public class IsoPair<A, B> extends ArrayList<A> {}
+            """);
+
+    /**
+     * A root whose only route to {@link #ISOLATED_LEAF_DTO} is the {@code IsoPair}-shaped field. In
+     * the main matrix the same leaf is also reachable through sibling fields, which masks a
+     * divergence on the {@code Pair} shape behind their redundancy; here nothing masks it.
+     */
+    private static final JavaFileObject ISOLATED_ROOT_DTO = SourceFiles.inline("com.example.iso.IsoRootDto", """
+            package com.example.iso;
+            public class IsoRootDto {
+                public IsoPair<IsoLeafDto, String> items;
+            }
+            """);
+
+    private static final JavaFileObject ISOLATED_RESOURCE = SourceFiles.inline("com.example.iso.IsoResource", """
+            package com.example.iso;
+            import jakarta.ws.rs.POST;
+            import jakarta.ws.rs.Path;
+            @Path("/iso")
+            public class IsoResource {
+                @POST
+                public String create(IsoRootDto body) { return null; }
+            }
+            """);
+
+    /** The isolated compilation unit, shared byte-identically by both environments. */
+    private static final JavaFileObject[] ISOLATED_SOURCES = {
+        ISOLATED_LEAF_DTO, ISOLATED_PAIR, ISOLATED_ROOT_DTO, ISOLATED_RESOURCE
+    };
+
+    /** FQN of the isolated root DTO. */
+    private static final String ISOLATED_ROOT_FQN = "com.example.iso.IsoRootDto";
+
+    /** FQN of the isolated root's generated companion. */
+    private static final String ISOLATED_ROOT_PROCESSOR_FQN = "com.example.iso.IsoRootDto_InputProcessor";
+
+    /** FQN of the leaf both paths must reach through the {@code IsoPair}-shaped field alone. */
+    private static final String ISOLATED_LEAF_FQN = "com.example.iso.IsoLeafDto";
+
+    // --- Isolated wildcard-bound-shape conformance fixtures ---
+
+    /**
+     * The leaf of the wildcard matrix, reachable from {@link #WILD_ROOT_DTO} through the
+     * {@code WildOpt}-shaped field and through nothing else.
+     */
+    private static final JavaFileObject WILD_LEAF_DTO = SourceFiles.inline("com.example.wild.WildLeafDto", """
+            package com.example.wild;
+            import dev.vertique.core.sanitization.Sanitize;
+            import dev.vertique.sanitization.sanitize.StripControlCharsSanitizer;
+            public class WildLeafDto {
+                @Sanitize(StripControlCharsSanitizer.class)
+                public String note;
+            }
+            """);
+
+    /**
+     * A collection subtype whose element variable sits inside a <em>wildcard bound</em> nested in the
+     * supertype's type argument. Resolving it needs the substitution to recurse through the wildcard;
+     * a wildcard left unsubstituted keeps {@code T}, which normalizes to its {@code Object} bound and
+     * loses the element entirely.
+     */
+    private static final JavaFileObject WILD_OPT = SourceFiles.inline("com.example.wild.WildOpt", """
+            package com.example.wild;
+            import java.util.ArrayList;
+            import java.util.Optional;
+            public class WildOpt<T> extends ArrayList<Optional<? extends T>> {}
+            """);
+
+    /** A root whose only route to {@link #WILD_LEAF_DTO} is the {@code WildOpt}-shaped field. */
+    private static final JavaFileObject WILD_ROOT_DTO = SourceFiles.inline("com.example.wild.WildRootDto", """
+            package com.example.wild;
+            public class WildRootDto {
+                public WildOpt<WildLeafDto> items;
+            }
+            """);
+
+    private static final JavaFileObject WILD_RESOURCE = SourceFiles.inline("com.example.wild.WildResource", """
+            package com.example.wild;
+            import jakarta.ws.rs.POST;
+            import jakarta.ws.rs.Path;
+            @Path("/wild")
+            public class WildResource {
+                @POST
+                public String create(WildRootDto body) { return null; }
+            }
+            """);
+
+    /** The wildcard compilation unit, shared byte-identically by both environments. */
+    private static final JavaFileObject[] WILD_SOURCES = {WILD_LEAF_DTO, WILD_OPT, WILD_ROOT_DTO, WILD_RESOURCE};
+
+    /** FQN of the wildcard root DTO. */
+    private static final String WILD_ROOT_FQN = "com.example.wild.WildRootDto";
+
+    /** FQN of the wildcard root's generated companion. */
+    private static final String WILD_ROOT_PROCESSOR_FQN = "com.example.wild.WildRootDto_InputProcessor";
+
+    /** FQN of the leaf both paths must reach through the {@code WildOpt}-shaped field alone. */
+    private static final String WILD_LEAF_FQN = "com.example.wild.WildLeafDto";
+
+    // --- Isolated non-generic-subtype-shape conformance fixtures ---
+
+    /**
+     * The leaf of the non-generic-subtype matrix, reachable from {@link #NONGEN_ROOT_DTO} through
+     * the {@code NonGenDtos}-shaped field and through nothing else.
+     */
+    private static final JavaFileObject NONGEN_LEAF_DTO = SourceFiles.inline("com.example.ng.NonGenLeafDto", """
+            package com.example.ng;
+            import dev.vertique.core.sanitization.Sanitize;
+            import dev.vertique.sanitization.sanitize.StripControlCharsSanitizer;
+            public class NonGenLeafDto {
+                @Sanitize(StripControlCharsSanitizer.class)
+                public String note;
+            }
+            """);
+
+    /**
+     * A concrete, non-generic collection subtype whose element is fixed by its own declaration. A
+     * field declared with this type is a plain {@code Class} use site — not a
+     * {@code ParameterizedType} — carrying no local type argument at all, unlike {@link #CONF_FIXED}.
+     */
+    private static final JavaFileObject NONGEN_DTOS = SourceFiles.inline("com.example.ng.NonGenDtos", """
+            package com.example.ng;
+            import java.util.ArrayList;
+            public final class NonGenDtos extends ArrayList<NonGenLeafDto> {}
+            """);
+
+    /** A root whose only route to {@link #NONGEN_LEAF_DTO} is the {@code NonGenDtos}-shaped field. */
+    private static final JavaFileObject NONGEN_ROOT_DTO = SourceFiles.inline("com.example.ng.NonGenRootDto", """
+            package com.example.ng;
+            public class NonGenRootDto {
+                public NonGenDtos items;
+            }
+            """);
+
+    private static final JavaFileObject NONGEN_RESOURCE = SourceFiles.inline("com.example.ng.NonGenResource", """
+            package com.example.ng;
+            import jakarta.ws.rs.POST;
+            import jakarta.ws.rs.Path;
+            @Path("/nongen")
+            public class NonGenResource {
+                @POST
+                public String create(NonGenRootDto body) { return null; }
+            }
+            """);
+
+    /** The non-generic-subtype compilation unit, shared byte-identically by both environments. */
+    private static final JavaFileObject[] NONGEN_SOURCES = {
+        NONGEN_LEAF_DTO, NONGEN_DTOS, NONGEN_ROOT_DTO, NONGEN_RESOURCE
+    };
+
+    /** FQN of the non-generic-subtype root DTO. */
+    private static final String NONGEN_ROOT_FQN = "com.example.ng.NonGenRootDto";
+
+    /** FQN of the non-generic-subtype root's generated companion. */
+    private static final String NONGEN_ROOT_PROCESSOR_FQN = "com.example.ng.NonGenRootDto_InputProcessor";
+
+    /** FQN of the leaf both paths must reach through the {@code NonGenDtos}-shaped field alone. */
+    private static final String NONGEN_LEAF_FQN = "com.example.ng.NonGenLeafDto";
+
+    // --- Isolated owner-bound-inner-class-shape conformance fixtures ---
+
+    /**
+     * The leaf of the owner-bound matrix, reachable from {@link #OWNERBOUND_ROOT_DTO} through the
+     * {@code OwnerBoundOuter<T>.Inner}-shaped field and through nothing else.
+     */
+    private static final JavaFileObject OWNERBOUND_LEAF_DTO =
+            SourceFiles.inline("com.example.ob.OwnerBoundLeafDto", """
+            package com.example.ob;
+            import dev.vertique.core.sanitization.Sanitize;
+            import dev.vertique.sanitization.sanitize.StripControlCharsSanitizer;
+            public class OwnerBoundLeafDto {
+                @Sanitize(StripControlCharsSanitizer.class)
+                public String note;
+            }
+            """);
+
+    /**
+     * An outer/inner pair where the inner class's {@code Collection<E>} binding comes from the
+     * enclosing instance's type argument rather than from any type argument local to {@code Inner}
+     * itself — {@code Inner} declares no type parameters of its own.
+     */
+    private static final JavaFileObject OWNERBOUND_OUTER = SourceFiles.inline("com.example.ob.OwnerBoundOuter", """
+            package com.example.ob;
+            import java.util.ArrayList;
+            public class OwnerBoundOuter<T> {
+                public class Inner extends ArrayList<T> {}
+            }
+            """);
+
+    /**
+     * A root whose only route to {@link #OWNERBOUND_LEAF_DTO} is the
+     * {@code OwnerBoundOuter<T>.Inner}-shaped field.
+     */
+    private static final JavaFileObject OWNERBOUND_ROOT_DTO =
+            SourceFiles.inline("com.example.ob.OwnerBoundRootDto", """
+            package com.example.ob;
+            public class OwnerBoundRootDto {
+                public OwnerBoundOuter<OwnerBoundLeafDto>.Inner items;
+            }
+            """);
+
+    private static final JavaFileObject OWNERBOUND_RESOURCE =
+            SourceFiles.inline("com.example.ob.OwnerBoundResource", """
+            package com.example.ob;
+            import jakarta.ws.rs.POST;
+            import jakarta.ws.rs.Path;
+            @Path("/ownerbound")
+            public class OwnerBoundResource {
+                @POST
+                public String create(OwnerBoundRootDto body) { return null; }
+            }
+            """);
+
+    /** The owner-bound compilation unit, shared byte-identically by both environments. */
+    private static final JavaFileObject[] OWNERBOUND_SOURCES = {
+        OWNERBOUND_LEAF_DTO, OWNERBOUND_OUTER, OWNERBOUND_ROOT_DTO, OWNERBOUND_RESOURCE
+    };
+
+    /** FQN of the owner-bound root DTO. */
+    private static final String OWNERBOUND_ROOT_FQN = "com.example.ob.OwnerBoundRootDto";
+
+    /** FQN of the owner-bound root's generated companion. */
+    private static final String OWNERBOUND_ROOT_PROCESSOR_FQN = "com.example.ob.OwnerBoundRootDto_InputProcessor";
+
+    /**
+     * FQN of the leaf both paths must reach through the {@code OwnerBoundOuter<T>.Inner}-shaped
+     * field alone.
+     */
+    private static final String OWNERBOUND_LEAF_FQN = "com.example.ob.OwnerBoundLeafDto";
+
+    // --- Owner-set conformance ---
+
+    /**
+     * Pins the invariant the empty-owner-set fallback rests on: the set of owner types the
+     * <em>generated</em> path prepares is contained in the set the <em>reflective</em> path prepares,
+     * over one fixture matrix compiled identically by both.
+     *
+     * <p><strong>Why two compilations.</strong> {@code GeneratedInputProcessorDispatcher} resolves a
+     * companion through the target class's own classloader behind a {@code ClassValue}, so once real
+     * APT output is loaded the public entry point selects the <em>generated</em> path for that
+     * {@code Class}. A single compilation would therefore exercise the generated path twice and
+     * report agreement no matter how far {@code AnnotationCollector} and {@code TypeClassifier} had
+     * drifted — a false-positive proof of exactly the claim these tests exist to make. The identical
+     * sources are compiled twice into two isolated harness classloaders: once with
+     * {@link SanitizationProcessor}, once with a {@link NoOpAnnotationProcessor} so no companion
+     * exists and the dispatcher necessarily falls through to reflection.
+     * {@link #compileWithCodegen()} and {@link #compileWithoutCodegen()} each assert their own
+     * environment's companion presence, so the discriminating mechanic cannot silently degrade.
+     *
+     * <p><strong>Containment, not equality — but this matrix no longer demonstrates a surplus.</strong>
+     * A collection subtype's raw container class ({@code ConfPair}, {@code ConfFixed}, {@code
+     * ConfWeird} below) is still the class the reflective engine would dispatch against whenever the
+     * wire shape disagrees with the declared collection shape, and the generated path's {@code
+     * dispatchObjectCollection} arm still never asks for an owner on the raw container — the asymmetry
+     * in what each path <em>dispatches against</em> is unchanged. What changed is the precondition for
+     * being <em>prepared</em> at all: {@link OwnerTypeWalk} now gates preparation on a class's own
+     * resolved metadata declaring at least one field, and none of {@code ConfPair}/{@code
+     * ConfFixed}/{@code ConfWeird} declare one of their own (their instance fields come from {@code
+     * ArrayList}/{@code AbstractList}, which the resolver excludes) — so that mismatch dispatch is
+     * schema-free on both paths, exactly like the {@code String} field's raw declared class already
+     * was, and neither path prepares any of the four. The generated and reflective owner sets are
+     * therefore equal over this particular matrix; containment remains the invariant this test proves
+     * (a shape where the raw container genuinely declares its own field would still show a reflective
+     * surplus), it is simply not exercised by this fixture set any longer.
+     */
+    @Nested
+    @DisplayName("reflective ↔ generated owner-set conformance")
+    class OwnerSetConformance {
+
+        @Test
+        @DisplayName("the generated path's owner set is contained in the reflective path's")
+        void generatedOwnerSetIsContainedInTheReflectiveOne() throws Exception {
+            Set<String> generated = prepareOwners(compileWithCodegen());
+            Set<String> reflective = prepareOwners(compileWithoutCodegen());
+
+            assertTrue(
+                    reflective.containsAll(generated),
+                    () -> ("The generated path prepares an owner the reflective path does not, so"
+                                    + " AnnotationCollector and TypeClassifier have diverged."
+                                    + "\n  generated only: %s\n  generated:      %s\n  reflective:     %s")
+                            .formatted(difference(generated, reflective), generated, reflective));
+
+            // Non-vacuity: containment over an empty generated set would prove nothing, and the two
+            // sets being equal would mean the two environments never diverged — which is what a
+            // broken (single-compilation) mechanic looks like.
+            assertFalse(generated.isEmpty(), "the generated path must prepare at least its own root");
+            assertEquals(
+                    Set.of(),
+                    difference(reflective, generated),
+                    "the reflective path's surplus must now be empty: ConfPair, ConfFixed, and ConfWeird's raw"
+                            + " container classes each declare no fields of their own (their instance fields"
+                            + " come from ArrayList/AbstractList, which the collector excludes), so"
+                            + " OwnerTypeWalk's fields()-emptiness gate now skips preparing them on the"
+                            + " reflective side exactly as the generated path's arms already skip asking for"
+                            + " an owner on the raw container. The String field's raw declared class was"
+                            + " already outside this surplus before this gate existed — String's own metadata"
+                            + " declares no fields either — so neither path ever treated it as a field-name"
+                            + " owner");
+        }
+
+        @Test
+        @DisplayName("containment holds on a root whose only route to its leaf is the Pair-shaped field")
+        void generatedOwnerSetIsContainedInTheReflectiveOneForAnIsolatedPairShape() throws Exception {
+            Set<String> generated =
+                    prepareOwners(compileWithCodegen(ISOLATED_SOURCES, ISOLATED_ROOT_PROCESSOR_FQN), ISOLATED_ROOT_FQN);
+            Set<String> reflective = prepareOwners(
+                    compileWithoutCodegen(ISOLATED_SOURCES, ISOLATED_ROOT_PROCESSOR_FQN), ISOLATED_ROOT_FQN);
+
+            assertTrue(
+                    reflective.containsAll(generated),
+                    () -> ("The generated path prepares an owner the reflective path does not on a shape no"
+                                    + " sibling field can mask, so AnnotationCollector and TypeClassifier have"
+                                    + " diverged on the collection element rule."
+                                    + "\n  generated only: %s\n  generated:      %s\n  reflective:     %s")
+                            .formatted(difference(generated, reflective), generated, reflective));
+            assertTrue(
+                    generated.contains(ISOLATED_LEAF_FQN),
+                    () -> "the generated path dispatches the Pair-shaped field's elements against the leaf, so"
+                            + " it must declare it as an owner; generated=" + generated);
+            assertTrue(
+                    reflective.contains(ISOLATED_LEAF_FQN),
+                    () -> "the reflective path binds the same element through the Collection<E> supertype"
+                            + " binding, so it must prepare the leaf too; reflective=" + reflective);
+        }
+
+        @Test
+        @DisplayName("containment holds on a root whose only route to its leaf is a wildcard-bound element")
+        void generatedOwnerSetIsContainedInTheReflectiveOneForAnIsolatedWildcardShape() throws Exception {
+            Set<String> generated =
+                    prepareOwners(compileWithCodegen(WILD_SOURCES, WILD_ROOT_PROCESSOR_FQN), WILD_ROOT_FQN);
+            Set<String> reflective =
+                    prepareOwners(compileWithoutCodegen(WILD_SOURCES, WILD_ROOT_PROCESSOR_FQN), WILD_ROOT_FQN);
+
+            assertTrue(
+                    reflective.containsAll(generated),
+                    () -> ("The generated path prepares an owner the reflective path does not on a"
+                                    + " WildOpt<T> extends ArrayList<Optional<? extends T>> shape, so"
+                                    + " AnnotationCollector substitutes into a wildcard bound where"
+                                    + " TypeClassifier does not."
+                                    + "\n  generated only: %s\n  generated:      %s\n  reflective:     %s")
+                            .formatted(difference(generated, reflective), generated, reflective));
+            assertTrue(
+                    generated.contains(WILD_LEAF_FQN),
+                    () -> "the generated path unwraps the wildcard bound after substitution, so it dispatches"
+                            + " the field's elements against the leaf and must declare it as an owner;"
+                            + " generated=" + generated);
+            assertTrue(
+                    reflective.contains(WILD_LEAF_FQN),
+                    () -> "the reflective path must substitute the binding into the wildcard's bound too, or"
+                            + " it prepares no owner for an element the generated path dispatches against;"
+                            + " reflective=" + reflective);
+        }
+
+        @Test
+        @DisplayName("containment holds on a root whose only route to its leaf is a non-generic collection subtype")
+        void generatedOwnerSetIsContainedInTheReflectiveOneForAnIsolatedNonGenericSubtypeShape() throws Exception {
+            Set<String> generated =
+                    prepareOwners(compileWithCodegen(NONGEN_SOURCES, NONGEN_ROOT_PROCESSOR_FQN), NONGEN_ROOT_FQN);
+            Set<String> reflective =
+                    prepareOwners(compileWithoutCodegen(NONGEN_SOURCES, NONGEN_ROOT_PROCESSOR_FQN), NONGEN_ROOT_FQN);
+
+            assertTrue(
+                    reflective.containsAll(generated),
+                    () -> ("The generated path prepares an owner the reflective path does not on a"
+                                    + " NonGenDtos extends ArrayList<NonGenLeafDto> shape — a plain Class use"
+                                    + " site with no local type argument — so AnnotationCollector and"
+                                    + " TypeClassifier have diverged on the raw-class-alone gate."
+                                    + "\n  generated only: %s\n  generated:      %s\n  reflective:     %s")
+                            .formatted(difference(generated, reflective), generated, reflective));
+            assertTrue(
+                    generated.contains(NONGEN_LEAF_FQN),
+                    () -> "the generated path dispatches the NonGenDtos-shaped field's elements against the"
+                            + " leaf, so it must declare it as an owner; generated=" + generated);
+            assertTrue(
+                    reflective.contains(NONGEN_LEAF_FQN),
+                    () -> "the reflective path binds the same element from the class's own generic superclass,"
+                            + " so it must prepare the leaf too, even though the field's own use site carries no"
+                            + " type argument; reflective=" + reflective);
+        }
+
+        @Test
+        @DisplayName("containment holds on a root whose only route to its leaf is an owner-bound inner class")
+        void generatedOwnerSetIsContainedInTheReflectiveOneForAnIsolatedOwnerBoundInnerClassShape() throws Exception {
+            Set<String> generated = prepareOwners(
+                    compileWithCodegen(OWNERBOUND_SOURCES, OWNERBOUND_ROOT_PROCESSOR_FQN), OWNERBOUND_ROOT_FQN);
+            Set<String> reflective = prepareOwners(
+                    compileWithoutCodegen(OWNERBOUND_SOURCES, OWNERBOUND_ROOT_PROCESSOR_FQN), OWNERBOUND_ROOT_FQN);
+
+            assertTrue(
+                    reflective.containsAll(generated),
+                    () -> ("The generated path prepares an owner the reflective path does not on an"
+                                    + " OwnerBoundOuter<T> { class Inner extends ArrayList<T> {} } shape used as"
+                                    + " OwnerBoundOuter<Leaf>.Inner, so AnnotationCollector and TypeClassifier"
+                                    + " have diverged on resolving the element through the parameterized owner"
+                                    + " type."
+                                    + "\n  generated only: %s\n  generated:      %s\n  reflective:     %s")
+                            .formatted(difference(generated, reflective), generated, reflective));
+            assertTrue(
+                    generated.contains(OWNERBOUND_LEAF_FQN),
+                    () -> "the generated path dispatches the owner-bound field's elements against the leaf, so"
+                            + " it must declare it as an owner; generated=" + generated);
+            assertTrue(
+                    reflective.contains(OWNERBOUND_LEAF_FQN),
+                    () -> "the reflective path binds the same element through the enclosing instance's type"
+                            + " argument, so it must prepare the leaf too, even though Inner carries no local"
+                            + " type argument of its own; reflective=" + reflective);
+        }
+
+        @Test
+        @DisplayName("every owner observed on the reflective path was prepared before traversal")
+        void everyObservedOwnerWasPreparedOnTheReflectivePath() throws Exception {
+            RecordingNameResolver resolver = traverse(compileWithoutCodegen());
+
+            assertTrue(resolver.prepared().containsAll(resolver.observed()), () -> "observed but never prepared: %s"
+                    .formatted(difference(resolver.observed(), resolver.prepared())));
+            assertFalse(
+                    resolver.observed().contains("java.lang.String"),
+                    () -> "the deliberately mismatched {\"name\": {\"x\": 1}} payload dispatches against the"
+                            + " String field's raw declared class, but String's own metadata declares no"
+                            + " fields, so that dispatch is schema-free and must never call logicalName;"
+                            + " observed=" + resolver.observed());
+        }
+
+        @Test
+        @DisplayName("every owner observed on the generated path was prepared before traversal")
+        void everyObservedOwnerWasPreparedOnTheGeneratedPath() throws Exception {
+            RecordingNameResolver resolver = traverse(compileWithCodegen());
+
+            assertTrue(resolver.prepared().containsAll(resolver.observed()), () -> "observed but never prepared: %s"
+                    .formatted(difference(resolver.observed(), resolver.prepared())));
+            // Non-vacuity: containment over an empty observed set would prove nothing — it would pass
+            // just as well if the generated traversal never ran at all. ConfRootDto's own generated
+            // switch projects every top-level wire key through rootCtx.logicalFieldName(ConfRootDto.class,
+            // k) (see conformancePayload's "name" entry among others), so a real traversal genuinely
+            // observes it; this is the execution proof ConfWrapper's prepared()-only membership check
+            // stopped providing once ConfWrapper's schema-free metadata took it out of the observed set.
+            assertFalse(
+                    resolver.observed().isEmpty(),
+                    "the generated path must genuinely observe at least one"
+                            + " owner during traversal — an empty set here would mean the generated traversal never ran,"
+                            + " which containment against prepared() alone cannot catch");
+            assertTrue(
+                    resolver.observed().contains("com.example.conf.ConfRootDto"),
+                    () -> "the generated root's own switch dispatches every top-level wire key through"
+                            + " rootCtx.logicalFieldName(ConfRootDto.class, k), so a real generated-path"
+                            + " traversal must observe ConfRootDto; observed=" + resolver.observed());
+            assertFalse(
+                    resolver.observed().contains("java.lang.String"),
+                    () -> "the generated path returns a shape-mismatched String value unchanged, so it must"
+                            + " never ask for an owner on the mismatch family; observed=" + resolver.observed());
+        }
+    }
+
+    // --- Owner-set conformance helpers ---
+
+    /**
+     * Compiles the conformance matrix with the real {@link SanitizationProcessor} and asserts the
+     * root's generated companion is present, so the dispatcher takes the generated path for classes
+     * loaded from this result's classloader.
+     *
+     * @return the codegen-active compilation result
+     */
+    private static Result compileWithCodegen() {
+        return compileWithCodegen(CONF_SOURCES, CONF_ROOT_PROCESSOR_FQN);
+    }
+
+    /**
+     * Compiles {@code sources} with the real {@link SanitizationProcessor} and asserts the named
+     * companion is present, so the dispatcher takes the generated path for classes loaded from this
+     * result's classloader.
+     *
+     * @param sources      the compilation unit
+     * @param processorFqn the generated companion whose presence discriminates this environment
+     * @return the codegen-active compilation result
+     */
+    private static Result compileWithCodegen(JavaFileObject[] sources, String processorFqn) {
+        Result result = ProcessorTestHarness.run(new SanitizationProcessor(), sources);
+        result.assertSuccess();
+        assertNotNull(
+                result.loadGeneratedClass(processorFqn), "the codegen environment must carry the generated companion");
+        return result;
+    }
+
+    /**
+     * Compiles the same sources with a no-op processor and asserts no generated companion exists, so
+     * the dispatcher necessarily falls through to the reflective walk for classes loaded from this
+     * result's classloader.
+     *
+     * @return the codegen-inactive compilation result
+     */
+    private static Result compileWithoutCodegen() {
+        return compileWithoutCodegen(CONF_SOURCES, CONF_ROOT_PROCESSOR_FQN);
+    }
+
+    /**
+     * Compiles {@code sources} with a no-op processor and asserts the named companion does not exist,
+     * so the dispatcher necessarily falls through to the reflective walk for classes loaded from this
+     * result's classloader.
+     *
+     * @param sources      the compilation unit
+     * @param processorFqn the generated companion that must be absent here
+     * @return the codegen-inactive compilation result
+     */
+    private static Result compileWithoutCodegen(JavaFileObject[] sources, String processorFqn) {
+        Result result = ProcessorTestHarness.run(new NoOpAnnotationProcessor(), sources);
+        result.assertSuccess();
+        assertThrows(
+                AssertionFailedError.class,
+                () -> result.loadGeneratedClass(processorFqn),
+                "the reflective environment must carry no generated companion — otherwise both"
+                        + " environments exercise the generated path and the comparison is vacuous");
+        return result;
+    }
+
+    /**
+     * Runs the public precompute entry point over the conformance root loaded from the given
+     * environment's classloader and returns the prepared owners by binary name.
+     *
+     * <p>Names, not {@code Class} instances: the two environments load the same fixture sources
+     * through different classloaders, so their {@code Class} objects are never {@code equals}.
+     *
+     * @param result the compilation environment
+     * @return the prepared owner binary names, in preparation order
+     * @throws Exception if the root fixture class cannot be loaded
+     */
+    private static Set<String> prepareOwners(Result result) throws Exception {
+        return prepareOwners(result, CONF_ROOT_FQN);
+    }
+
+    /**
+     * Runs the public precompute entry point over the named root loaded from the given environment's
+     * classloader and returns the prepared owners by binary name.
+     *
+     * @param result  the compilation environment
+     * @param rootFqn the root DTO to precompute
+     * @return the prepared owner binary names, in preparation order
+     * @throws Exception if the root fixture class cannot be loaded
+     */
+    private static Set<String> prepareOwners(Result result, String rootFqn) throws Exception {
+        RecordingNameResolver resolver = new RecordingNameResolver();
+        newConformanceEngine().precomputeFieldNameResolution(result.loadGeneratedClass(rootFqn), resolver);
+        return resolver.prepared();
+    }
+
+    /**
+     * Precomputes, seals the resolver, then drives a real traversal of the mismatch-carrying payload
+     * through the public {@code processInput} entry point. The resolver throws on any
+     * {@code logicalName} for an owner that was not prepared, so the postcondition is enforced at the
+     * call site rather than only asserted afterwards.
+     *
+     * @param result the compilation environment
+     * @return the resolver, carrying both the prepared and the observed owner names
+     * @throws Exception if the root fixture class cannot be loaded
+     */
+    private static RecordingNameResolver traverse(Result result) throws Exception {
+        Class<?> root = result.loadGeneratedClass(CONF_ROOT_FQN);
+        RecordingNameResolver resolver = new RecordingNameResolver();
+        InputObjectProcessor engine = newConformanceEngine();
+        engine.precomputeFieldNameResolution(root, resolver);
+        resolver.seal();
+        engine.processInput(conformancePayload(), root, EffectiveInputPolicies.NONE, InputLocation.BODY, resolver);
+        return resolver;
+    }
+
+    /**
+     * Builds a default engine whose canonicalizer and sanitizer factories instantiate the built-in
+     * processors reflectively.
+     *
+     * @return a fresh engine; each environment gets its own so their dispatcher caches never mix
+     */
+    private static InputObjectProcessor newConformanceEngine() {
+        return InputObjectProcessor.createDefault(
+                cls -> (Canonicalizer) instantiate(cls), cls -> (Sanitizer) instantiate(cls));
+    }
+
+    /**
+     * Instantiates a chain processor class through its public no-arg constructor.
+     *
+     * @param cls the processor class
+     * @return the new instance
+     */
+    private static Object instantiate(Class<?> cls) {
+        try {
+            return cls.getDeclaredConstructor().newInstance();
+        } catch (ReflectiveOperationException e) {
+            throw new IllegalStateException("Failed to instantiate " + cls.getName(), e);
+        }
+    }
+
+    /**
+     * Builds the wire payload that reaches every shape in the conformance matrix, including the
+     * deliberate {@code {"name": {"x": 1}}} mismatch against the {@code String name} field. That
+     * mismatch is the only way a mismatch-family owner becomes observable at all —
+     * {@code logicalFieldName} is called from one site, inside {@code processMap}.
+     *
+     * @return a mutable, insertion-ordered intermediate
+     */
+    private static Map<String, Object> conformancePayload() {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("wrapped", wireMap("value", " wrapped "));
+        payload.put("optionalDto", wireMap("text", " optional "));
+        payload.put("pair", wireList(wireMap("text", " pair ")));
+        payload.put("fixed", wireList(" fixed "));
+        payload.put("weird", wireList(wireMap("text", " weird ")));
+        payload.put("nestedLists", wireList(wireList(wireMap("text", " nested "))));
+        payload.put("accessorLess", wireMap("label", " accessor-less "));
+        payload.put("mapsInList", wireList(wireMap("anyKey", wireMap("text", " in map "))));
+        payload.put("self", wireMap("name", " self "));
+        payload.put("name", wireMap("x", 1));
+        return payload;
+    }
+
+    /**
+     * Builds a single-entry mutable map, mirroring a one-key JSON object fragment.
+     *
+     * @param key   the wire key
+     * @param value the wire value
+     * @return a new mutable map
+     */
+    private static Map<String, Object> wireMap(String key, Object value) {
+        Map<String, Object> map = new LinkedHashMap<>();
+        map.put(key, value);
+        return map;
+    }
+
+    /**
+     * Builds a single-element mutable list, mirroring a one-element JSON array fragment.
+     *
+     * @param element the sole element
+     * @return a new mutable list
+     */
+    private static List<Object> wireList(Object element) {
+        List<Object> list = new ArrayList<>();
+        list.add(element);
+        return list;
+    }
+
+    /**
+     * Returns the elements of {@code left} that {@code right} does not contain, for failure messages
+     * that name the divergence rather than dumping two sets and leaving the reader to diff them.
+     *
+     * @param left  the set to subtract from
+     * @param right the set to subtract
+     * @return a new set holding {@code left \ right}
+     */
+    private static Set<String> difference(Set<String> left, Set<String> right) {
+        Set<String> result = new LinkedHashSet<>(left);
+        result.removeAll(right);
+        return result;
+    }
+
+    /**
+     * Tracing {@link InputFieldNameResolver} that records every owner handed to {@code precompute}
+     * and every owner handed to {@code logicalName}, keyed by binary class name so owners loaded by
+     * two different harness classloaders compare.
+     *
+     * <p>Once {@link #seal()} has been called, an unprepared owner reaching {@code logicalName} —
+     * or a late {@code precompute} — throws. Both are contract violations of
+     * {@code precomputeFieldNameResolution}'s postcondition, and failing at the call site names the
+     * offending owner instead of leaving a set difference to be interpreted afterwards.
+     */
+    private static final class RecordingNameResolver implements InputFieldNameResolver {
+
+        private final Set<String> prepared = new LinkedHashSet<>();
+        private final Set<String> observed = new LinkedHashSet<>();
+        private boolean sealed;
+
+        @Override
+        public void precompute(Class<?> ownerType) {
+            if (sealed) {
+                throw new AssertionFailedError("precompute(" + ownerType.getName()
+                        + ") arrived after precomputeFieldNameResolution returned; the postcondition is that"
+                        + " every statically knowable owner is prepared before it returns");
+            }
+            prepared.add(ownerType.getName());
+        }
+
+        @Override
+        public String logicalName(Class<?> ownerType, String wireName) {
+            String owner = ownerType.getName();
+            observed.add(owner);
+            if (sealed && !prepared.contains(owner)) {
+                throw new AssertionFailedError("Owner " + owner + " reached logicalName(\"" + wireName
+                        + "\") without having been precomputed; prepared=" + prepared);
+            }
+            return wireName;
+        }
+
+        /** Marks preparation complete, after which an unprepared owner is a failure rather than a record. */
+        void seal() {
+            sealed = true;
+        }
+
+        /**
+         * Returns the owners handed to {@code precompute}, by binary name.
+         *
+         * @return the prepared owner names in preparation order
+         */
+        Set<String> prepared() {
+            return prepared;
+        }
+
+        /**
+         * Returns the owners handed to {@code logicalName}, by binary name.
+         *
+         * @return the observed owner names in observation order
+         */
+        Set<String> observed() {
+            return observed;
+        }
+    }
+
+    /**
+     * Annotation processor that claims every annotation and does nothing, so the conformance matrix
+     * can be compiled through the same harness with codegen switched off. Passing an explicit
+     * processor also suppresses javac's service-loader discovery, which would otherwise pick
+     * {@link SanitizationProcessor} back up off the test classpath.
+     */
+    @SupportedAnnotationTypes("*")
+    @SupportedSourceVersion(SourceVersion.RELEASE_21)
+    private static final class NoOpAnnotationProcessor extends AbstractProcessor {
+
+        @Override
+        public boolean process(Set<? extends TypeElement> annotations, RoundEnvironment roundEnv) {
+            return false;
+        }
+    }
 
     // --- Helper: chain resolver using real built-in processors ---
 

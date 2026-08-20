@@ -6,6 +6,7 @@ package dev.vertique.input.processing;
 import dev.vertique.core.sanitization.InputFieldNameResolver;
 import dev.vertique.core.sanitization.InputLocation;
 import jakarta.annotation.Nullable;
+import java.util.Set;
 
 /**
  * Per-type generated walker over a JSON intermediate ({@code Map<String, Object>} or
@@ -78,4 +79,30 @@ public interface GeneratedInputProcessor<T> {
             GeneratedInputProcessorDispatcher dispatcher,
             @Nullable InputTraversalContext parent,
             String parentPath);
+
+    /**
+     * Returns every class this processor may pass to
+     * {@link InputTraversalContext#logicalFieldName(Class, String)} or dispatch into — its own
+     * {@link #targetType()} and each nested DTO and collection element type it dispatches. Flat, not
+     * transitive: the engine closes the graph and bounds the recursion.
+     *
+     * <p>A <strong>schema-free</strong> field contributes nothing, annotated or not. Its arm hands the
+     * erased declared type to the reflective continuation as {@code InputValueContext} provenance only —
+     * that type declares no fields a projected key could match, so it is never projected against and
+     * needs no prepared projection.
+     *
+     * <p><strong>An override MUST include its own {@link #targetType()}.</strong> An empty return is
+     * read as "does not declare an owner set" and makes the engine fall back to its reflective walk for
+     * this type; the fallback is logged at debug so a stale generated class is diagnosable rather than
+     * silent. The empty default therefore keeps a hand-written or previously-generated processor
+     * working.
+     *
+     * <p><strong>Duplicates are expected and must be eliminated by the implementation.</strong> A
+     * self-referential DTO, or two fields targeting the same nested DTO, naturally repeats a class.
+     *
+     * @return the owner types; never {@code null}, possibly empty, free of duplicates
+     */
+    default Set<Class<?>> fieldNameOwnerTypes() {
+        return Set.of();
+    }
 }

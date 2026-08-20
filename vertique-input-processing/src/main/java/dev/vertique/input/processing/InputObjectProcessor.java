@@ -7,6 +7,7 @@ import dev.vertique.core.sanitization.Canonicalizer;
 import dev.vertique.core.sanitization.InputFieldNameResolver;
 import dev.vertique.core.sanitization.InputLocation;
 import dev.vertique.core.sanitization.Sanitizer;
+import jakarta.annotation.Nullable;
 import java.lang.reflect.Type;
 import java.util.function.Function;
 
@@ -94,6 +95,31 @@ public interface InputObjectProcessor {
     static boolean declaresPolicies(Type targetType) {
         return InputPolicyMetadataResolver.declaresPolicies(targetType);
     }
+
+    /**
+     * Hands {@code resolver} every owner type this processor may pass to
+     * {@link InputFieldNameResolver#logicalName} while processing {@code declaredType}, so no
+     * projection is composed on the request path.
+     *
+     * <p>Postcondition: every <em>statically knowable</em> owner has been passed to
+     * {@link InputFieldNameResolver#precompute} before this returns. Statically knowable excludes what
+     * no declared type can name — a {@code @JsonTypeInfo} subtype, the runtime value of a {@code Map}-
+     * or {@code Object}-typed field — and an owner reachable only through a platform
+     * ({@code java.*}/{@code javax.*}/{@code jakarta.*}) class's declared fields, which is precomputed
+     * but never descended.
+     *
+     * <p>The prepared set is deliberately wider than the declared type graph: a field's <em>raw</em>
+     * declared class is an owner too, because a wire fragment whose shape disagrees with the declared
+     * shape is dispatched against it. That is why {@code String}, {@code List} and {@code Map} appear.
+     *
+     * @param declaredType the body or message type; {@code null} prepares nothing
+     * @param resolver     the resolver the same traversal will use at runtime; must not be {@code null}
+     * @throws dev.vertique.core.exception.ConfigurationException if a reachable owner's projection
+     *                                                            cannot be composed
+     * @throws IllegalStateException if a reachable type declares conflicting policy annotations —
+     *                               previously surfaced on the first request, now at registration
+     */
+    void precomputeFieldNameResolution(@Nullable Type declaredType, InputFieldNameResolver resolver);
 
     /**
      * Processes a structured input intermediate (typically a {@code Map<String, Object>}

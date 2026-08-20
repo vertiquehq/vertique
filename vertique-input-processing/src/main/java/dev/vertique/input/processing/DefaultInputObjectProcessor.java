@@ -121,6 +121,23 @@ class DefaultInputObjectProcessor implements InputObjectProcessor {
     private final GeneratedInputProcessorDispatcher dispatcher;
 
     /**
+     * Element classes resolved for top-level list/array target types, keyed by the declared
+     * {@link Type}.
+     *
+     * <p>{@link TypeClassifier#elementType} resolves the {@code Collection<E>} supertype binding by
+     * walking the declared type's supertypes and substituting type arguments at each hop, which would
+     * otherwise run once per request. The answer depends only on the declared type, so it is computed
+     * once. The value is an {@link Optional} because "no element schema" is a legitimate answer — for
+     * a raw collection, a container element or an unresolvable binding — and recomputing that answer
+     * costs the same walk as any other.
+     *
+     * <p>Retention is bounded by the set of distinct declared target types the caller hands in, which
+     * is fixed at registration, and by the engine instance, which is component-scoped and dies with
+     * its Dagger component.
+     */
+    private final ConcurrentMap<Type, Optional<Class<?>>> topLevelElementTypes = new ConcurrentHashMap<>();
+
+    /**
      * Creates a new processor with the given dependencies.
      *
      * <p>Both resolver functions are wrapped in a per-engine {@link ResolutionCache}, so each is
@@ -166,6 +183,11 @@ class DefaultInputObjectProcessor implements InputObjectProcessor {
     }
 
     @Override
+    public void precomputeFieldNameResolution(@Nullable Type declaredType, InputFieldNameResolver resolver) {
+        OwnerTypeWalk.prepare(declaredType, resolver, metadataResolver, dispatcher);
+    }
+
+    @Override
     public Object processInput(
             Object input,
             Type targetType,
@@ -208,7 +230,9 @@ class DefaultInputObjectProcessor implements InputObjectProcessor {
             // metadata.
             // The runtime fast-path consults the dispatcher for the ELEMENT class — codegen never emits a List<X> or
             // X[] processor; it emits X_InputProcessor and the iteration is handled here.
-            Class<?> elementClass = TypeClassifier.elementType(targetType);
+            Class<?> elementClass = topLevelElementTypes
+                    .computeIfAbsent(targetType, t -> Optional.ofNullable(TypeClassifier.elementType(t)))
+                    .orElse(null);
             if (elementClass != null) {
                 Optional<GeneratedInputProcessor<Object>> generated = dispatcher.resolve(asObjectClass(elementClass));
                 if (generated.isPresent()) {
@@ -278,6 +302,16 @@ class DefaultInputObjectProcessor implements InputObjectProcessor {
      * {@link InputPolicyMetadata#fields()} by Java property names. The output map is keyed by the
      * original wire names.
      *
+     * <p><strong>Schema-free traversal skips the projection entirely.</strong> When {@code metadata}
+     * carries no declared fields — {@link InputPolicyMetadata#EMPTY}, or the resolved metadata of a
+     * type with no statically known property set — no key sent to this map can ever match
+     * {@link InputPolicyMetadata#fields()}, so the projection is provably a no-op. Calling it anyway
+     * would be the only site in the engine that consults {@link InputFieldNameResolver} for an owner
+     * that is not a field-name owner (a raw collection, a {@code Map}/{@code Object} target, a
+     * wire/declared shape mismatch, an unknown subtree); {@code ownerType} still flows into every
+     * {@link InputValueContext} produced for this map's values, so processing provenance is
+     * unaffected. See {@link OwnerTypeWalk} for the matching change to what gets prepared.
+     *
      * @param map        the input map (keys may be any type, values may be any type)
      * @param metadata   annotation metadata for the owner type
      * @param ctx        the accumulated traversal context (ancestor chains + skip flags)
@@ -297,6 +331,7 @@ class DefaultInputObjectProcessor implements InputObjectProcessor {
             Class<?> ownerType) {
 
         Map<String, Object> result = new LinkedHashMap<>(map.size());
+        boolean schemaFree = metadata.fields().isEmpty();
 
         for (Map.Entry<?, ?> entry : map.entrySet()) {
             String key = String.valueOf(entry.getKey());
@@ -311,12 +346,20 @@ class DefaultInputObjectProcessor implements InputObjectProcessor {
             // The intermediate is keyed by WIRE names; metadata.fields() is keyed by JAVA property
             // names. Project before the lookup, or a renamed field never matches its own policies.
             // The result map keeps the wire key — the projection selects metadata, it never renames
-            // what the codec will bind.
-            String logicalKey = ctx.logicalFieldName(ownerType, key);
-            FieldPolicyMetadata fieldMeta = metadata.fields().get(logicalKey);
-            // logicalName is the JAVA property name once a property matched, the wire name
-            // otherwise; path stays the wire path so a diagnostic points at what the caller sent.
-            String logicalName = fieldMeta != null ? logicalKey : key;
+            // what the codec will bind. A schema-free owner has no field to ever match, so the
+            // projection is skipped rather than run and discarded.
+            FieldPolicyMetadata fieldMeta;
+            String logicalName;
+            if (schemaFree) {
+                fieldMeta = null;
+                logicalName = key;
+            } else {
+                String logicalKey = ctx.logicalFieldName(ownerType, key);
+                fieldMeta = metadata.fields().get(logicalKey);
+                // logicalName is the JAVA property name once a property matched, the wire name
+                // otherwise; path stays the wire path so a diagnostic points at what the caller sent.
+                logicalName = fieldMeta != null ? logicalKey : key;
+            }
 
             if (value instanceof String s) {
                 result.put(

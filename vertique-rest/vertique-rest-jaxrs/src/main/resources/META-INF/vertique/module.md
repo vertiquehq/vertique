@@ -1004,14 +1004,22 @@ Remove the declaration, or add `@SkipCanonicalization` / `@SkipSanitization` to 
 
 When an `InputObjectProcessor` is bound, route registration also composes each route's body wire-name
 projection (`JacksonFieldNameResolver`, from `dev.vertique:vertique-json`) against that route's
-resolved body mapper — for the body parameter's declared type, an array's component type, a generic
-body's type arguments, and every type reachable from those through a declared Jackson-visible
-property. Any type in that graph whose projection cannot be composed — two properties claiming one
-wire name, or two properties claiming one `@JsonAlias` — fails router build with
-`ConfigurationException` naming the type and the contested name, including when it is a nested DTO
-rather than the body type itself. Composing at registration is what
-makes that a startup failure rather than a 500 on every request that touches the type, and it keeps
-Jackson bean introspection off the event loop.
+resolved body mapper. **The engine decides which types get composed**, not the registrar: registration
+hands each body parameter's declared type to `InputObjectProcessor.precomputeFieldNameResolution`,
+which prepares the resolver for every owner type its own descent may consult for that body. The
+postcondition is that no statically knowable owner is left to introspect on the request path — the
+`vertique-input-processing` reference documents the owner set and its bounds in full.
+
+Two startup failures follow, both of which previously surfaced per request:
+
+- A type in that set whose projection cannot be composed — two properties claiming one wire name, or
+  two properties claiming one `@JsonAlias` — fails router build with `ConfigurationException` naming
+  the type and the contested name, including when it is a nested DTO rather than the body type itself.
+- A reachable type declaring conflicting policy annotations fails router build with
+  `IllegalStateException`, because preparing the owner set resolves that type's policy metadata.
+
+Composing at registration is what makes each a startup failure rather than a 500 on every request that
+touches the type, and it keeps Jackson bean introspection off the event loop.
 
 ### Request-time failures
 

@@ -5,7 +5,6 @@ package dev.vertique.json;
 
 import com.fasterxml.jackson.databind.BeanDescription;
 import com.fasterxml.jackson.databind.DeserializationConfig;
-import com.fasterxml.jackson.databind.JavaType;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.PropertyName;
 import com.fasterxml.jackson.databind.introspect.BeanPropertyDefinition;
@@ -13,12 +12,7 @@ import dev.vertique.core.exception.ConfigurationException;
 import dev.vertique.core.sanitization.InputFieldNameResolver;
 import io.vertx.core.json.jackson.DatabindCodec;
 import jakarta.annotation.Nullable;
-import java.lang.reflect.GenericArrayType;
-import java.lang.reflect.ParameterizedType;
-import java.lang.reflect.Type;
-import java.util.Collection;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -58,14 +52,16 @@ import java.util.Set;
  * <p><strong>Caching and the identity short circuit.</strong> One instance is created per body mapper
  * at route or endpoint registration and caches its per-type projection in a {@link ClassValue}, so
  * entries are collected with the classloader that owns the DTO rather than pinned in a static
- * {@code Class}-keyed map. Each boundary composes the projections for every body or message type it
- * knows — and, through {@link #precomputeGraph}, for every type reachable from one by a declared
- * property — at that same registration, so {@link #logicalName} neither introspects nor raises
- * anything on the request path. When a type's computed projection maps every
- * wire name onto itself — the
- * overwhelmingly common DTO — the entry records that and {@link #logicalName} returns the wire name
- * directly, skipping the per-field lookup entirely. The flag follows the <em>computed</em>
- * projection, never an inference about the mapper's configuration.
+ * {@code Class}-keyed map. This type composes and caches the projection of <em>one</em> class at a
+ * time: {@link #precompute(Class)} is the {@link InputFieldNameResolver} SPI hook the
+ * input-processing engine calls at registration, once for every owner type it may later pass to
+ * {@link #logicalName}. Deciding <em>which</em> types those are is the engine's job, not this
+ * module's — this resolver never walks a type graph. Because the engine hands over its own owner
+ * set at registration, {@link #logicalName} neither introspects nor raises anything on the request
+ * path. When a type's computed projection maps every wire name onto itself — the overwhelmingly
+ * common DTO — the entry records that and {@link #logicalName} returns the wire name directly,
+ * skipping the per-field lookup entirely. The flag follows the <em>computed</em> projection, never
+ * an inference about the mapper's configuration.
  *
  * <p>Instances are immutable and safe for concurrent use from several event-loop threads. A mapper
  * selected for a mounted route is treated as immutable after router construction: an application that
@@ -128,213 +124,28 @@ public final class JacksonFieldNameResolver implements InputFieldNameResolver {
     /**
      * Composes {@code ownerType}'s projection now, so {@link #logicalName} serves it from cache.
      *
-     * <p>Every boundary calls this at registration for each body or message type it already knows.
-     * That placement is the contract, not an optimization: {@link InputFieldNameResolver} publishes
-     * that an implementation never throws and should serve every call from a precomputed projection,
-     * and composing a projection means running a full Jackson bean introspection which can also fail.
-     * Left to the first request, that work — and any failure it raises — would land on an event-loop
-     * thread as a per-request error, and would repeat on every subsequent request, because a
-     * {@link ClassValue} does not memoise a {@code computeValue} that threw.
+     * <p>This is the {@link InputFieldNameResolver} SPI hook the input-processing engine calls at
+     * registration — once for every owner type it may later pass to {@link #logicalName} while
+     * processing a declared body or message type. That placement is the contract, not an
+     * optimization: {@link InputFieldNameResolver} publishes that an implementation never throws and
+     * should serve every call from a precomputed projection, and composing a projection means running
+     * a full Jackson bean introspection which can also fail. Left to the first request, that work —
+     * and any failure it raises — would land on an event-loop thread as a per-request error, and
+     * would repeat on every subsequent request, because a {@link ClassValue} does not memoise a
+     * {@code computeValue} that threw.
      *
-     * <p>Calling this for a type whose projection is already composed is a no-op.
+     * <p>Which classes make up that owner set is decided by the engine, which knows what it descends;
+     * this resolver composes exactly the class it is handed and walks no type graph of its own.
+     * Calling this for a type whose projection is already composed is a no-op.
      *
-     * @param ownerType the body or message type to compose the projection for; must not be {@code null}
+     * @param ownerType the owner type to compose the projection for; must not be {@code null}
      * @throws ConfigurationException if {@code ownerType}'s projection cannot be composed — two
      *                                properties claiming one primary wire name, or two properties
      *                                claiming one alias
      */
+    @Override
     public void precompute(Class<?> ownerType) {
         projections.get(ownerType);
-    }
-
-    /**
-     * Composes the projection for {@code declaredType} and for every type reachable from it through
-     * Jackson-visible properties, so no type the engine can descend into is left to introspect lazily
-     * on the request or message path.
-     *
-     * <p>This is the shared warm-up walk every Jackson-bound boundary uses: it unwraps arrays and
-     * parameterized shapes (a {@code List<Dto>} body warms {@code Dto}, a {@code Dto[]} message warms
-     * {@code Dto}), then follows each visited type's declared property types transitively, including
-     * collection element types. A visited set makes a cyclic type graph terminate, and a shape
-     * carrying no statically known property set — a wildcard, a type variable, a primitive, an enum,
-     * a platform type such as {@link String}, or a map's key and value types — is skipped rather than
-     * introspected. The map rule applies to the declared shape itself as well as to a property: a
-     * {@code Map<String, Dto>} body warms neither {@code String} nor {@code Dto}. Both walks decide
-     * "is this a map?" with the engine's own {@code Map.class.isAssignableFrom} test (see
-     * {@link #isMapKeyed}).
-     *
-     * <p>The walk is a deliberate <em>superset</em> of the links the engine descends, never a
-     * subset. It is exact for maps, collections, arrays, and {@code Optional}, but a non-map
-     * parameterized type's arguments are warmed even though the engine classifies such a field to
-     * its erased bound and never reaches them — so a {@code Wrapper<Dto>} property warms
-     * {@code Dto}. That direction is the safe one: it can fail startup on a collision the request
-     * path would not consult, but it can never leave a type the engine does descend unwarmed and
-     * introspecting on the event loop.
-     *
-     * <p>Why transitive rather than only the declared body or message type: the engine resolves the
-     * projection for the <em>owner of each nested fragment</em>, so a nested DTO's projection is
-     * consulted on the request path exactly like the root's. Warming only the root would leave that
-     * first consultation to run a bean introspection on an event-loop thread — and, because a
-     * {@link ClassValue} does not memoise a {@code computeValue} that threw, would re-run and re-throw
-     * it for every subsequent request.
-     *
-     * @param declaredType the declared body or message type to walk, or {@code null} for nothing
-     * @throws ConfigurationException if any reachable type's projection cannot be composed — two
-     *                                properties claiming one primary wire name, or two properties
-     *                                claiming one alias
-     */
-    public void precomputeGraph(@Nullable Type declaredType) {
-        warmDeclaredType(declaredType, new HashSet<>());
-    }
-
-    /**
-     * Walks one reflective type shape, unwrapping arrays and parameterized types down to the classes
-     * that carry a property set.
-     *
-     * <p><strong>A map shape's arguments are not walked</strong>, matching
-     * {@link #warmPropertyType}: a {@code Map<String, Dto>} body is schema-free exactly like a
-     * map-typed property, so neither its key nor its value type is ever consulted as a projection
-     * owner and warming one would let an ambiguity the request path can never reach fail
-     * registration. Both walks read "map shape" from {@link #isMapKeyed}, so a module-contributed
-     * map-like type is walked here as the ordinary parameterized shape the engine descends.
-     *
-     * @param declaredType the shape to walk, or {@code null}
-     * @param visited      the classes already warmed on this walk
-     */
-    private void warmDeclaredType(@Nullable Type declaredType, Set<Class<?>> visited) {
-        if (declaredType instanceof Class<?> rawClass) {
-            warmClass(rawClass, visited);
-        } else if (declaredType instanceof ParameterizedType parameterized) {
-            Type rawType = parameterized.getRawType();
-            warmDeclaredType(rawType, visited);
-            if (rawType instanceof Class<?> rawClass && isMapKeyed(rawClass)) {
-                return;
-            }
-            for (Type argument : parameterized.getActualTypeArguments()) {
-                warmDeclaredType(argument, visited);
-            }
-        } else if (declaredType instanceof GenericArrayType genericArray) {
-            warmDeclaredType(genericArray.getGenericComponentType(), visited);
-        }
-        // A wildcard or type variable carries no statically known property set — nothing to project.
-    }
-
-    /**
-     * Returns whether a raw class is the arbitrarily-keyed shape whose key and value types neither
-     * warm-up walk descends.
-     *
-     * <p>This is the engine's own test, character for character: {@code InputPolicyMetadataResolver}
-     * excludes a field type with {@code !Map.class.isAssignableFrom(type)} in
-     * {@code isDescendableObject}, and {@code TypeClassifier} excludes an element type the same way.
-     * Keying both walks on it is what makes the parity claim true — a type a registered module
-     * classifies as <em>map-like</em> without it implementing {@link Map} (what Jackson's
-     * {@code MapLikeType} exists for; Scala, Guava and Kotlin module registrations produce them) is
-     * descended by the engine as a plain object, so both walks must warm it as one rather than treat
-     * it as a schema-free map. Asking Jackson's {@code TypeFactory} instead would answer a different
-     * question than the engine asks, and the two would disagree on exactly those types.
-     *
-     * @param rawClass the raw class to test
-     * @return {@code true} when the shape is keyed by arbitrary map keys
-     */
-    private static boolean isMapKeyed(Class<?> rawClass) {
-        return Map.class.isAssignableFrom(rawClass);
-    }
-
-    /**
-     * Returns whether a raw class is one the engine iterates element-wise rather than descending into
-     * itself — a {@link java.util.Collection} or an array. {@code InputPolicyMetadataResolver} routes
-     * exactly these two through its element-type branch, so for them the element schema is warmed and
-     * the container class is not; every other shape is a plain descendable object whose own class is
-     * warmed. Jackson's {@code JavaType.isContainerType()} is deliberately not used here: it also
-     * answers {@code true} for a map-like type the engine descends as a plain object.
-     *
-     * @param rawClass the raw class to test
-     * @return {@code true} when the shape carries an element schema instead of its own property set
-     */
-    private static boolean isElementWise(Class<?> rawClass) {
-        return Collection.class.isAssignableFrom(rawClass) || rawClass.isArray();
-    }
-
-    /**
-     * Warms one class and every type its Jackson-visible properties expose, at most once per class.
-     *
-     * @param rawClass the class to warm
-     * @param visited  the classes already warmed on this walk
-     */
-    private void warmClass(Class<?> rawClass, Set<Class<?>> visited) {
-        if (rawClass.isArray()) {
-            warmClass(rawClass.getComponentType(), visited);
-            return;
-        }
-        if (!carriesProjectableProperties(rawClass) || !visited.add(rawClass)) {
-            return;
-        }
-        precompute(rawClass);
-        // The property walk re-reads the same BeanDescription the projection was composed from;
-        // Jackson serves it from its own type/description caches.
-        BeanDescription description = config.introspect(mapper.getTypeFactory().constructType(rawClass));
-        for (BeanPropertyDefinition property : description.findProperties()) {
-            warmPropertyType(property.getPrimaryType(), visited);
-        }
-    }
-
-    /**
-     * Warms one property's declared type, descending through array and collection shapes to the
-     * element types the engine walks element-wise.
-     *
-     * <p><strong>A map shape is not descended.</strong> The engine treats a map-typed field as
-     * schema-free — it carries no statically known property set, so its fragment's policies are keyed
-     * against the map type itself and neither the key nor the value type is ever consulted as a
-     * projection owner. Warming them anyway would let an ambiguity the request path can never reach
-     * fail registration, which is an availability change with no behavioural payoff. "Map shape"
-     * means {@link #isMapKeyed} — the engine's own test — so a type a registered module classifies as
-     * map-like without it implementing {@link Map} is warmed here as the plain descendable object the
-     * engine descends, not skipped and not descended over its module-declared content type.
-     *
-     * @param propertyType the property's resolved Jackson type, or {@code null}
-     * @param visited      the classes already warmed on this walk
-     */
-    private void warmPropertyType(@Nullable JavaType propertyType, Set<Class<?>> visited) {
-        if (propertyType == null) {
-            return;
-        }
-        Class<?> rawClass = propertyType.getRawClass();
-        // Map is tested first, so a class implementing both Map and Collection is treated as
-        // map-keyed. The engine's buildFieldMeta tests element-wise first and would descend such a
-        // type's element instead. No such type is known to exist, and Jackson would bind one as a
-        // MapType regardless; the divergence is recorded here rather than left for a reader to
-        // rediscover, because the two orders agree for every type that is one or the other.
-        if (isMapKeyed(rawClass)) {
-            return;
-        }
-        if (isElementWise(rawClass)) {
-            // The engine walks a collection or array element-wise, so the element schema is what a
-            // fragment's policies are keyed against — never the container class itself.
-            warmPropertyType(propertyType.getContentType(), visited);
-        } else {
-            warmClass(rawClass, visited);
-        }
-        // Type arguments of any other generic shape are still walked, so an Optional<Dto> — which the
-        // engine treats as transparent — reaches Dto.
-        for (int i = 0; i < propertyType.containedTypeCount(); i++) {
-            warmPropertyType(propertyType.containedType(i), visited);
-        }
-    }
-
-    /**
-     * Returns whether a class can carry a wire &rarr; Java projection worth composing. Primitives,
-     * enums, and platform types have no application-declared property set the engine keys policies
-     * against, so introspecting them would cost a full bean introspection for an empty answer.
-     *
-     * @param rawClass the class to test
-     * @return {@code true} when the class is an application type worth introspecting
-     */
-    private static boolean carriesProjectableProperties(Class<?> rawClass) {
-        if (rawClass.isPrimitive() || rawClass.isEnum()) {
-            return false;
-        }
-        String name = rawClass.getName();
-        return !name.startsWith("java.") && !name.startsWith("javax.") && !name.startsWith("jakarta.");
     }
 
     /**
