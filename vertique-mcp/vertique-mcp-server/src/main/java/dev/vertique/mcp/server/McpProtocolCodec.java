@@ -137,13 +137,26 @@ final class McpProtocolCodec {
         if (node == null || !node.isObject()) {
             return new Analysis(node, null, new CodecError(INVALID_REQUEST, MSG_INVALID_REQUEST, null));
         }
-        JsonNode id = usableId(node.get("id"));
+        JsonNode rawId = node.get("id");
+        JsonNode id = usableId(rawId);
         JsonNode version = node.get("jsonrpc");
         if (version == null || !version.isTextual() || !JSONRPC_VERSION.equals(version.asText())) {
             return new Analysis(node, id, new CodecError(INVALID_REQUEST, MSG_INVALID_REQUEST, null));
         }
+        // The final-2026 request schema requires a string or integer id on every supported method —
+        // all three are requests, none a notification — so an absent, null, fractional, or structured
+        // id is an invalid request. The usable id is null because no trustworthy value can be echoed.
+        if (rawId == null || !(rawId.isTextual() || rawId.isIntegralNumber())) {
+            return new Analysis(node, null, new CodecError(INVALID_REQUEST, MSG_INVALID_REQUEST, null));
+        }
         JsonNode method = node.get("method");
         if (method == null || !method.isTextual()) {
+            return new Analysis(node, id, new CodecError(INVALID_REQUEST, MSG_INVALID_REQUEST, null));
+        }
+        // params is optional (absent is normalized elsewhere), but when present it must be an object —
+        // a structured params of any other shape is a structurally invalid request.
+        JsonNode params = node.get("params");
+        if (params != null && !params.isObject()) {
             return new Analysis(node, id, new CodecError(INVALID_REQUEST, MSG_INVALID_REQUEST, null));
         }
         if (!SUPPORTED_METHODS.contains(method.asText())) {

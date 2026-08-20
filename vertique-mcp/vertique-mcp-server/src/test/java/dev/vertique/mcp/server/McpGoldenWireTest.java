@@ -5,6 +5,7 @@ package dev.vertique.mcp.server;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import io.vertx.core.buffer.Buffer;
 import io.vertx.core.json.JsonObject;
 import java.io.IOException;
 import java.io.InputStream;
@@ -56,7 +57,20 @@ class McpGoldenWireTest {
             assertThat(decoded.error().message())
                     .as("invalid frame yields the pinned JSON-RPC message: %s", invalid.name())
                     .isEqualTo(invalid.message());
+
+            byte[] errorResponse = codec.errorResponse(invalid.frame());
+            assertThat(errorResponse)
+                    .as("invalid frame re-encodes to the pinned canonical error-response bytes: %s", invalid.name())
+                    .isEqualTo(invalid.expectedResponse());
+            assertThat(new JsonObject(Buffer.buffer(errorResponse)).getValue("id"))
+                    .as("invalid frame echoes exactly the pinned request id: %s", invalid.name())
+                    .isEqualTo(invalid.expectedId());
         }
+
+        byte[] pinnedError = McpGoldenWireTestFixture.firstErrorResponse(codec, invalidCases);
+        assertThat(McpGoldenWireTestFixture.flipFirstByte(pinnedError))
+                .as("a one-byte mutation of a pinned error response fails byte equality")
+                .isNotEqualTo(pinnedError);
 
         byte[] valid = validFrames.getFirst();
         byte[] mutant = McpGoldenWireTestFixture.appendTrailingByte(valid);
@@ -91,7 +105,9 @@ class McpGoldenWireTest {
                         descriptor.getString("name"),
                         descriptor.getString("frame").getBytes(StandardCharsets.UTF_8),
                         descriptor.getInteger("code"),
-                        descriptor.getString("message")));
+                        descriptor.getString("message"),
+                        descriptor.getValue("id"),
+                        descriptor.getString("expectedResponse").getBytes(StandardCharsets.UTF_8)));
             }
             return List.copyOf(cases);
         }
@@ -100,6 +116,16 @@ class McpGoldenWireTest {
             byte[] mutant = new byte[frame.length + 1];
             System.arraycopy(frame, 0, mutant, 0, frame.length);
             mutant[frame.length] = (byte) '}';
+            return mutant;
+        }
+
+        static byte[] firstErrorResponse(McpProtocolCodec codec, List<InvalidCase> invalidCases) {
+            return codec.errorResponse(invalidCases.getFirst().frame());
+        }
+
+        static byte[] flipFirstByte(byte[] response) {
+            byte[] mutant = response.clone();
+            mutant[0] = (byte) (mutant[0] ^ 0x01);
             return mutant;
         }
 
@@ -120,7 +146,11 @@ class McpGoldenWireTest {
          * @param frame the raw UTF-8 request bytes
          * @param code the pinned final-spec JSON-RPC error code
          * @param message the pinned safe error message
+         * @param expectedId the pinned echoed request id (an {@link Integer}, a {@link String}, or
+         *     {@code null} when no trustworthy id is echoed)
+         * @param expectedResponse the pinned canonical error-response bytes the codec must re-encode
          */
-        record InvalidCase(String name, byte[] frame, int code, String message) {}
+        record InvalidCase(
+                String name, byte[] frame, int code, String message, Object expectedId, byte[] expectedResponse) {}
     }
 }

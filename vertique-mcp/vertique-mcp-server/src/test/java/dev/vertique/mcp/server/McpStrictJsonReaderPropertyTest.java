@@ -120,6 +120,14 @@ class McpStrictJsonReaderPropertyTest {
             cases.add(literalCase("stringOverLimit", quotedString(strLen + 1), true));
             cases.add(literalCase("duplicateKey", "{\"a\":1,\"a\":2}", true));
             cases.add(literalCase("trailingTokens", "{\"a\":1} x", true));
+            // Adversarial numeric seeds (overlap F1/F2 inputs) so TP-003's numeric-termination and
+            // classification claim is discharged, not merely asserted for small random integers: a
+            // multi-thousand-digit integer, a short token with an out-of-bound decimal scale, and an
+            // exponent whose overflow makes decimal materialization throw. Each must terminate promptly
+            // with a bounded classified rejection rather than an O(n²) parse, an OOM encode, or an escape.
+            cases.add(literalCase("largeIntegerToken", "1".repeat(2000), true));
+            cases.add(literalCase("largeDecimalScale", "1e999999999", true));
+            cases.add(literalCase("exponentOverflow", "1E2147483649", true));
             cases.add(new Case(
                     "invalidUtf8Byte",
                     new byte[] {(byte) '{', (byte) '"', (byte) 'a', (byte) '"', (byte) ':', (byte) 0xFF, (byte) '}'},

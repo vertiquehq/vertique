@@ -149,7 +149,28 @@ class McpStrictJsonReaderTest {
                             new byte[] {
                                 (byte) '{', (byte) '"', (byte) 'a', (byte) '"', (byte) ':', (byte) 0xFF, (byte) '}'
                             },
-                            McpStrictJsonReader.Rejection.INVALID_UTF8));
+                            McpStrictJsonReader.Rejection.INVALID_UTF8),
+                    // F1(a): a numeric token far longer than the fixed MAX_NUMBER_CHARS bound must be
+                    // rejected before big-integer materialization, not parsed into a value.
+                    new Row(
+                            "integerTokenOverLength",
+                            utf8("1".repeat(2000)),
+                            McpStrictJsonReader.Rejection.NUMBER_OUT_OF_BOUNDS),
+                    // F1(b): an 11-byte token whose decimal scale magnitude is ~1e9 passes any length
+                    // bound; its scale must be rejected before a plain-form encode can exhaust memory.
+                    new Row(
+                            "decimalScaleOverBound",
+                            utf8("1e999999999"),
+                            McpStrictJsonReader.Rejection.NUMBER_OUT_OF_BOUNDS),
+                    // F1(c): an exponent whose negated value is exactly Integer.MIN_VALUE yields a
+                    // decimal with scale Integer.MIN_VALUE (no throw); its scale magnitude is bounded.
+                    new Row(
+                            "decimalScaleAtIntMin",
+                            utf8("1E2147483648"),
+                            McpStrictJsonReader.Rejection.NUMBER_OUT_OF_BOUNDS),
+                    // F2: an exponent that overflows int makes Jackson's decimal materialization throw
+                    // NumberFormatException; it must settle as a classified MALFORMED, never escape.
+                    new Row("decimalExponentOverflow", utf8("1E2147483649"), McpStrictJsonReader.Rejection.MALFORMED));
         }
 
         private static byte[] utf8(String literal) {

@@ -13,6 +13,7 @@ import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import jakarta.annotation.Nullable;
 import java.io.IOException;
+import java.math.BigDecimal;
 import java.nio.ByteBuffer;
 import java.nio.CharBuffer;
 import java.nio.charset.CharacterCodingException;
@@ -48,6 +49,20 @@ final class McpStrictJsonReader {
     private static final JsonNodeFactory NODE_FACTORY = JsonNodeFactory.withExactBigDecimals(true);
 
     /**
+     * Fixed internal cap on the lexical length of a numeric token (Jackson's own default). A longer
+     * token is rejected before {@link java.math.BigInteger}/{@link java.math.BigDecimal}
+     * materialization, defeating the O(n²) cost of parsing a multi-million-digit integer.
+     */
+    private static final int MAX_NUMBER_CHARS = 1000;
+
+    /**
+     * Fixed internal cap on the magnitude of a decimal's scale. A short token such as
+     * {@code 1e999999999} passes any length bound yet decodes to a {@link java.math.BigDecimal} whose
+     * plain-form encode would exhaust memory; bounding the scale magnitude rejects it before that.
+     */
+    private static final int MAX_DECIMAL_SCALE = 10_000;
+
+    /**
      * Streaming factory whose stream-read constraints are raised above every configured MCP bound so
      * this reader — not Jackson — is the sole authority that classifies a bounded rejection.
      */
@@ -62,7 +77,13 @@ final class McpStrictJsonReader {
 
     private final int maxDepth;
     private final int maxProperties;
+
     private final int maxItems;
+
+    /**
+     * The string-length bound, measured in Java {@code String.length()} — i.e. UTF-16 code units, not
+     * Unicode code points, so a supplementary (astral) code point counts as two toward this bound.
+     */
     private final int maxStringChars;
 
     /**
@@ -173,8 +194,20 @@ final class McpStrictJsonReader {
                         }
                         value = NODE_FACTORY.textNode(text);
                     }
-                    case VALUE_NUMBER_INT -> value = integerNode(parser);
-                    case VALUE_NUMBER_FLOAT -> value = NODE_FACTORY.numberNode(parser.getDecimalValue());
+                    case VALUE_NUMBER_INT -> {
+                        Result number = materializeNumber(parser, false);
+                        if (number.isRejected()) {
+                            return number;
+                        }
+                        value = number.value();
+                    }
+                    case VALUE_NUMBER_FLOAT -> {
+                        Result number = materializeNumber(parser, true);
+                        if (number.isRejected()) {
+                            return number;
+                        }
+                        value = number.value();
+                    }
                     case VALUE_TRUE -> value = NODE_FACTORY.booleanNode(true);
                     case VALUE_FALSE -> value = NODE_FACTORY.booleanNode(false);
                     case VALUE_NULL -> value = NODE_FACTORY.nullNode();
@@ -242,6 +275,41 @@ final class McpStrictJsonReader {
     }
 
     /**
+     * Materializes a numeric token into an exact node under fixed internal hardening bounds.
+     *
+     * <p>The lexical length is checked <em>before</em> any {@link java.math.BigInteger}/
+     * {@link java.math.BigDecimal} materialization, so a multi-million-digit token is rejected without
+     * paying the O(n²) parse cost; a decimal is materialized only once its length is in bounds, and its
+     * scale magnitude is then bounded so a short token such as {@code 1e999999999} cannot drive an
+     * out-of-memory plain-form encode. The materialization itself is wrapped in a narrow
+     * {@link RuntimeException} catch — {@code getDecimalValue()}/{@code getBigIntegerValue()} throw an
+     * unchecked {@link NumberFormatException} on exponent overflow — so such a token settles as a
+     * classified {@link Rejection#MALFORMED} rather than escaping the decode uncaught.
+     *
+     * @param parser the streaming parser positioned on a numeric token
+     * @param isFloat whether the token is a decimal (has a fraction or exponent)
+     * @return the exact numeric node, or a classified numeric rejection
+     * @throws IOException when the parser cannot read the token's lexical length
+     */
+    private static Result materializeNumber(JsonParser parser, boolean isFloat) throws IOException {
+        if (parser.getTextLength() > MAX_NUMBER_CHARS) {
+            return Result.rejected(Rejection.NUMBER_OUT_OF_BOUNDS);
+        }
+        try {
+            if (isFloat) {
+                BigDecimal decimal = parser.getDecimalValue();
+                if (Math.abs((long) decimal.scale()) > MAX_DECIMAL_SCALE) {
+                    return Result.rejected(Rejection.NUMBER_OUT_OF_BOUNDS);
+                }
+                return Result.ok(NODE_FACTORY.numberNode(decimal));
+            }
+            return Result.ok(integerNode(parser));
+        } catch (RuntimeException numberOverflow) {
+            return Result.rejected(Rejection.MALFORMED);
+        }
+    }
+
+    /**
      * Builds an integer node that preserves the exact 64-bit or big-integer value.
      *
      * @param parser the streaming parser positioned on an integer token
@@ -284,6 +352,13 @@ final class McpStrictJsonReader {
         MAX_ITEMS,
         /** A string exceeded {@link McpServerConfig#jsonMaxStringChars()} characters. */
         MAX_STRING_CHARS,
+        /**
+         * A numeric token exceeded a fixed internal hardening bound: its lexical length exceeded
+         * {@link #MAX_NUMBER_CHARS}, or a decimal's scale magnitude exceeded {@link #MAX_DECIMAL_SCALE}.
+         * These bounds short-circuit before big-integer / big-decimal materialization so an adversarial
+         * numeric token cannot drive an O(n²) parse or an out-of-memory plain-form encode.
+         */
+        NUMBER_OUT_OF_BOUNDS,
         /** The bytes were not valid UTF-8, or contained a lone surrogate. */
         INVALID_UTF8,
         /** The bytes were not a single well-formed JSON value. */

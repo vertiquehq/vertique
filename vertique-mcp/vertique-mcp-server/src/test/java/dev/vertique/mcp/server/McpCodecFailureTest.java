@@ -81,7 +81,28 @@ class McpCodecFailureTest {
                             "duplicateId",
                             utf8("{\"jsonrpc\":\"2.0\",\"id\":1,\"id\":2,\"method\":\"server/discover\"}"),
                             -32700,
-                            null));
+                            null),
+                    // F4: an absent id is a structurally invalid request envelope (id must be a string
+                    // or integer); it classifies as -32600 with a null usable id.
+                    new Row(
+                            "missingId",
+                            utf8("{\"jsonrpc\":\"2.0\",\"method\":\"tools/list\",\"params\":{}}"),
+                            -32600,
+                            null),
+                    // F4: a fractional id is neither a string nor an integer, so it is untrustworthy to
+                    // echo; the envelope is -32600 and the usable id is null.
+                    new Row(
+                            "fractionalId",
+                            utf8("{\"jsonrpc\":\"2.0\",\"id\":1.5,\"method\":\"tools/list\",\"params\":{}}"),
+                            -32600,
+                            null),
+                    // F4: params, when present, must be an object; a non-object params is -32600, and the
+                    // valid integer id is still echoed.
+                    new Row(
+                            "nonObjectParams",
+                            utf8("{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/list\",\"params\":[]}"),
+                            -32600,
+                            3));
         }
 
         static JsonObject parse(byte[] response) {

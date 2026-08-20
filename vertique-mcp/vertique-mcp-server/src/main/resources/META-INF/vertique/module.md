@@ -37,22 +37,31 @@ partial value** — any frame that carries:
   overflow the call stack;
 - an object with more members than `jsonMaxPropertiesPerObject` (default 1,000), an array with more
   items than `jsonMaxItemsPerArray` (default 10,000), or a string longer than `jsonMaxStringChars`
-  (default 262,144);
+  (default 262,144). The string bound is measured in UTF-16 code units (Java `String.length()`), not
+  Unicode code points, so a supplementary (astral) code point counts as two toward the bound;
 - invalid UTF-8, including lone surrogates.
 
 Numeric values keep their exact lexical precision: a 64-bit-overflowing integer such as
 `9007199254740993` and a decimal such as `0.10000000000000001` survive decode and canonical
 re-encode without lossy `double` rounding, so downstream schema validation sees exactly what the
 client sent. Canonical encoding is a compact, insertion-order-preserving re-encode; an
-already-compact frame round-trips byte-for-byte.
+already-compact frame round-trips byte-for-byte. Precision is preserved within fixed internal
+hardening bounds: a numeric token whose lexical length or decimal-scale magnitude is far beyond any
+legitimate value — the vectors that would otherwise drive a quadratic big-integer parse or an
+out-of-memory plain-form encode — is rejected as a bounded classified outcome rather than
+materialized, and an exponent that overflows during materialization is classified rather than
+allowed to escape.
 
 Over that reader, the codec validates the final-2026 JSON-RPC request envelope — `jsonrpc` must be
 `"2.0"`, `method` must name one of the bounded supported set (`server/discover`, `tools/list`,
-`tools/call`), and the request `id` is echoed only when it is a trustworthy integer or string — and
-classifies failures deterministically to the standard JSON-RPC codes with the standard messages and
-no `data`: `-32700` *Parse error* (malformed JSON, or a strict-reader rejection such as a duplicate
-key or trailing token; null id), `-32600` *Invalid Request* (bad envelope; original usable id when
-present), and `-32601` *Method not found* (unknown method; original usable id). Header/body-mismatch
+`tools/call`), the request `id` must be present and a string or integer (all three supported methods
+are requests, never notifications), and `params`, when present, must be an object — and classifies
+failures deterministically to the standard JSON-RPC codes with the standard messages and no `data`:
+`-32700` *Parse error* (malformed JSON, or a strict-reader rejection such as a duplicate key or
+trailing token; null id), `-32600` *Invalid Request* (bad envelope — wrong version, a missing or
+non-string/non-integer id, a missing method, or a non-object `params`; original usable id when the
+id itself is a trustworthy string or integer, else null), and `-32601` *Method not found* (unknown
+method; original usable id). Header/body-mismatch
 (`-32020`) and tool-level authorization (`-32602`) classification belong to the HTTP-contract and
 tool-dispatch slices and are not part of this codec. An internal codec failure settles through a
 pre-encoded `-32603` *Internal error* response that is written exactly once and never carries the
