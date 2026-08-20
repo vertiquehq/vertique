@@ -21,6 +21,9 @@ import lombok.extern.jackson.Jacksonized;
  * supplied values onto that builder. {@code McpServerConfigValidator} enforces the documented bounds
  * before any route is mounted, so invalid programmatic and loaded configuration fail startup
  * identically.
+ *
+ * <p>The class is {@code final} by contract: the configuration surface is closed, so no consumer may
+ * widen or reinterpret a documented bound by subclassing it.
  */
 @Getter
 @Builder(toBuilder = true)
@@ -28,7 +31,7 @@ import lombok.extern.jackson.Jacksonized;
 @Accessors(fluent = true)
 @JsonIgnoreProperties(ignoreUnknown = true)
 @JsonAutoDetect(fieldVisibility = JsonAutoDetect.Visibility.ANY, getterVisibility = JsonAutoDetect.Visibility.NONE)
-public class McpServerConfig {
+public final class McpServerConfig {
 
     /** Whether the MCP mount is installed at all ({@code mcp.enabled}). Defaults to {@code false}. */
     @Builder.Default

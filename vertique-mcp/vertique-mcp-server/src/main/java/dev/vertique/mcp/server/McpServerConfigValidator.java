@@ -10,6 +10,7 @@ import io.vertx.ext.web.RoutingContext;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import java.util.stream.Stream;
 
 /** Validates the startup-safe, bounded configuration accepted by the MCP server. */
 final class McpServerConfigValidator {
@@ -18,8 +19,7 @@ final class McpServerConfigValidator {
     /** Validates {@code config}, throwing one stable key-named configuration error on failure. */
     void validate(McpServerConfig config) {
         require(config != null, "mcp");
-        require(config.mountPath() != null && config.mountPath().endsWith("/*"), "mcp.mountPath");
-        require(config.mountPath().indexOf('*') == config.mountPath().length() - 1, "mcp.mountPath");
+        validateMountPath(config.mountPath());
         if (config.enabled()) {
             requireNonBlank(config.serverName(), "mcp.serverName");
             requireNonBlank(config.serverVersion(), "mcp.serverVersion");
@@ -55,6 +55,33 @@ final class McpServerConfigValidator {
         require(matches.size() == 1, "mcp.authenticationScheme");
         Optional<Handler<RoutingContext>> optionalHandler = matches.getFirst().createOptionalHandler();
         require(optionalHandler != null && optionalHandler.isPresent(), "mcp.authenticationScheme");
+    }
+
+    /**
+     * Validates that {@code mountPath} is one absolute, normalized, literal Router mount ending
+     * {@code /*}: a leading {@code /}, no path parameters ({@code :} segments), no wildcard other
+     * than the terminal {@code /*}, no query or fragment, no duplicate separators, no {@code .} or
+     * {@code ..} segments, and no whitespace or control characters. The bare {@code /*} root mount
+     * satisfies every one of those constraints and is therefore accepted.
+     */
+    private static void validateMountPath(String mountPath) {
+        require(mountPath != null, "mcp.mountPath");
+        require(mountPath.startsWith("/"), "mcp.mountPath");
+        require(mountPath.endsWith("/*"), "mcp.mountPath");
+        require(mountPath.indexOf('*') == mountPath.length() - 1, "mcp.mountPath");
+        require(mountPath.indexOf(':') < 0, "mcp.mountPath");
+        require(mountPath.indexOf('?') < 0 && mountPath.indexOf('#') < 0, "mcp.mountPath");
+        require(!mountPath.contains("//"), "mcp.mountPath");
+        require(
+                mountPath
+                        .chars()
+                        .noneMatch(character -> Character.isWhitespace(character) || Character.isISOControl(character)),
+                "mcp.mountPath");
+        String literalPrefix = mountPath.substring(0, mountPath.length() - 1);
+        require(
+                Stream.of(literalPrefix.split("/", -1))
+                        .noneMatch(segment -> ".".equals(segment) || "..".equals(segment)),
+                "mcp.mountPath");
     }
 
     private static void validateOrigins(Set<String> origins) {
