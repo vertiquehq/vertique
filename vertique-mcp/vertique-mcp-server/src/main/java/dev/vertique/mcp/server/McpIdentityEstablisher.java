@@ -19,6 +19,7 @@ import java.util.Set;
 final class McpIdentityEstablisher {
     private static final InvocationOrigin MCP_ORIGIN = InvocationOrigin.of(DispatchBoundary.MCP);
 
+    private final boolean schemeConfigured;
     private final Handler<RoutingContext> optionalAuthentication;
     private final Handler<RoutingContext> identityResolution;
 
@@ -29,18 +30,25 @@ final class McpIdentityEstablisher {
         Objects.requireNonNull(config, "config");
         Objects.requireNonNull(routeAuthHandlers, "routeAuthHandlers");
         Objects.requireNonNull(identityResolutionMiddleware, "identityResolutionMiddleware");
+        this.schemeConfigured = config.enabled() && config.authenticationScheme() != null;
         optionalAuthentication =
                 selectOptionalHandler(config, routeAuthHandlers).orElse(context -> context.next());
         identityResolution = identityResolutionMiddleware.handlerFor(MCP_ORIGIN);
     }
 
     /**
-     * Admits only clean routing authentication state before MCP establishes its own identity.
+     * Admits the request into identity establishment.
+     *
+     * <p>When a scheme is configured (§4.7 stage 3), only clean routing authentication state is
+     * admitted: a pre-existing {@code RoutingContext.user()} or authentication evidence fails closed
+     * before the selected scheme runs. When no scheme is configured, the mount binds an MCP-owned
+     * canonical anonymous context <em>without consulting</em> ambient Router user/evidence, so an
+     * ambient routing user is not a rejection — it is simply ignored.
      *
      * @param context the request context inspected at the MCP trust boundary
      */
     void admit(RoutingContext context) {
-        if (!hasCleanAuthenticationState(context)) {
+        if (schemeConfigured && !hasCleanAuthenticationState(context)) {
             reject(context);
             return;
         }
@@ -56,9 +64,16 @@ final class McpIdentityEstablisher {
      * Verifies that optional authentication either supplied both user and evidence or supplied neither.
      *
      * <p>This prevents a misbehaving optional handler from turning invalid credentials into an
-     * anonymous request or from providing an unverified ambient user.
+     * anonymous request or from providing an unverified ambient user. The check applies only when a
+     * scheme is configured: with no scheme the mount binds canonical anonymous without consulting
+     * ambient Router user/evidence, so an ambient user left on the context is intentionally ignored
+     * rather than treated as an inconsistent post-authentication state.
      */
     void verifyPostAuthenticationState(RoutingContext context) {
+        if (!schemeConfigured) {
+            context.next();
+            return;
+        }
         boolean hasUser = context.user() != null;
         boolean hasEvidence = !RestAuthenticationEvidence.get(context).isEmpty();
         if (hasUser != hasEvidence) {

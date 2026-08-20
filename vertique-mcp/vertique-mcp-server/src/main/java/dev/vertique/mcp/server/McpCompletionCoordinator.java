@@ -82,46 +82,62 @@ final class McpCompletionCoordinator {
     // --- T004 settlement seam ---
     //
     // The disconnect, reset, and timeout settlement entries below are the internal seam the T004
-    // dispatcher will call once it wires disconnect/reset/timeout handlers. They are deliberately
-    // NON-FUNCTIONAL in this red slice: the frozen lifecycle contract promises exactly-once
-    // terminal-before-completion delivery on these paths, but that behavior is implemented in the
-    // T004 green slice. Until then these entries publish nothing, so the TP-003/TP-004 race and
-    // observation matrices land red on the missing terminal/completion delivery rather than on a
-    // setup or compilation error.
+    // dispatcher calls once a client disconnects, the response stream resets, or the whole-request
+    // timeout elapses. Each drives exactly one terminal and exactly one completion through the same
+    // first-observed-wins completed-guard as the write path, redispatched onto the request-owning
+    // Vert.x context, with the completion instant read from the injected clock. A signal that arrives
+    // after settlement has already won is suppressed, so the frozen lifecycle contract's exactly-once
+    // terminal-before-completion guarantee holds on every settlement path.
 
     /**
      * Settles the request when the client disconnects before or after the first write.
      *
-     * <p>NON-FUNCTIONAL in the T004 red slice — no terminal or completion is delivered yet.
+     * <p>Publishes exactly one terminal and one {@code DISCONNECTED} completion when this is the first
+     * settlement; a later signal is suppressed.
      *
-     * @param terminal the synthesized terminal facts the green slice will publish
+     * @param terminal the synthesized terminal facts to publish
      * @param responseCommitted whether any response byte had been committed before the disconnect
      */
     void settleDisconnected(McpRequestTerminalEvent terminal, boolean responseCommitted) {
-        // Intentionally not implemented in the red slice (see TP-003/TP-004).
+        settle(terminal, McpTransportOutcome.DISCONNECTED, responseCommitted);
     }
 
     /**
      * Settles the request when the response stream is reset.
      *
-     * <p>NON-FUNCTIONAL in the T004 red slice — no terminal or completion is delivered yet.
+     * <p>Publishes exactly one terminal and one {@code RESET} completion when this is the first
+     * settlement; a later signal is suppressed.
      *
-     * @param terminal the synthesized terminal facts the green slice will publish
+     * @param terminal the synthesized terminal facts to publish
      * @param responseCommitted whether any response byte had been committed before the reset
      */
     void settleReset(McpRequestTerminalEvent terminal, boolean responseCommitted) {
-        // Intentionally not implemented in the red slice (see TP-003/TP-004).
+        settle(terminal, McpTransportOutcome.RESET, responseCommitted);
     }
 
     /**
      * Settles the request when the whole-request timeout elapses.
      *
-     * <p>NON-FUNCTIONAL in the T004 red slice — no terminal or completion is delivered yet.
+     * <p>A timeout aborts the request without a successful write, so it records the
+     * {@code WRITE_FAILED} transport outcome with an uncommitted response. Publishes exactly one
+     * terminal and one completion when this is the first settlement; a later signal is suppressed.
      *
-     * @param terminal the synthesized terminal facts the green slice will publish
+     * @param terminal the synthesized terminal facts to publish
      */
     void settleTimeout(McpRequestTerminalEvent terminal) {
-        // Intentionally not implemented in the red slice (see TP-003/TP-004).
+        settle(terminal, McpTransportOutcome.WRITE_FAILED, false);
+    }
+
+    /**
+     * Redispatches a settlement onto the request-owning context and drives the completed-guard once.
+     *
+     * @param terminal the terminal facts to publish before completion
+     * @param transport the transport outcome the completion records
+     * @param responseCommitted whether any response byte had been committed
+     */
+    private void settle(McpRequestTerminalEvent terminal, McpTransportOutcome transport, boolean responseCommitted) {
+        Instant completedAt = clock.instant();
+        context.runOnContext(ignored -> completeOnContext(terminal, transport, responseCommitted, completedAt));
     }
 
     private void completeOnContext(
@@ -135,7 +151,12 @@ final class McpCompletionCoordinator {
         completed = true;
         McpRequestTerminalObservation observation = new McpRequestTerminalObservation(terminal, null);
         observations.forEach(item -> invoke(() -> item.onTerminal(observation)));
-        McpRequestCompletedEvent event = completedEvent(terminal, transport, responseCommitted, completedAt);
+        // The completion instant can never precede logical settlement: the frozen lifecycle contract
+        // requires completedAt >= terminalAt. Clamp to terminalAt so a settlement clock that reads
+        // earlier than the terminal (clock skew, or a deterministic future-dated test terminal) still
+        // produces a contract-valid completion rather than throwing between terminal and completion.
+        Instant settledAt = completedAt.isBefore(terminal.terminalAt()) ? terminal.terminalAt() : completedAt;
+        McpRequestCompletedEvent event = completedEvent(terminal, transport, responseCommitted, settledAt);
         observations.forEach(item -> invoke(() -> item.onCompleted(event)));
         listeners.forEach(listener -> invoke(() -> listener.onCompleted(event)));
     }

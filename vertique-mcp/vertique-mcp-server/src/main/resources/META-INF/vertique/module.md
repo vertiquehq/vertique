@@ -18,12 +18,56 @@ the mount is one literal path ending in `/*`, and every request and JSON bound i
 range and consistency at startup, before the router is mounted — so an out-of-range value fails
 composition rather than a live request. The JSON bounds (`jsonMaxDepth`,
 `jsonMaxPropertiesPerObject`, `jsonMaxItemsPerArray`, `jsonMaxStringChars`) are enforced by the
-strict bounded JSON-RPC codec described in [Strict bounded JSON-RPC codec](#strict-bounded-json-rpc-codec).
-The `allowedOrigins` allowlist is configured but not yet enforced by this version; Origin rejection
-and the wiring that puts the codec on the live HTTP request path arrive with the HTTP-contract
-capability. Request body size is enforced today, from `http.maxBodySize`. A configured `jsonProfile`
-is validated during composition even if MCP is disabled, preventing a latent invalid deployment
-configuration.
+strict bounded JSON-RPC codec described in [Strict bounded JSON-RPC codec](#strict-bounded-json-rpc-codec),
+which is now wired onto the live request path. Request body size is enforced from
+`http.maxBodySize`. A configured `jsonProfile` is validated during composition even if MCP is
+disabled, preventing a latent invalid deployment configuration.
+
+## Stateless HTTP contract
+
+The mount is stateless and multi-instance: it establishes no session, emits no cookie or affinity
+header, and two independently deployed servers share nothing, so a load balancer may route any
+request to any instance. Every request is admitted through the fixed pipeline before dispatch:
+
+- **Method** — only `POST` is accepted. `GET`, `DELETE`, and any other method are HTTP `405`.
+- **Origin** — a request that carries an `Origin` outside a non-empty `mcp.allowedOrigins` allowlist
+  is rejected with HTTP `403` before dispatch. An empty allowlist (the default) imposes no origin
+  restriction, and a request with no `Origin` header is never origin-rejected.
+- **Body limit** — a body larger than `http.maxBodySize` is a bounded HTTP failure, not a protocol
+  result.
+- **Session headers** — the stateless protocol has no session concept, so an unsupported session
+  header (for example `Mcp-Session-Id`) is ignored and the request stays bounded.
+- **Accept / content-type** — discovery always answers `application/json`; a client that accepts
+  `application/json`, `text/event-stream`, or both receives the JSON discovery result.
+
+Once a JSON-RPC envelope is decoded, protocol failures use the final-spec JSON-RPC codes and their
+mapped HTTP status: a malformed frame is `-32700` (HTTP `400`), an invalid envelope is `-32600`
+(HTTP `400`), and an unknown method is `-32601` (HTTP `404`). None of these admission or protocol
+failures invokes a tool.
+
+## Request lifecycle and exactly-once settlement
+
+Every admitted request opens neutral lifecycle observation (`McpRequestLifecycleObserver`) before
+authentication, and settles through a completion coordinator that captures the request-owning Vert.x
+context and redispatches every off-context completion onto it. Settlement is **first-observed-wins**
+and delivers **exactly one terminal event followed by exactly one completion event** on every
+path — a successful write, a client disconnect, a response-stream reset, or a whole-request timeout
+(`mcp.request.timeoutMs`). The terminal always precedes the completion, and any later signal after
+the first settlement wins is suppressed, so a disconnect that races a late handler result cannot
+produce a second terminal. A disconnect or reset before the first response byte records an
+uncommitted (`responseCommitted=false`) `DISCONNECTED`/`RESET` completion; a timeout records a
+`WRITE_FAILED` completion. Observer `open`, callback, null-session, and retention failures are
+isolated per observer and never change the protocol or business outcome. (A pre-pipeline failure,
+such as a body-limit rejection that fires before the coordinator is created, produces no lifecycle
+observation.)
+
+## Bounded response output
+
+The response write is bounded by `mcp.output.maxBytes`: serialization streams through a byte-counting
+writer that stops the moment the running count would exceed the cap, so an over-cap response is
+classified as a bounded internal error and never emitted — the full over-cap byte array is never
+materialized. Discovery responses are far below the default cap; the bound exists for the larger
+structured outputs introduced by later slices.
 
 ## Strict bounded JSON-RPC codec
 
