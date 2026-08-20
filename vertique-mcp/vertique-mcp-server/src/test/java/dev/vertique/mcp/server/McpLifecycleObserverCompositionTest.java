@@ -4,15 +4,23 @@
 package dev.vertique.mcp.server;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import dagger.Component;
+import dagger.Module;
+import dagger.Provides;
+import dagger.multibindings.IntoSet;
+import dagger.multibindings.Multibinds;
 import dev.vertique.mcp.lifecycle.McpRequestCompletedEvent;
 import dev.vertique.mcp.lifecycle.McpRequestCompletedListener;
 import dev.vertique.mcp.lifecycle.McpRequestLifecycleObserver;
 import dev.vertique.mcp.lifecycle.McpRequestObservation;
 import dev.vertique.mcp.lifecycle.McpRequestTerminalObservation;
 import dev.vertique.rest.core.config.HttpConfig;
+import dev.vertique.rest.core.router.RouterMount;
+import dev.vertique.rest.core.security.RouteAuthHandler;
 import dev.vertique.rest.core.security.SecurityRuntime;
 import dev.vertique.rest.security.IdentityResolutionMiddleware;
 import io.vertx.core.Context;
@@ -26,6 +34,7 @@ import io.vertx.ext.web.Router;
 import io.vertx.ext.web.client.HttpResponse;
 import io.vertx.ext.web.client.WebClient;
 import io.vertx.ext.web.handler.BodyHandler;
+import jakarta.inject.Singleton;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
@@ -44,7 +53,17 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
 /**
- * Exercises neutral lifecycle extensions through a real MCP discovery request.
+ * Exercises neutral lifecycle extensions through a real MCP discovery request served by a mount that
+ * a <em>generated</em> Dagger component composed.
+ *
+ * <p>Every row obtains its {@link RouterMount} from a test {@code @Component} that includes the
+ * production {@link McpServerModule}, so the matrix proves the composed graph — the
+ * {@code @Multibinds} zero-contribution case, and the multi-contribution case where each
+ * {@code @IntoSet} observer/listener reaches the dispatcher — rather than a hand-assembled object
+ * graph that could pass while the module's bindings are broken. {@link GraphExternalsModule} supplies
+ * only the bindings an application graph owns outside this module (configuration, the
+ * {@code Set<RouteAuthHandler>} that {@code AuthModule} declares in production, identity resolution,
+ * the security runtime, and HTTP limits).
  *
  * <p>The client is a {@link WebClient} wrapping a raw {@link HttpClient}: {@code WebClient}
  * aggregates the body before its future resolves, while the wrapped raw client keeps the awaitable
@@ -84,31 +103,33 @@ class McpLifecycleObserverCompositionTest {
     @ParameterizedTest(name = "{0}")
     @MethodSource("compositionRows")
     @DisplayName("composes neutral observers and completion listeners without shared request state")
-    void shouldEnforceT001ContractMatrix(
-            String row,
-            Set<McpRequestLifecycleObserver> observers,
-            Set<McpRequestCompletedListener> listeners,
-            List<RecordingObserver> healthyObservers,
-            List<RecordingListener> healthyListeners)
-            throws Exception {
+    void shouldEnforceT001ContractMatrix(String row, Composition composition) throws Exception {
         vertx = Vertx.vertx();
-        int port = mountDiscoveryServer(observers, listeners);
+        int port = mountDiscoveryServer(composition.mount());
 
         JsonObject response = discover(port);
 
+        assertThat(composition.composedObservers())
+                .as("%s: the graph must compose exactly the contributed lifecycle observers", row)
+                .hasSize(composition.expectedObserverCount())
+                .containsAll(composition.healthyObservers());
+        assertThat(composition.composedListeners())
+                .as("%s: the graph must compose exactly the contributed completion listeners", row)
+                .hasSize(composition.expectedListenerCount())
+                .containsAll(composition.healthyListeners());
         assertThat(response.getJsonObject("result")
                         .getJsonObject("_meta")
                         .getJsonObject("io.modelcontextprotocol/serverInfo")
                         .getString("name"))
                 .isEqualTo("lifecycle-test");
-        for (RecordingObserver healthyObserver : healthyObservers) {
+        for (RecordingObserver healthyObserver : composition.healthyObservers()) {
             healthyObserver.awaitCallbacks();
         }
-        for (RecordingListener healthyListener : healthyListeners) {
+        for (RecordingListener healthyListener : composition.healthyListeners()) {
             healthyListener.awaitCallback();
         }
-        healthyObservers.forEach(RecordingObserver::assertExactlyOneTerminalAndCompletionOnOneContext);
-        healthyListeners.forEach(RecordingListener::assertExactlyOneCompletionOnOwningContext);
+        composition.healthyObservers().forEach(RecordingObserver::assertExactlyOneTerminalAndCompletionOnOneContext);
+        composition.healthyListeners().forEach(RecordingListener::assertExactlyOneCompletionOnOwningContext);
     }
 
     /**
@@ -125,7 +146,7 @@ class McpLifecycleObserverCompositionTest {
         vertx = Vertx.vertx();
         List<Path> spooled = new CopyOnWriteArrayList<>();
         int port = mountServer(
-                Set.of(), Set.of(), BodyHandler.create().setUploadsDirectory(uploadsDirectory.toString()), spooled);
+                zeroExtensionMount(), BodyHandler.create().setUploadsDirectory(uploadsDirectory.toString()), spooled);
 
         HttpResponse<Buffer> response = postMultipart(port);
 
@@ -138,6 +159,11 @@ class McpLifecycleObserverCompositionTest {
         awaitSpooledUploadsDeleted(uploadsDirectory, spooled);
     }
 
+    /**
+     * Builds one generated Dagger graph per row: a zero-contribution graph whose observer and listener
+     * sets can only come from {@link McpServerModule}'s {@code @Multibinds} declarations, and two
+     * multi-contribution graphs whose sets are assembled from {@code @Provides @IntoSet} bindings.
+     */
     private static Stream<Arguments> compositionRows() {
         RecordingObserver firstObserver = new RecordingObserver();
         RecordingObserver secondObserver = new RecordingObserver();
@@ -145,61 +171,84 @@ class McpLifecycleObserverCompositionTest {
         RecordingListener secondListener = new RecordingListener();
         RecordingListener thirdListener = new RecordingListener();
         RecordingListener fourthListener = new RecordingListener();
+
+        ZeroExtensionComponent zeroExtension = zeroExtensionComponent();
+        ObserverAndListenerComponent observersAndListeners =
+                DaggerMcpLifecycleObserverCompositionTest_ObserverAndListenerComponent.builder()
+                        .observerAndListenerContributions(new ObserverAndListenerContributions(
+                                firstObserver, secondObserver, firstListener, secondListener))
+                        .build();
+        ListenerOnlyComponent listenersOnly = DaggerMcpLifecycleObserverCompositionTest_ListenerOnlyComponent.builder()
+                .listenerOnlyContributions(new ListenerOnlyContributions(thirdListener, fourthListener))
+                .build();
+
         return Stream.of(
-                Arguments.of("shouldBootDiscoveryWithZeroOptionalExtensions", Set.of(), Set.of(), List.of(), List.of()),
+                Arguments.of(
+                        "shouldBootDiscoveryWithZeroOptionalExtensions",
+                        new Composition(
+                                soleMount(zeroExtension.routerMounts()),
+                                zeroExtension.lifecycleObservers(),
+                                zeroExtension.completedListeners(),
+                                0,
+                                0,
+                                List.of(),
+                                List.of())),
                 Arguments.of(
                         "shouldCompileAndRunWithZeroOrMultipleObserverContributions",
-                        Set.of(firstObserver, secondObserver, throwingObserver(), nullObserver()),
-                        Set.of(firstListener, secondListener, throwingListener()),
-                        List.of(firstObserver, secondObserver),
-                        List.of(firstListener, secondListener)),
+                        new Composition(
+                                soleMount(observersAndListeners.routerMounts()),
+                                observersAndListeners.lifecycleObservers(),
+                                observersAndListeners.completedListeners(),
+                                4,
+                                3,
+                                List.of(firstObserver, secondObserver),
+                                List.of(firstListener, secondListener))),
                 Arguments.of(
                         "shouldCompileAndRunWithZeroOrMultipleCompletionListeners",
-                        Set.of(),
-                        Set.of(thirdListener, fourthListener),
-                        List.of(),
-                        List.of(thirdListener, fourthListener)));
+                        new Composition(
+                                soleMount(listenersOnly.routerMounts()),
+                                listenersOnly.lifecycleObservers(),
+                                listenersOnly.completedListeners(),
+                                0,
+                                2,
+                                List.of(),
+                                List.of(thirdListener, fourthListener))));
     }
 
-    private int mountDiscoveryServer(
-            Set<McpRequestLifecycleObserver> observers, Set<McpRequestCompletedListener> listeners) throws Exception {
-        return mountServer(observers, listeners, BodyHandler.create(), new CopyOnWriteArrayList<>());
+    private static ZeroExtensionComponent zeroExtensionComponent() {
+        return DaggerMcpLifecycleObserverCompositionTest_ZeroExtensionComponent.create();
+    }
+
+    private static RouterMount zeroExtensionMount() {
+        return soleMount(zeroExtensionComponent().routerMounts());
+    }
+
+    /** Asserts the module contributes exactly one mount and returns it. */
+    private static RouterMount soleMount(Set<RouterMount> mounts) {
+        assertThat(mounts)
+                .as("McpServerModule must contribute exactly one RouterMount to the graph")
+                .hasSize(1);
+        return mounts.iterator().next();
+    }
+
+    private int mountDiscoveryServer(RouterMount mount) throws Exception {
+        return mountServer(mount, BodyHandler.create(), new CopyOnWriteArrayList<>());
     }
 
     /**
-     * Mounts the MCP sub-router behind an application-composed root {@code bodyHandler}, recording the
-     * paths that handler spooled so a test can prove cleanup rather than absence of uploads.
+     * Mounts the graph-composed MCP sub-router behind an application-composed root
+     * {@code bodyHandler}, recording the paths that handler spooled so a test can prove cleanup rather
+     * than absence of uploads.
      */
-    private int mountServer(
-            Set<McpRequestLifecycleObserver> observers,
-            Set<McpRequestCompletedListener> listeners,
-            BodyHandler rootBodyHandler,
-            List<Path> spooledUploads)
+    private int mountServer(RouterMount mount, BodyHandler rootBodyHandler, List<Path> spooledUploads)
             throws Exception {
-        McpServerConfig config = McpServerConfig.builder()
-                .enabled(true)
-                .serverName("lifecycle-test")
-                .serverVersion("1.0.0")
-                .build();
-        IdentityResolutionMiddleware identity = mock(IdentityResolutionMiddleware.class);
-        when(identity.handlerFor(org.mockito.ArgumentMatchers.any())).thenReturn(context -> context.next());
-        // Identity resolution is stubbed out here, so no context is ever bound and dispatch records
-        // no security facts — this test observes lifecycle composition, not identity.
-        SecurityRuntime securityRuntime = mock(SecurityRuntime.class);
-        McpRouterMount mount = new McpRouterMount(
-                config,
-                new McpServerConfigValidator(),
-                new McpRequestDispatcher(config, securityRuntime, observers, listeners),
-                Set.of(),
-                identity,
-                HttpConfig.builder().build());
         Router router = Router.router(vertx);
         router.route().handler(rootBodyHandler);
         router.route().handler(context -> {
             context.fileUploads().forEach(upload -> spooledUploads.add(Path.of(upload.uploadedFileName())));
             context.next();
         });
-        router.route(config.mountPath()).subRouter(await(mount.createRouter(vertx)));
+        router.route(mount.mountPath()).subRouter(await(mount.createRouter(vertx)));
         server = await(vertx.createHttpServer().requestHandler(router).listen(0, "127.0.0.1"));
         return server.actualPort();
     }
@@ -279,6 +328,318 @@ class McpLifecycleObserverCompositionTest {
     private static <T> T await(Future<T> future) throws Exception {
         return future.toCompletionStage().toCompletableFuture().get(5, TimeUnit.SECONDS);
     }
+
+    // --- Matrix row model ---
+
+    /**
+     * One matrix row's graph-composed subject.
+     *
+     * @param mount the mount the generated component contributed
+     * @param composedObservers the observer set the generated component resolved
+     * @param composedListeners the listener set the generated component resolved
+     * @param expectedObserverCount how many observers the row's bindings must compose
+     * @param expectedListenerCount how many listeners the row's bindings must compose
+     * @param healthyObservers the contributed observers that must each receive exactly one callback
+     * @param healthyListeners the contributed listeners that must each receive exactly one callback
+     */
+    private record Composition(
+            RouterMount mount,
+            Set<McpRequestLifecycleObserver> composedObservers,
+            Set<McpRequestCompletedListener> composedListeners,
+            int expectedObserverCount,
+            int expectedListenerCount,
+            List<RecordingObserver> healthyObservers,
+            List<RecordingListener> healthyListeners) {}
+
+    // --- Test Dagger graphs ---
+
+    /**
+     * Provides the bindings an application graph owns outside {@link McpServerModule}.
+     *
+     * <p>The {@code Set<RouteAuthHandler>} declaration mirrors {@code AuthModule}'s production
+     * {@code @Multibinds}; identity resolution and the security runtime are stubbed because this test
+     * observes lifecycle composition, not identity. With identity resolution stubbed out no security
+     * context is ever bound, so dispatch records no security facts.
+     */
+    @Module
+    abstract static class GraphExternalsModule {
+        private GraphExternalsModule() {}
+
+        /** Declares the route-authentication set an application graph contributes into. */
+        @Multibinds
+        abstract Set<RouteAuthHandler> routeAuthHandlers();
+
+        /**
+         * Supplies the enabled MCP configuration every row's mount is validated against.
+         *
+         * @return the bounded discovery configuration used by the matrix
+         */
+        @Provides
+        @Singleton
+        static McpServerConfig config() {
+            return McpServerConfig.builder()
+                    .enabled(true)
+                    .serverName("lifecycle-test")
+                    .serverVersion("1.0.0")
+                    .build();
+        }
+
+        /**
+         * Supplies identity resolution that admits every request without binding a security context.
+         *
+         * @return a stub middleware whose handler simply advances the routing context
+         */
+        @Provides
+        @Singleton
+        static IdentityResolutionMiddleware identityResolutionMiddleware() {
+            IdentityResolutionMiddleware identity = mock(IdentityResolutionMiddleware.class);
+            when(identity.handlerFor(any())).thenReturn(context -> context.next());
+            return identity;
+        }
+
+        /**
+         * Supplies the security runtime the dispatcher snapshots from.
+         *
+         * @return a stub runtime that reports no established context
+         */
+        @Provides
+        @Singleton
+        static SecurityRuntime securityRuntime() {
+            return mock(SecurityRuntime.class);
+        }
+
+        /**
+         * Supplies the HTTP limits the mount applies to its own body handler.
+         *
+         * @return the framework default HTTP configuration
+         */
+        @Provides
+        @Singleton
+        static HttpConfig httpConfig() {
+            return HttpConfig.builder().build();
+        }
+    }
+
+    /**
+     * The zero-extension graph: no {@code @IntoSet} observer or listener binding exists anywhere, so
+     * both sets can only be satisfied by {@link McpServerModule}'s {@code @Multibinds} declarations.
+     * Compiling this component is itself the proof that the zero-extension graph resolves.
+     */
+    @Singleton
+    @Component(modules = {McpServerModule.class, GraphExternalsModule.class})
+    interface ZeroExtensionComponent {
+
+        /**
+         * Returns the mounts the module contributed.
+         *
+         * @return the router-mount multibinding, expected to hold exactly the MCP mount
+         */
+        Set<RouterMount> routerMounts();
+
+        /**
+         * Returns the composed lifecycle observers.
+         *
+         * @return the observer multibinding, expected to be empty
+         */
+        Set<McpRequestLifecycleObserver> lifecycleObservers();
+
+        /**
+         * Returns the composed completion listeners.
+         *
+         * @return the listener multibinding, expected to be empty
+         */
+        Set<McpRequestCompletedListener> completedListeners();
+    }
+
+    /** The multi-contribution graph: several observers and listeners, including failing contributions. */
+    @Singleton
+    @Component(modules = {McpServerModule.class, GraphExternalsModule.class, ObserverAndListenerContributions.class})
+    interface ObserverAndListenerComponent {
+
+        /**
+         * Returns the mounts the module contributed.
+         *
+         * @return the router-mount multibinding, expected to hold exactly the MCP mount
+         */
+        Set<RouterMount> routerMounts();
+
+        /**
+         * Returns the composed lifecycle observers.
+         *
+         * @return the observer multibinding, expected to hold the four contributed observers
+         */
+        Set<McpRequestLifecycleObserver> lifecycleObservers();
+
+        /**
+         * Returns the composed completion listeners.
+         *
+         * @return the listener multibinding, expected to hold the three contributed listeners
+         */
+        Set<McpRequestCompletedListener> completedListeners();
+    }
+
+    /** The listeners-only graph: zero observer contributions alongside several listeners. */
+    @Singleton
+    @Component(modules = {McpServerModule.class, GraphExternalsModule.class, ListenerOnlyContributions.class})
+    interface ListenerOnlyComponent {
+
+        /**
+         * Returns the mounts the module contributed.
+         *
+         * @return the router-mount multibinding, expected to hold exactly the MCP mount
+         */
+        Set<RouterMount> routerMounts();
+
+        /**
+         * Returns the composed lifecycle observers.
+         *
+         * @return the observer multibinding, expected to be empty
+         */
+        Set<McpRequestLifecycleObserver> lifecycleObservers();
+
+        /**
+         * Returns the composed completion listeners.
+         *
+         * @return the listener multibinding, expected to hold the two contributed listeners
+         */
+        Set<McpRequestCompletedListener> completedListeners();
+    }
+
+    /**
+     * Contributes two recording observers, one throwing observer, one observer that opens no
+     * observation, two recording listeners, and one throwing listener.
+     */
+    @Module
+    static final class ObserverAndListenerContributions {
+        private final RecordingObserver firstObserver;
+        private final RecordingObserver secondObserver;
+        private final RecordingListener firstListener;
+        private final RecordingListener secondListener;
+
+        ObserverAndListenerContributions(
+                RecordingObserver firstObserver,
+                RecordingObserver secondObserver,
+                RecordingListener firstListener,
+                RecordingListener secondListener) {
+            this.firstObserver = firstObserver;
+            this.secondObserver = secondObserver;
+            this.firstListener = firstListener;
+            this.secondListener = secondListener;
+        }
+
+        /**
+         * Contributes the first healthy observer.
+         *
+         * @return the recording observer whose callbacks the row asserts
+         */
+        @Provides
+        @IntoSet
+        McpRequestLifecycleObserver first() {
+            return firstObserver;
+        }
+
+        /**
+         * Contributes the second healthy observer.
+         *
+         * @return the recording observer whose callbacks the row asserts
+         */
+        @Provides
+        @IntoSet
+        McpRequestLifecycleObserver second() {
+            return secondObserver;
+        }
+
+        /**
+         * Contributes an observer that throws when opened.
+         *
+         * @return the failing observer whose failure must be isolated
+         */
+        @Provides
+        @IntoSet
+        McpRequestLifecycleObserver failing() {
+            return throwingObserver();
+        }
+
+        /**
+         * Contributes an observer that opens no observation.
+         *
+         * @return the observer returning {@code null}, which must be isolated
+         */
+        @Provides
+        @IntoSet
+        McpRequestLifecycleObserver silent() {
+            return nullObserver();
+        }
+
+        /**
+         * Contributes the first healthy completion listener.
+         *
+         * @return the recording listener whose callback the row asserts
+         */
+        @Provides
+        @IntoSet
+        McpRequestCompletedListener firstCompleted() {
+            return firstListener;
+        }
+
+        /**
+         * Contributes the second healthy completion listener.
+         *
+         * @return the recording listener whose callback the row asserts
+         */
+        @Provides
+        @IntoSet
+        McpRequestCompletedListener secondCompleted() {
+            return secondListener;
+        }
+
+        /**
+         * Contributes a completion listener that throws.
+         *
+         * @return the failing listener whose failure must be isolated
+         */
+        @Provides
+        @IntoSet
+        McpRequestCompletedListener failingCompleted() {
+            return throwingListener();
+        }
+    }
+
+    /** Contributes two recording completion listeners and no observer at all. */
+    @Module
+    static final class ListenerOnlyContributions {
+        private final RecordingListener firstListener;
+        private final RecordingListener secondListener;
+
+        ListenerOnlyContributions(RecordingListener firstListener, RecordingListener secondListener) {
+            this.firstListener = firstListener;
+            this.secondListener = secondListener;
+        }
+
+        /**
+         * Contributes the first healthy completion listener.
+         *
+         * @return the recording listener whose callback the row asserts
+         */
+        @Provides
+        @IntoSet
+        McpRequestCompletedListener firstCompleted() {
+            return firstListener;
+        }
+
+        /**
+         * Contributes the second healthy completion listener.
+         *
+         * @return the recording listener whose callback the row asserts
+         */
+        @Provides
+        @IntoSet
+        McpRequestCompletedListener secondCompleted() {
+            return secondListener;
+        }
+    }
+
+    // --- Recording contributions ---
 
     private static final class RecordingObserver implements McpRequestLifecycleObserver, McpRequestObservation {
         private final CountDownLatch callbacks = new CountDownLatch(2);
