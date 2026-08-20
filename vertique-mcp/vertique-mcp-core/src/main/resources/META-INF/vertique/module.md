@@ -6,14 +6,51 @@ SPDX-License-Identifier: EUPL-1.2
 # MCP Core
 
 > **Status:** Alpha
-> **Package:** `dev.vertique.mcp.lifecycle`, `dev.vertique.mcp.interceptor`
+> **Package:** `dev.vertique.mcp.annotation`, `dev.vertique.mcp.tool`, `dev.vertique.mcp.lifecycle`,
+> `dev.vertique.mcp.interceptor`
 > **Artifact:** `vertique-mcp-core`
 > **Depends on:** `vertique-core`, `vertique-security-core`, `jakarta.annotation-api`
 
-`vertique-mcp-core` owns the stable public API for Model Context Protocol lifecycle facts and
-neutral per-request observation. It contains immutable terminal and completion events, their
-outcome classifications, and extension interfaces. It has no HTTP router, protocol parser,
-handler invocation, or runtime composition.
+`vertique-mcp-core` owns the stable public API for authoring Model Context Protocol tools, plus
+Model Context Protocol lifecycle facts and neutral per-request observation. It contains the tool
+authoring annotations, the immutable descriptor and invocation contracts, immutable terminal and
+completion events, their outcome classifications, and extension interfaces. It has no HTTP router,
+protocol parser, handler invocation, or runtime composition.
+
+## Tool authoring
+
+Annotate a `public` method of a dependency-injected `public` type with `@McpTool` to publish it as
+a tool, and describe each declared parameter with `@McpToolParam`. Both annotations have `CLASS`
+retention and are consumed at compile time by `vertique-codegen-mcp`; nothing scans the classpath
+at runtime.
+
+Tool names are explicit, unique, case-sensitive, 1–128 characters, and match `[A-Za-z0-9_.-]+`.
+Descriptions are non-blank and at most 4,096 characters; a blank title is omitted from the wire. A
+blank `@McpToolParam.name` resolves to the source parameter name. Requiredness is type-derived —
+an `Optional<T>` parameter may be absent, every other parameter is required.
+
+`McpCancellationSignal` is the only framework-supplied parameter a tool method may declare. It is
+excluded from the input schema and lets a handler stop cooperative work when the client disconnects
+or the call times out. Cancellation is cooperative: the framework cannot stop a handler that
+ignores the signal.
+
+`McpToolResult` is the immutable result type a handler may return when it needs explicit text
+content or a tool execution error; use its `text`, `structured`, and `error` factories. A handler
+that returns a plain value has its result wrapped by generated code instead.
+
+## Descriptor and invocation contracts
+
+`McpToolDescriptor` is the immutable published description of one tool: name, optional title,
+description, `McpToolAnnotations` hints, canonical input schema, optional canonical output schema,
+and the `McpToolAccess` requirement resolved at compile time. `McpToolAccess` carries one
+`McpAccessMode` base policy — `PERMIT_ALL`, `DENY_ALL`, or `RESTRICTED` — with roles and an
+optional `ActionRef` that compose with AND under `RESTRICTED`.
+
+`McpToolInvoker` and `McpPreparedToolCall` are generated-runtime contracts: application code
+neither implements nor calls them. `prepare` is the fixed input boundary — the server validates
+arguments against the input schema, generated code then applies input policies, materializes typed
+parameters through the effective JSON profile, and performs Bean Validation. No prepared call
+exists for a failed stage.
 
 ## Lifecycle facts
 
@@ -42,6 +79,7 @@ observation. It carries no baggage.
 
 ## Dependency boundary
 
-This module consumes only the public core correlation snapshot and security snapshot types. Runtime
-dispatch, HTTP integration, tool registration, authorization enforcement, and observability adapters
-belong to separately packaged modules and must not be introduced here.
+This module consumes only the public core correlation snapshot, the security snapshot and
+`ActionRef` types, and `io.vertx.core.Future`. Runtime dispatch, HTTP integration, schema
+generation, tool registration, authorization enforcement, and observability adapters belong to
+separately packaged modules and must not be introduced here.
