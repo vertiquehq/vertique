@@ -86,6 +86,15 @@ jobs:
           bash scripts/test-verify-test-client-policy.sh
           bash scripts/verify-test-client-policy.sh
 
+      # Resolves the full dependency-and-plugin closure as its own step, so a
+      # download failure (network flake, missing artifact, checksum mismatch)
+      # is attributed here rather than surfacing as an unrelated-looking
+      # compile error, and so the setup-java Maven cache ends up complete even
+      # when a later compile or test failure would otherwise have stopped the
+      # build before reaching every module.
+      - name: Resolve dependencies
+        run: ./mvnw -ntp dependency:go-offline -DincludeScope=test
+
       # Per-module HTML reports are skipped: the vertique-coverage-report
       # aggregate XML produced by this same invocation is the only coverage
       # output CI consumes. Reactor parallelism (-T1C) comes from
