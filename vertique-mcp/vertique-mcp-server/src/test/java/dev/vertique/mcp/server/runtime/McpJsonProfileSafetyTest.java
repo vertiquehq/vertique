@@ -26,6 +26,8 @@ import com.fasterxml.jackson.databind.introspect.AnnotatedMember;
 import com.fasterxml.jackson.databind.introspect.JacksonAnnotationIntrospector;
 import com.fasterxml.jackson.databind.jsontype.BasicPolymorphicTypeValidator;
 import com.fasterxml.jackson.databind.jsontype.NamedType;
+import com.fasterxml.jackson.databind.jsontype.TypeResolverBuilder;
+import com.fasterxml.jackson.databind.jsontype.impl.StdTypeResolverBuilder;
 import com.fasterxml.jackson.databind.jsontype.impl.TypeIdResolverBase;
 import com.fasterxml.jackson.databind.module.SimpleModule;
 import com.fasterxml.jackson.databind.ser.std.StdSerializer;
@@ -71,10 +73,14 @@ import org.junit.jupiter.params.provider.MethodSource;
  *       traversed instead of escaping the walk.</li>
  *   <li>{@link #shouldApplyEverySafetyRulePerMapperSideUnderSplitIntrospectors()} — a mapper with
  *       independent serialization and deserialization introspectors is checked on both sides, so
- *       unsafe metadata visible to only one of them is still rejected.</li>
+ *       unsafe metadata visible to only one of them is still rejected. This row also owns the two
+ *       shapes only a per-side check sees at all: a class-level resolver installed through
+ *       {@code findTypeResolver} alone, and an allowlist one side declares that the other side's
+ *       resolved mapping does not agree with.</li>
  *   <li>{@link #shouldRejectRawMemberDeclarationsReachableFromToolTypes()} — a raw generic
  *       declaration on a reachable DTO member erases its contents to {@code Object} and is a bounded
- *       composition failure, while an explicit {@code List<Object>} stays accepted.</li>
+ *       composition failure, array declarations included, while an explicit {@code List<Object>} and
+ *       resolved array declarations stay accepted.</li>
  * </ol>
  */
 @DisplayName("MCP JSON profile safety — T002 contract matrix")
@@ -149,6 +155,13 @@ class McpJsonProfileSafetyTest {
                 .as("a wildcard root type is a bounded composition failure")
                 .isInstanceOf(JsonProfileConfigurationException.class)
                 .hasMessageContaining("wildcard");
+
+        assertThatThrownBy(() -> validator.validate(safeProfile, McpJsonProfileSafetyTestFixture.rawArrayRoot(), null))
+                .as("a raw generic array root is a bounded composition failure, exactly like the raw element"
+                        + " declaration it hides")
+                .isInstanceOf(JsonProfileConfigurationException.class)
+                .hasMessageContaining("raw")
+                .hasMessageContaining("java.util.List");
     }
 
     // --- Row 2: closed reachable-type rules through effective introspection ---
@@ -284,6 +297,12 @@ class McpJsonProfileSafetyTest {
      * class-level and a member-level mechanism seen only by the deserialization introspector are
      * rejected exactly like the mirrored serialization-only case, while split introspectors that both
      * see only safe metadata stay accepted.
+     *
+     * <p>Two shapes exist only because the check runs per side. A class-level resolver installed
+     * through {@code findTypeResolver} alone carries no {@code @JsonTypeInfo} for a metadata-shaped
+     * check to see, yet Jackson's serializer and deserializer factories install it; and an allowlist
+     * that only one side declares is the case the <em>resolved mapping</em> comparison exists for,
+     * because the other side resolves no subtypes at all. Both are asserted on each side.
      */
     private static void shouldApplyEverySafetyRulePerMapperSideUnderSplitIntrospectors() {
         McpJsonProfileSafetyValidator validator = new McpJsonProfileSafetyValidator();
@@ -315,11 +334,58 @@ class McpJsonProfileSafetyTest {
                 .hasMessageContaining("CLASS")
                 .hasMessageContaining("SplitBase");
 
+        assertThatThrownBy(() -> validator.validate(
+                        McpJsonProfileSafetyTestFixture.serializationOnlyClassResolverProfile(),
+                        ResolverInstalledCarrier.class,
+                        null))
+                .as("a class-level type resolver installed through findTypeResolver alone is rejected on the"
+                        + " serialization side, even though no @JsonTypeInfo exists to see")
+                .isInstanceOf(JsonProfileConfigurationException.class)
+                .hasMessageContaining("resolver")
+                .hasMessageContaining("ResolverInstalledDto");
+
+        assertThatThrownBy(() -> validator.validate(
+                        McpJsonProfileSafetyTestFixture.deserializationOnlyClassResolverProfile(),
+                        ResolverInstalledCarrier.class,
+                        null))
+                .as("the mirrored deserialization-side visibility of the same installed resolver stays rejected")
+                .isInstanceOf(JsonProfileConfigurationException.class)
+                .hasMessageContaining("resolver")
+                .hasMessageContaining("ResolverInstalledDto");
+
+        assertThatThrownBy(() -> validator.validate(
+                        McpJsonProfileSafetyTestFixture.serializationOnlyNamedAllowlistProfile(),
+                        SplitAllowlistCarrier.class,
+                        null))
+                .as("an allowlist only the serialization side declares is compared against the deserialization"
+                        + " side's resolved mapping, which resolves nothing")
+                .isInstanceOf(JsonProfileConfigurationException.class)
+                .hasMessageContaining("deserialization-facing subtype mapping")
+                .hasMessageContaining("SplitAllowlistBase");
+
+        assertThatThrownBy(() -> validator.validate(
+                        McpJsonProfileSafetyTestFixture.deserializationOnlyNamedAllowlistProfile(),
+                        SplitAllowlistCarrier.class,
+                        null))
+                .as("the mirrored case is caught by the serialization-facing comparison alone")
+                .isInstanceOf(JsonProfileConfigurationException.class)
+                .hasMessageContaining("serialization-facing subtype mapping")
+                .hasMessageNotContaining("deserialization-facing")
+                .hasMessageContaining("SplitAllowlistBase");
+
         assertThatCode(() -> validator.validate(
                         McpJsonProfileSafetyTestFixture.splitSafeIntrospectorProfile(),
                         SafeCarrier.class,
                         ClosedShapeCarrier.class))
                 .as("split introspectors that both see only safe metadata are accepted, not double-reported")
+                .doesNotThrowAnyException();
+
+        assertThatCode(() -> validator.validate(
+                        McpJsonProfileSafetyTestFixture.splitSafeIntrospectorProfile(),
+                        ResolverInstalledCarrier.class,
+                        null))
+                .as("a plain bean with no installed resolver stays accepted, so the class-level resolver gate"
+                        + " rejects the installation and not the type")
                 .doesNotThrowAnyException();
     }
 
@@ -330,6 +396,12 @@ class McpJsonProfileSafetyTest {
      * Jackson resolves it to an unconstrained container that the walk would otherwise traverse as a
      * silent leaf. It is a bounded composition failure naming the reachable path and the property. An
      * explicitly declared {@code List<Object>} is the application's own choice and stays accepted.
+     *
+     * <p>An array hides the same erasure behind a different reflective shape: {@code List[]} is a
+     * plain array {@code Class}, not a {@code GenericArrayType}, so it is invisible to a walk that
+     * inspects only parameterized types and generic arrays. {@code String[]} and
+     * {@code List<String>[]} are the controls that keep the array descent from rejecting resolved
+     * declarations.
      */
     private static void shouldRejectRawMemberDeclarationsReachableFromToolTypes() {
         McpJsonProfileSafetyValidator validator = new McpJsonProfileSafetyValidator();
@@ -349,8 +421,21 @@ class McpJsonProfileSafetyTest {
                 .hasMessageContaining("java.util.Map")
                 .hasMessageContaining("entries");
 
+        assertThatThrownBy(() -> validator.validate(safeProfile, RawArrayCarrier.class, null))
+                .as("a raw generic array declared on a reachable DTO member is a bounded composition failure:"
+                        + " List[] is an array Class, not a GenericArrayType, so only a walk that descends into"
+                        + " an array class's component type sees the erasure")
+                .isInstanceOf(JsonProfileConfigurationException.class)
+                .hasMessageContaining("raw")
+                .hasMessageContaining("java.util.List")
+                .hasMessageContaining("batches");
+
         assertThatCode(() -> validator.validate(safeProfile, ObjectListCarrier.class, null))
                 .as("an explicitly declared List<Object> is the application's own choice and stays accepted")
+                .doesNotThrowAnyException();
+
+        assertThatCode(() -> validator.validate(safeProfile, TypedArrayCarrier.class, null))
+                .as("String[] and List<String>[] are resolved array declarations and stay accepted")
                 .doesNotThrowAnyException();
     }
 
@@ -426,6 +511,34 @@ class McpJsonProfileSafetyTest {
                     new JacksonAnnotationIntrospector());
         }
 
+        /** Split introspectors where only the serialization side installs a class-level type resolver. */
+        static JsonMapperProfile serializationOnlyClassResolverProfile() {
+            return splitIntrospectorProfile(
+                    "ser-only-resolver", new TypeResolverInstallingIntrospector(), new JacksonAnnotationIntrospector());
+        }
+
+        /** The mirrored case: only the deserialization side installs the same class-level type resolver. */
+        static JsonMapperProfile deserializationOnlyClassResolverProfile() {
+            return splitIntrospectorProfile(
+                    "deser-only-resolver",
+                    new JacksonAnnotationIntrospector(),
+                    new TypeResolverInstallingIntrospector());
+        }
+
+        /** Split introspectors where only the serialization side reports a closed Id.NAME allowlist. */
+        static JsonMapperProfile serializationOnlyNamedAllowlistProfile() {
+            return splitIntrospectorProfile(
+                    "ser-only-allowlist", new ScopedNamedAllowlistIntrospector(), new JacksonAnnotationIntrospector());
+        }
+
+        /** The mirrored case: only the deserialization side reports the same closed Id.NAME allowlist. */
+        static JsonMapperProfile deserializationOnlyNamedAllowlistProfile() {
+            return splitIntrospectorProfile(
+                    "deser-only-allowlist",
+                    new JacksonAnnotationIntrospector(),
+                    new ScopedNamedAllowlistIntrospector());
+        }
+
         /** The positive control: two independent introspectors that both see only safe metadata. */
         static JsonMapperProfile splitSafeIntrospectorProfile() {
             return splitIntrospectorProfile(
@@ -441,6 +554,15 @@ class McpJsonProfileSafetyTest {
         /** A raw {@code List} root, taken from a declared field so the erasure is genuine. */
         static Type rawRoot() {
             return genericTypeOf("rawValues");
+        }
+
+        /**
+         * A raw generic <em>array</em> root. A {@code List[]} is a plain {@code Class}, not a
+         * {@code GenericArrayType}, so only a walk that descends into an array class's component type
+         * sees the erased element declaration at all.
+         */
+        static Type rawArrayRoot() {
+            return genericTypeOf("rawArrayValues");
         }
 
         /** A wildcard-bearing root, taken from a declared field so the wildcard survives. */
@@ -462,6 +584,7 @@ class McpJsonProfileSafetyTest {
     private static final class UnresolvedRootHolder {
         private List rawValues;
         private List<? extends Number> wildcardValues;
+        private List[] rawArrayValues;
     }
 
     /** One profile variant of the Given, pairing an id with the mapper under proof. */
@@ -561,6 +684,81 @@ class McpJsonProfileSafetyTest {
         }
     }
 
+    /**
+     * A plain bean carrying no {@code @JsonTypeInfo} at all, used as the base a custom introspector
+     * installs a class-level type resolver on through {@code findTypeResolver} alone.
+     */
+    private record ResolverInstalledDto(String value) {}
+
+    private record ResolverInstalledCarrier(ResolverInstalledDto argument0) {}
+
+    /**
+     * Installs a class-name class-level type resolver for {@link ResolverInstalledDto} by overriding
+     * only {@code findTypeResolver}.
+     *
+     * <p>This is the shape Jackson's own {@code Basic{Serializer,Deserializer}Factory} honours for
+     * class-level resolution: they ask {@code findTypeResolver} and install whatever it returns. An
+     * introspector — or a module carrying one — that overrides it without also reporting
+     * {@code findPolymorphicTypeInfo} therefore reopens the whole subtype space while every
+     * {@code @JsonTypeInfo}-shaped check sees nothing at all.
+     */
+    private static final class TypeResolverInstallingIntrospector extends JacksonAnnotationIntrospector {
+
+        @Override
+        public TypeResolverBuilder<?> findTypeResolver(
+                MapperConfig<?> config, AnnotatedClass annotated, JavaType baseType) {
+            if (ResolverInstalledDto.class.equals(annotated.getRawType())) {
+                return new StdTypeResolverBuilder()
+                        .init(Id.CLASS, null)
+                        .inclusion(JsonTypeInfo.As.PROPERTY)
+                        .typeProperty("@class");
+            }
+            return super.findTypeResolver(config, annotated, baseType);
+        }
+    }
+
+    /** A plain base that only one mapper side's introspector reports a closed allowlist for. */
+    private interface SplitAllowlistBase {}
+
+    private record SplitAllowlistFirst(String first) implements SplitAllowlistBase {}
+
+    private record SplitAllowlistCarrier(SplitAllowlistBase value) {}
+
+    /** Supplies the accepted {@code Id.NAME} shape the split-allowlist introspector reports. */
+    @JsonTypeInfo(use = Id.NAME, property = "kind")
+    private interface NamePolymorphismMarker {}
+
+    /**
+     * Reports a safe, finite {@code Id.NAME} allowlist for {@link SplitAllowlistBase} in the class
+     * scope only.
+     *
+     * <p>Installed on one mapper side, it produces the case the per-side <em>resolved mapping</em>
+     * comparison exists for: the side that declares the allowlist resolves it, and the other side
+     * resolves nothing at all. Because the declared shape is the accepted one, the walk reaches the
+     * mapping comparison instead of failing earlier on the type-id mechanism.
+     */
+    private static final class ScopedNamedAllowlistIntrospector extends JacksonAnnotationIntrospector {
+
+        private static final JsonTypeInfo.Value NAME_TYPE_INFO =
+                JsonTypeInfo.Value.from(NamePolymorphismMarker.class.getAnnotation(JsonTypeInfo.class));
+
+        @Override
+        public JsonTypeInfo.Value findPolymorphicTypeInfo(MapperConfig<?> config, Annotated annotated) {
+            if (annotated instanceof AnnotatedClass && SplitAllowlistBase.class.equals(annotated.getRawType())) {
+                return NAME_TYPE_INFO;
+            }
+            return super.findPolymorphicTypeInfo(config, annotated);
+        }
+
+        @Override
+        public List<NamedType> findSubtypes(Annotated annotated) {
+            if (SplitAllowlistBase.class.equals(annotated.getRawType())) {
+                return List.of(new NamedType(SplitAllowlistFirst.class, "first"));
+            }
+            return super.findSubtypes(annotated);
+        }
+    }
+
     /** A DTO one hop from the carrier whose raw member declaration erases its contents to Object. */
     @SuppressWarnings("rawtypes")
     private record RawListDto(List values) {}
@@ -573,10 +771,21 @@ class McpJsonProfileSafetyTest {
 
     private record RawMapCarrier(RawMapDto argument0) {}
 
+    /** The same erasure hidden inside an array declaration: {@code List[]}, not {@code List<?>[]}. */
+    @SuppressWarnings("rawtypes")
+    private record RawArrayDto(List[] batches) {}
+
+    private record RawArrayCarrier(RawArrayDto argument0) {}
+
     /** The positive control: {@code Object} contents the application declared deliberately. */
     private record ObjectListDto(List<Object> values) {}
 
     private record ObjectListCarrier(ObjectListDto argument0) {}
+
+    /** The array controls: neither a non-generic component nor a resolved generic one is erased. */
+    private record TypedArrayDto(String[] labels, List<String>[] batches) {}
+
+    private record TypedArrayCarrier(TypedArrayDto argument0) {}
 
     /** A base whose declared allowlist repeats one logical name. */
     @JsonTypeInfo(use = Id.NAME, property = "kind")

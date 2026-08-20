@@ -49,7 +49,8 @@ import org.junit.jupiter.params.provider.MethodSource;
  *       it is emitted.</li>
  *   <li>{@link #shouldRejectDuplicateNamesAndUnsupportedSignatures()} — the rejection diagnostics:
  *       duplicate tool names, raw and wildcard and unresolved types, an unsupported input-schema
- *       member, an unsupported result type, and a {@code void} return.</li>
+ *       member, a platform type carried as an application generic's type argument, an unsupported
+ *       result type, and a {@code void} return.</li>
  * </ol>
  *
  * <p>Each invalid source asserts an error <em>count</em> of exactly one for its targeted fragments,
@@ -444,6 +445,90 @@ class McpToolProcessorCompileTest {
                             + " declared on");
         }
 
+        // Mutation — @Authorized inherited from an overridden superclass method. This is the method
+        // half of the superclass tier, which neither the interface-method nor the superclass-type
+        // fixture reaches: dropping the superclass-method tier from the resolver leaves both of those
+        // green. Valid control: drop @Authorized from the base class method.
+        JavaFileObject superclassMethodAuthorized =
+                SourceFiles.inline(TOOLS_PACKAGE + ".SuperclassMethodAuthorizedTools", """
+                package com.example.tools;
+
+                import dev.vertique.mcp.annotation.McpTool;
+                import dev.vertique.mcp.annotation.McpToolParam;
+                import dev.vertique.rest.core.security.Authorized;
+                import io.vertx.core.Future;
+                import jakarta.inject.Inject;
+
+                abstract class AuthorizedMethodBaseTools {
+
+                    @Authorized
+                    public Future<WeatherReport> lookup(String city) {
+                        return Future.succeededFuture(new WeatherReport(city, 21));
+                    }
+                }
+
+                public class SuperclassMethodAuthorizedTools extends AuthorizedMethodBaseTools {
+
+                    @Inject
+                    public SuperclassMethodAuthorizedTools() {}
+
+                    @Override
+                    @McpTool(name = "weather.superclassMethodAuthorized",
+                            description = "Look up the current weather.")
+                    public Future<WeatherReport> lookup(
+                            @McpToolParam(name = "city", description = "The city to look up.") String city) {
+                        return Future.succeededFuture(new WeatherReport(city, 21));
+                    }
+                }
+                """);
+        try (McpToolCompilation inheritedSuperclassMethod =
+                McpToolCompilation.of(authorizedAnnotation(), weatherReport(), superclassMethodAuthorized)) {
+            inheritedSuperclassMethod.result().assertFailed();
+            assertEquals(
+                    1,
+                    inheritedSuperclassMethod.errorsNaming("@Authorized", "AuthorizedMethodBaseTools.lookup()"),
+                    "@Authorized inherited from an overridden superclass method must be rejected, naming the"
+                            + " source element it was declared on");
+        }
+
+        // Mutation — TYPE-level @Authorized on an implemented interface. This is the type half of the
+        // interface tier, the last tier the resolver considers; dropping it leaves every other
+        // @Authorized fixture green. Valid control: drop @Authorized from the interface.
+        JavaFileObject interfaceTypeAuthorized =
+                SourceFiles.inline(TOOLS_PACKAGE + ".InterfaceTypeAuthorizedTools", """
+                package com.example.tools;
+
+                import dev.vertique.mcp.annotation.McpTool;
+                import dev.vertique.mcp.annotation.McpToolParam;
+                import dev.vertique.rest.core.security.Authorized;
+                import io.vertx.core.Future;
+                import jakarta.inject.Inject;
+
+                @Authorized
+                interface AuthorizedToolMarker {}
+
+                public class InterfaceTypeAuthorizedTools implements AuthorizedToolMarker {
+
+                    @Inject
+                    public InterfaceTypeAuthorizedTools() {}
+
+                    @McpTool(name = "weather.interfaceTypeAuthorized", description = "Look up the current weather.")
+                    public Future<WeatherReport> lookup(
+                            @McpToolParam(name = "city", description = "The city to look up.") String city) {
+                        return Future.succeededFuture(new WeatherReport(city, 21));
+                    }
+                }
+                """);
+        try (McpToolCompilation inheritedInterfaceType =
+                McpToolCompilation.of(authorizedAnnotation(), weatherReport(), interfaceTypeAuthorized)) {
+            inheritedInterfaceType.result().assertFailed();
+            assertEquals(
+                    1,
+                    inheritedInterfaceType.errorsNaming("@Authorized", "AuthorizedToolMarker"),
+                    "TYPE-level @Authorized on an implemented interface must be rejected, naming the source"
+                            + " element it was declared on");
+        }
+
         // Mutation — an action value outside the frozen ActionRef grammar. The generated invoker emits
         // ActionRef.parse(<value>), so a non-canonical value compiles into source that always throws at
         // composition. Valid control: "weather.city.read".
@@ -751,6 +836,73 @@ class McpToolProcessorCompileTest {
                     "a parameter with no JSON schema representation must be rejected");
         }
 
+        // Mutation — a platform type carried as the argument of an application generic. The
+        // representability walk must descend into every declared type argument, not only the
+        // hard-coded container and map families: an application envelope is neither, so a check that
+        // stops at the envelope accepts io.vertx types inside it. Valid control: Envelope<String>.
+        JavaFileObject platformInsideApplicationGeneric =
+                SourceFiles.inline(TOOLS_PACKAGE + ".GenericEnvelopeTools", """
+                package com.example.tools;
+
+                import dev.vertique.mcp.annotation.McpTool;
+                import dev.vertique.mcp.annotation.McpToolParam;
+                import io.vertx.core.Future;
+                import io.vertx.core.json.JsonObject;
+                import jakarta.inject.Inject;
+
+                public class GenericEnvelopeTools {
+
+                    @Inject
+                    public GenericEnvelopeTools() {}
+
+                    @McpTool(name = "weather.genericEnvelope", description = "Look up the current weather.")
+                    public Future<WeatherReport> lookup(
+                            @McpToolParam(name = "envelope", description = "The envelope to read.")
+                            Envelope<JsonObject> envelope) {
+                        return Future.succeededFuture(new WeatherReport("nowhere", 21));
+                    }
+                }
+                """);
+        try (McpToolCompilation genericEnvelope =
+                McpToolCompilation.of(weatherReport(), envelope(), platformInsideApplicationGeneric)) {
+            genericEnvelope.result().assertFailed();
+            assertEquals(
+                    1,
+                    genericEnvelope.errorsNaming("JsonObject", "schema"),
+                    "a platform type reached through an application generic's type argument has no JSON schema"
+                            + " representation and must be rejected — the walk must descend into every declared"
+                            + " type argument, not only the container and map families");
+        }
+
+        // Control — the same application generic carrying a representable argument still compiles, so
+        // the descent rejects the platform argument rather than the generic itself.
+        JavaFileObject representableApplicationGeneric =
+                SourceFiles.inline(TOOLS_PACKAGE + ".RepresentableEnvelopeTools", """
+                package com.example.tools;
+
+                import dev.vertique.mcp.annotation.McpTool;
+                import dev.vertique.mcp.annotation.McpToolParam;
+                import io.vertx.core.Future;
+                import jakarta.inject.Inject;
+
+                public class RepresentableEnvelopeTools {
+
+                    @Inject
+                    public RepresentableEnvelopeTools() {}
+
+                    @McpTool(name = "weather.representableEnvelope", description = "Look up the current weather.")
+                    public Future<WeatherReport> lookup(
+                            @McpToolParam(name = "envelope", description = "The envelope to read.")
+                            Envelope<String> envelope) {
+                        return Future.succeededFuture(new WeatherReport("nowhere", 21));
+                    }
+                }
+                """);
+        try (McpToolCompilation representableEnvelope =
+                McpToolCompilation.of(weatherReport(), envelope(), representableApplicationGeneric)) {
+            representableEnvelope.result().assertSuccess();
+        }
+
         // Mutation — void return. Valid control: Future<WeatherReport>.
         JavaFileObject voidReturnType = SourceFiles.inline(TOOLS_PACKAGE + ".VoidReturnTools", """
                 package com.example.tools;
@@ -853,6 +1005,20 @@ class McpToolProcessorCompileTest {
                 package com.example.tools;
 
                 public record WeatherReport(String city, int temperatureCelsius) {}
+                """);
+    }
+
+    /**
+     * An application generic: neither a supported container nor a map, so it is the shape that proves
+     * the representability walk descends into every declared type argument.
+     *
+     * @return the {@code com.example.tools.Envelope} source
+     */
+    private static JavaFileObject envelope() {
+        return SourceFiles.inline(TOOLS_PACKAGE + ".Envelope", """
+                package com.example.tools;
+
+                public record Envelope<T>(T payload) {}
                 """);
     }
 

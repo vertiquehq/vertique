@@ -20,6 +20,7 @@ import com.fasterxml.jackson.databind.introspect.AnnotatedMethod;
 import com.fasterxml.jackson.databind.introspect.AnnotatedParameter;
 import com.fasterxml.jackson.databind.introspect.BeanPropertyDefinition;
 import com.fasterxml.jackson.databind.jsontype.NamedType;
+import com.fasterxml.jackson.databind.jsontype.TypeResolverBuilder;
 import com.fasterxml.jackson.databind.type.TypeFactory;
 import dev.vertique.core.json.JsonMapperProfile;
 import dev.vertique.core.json.JsonProfileConfigurationException;
@@ -59,6 +60,12 @@ import java.util.concurrent.atomic.AtomicReference;
  * {@code @JsonSubTypes} allowlist, and Jackson's resolved serialization- and deserialization-facing
  * subtype mappings equal to that allowlist. Custom serializers and deserializers are trusted
  * application code and are accepted; they are not claimed to be statically proven safe.
+ *
+ * <p>Type information is read the way Jackson installs it, not only the way it is annotated. Every
+ * scope is gated on the resolver the mapper would actually install — {@code findTypeResolver} for
+ * the class scope, {@code findPropertyTypeResolver} and {@code findPropertyContentTypeResolver} for
+ * the member scopes — so an introspector or module that installs a resolver without reporting
+ * {@code @JsonTypeInfo} metadata is rejected rather than seen as an unannotated type.
  *
  * <p>Effective metadata is read per mapper side. A mapper configured through
  * {@code ObjectMapper.setAnnotationIntrospectors} holds one introspector for serialization and
@@ -255,6 +262,20 @@ final class McpJsonProfileSafetyValidator {
         /**
          * Validates one mapper side's effective class-level type information.
          *
+         * <p>The gate is the resolver Jackson would actually install, not only the
+         * {@code @JsonTypeInfo}-shaped metadata: {@code Basic{Serializer,Deserializer}Factory} resolve
+         * class-level polymorphism by asking {@code findTypeResolver} and installing whatever it
+         * returns, so an introspector — or a module carrying one — that overrides that method alone
+         * reopens the subtype space while every metadata-shaped check sees nothing. Consulting both
+         * signals also subsumes the {@code @JsonTypeResolver}/{@code @JsonTypeIdResolver} annotation
+         * rejections, which are otherwise only reachable once the metadata is already reported.
+         *
+         * <p>An installed resolver is accepted only when the same side also reports the sanctioned
+         * {@code Id.NAME} shape, mirroring how the member scope gates on
+         * {@code findPropertyTypeResolver}. {@code Id.NONE} keeps meaning <em>absent</em>: it is
+         * Jackson's own way of disabling polymorphism, and the marker builder it installs blocks type
+         * handling rather than adding it.
+         *
          * @param reachable the type being visited
          * @param classInfo that side's annotated class
          * @param config that side's mapper config
@@ -269,7 +290,9 @@ final class McpJsonProfileSafetyValidator {
                 MapperConfig<?> config,
                 AnnotationIntrospector introspector) {
             JsonTypeInfo.Value typeInfo = introspector.findPolymorphicTypeInfo(config, classInfo);
-            if (typeInfo == null || typeInfo.getIdType() == JsonTypeInfo.Id.NONE) {
+            boolean declaresTypeInfo = typeInfo != null && typeInfo.getIdType() != JsonTypeInfo.Id.NONE;
+            boolean installsResolver = installsClassTypeHandling(reachable, classInfo, config, introspector, typeInfo);
+            if (!declaresTypeInfo && !installsResolver) {
                 return null;
             }
             if (classInfo.getAnnotation(JsonTypeResolver.class) != null) {
@@ -278,6 +301,12 @@ final class McpJsonProfileSafetyValidator {
             if (classInfo.getAnnotation(JsonTypeIdResolver.class) != null) {
                 throw failure(reachable.path(), "a custom @JsonTypeIdResolver resolver is not an accepted mechanism");
             }
+            if (!declaresTypeInfo) {
+                throw failure(
+                        reachable.path(),
+                        "the mapper installs a class-level type resolver reporting no @JsonTypeInfo metadata;"
+                                + " only Id.NAME with an explicit @JsonSubTypes allowlist is an accepted mechanism");
+            }
             if (typeInfo.getIdType() != JsonTypeInfo.Id.NAME) {
                 throw failure(
                         reachable.path(),
@@ -285,6 +314,55 @@ final class McpJsonProfileSafetyValidator {
                                 + "' is not an accepted mechanism; only Id.NAME with an explicit @JsonSubTypes allowlist is");
             }
             return declaredAllowlist(reachable.path(), introspector.findSubtypes(classInfo));
+        }
+
+        /**
+         * Reports whether one mapper side installs class-level type handling for the visited type.
+         *
+         * <p>A builder is only evidence of type handling when it actually produces a type serializer
+         * or deserializer — Jackson's own criterion, and the one that keeps {@code Id.NONE}'s
+         * polymorphism-disabling marker builder from being read as an installed mechanism. The build
+         * runs against the same side's config and resolved subtype mapping Jackson would use.
+         *
+         * @param reachable the type being visited
+         * @param classInfo that side's annotated class
+         * @param config that side's mapper config
+         * @param introspector the introspector that side actually uses
+         * @param typeInfo that side's reported metadata, possibly {@code null}
+         * @return {@code true} when that side installs class-level type handling
+         */
+        private boolean installsClassTypeHandling(
+                ReachableType reachable,
+                AnnotatedClass classInfo,
+                MapperConfig<?> config,
+                AnnotationIntrospector introspector,
+                @Nullable JsonTypeInfo.Value typeInfo) {
+            try {
+                TypeResolverBuilder<?> resolver = introspector.findTypeResolver(config, classInfo, reachable.type());
+                if (resolver == null) {
+                    return false;
+                }
+                // The sanctioned Id.NAME shape is validated by its metadata, so the builder is not
+                // instantiated for it: the allowlist and resolved-mapping rules already bound it.
+                if (typeInfo != null && typeInfo.getIdType() == JsonTypeInfo.Id.NAME) {
+                    return true;
+                }
+                if (config instanceof SerializationConfig serialization) {
+                    return resolver.buildTypeSerializer(serialization, reachable.type(), subtypesByClass(classInfo))
+                            != null;
+                }
+                if (config instanceof DeserializationConfig deserialization) {
+                    return resolver.buildTypeDeserializer(
+                                    deserialization, reachable.type(), subtypesByTypeId(classInfo))
+                            != null;
+                }
+                return true;
+            } catch (RuntimeException failure) {
+                throw failure(
+                        reachable.path(),
+                        "class-level type resolver introspection failed: "
+                                + failure.getClass().getSimpleName());
+            }
         }
 
         /**
@@ -594,17 +672,26 @@ final class McpJsonProfileSafetyValidator {
          * @param member the annotated member whose declaration is checked
          */
         private void rejectRawMemberDeclaration(String propertyPath, AnnotatedMember member) {
-            Type declared = declaredGenericType(member);
+            Type declared = declaredGenericType(propertyPath, member);
             if (declared != null) {
                 rejectRawUsage(propertyPath, declared);
             }
         }
 
-        /** Walks a declared member type, rejecting a raw use of a parameterizable class at any depth. */
+        /**
+         * Walks a declared member type, rejecting a raw use of a parameterizable class at any depth.
+         *
+         * <p>An array class is descended into rather than inspected directly: a {@code List[]}
+         * declaration is a plain array {@code Class} — only {@code List<String>[]}, whose component is
+         * itself parameterized, reaches reflection as a {@code GenericArrayType} — so the erased
+         * element declaration is invisible to anything that does not read the component type.
+         */
         private void rejectRawUsage(String propertyPath, Type declared) {
             switch (declared) {
                 case Class<?> rawCandidate -> {
-                    if (rawCandidate.getTypeParameters().length > 0) {
+                    if (rawCandidate.isArray()) {
+                        rejectRawUsage(propertyPath, rawCandidate.getComponentType());
+                    } else if (rawCandidate.getTypeParameters().length > 0) {
                         throw failure(
                                 propertyPath,
                                 "property declares raw type " + rawCandidate.getName()
@@ -626,15 +713,16 @@ final class McpJsonProfileSafetyValidator {
         /**
          * Reads the underlying generic declaration of one annotated member.
          *
+         * @param propertyPath the bounded reachable path of this member
          * @param member the member Jackson chose as the property's primary one
          * @return the declared {@code Type}, or {@code null} when the member exposes no unambiguous one
          */
         @Nullable
-        private static Type declaredGenericType(AnnotatedMember member) {
+        private Type declaredGenericType(String propertyPath, AnnotatedMember member) {
             return switch (member) {
                 case AnnotatedField field -> field.getAnnotated().getGenericType();
                 case AnnotatedMethod method -> declaredMethodType(method.getAnnotated());
-                case AnnotatedParameter parameter -> declaredParameterType(parameter);
+                case AnnotatedParameter parameter -> declaredParameterType(propertyPath, parameter);
                 default -> null;
             };
         }
@@ -653,21 +741,36 @@ final class McpJsonProfileSafetyValidator {
          * Reads a creator parameter's generic declaration by index.
          *
          * <p>{@code Executable.getGenericParameterTypes()} omits synthetic parameters for inner-class
-         * and enum constructors, which would misalign the index; that ambiguous case reports no
-         * declaration rather than an arbitrary one.
+         * and enum constructors, which misaligns the index against {@code getParameterCount()}. An
+         * ambiguous index cannot be read as a declaration, and skipping the member silently would make
+         * the whole resolved-declaration rule fail open for that property — so the ambiguity is a
+         * bounded composition failure naming the creator, per the closed algorithm's rule 1.
          *
+         * <p>No Jackson-reachable property reaches this: records, static nested types and top-level
+         * types all align, while Jackson drops the implicit-parameter creators of inner, local and
+         * enum types entirely, and an enum is a traversal leaf before bean introspection runs. The
+         * rejection is therefore a fail-closed guard for a shape Jackson's own creator detection does
+         * not currently produce, not a rejection of a supported DTO.
+         *
+         * @param propertyPath the bounded reachable path of this member
          * @param parameter the annotated creator parameter
-         * @return its declared {@code Type}, or {@code null} when the index cannot be trusted
+         * @return its declared {@code Type}
          */
-        @Nullable
-        private static Type declaredParameterType(AnnotatedParameter parameter) {
+        private Type declaredParameterType(String propertyPath, AnnotatedParameter parameter) {
             if (!(parameter.getOwner().getMember() instanceof Executable executable)) {
-                return null;
+                throw failure(
+                        propertyPath,
+                        "creator parameter " + parameter.getIndex()
+                                + " exposes no reflective declaration, so its declared type cannot be resolved");
             }
             Type[] declared = executable.getGenericParameterTypes();
             int index = parameter.getIndex();
             if (declared.length != executable.getParameterCount() || index >= declared.length) {
-                return null;
+                throw failure(
+                        propertyPath,
+                        "creator of " + executable.getDeclaringClass().getName() + " declares "
+                                + executable.getParameterCount() + " parameters but " + declared.length
+                                + " generic ones, so parameter " + index + " has no unambiguous declared type");
             }
             return declared[index];
         }
@@ -681,11 +784,19 @@ final class McpJsonProfileSafetyValidator {
             pending.addLast(new ReachableType(type, parentPath + " -> " + step + ": " + type.toCanonical()));
         }
 
-        /** Rejects raw, wildcard, variable and otherwise unresolved declared root types. */
+        /**
+         * Rejects raw, wildcard, variable and otherwise unresolved declared root types.
+         *
+         * <p>An array class is descended into for the same reason the member walk descends into one:
+         * a raw {@code List[]} root is a plain array {@code Class}, so its erased element declaration
+         * is only visible through the component type.
+         */
         private void requireResolved(Type type, String rootPath) {
             switch (type) {
                 case Class<?> rawCandidate -> {
-                    if (rawCandidate.getTypeParameters().length > 0) {
+                    if (rawCandidate.isArray()) {
+                        requireResolved(rawCandidate.getComponentType(), rootPath);
+                    } else if (rawCandidate.getTypeParameters().length > 0) {
                         throw failure(rootPath, "raw type " + rawCandidate.getName() + " is not resolvable");
                     }
                 }

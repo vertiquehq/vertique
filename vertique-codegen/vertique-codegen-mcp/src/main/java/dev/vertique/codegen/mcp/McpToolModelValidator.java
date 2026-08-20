@@ -714,15 +714,32 @@ final class McpToolModelValidator {
      * application types all have one. A platform, runtime, or serialization-library type that is not
      * explicitly supported does not.
      *
+     * <p>The walk descends into <em>every</em> declared type argument, not only those of the
+     * hard-coded container and map families: an application generic is neither, so stopping at it
+     * would accept a platform or SDK type carried inside it — {@code Envelope<RoutingContext>} is
+     * exactly the shape the contract makes a compile error. Descent is bounded by a visited set keyed
+     * on the resolved type, so a self-referential instantiation terminates.
+     *
      * @param type the type to inspect
      * @return the first unrepresentable type, or empty when the whole tree is representable
      */
     private Optional<TypeMirror> firstUnrepresentable(TypeMirror type) {
+        return firstUnrepresentable(type, new LinkedHashSet<>());
+    }
+
+    /**
+     * Runs the representability walk with the set of declared types already visited on this branch.
+     *
+     * @param type    the type to inspect
+     * @param visited the resolved declared types already visited
+     * @return the first unrepresentable type, or empty when the whole tree is representable
+     */
+    private Optional<TypeMirror> firstUnrepresentable(TypeMirror type, Set<String> visited) {
         if (type.getKind().isPrimitive()) {
             return Optional.empty();
         }
         if (type instanceof ArrayType array) {
-            return firstUnrepresentable(array.getComponentType());
+            return firstUnrepresentable(array.getComponentType(), visited);
         }
         if (!(type instanceof DeclaredType declared)) {
             return Optional.of(type);
@@ -735,16 +752,20 @@ final class McpToolModelValidator {
         if (SCALARS.contains(fqn)) {
             return Optional.empty();
         }
-        if (CONTAINERS.contains(fqn) || MAPS.contains(fqn)) {
-            return declared.getTypeArguments().stream()
-                    .map(this::firstUnrepresentable)
-                    .flatMap(Optional::stream)
-                    .findFirst();
-        }
-        if (PLATFORM_PREFIXES.stream().anyMatch(fqn::startsWith)) {
+        // A container or map is representable through its arguments; any other platform-owned type is
+        // not an application DTO and has no representation at all.
+        if (!CONTAINERS.contains(fqn)
+                && !MAPS.contains(fqn)
+                && PLATFORM_PREFIXES.stream().anyMatch(fqn::startsWith)) {
             return Optional.of(declared);
         }
-        return Optional.empty();
+        if (!visited.add(declared.toString())) {
+            return Optional.empty();
+        }
+        return declared.getTypeArguments().stream()
+                .map(argument -> firstUnrepresentable(argument, visited))
+                .flatMap(Optional::stream)
+                .findFirst();
     }
 
     private Optional<TypeMirror> firstUnresolved(TypeMirror type) {
