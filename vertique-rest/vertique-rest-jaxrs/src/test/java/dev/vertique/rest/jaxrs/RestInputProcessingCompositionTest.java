@@ -125,6 +125,31 @@ class RestInputProcessingCompositionTest {
         }
     }
 
+    /**
+     * Body DTO reaching {@link DuplicateAliasDto} only through a private field with no accessor.
+     *
+     * <p>Jackson's property introspection does not expose such a field, so a warm-up walk driven by
+     * Jackson properties never reaches its target. The engine records every declared field of a
+     * descendable type unconditionally and dispatches nested fragments against it, so this is a type
+     * whose projection <em>is</em> consulted on the request path.
+     */
+    public static class HiddenAliasHolderDto {
+        public String label;
+
+        @SuppressWarnings("unused")
+        private DuplicateAliasDto hidden;
+    }
+
+    /** Resource whose body type reaches an unprojectable type only through a Jackson-invisible field. */
+    @Path("/hidden-projection")
+    static class HiddenUnprojectableBodyResource {
+
+        @POST
+        public Future<String> accept(HiddenAliasHolderDto dto) {
+            return Future.succeededFuture(dto.label);
+        }
+    }
+
     /** Resource whose two routes declare policies in the two different ways the gate must see. */
     @Path("/governed")
     static class PolicyDeclaringResource {
@@ -205,6 +230,26 @@ class RestInputProcessingCompositionTest {
         }
     }
 
+    /**
+     * The real engine, which owns the warm-up walk. A test that asserts <em>which</em> types get
+     * their projection composed cannot use a double: the walk is the engine's own descent, so a
+     * no-op {@code precomputeFieldNameResolution} would compose nothing and prove nothing.
+     *
+     * <p>The resolver functions throw because no fixture reached through a warm-up walk declares a
+     * chain, and both are consulted only when a value is actually processed.
+     *
+     * @return a default engine over policy-free fixtures
+     */
+    private static InputObjectProcessor realEngine() {
+        return InputObjectProcessor.createDefault(
+                type -> {
+                    throw new AssertionError("no canonicalizer is declared by these fixtures: " + type);
+                },
+                type -> {
+                    throw new AssertionError("no sanitizer is declared by these fixtures: " + type);
+                });
+    }
+
     /** Pass-through engine standing in for a bound {@code SanitizationModule}. */
     private static final class PassThroughProcessor implements InputObjectProcessor {
         @Override
@@ -215,6 +260,11 @@ class RestInputProcessingCompositionTest {
                 InputLocation location,
                 InputFieldNameResolver nameResolver) {
             return input;
+        }
+
+        @Override
+        public void precomputeFieldNameResolution(Type declaredType, InputFieldNameResolver resolver) {
+            // This double resolves no per-type metadata, so there is nothing to precompute.
         }
     }
 
@@ -318,7 +368,7 @@ class RestInputProcessingCompositionTest {
     void shouldFailStartupWhenABodyTypesProjectionCannotBeComposed() {
         ConfigurationException failure = assertThrows(
                 ConfigurationException.class,
-                () -> register(Set.of(new UnprojectableBodyResource()), new PassThroughProcessor()),
+                () -> register(Set.of(new UnprojectableBodyResource()), realEngine()),
                 "the projection is composed at route registration, so an unresolvable one fails startup");
 
         String message = failure.getMessage();
@@ -331,7 +381,7 @@ class RestInputProcessingCompositionTest {
         // blanket startup cost that rejects ordinary DTOs.
         setUp();
         assertDoesNotThrow(
-                () -> register(Set.of(new PolicyFreeResource()), new PassThroughProcessor()),
+                () -> register(Set.of(new PolicyFreeResource()), realEngine()),
                 "an ordinary body type must register normally");
     }
 
@@ -340,7 +390,7 @@ class RestInputProcessingCompositionTest {
     void shouldFailStartupWhenANestedTypesProjectionCannotBeComposed() {
         ConfigurationException failure = assertThrows(
                 ConfigurationException.class,
-                () -> register(Set.of(new NestedUnprojectableBodyResource()), new PassThroughProcessor()),
+                () -> register(Set.of(new NestedUnprojectableBodyResource()), realEngine()),
                 "the engine resolves a nested type's projection on the request path, so warming has to "
                         + "cover the declared field graph — not only the body type itself");
 
@@ -348,6 +398,22 @@ class RestInputProcessingCompositionTest {
         assertTrue(
                 message.contains(DuplicateAliasDto.class.getName()),
                 "the failure must name the nested type whose projection cannot be composed: " + message);
+        assertTrue(message.contains("shared"), "the failure must name the contested wire name: " + message);
+    }
+
+    @Test
+    @DisplayName("a colliding body type reached only through a Jackson-invisible field fails route registration")
+    void collidingBodyTypeFailsRouteRegistration() {
+        ConfigurationException failure = assertThrows(
+                ConfigurationException.class,
+                () -> register(Set.of(new HiddenUnprojectableBodyResource()), realEngine()),
+                "the engine descends every declared field of a descendable type, so warming must follow "
+                        + "the engine's own owner set — not the narrower set Jackson exposes as properties");
+
+        String message = failure.getMessage();
+        assertTrue(
+                message.contains(DuplicateAliasDto.class.getName()),
+                "the failure must name the type whose projection cannot be composed: " + message);
         assertTrue(message.contains("shared"), "the failure must name the contested wire name: " + message);
     }
 }

@@ -23,10 +23,15 @@ import javax.lang.model.type.TypeMirror;
  *   <li><strong>Direct roots</strong> (types discovered as {@code @BODY} parameters) are included
  *       unconditionally, so route- and parameter-level policies still flow through the generated
  *       path even when the DTO carries no local sanitization annotations.</li>
- *   <li><strong>Transitive nested types</strong> are included only when their subtree carries at
- *       least one {@code @Sanitize}, {@code @Canonicalize}, {@code @SkipCanonicalization}, or
- *       {@code @SkipSanitization} annotation (directly, on a field or component, on the type,
- *       or on a meta-annotation) or any reachable nested field's type participates.</li>
+ *   <li><strong>Transitive nested types</strong> are included only when <em>they themselves</em>
+ *       carry at least one {@code @Sanitize}, {@code @Canonicalize},
+ *       {@code @SkipCanonicalization}, or {@code @SkipSanitization} annotation — on the type, on
+ *       one of their own fields or components, or via a meta-annotation on either. See
+ *       {@link #hasOwnAnnotations}, which is the whole rule. The condition is <strong>not</strong>
+ *       a subtree condition: an un-annotated mid-tier DTO on the path to an annotated leaf is not
+ *       emitted, and its fragment is handled by the reflective continuation at runtime. The leaf
+ *       is still emitted, because the walk below descends <em>through</em> a non-participating
+ *       type rather than pruning at it.</li>
  *   <li>Types outside the current compilation unit are excluded — the runtime falls back to the
  *       reflective continuation for those.</li>
  *   <li>Cycle protection via max depth {@value #MAX_DEPTH}. This is an APT-time bound on walking

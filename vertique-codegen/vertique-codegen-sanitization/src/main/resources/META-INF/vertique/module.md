@@ -24,6 +24,7 @@ For each participating DTO type, the processor emits a `{DTO}_InputProcessor` cl
 
 - `public final`, implements `GeneratedInputProcessor<T>`, with a public no-arg constructor for `Class.forName`-based instantiation by `GeneratedInputProcessorDispatcher`.
 - `static final` chain constants — `List<Class<? extends Canonicalizer>>`, `List<Class<? extends Sanitizer>>`, and `boolean` skip flags — for the type-level chain and for each field, resolved once at class-load time.
+- `fieldNameOwnerTypes()` returns a `static final Set<Class<?>>` naming every **field-name owner** the emitted `process(...)` arms may project a wire key against — i.e. pass to `InputTraversalContext.logicalFieldName(Class, String)` or dispatch into on that basis — so the engine can pre-warm those name projections at registration instead of walking the type reflectively. It holds the DTO's **own class — always, so the engine never mistakes a real owner set for the "not declared" empty default** — plus the erased nested/element type of each nested-DTO and nested-DTO-collection field. A schema-free field (an annotated `Map`, `Object`, or a collection with no per-object element) contributes nothing, annotated or not: its arm hands its erased declared type to `GeneratedSupport.applyDefault` only as `InputValueContext` provenance for the reflective continuation (`dispatcher.walkUnknown`, which walks with `InputPolicyMetadata.EMPTY`), never as a projection owner — its own metadata declares no fields a projected key could ever match. The set is flat, not transitive: the engine closes the graph itself. It is **deduplicated** — a self-referential DTO or two fields sharing a nested type name one class twice — and the emitted body accumulates into a `LinkedHashSet` before `Set.copyOf(...)` rather than using a `Set.of(...)` varargs literal, which would reject the repeat with `IllegalArgumentException` and surface it as an `ExceptionInInitializerError` on first dispatch.
 - `process(...)` dispatches on a `switch` whose `case` labels are the DTO's **Java** property names and whose selector is the traversal's projection of the wire key — `switch (rootCtx.logicalFieldName(Dto.class, k))`. The intermediate is keyed by wire names, so a renamed property (e.g. `@JsonProperty("user_name") String userName`) would match no arm if the raw key were switched on and its declared chain would be silently skipped. The projection selects the arm only: the emitted map keeps the wire key `k`, which is what the codec binds. The `InputValueContext` follows the same split — `path` is the wire path, `logicalName` is the Java property name for a matched arm and the wire name for an unmatched key.
   - String fields call `GeneratedSupport.applyString(...)`.
   - String collection fields call `GeneratedSupport.applyStringCollection(...)`.
@@ -40,11 +41,15 @@ See "Runtime SPI Types" below for the interfaces and helpers this generated clas
 
 For a `@BODY` resource-method parameter typed `Collection<E>` or `E[]`, the element type `E` — not the collection/array type itself — is the discovery root for generation.
 
-**Which nested DTOs get a generated processor.** A nested DTO type is included in the generated set only if its subtree carries at least one of `@Canonicalize`, `@Sanitize`, `@SkipCanonicalization`, or `@SkipSanitization` — directly on the type, on a field/component, or via a meta-annotation. A discovery-root DTO is always included regardless of local annotations, so route- and parameter-level policies still flow through the generated path. Field classification walks the superclass chain (stopping at `Object`) to collect inherited fields, mirroring `FR-CG008-005`, so they participate alongside a DTO's own fields.
+**Which nested DTOs get a generated processor.** A nested DTO type is included in the generated set only if **it** carries at least one of `@Canonicalize`, `@Sanitize`, `@SkipCanonicalization`, or `@SkipSanitization` — on the type itself, on one of its own fields/components, or via a meta-annotation on either. A discovery-root DTO is always included regardless of local annotations, so route- and parameter-level policies still flow through the generated path. Field classification walks the superclass chain (stopping at `Object`) to collect inherited fields, mirroring `FR-CG008-005`, so they participate alongside a DTO's own fields.
+
+The condition is the type's **own** annotations, not its subtree's. An un-annotated mid-tier DTO on the path to an annotated leaf gets **no** generated processor — the leaf still does, because discovery traverses through a non-participating type rather than pruning at it, and the mid-tier's own fragment is handled by the reflective continuation at runtime. Reading the rule as a subtree condition over-states which types are generated.
 
 **External-jar limit.** A field or record component whose declared type is not in the current compilation unit (an external-jar type) is not scanned for nested annotations; the generated processor calls `dispatcher.dispatchNested(...)` for that field instead, routing it to the reflective continuation (see "Codegen↔Reflection Handoff" below).
 
 **Array fields classify like collections.** Both shapes arrive as a JSON array carrying exactly one element schema, so a `NestedDto[]` field is treated as `COLLECTION_OF_DTO` and a `String[]` field as `COLLECTION_OF_STRINGS` — elements are processed at the component type, exactly as for `Collection<E>`, matching the reflective baseline. An array whose component is itself an array (`String[][]`) carries no element schema and stays `OTHER`, keeping the inherited-chain path.
+
+**`Map` fields are schema-free, never nested DTOs.** A `Map`'s keys are arbitrary, so it carries no statically known property set to generate a `switch` over. A `Map`-typed field is therefore classified `OTHER`: an unannotated one contributes no arm and no owner type at all, and an annotated one gets an `applyDefault` arm whose owner is the field's erased declared type (`Map`, or the declared subtype for a `HashMap`-typed field). The test is assignability to `java.util.Map`, not an exact type match, so `Map` and its subtypes classify identically. This mirrors the reflective `InputPolicyMetadataResolver`, which excludes `Map` from descent for the same reason — so the `InputValueContext.ownerType` reported for keys inside a `Map` field is the same whether or not codegen is active.
 
 **Context parameters are never request bodies.** A resource method parameter annotated `@Context`, or one whose declared type is assignable to `dev.vertique.core.context.ContextValue`, is excluded from discovery — these are auto-classified as `CONTEXT` by the runtime regardless of whether `@Context` is present, and are never treated as request-body roots.
 
@@ -74,6 +79,21 @@ the field kind:
 | `Collection<?>` / `Collection<? super NestedDto>` | `OTHER` — the element normalizes to `java.lang.Object`, a scalar leaf |
 | `Optional<T>` where `T extends A & B` | classified against `A` — javac erases an intersection bound to its leftmost member, and that is the type in the erased field signature Jackson binds against |
 
+**A collection's element type is its `Collection<E>` binding**, not a type argument read off the declared
+type by position. Field classification and `@BODY` discovery both resolve `E` by following the declared
+type's supertypes with its arguments substituted:
+
+| Declared field or body type | Classified as |
+|---------------------|---------------|
+| `Pair<NestedDto, Other>` where `class Pair<A, B> extends ArrayList<A>` | `COLLECTION_OF_DTO` (element type `NestedDto` — the binding is the *first* argument here, whatever the declared arity) |
+| `Weird<Other, NestedDto>` where `class Weird<A, B> extends ArrayList<B>` | `COLLECTION_OF_DTO` (element type `NestedDto` — the binding is the *second* argument) |
+| `Fixed<NestedDto>` where `class Fixed<T> extends ArrayList<String>` | `COLLECTION_OF_STRINGS` — the supertype fixes the element, so the declared argument is not the element type |
+| a raw collection (`List`, `Pair`) | `OTHER` (or omitted when unannotated) — nothing binds `E` |
+
+This is the same rule the reflective `TypeClassifier.elementType` applies, so a `Pair`-shaped body
+parameter is rooted at, dispatched against, and sanitized as the element the codec actually binds,
+whether or not codegen is active.
+
 Without this normalization `Optional` would classify as a nested DTO and emit `dispatcher.dispatchNested(v, Optional.class, …)`; no `Optional_InputProcessor` exists, so the field's chain would be silently dropped and nested DTO metadata would be resolved from `Optional` rather than the wrapped type. Likewise, without bound normalization a bounded nested DTO would fall to the `OTHER` tail and never receive its own generated processor while the runtime still materialized it. This keeps the generated path aligned with the reflective `InputPolicyMetadataResolver`, which applies the same `Optional`-stripping and bound-resolution rules.
 
 ---
@@ -99,8 +119,12 @@ public interface GeneratedInputProcessor<T> {
                    GeneratedInputProcessorDispatcher dispatcher,
                    @Nullable InputTraversalContext parent,
                    String parentPath);
+
+    default Set<Class<?>> fieldNameOwnerTypes() { return Set.of(); }
 }
 ```
+
+Every emitted `{DTO}_InputProcessor` overrides `fieldNameOwnerTypes()` (see above). The empty default keeps a hand-written or previously-generated processor working: the engine reads an empty return as "this processor does not declare an owner set" and falls back to its own reflective walk for that type.
 
 `parent == null` signals that this is the top-level entry; the generated class then seeds from `InputTraversalContext.fromPolicies(policies, InputFieldNameResolver.IDENTITY)`. That fallback exists for direct invocation only — the engine's own entry points always hand over a real `parent`, because a context seeded here can only assume identity naming and would drop a wire-name projection. A non-null `parent` means the caller has already accumulated traversal state (nested dispatch) and carries the traversal's `InputFieldNameResolver`. `parentPath` is the dot-separated path prefix of the field this DTO is nested under — an empty string at the top level — and is composed into the `path` of every `InputValueContext` the processor builds.
 

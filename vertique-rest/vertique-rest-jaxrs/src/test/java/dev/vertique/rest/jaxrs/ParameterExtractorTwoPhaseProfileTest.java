@@ -85,6 +85,11 @@ class ParameterExtractorTwoPhaseProfileTest {
                 InputFieldNameResolver nameResolver) {
             return intermediateBody;
         }
+
+        @Override
+        public void precomputeFieldNameResolution(Type declaredType, InputFieldNameResolver resolver) {
+            // This double resolves no per-type metadata, so there is nothing to precompute.
+        }
     }
 
     /**

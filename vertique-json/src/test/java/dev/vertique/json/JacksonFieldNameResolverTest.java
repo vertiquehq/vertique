@@ -13,16 +13,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.annotation.JsonAlias;
 import com.fasterxml.jackson.annotation.JsonProperty;
-import com.fasterxml.jackson.databind.JavaType;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.PropertyName;
 import com.fasterxml.jackson.databind.introspect.Annotated;
 import com.fasterxml.jackson.databind.introspect.AnnotatedField;
 import com.fasterxml.jackson.databind.introspect.JacksonAnnotationIntrospector;
 import com.fasterxml.jackson.databind.json.JsonMapper;
-import com.fasterxml.jackson.databind.type.TypeBindings;
-import com.fasterxml.jackson.databind.type.TypeFactory;
-import com.fasterxml.jackson.databind.type.TypeModifier;
 import dev.vertique.core.exception.ConfigurationException;
 import io.vertx.core.json.jackson.DatabindCodec;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -33,7 +29,7 @@ import org.junit.jupiter.api.Test;
  * Unit tests for {@link JacksonFieldNameResolver}, the Jackson-backed wire &rarr; Java property-name
  * projection every Jackson-bound transport hands to the input-processing engine.
  *
- * <p>The four behaviours pinned here are the ones a wrong implementation silently converts into a
+ * <p>The behaviours pinned here are the ones a wrong implementation silently converts into a
  * dropped {@code @Canonicalize}/{@code @Sanitize}:
  *
  * <ul>
@@ -111,83 +107,6 @@ class JacksonFieldNameResolverTest {
         public String name;
     }
 
-    /** DTO reaching {@link DuplicateAliasDto} through a plain declared field. */
-    public static class NestedHolderDto {
-        public String label;
-        public DuplicateAliasDto nested;
-    }
-
-    /** DTO reaching {@link DuplicateAliasDto} through a collection, alongside a map-valued field. */
-    public static class ContainerHolderDto {
-        public java.util.List<DuplicateAliasDto> many;
-        public java.util.Map<String, RenamedDto> byKey;
-    }
-
-    /**
-     * DTO reaching {@link DuplicateAliasDto} only as a map key and a map value. The engine treats a
-     * map field as schema-free and never projects either type, so neither may be warmed.
-     */
-    public static class MapOnlyHolderDto {
-        public java.util.Map<String, DuplicateAliasDto> byName;
-        public java.util.Map<DuplicateAliasDto, String> byDto;
-    }
-
-    /**
-     * Carrier whose fields supply the <em>declared</em> {@link java.lang.reflect.Type} shapes a
-     * boundary hands {@code precomputeGraph} — the same shapes a resource method's
-     * {@code param.genericType()} produces for a map-shaped body. This type is never warmed itself;
-     * only its fields' generic types are.
-     */
-    public static class DeclaredBodyShapes {
-        public java.util.Map<String, DuplicateAliasDto> mapBody;
-        public java.util.List<java.util.Map<String, DuplicateAliasDto>> listOfMapsBody;
-        public java.util.List<DuplicateAliasDto> listBody;
-    }
-
-    /**
-     * DTO a registered Jackson module classifies as <em>map-like</em> without it implementing
-     * {@link java.util.Map} — the shape {@code MapLikeType} exists for, and what Scala, Guava and
-     * Kotlin module registrations produce. The engine's descendability test is
-     * {@code !Map.class.isAssignableFrom(type)}, so it descends this type exactly like any other
-     * object and resolves a projection for it on the request path. Its two properties claim one
-     * alias, so composing that projection fails — and must fail at registration.
-     */
-    public static class CustomMapLikeDto {
-        @JsonAlias({"shared"})
-        public String alpha;
-
-        @JsonAlias({"shared"})
-        public String beta;
-    }
-
-    /** DTO reaching {@link CustomMapLikeDto} through a plain declared property. */
-    public static class CustomMapLikeHolderDto {
-        public String label;
-        public CustomMapLikeDto custom;
-    }
-
-    /**
-     * Map-like DTO whose own properties compose cleanly and whose module-declared <em>value</em>
-     * type is {@link DuplicateAliasDto}. The engine descends this type as a plain object and never
-     * consults its value type as a projection owner, so warming that value type would turn a
-     * collision the request path can never reach into a startup failure.
-     */
-    public static class ValueTypedMapLikeDto {
-        public String label;
-    }
-
-    /** DTO reaching {@link ValueTypedMapLikeDto} through a plain declared property. */
-    public static class ValueTypedMapLikeHolderDto {
-        public ValueTypedMapLikeDto custom;
-    }
-
-    /** Cyclic DTO graph — the walk must terminate rather than recurse forever. */
-    public static class CyclicNodeDto {
-        public String name;
-        public CyclicNodeDto child;
-        public java.util.List<CyclicNodeDto> children;
-    }
-
     /** Mapper that renames nothing of its own. */
     private static ObjectMapper vanillaMapper() {
         return JsonMapper.builder().build();
@@ -237,40 +156,6 @@ class JacksonFieldNameResolverTest {
                         return super.findNameForDeserialization(annotated);
                     }
                 })
-                .build();
-    }
-
-    /**
-     * Mapper whose registered {@link com.fasterxml.jackson.databind.type.TypeModifier} classifies two
-     * fixtures as map-like without either implementing {@link java.util.Map} — exactly what the Scala,
-     * Guava and Kotlin modules do for their own container abstractions. This is the only way to obtain
-     * a {@code MapLikeType} that is not a {@code MapType}, and it is the configuration under which the
-     * warm-up walks and the engine must still agree on what is descended.
-     *
-     * @return a mapper contributing two module-declared map-like types
-     */
-    private static ObjectMapper mapLikeContributingMapper() {
-        return JsonMapper.builder()
-                .typeFactory(TypeFactory.defaultInstance().withModifier(new TypeModifier() {
-                    @Override
-                    public JavaType modifyType(
-                            JavaType type,
-                            java.lang.reflect.Type jdkType,
-                            TypeBindings bindings,
-                            TypeFactory typeFactory) {
-                        if (type.isMapLikeType()) {
-                            return type;
-                        }
-                        if (type.getRawClass() == CustomMapLikeDto.class) {
-                            return typeFactory.constructMapLikeType(CustomMapLikeDto.class, String.class, String.class);
-                        }
-                        if (type.getRawClass() == ValueTypedMapLikeDto.class) {
-                            return typeFactory.constructMapLikeType(
-                                    ValueTypedMapLikeDto.class, String.class, DuplicateAliasDto.class);
-                        }
-                        return type;
-                    }
-                }))
                 .build();
     }
 
@@ -425,169 +310,6 @@ class JacksonFieldNameResolverTest {
                 afterRegistration,
                 warmIntrospections.get(),
                 "a warmed type must be served from the precomputed projection, never re-introspected");
-    }
-
-    @Test
-    @DisplayName("precomputeGraph warms the declared field graph so a nested type never introspects lazily")
-    void shouldWarmTheDeclaredFieldGraphTransitively() {
-        JacksonFieldNameResolver resolver = JacksonFieldNameResolver.forMapper(vanillaMapper());
-
-        // A nested type reached only through a declared field is resolved on the request path exactly
-        // like the body type itself, so its projection must be composed at registration too.
-        ConfigurationException nested = assertThrows(
-                ConfigurationException.class,
-                () -> resolver.precomputeGraph(NestedHolderDto.class),
-                "a declared field's own type must be warmed with its owner");
-        assertTrue(
-                nested.getMessage().contains(DuplicateAliasDto.class.getName()),
-                "the failure must name the nested type: " + nested.getMessage());
-
-        // A collection element type is the same case as a plain field type: the engine descends into
-        // it. (A map value type is not — see shouldNotWarmMapKeyOrValueTypes.)
-        ConfigurationException contained = assertThrows(
-                ConfigurationException.class,
-                () -> resolver.precomputeGraph(ContainerHolderDto.class),
-                "a collection element type must be warmed like a plain field type");
-        assertTrue(
-                contained.getMessage().contains(DuplicateAliasDto.class.getName()),
-                "the failure must name the element type: " + contained.getMessage());
-
-        // An array target is unwrapped to its component type, which is where the property set lives.
-        ConfigurationException arrayed = assertThrows(
-                ConfigurationException.class,
-                () -> resolver.precomputeGraph(DuplicateAliasDto[].class),
-                "an array target must be unwrapped to its component type");
-        assertTrue(
-                arrayed.getMessage().contains(DuplicateAliasDto.class.getName()),
-                "the failure must name the component type, not the array class: " + arrayed.getMessage());
-    }
-
-    @Test
-    @DisplayName("precomputeGraph does not warm map key or value types the engine never projects")
-    void shouldNotWarmMapKeyOrValueTypes() {
-        JacksonFieldNameResolver resolver = JacksonFieldNameResolver.forMapper(vanillaMapper());
-
-        // A map field carries no statically known property set, so the engine keys its fragment's
-        // policies against Map itself and never resolves a projection for the key or value type.
-        // Warming one anyway turns an ambiguity the request path can never consult into a
-        // registration failure — an availability change with no behavioural payoff.
-        assertDoesNotThrow(
-                () -> resolver.precomputeGraph(MapOnlyHolderDto.class),
-                "a type reachable only as a map key or value must not be warmed");
-    }
-
-    @Test
-    @DisplayName("precomputeGraph does not warm a map's value type from a declared parameterized body")
-    void shouldNotWarmMapValueTypesReachedFromADeclaredParameterizedType() throws Exception {
-        JacksonFieldNameResolver resolver = JacksonFieldNameResolver.forMapper(vanillaMapper());
-
-        // A `Map<String, Dto>` body is schema-free exactly like a map-typed property: the engine keys
-        // its fragment's policies against the map type and never resolves a projection for the value
-        // type, so warming it turns a collision the request path can never consult into a startup
-        // failure. The entry-point walk must apply the same rule the property walk does.
-        java.lang.reflect.Type mapBody =
-                DeclaredBodyShapes.class.getField("mapBody").getGenericType();
-        assertDoesNotThrow(
-                () -> resolver.precomputeGraph(mapBody),
-                "a declared Map<String, Dto> body must not warm its value type");
-
-        java.lang.reflect.Type listOfMapsBody =
-                DeclaredBodyShapes.class.getField("listOfMapsBody").getGenericType();
-        assertDoesNotThrow(
-                () -> resolver.precomputeGraph(listOfMapsBody),
-                "a map nested inside a declared collection body must not warm its value type either");
-
-        // Control — a non-map parameterized body still walks its arguments, so the suppression is
-        // scoped to map shapes rather than to parameterized types in general.
-        java.lang.reflect.Type listBody =
-                DeclaredBodyShapes.class.getField("listBody").getGenericType();
-        ConfigurationException listed = assertThrows(
-                ConfigurationException.class,
-                () -> resolver.precomputeGraph(listBody),
-                "a declared List<Dto> body must still warm its element type");
-        assertTrue(
-                listed.getMessage().contains(DuplicateAliasDto.class.getName()),
-                "the failure must name the element type: " + listed.getMessage());
-    }
-
-    @Test
-    @DisplayName("precomputeGraph warms a module-contributed map-like type as a declared body and as a property")
-    void shouldWarmAModuleContributedMapLikeTypeTheEngineDescends() {
-        ObjectMapper mapper = mapLikeContributingMapper();
-
-        // Fixture sanity — and the whole reason this shape is a hazard: Jackson calls it map-like,
-        // but it does not implement java.util.Map, which is the engine's own descendability test
-        // (InputPolicyMetadataResolver#isDescendableObject). The engine therefore descends it and
-        // resolves a projection for it on the request path, so the warm-up walks must warm it.
-        JavaType custom = mapper.getTypeFactory().constructType(CustomMapLikeDto.class);
-        assertTrue(custom.isMapLikeType(), "the fixture must be the map-like shape a registered module contributes");
-        assertFalse(
-                java.util.Map.class.isAssignableFrom(custom.getRawClass()),
-                "the fixture must not implement java.util.Map — that is what makes the engine descend it");
-
-        // As a declared body type.
-        ConfigurationException declared = assertThrows(
-                ConfigurationException.class,
-                () -> JacksonFieldNameResolver.forMapper(mapper).precomputeGraph(CustomMapLikeDto.class),
-                "a declared map-like body the engine descends must be warmed at registration");
-        assertTrue(
-                declared.getMessage().contains(CustomMapLikeDto.class.getName()),
-                "the failure must name the map-like type: " + declared.getMessage());
-
-        // As a property of a declared body type — the link the engine actually reaches it through.
-        ConfigurationException nested = assertThrows(
-                ConfigurationException.class,
-                () -> JacksonFieldNameResolver.forMapper(mapper).precomputeGraph(CustomMapLikeHolderDto.class),
-                "a map-like property the engine descends must be warmed at registration, not on first request");
-        assertTrue(
-                nested.getMessage().contains(CustomMapLikeDto.class.getName()),
-                "the failure must name the map-like property type: " + nested.getMessage());
-    }
-
-    @Test
-    @DisplayName("precomputeGraph warms a map-like type as a plain object, never over its module-declared value type")
-    void shouldWarmAMapLikeTypeAsAPlainObjectRatherThanOverItsValueType() {
-        ObjectMapper mapper = mapLikeContributingMapper();
-        JacksonFieldNameResolver resolver = JacksonFieldNameResolver.forMapper(mapper);
-
-        // Fixture sanity — the module declares a value type Jackson would descend as container content.
-        JavaType valueTyped = mapper.getTypeFactory().constructType(ValueTypedMapLikeDto.class);
-        assertEquals(
-                DuplicateAliasDto.class,
-                valueTyped.getContentType().getRawClass(),
-                "the fixture must carry a module-declared value type");
-
-        // The engine descends a map-like type as a plain object: it resolves that type's own
-        // projection and never consults the value type as a projection owner. Warming the value type
-        // would turn a collision the request path can never reach into a startup failure.
-        assertDoesNotThrow(
-                () -> resolver.precomputeGraph(ValueTypedMapLikeHolderDto.class),
-                "a map-like type's module-declared value type is not a projection owner and must not be warmed");
-        assertDoesNotThrow(
-                () -> resolver.precomputeGraph(ValueTypedMapLikeDto.class),
-                "the same rule applies when the map-like type is the declared body shape");
-        assertEquals(
-                "label",
-                resolver.logicalName(ValueTypedMapLikeDto.class, "label"),
-                "the map-like type's own projection still serves");
-    }
-
-    @Test
-    @DisplayName("precomputeGraph terminates on a cyclic graph and skips scalar property types")
-    void shouldTerminateOnCyclesAndSkipScalars() {
-        AtomicInteger introspections = new AtomicInteger();
-        JacksonFieldNameResolver resolver = JacksonFieldNameResolver.forMapper(countingMapper(introspections));
-
-        assertDoesNotThrow(
-                () -> resolver.precomputeGraph(CyclicNodeDto.class),
-                "a self-referential type graph must be visited once per type, not followed forever");
-        assertEquals("child", resolver.logicalName(CyclicNodeDto.class, "child"), "the warmed projection still serves");
-
-        // A scalar carries no property set the engine keys against, so warming one must introspect
-        // nothing — the asymmetry that let a String message type be introspected pointlessly.
-        introspections.set(0);
-        assertDoesNotThrow(() -> resolver.precomputeGraph(String.class), "a scalar target is not a projection source");
-        assertEquals(0, introspections.get(), "warming a scalar must not run a bean introspection");
     }
 
     @Test

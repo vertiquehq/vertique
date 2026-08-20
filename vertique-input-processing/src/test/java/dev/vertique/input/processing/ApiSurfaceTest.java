@@ -61,7 +61,11 @@ class ApiSurfaceTest {
 
     /** Types that implement the engine but are deliberately not part of the surface. */
     private static final Set<String> INTERNAL_TYPES = Set.of(
-            "DefaultInputObjectProcessor", "InputPolicyMetadata", "InputPolicyMetadataResolver", "TypeClassifier");
+            "DefaultInputObjectProcessor",
+            "InputPolicyMetadata",
+            "InputPolicyMetadataResolver",
+            "OwnerTypeWalk",
+            "TypeClassifier");
 
     @Nested
     @DisplayName("package inventory")
@@ -143,6 +147,7 @@ class ApiSurfaceTest {
                     InputObjectProcessor.class,
                     "createDefault(Function,Function)",
                     "declaresPolicies(Type)",
+                    "precomputeFieldNameResolution(Type,InputFieldNameResolver)",
                     "processInput(Object,Type,EffectiveInputPolicies,InputLocation,InputFieldNameResolver)");
             assertNoPublicFields(InputObjectProcessor.class);
             assertNoPublicConstructors(InputObjectProcessor.class);
@@ -226,7 +231,8 @@ class ApiSurfaceTest {
                     GeneratedInputProcessor.class,
                     "targetType()",
                     "process(Object,EffectiveInputPolicies,InputLocation,ChainResolver,"
-                            + "GeneratedInputProcessorDispatcher,InputTraversalContext,String)");
+                            + "GeneratedInputProcessorDispatcher,InputTraversalContext,String)",
+                    "fieldNameOwnerTypes()");
             assertNoPublicFields(GeneratedInputProcessor.class);
             assertNoPublicConstructors(GeneratedInputProcessor.class);
         }

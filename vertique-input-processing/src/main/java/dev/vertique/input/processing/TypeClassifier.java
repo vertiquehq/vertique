@@ -9,7 +9,11 @@ import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
 import java.lang.reflect.TypeVariable;
 import java.lang.reflect.WildcardType;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
+import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
@@ -34,6 +38,11 @@ import java.util.Optional;
  *   <li>a {@link ParameterizedType} keeps its parameterization; {@link #classify} erases it to the
  *       raw class only when a {@code Class} is what the caller needs.</li>
  * </ul>
+ *
+ * <p>{@link #elementType} adds one further rule: a collection's element type is {@code E} in its
+ * {@code Collection<E>} <em>supertype binding</em>, not a type argument read off the declared type by
+ * position. A {@code Fixed<T> extends ArrayList<String>} binds {@code String} elements however it is
+ * parameterized, and a {@code Weird<A, B> extends ArrayList<B>} binds its second argument.
  *
  * <p>These rules are symmetric with the APT-time {@code AnnotationCollector} in
  * {@code vertique-codegen-sanitization}, so the generated and reflective paths classify identically.
@@ -93,19 +102,30 @@ final class TypeClassifier {
      * <p>So {@code List<Node>}, {@code List<? extends Node>}, {@code List<Optional<Node>>} and
      * {@code Node[]} all yield {@code Node}.
      *
-     * <p><strong>Only a genuine container yields an element type.</strong> A parameterized type is
-     * consulted for a type argument only when its raw type is a {@link Collection} — the same gate
-     * {@link InputPolicyMetadataResolver} applies before it reaches this method. Without it any
+     * <p><strong>Only a genuine container yields an element type.</strong> A type — parameterized or
+     * not — is consulted for an element only when its raw type is a {@link Collection} — the same
+     * gate {@link InputPolicyMetadataResolver} applies before it reaches this method. Without it any
      * single-argument generic ({@code Wrapper<Node>}, {@code Holder<Node>}) would report as a
      * container, and the startup gate that calls this method directly would claim a policy the
      * walker cannot reach: the walker classifies {@code Wrapper}'s own field to its {@code Object}
-     * bound and stops there.
+     * bound and stops there. A use site with no local type arguments — a plain {@code Class} such as
+     * {@code final class Dtos extends ArrayList<Dto> {}} used as the field type {@code Dtos} — still
+     * enters this gate: the element binding comes from the class's own generic superclass, not from
+     * anything the use site writes locally.
+     *
+     * <p><strong>The element is the {@code Collection<E>} supertype binding</strong>, resolved by
+     * {@link #collectionElementBinding} — never "type argument 0" of the declared type. Argument
+     * position is not the element type: {@code Pair<A, B> extends ArrayList<A>} binds its
+     * <em>first</em> argument, {@code Weird<A, B> extends ArrayList<B>} its second, and
+     * {@code Fixed<T> extends ArrayList<String>} binds {@code String} whatever {@code T} is. Only
+     * the supertype binding answers all three with the type Jackson actually binds.
      *
      * <p>Returns {@code null} — "no element schema", which routes the field to handling that still
-     * applies inherited chains to string leaves — for a raw collection, an element type that
-     * resolves to {@link Object} or to a raw {@code Optional} (neither carries a property set), an
-     * element type that is itself a container (an array, a {@link Collection} or a {@link Map}),
-     * and any type that is neither a single-argument parameterized collection nor an array.
+     * applies inherited chains to string leaves — for a collection with no type arguments (a raw
+     * one) or no resolvable binding, an element type that resolves to {@link Object} or to a raw
+     * {@code Optional} (neither carries a property set), an element type that is itself a container
+     * (an array, a {@link Collection} or a {@link Map}), and any type that is neither a
+     * parameterized collection nor an array.
      *
      * <p>The nested-container exclusion is what keeps {@code List<List<String>>},
      * {@code Set<List<Node>>} and {@code List<Node>[]} on the inherited-chain path. Their wire
@@ -127,15 +147,19 @@ final class TypeClassifier {
             candidate = classify(genericArray.getGenericComponentType());
         } else if (container instanceof Class<?> cls && cls.isArray()) {
             candidate = cls.getComponentType();
-        } else if (container instanceof ParameterizedType parameterized) {
-            Class<?> rawType = rawClassOf(parameterized);
-            // Array raw types are impossible for a ParameterizedType, so the array half of the
-            // caller-side gate is covered by the two branches above rather than repeated here.
+        } else {
+            Class<?> rawType = rawClassOf(container);
+            // Array raw types are impossible here (a Class array is caught above, and a
+            // ParameterizedType can never erase to an array), so the array half of the caller-side
+            // gate is covered by the two branches above rather than repeated here. The gate itself is
+            // the raw class alone — it does not require the use site to carry its own type arguments,
+            // so a plain Class whose declaration fixes its element (Dtos extends ArrayList<Dto>)
+            // enters here exactly like a ParameterizedType use site does.
             if (rawType != null && Collection.class.isAssignableFrom(rawType)) {
-                Type[] args = parameterized.getActualTypeArguments();
-                if (args.length == 1) {
-                    candidate = classify(args[0]);
-                }
+                // The binding may itself be a wildcard or a type variable — it is a type argument
+                // written at some use site like any other — so it goes through classify, which
+                // resolves it to its bound exactly as a directly-declared argument would be.
+                candidate = classify(collectionElementBinding(container));
             }
         }
         if (candidate == null
@@ -147,6 +171,249 @@ final class TypeClassifier {
             return null;
         }
         return candidate;
+    }
+
+    /**
+     * Resolves {@code E} from the {@code Collection<E>} supertype binding of a collection type.
+     *
+     * <p>The walk starts at the declared type and climbs {@link Class#getGenericSuperclass()} and
+     * {@link Class#getGenericInterfaces()}, substituting each class's {@link Class#getTypeParameters()
+     * type parameters} with the arguments seen at its use site, until {@code java.util.Collection}
+     * itself is reached; its single resolved argument is the element type. So a
+     * {@code Weird<Other, Dto>} declared over {@code class Weird<A, B> extends ArrayList<B>} resolves
+     * through {@code ArrayList<Dto>} to {@code Dto}, and a {@code Fixed<Dto>} declared over
+     * {@code class Fixed<T> extends ArrayList<String>} resolves to {@code String}.
+     *
+     * <p>The result is <em>not</em> normalized here: it is a type argument as written at its
+     * declaration site and may be a wildcard, a type variable or an {@code Optional} layer, so the
+     * caller runs it through {@link #classify} like any other argument.
+     *
+     * <p>Returns {@code null} when no binding is resolvable — for a raw usage of a collection type,
+     * whose type parameters have no arguments to substitute. The recursion terminates because Java
+     * forbids circular inheritance, so every step is strictly closer to {@code Collection}.
+     *
+     * <p>Deliberately reflection-only: this module classifies types for every codec, so no Jackson
+     * type machinery may leak into the rule. The APT-time {@code AnnotationCollector} in
+     * {@code vertique-codegen-sanitization} resolves the same binding through
+     * {@code Types.directSupertypes}, so the generated and reflective paths pick the same element.
+     *
+     * @param collectionType the collection type, already normalized; may be {@code null}
+     * @return the element type as written at its declaration site, or {@code null} when the type is
+     *         not a collection or carries no resolvable binding
+     */
+    @Nullable
+    private static Type collectionElementBinding(@Nullable Type collectionType) {
+        Class<?> rawType = rawClassOf(collectionType);
+        if (rawType == null || !Collection.class.isAssignableFrom(rawType)) {
+            return null;
+        }
+        if (rawType == Collection.class) {
+            Type[] args = collectionType instanceof ParameterizedType parameterized
+                    ? parameterized.getActualTypeArguments()
+                    : new Type[0];
+            return args.length == 1 ? args[0] : null;
+        }
+        Map<TypeVariable<?>, Type> bindings = bindingsOf(rawType, collectionType);
+        for (Type supertype : supertypesOf(rawType)) {
+            Type resolved = substitute(supertype, bindings);
+            Class<?> resolvedRaw = rawClassOf(resolved);
+            if (resolvedRaw != null && Collection.class.isAssignableFrom(resolvedRaw)) {
+                Type element = collectionElementBinding(resolved);
+                if (element != null) {
+                    return element;
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Maps a class's type parameters to the arguments its use site supplies, including any bound
+     * carried by an enclosing instance's type.
+     *
+     * <p>An inner class's own {@link Class#getTypeParameters()} do not include its enclosing class's
+     * parameters — {@code class Outer<T> { class Inner extends ArrayList<T> {} }} declares no type
+     * parameter of its own on {@code Inner}, yet {@code Inner}'s generic superclass reads {@code T}
+     * from {@code Outer}. That binding arrives through {@link ParameterizedType#getOwnerType()} at
+     * the use site (e.g. {@code Outer<Dto>.Inner}), not through {@code getActualTypeArguments()},
+     * which covers only type arguments local to {@code Inner} itself. So this method folds the
+     * environment for {@code rawType}'s enclosing class — resolved the same way, recursively — into
+     * the environment it returns for {@code rawType} itself.
+     *
+     * @param rawType the erased class
+     * @param useSite the type as written at the use site
+     * @return the substitution environment, empty for a raw use site with no enclosing binding
+     */
+    private static Map<TypeVariable<?>, Type> bindingsOf(Class<?> rawType, @Nullable Type useSite) {
+        if (!(useSite instanceof ParameterizedType parameterized)) {
+            return Map.of();
+        }
+        Map<TypeVariable<?>, Type> bindings = new HashMap<>();
+        TypeVariable<?>[] parameters = rawType.getTypeParameters();
+        Type[] arguments = parameterized.getActualTypeArguments();
+        if (arguments.length == parameters.length) {
+            for (int i = 0; i < parameters.length; i++) {
+                bindings.put(parameters[i], arguments[i]);
+            }
+        }
+        Class<?> enclosingClass = rawType.getEnclosingClass();
+        if (enclosingClass != null) {
+            bindings.putAll(bindingsOf(enclosingClass, parameterized.getOwnerType()));
+        }
+        return bindings;
+    }
+
+    /**
+     * Returns the generic supertypes of a class — its superclass first, then its interfaces.
+     *
+     * @param rawType the class to climb from
+     * @return the declared generic supertypes
+     */
+    private static List<Type> supertypesOf(Class<?> rawType) {
+        List<Type> supertypes = new ArrayList<>();
+        Type superclass = rawType.getGenericSuperclass();
+        if (superclass != null) {
+            supertypes.add(superclass);
+        }
+        supertypes.addAll(Arrays.asList(rawType.getGenericInterfaces()));
+        return supertypes;
+    }
+
+    /**
+     * Rewrites {@code type} with every type variable the environment binds replaced by its argument,
+     * recursing into type arguments, the owner type and wildcard bounds so a supertype written
+     * {@code ArrayList<Optional<T>>} resolves to {@code ArrayList<Optional<Dto>>}, one written
+     * {@code ArrayList<Optional<? extends T>>} resolves to {@code ArrayList<Optional<? extends Dto>>},
+     * and one written {@code Outer<T>.Inner} resolves to {@code Outer<Dto>.Inner}.
+     *
+     * <p>A wildcard's bounds are ordinary types written at a declaration site, so a variable inside
+     * one binds exactly like a variable in a type-argument position. Leaving it unsubstituted would
+     * strand the variable, {@link #normalizeToBound} would resolve it to its declared bound
+     * ({@code Object} for an unbounded parameter), and the element schema would be lost — while the
+     * APT-time {@code AnnotationCollector} unwraps the same bound <em>after</em> substituting and
+     * still finds the element, which is precisely the divergence the two paths must not have. The
+     * owner type is substituted for the same reason: {@link #bindingsOf} reads a use site's owner
+     * type to resolve an inherited inner class's enclosing binding, so a supertype's own owner type
+     * must carry that same substitution forward or the binding it names is stranded one hop early.
+     *
+     * <p>A variable the environment does not bind is left as-is: it is the raw-use-site case, and
+     * {@link #normalizeToBound} later resolves it to its declared bound. A generic array component is
+     * left as-is too — an array element carries no element schema either way, so substituting inside
+     * it could not change an answer.
+     *
+     * @param type     the type to rewrite
+     * @param bindings the substitution environment
+     * @return the rewritten type, or {@code type} itself when nothing changed
+     */
+    private static Type substitute(Type type, Map<TypeVariable<?>, Type> bindings) {
+        if (type instanceof TypeVariable<?> variable) {
+            return bindings.getOrDefault(variable, variable);
+        }
+        if (type instanceof ParameterizedType parameterized) {
+            Type[] arguments = parameterized.getActualTypeArguments();
+            Type[] substituted = substituteAll(arguments, bindings);
+            Type ownerType = parameterized.getOwnerType();
+            Type substitutedOwner = ownerType == null ? null : substitute(ownerType, bindings);
+            return substituted == arguments && substitutedOwner == ownerType
+                    ? parameterized
+                    : new SubstitutedParameterizedType(parameterized.getRawType(), substituted, substitutedOwner);
+        }
+        if (type instanceof WildcardType wildcard) {
+            Type[] upperBounds = wildcard.getUpperBounds();
+            Type[] lowerBounds = wildcard.getLowerBounds();
+            Type[] substitutedUpper = substituteAll(upperBounds, bindings);
+            Type[] substitutedLower = substituteAll(lowerBounds, bindings);
+            return substitutedUpper == upperBounds && substitutedLower == lowerBounds
+                    ? wildcard
+                    : new SubstitutedWildcardType(substitutedUpper, substitutedLower);
+        }
+        return type;
+    }
+
+    /**
+     * Substitutes every element of a type array, returning the <em>same</em> array instance when no
+     * element changed so the caller can leave the enclosing type untouched — identity of the result
+     * is the "nothing changed" signal.
+     *
+     * @param types    the types to rewrite
+     * @param bindings the substitution environment
+     * @return a new array holding the rewritten types, or {@code types} itself when nothing changed
+     */
+    private static Type[] substituteAll(Type[] types, Map<TypeVariable<?>, Type> bindings) {
+        Type[] substituted = new Type[types.length];
+        boolean changed = false;
+        for (int i = 0; i < types.length; i++) {
+            substituted[i] = substitute(types[i], bindings);
+            changed |= substituted[i] != types[i];
+        }
+        return changed ? substituted : types;
+    }
+
+    /**
+     * A {@link ParameterizedType} whose arguments and owner type have been resolved against a
+     * substitution environment. {@link #bindingsOf} consults {@link #getOwnerType()} to recover an
+     * inherited inner class's enclosing-instance binding, so the owner type is carried and returned
+     * like any other component rather than stubbed to {@code null}.
+     *
+     * @param rawType   the erased class of the parameterized type
+     * @param arguments the resolved type arguments
+     * @param ownerType the resolved owner type, or {@code null} when the source type has none
+     */
+    private record SubstitutedParameterizedType(
+            Type rawType, Type[] arguments, @Nullable Type ownerType) implements ParameterizedType {
+
+        @Override
+        public Type[] getActualTypeArguments() {
+            return arguments.clone();
+        }
+
+        @Override
+        public Type getRawType() {
+            return rawType;
+        }
+
+        @Override
+        @Nullable
+        public Type getOwnerType() {
+            return ownerType;
+        }
+    }
+
+    /**
+     * A {@link WildcardType} whose bounds have been resolved against a substitution environment.
+     * Instances never escape {@link #collectionElementBinding}'s walk and are consumed by
+     * {@link #normalizeToBound}, which reads {@code getUpperBounds} alone.
+     *
+     * @param upperBounds the resolved {@code extends} bounds, never empty for a JDK-sourced wildcard
+     * @param lowerBounds the resolved {@code super} bounds, empty unless the wildcard is lower-bounded
+     */
+    private record SubstitutedWildcardType(Type[] upperBounds, Type[] lowerBounds) implements WildcardType {
+
+        @Override
+        public Type[] getUpperBounds() {
+            return upperBounds.clone();
+        }
+
+        @Override
+        public Type[] getLowerBounds() {
+            return lowerBounds.clone();
+        }
+
+        // A record's generated equals/hashCode compares Type[] components by array identity, which
+        // no WildcardType implementation uses. Instances never escape collectionElementBinding's
+        // walk today, but structural equality removes the trap for whoever first lets one reach a
+        // map key or an assertion.
+        @Override
+        public boolean equals(Object other) {
+            return other instanceof SubstitutedWildcardType that
+                    && java.util.Arrays.equals(upperBounds, that.upperBounds)
+                    && java.util.Arrays.equals(lowerBounds, that.lowerBounds);
+        }
+
+        @Override
+        public int hashCode() {
+            return 31 * java.util.Arrays.hashCode(upperBounds) + java.util.Arrays.hashCode(lowerBounds);
+        }
     }
 
     /**

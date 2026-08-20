@@ -3,8 +3,13 @@
 
 package dev.vertique.codegen.sanitization.processor;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+
 import dev.vertique.codegen.test.ProcessorTestHarness;
+import dev.vertique.codegen.test.ProcessorTestHarness.Result;
 import dev.vertique.codegen.test.fixtures.SourceFiles;
+import dev.vertique.input.processing.GeneratedInputProcessor;
+import java.util.Set;
 import javax.tools.JavaFileObject;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -122,6 +127,207 @@ class InputProcessorEmitterTest {
                 @POST
                 @Consumes(MediaType.APPLICATION_JSON)
                 public String create(WrappedFieldsDto body) { return null; }
+            }
+            """);
+
+    // --- Field-name owner-set fixtures ---
+
+    /** Nested DTO reached through a {@code NESTED_DTO} field of {@code OwnerRootDto}. */
+    private static final JavaFileObject ADDRESS_DTO = SourceFiles.inline("com.example.owner.AddressDto", """
+            package com.example.owner;
+            import dev.vertique.core.sanitization.Canonicalize;
+            import dev.vertique.sanitization.canonicalize.TrimCanonicalizer;
+            public class AddressDto {
+                @Canonicalize(TrimCanonicalizer.class)
+                public String street;
+            }
+            """);
+
+    /** Element DTO reached through a {@code COLLECTION_OF_DTO} field of {@code OwnerRootDto}. */
+    private static final JavaFileObject TAG_DTO = SourceFiles.inline("com.example.owner.TagDto", """
+            package com.example.owner;
+            import dev.vertique.core.sanitization.Canonicalize;
+            import dev.vertique.sanitization.canonicalize.TrimCanonicalizer;
+            public class TagDto {
+                @Canonicalize(TrimCanonicalizer.class)
+                public String label;
+            }
+            """);
+
+    /** Root DTO carrying one {@code NESTED_DTO} and one {@code COLLECTION_OF_DTO} field. */
+    private static final JavaFileObject OWNER_ROOT_DTO = SourceFiles.inline("com.example.owner.OwnerRootDto", """
+            package com.example.owner;
+            import java.util.List;
+            public class OwnerRootDto {
+                public AddressDto address;
+                public List<TagDto> tags;
+            }
+            """);
+
+    private static final JavaFileObject OWNER_ROOT_RESOURCE =
+            SourceFiles.inline("com.example.owner.OwnerRootResource", """
+            package com.example.owner;
+            import jakarta.ws.rs.POST;
+            import jakarta.ws.rs.Path;
+            @Path("/owner-roots")
+            public class OwnerRootResource {
+                @POST
+                public String create(OwnerRootDto body) { return null; }
+            }
+            """);
+
+    /**
+     * DTO with two <em>annotated</em> schema-free fields, covering both shapes whose {@code
+     * applyDefault} owner is the field's erased declared type rather than a nested DTO — and which
+     * therefore contribute nothing to {@code fieldNameOwnerTypes()} (see
+     * {@link FieldNameOwnerTypes#emittedOwnerTypesOmitAnnotatedSchemaFreeDeclaredTypes}):
+     * <ul>
+     *   <li>{@code attrs} — a {@code Map<String, String>}. A {@code Map} carries no statically
+     *       known property set, so {@code AnnotationCollector} classifies it as
+     *       {@code FieldKind.OTHER}. Its arm passes the erased declared type ({@code Map}) as the
+     *       {@code applyDefault} owner, but only as {@code InputValueContext} provenance for the
+     *       reflective continuation — never as a projection owner.</li>
+     *   <li>{@code codes} — an annotated collection of non-string scalars, which <em>is</em>
+     *       {@code FieldKind.OTHER}. Its arm passes the erased declared type
+     *       ({@code List}) as the {@code applyDefault} owner handed to the reflective
+     *       continuation, for the same schema-free reason.</li>
+     * </ul>
+     */
+    private static final JavaFileObject ATTRIBUTES_DTO = SourceFiles.inline("com.example.owner.AttributesDto", """
+            package com.example.owner;
+            import dev.vertique.core.sanitization.Sanitize;
+            import dev.vertique.sanitization.sanitize.StripControlCharsSanitizer;
+            import java.util.List;
+            import java.util.Map;
+            public class AttributesDto {
+                @Sanitize(StripControlCharsSanitizer.class)
+                public Map<String, String> attrs;
+                @Sanitize(StripControlCharsSanitizer.class)
+                public List<Integer> codes;
+            }
+            """);
+
+    private static final JavaFileObject ATTRIBUTES_RESOURCE =
+            SourceFiles.inline("com.example.owner.AttributesResource", """
+            package com.example.owner;
+            import jakarta.ws.rs.POST;
+            import jakarta.ws.rs.Path;
+            @Path("/attributes")
+            public class AttributesResource {
+                @POST
+                public String create(AttributesDto body) { return null; }
+            }
+            """);
+
+    /**
+     * DTO with an <em>unannotated</em> {@code Map}-typed field alongside an annotated string.
+     * {@code Map} is schema-free — the reflective engine's {@code isDescendableObject} excludes it,
+     * so no arm asks for an owner on {@code attrs} and it must contribute nothing to the declared
+     * owner set.
+     */
+    private static final JavaFileObject PLAIN_MAP_DTO = SourceFiles.inline("com.example.owner.PlainMapDto", """
+            package com.example.owner;
+            import dev.vertique.core.sanitization.Canonicalize;
+            import dev.vertique.sanitization.canonicalize.TrimCanonicalizer;
+            import java.util.Map;
+            public class PlainMapDto {
+                @Canonicalize(TrimCanonicalizer.class)
+                public String name;
+                public Map<String, String> attrs;
+            }
+            """);
+
+    private static final JavaFileObject PLAIN_MAP_RESOURCE =
+            SourceFiles.inline("com.example.owner.PlainMapResource", """
+            package com.example.owner;
+            import jakarta.ws.rs.POST;
+            import jakarta.ws.rs.Path;
+            @Path("/plain-maps")
+            public class PlainMapResource {
+                @POST
+                public String create(PlainMapDto body) { return null; }
+            }
+            """);
+
+    /**
+     * DTO whose schema-free fields ({@code int} and {@code Object}, both scalar leaves to
+     * {@code AnnotationCollector}) carry no annotations at all, so no emitted arm ever asks for an
+     * owner on them and they must contribute nothing.
+     */
+    private static final JavaFileObject PLAIN_DTO = SourceFiles.inline("com.example.owner.PlainDto", """
+            package com.example.owner;
+            import dev.vertique.core.sanitization.Canonicalize;
+            import dev.vertique.sanitization.canonicalize.TrimCanonicalizer;
+            public class PlainDto {
+                @Canonicalize(TrimCanonicalizer.class)
+                public String name;
+                public int count;
+                public Object misc;
+            }
+            """);
+
+    private static final JavaFileObject PLAIN_RESOURCE = SourceFiles.inline("com.example.owner.PlainResource", """
+            package com.example.owner;
+            import jakarta.ws.rs.POST;
+            import jakarta.ws.rs.Path;
+            @Path("/plains")
+            public class PlainResource {
+                @POST
+                public String create(PlainDto body) { return null; }
+            }
+            """);
+
+    /** Self-referential DTO — the origin class is both {@code targetType()} and a nested type. */
+    private static final JavaFileObject NODE_DTO = SourceFiles.inline("com.example.owner.NodeDto", """
+            package com.example.owner;
+            import dev.vertique.core.sanitization.Canonicalize;
+            import dev.vertique.sanitization.canonicalize.TrimCanonicalizer;
+            public class NodeDto {
+                @Canonicalize(TrimCanonicalizer.class)
+                public String label;
+                public NodeDto child;
+            }
+            """);
+
+    private static final JavaFileObject NODE_RESOURCE = SourceFiles.inline("com.example.owner.NodeResource", """
+            package com.example.owner;
+            import jakarta.ws.rs.POST;
+            import jakarta.ws.rs.Path;
+            @Path("/nodes")
+            public class NodeResource {
+                @POST
+                public String create(NodeDto body) { return null; }
+            }
+            """);
+
+    /** Nested DTO targeted by two distinct fields of {@code PairDto}. */
+    private static final JavaFileObject LEAF_DTO = SourceFiles.inline("com.example.owner.LeafDto", """
+            package com.example.owner;
+            import dev.vertique.core.sanitization.Canonicalize;
+            import dev.vertique.sanitization.canonicalize.TrimCanonicalizer;
+            public class LeafDto {
+                @Canonicalize(TrimCanonicalizer.class)
+                public String value;
+            }
+            """);
+
+    /** Two {@code NESTED_DTO} fields whose target type is the same class. */
+    private static final JavaFileObject PAIR_DTO = SourceFiles.inline("com.example.owner.PairDto", """
+            package com.example.owner;
+            public class PairDto {
+                public LeafDto left;
+                public LeafDto right;
+            }
+            """);
+
+    private static final JavaFileObject PAIR_RESOURCE = SourceFiles.inline("com.example.owner.PairResource", """
+            package com.example.owner;
+            import jakarta.ws.rs.POST;
+            import jakarta.ws.rs.Path;
+            @Path("/pairs")
+            public class PairResource {
+                @POST
+                public String create(PairDto body) { return null; }
             }
             """);
 
@@ -393,6 +599,125 @@ class InputProcessorEmitterTest {
                     .assertSuccess()
                     .assertGeneratedSourceContains(
                             "com.example.Outer_Inner_InputProcessor", "class Outer_Inner_InputProcessor");
+        }
+    }
+
+    // --- fieldNameOwnerTypes() ---
+
+    /**
+     * Pins the emitted {@code fieldNameOwnerTypes()} override that lets the engine skip its
+     * reflective owner walk for a generated type. The engine reads an <em>empty</em> return as
+     * "this processor does not declare an owner set", so the origin class must always be present —
+     * that is what makes the empty set a usable sentinel.
+     *
+     * <p>The last two cases assert the generated class <em>initializes</em> rather than inspecting
+     * the source text: a duplicate class in a {@code Set.of(a, b, c)} varargs literal throws
+     * {@code IllegalArgumentException} from a {@code static final} initializer, which surfaces as
+     * {@code ExceptionInInitializerError} at first dispatch and is invisible to a source assertion.
+     */
+    @Nested
+    @DisplayName("fieldNameOwnerTypes() emission")
+    class FieldNameOwnerTypes {
+
+        @Test
+        @DisplayName("emitted owner types contain the origin class")
+        void emittedOwnerTypesContainTheOriginClass() {
+            ProcessorTestHarness.run(
+                            new SanitizationProcessor(), ADDRESS_DTO, TAG_DTO, OWNER_ROOT_DTO, OWNER_ROOT_RESOURCE)
+                    .assertSuccess()
+                    .assertGeneratedSourceContains(
+                            "com.example.owner.OwnerRootDto_InputProcessor", "fieldNameOwnerTypes()")
+                    .assertGeneratedSourceContains(
+                            "com.example.owner.OwnerRootDto_InputProcessor", "owners.add(OwnerRootDto.class)");
+        }
+
+        @Test
+        @DisplayName("emitted owner types contain nested-DTO and collection-element types")
+        void emittedOwnerTypesContainNestedAndElementTypes() {
+            ProcessorTestHarness.run(
+                            new SanitizationProcessor(), ADDRESS_DTO, TAG_DTO, OWNER_ROOT_DTO, OWNER_ROOT_RESOURCE)
+                    .assertSuccess()
+                    .assertGeneratedSourceContains(
+                            "com.example.owner.OwnerRootDto_InputProcessor", "owners.add(AddressDto.class)")
+                    .assertGeneratedSourceContains(
+                            "com.example.owner.OwnerRootDto_InputProcessor", "owners.add(TagDto.class)");
+        }
+
+        @Test
+        @DisplayName("emitted owner types omit an annotated schema-free field's erased declared type")
+        void emittedOwnerTypesOmitAnnotatedSchemaFreeDeclaredTypes() {
+            // attrs (Map) and codes (List) are both annotated OTHER-kind fields — their arms hand
+            // the erased declared type to applyDefault only as InputValueContext provenance for the
+            // reflective continuation (dispatcher.walkUnknown), which walks with
+            // InputPolicyMetadata.EMPTY and therefore never projects a wire key against either type.
+            // Neither is a field-name owner, so neither belongs in fieldNameOwnerTypes().
+            ProcessorTestHarness.run(new SanitizationProcessor(), ATTRIBUTES_DTO, ATTRIBUTES_RESOURCE)
+                    .assertSuccess()
+                    .assertGeneratedSourceContains(
+                            "com.example.owner.AttributesDto_InputProcessor", "owners.add(AttributesDto.class)")
+                    .assertGeneratedSourceDoesNotContain(
+                            "com.example.owner.AttributesDto_InputProcessor", "owners.add(Map.class)")
+                    .assertGeneratedSourceDoesNotContain(
+                            "com.example.owner.AttributesDto_InputProcessor", "owners.add(List.class)");
+        }
+
+        @Test
+        @DisplayName("emitted owner types omit unannotated schema-free fields")
+        void emittedOwnerTypesOmitUnannotatedSchemaFreeFields() {
+            ProcessorTestHarness.run(new SanitizationProcessor(), PLAIN_DTO, PLAIN_RESOURCE)
+                    .assertSuccess()
+                    .assertGeneratedSourceContains(
+                            "com.example.owner.PlainDto_InputProcessor", "owners.add(PlainDto.class)")
+                    .assertGeneratedSourceDoesNotContain(
+                            "com.example.owner.PlainDto_InputProcessor", "owners.add(int.class)")
+                    .assertGeneratedSourceDoesNotContain(
+                            "com.example.owner.PlainDto_InputProcessor", "owners.add(Object.class)");
+        }
+
+        @Test
+        @DisplayName("emitted owner types omit unannotated Map fields")
+        void emittedOwnerTypesOmitUnannotatedMapFields() {
+            ProcessorTestHarness.run(new SanitizationProcessor(), PLAIN_MAP_DTO, PLAIN_MAP_RESOURCE)
+                    .assertSuccess()
+                    .assertGeneratedSourceContains(
+                            "com.example.owner.PlainMapDto_InputProcessor", "owners.add(PlainMapDto.class)")
+                    .assertGeneratedSourceDoesNotContain(
+                            "com.example.owner.PlainMapDto_InputProcessor", "owners.add(Map.class)");
+        }
+
+        @Test
+        @DisplayName("self-referential DTO emits its own class once and the generated class initializes")
+        void selfReferentialDtoEmitsItsOwnClassOnce() throws Exception {
+            Result result = ProcessorTestHarness.run(new SanitizationProcessor(), NODE_DTO, NODE_RESOURCE);
+            result.assertSuccess();
+
+            Class<?> processorClass = result.loadGeneratedClass("com.example.owner.NodeDto_InputProcessor");
+            GeneratedInputProcessor<?> processor = (GeneratedInputProcessor<?>)
+                    processorClass.getDeclaredConstructor().newInstance();
+            Class<?> nodeClass = result.loadGeneratedClass("com.example.owner.NodeDto");
+
+            assertEquals(
+                    Set.of(nodeClass),
+                    processor.fieldNameOwnerTypes(),
+                    "a self-referential DTO must contribute its own class exactly once");
+        }
+
+        @Test
+        @DisplayName("two fields targeting one nested type emit it once and the generated class initializes")
+        void twoFieldsTargetingOneNestedTypeEmitItOnce() throws Exception {
+            Result result = ProcessorTestHarness.run(new SanitizationProcessor(), LEAF_DTO, PAIR_DTO, PAIR_RESOURCE);
+            result.assertSuccess();
+
+            Class<?> processorClass = result.loadGeneratedClass("com.example.owner.PairDto_InputProcessor");
+            GeneratedInputProcessor<?> processor = (GeneratedInputProcessor<?>)
+                    processorClass.getDeclaredConstructor().newInstance();
+            Class<?> pairClass = result.loadGeneratedClass("com.example.owner.PairDto");
+            Class<?> leafClass = result.loadGeneratedClass("com.example.owner.LeafDto");
+
+            assertEquals(
+                    Set.of(pairClass, leafClass),
+                    processor.fieldNameOwnerTypes(),
+                    "two fields of the same nested type must contribute that type exactly once");
         }
     }
 

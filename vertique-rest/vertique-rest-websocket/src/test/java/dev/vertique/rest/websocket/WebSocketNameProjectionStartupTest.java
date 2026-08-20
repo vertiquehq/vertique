@@ -9,13 +9,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.annotation.JsonAlias;
 import dev.vertique.core.exception.ConfigurationException;
-import dev.vertique.core.sanitization.InputFieldNameResolver;
-import dev.vertique.core.sanitization.InputLocation;
-import dev.vertique.input.processing.EffectiveInputPolicies;
 import dev.vertique.input.processing.InputObjectProcessor;
 import io.vertx.core.Vertx;
 import io.vertx.ext.web.Router;
-import java.lang.reflect.Type;
 import java.util.Set;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -105,31 +101,51 @@ class WebSocketNameProjectionStartupTest {
         void onMessage(WebSocketSession session, String message) {}
     }
 
-    /** Pass-through engine standing in for a bound {@code SanitizationModule}. */
-    private static final class PassThroughProcessor implements InputObjectProcessor {
-        @Override
-        public Object processInput(
-                Object input,
-                Type targetType,
-                EffectiveInputPolicies policies,
-                InputLocation location,
-                InputFieldNameResolver nameResolver) {
-            return input;
-        }
+    /**
+     * Message type reaching {@link DuplicateAliasMessage} only through a private field with no
+     * accessor.
+     *
+     * <p>Jackson's property introspection does not expose such a field, so a warm-up walk driven by
+     * Jackson properties never reaches its target. The engine records every declared field of a
+     * descendable type unconditionally and dispatches nested fragments against it, so this is a type
+     * whose projection <em>is</em> consulted on the message path.
+     */
+    public static class HiddenAliasHolderMessage {
+        public String label;
+
+        @SuppressWarnings("unused")
+        private DuplicateAliasMessage hidden;
+    }
+
+    @WebSocketEndpoint("/ws/hidden")
+    static class HiddenUnprojectableMessageEndpoint {
+        @OnMessage
+        void onMessage(WebSocketSession session, HiddenAliasHolderMessage message) {}
+    }
+
+    /**
+     * The real engine, which owns the warm-up walk. A test that asserts <em>which</em> message types
+     * get their projection composed cannot use a double: the walk is the engine's own descent, so a
+     * no-op {@code precomputeFieldNameResolution} would compose nothing and prove nothing.
+     *
+     * <p>The resolver functions throw because no fixture here declares a chain, and both are
+     * consulted only when a value is actually processed.
+     *
+     * @return a default engine over policy-free fixtures
+     */
+    private static InputObjectProcessor realEngine() {
+        return InputObjectProcessor.createDefault(
+                type -> {
+                    throw new AssertionError("no canonicalizer is declared by these fixtures: " + type);
+                },
+                type -> {
+                    throw new AssertionError("no sanitizer is declared by these fixtures: " + type);
+                });
     }
 
     private static WebSocketEndpointRegistrar registrar() {
         return new WebSocketEndpointRegistrar(
-                new WebSocketMessageCodec(),
-                null,
-                null,
-                null,
-                Set.of(),
-                null,
-                new PassThroughProcessor(),
-                null,
-                null,
-                null);
+                new WebSocketMessageCodec(), null, null, null, Set.of(), null, realEngine(), null, null, null);
     }
 
     // --- Tests ---
@@ -177,6 +193,22 @@ class WebSocketNameProjectionStartupTest {
         assertTrue(
                 failure.getMessage().contains(DuplicateAliasMessage.class.getName()),
                 "the failure must name the component type, not the array class: " + failure.getMessage());
+    }
+
+    @Test
+    @DisplayName("a colliding message type reached only through a Jackson-invisible field fails endpoint registration")
+    void collidingMessageTypeFailsEndpointRegistration() {
+        ConfigurationException failure = assertThrows(
+                ConfigurationException.class,
+                () -> registrar().registerAll(Set.of(new HiddenUnprojectableMessageEndpoint()), router),
+                "the engine descends every declared field of a descendable type, so warming must follow "
+                        + "the engine's own owner set — not the narrower set Jackson exposes as properties");
+
+        String message = failure.getMessage();
+        assertTrue(
+                message.contains(DuplicateAliasMessage.class.getName()),
+                "the failure must name the type whose projection cannot be composed: " + message);
+        assertTrue(message.contains("shared"), "the failure must name the contested wire name: " + message);
     }
 
     @Test

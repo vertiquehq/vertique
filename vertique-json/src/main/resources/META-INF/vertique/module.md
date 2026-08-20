@@ -315,13 +315,13 @@ JacksonFieldNameResolver resolver = JacksonFieldNameResolver.forMapper(mapper);
 // forRoute(null) is the reserved `vertx` profile: DatabindCodec.mapper().
 JacksonFieldNameResolver vertxProfile = JacksonFieldNameResolver.forRoute(null);
 
-// Compose each body/message type's projection at registration, never on the request path.
+// Compose one owner type's projection at registration, never on the request path.
 resolver.precompute(RenamedDto.class);
 
-// Or warm the whole declared graph a boundary can descend into: the type itself, an array's or
-// collection's element type, and every type its Jackson-visible properties expose, transitively.
-// Map key and value types are not part of that graph — a map-typed field is schema-free.
-resolver.precomputeGraph(orderBodyType);
+// In practice a transport does not call precompute itself. From its own module — which does depend
+// on the engine — it hands the declared body or message type over, and the engine calls precompute
+// once per owner type it may consult:
+//     objectProcessor.precomputeFieldNameResolution(orderBodyType, resolver);
 
 resolver.logicalName(RenamedDto.class, "user_name"); // -> "userName"
 resolver.logicalName(RenamedDto.class, "unknown");   // -> "unknown" (the projection is total)
@@ -335,15 +335,16 @@ resolver.logicalName(RenamedDto.class, "unknown");   // -> "unknown" (the projec
 | Two properties claiming one alias | `ConfigurationException` naming the type, the alias, and both Java properties. Jackson resolves such a collision in hash order while a projection built from `findProperties()` resolves it in declaration order, so the property whose policies are applied and the property Jackson binds could differ non-deterministically. An alias colliding with another property's *primary* name is **not** this case: the primary claims the key and the alias is silently unclaimed, exactly as Jackson binds it |
 | Unknown wire name | Returned unchanged — the projection is total and never throws for an unrecognized key |
 | Caching | One `ClassValue`-cached projection per `(mapper, type)`; entries are collected with the DTO's classloader |
-| When the projection is composed | `precompute(Class)` composes it for one type at registration; `precomputeGraph(Type)` composes it for a declared type and everything reachable from it. Every boundary calls the latter there for each body or message type it knows, so `logicalName` neither introspects nor raises anything on the request path, and a name collision fails startup instead of failing every request that touches the type |
-| What `precomputeGraph` walks | The declared type, an array component or collection element type, a non-map parameterized type's arguments, and then each visited type's Jackson-visible property types, transitively. The walk is a deliberate **superset** of the links the input-processing engine descends, never a subset: it is exact for maps, collections, arrays, and `Optional`, but a non-map parameterized type's arguments are warmed even though the engine classifies such a field to its erased bound and never reaches them. That direction is the safe one — it can fail startup on a collision the request path would not consult, but never leaves a type the engine does descend unwarmed and introspecting on the event loop. A visited set terminates cyclic graphs; primitives, enums, and platform (`java.*` / `javax.*` / `jakarta.*`) types are skipped, so a `String` body or message type costs no introspection. A **map's key and value types are not walked**, whether the map is the declared shape itself (`Map<String, Dto>`, `List<Map<String, Dto>>`) or a property's type: a map fragment is schema-free, so neither is ever consulted as a projection owner, and warming one would let a collision the request path can never reach fail startup. "Map" means `java.util.Map` — the engine's own test. A type a registered module (Scala, Guava, Kotlin) classifies as *map-like* without it implementing `java.util.Map` is descended by the engine as a plain object, so it is warmed as one: its own projection is composed, and its module-declared key and value types are not walked |
+| When the projection is composed | `precompute(Class)` composes it for **one** owner type at registration. It is the `InputFieldNameResolver` SPI hook the input-processing engine calls — once per owner type it may pass to `logicalName` while processing a declared body or message type — from `InputObjectProcessor.precomputeFieldNameResolution(Type, InputFieldNameResolver)`. So `logicalName` neither introspects nor raises anything on the request path, and a name collision fails startup instead of failing every request that touches the type |
+| Which types get composed | Decided by the engine, not by this module: the resolver composes exactly the class it is handed and walks no type graph of its own. See the `vertique-input-processing` reference for the owner set `precomputeFieldNameResolution` prepares and the shapes it cannot reach statically |
 | Identity short circuit | When the *computed* projection maps every wire name onto itself, `logicalName` returns the wire name directly and no per-field lookup happens |
 
-Nested types are covered: the engine consults the projection of the owner of every nested fragment,
-so `precomputeGraph` follows the declared property graph and leaves nothing for the request path to
-introspect. A type reached only through a shape the declared types do not name — a `Map`- or
-`Object`-typed field's runtime value, or a `@JsonTypeInfo` subtype — is still composed lazily on
-first use, because no static walk can name it.
+Nested types are covered, but that coverage is the engine's postcondition rather than this module's:
+the engine consults the projection of the owner of every nested fragment, and it is
+`precomputeFieldNameResolution` that enumerates those owners and calls `precompute` for each. A type
+reached only through a shape the declared types do not name — a `Map`- or `Object`-typed field's
+runtime value, or a `@JsonTypeInfo` subtype — is still composed lazily on first use, because no
+static walk can name it.
 
 Instances are immutable and safe for concurrent use from several event-loop threads. A mapper
 selected for a mounted boundary is treated as immutable afterwards: an application that mutates a
