@@ -67,7 +67,23 @@ jobs:
         with:
           distribution: temurin
           java-version: "21"
-          cache: maven
+
+      # setup-java's own "cache: maven" only saves on a cache miss — once a
+      # cache exists for the current pom.xml hash it is never refreshed, so
+      # any dependency first resolved in a later commit (most commonly a
+      # plugin's own transitive, e.g. httpclient/qdox/common-java5) is never
+      # persisted and stays permanently exposed to Maven Central on every
+      # run. restore/save as separate steps instead, keyed per run with a
+      # restore-keys fallback to the most recent save: every run's downloads
+      # get captured, so the cache grows toward completeness instead of
+      # freezing at whatever existed when the cache was first created.
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ~/.m2/repository
+          key: maven-${{ runner.os }}-${{ hashFiles('**/pom.xml') }}-${{ github.run_id }}
+          restore-keys: |
+            maven-${{ runner.os }}-${{ hashFiles('**/pom.xml') }}-
+            maven-${{ runner.os }}-
 
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
@@ -136,3 +152,14 @@ jobs:
 
       - name: Check formatting
         run: ./mvnw -ntp -pl '!vertique-app-parent' spotless:check
+
+      # Always, not just on success: whatever this run downloaded should
+      # survive even if a later step (or the build itself) fails, since a
+      # failure downstream of dependency resolution shouldn't cost the next
+      # run's cache the artifacts this run already fetched. The per-run key
+      # never collides, so this never fails on "cache already exists".
+      - if: always()
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ~/.m2/repository
+          key: maven-${{ runner.os }}-${{ hashFiles('**/pom.xml') }}-${{ github.run_id }}
