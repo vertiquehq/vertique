@@ -38,6 +38,21 @@ ignores the signal.
 content or a tool execution error; use its `text`, `structured`, and `error` factories. A handler
 that returns a plain value has its result wrapped by generated code instead.
 
+## Selecting a JSON profile
+
+Tool arguments and structured results are mapped by an effective `JsonMapperProfile`. Select one
+with `vertique-core`'s `@JsonProfile` on the tool method or on its declaring type; the method-level
+annotation wins. `vertique-codegen-mcp` resolves that choice at compile time and rejects a blank
+value there, so an unusable selection never reaches startup.
+
+The full precedence is method `@JsonProfile`, then declaring type `@JsonProfile`, then the MCP
+boundary default `mcp.jsonProfile`, then the global default `json.jsonProfile`, then the reserved
+`vertx` profile. Everything after the annotations is resolved once during composition by
+`vertique-mcp-server`, which also rejects an unknown id before the router is mounted.
+
+Profiles apply only to tool arguments and structured results. Protocol envelopes, the JSON-RPC
+codec, and resource limits are profile-independent.
+
 ## Descriptor and invocation contracts
 
 `McpToolDescriptor` is the immutable published description of one tool: name, optional title,
