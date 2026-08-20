@@ -24,6 +24,7 @@ import com.fasterxml.jackson.databind.jsontype.TypeDeserializer;
 import com.fasterxml.jackson.databind.jsontype.TypeIdResolver;
 import com.fasterxml.jackson.databind.jsontype.TypeResolverBuilder;
 import com.fasterxml.jackson.databind.jsontype.TypeSerializer;
+import com.fasterxml.jackson.databind.jsontype.impl.TypeNameIdResolver;
 import com.fasterxml.jackson.databind.type.TypeFactory;
 import dev.vertique.core.json.JsonMapperProfile;
 import dev.vertique.core.json.JsonProfileConfigurationException;
@@ -70,17 +71,26 @@ import java.util.function.Supplier;
  * scope is gated on the resolver the mapper would actually install — {@code findTypeResolver} for
  * the class scope, {@code findPropertyTypeResolver} and {@code findPropertyContentTypeResolver} for
  * the member scopes — so an introspector or module that installs a resolver without reporting
- * {@code @JsonTypeInfo} metadata is rejected rather than seen as an unannotated type. In the class
- * scope the gate goes one step further and reads the mechanism of the type serializer or type
- * deserializer the mapper actually builds, because reported metadata and installed resolver are
- * independent signals: an introspector may report the sanctioned {@code Id.NAME} shape while handing
- * the factories an {@code Id.CLASS} or {@code Id.CUSTOM} builder.
+ * {@code @JsonTypeInfo} metadata is rejected rather than seen as an unannotated type. Both the class
+ * and member scopes go one step further and read the <em>identity</em> of the type id resolver the
+ * type serializer or type deserializer the mapper actually builds carries, accepting only Jackson's
+ * own {@code TypeNameIdResolver}. Reported metadata, the self-reported mechanism, and the installed
+ * resolver are independent signals: a custom resolver can report {@code Id.NAME} from
+ * {@code getMechanism()} while its {@code typeFromId} maps a wire-chosen id to any subtype of the
+ * base — including one the finite {@code @JsonSubTypes} allowlist never listed and the walk never
+ * proved — so only the live resolver's identity, not its self-reported mechanism, proves the
+ * sanctioned name mechanism.
  *
  * <p>The class scope is entered for every non-primitive, non-enum reachable type, containers
  * included. Jackson resolves a container's own type handling by asking {@code findTypeResolver} for
  * the container raw class — {@code java.util.List}, {@code java.util.Map}, the array class, the
  * reference class — so validating only a container's contents would leave a resolver installed on
- * the container itself live.
+ * the container itself live. The class-level resolver gate introspects the annotated class Jackson's
+ * factories install from — {@code introspectClassAnnotations(baseType.getRawClass())}, an erased
+ * class carrying no generic bindings — not the resolved {@code JavaType}, so an introspector keying
+ * its resolver on the annotated class's own bindings cannot show the validator a safe view while the
+ * mapper installs an unsafe resolver from the erased one. Bean property discovery stays on the full
+ * resolved type.
  *
  * <p>Effective metadata is read per mapper side. A mapper configured through
  * {@code ObjectMapper.setAnnotationIntrospectors} holds one introspector for serialization and
@@ -241,8 +251,12 @@ final class McpJsonProfileSafetyValidator {
          *
          * <p>Only the annotations of the container class are needed, so the class is introspected the
          * way Jackson's own type-serializer construction introspects it — through
-         * {@code introspectClassAnnotations} — rather than through a full property introspection that
-         * has no meaning for a container.
+         * {@code introspectClassAnnotations} of the container's <em>raw class</em> — rather than
+         * through a full property introspection that has no meaning for a container. Passing the raw
+         * class, not the resolved {@link JavaType}, mirrors {@code Basic{Serializer,Deserializer}Factory},
+         * which introspect {@code baseType.getRawClass()} before asking {@code findTypeResolver}; an
+         * introspector that keys its resolver on the annotated class's own generic bindings therefore
+         * cannot show the validator a different {@link AnnotatedClass} than the mapper installs from.
          *
          * @param reachable the container type being visited
          */
@@ -251,10 +265,10 @@ final class McpJsonProfileSafetyValidator {
             AnnotatedClass deserializationClassInfo;
             try {
                 serializationClassInfo = serializationConfig
-                        .introspectClassAnnotations(reachable.type())
+                        .introspectClassAnnotations(reachable.type().getRawClass())
                         .getClassInfo();
                 deserializationClassInfo = deserializationConfig
-                        .introspectClassAnnotations(reachable.type())
+                        .introspectClassAnnotations(reachable.type().getRawClass())
                         .getClassInfo();
             } catch (RuntimeException failure) {
                 throw failure(
@@ -276,17 +290,29 @@ final class McpJsonProfileSafetyValidator {
         private void visitBean(ReachableType reachable) {
             BeanDescription serializationDescription;
             BeanDescription deserializationDescription;
+            AnnotatedClass serializationResolverClassInfo;
+            AnnotatedClass deserializationResolverClassInfo;
             try {
                 serializationDescription = serializationConfig.introspect(reachable.type());
                 deserializationDescription = deserializationConfig.introspect(reachable.type());
+                // The class-level resolver gate must read the annotated class Jackson's own factories
+                // install from — introspectClassAnnotations(baseType.getRawClass()) — not the
+                // full-type BeanDescription's class info, so a bindings-discriminating introspector
+                // cannot show the validator a safe AnnotatedClass while the mapper installs from the
+                // erased one. Property discovery below stays on the full resolved type.
+                serializationResolverClassInfo = serializationConfig
+                        .introspectClassAnnotations(reachable.type().getRawClass())
+                        .getClassInfo();
+                deserializationResolverClassInfo = deserializationConfig
+                        .introspectClassAnnotations(reachable.type().getRawClass())
+                        .getClassInfo();
             } catch (RuntimeException failure) {
                 throw failure(
                         reachable.path(),
                         "mapper introspection failed: " + failure.getClass().getSimpleName());
             }
 
-            rejectUnsafePolymorphism(
-                    reachable, serializationDescription.getClassInfo(), deserializationDescription.getClassInfo());
+            rejectUnsafePolymorphism(reachable, serializationResolverClassInfo, deserializationResolverClassInfo);
             enqueuePropertyTypes(reachable, serializationDescription, deserializationDescription);
         }
 
@@ -332,13 +358,18 @@ final class McpJsonProfileSafetyValidator {
          * rejections, which are otherwise only reachable once the metadata is already reported.
          *
          * <p>An installed resolver is accepted only when the same side also reports the sanctioned
-         * {@code Id.NAME} shape <em>and</em> the handler that side actually builds reports
-         * {@code Id.NAME} as its own mechanism. The two signals are independent — a custom
-         * introspector can report {@code Id.NAME} metadata with a finite {@code @JsonSubTypes}
-         * allowlist while {@code findTypeResolver} hands the factories an {@code Id.CLASS} builder — so
-         * a metadata-only check would pass while the mapper installs the unsafe mechanism.
-         * {@code Id.NONE} keeps meaning <em>absent</em>: it is Jackson's own way of disabling
-         * polymorphism, and the marker builder it installs builds no handler at all.
+         * {@code Id.NAME} shape <em>and</em> the handler that side actually builds carries Jackson's
+         * own {@link TypeNameIdResolver} — the exact type the legitimate {@code @JsonTypeInfo(use =
+         * NAME)} path builds on both the serialization and deserialization sides. Reading the live
+         * resolver's identity rather than its self-reported mechanism is what closes the spoof: a
+         * custom {@link TypeIdResolver} can report {@code Id.NAME} from {@code getMechanism()} while
+         * its {@code typeFromId} maps a wire-chosen id to any subtype of the base — including one the
+         * finite {@code @JsonSubTypes} allowlist never listed and the walk never proved — so a
+         * mechanism-only check would accept an impostor that reopens the subtype space. Any resolver
+         * that is not a {@code TypeNameIdResolver} — a custom impostor, an {@code Id.CLASS} or
+         * {@code Id.CUSTOM} builder — is rejected. {@code Id.NONE} keeps meaning <em>absent</em>: it
+         * is Jackson's own way of disabling polymorphism, and the marker builder it installs builds no
+         * handler at all.
          *
          * @param reachable the type being visited
          * @param classInfo that side's annotated class
@@ -355,9 +386,8 @@ final class McpJsonProfileSafetyValidator {
                 AnnotationIntrospector introspector) {
             JsonTypeInfo.Value typeInfo = introspector.findPolymorphicTypeInfo(config, classInfo);
             boolean declaresTypeInfo = typeInfo != null && typeInfo.getIdType() != JsonTypeInfo.Id.NONE;
-            JsonTypeInfo.Id installedMechanism =
-                    installedClassTypeMechanism(reachable, classInfo, config, introspector);
-            if (!declaresTypeInfo && installedMechanism == null) {
+            InstalledResolver installed = installedClassResolver(reachable, classInfo, config, introspector);
+            if (!declaresTypeInfo && installed == null) {
                 return null;
             }
             if (classInfo.getAnnotation(JsonTypeResolver.class) != null) {
@@ -378,29 +408,48 @@ final class McpJsonProfileSafetyValidator {
                         "type id mechanism 'Id." + typeInfo.getIdType()
                                 + "' is not an accepted mechanism; only Id.NAME with an explicit @JsonSubTypes allowlist is");
             }
-            if (installedMechanism != null && installedMechanism != JsonTypeInfo.Id.NAME) {
-                throw failure(
-                        reachable.path(),
-                        "the mapper reports Id.NAME metadata but installs class-level type handling whose live"
-                                + " type id mechanism is 'Id." + installedMechanism
-                                + "'; only Id.NAME with an explicit @JsonSubTypes allowlist is an accepted mechanism");
+            if (installed != null && !installed.sanctioned()) {
+                throw failure(reachable.path(), unsafeInstalledResolverReason("class", installed));
             }
             return declaredAllowlist(reachable.path(), introspector.findSubtypes(classInfo));
         }
 
         /**
-         * Reports the mechanism of the class-level type handler one mapper side actually installs.
+         * Builds the rejection reason for a live type id resolver that is not Jackson's sanctioned
+         * {@link TypeNameIdResolver}.
          *
-         * <p>The builder alone is not the mechanism: Jackson's serializer and deserializer factories
+         * <p>The self-reported mechanism is named too, so an {@code Id.CLASS} or {@code Id.CUSTOM}
+         * builder masked behind {@code Id.NAME} metadata still surfaces its mechanism, while an
+         * impostor that reports {@code Id.NAME} from {@code getMechanism()} is caught by the resolver
+         * type it actually is.
+         *
+         * @param scope {@code "class"} or {@code "member"}, naming where the resolver is installed
+         * @param installed the live resolver that failed the identity check
+         * @return the bounded, payload-free reason
+         */
+        private static String unsafeInstalledResolverReason(String scope, InstalledResolver installed) {
+            return "the mapper reports Id.NAME metadata but installs " + scope
+                    + "-level type handling that is not Jackson's sanctioned name resolver (resolver "
+                    + installed.resolverType() + ", mechanism Id." + installed.mechanism()
+                    + "); only Id.NAME through Jackson's TypeNameIdResolver with an explicit @JsonSubTypes"
+                    + " allowlist is an accepted mechanism";
+        }
+
+        /**
+         * Reports the identity of the class-level type handler one mapper side actually installs.
+         *
+         * <p>The builder alone is not the resolver: Jackson's serializer and deserializer factories
          * ask {@code findTypeResolver} and then <em>build</em> a type serializer or type deserializer
          * from what comes back, and it is that handler's own {@link TypeIdResolver} that decides how a
-         * type id is written and read. Reading the live mechanism rather than the reported metadata is
-         * what closes the gap between an introspector that reports the sanctioned {@code Id.NAME} shape
-         * and one that installs an {@code Id.CLASS} or {@code Id.CUSTOM} resolver behind it.
+         * type id is read and mapped to a class. Reading the live resolver's identity rather than its
+         * self-reported mechanism is what closes the spoof: an impostor resolver can report
+         * {@code Id.NAME} from {@code getMechanism()} while its {@code typeFromId} escapes the
+         * allowlist, so only Jackson's own {@link TypeNameIdResolver} — the type the legitimate
+         * {@code @JsonTypeInfo(use = NAME)} path builds — is accepted.
          *
          * <p>A {@code null} handler is Jackson's own signal that no type handling is installed at all —
          * the {@code Id.NONE} marker builder returns one — so it is reported as absent rather than as a
-         * mechanism. The build runs against the same side's config and resolved subtype mapping Jackson
+         * resolver. The build runs against the same side's config and resolved subtype mapping Jackson
          * would use, and each step that can fail converts to its own bounded composition failure so the
          * message names the step that actually failed.
          *
@@ -408,10 +457,11 @@ final class McpJsonProfileSafetyValidator {
          * @param classInfo that side's annotated class
          * @param config that side's mapper config
          * @param introspector the introspector that side actually uses
-         * @return the live mechanism, or {@code null} when that side installs no class-level type handling
+         * @return the live resolver identity, or {@code null} when that side installs no class-level
+         *     type handling
          */
         @Nullable
-        private JsonTypeInfo.Id installedClassTypeMechanism(
+        private InstalledResolver installedClassResolver(
                 ReachableType reachable,
                 AnnotatedClass classInfo,
                 MapperConfig<?> config,
@@ -430,57 +480,62 @@ final class McpJsonProfileSafetyValidator {
             }
             if (config instanceof SerializationConfig serialization) {
                 Collection<NamedType> subtypes = resolvedSubtypesByClass(reachable, classInfo);
-                return liveMechanism(
-                        reachable,
+                return liveResolver(
+                        reachable.path(),
+                        "class",
                         () -> resolver.buildTypeSerializer(serialization, reachable.type(), subtypes),
                         TypeSerializer::getTypeIdResolver);
             }
             if (config instanceof DeserializationConfig deserialization) {
                 Collection<NamedType> subtypes = resolvedSubtypesByTypeId(reachable, classInfo);
-                return liveMechanism(
-                        reachable,
+                return liveResolver(
+                        reachable.path(),
+                        "class",
                         () -> resolver.buildTypeDeserializer(deserialization, reachable.type(), subtypes),
                         TypeDeserializer::getTypeIdResolver);
             }
             throw failure(
                     reachable.path(),
                     "the mapper installs a class-level type resolver for an unrecognised mapper side, so its"
-                            + " mechanism cannot be proven");
+                            + " identity cannot be proven");
         }
 
         /**
-         * Builds one side's class-level type handler and reads the mechanism it reports.
+         * Builds one mapper side's type handler and reports the identity of its live type id resolver.
          *
-         * @param reachable the type being visited
+         * @param path the bounded reachable path of the scope being validated
+         * @param scope {@code "class"} or {@code "member"}, naming the failure message's scope
          * @param build builds that side's handler from the installed resolver
          * @param idResolverOf reads the built handler's type id resolver
          * @param <H> the handler type of that mapper side
-         * @return the live mechanism, or {@code null} when the resolver builds no handler
+         * @return the live resolver identity, or {@code null} when the resolver builds no handler
          */
         @Nullable
-        private <H> JsonTypeInfo.Id liveMechanism(
-                ReachableType reachable, Supplier<H> build, Function<H, TypeIdResolver> idResolverOf) {
-            JsonTypeInfo.Id mechanism;
+        private <H> InstalledResolver liveResolver(
+                String path, String scope, Supplier<H> build, Function<H, TypeIdResolver> idResolverOf) {
+            TypeIdResolver idResolver;
             try {
                 H handler = build.get();
                 if (handler == null) {
                     return null;
                 }
-                TypeIdResolver idResolver = idResolverOf.apply(handler);
-                mechanism = idResolver == null ? null : idResolver.getMechanism();
+                idResolver = idResolverOf.apply(handler);
             } catch (RuntimeException failure) {
                 throw failure(
-                        reachable.path(),
-                        "class-level type resolver construction failed: "
+                        path,
+                        scope + "-level type resolver construction failed: "
                                 + failure.getClass().getSimpleName());
             }
-            if (mechanism == null) {
+            if (idResolver == null) {
                 throw failure(
-                        reachable.path(),
-                        "the mapper installs class-level type handling reporting no type id mechanism, so it"
-                                + " cannot be proven to be Id.NAME");
+                        path,
+                        "the mapper installs " + scope + "-level type handling reporting no type id resolver, so it"
+                                + " cannot be proven to be Jackson's sanctioned name resolver");
             }
-            return mechanism;
+            return new InstalledResolver(
+                    idResolver instanceof TypeNameIdResolver,
+                    idResolver.getClass().getName(),
+                    idResolver.getMechanism());
         }
 
         /** Resolves the serialization-facing subtype mapping the handler build feeds on. */
@@ -706,17 +761,24 @@ final class McpJsonProfileSafetyValidator {
                 JavaType propertyType = property.getPrimaryType();
                 String propertyPath = reachable.path() + " -> " + property.getName();
                 rejectRawMemberDeclaration(propertyPath, member);
-                if (introspector.findPropertyTypeResolver(config, member, propertyType) != null) {
-                    requireClosedMemberPolymorphism(propertyPath, member, propertyType, config, introspector);
-                }
-                if (hasContent(propertyType)
-                        && introspector.findPropertyContentTypeResolver(config, member, propertyType) != null) {
+                TypeResolverBuilder<?> propertyResolver =
+                        introspector.findPropertyTypeResolver(config, member, propertyType);
+                if (propertyResolver != null) {
                     requireClosedMemberPolymorphism(
-                            propertyPath + " -> <content>",
-                            member,
-                            propertyType.getContentType(),
-                            config,
-                            introspector);
+                            propertyPath, member, propertyType, propertyResolver, config, introspector);
+                }
+                if (hasContent(propertyType)) {
+                    TypeResolverBuilder<?> contentResolver =
+                            introspector.findPropertyContentTypeResolver(config, member, propertyType);
+                    if (contentResolver != null) {
+                        requireClosedMemberPolymorphism(
+                                propertyPath + " -> <content>",
+                                member,
+                                propertyType.getContentType(),
+                                contentResolver,
+                                config,
+                                introspector);
+                    }
                 }
             }
         }
@@ -730,9 +792,17 @@ final class McpJsonProfileSafetyValidator {
          * declared base type's class-level allowlist otherwise, exactly as Jackson's member-scoped
          * subtype resolution falls back.
          *
+         * <p>The gate reads the resolver the mapper actually builds from the member-declared builder,
+         * not only the reported {@code Id.NAME} metadata: the identical {@code getMechanism()} spoof
+         * available at class scope reopens here on a bean property, so only a live
+         * {@link TypeNameIdResolver} — the type the legitimate {@code @JsonTypeInfo(use = NAME)} member
+         * path builds on both sides — is accepted, and an impostor reporting {@code Id.NAME} while its
+         * {@code typeFromId} escapes the allowlist is rejected.
+         *
          * @param path the bounded reachable path of this member scope
          * @param member the annotated member declaring the type information
          * @param baseType the type the member-declared resolver is installed for
+         * @param memberResolver the resolver builder Jackson installs for this member scope
          * @param config the mapper side whose introspection declared the resolver
          * @param introspector the introspector that side actually uses
          */
@@ -740,6 +810,7 @@ final class McpJsonProfileSafetyValidator {
                 String path,
                 AnnotatedMember member,
                 JavaType baseType,
+                TypeResolverBuilder<?> memberResolver,
                 MapperConfig<?> config,
                 AnnotationIntrospector introspector) {
             if (member.getAnnotation(JsonTypeResolver.class) != null) {
@@ -756,6 +827,7 @@ final class McpJsonProfileSafetyValidator {
                                 + (memberTypeInfo == null ? "unknown" : "Id." + memberTypeInfo.getIdType())
                                 + "' is not an accepted mechanism; only Id.NAME with an explicit @JsonSubTypes allowlist is");
             }
+            requireSanctionedMemberResolver(path, member, baseType, memberResolver, config);
             Map<String, Class<?>> allowlist =
                     declaredAllowlist(path, memberSubtypes(member, baseType, config, introspector));
             Class<?> baseClass = baseType.getRawClass();
@@ -772,6 +844,60 @@ final class McpJsonProfileSafetyValidator {
                     subtypesByTypeId(member, baseType),
                     "deserialization-facing subtype mapping");
             enqueueAllowlist(path, allowlist);
+        }
+
+        /**
+         * Requires the live resolver a member-declared builder installs to be Jackson's sanctioned
+         * {@link TypeNameIdResolver}, per the mapper side being validated.
+         *
+         * <p>The handler is built exactly as Jackson's serializer or deserializer factory builds it —
+         * a type serializer on the serialization side, a type deserializer on the deserialization side
+         * — from the member's own resolver builder and its resolved subtype mapping, so an impostor
+         * reporting {@code Id.NAME} from {@code getMechanism()} is caught by the resolver type it
+         * actually is rather than the mechanism it claims.
+         *
+         * @param path the bounded reachable path of this member scope
+         * @param member the annotated member declaring the type information
+         * @param baseType the type the member-declared resolver is installed for
+         * @param memberResolver the resolver builder Jackson installs for this member scope
+         * @param config the mapper side whose introspection declared the resolver
+         */
+        private void requireSanctionedMemberResolver(
+                String path,
+                AnnotatedMember member,
+                JavaType baseType,
+                TypeResolverBuilder<?> memberResolver,
+                MapperConfig<?> config) {
+            InstalledResolver installed;
+            if (config instanceof SerializationConfig serialization) {
+                Collection<NamedType> subtypes = subtypesByClass(member, baseType);
+                installed = liveResolver(
+                        path,
+                        "member",
+                        () -> memberResolver.buildTypeSerializer(serialization, baseType, subtypes),
+                        TypeSerializer::getTypeIdResolver);
+            } else if (config instanceof DeserializationConfig deserialization) {
+                Collection<NamedType> subtypes = subtypesByTypeId(member, baseType);
+                installed = liveResolver(
+                        path,
+                        "member",
+                        () -> memberResolver.buildTypeDeserializer(deserialization, baseType, subtypes),
+                        TypeDeserializer::getTypeIdResolver);
+            } else {
+                throw failure(
+                        path,
+                        "the mapper installs a member-level type resolver for an unrecognised mapper side, so its"
+                                + " identity cannot be proven");
+            }
+            if (installed == null) {
+                throw failure(
+                        path,
+                        "the mapper installs member-level type handling that builds no live resolver, so it cannot"
+                                + " be proven to be Jackson's sanctioned name resolver");
+            }
+            if (!installed.sanctioned()) {
+                throw failure(path, unsafeInstalledResolverReason("member", installed));
+            }
         }
 
         /** Reads the member's own allowlist, falling back to the declared base type's as Jackson does. */
@@ -968,4 +1094,13 @@ final class McpJsonProfileSafetyValidator {
 
     /** One canonical type reached during the walk, with the path that reached it. */
     private record ReachableType(JavaType type, String path) {}
+
+    /**
+     * The identity of a live type id resolver one mapper side actually installs.
+     *
+     * @param sanctioned whether the resolver is Jackson's own {@code TypeNameIdResolver}
+     * @param resolverType the resolver's concrete class name, for the rejection message
+     * @param mechanism the mechanism the resolver reports, which an impostor may spoof as {@code Id.NAME}
+     */
+    private record InstalledResolver(boolean sanctioned, String resolverType, JsonTypeInfo.Id mechanism) {}
 }

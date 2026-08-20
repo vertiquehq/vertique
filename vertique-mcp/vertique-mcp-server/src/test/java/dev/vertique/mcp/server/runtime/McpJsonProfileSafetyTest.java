@@ -60,7 +60,7 @@ import org.junit.jupiter.params.provider.MethodSource;
  * discovery, a custom type-id resolver, a polymorphism-supplying mix-in, and a trusted custom
  * serializer/deserializer pair. Every row traverses one reachable type graph once with the validator.
  *
- * <p>Nine rows isolate nine boundaries, one each:
+ * <p>Ten rows isolate ten boundaries, one each:
  *
  * <ol>
  *   <li>{@link #shouldTraverseMapperDerivedPrimitiveEnumContainerPropertyAndCyclicBoundaries()} — the
@@ -96,6 +96,13 @@ import org.junit.jupiter.params.provider.MethodSource;
  *   <li>{@link #shouldGateClassLevelPolymorphismOnContainerRootsAndMembers()} — a container, map,
  *       array or reference type is validated as its own polymorphic base before its contents are
  *       enqueued, so a resolver installed on the container class itself is rejected.</li>
+ *   <li>{@link #shouldRejectLiveResolverIdentitySpoofsAndBindingDiscriminatedIntrospection()} — the
+ *       class- and member-level gates read the identity of the live type id resolver the mapper
+ *       builds and accept only Jackson's {@code TypeNameIdResolver}, so an impostor reporting
+ *       {@code Id.NAME} from {@code getMechanism()} is rejected on both scopes; and the class-level
+ *       resolver gate introspects the erased raw class Jackson installs from, so a
+ *       binding-discriminating introspector cannot hide an unsafe resolver behind a safe
+ *       {@code List<Item>} view.</li>
  * </ol>
  */
 @DisplayName("MCP JSON profile safety — T002 contract matrix")
@@ -141,7 +148,11 @@ class McpJsonProfileSafetyTest {
                                 ::shouldCrossCheckLiveClassLevelHandlerMechanismAgainstReportedMetadata),
                 new MatrixRow(
                         "shouldGateClassLevelPolymorphismOnContainerRootsAndMembers",
-                        McpJsonProfileSafetyTest::shouldGateClassLevelPolymorphismOnContainerRootsAndMembers));
+                        McpJsonProfileSafetyTest::shouldGateClassLevelPolymorphismOnContainerRootsAndMembers),
+                new MatrixRow(
+                        "shouldRejectLiveResolverIdentitySpoofsAndBindingDiscriminatedIntrospection",
+                        McpJsonProfileSafetyTest
+                                ::shouldRejectLiveResolverIdentitySpoofsAndBindingDiscriminatedIntrospection));
     }
 
     @ParameterizedTest(name = "{0}")
@@ -683,6 +694,79 @@ class McpJsonProfileSafetyTest {
                 .doesNotThrowAnyException();
     }
 
+    // --- Row 10: live-resolver identity spoofs and binding-discriminated introspection ---
+
+    /**
+     * Two independent signals decide class- and member-level safety, and both were spoofable before
+     * the live-resolver identity gate.
+     *
+     * <p>A custom {@link com.fasterxml.jackson.databind.jsontype.TypeIdResolver} can report
+     * {@code Id.NAME} from {@code getMechanism()} — the exact signal a mechanism-only check trusted —
+     * while its {@code typeFromId} maps a wire-chosen id to any subtype of the base, including one the
+     * finite {@code @JsonSubTypes} allowlist never listed and the walk never proved. Installed via a
+     * custom {@code TypeResolverBuilder} with sanctioned {@code Id.NAME} metadata and no
+     * {@code @JsonTypeIdResolver} annotation, the impostor slips a mechanism check on both the class
+     * and the bean-property scope. The gate now reads the identity of the live resolver the mapper
+     * actually builds and accepts only Jackson's own {@code TypeNameIdResolver}, so the impostor is
+     * rejected on both scopes while the legitimate {@code @JsonTypeInfo(use = NAME)} shape — which
+     * builds a {@code TypeNameIdResolver} on both sides — stays accepted.
+     *
+     * <p>Separately, the class-level resolver gate must introspect the annotated class Jackson's own
+     * factories install from — {@code introspectClassAnnotations(baseType.getRawClass())}, an erased
+     * class carrying no generic bindings — not the resolved {@code JavaType}. An introspector that
+     * keys its resolver on the annotated class's own bindings could otherwise show the validator a
+     * safe {@code List<Item>} view while the mapper installs an unsafe resolver from the erased
+     * {@code List}; mirroring Jackson's raw-class input closes that mismatch. Ordinary generic
+     * containers and beans, which carry no such introspector, stay accepted.
+     */
+    private static void shouldRejectLiveResolverIdentitySpoofsAndBindingDiscriminatedIntrospection() {
+        McpJsonProfileSafetyValidator validator = new McpJsonProfileSafetyValidator();
+
+        assertThatThrownBy(() -> validator.validate(
+                        McpJsonProfileSafetyTestFixture.classIdentitySpoofProfile(), IdentitySpoofCarrier.class, null))
+                .as("a class-level resolver reporting Id.NAME from getMechanism() but not Jackson's TypeNameIdResolver"
+                        + " is rejected on identity, not trusted on its self-reported mechanism")
+                .isInstanceOf(JsonProfileConfigurationException.class)
+                .hasMessageContaining("is not Jackson's sanctioned name resolver")
+                .hasMessageContaining("ImpostorNameIdResolver")
+                .hasMessageContaining("IdentitySpoofBase");
+
+        assertThatThrownBy(() -> validator.validate(
+                        McpJsonProfileSafetyTestFixture.memberIdentitySpoofProfile(),
+                        MemberIdentitySpoofCarrier.class,
+                        null))
+                .as("the same getMechanism spoof installed on a bean property is rejected on member-scope identity")
+                .isInstanceOf(JsonProfileConfigurationException.class)
+                .hasMessageContaining("member-level type handling that is not Jackson's sanctioned name resolver")
+                .hasMessageContaining("ImpostorNameIdResolver")
+                .hasMessageContaining("value");
+
+        assertThatThrownBy(() -> validator.validate(
+                        McpJsonProfileSafetyTestFixture.bindingDiscriminatedProfile(), BindingListCarrier.class, null))
+                .as("an introspector that shows the validator a safe List<Item> view while installing an unsafe"
+                        + " resolver from the erased List is caught once the gate mirrors Jackson's raw-class input")
+                .isInstanceOf(JsonProfileConfigurationException.class)
+                .hasMessageContaining("reporting no @JsonTypeInfo metadata")
+                .hasMessageContaining("java.util.List");
+
+        assertThatCode(() -> validator.validate(
+                        McpJsonProfileSafetyTestFixture.safeClosedProfile(),
+                        ClosedShapeCarrier.class,
+                        MemberClosedAllowlistCarrier.class))
+                .as("the legitimate @JsonTypeInfo(use = NAME) shape builds a TypeNameIdResolver on both sides at"
+                        + " class and member scope and stays accepted, so the identity gate does not over-reject")
+                .doesNotThrowAnyException();
+
+        assertThatCode(() -> validator.validate(
+                        McpJsonProfileSafetyTestFixture.safeClosedProfile(),
+                        BindingListCarrier.class,
+                        SafeCarrier.class))
+                .as("the same List<Item> carrier and ordinary generic containers stay accepted under a normal"
+                        + " mapper, so the raw-class-mirroring gate rejects the malicious introspector and not the"
+                        + " generic type")
+                .doesNotThrowAnyException();
+    }
+
     // --- Fixtures ---
 
     /** Framework wiring for the safety proof: the profile variants and the raw/wildcard root tokens. */
@@ -890,6 +974,26 @@ class McpJsonProfileSafetyTest {
                     "deser-only-container-resolver",
                     new JacksonAnnotationIntrospector(),
                     new ContainerClassResolverIntrospector(containerClass));
+        }
+
+        // --- Row 10: live-resolver identity spoofs and binding-discriminated introspection ---
+
+        /** Installs a class-level impostor resolver reporting Id.NAME from getMechanism() on both sides. */
+        static JsonMapperProfile classIdentitySpoofProfile() {
+            ObjectMapper mapper = new ObjectMapper().setAnnotationIntrospector(new ClassIdentitySpoofIntrospector());
+            return new StubProfile("class-identity-spoof", mapper);
+        }
+
+        /** Installs the same impostor resolver on a bean property through findPropertyTypeResolver. */
+        static JsonMapperProfile memberIdentitySpoofProfile() {
+            ObjectMapper mapper = new ObjectMapper().setAnnotationIntrospector(new MemberIdentitySpoofIntrospector());
+            return new StubProfile("member-identity-spoof", mapper);
+        }
+
+        /** Shows a safe List&lt;Item&gt; view to the JavaType overload, an unsafe resolver to the erased List. */
+        static JsonMapperProfile bindingDiscriminatedProfile() {
+            ObjectMapper mapper = new ObjectMapper().setAnnotationIntrospector(new BindingDiscriminatingIntrospector());
+            return new StubProfile("binding-discriminated", mapper);
         }
 
         /** A resolved {@code List<ContainerItem>} root, taken from a declared field. */
@@ -1464,6 +1568,154 @@ class McpJsonProfileSafetyTest {
         @Override
         public TrustedValue deserialize(JsonParser parser, DeserializationContext context) throws IOException {
             return new TrustedValue(parser.getValueAsString());
+        }
+    }
+
+    // --- Row 10 graph: live-resolver identity spoofs and binding-discriminated introspection ---
+
+    /** A plain base a custom introspector reports the sanctioned Id.NAME shape and a finite allowlist for. */
+    private interface IdentitySpoofBase {}
+
+    /** The one allowlisted subtype the walk proves; the impostor never actually resolves to it. */
+    private record IdentitySpoofSafe(String s) implements IdentitySpoofBase {}
+
+    /**
+     * A subtype of the base outside the finite allowlist, so the walk never visits or proves it. The
+     * impostor's {@code typeFromId} maps a wire-chosen id to this escaped subtype at runtime.
+     */
+    private record IdentitySpoofEscaped(String s) implements IdentitySpoofBase {}
+
+    private record IdentitySpoofCarrier(IdentitySpoofBase value) {}
+
+    private record MemberIdentitySpoofCarrier(IdentitySpoofBase value) {}
+
+    /** An element type a binding-discriminated container carries; itself always safe. */
+    private record BindingItem(String name) {}
+
+    private record BindingListCarrier(List<BindingItem> values) {}
+
+    /**
+     * Reports {@code Id.NAME} from {@code getMechanism()} while {@code typeFromId} maps any wire id to
+     * a subtype outside the allowlist. It is not Jackson's {@code TypeNameIdResolver}, so the
+     * live-identity gate rejects it despite the sanctioned mechanism it claims.
+     */
+    private static final class ImpostorNameIdResolver extends TypeIdResolverBase {
+
+        @Override
+        public String idFromValue(Object value) {
+            return "safe";
+        }
+
+        @Override
+        public String idFromValueAndType(Object value, Class<?> suggestedType) {
+            return "safe";
+        }
+
+        @Override
+        public JavaType typeFromId(DatabindContext context, String id) {
+            return context.constructType(IdentitySpoofEscaped.class);
+        }
+
+        @Override
+        public Id getMechanism() {
+            return Id.NAME;
+        }
+    }
+
+    /** A builder carrying Id.NAME metadata whose live id resolver is the impostor rather than Jackson's own. */
+    private static TypeResolverBuilder<?> impostorNameBuilder() {
+        return new StdTypeResolverBuilder()
+                .init(Id.NAME, new ImpostorNameIdResolver())
+                .inclusion(JsonTypeInfo.As.PROPERTY)
+                .typeProperty("kind");
+    }
+
+    /** Reuses the sanctioned Id.NAME metadata the split-allowlist introspector supplies. */
+    private static final JsonTypeInfo.Value SPOOF_NAME_TYPE_INFO =
+            JsonTypeInfo.Value.from(NamePolymorphismMarker.class.getAnnotation(JsonTypeInfo.class));
+
+    /** Installs the impostor as the class-level resolver for {@link IdentitySpoofBase}. */
+    private static final class ClassIdentitySpoofIntrospector extends JacksonAnnotationIntrospector {
+
+        @Override
+        public JsonTypeInfo.Value findPolymorphicTypeInfo(MapperConfig<?> config, Annotated annotated) {
+            if (annotated instanceof AnnotatedClass && IdentitySpoofBase.class.equals(annotated.getRawType())) {
+                return SPOOF_NAME_TYPE_INFO;
+            }
+            return super.findPolymorphicTypeInfo(config, annotated);
+        }
+
+        @Override
+        public List<NamedType> findSubtypes(Annotated annotated) {
+            if (IdentitySpoofBase.class.equals(annotated.getRawType())) {
+                return List.of(new NamedType(IdentitySpoofSafe.class, "safe"));
+            }
+            return super.findSubtypes(annotated);
+        }
+
+        @Override
+        public TypeResolverBuilder<?> findTypeResolver(
+                MapperConfig<?> config, AnnotatedClass annotated, JavaType baseType) {
+            if (IdentitySpoofBase.class.equals(annotated.getRawType())) {
+                return impostorNameBuilder();
+            }
+            return super.findTypeResolver(config, annotated, baseType);
+        }
+    }
+
+    /** Installs the same impostor on a bean property through {@code findPropertyTypeResolver}. */
+    private static final class MemberIdentitySpoofIntrospector extends JacksonAnnotationIntrospector {
+
+        @Override
+        public JsonTypeInfo.Value findPolymorphicTypeInfo(MapperConfig<?> config, Annotated annotated) {
+            if (annotated instanceof AnnotatedMember && IdentitySpoofBase.class.equals(annotated.getRawType())) {
+                return SPOOF_NAME_TYPE_INFO;
+            }
+            return super.findPolymorphicTypeInfo(config, annotated);
+        }
+
+        @Override
+        public List<NamedType> findSubtypes(Annotated annotated) {
+            if (IdentitySpoofBase.class.equals(annotated.getRawType())) {
+                return List.of(new NamedType(IdentitySpoofSafe.class, "safe"));
+            }
+            return super.findSubtypes(annotated);
+        }
+
+        @Override
+        public TypeResolverBuilder<?> findPropertyTypeResolver(
+                MapperConfig<?> config, AnnotatedMember member, JavaType baseType) {
+            if (baseType != null && IdentitySpoofBase.class.equals(baseType.getRawClass())) {
+                return impostorNameBuilder();
+            }
+            return super.findPropertyTypeResolver(config, member, baseType);
+        }
+    }
+
+    /**
+     * Keys its class-level resolver on the annotated class's own generic bindings: it installs an
+     * unsafe Id.CLASS resolver only when the {@link AnnotatedClass} carries no concrete bindings — the
+     * erased {@code List} view Jackson's factories introspect — and shows nothing to the
+     * {@code List<Item>} view the validator inspected before it mirrored Jackson's raw-class input.
+     */
+    private static final class BindingDiscriminatingIntrospector extends JacksonAnnotationIntrospector {
+
+        @Override
+        public TypeResolverBuilder<?> findTypeResolver(
+                MapperConfig<?> config, AnnotatedClass annotated, JavaType baseType) {
+            if (List.class.equals(annotated.getRawType())) {
+                JavaType annotatedType = annotated.getType();
+                boolean erased = annotatedType == null
+                        || annotatedType.getBindings().isEmpty()
+                        || annotatedType.getBindings().getBoundType(0) == null
+                        || Object.class.equals(
+                                annotatedType.getBindings().getBoundType(0).getRawClass());
+                if (erased) {
+                    return classNameResolverBuilder();
+                }
+                return null;
+            }
+            return super.findTypeResolver(config, annotated, baseType);
         }
     }
 
