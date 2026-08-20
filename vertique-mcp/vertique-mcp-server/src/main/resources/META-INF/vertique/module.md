@@ -16,12 +16,47 @@ introduced by their owning slices.
 Configuration is disabled by default. When enabled, `serverName` and `serverVersion` are required,
 the mount is one literal path ending in `/*`, and every request and JSON bound is validated for
 range and consistency at startup, before the router is mounted — so an out-of-range value fails
-composition rather than a live request. Startup validation is not enforcement: the `allowedOrigins`
-allowlist and the JSON bounds (`jsonMaxDepth`, `jsonMaxPropertiesPerObject`, `jsonMaxItemsPerArray`,
-`jsonMaxStringChars`) are configured but not yet enforced by this version; Origin rejection and
-bounded JSON parsing arrive with the codec and HTTP-contract capabilities. Request body size is
-enforced today, from `http.maxBodySize`. A configured `jsonProfile` is validated during composition
-even if MCP is disabled, preventing a latent invalid deployment configuration.
+composition rather than a live request. The JSON bounds (`jsonMaxDepth`,
+`jsonMaxPropertiesPerObject`, `jsonMaxItemsPerArray`, `jsonMaxStringChars`) are enforced by the
+strict bounded JSON-RPC codec described in [Strict bounded JSON-RPC codec](#strict-bounded-json-rpc-codec).
+The `allowedOrigins` allowlist is configured but not yet enforced by this version; Origin rejection
+and the wiring that puts the codec on the live HTTP request path arrive with the HTTP-contract
+capability. Request body size is enforced today, from `http.maxBodySize`. A configured `jsonProfile`
+is validated during composition even if MCP is disabled, preventing a latent invalid deployment
+configuration.
+
+## Strict bounded JSON-RPC codec
+
+Wire decoding is framework-owned and trusts no application mapper. A strict UTF-8, bounded reader
+decodes exactly one complete JSON value and rejects — with a classified, bounded outcome and **no
+partial value** — any frame that carries:
+
+- **duplicate object keys**, or **trailing tokens** after one complete top-level value;
+- nesting deeper than `jsonMaxDepth` (default 64), enforced by an explicit depth counter rather
+  than native recursion, so an adversarial deeply-nested frame is bounded rather than able to
+  overflow the call stack;
+- an object with more members than `jsonMaxPropertiesPerObject` (default 1,000), an array with more
+  items than `jsonMaxItemsPerArray` (default 10,000), or a string longer than `jsonMaxStringChars`
+  (default 262,144);
+- invalid UTF-8, including lone surrogates.
+
+Numeric values keep their exact lexical precision: a 64-bit-overflowing integer such as
+`9007199254740993` and a decimal such as `0.10000000000000001` survive decode and canonical
+re-encode without lossy `double` rounding, so downstream schema validation sees exactly what the
+client sent. Canonical encoding is a compact, insertion-order-preserving re-encode; an
+already-compact frame round-trips byte-for-byte.
+
+Over that reader, the codec validates the final-2026 JSON-RPC request envelope — `jsonrpc` must be
+`"2.0"`, `method` must name one of the bounded supported set (`server/discover`, `tools/list`,
+`tools/call`), and the request `id` is echoed only when it is a trustworthy integer or string — and
+classifies failures deterministically to the standard JSON-RPC codes with the standard messages and
+no `data`: `-32700` *Parse error* (malformed JSON, or a strict-reader rejection such as a duplicate
+key or trailing token; null id), `-32600` *Invalid Request* (bad envelope; original usable id when
+present), and `-32601` *Method not found* (unknown method; original usable id). Header/body-mismatch
+(`-32020`) and tool-level authorization (`-32602`) classification belong to the HTTP-contract and
+tool-dispatch slices and are not part of this codec. An internal codec failure settles through a
+pre-encoded `-32603` *Internal error* response that is written exactly once and never carries the
+cause's text, so an internal exception message cannot leak to a client.
 
 The mount handles no file uploads of its own, but it does not rely on that alone: an
 application-composed ancestor `BodyHandler` with uploads enabled spools multipart parts to disk
