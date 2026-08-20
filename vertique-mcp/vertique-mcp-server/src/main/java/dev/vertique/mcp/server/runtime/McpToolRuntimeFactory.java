@@ -17,7 +17,6 @@ import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
 import java.lang.reflect.Type;
 import java.util.Collections;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -115,6 +114,6 @@ public final class McpToolRuntimeFactory {
                         "Duplicate MCP tool name '" + name + "': two generated invokers publish it");
             }
         }
-        return Collections.unmodifiableMap(new LinkedHashMap<>(byName));
+        return Collections.unmodifiableMap(byName);
     }
 }

@@ -6,11 +6,10 @@ package dev.vertique.mcp.server.runtime;
 import dev.vertique.core.json.JsonMapperProfile;
 import dev.vertique.core.json.JsonMapperProfileRegistry;
 import dev.vertique.core.json.JsonProfileId;
+import dev.vertique.core.util.Strings;
 import dev.vertique.json.JsonConfig;
 import dev.vertique.mcp.server.McpServerConfig;
 import jakarta.annotation.Nullable;
-import jakarta.inject.Inject;
-import jakarta.inject.Singleton;
 
 /**
  * Resolves the effective tool-payload JSON profile once, at composition.
@@ -21,7 +20,6 @@ import jakarta.inject.Singleton;
  * declared literal, so this resolver owns the configured tail. An unknown id fails composition before
  * Router mount; a blank id never reaches composition (it fails compilation).
  */
-@Singleton
 final class McpJsonProfileResolver {
 
     private final JsonMapperProfileRegistry profiles;
@@ -35,7 +33,6 @@ final class McpJsonProfileResolver {
      * @param jsonConfig the global JSON configuration carrying {@code json.jsonProfile}
      * @param mcpConfig the MCP server configuration carrying {@code mcp.jsonProfile}
      */
-    @Inject
     McpJsonProfileResolver(JsonMapperProfileRegistry profiles, JsonConfig jsonConfig, McpServerConfig mcpConfig) {
         this.profiles = profiles;
         this.jsonConfig = jsonConfig;
@@ -65,14 +62,7 @@ final class McpJsonProfileResolver {
      * @return the configured default id, or the reserved {@code vertx} id when neither tier is set
      */
     private JsonProfileId configuredDefault() {
-        String boundaryDefault = mcpConfig.jsonProfile();
-        if (boundaryDefault != null && !boundaryDefault.isBlank()) {
-            return JsonProfileId.of(boundaryDefault);
-        }
-        String globalDefault = jsonConfig.jsonProfile();
-        if (globalDefault != null && !globalDefault.isBlank()) {
-            return JsonProfileId.of(globalDefault);
-        }
-        return JsonProfileId.VERTX;
+        String configured = Strings.firstNonBlank(mcpConfig.jsonProfile(), jsonConfig.jsonProfile());
+        return configured != null ? JsonProfileId.of(configured) : JsonProfileId.VERTX;
     }
 }

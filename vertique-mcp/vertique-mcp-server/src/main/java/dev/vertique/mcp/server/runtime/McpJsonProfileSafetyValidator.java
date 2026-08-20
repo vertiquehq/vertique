@@ -21,8 +21,6 @@ import com.fasterxml.jackson.databind.type.TypeFactory;
 import dev.vertique.core.json.JsonMapperProfile;
 import dev.vertique.core.json.JsonProfileConfigurationException;
 import jakarta.annotation.Nullable;
-import jakarta.inject.Inject;
-import jakarta.inject.Singleton;
 import java.lang.reflect.GenericArrayType;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
@@ -60,14 +58,12 @@ import java.util.concurrent.atomic.AtomicReference;
  * <p>A failure names the bounded profile id, the reachable type path, and the violated rule; it never
  * carries a payload or serialized value, and the message is capped at 1,024 UTF-16 code units.
  */
-@Singleton
 final class McpJsonProfileSafetyValidator {
 
     /** The bounded failure-message cap in UTF-16 code units. */
     private static final int MAX_MESSAGE_CODE_UNITS = 1_024;
 
     /** Creates the stateless composition-time validator. */
-    @Inject
     McpJsonProfileSafetyValidator() {}
 
     /**

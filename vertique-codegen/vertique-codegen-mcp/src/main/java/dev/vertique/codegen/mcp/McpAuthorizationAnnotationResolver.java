@@ -178,19 +178,18 @@ final class McpAuthorizationAnnotationResolver {
 
     private BaseResolution resolveBase(List<List<Element>> tiers, ExecutableElement method, TypeElement declaringType) {
         for (List<Element> tier : tiers) {
-            List<Element> declaring = tier.stream()
-                    .filter(McpAuthorizationAnnotationResolver::declaresBase)
-                    .toList();
-            if (declaring.isEmpty()) {
-                continue;
-            }
             List<BaseResolution> resolved = new ArrayList<>();
-            for (Element source : declaring) {
+            for (Element source : tier) {
                 BaseResolution single = readBase(source, method, declaringType);
                 if (!single.valid()) {
                     return BaseResolution.invalid();
                 }
-                resolved.add(single);
+                if (single.kind() != BaseKind.NONE) {
+                    resolved.add(single);
+                }
+            }
+            if (resolved.isEmpty()) {
+                continue;
             }
             BaseResolution first = resolved.get(0);
             boolean agree = resolved.stream()
@@ -232,6 +231,9 @@ final class McpAuthorizationAnnotationResolver {
         }
         if (denyAll) {
             return new BaseResolution(true, BaseKind.DENY_ALL, List.of());
+        }
+        if (!rolesAllowed) {
+            return BaseResolution.none();
         }
         List<String> roles = roles(source);
         if (roles.isEmpty()) {
@@ -378,12 +380,6 @@ final class McpAuthorizationAnnotationResolver {
     }
 
     // --- Attribute reading ---
-
-    private static boolean declaresBase(Element element) {
-        return AnnotationMirrors.isPresent(element, JaxRsAnnotations.PERMIT_ALL)
-                || AnnotationMirrors.isPresent(element, JaxRsAnnotations.DENY_ALL)
-                || AnnotationMirrors.isPresent(element, JaxRsAnnotations.ROLES_ALLOWED);
-    }
 
     private List<String> roles(Element source) {
         return AnnotationMirrors.findByFqn(source, JaxRsAnnotations.ROLES_ALLOWED)

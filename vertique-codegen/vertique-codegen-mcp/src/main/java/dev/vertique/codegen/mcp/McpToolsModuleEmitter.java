@@ -9,6 +9,7 @@ import com.palantir.javapoet.JavaFile;
 import com.palantir.javapoet.MethodSpec;
 import com.palantir.javapoet.TypeSpec;
 import dev.vertique.codegen.CodegenContext;
+import dev.vertique.codegen.PackageResolver;
 import dev.vertique.codegen.support.Identifiers;
 import java.beans.Introspector;
 import java.io.IOException;
@@ -192,36 +193,8 @@ final class McpToolsModuleEmitter {
         }
         Set<String> packages = new TreeSet<>();
         models.forEach(model -> packages.add(ctx.packageNameOf(model.declaringType())));
-        String lcp = packages.stream()
-                .reduce(McpToolsModuleEmitter::longestCommonPrefix)
-                .orElse(FALLBACK_PACKAGE);
+        String lcp =
+                packages.stream().reduce(PackageResolver::longestCommonPrefix).orElse(FALLBACK_PACKAGE);
         return lcp.isBlank() ? FALLBACK_PACKAGE : lcp;
-    }
-
-    /**
-     * Computes the longest common dot-delimited package prefix of two package names.
-     *
-     * @param a the first package name
-     * @param b the second package name
-     * @return the longest common prefix, or {@code ""} when there is none
-     */
-    static String longestCommonPrefix(String a, String b) {
-        if (a.equals(b)) {
-            return a;
-        }
-        String[] partsA = a.split("\\.", -1);
-        String[] partsB = b.split("\\.", -1);
-        int limit = Math.min(partsA.length, partsB.length);
-        StringBuilder prefix = new StringBuilder();
-        for (int i = 0; i < limit; i++) {
-            if (!partsA[i].equals(partsB[i])) {
-                break;
-            }
-            if (!prefix.isEmpty()) {
-                prefix.append('.');
-            }
-            prefix.append(partsA[i]);
-        }
-        return prefix.toString();
     }
 }
