@@ -153,6 +153,51 @@ export function readPom(pomPath) {
 }
 
 /**
+ * Reads every `<build><plugins><plugin>` declaration from a pom, including each plugin
+ * dependency's exclusions.
+ *
+ * `readPom` deliberately does not carry this: its shape is publication-focused, and most
+ * consumers have no interest in plugin declarations. Parsing lives here rather than in the
+ * calling test for the same reason the rest of this module exists — a regex cannot tell a
+ * plugin's `<dependencies>` from the project's.
+ *
+ * `<pluginManagement>` is excluded by construction: its `<plugins>` is a child of
+ * `<pluginManagement>`, not of `<build>`, and only a real `<build><plugins>` declaration
+ * causes Maven to resolve a plugin realm.
+ *
+ * @param {string} pomPath absolute path to a pom.xml
+ * @returns {Array<{groupId: string|undefined, artifactId: string,
+ *                  dependencies: Array<{groupId: string, artifactId: string,
+ *                                       version: string|undefined,
+ *                                       exclusions: Array<{groupId: string, artifactId: string}>}>}>}
+ */
+export function readPluginDeclarations(pomPath) {
+  const project = parseXml(readFileSync(pomPath, 'utf8'));
+  if (!project) throw new Error(`${pomPath}: no root <project> element`);
+
+  return childrenNamed(project, 'build')
+    .flatMap((b) => childrenNamed(b, 'plugins'))
+    .flatMap((ps) => childrenNamed(ps, 'plugin'))
+    .map((p) => ({
+      groupId: childText(p, 'groupId'),
+      artifactId: childText(p, 'artifactId'),
+      dependencies: childrenNamed(p, 'dependencies')
+        .flatMap((ds) => childrenNamed(ds, 'dependency'))
+        .map((d) => ({
+          groupId: childText(d, 'groupId'),
+          artifactId: childText(d, 'artifactId'),
+          version: childText(d, 'version'),
+          exclusions: childrenNamed(d, 'exclusions')
+            .flatMap((es) => childrenNamed(es, 'exclusion'))
+            .map((e) => ({ groupId: childText(e, 'groupId'), artifactId: childText(e, 'artifactId') }))
+            .filter((e) => e.groupId && e.artifactId),
+        }))
+        .filter((d) => d.groupId && d.artifactId),
+    }))
+    .filter((p) => p.artifactId);
+}
+
+/**
  * Walks the reactor from `repoRoot/pom.xml`, following `<modules>`.
  * @param {string} repoRoot reactor root directory
  * @returns {{relPath: string, artifactId: string, packaging: string}[]} every reactor module
