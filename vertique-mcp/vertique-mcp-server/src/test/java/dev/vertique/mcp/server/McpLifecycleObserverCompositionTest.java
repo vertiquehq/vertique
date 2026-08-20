@@ -13,6 +13,7 @@ import dev.vertique.mcp.lifecycle.McpRequestLifecycleObserver;
 import dev.vertique.mcp.lifecycle.McpRequestObservation;
 import dev.vertique.mcp.lifecycle.McpRequestTerminalObservation;
 import dev.vertique.rest.core.config.HttpConfig;
+import dev.vertique.rest.core.security.SecurityRuntime;
 import dev.vertique.rest.security.IdentityResolutionMiddleware;
 import io.vertx.core.Context;
 import io.vertx.core.Future;
@@ -182,10 +183,13 @@ class McpLifecycleObserverCompositionTest {
                 .build();
         IdentityResolutionMiddleware identity = mock(IdentityResolutionMiddleware.class);
         when(identity.handlerFor(org.mockito.ArgumentMatchers.any())).thenReturn(context -> context.next());
+        // Identity resolution is stubbed out here, so no context is ever bound and dispatch records
+        // no security facts — this test observes lifecycle composition, not identity.
+        SecurityRuntime securityRuntime = mock(SecurityRuntime.class);
         McpRouterMount mount = new McpRouterMount(
                 config,
                 new McpServerConfigValidator(),
-                new McpRequestDispatcher(config, observers, listeners),
+                new McpRequestDispatcher(config, securityRuntime, observers, listeners),
                 Set.of(),
                 identity,
                 HttpConfig.builder().build());

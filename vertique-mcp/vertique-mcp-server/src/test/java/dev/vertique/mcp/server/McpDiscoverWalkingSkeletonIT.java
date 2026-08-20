@@ -27,6 +27,7 @@ import dev.vertique.security.DefaultAuthMethod;
 import dev.vertique.security.PrincipalRef;
 import dev.vertique.security.PrincipalType;
 import dev.vertique.security.SecurityContext;
+import dev.vertique.security.SecurityContextSnapshot;
 import dev.vertique.security.SecurityIdentity;
 import dev.vertique.security.resolver.SecurityIdentityResolutionContext;
 import dev.vertique.security.resolver.SecurityIdentityResolver;
@@ -173,7 +174,9 @@ public class McpDiscoverWalkingSkeletonIT {
                 assertThat(bound.authentication().primaryMethod().normalizedKind())
                         .isEqualTo(AuthMethodKind.NONE);
                 assertThat(bound.authentication().evidence()).isEmpty();
-                assertDispatchedDiscovery(fixture.awaitCompleted());
+                McpRequestCompletedEvent completed = fixture.awaitCompleted();
+                assertDispatchedDiscovery(completed);
+                assertEstablishedSecurity(completed, PrincipalType.ANONYMOUS, "anonymous", AuthMethodKind.NONE);
             }
             case VALID_CREDENTIALS_ROW -> {
                 // Given: the one bearer credential the fixture's scheme accepts for principal alice.
@@ -192,7 +195,9 @@ public class McpDiscoverWalkingSkeletonIT {
                 assertThat(bound.authentication().primaryMethod().normalizedKind())
                         .isEqualTo(AuthMethodKind.JWT);
                 assertThat(bound.authentication().evidence()).hasSize(1);
-                assertDispatchedDiscovery(fixture.awaitCompleted());
+                McpRequestCompletedEvent completed = fixture.awaitCompleted();
+                assertDispatchedDiscovery(completed);
+                assertEstablishedSecurity(completed, PrincipalType.USER, "alice", AuthMethodKind.JWT);
             }
             case DENIED_CREDENTIALS_ROW -> {
                 // Given: a tampered bearer credential for the same scheme.
@@ -207,6 +212,9 @@ public class McpDiscoverWalkingSkeletonIT {
                 McpRequestCompletedEvent completed = fixture.awaitCompleted();
                 assertThat(completed.terminal().httpStatus()).isEqualTo(401);
                 assertThat(fixture.boundSecurityContext()).isNull();
+                assertThat(completed.terminal().security())
+                        .as("a terminal reached before identity establishment carries no security facts")
+                        .isNull();
             }
             case MULTIPART_UPLOAD_ROW -> {
                 // Given: a multipart body carrying a file part, which the MCP contract never accepts.
@@ -293,6 +301,24 @@ public class McpDiscoverWalkingSkeletonIT {
         assertThat(completed.terminal().httpStatus()).isEqualTo(200);
     }
 
+    /**
+     * Asserts the terminal event carries the security snapshot identity resolution established.
+     *
+     * <p>The lifecycle contract requires {@code security} to be present after identity establishment
+     * — including for the canonical anonymous identity — and null only for a terminal outcome that
+     * occurred earlier.
+     */
+    private static void assertEstablishedSecurity(
+            McpRequestCompletedEvent completed, PrincipalType actorType, String actorId, AuthMethodKind methodKind) {
+        SecurityContextSnapshot security = completed.terminal().security();
+        assertThat(security)
+                .as("a terminal reached after identity establishment must carry the security snapshot")
+                .isNotNull();
+        assertThat(security.identity().actor().type()).isEqualTo(actorType);
+        assertThat(security.identity().actor().id()).isEqualTo(actorId);
+        assertThat(security.authentication().primaryMethod().normalizedKind()).isEqualTo(methodKind);
+    }
+
     /** Removes {@code path} and everything below it, so an upload assertion starts from a known state. */
     private static void deleteRecursively(Path path) throws IOException {
         if (!Files.exists(path)) {
@@ -329,12 +355,15 @@ public class McpDiscoverWalkingSkeletonIT {
                     .authenticationScheme("bearer")
                     .toolsTtlMs(CONFIGURED_TTL_MS)
                     .build();
+            // The one runtime both identity resolution binds into and dispatch snapshots from, so the
+            // terminal event's security facts come from the context the pipeline actually established.
+            RecordingSecurityRuntime securityRuntime = new RecordingSecurityRuntime(boundSecurityContext);
             McpRouterMount mount = new McpRouterMount(
                     config,
                     new McpServerConfigValidator(),
-                    new McpRequestDispatcher(config, Set.of(recordingObserver()), Set.of()),
+                    new McpRequestDispatcher(config, securityRuntime, Set.of(recordingObserver()), Set.of()),
                     Set.of(new BearerRouteAuthHandler()),
-                    identityResolution(),
+                    identityResolution(securityRuntime),
                     HttpConfig.builder().build());
             Router router = Router.router(vertx);
             router.route().handler(new RequestContextLifecycle());
@@ -383,13 +412,15 @@ public class McpDiscoverWalkingSkeletonIT {
          * default's behaviour for the two evidence shapes this matrix drives — empty evidence
          * resolves to the canonical anonymous identity, and evidence carrying a {@code sub}
          * attribute resolves to that user.
+         *
+         * @param securityRuntime the runtime the resolved context is bound into
          */
-        private IdentityResolutionMiddleware identityResolution() {
+        private IdentityResolutionMiddleware identityResolution(SecurityRuntime securityRuntime) {
             return new IdentityResolutionMiddleware(
                     Set.of(new SubjectEvidenceIdentityResolver()),
                     Optional.of(new DefaultSecurityClaimMapper()),
                     new SecurityEventEmitter(Set.of()),
-                    new RecordingSecurityRuntime(boundSecurityContext),
+                    securityRuntime,
                     NO_OP_CONTEXT_HOLDER);
         }
     }

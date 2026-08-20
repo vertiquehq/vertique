@@ -9,11 +9,15 @@ import dev.vertique.mcp.lifecycle.McpRequestCompletedListener;
 import dev.vertique.mcp.lifecycle.McpRequestLifecycleObserver;
 import dev.vertique.mcp.lifecycle.McpRequestTerminalEvent;
 import dev.vertique.mcp.lifecycle.McpTransportOutcome;
+import dev.vertique.rest.core.security.SecurityRuntime;
+import dev.vertique.security.SecurityContext;
+import dev.vertique.security.SecurityContextSnapshot;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.http.HttpMethod;
 import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.RoutingContext;
+import jakarta.annotation.Nullable;
 import jakarta.inject.Inject;
 import java.time.Instant;
 import java.util.Set;
@@ -33,15 +37,18 @@ final class McpRequestDispatcher {
     private static final String COMPLETION_COORDINATOR_KEY =
             McpRequestDispatcher.class.getName() + ".completionCoordinator";
     private final McpServerConfig config;
+    private final SecurityRuntime securityRuntime;
     private final Set<McpRequestLifecycleObserver> lifecycleObservers;
     private final Set<McpRequestCompletedListener> completedListeners;
 
     @Inject
     McpRequestDispatcher(
             McpServerConfig config,
+            SecurityRuntime securityRuntime,
             Set<McpRequestLifecycleObserver> lifecycleObservers,
             Set<McpRequestCompletedListener> completedListeners) {
         this.config = config;
+        this.securityRuntime = securityRuntime;
         this.lifecycleObservers = Set.copyOf(lifecycleObservers);
         this.completedListeners = Set.copyOf(completedListeners);
     }
@@ -55,29 +62,36 @@ final class McpRequestDispatcher {
                         context.vertx().getOrCreateContext(), lifecycleObservers, completedListeners, startedAt));
         context.put(McpRequestDispatcher.class.getName() + ".startedAt", startedAt);
         if (context.request().method() != HttpMethod.POST) {
-            reject(context, McpMethod.OTHER, McpErrorType.HTTP, 405);
+            // Terminal before identity establishment: no security facts exist yet.
+            reject(context, McpMethod.OTHER, McpErrorType.HTTP, 405, null);
             return;
         }
         context.next();
     }
 
-    /** Handles one admitted MCP HTTP request. */
+    /**
+     * Handles one admitted MCP HTTP request.
+     *
+     * <p>Runs after identity establishment, so every terminal event it creates carries the
+     * established {@link SecurityContextSnapshot} — including the canonical anonymous one.
+     */
     void dispatch(RoutingContext context) {
+        SecurityContextSnapshot security = establishedSecurity();
         JsonObject request;
         try {
             request = context.body().asJsonObject();
         } catch (RuntimeException exception) {
-            reject(context, McpMethod.OTHER, McpErrorType.PROTOCOL, 400);
+            reject(context, McpMethod.OTHER, McpErrorType.PROTOCOL, 400, security);
             return;
         }
         if (request == null) {
             // An absent, empty, or literal-null body decodes to no envelope at all: a protocol
             // failure, not an internal one.
-            reject(context, McpMethod.OTHER, McpErrorType.PROTOCOL, 400);
+            reject(context, McpMethod.OTHER, McpErrorType.PROTOCOL, 400, security);
             return;
         }
         if (!DISCOVER_METHOD.equals(request.getString("method"))) {
-            reject(context, McpMethod.OTHER, McpErrorType.PROTOCOL, 404);
+            reject(context, McpMethod.OTHER, McpErrorType.PROTOCOL, 404, security);
             return;
         }
         JsonObject serverInfo =
@@ -105,13 +119,15 @@ final class McpRequestDispatcher {
                         McpRequestTerminalEvent.UNKNOWN_TOOL_NAME,
                         200,
                         null,
-                        null,
+                        security,
                         null));
     }
 
     static void completeAuthenticationRejection(RoutingContext context) {
         int status = context.statusCode();
-        reject(context, McpMethod.OTHER, McpErrorType.AUTHENTICATION, status >= 400 ? status : 401);
+        // An authentication rejection terminates before identity establishment, and the event
+        // contract forbids it from carrying security facts.
+        reject(context, McpMethod.OTHER, McpErrorType.AUTHENTICATION, status >= 400 ? status : 401, null);
     }
 
     /** Completes failures from optional authentication and identity establishment without leakage. */
@@ -124,13 +140,31 @@ final class McpRequestDispatcher {
             status = 500;
         }
         if (status == 401 || status == 403) {
-            reject(context, McpMethod.OTHER, McpErrorType.AUTHENTICATION, status);
+            reject(context, McpMethod.OTHER, McpErrorType.AUTHENTICATION, status, null);
             return;
         }
-        reject(context, McpMethod.OTHER, McpErrorType.INTERNAL, status);
+        // An internal failure can occur on either side of identity establishment; the snapshot is
+        // null exactly when no context was established before the failure.
+        reject(context, McpMethod.OTHER, McpErrorType.INTERNAL, status, establishedSecurity());
     }
 
-    private static void reject(RoutingContext context, McpMethod method, McpErrorType errorType, int status) {
+    /**
+     * Snapshots the security context identity establishment bound for this request.
+     *
+     * @return the established snapshot, or {@code null} when no context is bound — i.e. the request
+     *         terminated before identity establishment completed
+     */
+    private @Nullable SecurityContextSnapshot establishedSecurity() {
+        SecurityContext current = securityRuntime.current();
+        return current == null ? null : SecurityContextSnapshot.from(current);
+    }
+
+    private static void reject(
+            RoutingContext context,
+            McpMethod method,
+            McpErrorType errorType,
+            int status,
+            @Nullable SecurityContextSnapshot security) {
         write(
                 context,
                 status,
@@ -144,7 +178,7 @@ final class McpRequestDispatcher {
                         status,
                         null,
                         null,
-                        null,
+                        security,
                         null));
     }
 
