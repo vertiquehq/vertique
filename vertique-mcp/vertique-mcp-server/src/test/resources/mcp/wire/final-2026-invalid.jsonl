@@ -1,0 +1,6 @@
+{"name":"malformedJson","frame":"{not valid json","code":-32700,"message":"Parse error","id":null}
+{"name":"trailingTokens","frame":"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"server/discover\"} trailing","code":-32700,"message":"Parse error","id":null}
+{"name":"duplicateKeys","frame":"{\"jsonrpc\":\"2.0\",\"id\":1,\"id\":2,\"method\":\"server/discover\"}","code":-32700,"message":"Parse error","id":null}
+{"name":"invalidEnvelopeMissingMethod","frame":"{\"jsonrpc\":\"2.0\",\"id\":7,\"params\":{}}","code":-32600,"message":"Invalid Request","id":7}
+{"name":"invalidEnvelopeWrongVersion","frame":"{\"jsonrpc\":\"1.0\",\"id\":8,\"method\":\"server/discover\"}","code":-32600,"message":"Invalid Request","id":8}
+{"name":"unknownMethod","frame":"{\"jsonrpc\":\"2.0\",\"id\":9,\"method\":\"does/notexist\",\"params\":{\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{}}}}","code":-32601,"message":"Method not found","id":9}
