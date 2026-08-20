@@ -20,7 +20,10 @@ import com.fasterxml.jackson.databind.introspect.AnnotatedMethod;
 import com.fasterxml.jackson.databind.introspect.AnnotatedParameter;
 import com.fasterxml.jackson.databind.introspect.BeanPropertyDefinition;
 import com.fasterxml.jackson.databind.jsontype.NamedType;
+import com.fasterxml.jackson.databind.jsontype.TypeDeserializer;
+import com.fasterxml.jackson.databind.jsontype.TypeIdResolver;
 import com.fasterxml.jackson.databind.jsontype.TypeResolverBuilder;
+import com.fasterxml.jackson.databind.jsontype.TypeSerializer;
 import com.fasterxml.jackson.databind.type.TypeFactory;
 import dev.vertique.core.json.JsonMapperProfile;
 import dev.vertique.core.json.JsonProfileConfigurationException;
@@ -44,6 +47,8 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Function;
+import java.util.function.Supplier;
 
 /**
  * Proves one selected profile mapper safe for remote input before any schema or Router mount exists.
@@ -65,7 +70,17 @@ import java.util.concurrent.atomic.AtomicReference;
  * scope is gated on the resolver the mapper would actually install — {@code findTypeResolver} for
  * the class scope, {@code findPropertyTypeResolver} and {@code findPropertyContentTypeResolver} for
  * the member scopes — so an introspector or module that installs a resolver without reporting
- * {@code @JsonTypeInfo} metadata is rejected rather than seen as an unannotated type.
+ * {@code @JsonTypeInfo} metadata is rejected rather than seen as an unannotated type. In the class
+ * scope the gate goes one step further and reads the mechanism of the type serializer or type
+ * deserializer the mapper actually builds, because reported metadata and installed resolver are
+ * independent signals: an introspector may report the sanctioned {@code Id.NAME} shape while handing
+ * the factories an {@code Id.CLASS} or {@code Id.CUSTOM} builder.
+ *
+ * <p>The class scope is entered for every non-primitive, non-enum reachable type, containers
+ * included. Jackson resolves a container's own type handling by asking {@code findTypeResolver} for
+ * the container raw class — {@code java.util.List}, {@code java.util.Map}, the array class, the
+ * reference class — so validating only a container's contents would leave a resolver installed on
+ * the container itself live.
  *
  * <p>Effective metadata is read per mapper side. A mapper configured through
  * {@code ObjectMapper.setAnnotationIntrospectors} holds one introspector for serialization and
@@ -162,7 +177,9 @@ final class McpJsonProfileSafetyValidator {
             if (type.isPrimitive() || type.isEnumType()) {
                 return;
             }
-            if (enqueueContainerContent(reachable)) {
+            if (isContainerLike(type)) {
+                rejectUnsafeContainerPolymorphism(reachable);
+                enqueueContainerContent(reachable);
                 return;
             }
             visitBean(reachable);
@@ -180,28 +197,71 @@ final class McpJsonProfileSafetyValidator {
         // --- Rule 1: container handling ---
 
         /**
+         * Reports whether Jackson resolves this type through its contents rather than its properties.
+         *
+         * @param type the reachable type
+         * @return {@code true} for an array, collection, map or reference type
+         */
+        private static boolean isContainerLike(JavaType type) {
+            return type.isArrayType()
+                    || type.isCollectionLikeType()
+                    || type.isMapLikeType()
+                    || type.isReferenceType()
+                    || Optional.class.equals(type.getRawClass())
+                    || AtomicReference.class.equals(type.getRawClass());
+        }
+
+        /**
          * Enqueues the contents of an array, collection, reference or map type.
          *
-         * @return {@code true} when the type was a container and its contents were enqueued
+         * @param reachable a container type, as reported by {@link #isContainerLike(JavaType)}
          */
-        private boolean enqueueContainerContent(ReachableType reachable) {
+        private void enqueueContainerContent(ReachableType reachable) {
             JavaType type = reachable.type();
             if (type.isArrayType() || type.isCollectionLikeType()) {
                 enqueue(type.getContentType(), reachable.path(), "[]");
-                return true;
+                return;
             }
             if (type.isMapLikeType()) {
                 enqueue(type.getKeyType(), reachable.path(), "{key}");
                 enqueue(type.getContentType(), reachable.path(), "{value}");
-                return true;
+                return;
             }
-            if (type.isReferenceType()
-                    || Optional.class.equals(type.getRawClass())
-                    || AtomicReference.class.equals(type.getRawClass())) {
-                enqueue(referencedTypeOf(type), reachable.path(), "<referenced>");
-                return true;
+            enqueue(referencedTypeOf(type), reachable.path(), "<referenced>");
+        }
+
+        /**
+         * Applies the class-level polymorphism rules to a container before its contents are enqueued.
+         *
+         * <p>A container is a polymorphic base in its own right: {@code BasicSerializerFactory} and
+         * {@code BasicDeserializerFactory} resolve type handling for a root value or a bean property by
+         * asking {@code findTypeResolver} for the container's own raw class and installing whatever it
+         * returns, so an introspector that keys a resolver to {@code java.util.List} reopens the
+         * subtype space of every list in the graph while the contents themselves stay safe.
+         *
+         * <p>Only the annotations of the container class are needed, so the class is introspected the
+         * way Jackson's own type-serializer construction introspects it — through
+         * {@code introspectClassAnnotations} — rather than through a full property introspection that
+         * has no meaning for a container.
+         *
+         * @param reachable the container type being visited
+         */
+        private void rejectUnsafeContainerPolymorphism(ReachableType reachable) {
+            AnnotatedClass serializationClassInfo;
+            AnnotatedClass deserializationClassInfo;
+            try {
+                serializationClassInfo = serializationConfig
+                        .introspectClassAnnotations(reachable.type())
+                        .getClassInfo();
+                deserializationClassInfo = deserializationConfig
+                        .introspectClassAnnotations(reachable.type())
+                        .getClassInfo();
+            } catch (RuntimeException failure) {
+                throw failure(
+                        reachable.path(),
+                        "mapper introspection failed: " + failure.getClass().getSimpleName());
             }
-            return false;
+            rejectUnsafePolymorphism(reachable, serializationClassInfo, deserializationClassInfo);
         }
 
         private JavaType referencedTypeOf(JavaType type) {
@@ -225,7 +285,8 @@ final class McpJsonProfileSafetyValidator {
                         "mapper introspection failed: " + failure.getClass().getSimpleName());
             }
 
-            rejectUnsafePolymorphism(reachable, serializationDescription, deserializationDescription);
+            rejectUnsafePolymorphism(
+                    reachable, serializationDescription.getClassInfo(), deserializationDescription.getClassInfo());
             enqueuePropertyTypes(reachable, serializationDescription, deserializationDescription);
         }
 
@@ -238,13 +299,13 @@ final class McpJsonProfileSafetyValidator {
          * mapping comparison and the subtype enqueue run once, so nothing is reported twice.
          *
          * @param reachable the type being visited
-         * @param serialization the serialization-facing description of that type
-         * @param deserialization the deserialization-facing description of that type
+         * @param serializationClassInfo the serialization-facing annotated class of that type
+         * @param deserializationClassInfo the deserialization-facing annotated class of that type
          */
         private void rejectUnsafePolymorphism(
-                ReachableType reachable, BeanDescription serialization, BeanDescription deserialization) {
-            AnnotatedClass serializationClassInfo = serialization.getClassInfo();
-            AnnotatedClass deserializationClassInfo = deserialization.getClassInfo();
+                ReachableType reachable,
+                AnnotatedClass serializationClassInfo,
+                AnnotatedClass deserializationClassInfo) {
             Map<String, Class<?>> serializationAllowlist = effectiveClassAllowlist(
                     reachable, serializationClassInfo, serializationConfig, serializationIntrospector);
             Map<String, Class<?>> deserializationAllowlist = effectiveClassAllowlist(
@@ -271,10 +332,13 @@ final class McpJsonProfileSafetyValidator {
          * rejections, which are otherwise only reachable once the metadata is already reported.
          *
          * <p>An installed resolver is accepted only when the same side also reports the sanctioned
-         * {@code Id.NAME} shape, mirroring how the member scope gates on
-         * {@code findPropertyTypeResolver}. {@code Id.NONE} keeps meaning <em>absent</em>: it is
-         * Jackson's own way of disabling polymorphism, and the marker builder it installs blocks type
-         * handling rather than adding it.
+         * {@code Id.NAME} shape <em>and</em> the handler that side actually builds reports
+         * {@code Id.NAME} as its own mechanism. The two signals are independent — a custom
+         * introspector can report {@code Id.NAME} metadata with a finite {@code @JsonSubTypes}
+         * allowlist while {@code findTypeResolver} hands the factories an {@code Id.CLASS} builder — so
+         * a metadata-only check would pass while the mapper installs the unsafe mechanism.
+         * {@code Id.NONE} keeps meaning <em>absent</em>: it is Jackson's own way of disabling
+         * polymorphism, and the marker builder it installs builds no handler at all.
          *
          * @param reachable the type being visited
          * @param classInfo that side's annotated class
@@ -291,8 +355,9 @@ final class McpJsonProfileSafetyValidator {
                 AnnotationIntrospector introspector) {
             JsonTypeInfo.Value typeInfo = introspector.findPolymorphicTypeInfo(config, classInfo);
             boolean declaresTypeInfo = typeInfo != null && typeInfo.getIdType() != JsonTypeInfo.Id.NONE;
-            boolean installsResolver = installsClassTypeHandling(reachable, classInfo, config, introspector, typeInfo);
-            if (!declaresTypeInfo && !installsResolver) {
+            JsonTypeInfo.Id installedMechanism =
+                    installedClassTypeMechanism(reachable, classInfo, config, introspector);
+            if (!declaresTypeInfo && installedMechanism == null) {
                 return null;
             }
             if (classInfo.getAnnotation(JsonTypeResolver.class) != null) {
@@ -313,54 +378,131 @@ final class McpJsonProfileSafetyValidator {
                         "type id mechanism 'Id." + typeInfo.getIdType()
                                 + "' is not an accepted mechanism; only Id.NAME with an explicit @JsonSubTypes allowlist is");
             }
+            if (installedMechanism != null && installedMechanism != JsonTypeInfo.Id.NAME) {
+                throw failure(
+                        reachable.path(),
+                        "the mapper reports Id.NAME metadata but installs class-level type handling whose live"
+                                + " type id mechanism is 'Id." + installedMechanism
+                                + "'; only Id.NAME with an explicit @JsonSubTypes allowlist is an accepted mechanism");
+            }
             return declaredAllowlist(reachable.path(), introspector.findSubtypes(classInfo));
         }
 
         /**
-         * Reports whether one mapper side installs class-level type handling for the visited type.
+         * Reports the mechanism of the class-level type handler one mapper side actually installs.
          *
-         * <p>A builder is only evidence of type handling when it actually produces a type serializer
-         * or deserializer — Jackson's own criterion, and the one that keeps {@code Id.NONE}'s
-         * polymorphism-disabling marker builder from being read as an installed mechanism. The build
-         * runs against the same side's config and resolved subtype mapping Jackson would use.
+         * <p>The builder alone is not the mechanism: Jackson's serializer and deserializer factories
+         * ask {@code findTypeResolver} and then <em>build</em> a type serializer or type deserializer
+         * from what comes back, and it is that handler's own {@link TypeIdResolver} that decides how a
+         * type id is written and read. Reading the live mechanism rather than the reported metadata is
+         * what closes the gap between an introspector that reports the sanctioned {@code Id.NAME} shape
+         * and one that installs an {@code Id.CLASS} or {@code Id.CUSTOM} resolver behind it.
+         *
+         * <p>A {@code null} handler is Jackson's own signal that no type handling is installed at all —
+         * the {@code Id.NONE} marker builder returns one — so it is reported as absent rather than as a
+         * mechanism. The build runs against the same side's config and resolved subtype mapping Jackson
+         * would use, and each step that can fail converts to its own bounded composition failure so the
+         * message names the step that actually failed.
          *
          * @param reachable the type being visited
          * @param classInfo that side's annotated class
          * @param config that side's mapper config
          * @param introspector the introspector that side actually uses
-         * @param typeInfo that side's reported metadata, possibly {@code null}
-         * @return {@code true} when that side installs class-level type handling
+         * @return the live mechanism, or {@code null} when that side installs no class-level type handling
          */
-        private boolean installsClassTypeHandling(
+        @Nullable
+        private JsonTypeInfo.Id installedClassTypeMechanism(
                 ReachableType reachable,
                 AnnotatedClass classInfo,
                 MapperConfig<?> config,
-                AnnotationIntrospector introspector,
-                @Nullable JsonTypeInfo.Value typeInfo) {
+                AnnotationIntrospector introspector) {
+            TypeResolverBuilder<?> resolver;
             try {
-                TypeResolverBuilder<?> resolver = introspector.findTypeResolver(config, classInfo, reachable.type());
-                if (resolver == null) {
-                    return false;
-                }
-                // The sanctioned Id.NAME shape is validated by its metadata, so the builder is not
-                // instantiated for it: the allowlist and resolved-mapping rules already bound it.
-                if (typeInfo != null && typeInfo.getIdType() == JsonTypeInfo.Id.NAME) {
-                    return true;
-                }
-                if (config instanceof SerializationConfig serialization) {
-                    return resolver.buildTypeSerializer(serialization, reachable.type(), subtypesByClass(classInfo))
-                            != null;
-                }
-                if (config instanceof DeserializationConfig deserialization) {
-                    return resolver.buildTypeDeserializer(
-                                    deserialization, reachable.type(), subtypesByTypeId(classInfo))
-                            != null;
-                }
-                return true;
+                resolver = introspector.findTypeResolver(config, classInfo, reachable.type());
             } catch (RuntimeException failure) {
                 throw failure(
                         reachable.path(),
                         "class-level type resolver introspection failed: "
+                                + failure.getClass().getSimpleName());
+            }
+            if (resolver == null) {
+                return null;
+            }
+            if (config instanceof SerializationConfig serialization) {
+                Collection<NamedType> subtypes = resolvedSubtypesByClass(reachable, classInfo);
+                return liveMechanism(
+                        reachable,
+                        () -> resolver.buildTypeSerializer(serialization, reachable.type(), subtypes),
+                        TypeSerializer::getTypeIdResolver);
+            }
+            if (config instanceof DeserializationConfig deserialization) {
+                Collection<NamedType> subtypes = resolvedSubtypesByTypeId(reachable, classInfo);
+                return liveMechanism(
+                        reachable,
+                        () -> resolver.buildTypeDeserializer(deserialization, reachable.type(), subtypes),
+                        TypeDeserializer::getTypeIdResolver);
+            }
+            throw failure(
+                    reachable.path(),
+                    "the mapper installs a class-level type resolver for an unrecognised mapper side, so its"
+                            + " mechanism cannot be proven");
+        }
+
+        /**
+         * Builds one side's class-level type handler and reads the mechanism it reports.
+         *
+         * @param reachable the type being visited
+         * @param build builds that side's handler from the installed resolver
+         * @param idResolverOf reads the built handler's type id resolver
+         * @param <H> the handler type of that mapper side
+         * @return the live mechanism, or {@code null} when the resolver builds no handler
+         */
+        @Nullable
+        private <H> JsonTypeInfo.Id liveMechanism(
+                ReachableType reachable, Supplier<H> build, Function<H, TypeIdResolver> idResolverOf) {
+            JsonTypeInfo.Id mechanism;
+            try {
+                H handler = build.get();
+                if (handler == null) {
+                    return null;
+                }
+                TypeIdResolver idResolver = idResolverOf.apply(handler);
+                mechanism = idResolver == null ? null : idResolver.getMechanism();
+            } catch (RuntimeException failure) {
+                throw failure(
+                        reachable.path(),
+                        "class-level type resolver construction failed: "
+                                + failure.getClass().getSimpleName());
+            }
+            if (mechanism == null) {
+                throw failure(
+                        reachable.path(),
+                        "the mapper installs class-level type handling reporting no type id mechanism, so it"
+                                + " cannot be proven to be Id.NAME");
+            }
+            return mechanism;
+        }
+
+        /** Resolves the serialization-facing subtype mapping the handler build feeds on. */
+        private Collection<NamedType> resolvedSubtypesByClass(ReachableType reachable, AnnotatedClass classInfo) {
+            try {
+                return subtypesByClass(classInfo);
+            } catch (RuntimeException failure) {
+                throw failure(
+                        reachable.path(),
+                        "class-level subtype resolution failed: "
+                                + failure.getClass().getSimpleName());
+            }
+        }
+
+        /** Resolves the deserialization-facing subtype mapping the handler build feeds on. */
+        private Collection<NamedType> resolvedSubtypesByTypeId(ReachableType reachable, AnnotatedClass classInfo) {
+            try {
+                return subtypesByTypeId(classInfo);
+            } catch (RuntimeException failure) {
+                throw failure(
+                        reachable.path(),
+                        "class-level subtype resolution failed: "
                                 + failure.getClass().getSimpleName());
             }
         }

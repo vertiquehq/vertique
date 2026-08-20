@@ -13,9 +13,11 @@ import com.fasterxml.jackson.core.JsonGenerator;
 import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.databind.AnnotationIntrospector;
 import com.fasterxml.jackson.databind.DatabindContext;
+import com.fasterxml.jackson.databind.DeserializationConfig;
 import com.fasterxml.jackson.databind.DeserializationContext;
 import com.fasterxml.jackson.databind.JavaType;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationConfig;
 import com.fasterxml.jackson.databind.SerializerProvider;
 import com.fasterxml.jackson.databind.annotation.JsonTypeIdResolver;
 import com.fasterxml.jackson.databind.cfg.MapperConfig;
@@ -26,7 +28,9 @@ import com.fasterxml.jackson.databind.introspect.AnnotatedMember;
 import com.fasterxml.jackson.databind.introspect.JacksonAnnotationIntrospector;
 import com.fasterxml.jackson.databind.jsontype.BasicPolymorphicTypeValidator;
 import com.fasterxml.jackson.databind.jsontype.NamedType;
+import com.fasterxml.jackson.databind.jsontype.TypeDeserializer;
 import com.fasterxml.jackson.databind.jsontype.TypeResolverBuilder;
+import com.fasterxml.jackson.databind.jsontype.TypeSerializer;
 import com.fasterxml.jackson.databind.jsontype.impl.StdTypeResolverBuilder;
 import com.fasterxml.jackson.databind.jsontype.impl.TypeIdResolverBase;
 import com.fasterxml.jackson.databind.module.SimpleModule;
@@ -34,11 +38,15 @@ import com.fasterxml.jackson.databind.ser.std.StdSerializer;
 import dev.vertique.core.json.JsonMapperProfile;
 import dev.vertique.core.json.JsonProfileConfigurationException;
 import dev.vertique.core.json.JsonProfileId;
+import jakarta.annotation.Nullable;
 import java.io.IOException;
 import java.lang.reflect.Type;
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Supplier;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.function.Executable;
@@ -52,7 +60,7 @@ import org.junit.jupiter.params.provider.MethodSource;
  * discovery, a custom type-id resolver, a polymorphism-supplying mix-in, and a trusted custom
  * serializer/deserializer pair. Every row traverses one reachable type graph once with the validator.
  *
- * <p>Seven rows isolate seven boundaries, one each:
+ * <p>Nine rows isolate nine boundaries, one each:
  *
  * <ol>
  *   <li>{@link #shouldTraverseMapperDerivedPrimitiveEnumContainerPropertyAndCyclicBoundaries()} — the
@@ -81,6 +89,13 @@ import org.junit.jupiter.params.provider.MethodSource;
  *       declaration on a reachable DTO member erases its contents to {@code Object} and is a bounded
  *       composition failure, array declarations included, while an explicit {@code List<Object>} and
  *       resolved array declarations stay accepted.</li>
+ *   <li>{@link #shouldCrossCheckLiveClassLevelHandlerMechanismAgainstReportedMetadata()} — the
+ *       class-level gate reads the mechanism of the type handler the mapper actually builds, so
+ *       sanctioned {@code Id.NAME} metadata cannot mask an {@code Id.CLASS} or {@code Id.CUSTOM}
+ *       resolver, and a resolver that fails while being built or resolved is a bounded failure.</li>
+ *   <li>{@link #shouldGateClassLevelPolymorphismOnContainerRootsAndMembers()} — a container, map,
+ *       array or reference type is validated as its own polymorphic base before its contents are
+ *       enqueued, so a resolver installed on the container class itself is rejected.</li>
  * </ol>
  */
 @DisplayName("MCP JSON profile safety — T002 contract matrix")
@@ -89,7 +104,7 @@ class McpJsonProfileSafetyTest {
     // --- Matrix ---
 
     /**
-     * The seven named rows of the T002 profile-safety matrix.
+     * The nine named rows of the T002 profile-safety matrix.
      *
      * @return one row per boundary, named exactly as the proof contract lists it
      */
@@ -119,7 +134,14 @@ class McpJsonProfileSafetyTest {
                         McpJsonProfileSafetyTest::shouldApplyEverySafetyRulePerMapperSideUnderSplitIntrospectors),
                 new MatrixRow(
                         "shouldRejectRawMemberDeclarationsReachableFromToolTypes",
-                        McpJsonProfileSafetyTest::shouldRejectRawMemberDeclarationsReachableFromToolTypes));
+                        McpJsonProfileSafetyTest::shouldRejectRawMemberDeclarationsReachableFromToolTypes),
+                new MatrixRow(
+                        "shouldCrossCheckLiveClassLevelHandlerMechanismAgainstReportedMetadata",
+                        McpJsonProfileSafetyTest
+                                ::shouldCrossCheckLiveClassLevelHandlerMechanismAgainstReportedMetadata),
+                new MatrixRow(
+                        "shouldGateClassLevelPolymorphismOnContainerRootsAndMembers",
+                        McpJsonProfileSafetyTest::shouldGateClassLevelPolymorphismOnContainerRootsAndMembers));
     }
 
     @ParameterizedTest(name = "{0}")
@@ -439,6 +461,228 @@ class McpJsonProfileSafetyTest {
                 .doesNotThrowAnyException();
     }
 
+    // --- Row 8: the live class-level handler's own mechanism ---
+
+    /**
+     * Reported {@code @JsonTypeInfo} metadata and the resolver Jackson actually installs are two
+     * independent signals, and a custom introspector can report the sanctioned {@code Id.NAME} shape
+     * with a finite {@code @JsonSubTypes} allowlist while {@code findTypeResolver} hands the serializer
+     * and deserializer factories an {@code Id.CLASS} or {@code Id.CUSTOM} builder. Every metadata-shaped
+     * rule then passes while the mapper installs the unsafe mechanism, so the class-level gate builds
+     * the handler per side and cross-checks the mechanism the live handler's own
+     * {@code TypeIdResolver} reports.
+     *
+     * <p>Building the handler is also the only way a builder that fails during construction is
+     * exercised at all; it converts to a bounded composition failure per side, as does a failure in the
+     * subtype resolution the build feeds on — the two report distinctly so a fail-closed message names
+     * the step that actually failed.
+     *
+     * <p>A {@code null} handler stays the {@code Id.NONE} suppression signal: Jackson's own marker
+     * builder disables polymorphism and builds no handler, so it is accepted rather than read as an
+     * installed mechanism. The mirrored control — {@code Id.NONE} metadata paired with a live unsafe
+     * resolver — is rejected by the no-metadata rule; it is asserted here as the metadata-reporting
+     * companion of row 6's introspector that reports no metadata at all.
+     */
+    private static void shouldCrossCheckLiveClassLevelHandlerMechanismAgainstReportedMetadata() {
+        McpJsonProfileSafetyValidator validator = new McpJsonProfileSafetyValidator();
+
+        assertThatCode(() -> validator.validate(
+                        McpJsonProfileSafetyTestFixture.reportedNameMetadataProfile(), MaskedCarrier.class, null))
+                .as("reported Id.NAME metadata whose live handler is also Id.NAME is the accepted shape,"
+                        + " so the cross-check gates the mechanism and not the reporting introspector")
+                .doesNotThrowAnyException();
+
+        assertThatThrownBy(() -> validator.validate(
+                        McpJsonProfileSafetyTestFixture.serializationOnlyMaskedClassResolverProfile(),
+                        MaskedCarrier.class,
+                        null))
+                .as("sanctioned Id.NAME metadata cannot mask an Id.CLASS resolver the serialization side"
+                        + " actually installs")
+                .isInstanceOf(JsonProfileConfigurationException.class)
+                .hasMessageContaining("reports Id.NAME metadata but installs class-level type handling")
+                .hasMessageContaining("Id.CLASS")
+                .hasMessageContaining("MaskedBase");
+
+        assertThatThrownBy(() -> validator.validate(
+                        McpJsonProfileSafetyTestFixture.deserializationOnlyMaskedClassResolverProfile(),
+                        MaskedCarrier.class,
+                        null))
+                .as("the mirrored deserialization-side masking stays rejected")
+                .isInstanceOf(JsonProfileConfigurationException.class)
+                .hasMessageContaining("reports Id.NAME metadata but installs class-level type handling")
+                .hasMessageContaining("Id.CLASS")
+                .hasMessageContaining("MaskedBase");
+
+        assertThatThrownBy(() -> validator.validate(
+                        McpJsonProfileSafetyTestFixture.serializationOnlyMaskedCustomResolverProfile(),
+                        MaskedCarrier.class,
+                        null))
+                .as("an Id.CUSTOM resolver masked behind Id.NAME metadata is rejected on the serialization side")
+                .isInstanceOf(JsonProfileConfigurationException.class)
+                .hasMessageContaining("reports Id.NAME metadata but installs class-level type handling")
+                .hasMessageContaining("Id.CUSTOM")
+                .hasMessageContaining("MaskedBase");
+
+        assertThatThrownBy(() -> validator.validate(
+                        McpJsonProfileSafetyTestFixture.deserializationOnlyMaskedCustomResolverProfile(),
+                        MaskedCarrier.class,
+                        null))
+                .as("the mirrored deserialization-side Id.CUSTOM masking stays rejected")
+                .isInstanceOf(JsonProfileConfigurationException.class)
+                .hasMessageContaining("reports Id.NAME metadata but installs class-level type handling")
+                .hasMessageContaining("Id.CUSTOM")
+                .hasMessageContaining("MaskedBase");
+
+        assertThatThrownBy(() -> validator.validate(
+                        McpJsonProfileSafetyTestFixture.serializationOnlyThrowingNameResolverProfile(),
+                        MaskedCarrier.class,
+                        null))
+                .as("an Id.NAME builder that throws while being built is a bounded composition failure,"
+                        + " not an unhandled runtime exception")
+                .isInstanceOf(JsonProfileConfigurationException.class)
+                .hasMessageContaining("class-level type resolver construction failed")
+                .hasMessageContaining("IllegalStateException");
+
+        assertThatThrownBy(() -> validator.validate(
+                        McpJsonProfileSafetyTestFixture.deserializationOnlyThrowingNameResolverProfile(),
+                        MaskedCarrier.class,
+                        null))
+                .as("the mirrored deserialization-side build failure is bounded too")
+                .isInstanceOf(JsonProfileConfigurationException.class)
+                .hasMessageContaining("class-level type resolver construction failed")
+                .hasMessageContaining("IllegalStateException");
+
+        assertThatThrownBy(() -> validator.validate(
+                        McpJsonProfileSafetyTestFixture.serializationOnlyThrowingSubtypeResolutionProfile(),
+                        MaskedCarrier.class,
+                        null))
+                .as("a serialization-side subtype-resolution failure reports as subtype resolution, not as"
+                        + " resolver introspection")
+                .isInstanceOf(JsonProfileConfigurationException.class)
+                .hasMessageContaining("class-level subtype resolution failed")
+                .hasMessageNotContaining("resolver introspection failed")
+                .hasMessageContaining("IllegalStateException");
+
+        assertThatThrownBy(() -> validator.validate(
+                        McpJsonProfileSafetyTestFixture.deserializationOnlyThrowingSubtypeResolutionProfile(),
+                        MaskedCarrier.class,
+                        null))
+                .as("the mirrored deserialization-side subtype-resolution failure is bounded and named too")
+                .isInstanceOf(JsonProfileConfigurationException.class)
+                .hasMessageContaining("class-level subtype resolution failed")
+                .hasMessageNotContaining("resolver introspection failed")
+                .hasMessageContaining("IllegalStateException");
+
+        assertThatCode(() -> validator.validate(
+                        McpJsonProfileSafetyTestFixture.suppressedTypingProfile(), SuppressedTypingCarrier.class, null))
+                .as("Jackson's Id.NONE marker builder builds no handler, and a null handler stays the"
+                        + " suppression signal rather than an installed mechanism")
+                .doesNotThrowAnyException();
+
+        assertThatThrownBy(() -> validator.validate(
+                        McpJsonProfileSafetyTestFixture.suppressedMetadataWithLiveResolverProfile(),
+                        SuppressedTypingCarrier.class,
+                        null))
+                .as("Id.NONE metadata paired with a live Id.CLASS resolver is rejected: the metadata reports"
+                        + " polymorphism as disabled while the mapper installs it")
+                .isInstanceOf(JsonProfileConfigurationException.class)
+                .hasMessageContaining("no @JsonTypeInfo metadata")
+                .hasMessageContaining("SuppressedTypingDto");
+    }
+
+    // --- Row 9: class-level polymorphism on container, map, array and reference types ---
+
+    /**
+     * Jackson resolves a container's own type handling by asking {@code findTypeResolver} for the
+     * container raw class — {@code java.util.List}, {@code java.util.Map}, the array class, the
+     * reference class — both for a root value and for a bean property, and installs whatever it
+     * returns. Validating only the contents of such a type therefore leaves a resolver installed on the
+     * container itself live, so the class-level rules run for every non-primitive, non-enum reachable
+     * type before its contents are enqueued.
+     *
+     * <p>Each container branch of the walk is proved separately, on both mapper sides for the
+     * collection branch, because each reaches {@code findTypeResolver} under a different raw class. The
+     * safe controls keep the gate from rejecting ordinary containers, which carry no class-level type
+     * information at all.
+     */
+    private static void shouldGateClassLevelPolymorphismOnContainerRootsAndMembers() {
+        McpJsonProfileSafetyValidator validator = new McpJsonProfileSafetyValidator();
+
+        assertThatThrownBy(() -> validator.validate(
+                        McpJsonProfileSafetyTestFixture.serializationOnlyContainerResolverProfile(List.class),
+                        McpJsonProfileSafetyTestFixture.containerListRoot(),
+                        null))
+                .as("a resolver installed on the collection class itself is rejected when the collection is a"
+                        + " declared root, not silently skipped in favour of its contents")
+                .isInstanceOf(JsonProfileConfigurationException.class)
+                .hasMessageContaining("installs a class-level type resolver reporting no @JsonTypeInfo metadata")
+                .hasMessageContaining("java.util.List");
+
+        assertThatThrownBy(() -> validator.validate(
+                        McpJsonProfileSafetyTestFixture.deserializationOnlyContainerResolverProfile(List.class),
+                        ContainerMemberCarrier.class,
+                        null))
+                .as("the same resolver is rejected when the collection is reached as a member, on the mirrored"
+                        + " mapper side")
+                .isInstanceOf(JsonProfileConfigurationException.class)
+                .hasMessageContaining("installs a class-level type resolver reporting no @JsonTypeInfo metadata")
+                .hasMessageContaining("java.util.List");
+
+        assertThatThrownBy(() -> validator.validate(
+                        McpJsonProfileSafetyTestFixture.serializationOnlyContainerResolverProfile(Map.class),
+                        MapMemberCarrier.class,
+                        null))
+                .as("the map branch is gated before its key and value types are enqueued")
+                .isInstanceOf(JsonProfileConfigurationException.class)
+                .hasMessageContaining("installs a class-level type resolver reporting no @JsonTypeInfo metadata")
+                .hasMessageContaining("java.util.Map");
+
+        assertThatThrownBy(() -> validator.validate(
+                        McpJsonProfileSafetyTestFixture.serializationOnlyContainerResolverProfile(
+                                ContainerItem[].class),
+                        ArrayMemberCarrier.class,
+                        null))
+                .as("the array branch is gated on the array class itself")
+                .isInstanceOf(JsonProfileConfigurationException.class)
+                .hasMessageContaining("installs a class-level type resolver reporting no @JsonTypeInfo metadata")
+                .hasMessageContaining("ContainerItem");
+
+        assertThatThrownBy(() -> validator.validate(
+                        McpJsonProfileSafetyTestFixture.serializationOnlyContainerResolverProfile(Optional.class),
+                        ReferenceMemberCarrier.class,
+                        null))
+                .as("the reference branch is gated before the referenced type is enqueued")
+                .isInstanceOf(JsonProfileConfigurationException.class)
+                .hasMessageContaining("installs a class-level type resolver reporting no @JsonTypeInfo metadata")
+                .hasMessageContaining("java.util.Optional");
+
+        assertThatThrownBy(() -> validator.validate(
+                        McpJsonProfileSafetyTestFixture.serializationOnlyContainerResolverProfile(
+                                AtomicReference.class),
+                        AtomicReferenceMemberCarrier.class,
+                        null))
+                .as("the atomic-reference branch is gated before the referenced type is enqueued")
+                .isInstanceOf(JsonProfileConfigurationException.class)
+                .hasMessageContaining("installs a class-level type resolver reporting no @JsonTypeInfo metadata")
+                .hasMessageContaining("java.util.concurrent.atomic.AtomicReference");
+
+        JsonMapperProfile safeProfile = McpJsonProfileSafetyTestFixture.safeClosedProfile();
+        assertThatCode(() -> validator.validate(safeProfile, McpJsonProfileSafetyTestFixture.containerListRoot(), null))
+                .as("an ordinary collection root carries no class-level type information and stays accepted")
+                .doesNotThrowAnyException();
+
+        assertThatCode(() -> validator.validate(safeProfile, ContainerMemberCarrier.class, null))
+                .as("ordinary collection, map, array and reference members stay accepted under the gate")
+                .doesNotThrowAnyException();
+        assertThatCode(() -> validator.validate(safeProfile, MapMemberCarrier.class, ArrayMemberCarrier.class))
+                .as("ordinary map and array members stay accepted under the gate")
+                .doesNotThrowAnyException();
+        assertThatCode(() -> validator.validate(
+                        safeProfile, ReferenceMemberCarrier.class, AtomicReferenceMemberCarrier.class))
+                .as("ordinary reference members stay accepted under the gate")
+                .doesNotThrowAnyException();
+    }
+
     // --- Fixtures ---
 
     /** Framework wiring for the safety proof: the profile variants and the raw/wildcard root tokens. */
@@ -549,6 +793,112 @@ class McpJsonProfileSafetyTest {
                 String id, AnnotationIntrospector serialization, AnnotationIntrospector deserialization) {
             ObjectMapper mapper = new ObjectMapper().setAnnotationIntrospectors(serialization, deserialization);
             return new StubProfile(id, mapper);
+        }
+
+        // --- Row 8: reported Id.NAME metadata versus the live class-level handler ---
+
+        /** Both sides report the sanctioned shape and install the matching live {@code Id.NAME} handler. */
+        static JsonMapperProfile reportedNameMetadataProfile() {
+            return maskedProfile("reported-name", null, null);
+        }
+
+        /** Only the serialization side hands the factories an {@code Id.CLASS} builder. */
+        static JsonMapperProfile serializationOnlyMaskedClassResolverProfile() {
+            return maskedProfile("ser-only-masked-class", McpJsonProfileSafetyTest::classNameResolverBuilder, null);
+        }
+
+        /** The mirrored case: only the deserialization side hands over the {@code Id.CLASS} builder. */
+        static JsonMapperProfile deserializationOnlyMaskedClassResolverProfile() {
+            return maskedProfile("deser-only-masked-class", null, McpJsonProfileSafetyTest::classNameResolverBuilder);
+        }
+
+        /** Only the serialization side hands the factories an {@code Id.CUSTOM} builder. */
+        static JsonMapperProfile serializationOnlyMaskedCustomResolverProfile() {
+            return maskedProfile("ser-only-masked-custom", McpJsonProfileSafetyTest::customIdResolverBuilder, null);
+        }
+
+        /** The mirrored case: only the deserialization side hands over the {@code Id.CUSTOM} builder. */
+        static JsonMapperProfile deserializationOnlyMaskedCustomResolverProfile() {
+            return maskedProfile("deser-only-masked-custom", null, McpJsonProfileSafetyTest::customIdResolverBuilder);
+        }
+
+        /** Only the serialization side hands over an {@code Id.NAME} builder that throws while building. */
+        static JsonMapperProfile serializationOnlyThrowingNameResolverProfile() {
+            return maskedProfile("ser-only-throwing-name", ThrowingNameTypeResolverBuilder::new, null);
+        }
+
+        /** The mirrored case: only the deserialization side hands over the throwing builder. */
+        static JsonMapperProfile deserializationOnlyThrowingNameResolverProfile() {
+            return maskedProfile("deser-only-throwing-name", null, ThrowingNameTypeResolverBuilder::new);
+        }
+
+        /** Only the serialization side fails while resolving the subtype mapping the build feeds on. */
+        static JsonMapperProfile serializationOnlyThrowingSubtypeResolutionProfile() {
+            return splitIntrospectorProfile(
+                    "ser-only-throwing-subtypes",
+                    new MaskedNameMetadataIntrospector(null, true),
+                    new MaskedNameMetadataIntrospector(null, false));
+        }
+
+        /** The mirrored case: only the deserialization side fails while resolving the subtype mapping. */
+        static JsonMapperProfile deserializationOnlyThrowingSubtypeResolutionProfile() {
+            return splitIntrospectorProfile(
+                    "deser-only-throwing-subtypes",
+                    new MaskedNameMetadataIntrospector(null, false),
+                    new MaskedNameMetadataIntrospector(null, true));
+        }
+
+        /** Both sides install Jackson's {@code Id.NONE} marker builder, which builds no handler at all. */
+        static JsonMapperProfile suppressedTypingProfile() {
+            return splitIntrospectorProfile(
+                    "suppressed-typing",
+                    new SuppressedTypingIntrospector(false),
+                    new SuppressedTypingIntrospector(false));
+        }
+
+        /** Both sides report {@code Id.NONE} metadata while installing a live {@code Id.CLASS} resolver. */
+        static JsonMapperProfile suppressedMetadataWithLiveResolverProfile() {
+            return splitIntrospectorProfile(
+                    "suppressed-metadata-live-resolver",
+                    new SuppressedTypingIntrospector(true),
+                    new SuppressedTypingIntrospector(true));
+        }
+
+        private static JsonMapperProfile maskedProfile(
+                String id,
+                @Nullable Supplier<TypeResolverBuilder<?>> serialization,
+                @Nullable Supplier<TypeResolverBuilder<?>> deserialization) {
+            return splitIntrospectorProfile(
+                    id,
+                    new MaskedNameMetadataIntrospector(serialization, false),
+                    new MaskedNameMetadataIntrospector(deserialization, false));
+        }
+
+        // --- Row 9: class-level resolvers keyed to a container raw class ---
+
+        /** Only the serialization side installs an {@code Id.CLASS} resolver on the container class. */
+        static JsonMapperProfile serializationOnlyContainerResolverProfile(Class<?> containerClass) {
+            return splitIntrospectorProfile(
+                    "ser-only-container-resolver",
+                    new ContainerClassResolverIntrospector(containerClass),
+                    new JacksonAnnotationIntrospector());
+        }
+
+        /** The mirrored case: only the deserialization side installs it on the container class. */
+        static JsonMapperProfile deserializationOnlyContainerResolverProfile(Class<?> containerClass) {
+            return splitIntrospectorProfile(
+                    "deser-only-container-resolver",
+                    new JacksonAnnotationIntrospector(),
+                    new ContainerClassResolverIntrospector(containerClass));
+        }
+
+        /** A resolved {@code List<ContainerItem>} root, taken from a declared field. */
+        static Type containerListRoot() {
+            try {
+                return ContainerRootHolder.class.getDeclaredField("listRoot").getGenericType();
+            } catch (NoSuchFieldException e) {
+                throw new AssertionError("missing container-root fixture field", e);
+            }
         }
 
         /** A raw {@code List} root, taken from a declared field so the erasure is genuine. */
@@ -892,6 +1242,200 @@ class McpJsonProfileSafetyTest {
                 @JsonSubTypes.Type(value = MemberScopedSecond.class, name = "second")
             })
             MemberScoped value) {}
+
+    // --- Row 8 graph: reported metadata versus the live class-level handler ---
+
+    /** A plain base a custom introspector reports the sanctioned {@code Id.NAME} shape for. */
+    private interface MaskedBase {}
+
+    private record MaskedFirst(String first) implements MaskedBase {}
+
+    private record MaskedCarrier(MaskedBase value) {}
+
+    /** A plain DTO used to prove the {@code Id.NONE} suppression signal on both sides. */
+    private record SuppressedTypingDto(String value) {}
+
+    private record SuppressedTypingCarrier(SuppressedTypingDto argument0) {}
+
+    /** Supplies the {@code Id.NONE} metadata the suppression fixtures report. */
+    @JsonTypeInfo(use = Id.NONE)
+    private interface NonePolymorphismMarker {}
+
+    /** The unsafe class-name builder a masking introspector hands the factories. */
+    private static TypeResolverBuilder<?> classNameResolverBuilder() {
+        return new StdTypeResolverBuilder()
+                .init(Id.CLASS, null)
+                .inclusion(JsonTypeInfo.As.PROPERTY)
+                .typeProperty("@class");
+    }
+
+    /** The unsafe custom-mechanism builder a masking introspector hands the factories. */
+    private static TypeResolverBuilder<?> customIdResolverBuilder() {
+        return new StdTypeResolverBuilder()
+                .init(Id.CUSTOM, new ApplicationTypeIdResolver())
+                .inclusion(JsonTypeInfo.As.PROPERTY)
+                .typeProperty("kind");
+    }
+
+    /**
+     * Reports the sanctioned {@code Id.NAME} shape and a finite allowlist for {@link MaskedBase} in the
+     * class scope, while optionally handing the factories a different live resolver for that same
+     * class, or failing the subtype resolution the resolver build feeds on.
+     *
+     * <p>Both mapper sides report the same metadata and the same allowlist, so the resolved-mapping
+     * comparison agrees and the only remaining difference is the mechanism of the handler each side
+     * actually builds. That is what isolates the live cross-check from every metadata-shaped rule.
+     */
+    private static final class MaskedNameMetadataIntrospector extends JacksonAnnotationIntrospector {
+
+        private static final JsonTypeInfo.Value NAME_TYPE_INFO =
+                JsonTypeInfo.Value.from(NamePolymorphismMarker.class.getAnnotation(JsonTypeInfo.class));
+
+        @Nullable
+        private final Supplier<TypeResolverBuilder<?>> maskedResolver;
+
+        private final boolean failSubtypeResolution;
+
+        private MaskedNameMetadataIntrospector(
+                @Nullable Supplier<TypeResolverBuilder<?>> maskedResolver, boolean failSubtypeResolution) {
+            this.maskedResolver = maskedResolver;
+            this.failSubtypeResolution = failSubtypeResolution;
+        }
+
+        @Override
+        public JsonTypeInfo.Value findPolymorphicTypeInfo(MapperConfig<?> config, Annotated annotated) {
+            if (annotated instanceof AnnotatedClass && MaskedBase.class.equals(annotated.getRawType())) {
+                return NAME_TYPE_INFO;
+            }
+            return super.findPolymorphicTypeInfo(config, annotated);
+        }
+
+        @Override
+        public List<NamedType> findSubtypes(Annotated annotated) {
+            if (MaskedBase.class.equals(annotated.getRawType())) {
+                if (failSubtypeResolution) {
+                    throw new IllegalStateException("subtype resolution is broken");
+                }
+                return List.of(new NamedType(MaskedFirst.class, "first"));
+            }
+            return super.findSubtypes(annotated);
+        }
+
+        @Override
+        public TypeResolverBuilder<?> findTypeResolver(
+                MapperConfig<?> config, AnnotatedClass annotated, JavaType baseType) {
+            if (maskedResolver != null && MaskedBase.class.equals(annotated.getRawType())) {
+                return maskedResolver.get();
+            }
+            return super.findTypeResolver(config, annotated, baseType);
+        }
+    }
+
+    /** An {@code Id.NAME} builder that fails while the mapper builds its handler, on either side. */
+    private static final class ThrowingNameTypeResolverBuilder extends StdTypeResolverBuilder {
+
+        private ThrowingNameTypeResolverBuilder() {
+            init(Id.NAME, null);
+            inclusion(JsonTypeInfo.As.PROPERTY);
+            typeProperty("kind");
+        }
+
+        @Override
+        public TypeSerializer buildTypeSerializer(
+                SerializationConfig config, JavaType baseType, Collection<NamedType> subtypes) {
+            throw new IllegalStateException("type serializer construction is broken");
+        }
+
+        @Override
+        public TypeDeserializer buildTypeDeserializer(
+                DeserializationConfig config, JavaType baseType, Collection<NamedType> subtypes) {
+            throw new IllegalStateException("type deserializer construction is broken");
+        }
+    }
+
+    /**
+     * Installs Jackson's polymorphism-disabling {@code Id.NONE} marker builder on
+     * {@link SuppressedTypingDto}, optionally reporting {@code Id.NONE} metadata alongside a live
+     * {@code Id.CLASS} resolver instead.
+     */
+    private static final class SuppressedTypingIntrospector extends JacksonAnnotationIntrospector {
+
+        private static final JsonTypeInfo.Value NONE_TYPE_INFO =
+                JsonTypeInfo.Value.from(NonePolymorphismMarker.class.getAnnotation(JsonTypeInfo.class));
+
+        private final boolean installLiveResolver;
+
+        private SuppressedTypingIntrospector(boolean installLiveResolver) {
+            this.installLiveResolver = installLiveResolver;
+        }
+
+        @Override
+        public JsonTypeInfo.Value findPolymorphicTypeInfo(MapperConfig<?> config, Annotated annotated) {
+            if (installLiveResolver
+                    && annotated instanceof AnnotatedClass
+                    && SuppressedTypingDto.class.equals(annotated.getRawType())) {
+                return NONE_TYPE_INFO;
+            }
+            return super.findPolymorphicTypeInfo(config, annotated);
+        }
+
+        @Override
+        public TypeResolverBuilder<?> findTypeResolver(
+                MapperConfig<?> config, AnnotatedClass annotated, JavaType baseType) {
+            if (SuppressedTypingDto.class.equals(annotated.getRawType())) {
+                return installLiveResolver ? classNameResolverBuilder() : StdTypeResolverBuilder.noTypeInfoBuilder();
+            }
+            return super.findTypeResolver(config, annotated, baseType);
+        }
+    }
+
+    // --- Row 9 graph: class-level resolvers keyed to a container raw class ---
+
+    /** The element type every container fixture carries; itself always safe. */
+    private record ContainerItem(String name) {}
+
+    private record ContainerMemberCarrier(List<ContainerItem> values) {}
+
+    private record MapMemberCarrier(Map<String, ContainerItem> entries) {}
+
+    private record ArrayMemberCarrier(ContainerItem[] batches) {}
+
+    private record ReferenceMemberCarrier(Optional<ContainerItem> maybe) {}
+
+    private record AtomicReferenceMemberCarrier(AtomicReference<ContainerItem> holder) {}
+
+    /** Declares the resolved container root the container-scope gate must validate as a root. */
+    @SuppressWarnings("unused")
+    private static final class ContainerRootHolder {
+        private List<ContainerItem> listRoot;
+    }
+
+    /**
+     * Installs a class-name class-level type resolver keyed to one container raw class.
+     *
+     * <p>Jackson asks {@code findTypeResolver} for the container raw class itself — {@code
+     * java.util.List}, {@code java.util.Map}, the array class, the reference class — when it
+     * constructs the type serializer or deserializer for a root value or a bean property, and installs
+     * whatever comes back. A walk that validates only the contents of such a type therefore leaves the
+     * container's own resolver live.
+     */
+    private static final class ContainerClassResolverIntrospector extends JacksonAnnotationIntrospector {
+
+        private final Class<?> containerClass;
+
+        private ContainerClassResolverIntrospector(Class<?> containerClass) {
+            this.containerClass = containerClass;
+        }
+
+        @Override
+        public TypeResolverBuilder<?> findTypeResolver(
+                MapperConfig<?> config, AnnotatedClass annotated, JavaType baseType) {
+            if (containerClass.equals(annotated.getRawType())) {
+                return classNameResolverBuilder();
+            }
+            return super.findTypeResolver(config, annotated, baseType);
+        }
+    }
 
     /** A value carried by a trusted custom serializer/deserializer pair. */
     private record TrustedValue(String raw) {}
