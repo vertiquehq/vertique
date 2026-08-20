@@ -7,9 +7,11 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.fasterxml.jackson.databind.JavaType;
 import io.swagger.v3.core.converter.AnnotatedType;
 import io.swagger.v3.core.converter.ModelConverter;
 import io.swagger.v3.core.converter.ModelConverterContextImpl;
@@ -18,6 +20,7 @@ import io.swagger.v3.core.jackson.ModelResolver;
 import io.swagger.v3.core.util.Json;
 import io.swagger.v3.oas.annotations.media.Schema.RequiredMode;
 import io.swagger.v3.oas.models.media.Schema;
+import io.vertx.core.Future;
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
@@ -29,9 +32,13 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Composition tests for this module's {@link ModelConverter} implementations: they pin the schema
- * shape {@link FutureModelConverter}, {@link BigDecimalModelConverter} and
- * {@link ScalarOptionalModelConverter} produce <em>together</em> for record DTOs, which no
- * single-converter unit test can prove.
+ * shape {@link BigDecimalModelConverter} and {@link ScalarOptionalModelConverter} produce
+ * <em>together</em> for record DTOs, which no single-converter unit test can prove.
+ *
+ * <p>{@link FutureModelConverter} takes no part in those DTO assertions: none of the fixtures below
+ * has a {@code Future}-typed component, so nothing in them would notice its absence. It is
+ * exercised by {@link RegistrationOrder} instead, which resolves a {@code Future<BigDecimal>}
+ * through the same chain.
  *
  * <p>Resolution is driven through an explicit, per-test {@link ModelConverterContextImpl} chain —
  * never {@link ModelConverters#getInstance()}. The static singleton is process-wide mutable state
@@ -51,6 +58,10 @@ import org.junit.jupiter.api.Test;
  * {@link ScalarOptionalModelConverter} carries {@code rank} <em>only</em>. The {@code nickname} and
  * {@code tags} assertions stay green without it, because swagger-core's {@link ModelResolver}
  * unwraps generic {@code Optional<T>} natively — they pin that native behaviour, not this module's.
+ * {@link FutureModelConverter} carries no DTO assertion at all; its removal reddens only
+ * {@link RegistrationOrder#futureOfBigDecimal_resolvesAsBareNumberBecauseBigDecimalConverterIsBehindTheUnwrap()},
+ * where the un-unwrapped {@code Future} reaches the {@link ModelResolver} and resolves as a
+ * JavaBean object schema with a {@code complete} property instead of a number.
  *
  * <p>The fixtures below mirror the <em>shapes</em> of that example's {@code OptionalGreeting} and
  * {@code PriceQuote} DTOs. They are fixtures, not copies: they exist to exercise the converters,
@@ -105,13 +116,17 @@ class OpenApiSchemaCompositionTest {
      * actually produces, then a {@link ModelResolver} tail so record types resolve to object
      * schemas at all (without a resolver at the tail the chain exhausts and returns {@code null}).
      *
-     * <p>The order is the <strong>reverse</strong> of the declared plugin configuration.
-     * {@code examples/vertique-example-hello/pom.xml} declares
-     * {@code FutureModelConverter}, {@code BigDecimalModelConverter}, {@code
-     * ScalarOptionalModelConverter} in that order, but {@link ModelConverters#addConverter} inserts
-     * at index {@code 0}, so each registration lands ahead of the previous one — see
+     * <p>The rule: {@link ModelConverters#addConverter} inserts at index {@code 0}, so each
+     * registration lands ahead of the previous one and a {@code <modelConverterClasses>} list
+     * composes <strong>back-to-front</strong> relative to how it reads — see
      * {@link RegistrationOrder#addConverter_prependsSoDeclaredOrderIsReversed()}, which pins that
      * behaviour empirically, and {@code vertiquehq/vertique-dev#395}.
+     *
+     * <p>The head-first order below is what a declaration of {@code FutureModelConverter},
+     * {@code BigDecimalModelConverter}, {@code ScalarOptionalModelConverter} composes to.
+     * {@code examples/vertique-example-hello/pom.xml} is an illustration of such a declaration
+     * rather than the authority for this chain: nothing enforces what that pom declares, so read
+     * the rule above, not the example's current contents.
      *
      * @return the converters, head first
      */
@@ -262,7 +277,13 @@ class OpenApiSchemaCompositionTest {
          * behaviour; it does not endorse or change it.
          *
          * <p>A throwaway {@code new ModelConverters()} is used rather than
-         * {@link ModelConverters#getInstance()} so this test mutates no process-wide state.
+         * {@link ModelConverters#getInstance()} so this test mutates no converter registry outside
+         * itself — in particular it never touches the process-wide singleton that every other test
+         * and any Swagger tooling in the same JVM share. That is the isolation that matters here;
+         * it is not total isolation from global state, because the {@link ModelResolver} a fresh
+         * {@code ModelConverters} seeds registers Jackson modules on the static
+         * {@link Json#mapper()} — exactly as {@link #chainConverters()} does on every call.
+         * Jackson dedupes by module type id, so that registration is idempotent and harmless.
          */
         @Test
         @DisplayName("addConverter prepends, so the pom's declared order is reversed in the resolved chain")
@@ -289,6 +310,57 @@ class OpenApiSchemaCompositionTest {
             assertSame(future, converters.get(2), "the first-registered converter must be last of the three");
             assertInstanceOf(
                     ModelResolver.class, converters.get(3), "the seeded ModelResolver must remain at the chain tail");
+        }
+
+        /**
+         * Pins the one type for which the prepend inversion is <em>not</em> benign:
+         * {@code Future<BigDecimal>}.
+         *
+         * <p>{@link FutureModelConverter#resolve} unwraps {@code Future<T>} and hands the inner
+         * type to {@link ConverterChain#delegate} — it continues down the <em>remaining</em> chain
+         * rather than restarting at the head via
+         * {@link io.swagger.v3.core.converter.ModelConverterContext#resolve}. In the registered
+         * order {@code [ScalarOptional, BigDecimal, Future, ModelResolver]}, a
+         * {@code Future<BigDecimal>} therefore passes {@link ScalarOptionalModelConverter} (raw
+         * class is {@code Future} — no match) and {@link BigDecimalModelConverter} (same — no
+         * match) before {@link FutureModelConverter} unwraps it, at which point only the bare
+         * {@link ModelResolver} is left. The converter that would have produced the decimal-string
+         * schema now sits <em>behind</em> the unwrap, so the type resolves as a plain JSON
+         * {@code number}.
+         *
+         * <p>This test records the observed behaviour; it does <strong>not</strong> assert desired
+         * behaviour. The {@code number} outcome is a consequence of the registration inversion
+         * raised in {@code vertiquehq/vertique-dev#395}, not a shape this module intends to emit —
+         * the declared pom order resolves the same type to the decimal-string schema, which
+         * {@code BigDecimalModelConverterTest#bigDecimalInsideFuture_resolvedWhenChainedAfterFutureConverter}
+         * pins. If #395 is resolved, this test is expected to change with it.
+         *
+         * <p>The consequence is <strong>latent</strong>: no production code currently returns a
+         * {@code Future<BigDecimal>} — verified across {@code examples/} and
+         * {@code vertique-rest/} — so no generated spec is wrong today. This test is where the
+         * surprise is written down should such a return type appear.
+         */
+        @Test
+        @DisplayName("Future<BigDecimal> resolves as a bare number: the BigDecimal converter lands behind the"
+                + " unwrap (observed consequence of #395)")
+        void futureOfBigDecimal_resolvesAsBareNumberBecauseBigDecimalConverterIsBehindTheUnwrap() {
+            ModelConverterContextImpl context = new ModelConverterContextImpl(chainConverters());
+            JavaType futureOfBigDecimal =
+                    Json.mapper().getTypeFactory().constructParametricType(Future.class, BigDecimal.class);
+
+            Schema<?> resolved = context.resolve(new AnnotatedType().type(futureOfBigDecimal));
+
+            assertNotNull(resolved, "Future<BigDecimal> must resolve to a schema through the registered chain");
+            assertEquals(
+                    "number",
+                    resolved.getType(),
+                    "in the registered order the unwrapped BigDecimal reaches only the ModelResolver, so it resolves"
+                            + " as a bare number, but was: " + resolved);
+            // Negative half of the claim: this is neither BigDecimalModelConverter's decimal-string
+            // schema nor the JavaBean shape a chain without FutureModelConverter would produce.
+            assertNull(resolved.getFormat(), "the bare number schema must carry no decimal format: " + resolved);
+            assertNull(resolved.getPattern(), "the bare number schema must carry no decimal pattern: " + resolved);
+            assertNull(resolved.getProperties(), "the Future must be unwrapped, not resolved as a bean: " + resolved);
         }
     }
 

@@ -73,6 +73,20 @@ class BigDecimalModelConverterTest {
         assertNull(result);
     }
 
+    /**
+     * Exercises the {@code [FutureModelConverter, BigDecimalModelConverter]} chain — the order a
+     * {@code <modelConverterClasses>} block <em>declares</em>, not the order the plugin registers.
+     * {@code ModelConverters#addConverter} prepends, so a declared order composes back-to-front and
+     * the registered chain puts {@link BigDecimalModelConverter} <em>ahead</em> of the
+     * {@code Future} unwrap, where it can no longer see the unwrapped {@link BigDecimal}.
+     *
+     * <p>This is therefore a converter-contract test — it proves {@link BigDecimalModelConverter}
+     * resolves a {@link BigDecimal} handed to it by an upstream unwrapping converter — and not a
+     * model of the production chain. What the production chain actually produces for
+     * {@code Future<BigDecimal>} is pinned by
+     * {@code OpenApiSchemaCompositionTest.RegistrationOrder}, and it is a bare {@code number}
+     * (see {@code vertiquehq/vertique-dev#395}).
+     */
     @Test
     @DisplayName(
             "BigDecimal nested inside Future<T> resolves to the decimal string schema when chained after FutureModelConverter")
