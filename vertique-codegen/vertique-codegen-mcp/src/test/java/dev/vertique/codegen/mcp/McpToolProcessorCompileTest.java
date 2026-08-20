@@ -33,19 +33,23 @@ import org.junit.jupiter.params.provider.MethodSource;
  * <ol>
  *   <li>{@link #shouldGenerateDirectInvokerTypedInputCarrierAndExplicitDaggerModule()} — the
  *       generation shape: direct invoker, typed {@code Input} carrier, explicit Dagger multibinding
- *       module, and the two negatives that prove no reflective fallback and no unwired tool type
- *       slip through.</li>
+ *       module, and the negatives that prove no reflective fallback, no unwired tool type, no
+ *       non-public declaring type, and no overloaded tool method slip through.</li>
  *   <li>{@link #shouldCompileUnannotatedAsNoneAndActionOnlyAsRestricted()} — access-mode
  *       derivation. An unannotated tool resolves no base policy at all (REST's
  *       {@code SecurityPolicy.None}), which on the wire is a public tool: descriptor access mode
  *       {@code PERMIT_ALL} with no roles and no action. A tool carrying only {@code @RequiresAction}
- *       is action-only restricted: {@code RESTRICTED} with the action and no roles.</li>
+ *       is action-only restricted: {@code RESTRICTED} with the action and no roles. Its negatives
+ *       are the {@code @PermitAll}/{@code @RequiresAction} conflict, {@code @Authorized} reaching
+ *       the tool through <em>any</em> policy source tier, and an action value outside the frozen
+ *       {@code ActionRef} grammar.</li>
  *   <li>{@link #shouldResolveMethodJsonProfileOverTypeAndRejectBlankValues()} — effective JSON
- *       profile resolution: a method-level {@code @JsonProfile} overrides the declaring type's, and
- *       a blank id is rejected.</li>
+ *       profile resolution: a method-level {@code @JsonProfile} overrides the declaring type's, a
+ *       blank id is rejected, and a nonblank id is normalized through {@code JsonProfileId} before
+ *       it is emitted.</li>
  *   <li>{@link #shouldRejectDuplicateNamesAndUnsupportedSignatures()} — the rejection diagnostics:
  *       duplicate tool names, raw and wildcard and unresolved types, an unsupported input-schema
- *       member, and a {@code void} return.</li>
+ *       member, an unsupported result type, and a {@code void} return.</li>
  * </ol>
  *
  * <p>Each invalid source asserts an error <em>count</em> of exactly one for its targeted fragments,
@@ -194,6 +198,72 @@ class McpToolProcessorCompileTest {
                     unwired.errorsNaming("UnwiredWeatherTools", "@Inject"),
                     "a tool type the generated module cannot wire must be rejected");
         }
+
+        // Mutation — package-private declaring type. The contract requires the declaring
+        // Dagger-managed type to be public, not only the tool method. Valid control: `public class`.
+        JavaFileObject packagePrivateToolType = SourceFiles.inline(TOOLS_PACKAGE + ".PackagePrivateWeatherTools", """
+                package com.example.tools;
+
+                import dev.vertique.mcp.annotation.McpTool;
+                import dev.vertique.mcp.annotation.McpToolParam;
+                import io.vertx.core.Future;
+                import jakarta.inject.Inject;
+
+                class PackagePrivateWeatherTools {
+
+                    @Inject
+                    PackagePrivateWeatherTools() {}
+
+                    @McpTool(name = "weather.packagePrivateType", description = "Look up the current weather.")
+                    public Future<WeatherReport> lookup(
+                            @McpToolParam(name = "city", description = "The city to look up.") String city) {
+                        return Future.succeededFuture(new WeatherReport(city, 21));
+                    }
+                }
+                """);
+        try (McpToolCompilation packagePrivateType = McpToolCompilation.of(weatherReport(), packagePrivateToolType)) {
+            packagePrivateType.result().assertFailed();
+            assertEquals(
+                    1,
+                    packagePrivateType.errorsNaming("PackagePrivateWeatherTools", "public"),
+                    "a package-private declaring type must be rejected: the contract requires the declaring"
+                            + " Dagger-managed type to be public");
+        }
+
+        // Mutation — an overload of the tool method that is not itself annotated. The contract rejects
+        // overloaded tool methods unqualified, so an unannotated sibling counts. Valid control: rename
+        // the sibling to lookupRange(...).
+        JavaFileObject overloadedToolMethod = SourceFiles.inline(TOOLS_PACKAGE + ".OverloadedWeatherTools", """
+                package com.example.tools;
+
+                import dev.vertique.mcp.annotation.McpTool;
+                import dev.vertique.mcp.annotation.McpToolParam;
+                import io.vertx.core.Future;
+                import jakarta.inject.Inject;
+
+                public class OverloadedWeatherTools {
+
+                    @Inject
+                    public OverloadedWeatherTools() {}
+
+                    @McpTool(name = "weather.overloaded", description = "Look up the current weather.")
+                    public Future<WeatherReport> lookup(
+                            @McpToolParam(name = "city", description = "The city to look up.") String city) {
+                        return Future.succeededFuture(new WeatherReport(city, 21));
+                    }
+
+                    public Future<WeatherReport> lookup(String city, int days) {
+                        return Future.succeededFuture(new WeatherReport(city, 21));
+                    }
+                }
+                """);
+        try (McpToolCompilation overloaded = McpToolCompilation.of(weatherReport(), overloadedToolMethod)) {
+            overloaded.result().assertFailed();
+            assertEquals(
+                    1,
+                    overloaded.errorsNaming("overload", "lookup"),
+                    "an overload of a tool method must be rejected even when the sibling is not annotated");
+        }
     }
 
     // --- Row 2: access-mode derivation ---
@@ -241,7 +311,7 @@ class McpToolProcessorCompileTest {
                     @Inject
                     public ActionOnlyWeatherTools() {}
 
-                    @RequiresAction("weather:read")
+                    @RequiresAction("weather.city.read")
                     @McpTool(name = "weather.action", description = "Look up the current weather.")
                     public Future<WeatherReport> lookup(
                             @McpToolParam(name = "city", description = "The city to look up.") String city) {
@@ -259,7 +329,7 @@ class McpToolProcessorCompileTest {
                     .assertGeneratedSourceContains(
                             TOOLS_PACKAGE + ".ActionOnlyWeatherTools_lookup_McpToolInvoker", "McpAccessMode.RESTRICTED")
                     .assertGeneratedSourceContains(
-                            TOOLS_PACKAGE + ".ActionOnlyWeatherTools_lookup_McpToolInvoker", "weather:read");
+                            TOOLS_PACKAGE + ".ActionOnlyWeatherTools_lookup_McpToolInvoker", "weather.city.read");
         }
 
         // Mutation — annotation conflict: @PermitAll and @RequiresAction on the same tool method.
@@ -280,7 +350,7 @@ class McpToolProcessorCompileTest {
                     public ConflictingWeatherTools() {}
 
                     @PermitAll
-                    @RequiresAction("weather:read")
+                    @RequiresAction("weather.city.read")
                     @McpTool(name = "weather.conflict", description = "Look up the current weather.")
                     public Future<WeatherReport> lookup(
                             @McpToolParam(name = "city", description = "The city to look up.") String city) {
@@ -294,6 +364,118 @@ class McpToolProcessorCompileTest {
                     1,
                     conflict.errorsNaming("@PermitAll", "@RequiresAction"),
                     "@RequiresAction must conflict with @PermitAll, exactly as it does for REST");
+        }
+
+        // Mutation — @Authorized inherited from an overridden interface method. The rejection must run
+        // over every policy source tier, exactly as the base-policy and action families do; a tier-blind
+        // check accepts this tool and generates an invoker for a REST-annotated declaration. Valid
+        // control: drop @Authorized from the interface method.
+        JavaFileObject interfaceAuthorized = SourceFiles.inline(TOOLS_PACKAGE + ".InterfaceAuthorizedTools", """
+                package com.example.tools;
+
+                import dev.vertique.mcp.annotation.McpTool;
+                import dev.vertique.mcp.annotation.McpToolParam;
+                import dev.vertique.rest.core.security.Authorized;
+                import io.vertx.core.Future;
+                import jakarta.inject.Inject;
+
+                interface AuthorizedLookup {
+
+                    @Authorized
+                    Future<WeatherReport> lookup(String city);
+                }
+
+                public class InterfaceAuthorizedTools implements AuthorizedLookup {
+
+                    @Inject
+                    public InterfaceAuthorizedTools() {}
+
+                    @Override
+                    @McpTool(name = "weather.interfaceAuthorized", description = "Look up the current weather.")
+                    public Future<WeatherReport> lookup(
+                            @McpToolParam(name = "city", description = "The city to look up.") String city) {
+                        return Future.succeededFuture(new WeatherReport(city, 21));
+                    }
+                }
+                """);
+        try (McpToolCompilation inherited =
+                McpToolCompilation.of(authorizedAnnotation(), weatherReport(), interfaceAuthorized)) {
+            inherited.result().assertFailed();
+            assertEquals(
+                    1,
+                    inherited.errorsNaming("@Authorized", "AuthorizedLookup"),
+                    "@Authorized inherited from an overridden interface method must be rejected, naming the"
+                            + " source element it was declared on");
+        }
+
+        // Mutation — TYPE-level @Authorized on a superclass of the declaring type. Same tier blindness,
+        // the type half. Valid control: drop @Authorized from the base class.
+        JavaFileObject superclassAuthorized = SourceFiles.inline(TOOLS_PACKAGE + ".SuperclassAuthorizedTools", """
+                package com.example.tools;
+
+                import dev.vertique.mcp.annotation.McpTool;
+                import dev.vertique.mcp.annotation.McpToolParam;
+                import dev.vertique.rest.core.security.Authorized;
+                import io.vertx.core.Future;
+                import jakarta.inject.Inject;
+
+                @Authorized
+                abstract class AuthorizedBaseTools {}
+
+                public class SuperclassAuthorizedTools extends AuthorizedBaseTools {
+
+                    @Inject
+                    public SuperclassAuthorizedTools() {}
+
+                    @McpTool(name = "weather.superclassAuthorized", description = "Look up the current weather.")
+                    public Future<WeatherReport> lookup(
+                            @McpToolParam(name = "city", description = "The city to look up.") String city) {
+                        return Future.succeededFuture(new WeatherReport(city, 21));
+                    }
+                }
+                """);
+        try (McpToolCompilation inheritedType =
+                McpToolCompilation.of(authorizedAnnotation(), weatherReport(), superclassAuthorized)) {
+            inheritedType.result().assertFailed();
+            assertEquals(
+                    1,
+                    inheritedType.errorsNaming("@Authorized", "AuthorizedBaseTools"),
+                    "TYPE-level @Authorized on a superclass must be rejected, naming the source element it was"
+                            + " declared on");
+        }
+
+        // Mutation — an action value outside the frozen ActionRef grammar. The generated invoker emits
+        // ActionRef.parse(<value>), so a non-canonical value compiles into source that always throws at
+        // composition. Valid control: "weather.city.read".
+        JavaFileObject invalidActionGrammar = SourceFiles.inline(TOOLS_PACKAGE + ".InvalidActionWeatherTools", """
+                package com.example.tools;
+
+                import dev.vertique.mcp.annotation.McpTool;
+                import dev.vertique.mcp.annotation.McpToolParam;
+                import dev.vertique.security.authz.RequiresAction;
+                import io.vertx.core.Future;
+                import jakarta.inject.Inject;
+
+                public class InvalidActionWeatherTools {
+
+                    @Inject
+                    public InvalidActionWeatherTools() {}
+
+                    @RequiresAction("weather:read")
+                    @McpTool(name = "weather.invalidAction", description = "Look up the current weather.")
+                    public Future<WeatherReport> lookup(
+                            @McpToolParam(name = "city", description = "The city to look up.") String city) {
+                        return Future.succeededFuture(new WeatherReport(city, 21));
+                    }
+                }
+                """);
+        try (McpToolCompilation invalidAction = McpToolCompilation.of(weatherReport(), invalidActionGrammar)) {
+            invalidAction.result().assertFailed();
+            assertEquals(
+                    1,
+                    invalidAction.errorsNaming("@RequiresAction", "weather:read"),
+                    "an action value ActionRef.parse can never accept must be rejected at compile time, naming"
+                            + " the offending value");
         }
     }
 
@@ -366,6 +548,42 @@ class McpToolProcessorCompileTest {
                     1,
                     blank.errorsNaming("@JsonProfile", "blank"),
                     "a blank @JsonProfile id must be rejected at compile time");
+        }
+
+        // Mutation — surrounding whitespace on the profile id. The contract routes the nonblank value
+        // through JsonProfileId, which normalizes by trimming; emitting the raw string would select a
+        // profile no registry entry can match. Valid control: "strict".
+        JavaFileObject untrimmedMethodProfile =
+                SourceFiles.inline(TOOLS_PACKAGE + ".UntrimmedProfileWeatherTools", """
+                package com.example.tools;
+
+                import dev.vertique.core.json.JsonProfile;
+                import dev.vertique.mcp.annotation.McpTool;
+                import dev.vertique.mcp.annotation.McpToolParam;
+                import io.vertx.core.Future;
+                import jakarta.inject.Inject;
+
+                public class UntrimmedProfileWeatherTools {
+
+                    @Inject
+                    public UntrimmedProfileWeatherTools() {}
+
+                    @JsonProfile("  strict  ")
+                    @McpTool(name = "weather.untrimmedProfile", description = "Look up the current weather.")
+                    public Future<WeatherReport> lookup(
+                            @McpToolParam(name = "city", description = "The city to look up.") String city) {
+                        return Future.succeededFuture(new WeatherReport(city, 21));
+                    }
+                }
+                """);
+        try (McpToolCompilation untrimmed = McpToolCompilation.of(weatherReport(), untrimmedMethodProfile)) {
+            untrimmed
+                    .result()
+                    .assertSuccess()
+                    .assertGeneratedSourceContains(
+                            TOOLS_PACKAGE + ".UntrimmedProfileWeatherTools_lookup_McpToolInvoker", "\"strict\"")
+                    .assertGeneratedSourceDoesNotContain(
+                            TOOLS_PACKAGE + ".UntrimmedProfileWeatherTools_lookup_McpToolInvoker", "\"  strict  \"");
         }
     }
 
@@ -558,6 +776,69 @@ class McpToolProcessorCompileTest {
                     voidReturn.errorsNaming("void", "lookup"),
                     "a void tool method produces no result content and must be rejected");
         }
+
+        // Mutation — a platform result type. The contract makes RoutingContext and the rest of the
+        // platform/SDK families compile errors; io.vertx.core.json.JsonObject exercises the same
+        // io.vertx. prefix branch that rejects io.vertx.ext.web.RoutingContext, which is not on this
+        // module's test classpath. Valid control: Future<WeatherReport>.
+        JavaFileObject platformResultType = SourceFiles.inline(TOOLS_PACKAGE + ".PlatformResultTools", """
+                package com.example.tools;
+
+                import dev.vertique.mcp.annotation.McpTool;
+                import dev.vertique.mcp.annotation.McpToolParam;
+                import io.vertx.core.Future;
+                import io.vertx.core.json.JsonObject;
+                import jakarta.inject.Inject;
+
+                public class PlatformResultTools {
+
+                    @Inject
+                    public PlatformResultTools() {}
+
+                    @McpTool(name = "weather.platformResult", description = "Look up the current weather.")
+                    public Future<JsonObject> lookup(
+                            @McpToolParam(name = "city", description = "The city to look up.") String city) {
+                        return Future.succeededFuture(new JsonObject());
+                    }
+                }
+                """);
+        try (McpToolCompilation platformResult = McpToolCompilation.of(weatherReport(), platformResultType)) {
+            platformResult.result().assertFailed();
+            assertEquals(
+                    1,
+                    platformResult.errorsNaming("JsonObject", "schema"),
+                    "a platform result type has no output schema representation and must be rejected — the"
+                            + " representability check must run over results, not only parameters");
+        }
+
+        // Mutation — an unsupported plain result type. Valid control: WeatherReport.
+        JavaFileObject unsupportedResultType = SourceFiles.inline(TOOLS_PACKAGE + ".UnsupportedResultTools", """
+                package com.example.tools;
+
+                import dev.vertique.mcp.annotation.McpTool;
+                import dev.vertique.mcp.annotation.McpToolParam;
+                import jakarta.inject.Inject;
+                import java.io.InputStream;
+
+                public class UnsupportedResultTools {
+
+                    @Inject
+                    public UnsupportedResultTools() {}
+
+                    @McpTool(name = "weather.unsupportedResult", description = "Look up the current weather.")
+                    public InputStream lookup(
+                            @McpToolParam(name = "city", description = "The city to look up.") String city) {
+                        return InputStream.nullInputStream();
+                    }
+                }
+                """);
+        try (McpToolCompilation unsupportedResult = McpToolCompilation.of(unsupportedResultType)) {
+            unsupportedResult.result().assertFailed();
+            assertEquals(
+                    1,
+                    unsupportedResult.errorsNaming("InputStream", "schema"),
+                    "a result with no JSON schema representation must be rejected");
+        }
     }
 
     // --- Shared fixture sources ---
@@ -572,6 +853,35 @@ class McpToolProcessorCompileTest {
                 package com.example.tools;
 
                 public record WeatherReport(String city, int temperatureCelsius) {}
+                """);
+    }
+
+    /**
+     * The REST-specific {@code @Authorized} annotation, declared as a fixture source under its real
+     * fully-qualified name.
+     *
+     * <p>The processor matches this annotation by FQN ({@code JaxRsAnnotations.AUTHORIZED}), and
+     * {@code vertique-rest-core} is deliberately not on this module's classpath — MCP codegen must not
+     * depend on REST. Declaring the annotation in the compiled source set is therefore the only way to
+     * author a fixture that carries it, and it exercises exactly the FQN the processor looks for.
+     *
+     * @return the {@code dev.vertique.rest.core.security.Authorized} source
+     */
+    private static JavaFileObject authorizedAnnotation() {
+        return SourceFiles.inline("dev.vertique.rest.core.security.Authorized", """
+                package dev.vertique.rest.core.security;
+
+                import java.lang.annotation.ElementType;
+                import java.lang.annotation.Retention;
+                import java.lang.annotation.RetentionPolicy;
+                import java.lang.annotation.Target;
+
+                @Target({ElementType.METHOD, ElementType.TYPE})
+                @Retention(RetentionPolicy.RUNTIME)
+                public @interface Authorized {
+
+                    String[] scopes() default {};
+                }
                 """);
     }
 

@@ -32,9 +32,11 @@ public record McpToolAccess(
     /**
      * Validates the resolved policy shape and defensively copies the role list.
      *
-     * @throws NullPointerException if {@code mode} or {@code roles} is null
-     * @throws IllegalArgumentException if a role is null or blank, if a non-restricted mode carries
-     *     roles or an action, or if a restricted mode carries neither a role nor an action
+     * @throws NullPointerException if {@code mode} or {@code roles} is null, or if {@code roles}
+     *     contains a null element ({@code List.copyOf} rejects null elements before the blank check
+     *     runs)
+     * @throws IllegalArgumentException if a role is blank, if a non-restricted mode carries roles or
+     *     an action, or if a restricted mode carries neither a role nor an action
      */
     public McpToolAccess {
         Objects.requireNonNull(mode, "mode");

@@ -7,6 +7,7 @@ import dev.vertique.codegen.AnnotationMirrors;
 import dev.vertique.codegen.CodegenContext;
 import dev.vertique.codegen.support.Identifiers;
 import dev.vertique.codegen.validate.InjectConstructorValidator;
+import dev.vertique.core.json.JsonProfileId;
 import dev.vertique.mcp.tool.McpToolDescriptor;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -38,17 +39,25 @@ import javax.lang.model.type.TypeMirror;
  *
  * <ul>
  *   <li><strong>Direct invocability</strong> — the tool method is public, concrete, and an instance
- *       method on a Dagger-managed type with exactly one {@code @Inject} constructor. There is no
- *       reflective fallback, so anything the generated invoker cannot call directly, or the
+ *       method on a public Dagger-managed type with exactly one {@code @Inject} constructor. There is
+ *       no reflective fallback, so anything the generated invoker cannot call directly, or the
  *       generated module cannot wire, is a compile error.</li>
  *   <li><strong>Protocol metadata</strong> — unique tool names matching
  *       {@code [A-Za-z0-9_.-]{1,128}}, a non-blank bounded description, and an omitted-when-blank
  *       title.</li>
  *   <li><strong>Honest type contracts</strong> — no raw, wildcard, type-variable, or unresolved type
- *       in a parameter or result, no {@code void} result, and no input member without a JSON schema
- *       representation.</li>
+ *       in a parameter or result, no {@code void} result, and no input member <em>or result</em>
+ *       without a JSON schema representation. The representability check is deliberately symmetric:
+ *       the platform, runtime, and serialization-library families the contract names as illegal
+ *       results (Reactor types, {@code RoutingContext}, SDK types) are exactly the families
+ *       {@link #firstUnrepresentable(TypeMirror)} already rejects on the input side. The one result
+ *       exempted is a handler-authored {@code McpToolResult<Void>}, the contract's text-only
+ *       shape.</li>
  *   <li><strong>Effective JSON profile</strong> — resolved method-over-type, with a blank id
- *       rejected at compile time rather than surfacing as an unresolvable mapper at composition.</li>
+ *       rejected at compile time rather than surfacing as an unresolvable mapper at composition, and
+ *       the nonblank id validated and normalized through
+ *       {@link dev.vertique.core.json.JsonProfileId} so the emitted id is the one composition looks
+ *       up.</li>
  * </ul>
  *
  * <p>Output-schema synthesis is a composition-time concern: a result type that is structurally valid
@@ -145,8 +154,8 @@ final class McpToolModelValidator {
 
     /**
      * Validates the concerns a declaring type owns once, regardless of how many tools it declares:
-     * it must be a concrete class the generated module can wire, and its tool methods must not be
-     * overloads (their simple names become generated invoker class names).
+     * it must be a public, concrete class the generated module can wire, and its tool methods must
+     * not be overloads (their simple names become generated invoker class names).
      *
      * @param declaringType the type declaring the tool methods
      * @param toolMethods   every {@code @McpTool} method declared by that type
@@ -179,15 +188,23 @@ final class McpToolModelValidator {
                             declaringType.getQualifiedName());
             return false;
         }
+        if (!declaringType.getModifiers().contains(Modifier.PUBLIC)) {
+            ctx.diagnostics()
+                    .error(
+                            declaringType,
+                            "@McpTool must be declared on a public Dagger-managed type; %s is not public",
+                            declaringType.getQualifiedName());
+            return false;
+        }
 
-        Set<String> seen = new LinkedHashSet<>();
         for (ExecutableElement method : toolMethods) {
-            if (!seen.add(method.getSimpleName().toString())) {
+            if (declaredWithSameName(declaringType, method) > 1) {
                 ctx.diagnostics()
                         .error(
                                 method,
                                 "Overloaded @McpTool method %s.%s(); a tool method name must be unique within its"
-                                        + " declaring type because it names the generated invoker",
+                                        + " declaring type because it names the generated invoker — an overload is"
+                                        + " rejected even when the sibling declaration carries no @McpTool",
                                 declaringType.getSimpleName(),
                                 method.getSimpleName());
                 return false;
@@ -195,6 +212,27 @@ final class McpToolModelValidator {
         }
 
         return injectConstructors.validate(declaringType);
+    }
+
+    /**
+     * Counts the methods the declaring type declares under the given method's simple name.
+     *
+     * <p>The contract rejects overloaded tool methods unqualified, so an unannotated sibling counts:
+     * the generated invoker is named for the declaring type and the method's simple name, and two
+     * declarations sharing that name have no honest, distinct tool identity. The scope is the
+     * declaring type's own declarations — an inherited same-name declaration is either the method
+     * this one overrides (one tool, resolved through the policy tiers) or a supertype's overload,
+     * neither of which collides with the generated invoker's name.
+     *
+     * @param declaringType the type declaring the tool method
+     * @param method        the tool method
+     * @return the number of methods declared by {@code declaringType} with that simple name
+     */
+    private static long declaredWithSameName(TypeElement declaringType, ExecutableElement method) {
+        return declaringType.getEnclosedElements().stream()
+                .filter(element -> element.getKind() == ElementKind.METHOD)
+                .filter(element -> element.getSimpleName().contentEquals(method.getSimpleName()))
+                .count();
     }
 
     // --- Tool declaration ---
@@ -400,6 +438,24 @@ final class McpToolModelValidator {
                             declaringType.getSimpleName(),
                             method.getSimpleName());
             return Optional.empty();
+        }
+
+        // A handler-authored McpToolResult<Void> is the contract's text-only shape, so it is the one
+        // result the representability check must not see: java.lang.Void is a platform type.
+        if (!(handlerAuthored && erasureIs(resultType, Void.class.getName()))) {
+            Optional<TypeMirror> unsupported = firstUnrepresentable(resultType);
+            if (unsupported.isPresent()) {
+                ctx.diagnostics()
+                        .error(
+                                method,
+                                "@McpTool method %s.%s() produces %s, which has no JSON schema representation; a tool"
+                                        + " result must be a JSON-representable type — platform, runtime, and SDK"
+                                        + " types are rejected",
+                                declaringType.getSimpleName(),
+                                method.getSimpleName(),
+                                unsupported.get());
+                return Optional.empty();
+            }
         }
 
         McpToolReturnModel.Shape shape;
@@ -631,7 +687,22 @@ final class McpToolModelValidator {
                             method.getSimpleName());
             return Optional.empty();
         }
-        return Optional.of(Optional.of(profile));
+        // The nonblank value is validated and normalized by JsonProfileId itself, so the emitted id is
+        // the exact one composition looks up in the registry. The catch is defensive: JsonProfileId
+        // currently rejects only blank values, which the check above already covers.
+        try {
+            return Optional.of(Optional.of(JsonProfileId.of(profile).value()));
+        } catch (IllegalArgumentException e) {
+            ctx.diagnostics()
+                    .error(
+                            method,
+                            "@JsonProfile at %s level for @McpTool method %s.%s() is not a valid profile id: %s",
+                            level,
+                            declaringType.getSimpleName(),
+                            method.getSimpleName(),
+                            e.getMessage());
+            return Optional.empty();
+        }
     }
 
     // --- Type helpers ---

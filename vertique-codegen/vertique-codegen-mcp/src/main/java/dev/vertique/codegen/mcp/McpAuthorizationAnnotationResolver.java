@@ -7,6 +7,7 @@ import dev.vertique.codegen.AnnotationMirrors;
 import dev.vertique.codegen.CodegenContext;
 import dev.vertique.codegen.JaxRsAnnotations;
 import dev.vertique.mcp.tool.McpAccessMode;
+import dev.vertique.security.authz.ActionRef;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -46,7 +47,15 @@ import javax.lang.model.type.TypeMirror;
  * </ul>
  *
  * <p>{@code @RequiresAction} conflicts with {@code @PermitAll} and {@code @DenyAll}, matching REST.
- * {@code @Authorized} is REST-specific and is rejected on MCP tools.
+ * Its value must be a canonical {@link dev.vertique.security.authz.ActionRef} string, because the
+ * generated invoker emits {@code ActionRef.parse(<value>)}: a value outside that grammar would
+ * otherwise compile into source that always throws at composition.
+ *
+ * <p>{@code @Authorized} is REST-specific and is rejected on MCP tools. That rejection runs over
+ * <em>every</em> source tier, not only the direct method and declaring type — an {@code @Authorized}
+ * inherited from an overridden interface method or a superclass type resolves exactly like the
+ * policy families do, so accepting it would silently publish a REST-annotated declaration as an MCP
+ * tool.
  */
 final class McpAuthorizationAnnotationResolver {
 
@@ -86,19 +95,23 @@ final class McpAuthorizationAnnotationResolver {
      * @return the resolved access contract, or empty when a diagnostic was reported
      */
     Optional<Access> resolve(TypeElement declaringType, ExecutableElement method) {
-        if (AnnotationMirrors.isPresent(method, JaxRsAnnotations.AUTHORIZED)
-                || AnnotationMirrors.isPresent(declaringType, JaxRsAnnotations.AUTHORIZED)) {
+        List<List<Element>> tiers = sourceTiers(declaringType, method);
+
+        Optional<Element> authorized = tiers.stream()
+                .flatMap(List::stream)
+                .filter(source -> AnnotationMirrors.isPresent(source, JaxRsAnnotations.AUTHORIZED))
+                .findFirst();
+        if (authorized.isPresent()) {
             ctx.diagnostics()
                     .error(
                             method,
                             "@Authorized is REST-specific and is not supported on the @McpTool method %s.%s();"
-                                    + " declare @RolesAllowed and/or @RequiresAction instead",
+                                    + " it is declared on %s — declare @RolesAllowed and/or @RequiresAction instead",
                             declaringType.getSimpleName(),
-                            method.getSimpleName());
+                            method.getSimpleName(),
+                            describe(authorized.get()));
             return Optional.empty();
         }
-
-        List<List<Element>> tiers = sourceTiers(declaringType, method);
 
         BaseResolution base = resolveBase(tiers, method, declaringType);
         if (!base.valid()) {
@@ -281,7 +294,25 @@ final class McpAuthorizationAnnotationResolver {
                                 method.getSimpleName());
                 return ActionResolution.invalid();
             }
-            return new ActionResolution(true, declared.get(0));
+            String action = declared.get(0);
+            // The generated invoker emits ActionRef.parse(action), so anything ActionRef rejects would
+            // compile into source that always throws at composition. Parse it here instead.
+            try {
+                ActionRef.parse(action);
+            } catch (IllegalArgumentException e) {
+                ctx.diagnostics()
+                        .error(
+                                method,
+                                "@RequiresAction(\"%s\") on the @McpTool method %s.%s() is not a canonical action:"
+                                        + " %s. Declare exactly three dot-separated segments, each matching"
+                                        + " ^[a-z][a-z0-9]*$ — for example \"weather.city.read\"",
+                                action,
+                                declaringType.getSimpleName(),
+                                method.getSimpleName(),
+                                e.getMessage());
+                return ActionResolution.invalid();
+            }
+            return new ActionResolution(true, action);
         }
         return ActionResolution.none();
     }
@@ -377,6 +408,24 @@ final class McpAuthorizationAnnotationResolver {
                 .map(ExecutableElement.class::cast)
                 .filter(candidate -> ctx.elements().overrides(method, candidate, declaringType))
                 .findFirst();
+    }
+
+    /**
+     * Describes a policy source element for a diagnostic, so a rejection names the declaration the
+     * offending annotation actually sits on rather than only the tool it was inherited by.
+     *
+     * @param source the policy source element
+     * @return {@code Owner.method()} for a method source, the qualified name for a type source, and
+     *         the simple name otherwise
+     */
+    private static String describe(Element source) {
+        if (source instanceof ExecutableElement executable) {
+            return executable.getEnclosingElement().getSimpleName() + "." + executable.getSimpleName() + "()";
+        }
+        if (source instanceof TypeElement type) {
+            return type.getQualifiedName().toString();
+        }
+        return source.getSimpleName().toString();
     }
 
     // --- Attribute reading ---
