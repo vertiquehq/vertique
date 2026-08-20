@@ -83,9 +83,13 @@ public interface GeneratedInputProcessor<T> {
     /**
      * Returns every class this processor may pass to
      * {@link InputTraversalContext#logicalFieldName(Class, String)} or dispatch into — its own
-     * {@link #targetType()}, each nested DTO and collection element type it dispatches, and the erased
-     * declared type of each annotated schema-free field it hands to the reflective continuation. Flat,
-     * not transitive: the engine closes the graph and bounds the recursion.
+     * {@link #targetType()} and each nested DTO and collection element type it dispatches. Flat, not
+     * transitive: the engine closes the graph and bounds the recursion.
+     *
+     * <p>A <strong>schema-free</strong> field contributes nothing, annotated or not. Its arm hands the
+     * erased declared type to the reflective continuation as {@code InputValueContext} provenance only —
+     * that type declares no fields a projected key could match, so it is never projected against and
+     * needs no prepared projection.
      *
      * <p><strong>An override MUST include its own {@link #targetType()}.</strong> An empty return is
      * read as "does not declare an owner set" and makes the engine fall back to its reflective walk for
