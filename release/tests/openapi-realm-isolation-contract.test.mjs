@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: EUPL-1.2
 
 /**
- * Issue #327 — the swagger plugin realm-isolation guard (ADR-0013).
+ * Issue #327 — the swagger plugin realm-isolation guard
+ * (vertique-dev docs/adr/0013-swagger-plugin-realm-isolation.md).
  *
  * Eight example modules declare `swagger-maven-plugin-jakarta` with identical plugin
  * coordinates and an identical plugin dependency list. Maven keys its plugin realm cache
@@ -50,7 +51,7 @@ const PINNED_MAVEN_VERSION = '3.9.9';
 const PINNED_SWAGGER_VERSION = '2.2.44';
 
 /** What a failing module must do about it, appended to every rule failure. */
-const FIX = `give that module exactly one <exclusion> of ${SALT_GROUP_ID}:<its own artifactId> on its ${SWAGGER_PLUGIN_ARTIFACT_ID} plugin dependency, as the realm-isolation comment in the sibling example poms and ADR-0013 describe`;
+const FIX = `give that module exactly one <exclusion> of ${SALT_GROUP_ID}:<its own artifactId> on its ${SWAGGER_PLUGIN_ARTIFACT_ID} plugin dependency, as the realm-isolation comment in the sibling example poms and vertique-dev docs/adr/0013-swagger-plugin-realm-isolation.md describe`;
 
 /** Renders rule violations into one lowercase, offender-naming failure message. */
 function because(violations, fix = FIX) {
@@ -60,6 +61,10 @@ function because(violations, fix = FIX) {
 /**
  * Collects every reactor module whose `<build><plugins>` declares the swagger plugin,
  * together with the realm salts its plugin dependencies carry.
+ *
+ * Returning nothing is treated as a reader fault, not as a clean tree: every rule below is
+ * a "no violations" assertion, so a parser that silently stopped seeing plugin declarations
+ * would make all of them pass vacuously.
  *
  * @param {string} repoRoot reactor root directory
  * @returns {Array<{artifactId: string, relPath: string, salts: string[]}>} sorted by artifactId
@@ -81,6 +86,10 @@ function readRealmSaltDeclarations(repoRoot) {
         .map((e) => e.artifactId),
     });
   }
+  assert.ok(
+    declarations.length > 0,
+    `no module under ${repoRoot} declares ${SWAGGER_PLUGIN_ARTIFACT_ID} — every realm-isolation rule below reports violations, so reading zero swagger-plugin declarations means the reader (or the reactor walk it rides on) is broken, not that the tree is clean`
+  );
   return declarations.sort((a, b) => a.artifactId.localeCompare(b.artifactId));
 }
 
@@ -90,8 +99,11 @@ function readRealmSaltDeclarations(repoRoot) {
  * proving something other than the check that guards `main`.
  *
  * Each returned bucket backs exactly one assertion below: `cardinality` →
- * everySwaggerExecutionCarriesARealmSalt, `uniqueness` → everyRealmSaltIsUnique,
+ * everySwaggerPluginDeclarationCarriesARealmSalt, `uniqueness` → everyRealmSaltIsUnique,
  * `ownership` → everyRealmSaltNamesItsOwnModule.
+ *
+ * The unit throughout is the plugin *declaration*, never the `<execution>`: Maven keys its
+ * realm cache per declaration, so a module with three executions still gets one realm.
  *
  * @param {Array<{artifactId: string, relPath: string, salts: string[]}>} declarations
  * @returns {{cardinality: string[], uniqueness: string[], ownership: string[]}}
@@ -153,9 +165,11 @@ function checkRealmIsolation(declarations) {
 
 /**
  * Minimal POM writer. `salts === null` writes a module that declares no swagger plugin;
- * `salts === []` writes one that declares it with no exclusion at all.
+ * `salts === []` writes one that declares it with no exclusion at all. `inProfile` wraps the
+ * declaration in a `<profile><build>` instead of the project-level `<build>` — the shape that
+ * used to escape the reader entirely (vertiquehq/vertique-dev#396).
  */
-function pom(dir, { artifactId, packaging = 'jar', modules = [], salts = null }) {
+function pom(dir, { artifactId, packaging = 'jar', modules = [], salts = null, inProfile = false }) {
   mkdirSync(dir, { recursive: true });
   const moduleXml = modules.length
     ? `<modules>${modules.map((m) => `<module>${m}</module>`).join('')}</modules>`
@@ -165,10 +179,7 @@ function pom(dir, { artifactId, packaging = 'jar', modules = [], salts = null })
         .map((s) => `<exclusion><groupId>${SALT_GROUP_ID}</groupId><artifactId>${s}</artifactId></exclusion>`)
         .join('')}</exclusions>`
     : '';
-  const buildXml =
-    salts === null
-      ? ''
-      : `<build><plugins><plugin>
+  const build = `<build><plugins><plugin>
       <groupId>io.swagger.core.v3</groupId>
       <artifactId>${SWAGGER_PLUGIN_ARTIFACT_ID}</artifactId>
       <dependencies>
@@ -180,6 +191,12 @@ function pom(dir, { artifactId, packaging = 'jar', modules = [], salts = null })
         </dependency>
       </dependencies>
     </plugin></plugins></build>`;
+  const buildXml =
+    salts === null
+      ? ''
+      : inProfile
+        ? `<profiles><profile><id>openapi</id>${build}</profile></profiles>`
+        : build;
 
   writeFileSync(
     path.join(dir, 'pom.xml'),
@@ -198,7 +215,7 @@ function pom(dir, { artifactId, packaging = 'jar', modules = [], salts = null })
 
 /**
  * Builds a synthetic reactor of plugin-declaring modules.
- * @param {Array<{artifactId: string, salts: string[]}>} modules
+ * @param {Array<{artifactId: string, salts: string[], inProfile?: boolean}>} modules
  * @returns {string} the reactor root directory, for the caller to remove
  */
 function fixtureReactor(modules) {
@@ -209,7 +226,11 @@ function fixtureReactor(modules) {
     modules: modules.map((m) => m.artifactId),
   });
   for (const m of modules) {
-    pom(path.join(root, m.artifactId), { artifactId: m.artifactId, salts: m.salts });
+    pom(path.join(root, m.artifactId), {
+      artifactId: m.artifactId,
+      salts: m.salts,
+      inProfile: m.inProfile ?? false,
+    });
   }
   return root;
 }
@@ -227,7 +248,7 @@ const CORRECTLY_SALTED = [
 ].map((artifactId) => ({ artifactId, salts: [artifactId] }));
 
 describe('SwaggerPluginRealmIsolationTest', () => {
-  it('everySwaggerExecutionCarriesARealmSalt', () => {
+  it('everySwaggerPluginDeclarationCarriesARealmSalt', () => {
     const { cardinality } = checkRealmIsolation(readRealmSaltDeclarations(REPO_ROOT));
     assert.deepEqual(cardinality, [], because(cardinality));
   });
@@ -280,10 +301,13 @@ describe('SwaggerPluginRealmIsolationTest', () => {
   });
 
   it('pinnedMavenAndSwaggerVersionsAreUnchanged', () => {
-    // Scalar property lookups, not structure: unlike a plugin's <dependencies>, neither of
-    // these tag names is ambiguous, so there is nothing for a parser to disambiguate.
+    // Scalar lookups, not structure. The pom side is unambiguous — <swagger-core.version> is
+    // one property tag, with nothing for a parser to disambiguate. The wrapper side is not:
+    // maven-wrapper.properties also carries wrapperUrl and can carry commented-out or
+    // distributionSha256-adjacent lines, so the version is read from an anchored
+    // distributionUrl line rather than from the first apache-maven-* match anywhere in it.
     const wrapper = readFileSync(path.join(REPO_ROOT, '.mvn', 'wrapper', 'maven-wrapper.properties'), 'utf8');
-    const maven = /apache-maven-(\d+\.\d+\.\d+)-bin\.zip/.exec(wrapper);
+    const maven = /^distributionUrl=.*apache-maven-(\d+\.\d+\.\d+)-bin\.zip/m.exec(wrapper);
     assert.ok(maven, 'the maven wrapper declares no apache-maven-<version>-bin.zip distributionUrl');
 
     const rootPom = readFileSync(path.join(REPO_ROOT, 'pom.xml'), 'utf8');
@@ -294,7 +318,8 @@ describe('SwaggerPluginRealmIsolationTest', () => {
       'the realm salt works only because this maven version folds exclusions into its plugin realm cache key ' +
       '(CacheUtils.dependenciesEquals), and only matters because this swagger version keeps ModelConverters ' +
       'static — an upgrade must re-run the runtime realm-count measurement (1 shared realm before the salts, ' +
-      '8 after) before this pin is moved, and update ADR-0013 with the result';
+      '8 after) before this pin is moved, and update vertique-dev ' +
+      'docs/adr/0013-swagger-plugin-realm-isolation.md with the result';
     assert.equal(
       maven[1],
       PINNED_MAVEN_VERSION,
@@ -366,6 +391,81 @@ describe('SwaggerPluginRealmIsolationTest', () => {
       const ninthResult = checkRealmIsolation(ninthDeclarations);
       assert.notDeepEqual(ninthResult.cardinality, [], 'a ninth unsalted module must be rejected');
       assert.match(ninthResult.cardinality.join('\n'), /vertique-example-ninth/);
+
+      // The literal pre-fix tree: all eight modules unsalted. This is the only fixture in
+      // which two or more modules present the EMPTY realm key, so it is the only one that
+      // exercises the self-collision branch — without it the uniqueness rule could be
+      // reverted to keying only salted modules and nothing here would go red, even though
+      // that reverted rule passes against precisely the state issue #327 reported.
+      const allUnsalted = fixtureReactor(
+        CORRECTLY_SALTED.map(({ artifactId }) => ({ artifactId, salts: [] }))
+      );
+      roots.push(allUnsalted);
+      const allUnsaltedDeclarations = readRealmSaltDeclarations(allUnsalted);
+      assert.equal(
+        allUnsaltedDeclarations.length,
+        SWAGGER_PLUGIN_MODULE_COUNT,
+        'the pre-fix fixture must still declare all eight modules'
+      );
+      const allUnsaltedResult = checkRealmIsolation(allUnsaltedDeclarations);
+      assert.notDeepEqual(
+        allUnsaltedResult.uniqueness,
+        [],
+        'eight modules with no salt at all present one shared realm key and must be rejected by the uniqueness rule, not only by cardinality'
+      );
+      const allUnsaltedUniqueness = allUnsaltedResult.uniqueness.join('\n');
+      for (const { artifactId } of CORRECTLY_SALTED) {
+        // The trailing guard matters: "vertique-example-services" is a prefix of
+        // "vertique-example-services-codegen", so a bare substring match would accept a
+        // message that names only the longer module.
+        assert.match(
+          allUnsaltedUniqueness,
+          new RegExp(`${artifactId}(?![\\w-])`),
+          `the uniqueness violation must name every colliding module, but ${artifactId} is missing from it`
+        );
+      }
+
+      // A declaration that lives only inside a <profile><build><plugins>, carrying no salt.
+      // An active profile resolves a realm exactly as a project-level declaration does, so
+      // this module must FACE the salt rules rather than be skipped (or the pom refused).
+      // Before the reader descended into profiles this fixture was invisible: the module
+      // vanished from the declaration list entirely, taking its missing salt with it.
+      const profileUnsalted = fixtureReactor([
+        ...CORRECTLY_SALTED.slice(0, 7),
+        { artifactId: 'vertique-example-websocket', salts: [], inProfile: true },
+      ]);
+      roots.push(profileUnsalted);
+      const profileDeclarations = readRealmSaltDeclarations(profileUnsalted);
+      assert.equal(
+        profileDeclarations.length,
+        SWAGGER_PLUGIN_MODULE_COUNT,
+        'a profile-declared swagger plugin must still be counted as a declaring module, not skipped'
+      );
+      const profileResult = checkRealmIsolation(profileDeclarations);
+      assert.notDeepEqual(
+        profileResult.cardinality,
+        [],
+        'an unsalted swagger declaration inside a <profile> must be rejected exactly as a project-level one is'
+      );
+      assert.match(profileResult.cardinality.join('\n'), /vertique-example-websocket/);
+      assert.notDeepEqual(
+        profileResult.ownership,
+        [],
+        'an unsalted profile-declared plugin must also fail the ownership rule'
+      );
+
+      // The same profile-declared plugin, correctly salted, must pass every rule — otherwise
+      // the fixture above would prove only that profiles are rejected, not that they are read.
+      const profileSalted = fixtureReactor([
+        ...CORRECTLY_SALTED.slice(0, 7),
+        { artifactId: 'vertique-example-websocket', salts: ['vertique-example-websocket'], inProfile: true },
+      ]);
+      roots.push(profileSalted);
+      assert.deepEqual(
+        checkRealmIsolation(readRealmSaltDeclarations(profileSalted)),
+        { cardinality: [], uniqueness: [], ownership: [] },
+        'a correctly salted profile-declared plugin must pass every realm-isolation rule'
+      );
     } finally {
       for (const r of roots) rmSync(r, { recursive: true, force: true });
     }

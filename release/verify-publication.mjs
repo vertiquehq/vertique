@@ -165,6 +165,16 @@ export function readPom(pomPath) {
  * `<pluginManagement>`, not of `<build>`, and only a real `<build><plugins>` declaration
  * causes Maven to resolve a plugin realm.
  *
+ * Plugins declared inside a `<profile><build><plugins>` ARE included, in the same returned
+ * shape as project-level ones. An active profile's plugin resolves its own realm exactly as a
+ * project-level declaration does, so a declaration hidden in a profile is precisely the shape
+ * a realm-isolation caller must see — omitting it would fail open, and refusing the pom
+ * outright would decline to look at it. Profile *activation* is deliberately not evaluated:
+ * this reader has no build context to evaluate it in, and a declaration anywhere in the pom is
+ * in scope regardless of whether today's invocation would activate it.
+ *
+ * This is the gap filed as vertiquehq/vertique-dev#396.
+ *
  * @param {string} pomPath absolute path to a pom.xml
  * @returns {Array<{groupId: string|undefined, artifactId: string,
  *                  dependencies: Array<{groupId: string, artifactId: string,
@@ -175,7 +185,16 @@ export function readPluginDeclarations(pomPath) {
   const project = parseXml(readFileSync(pomPath, 'utf8'));
   if (!project) throw new Error(`${pomPath}: no root <project> element`);
 
-  return childrenNamed(project, 'build')
+  // Project-level <build> and every <profile><build>, read through the same path so a
+  // profile-declared plugin cannot present a different shape than a project-level one.
+  const builds = [
+    ...childrenNamed(project, 'build'),
+    ...childrenNamed(project, 'profiles')
+      .flatMap((ps) => childrenNamed(ps, 'profile'))
+      .flatMap((profile) => childrenNamed(profile, 'build')),
+  ];
+
+  return builds
     .flatMap((b) => childrenNamed(b, 'plugins'))
     .flatMap((ps) => childrenNamed(ps, 'plugin'))
     .map((p) => ({
