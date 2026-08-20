@@ -497,8 +497,10 @@ class McpToolProcessorCompileTest {
             unresolved.result().assertFailed();
             assertEquals(
                     1,
-                    unresolved.errorsNaming("resolve", "MissingType"),
-                    "the processor must name the type it could not resolve, not leave it to javac alone");
+                    unresolved.errorsNaming("unknown type", "MissingType"),
+                    "the processor must name the type it could not resolve, not leave it to javac alone"
+                            + " (javac's own 'cannot find symbol' diagnostic matches neither fragment pair,"
+                            + " so a silent processor scores 0 here)");
         }
 
         // Mutation — unsupported input-schema member. Valid control: String city.
