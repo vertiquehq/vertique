@@ -30,6 +30,7 @@ import dev.vertique.core.json.JsonMapperProfile;
 import dev.vertique.core.json.JsonProfileConfigurationException;
 import jakarta.annotation.Nullable;
 import java.lang.reflect.Executable;
+import java.lang.reflect.Field;
 import java.lang.reflect.GenericArrayType;
 import java.lang.reflect.Method;
 import java.lang.reflect.ParameterizedType;
@@ -61,10 +62,13 @@ import java.util.function.Supplier;
  * effective serialization and deserialization property types. A primitive, an enum, a type with no
  * effective properties, and an already visited canonical type are leaves, so cyclic graphs terminate.
  *
- * <p>Every visited type must satisfy three closed rules: no default typer on either side, no
+ * <p>Every visited type must satisfy these closed rules: no default typer on either side, no
  * effective type information other than {@code @JsonTypeInfo(use = Id.NAME)} with a finite explicit
- * {@code @JsonSubTypes} allowlist, and Jackson's resolved serialization- and deserialization-facing
- * subtype mappings equal to that allowlist. Custom serializers and deserializers are trusted
+ * {@code @JsonSubTypes} allowlist, Jackson's resolved serialization- and deserialization-facing
+ * subtype mappings equal to that allowlist, and — the terminal rule — the live handler the mapper
+ * actually builds resolving remote input only to that allowlist: the deserialization-side {@code
+ * TypeNameIdResolver}'s own {@code id → class} map and the type deserializer's {@code defaultImpl} are
+ * each a subset of the allowlist the walk enqueues. Custom serializers and deserializers are trusted
  * application code and are accepted; they are not claimed to be statically proven safe.
  *
  * <p>Type information is read the way Jackson installs it, not only the way it is annotated. Every
@@ -72,14 +76,22 @@ import java.util.function.Supplier;
  * the class scope, {@code findPropertyTypeResolver} and {@code findPropertyContentTypeResolver} for
  * the member scopes — so an introspector or module that installs a resolver without reporting
  * {@code @JsonTypeInfo} metadata is rejected rather than seen as an unannotated type. Both the class
- * and member scopes go one step further and read the <em>identity</em> of the type id resolver the
- * type serializer or type deserializer the mapper actually builds carries, accepting only Jackson's
- * own {@code TypeNameIdResolver}. Reported metadata, the self-reported mechanism, and the installed
- * resolver are independent signals: a custom resolver can report {@code Id.NAME} from
- * {@code getMechanism()} while its {@code typeFromId} maps a wire-chosen id to any subtype of the
- * base — including one the finite {@code @JsonSubTypes} allowlist never listed and the walk never
- * proved — so only the live resolver's identity, not its self-reported mechanism, proves the
- * sanctioned name mechanism.
+ * and member scopes then read the type deserializer the mapper actually builds down to its
+ * <em>terminal binding</em>. That a resolver is Jackson's own {@code TypeNameIdResolver} is a
+ * necessary precondition — a custom resolver reporting {@code Id.NAME} from {@code getMechanism()} is
+ * still rejected on identity — but it is not the sufficient proof: a builder whose
+ * {@code _customIdResolver} is a genuine {@code TypeNameIdResolver} constructed from a poisoned
+ * subtype collection passes the identity check while binding a wire-chosen id to a base-subtype the
+ * finite {@code @JsonSubTypes} allowlist never listed, and a {@code defaultImpl} lets an id-less
+ * payload instantiate a class no id maps to. The sufficient proof is therefore terminal: the live
+ * resolver's own {@code id → class} map ({@code TypeNameIdResolver._idToType}, the map
+ * {@code typeFromId} consults) and the type deserializer's {@code defaultImpl} are each required to be
+ * a subset of the allowlist the walk enqueues, so what the mapper will actually instantiate from
+ * remote input is proven inside the validated graph. The terminal binding is read on the
+ * deserialization side, where a wire id becomes a class; the serialization side, which never turns a
+ * wire id into a class, is gated on resolver identity alone. Reported metadata, the self-reported
+ * mechanism, the resolved subtype mapping, and the live terminal binding are independent signals, and
+ * only the last is the acceptance criterion.
  *
  * <p>The class scope is entered for every non-primitive, non-enum reachable type, containers
  * included. Jackson resolves a container's own type handling by asking {@code findTypeResolver} for
@@ -103,7 +115,8 @@ import java.util.function.Supplier;
  * pass as a silent leaf. An explicitly declared {@code Object} content is the application's own
  * choice and stays accepted.
  *
- * <p>The same three rules apply to class, property and container-content scopes alike. Jackson
+ * <p>The same closed rules — including the terminal live-map and {@code defaultImpl} checks — apply to
+ * class, property and container-content scopes alike. Jackson
  * installs a member-declared resolver ahead of the declared base type's class-level one, so a
  * property or container content that declares its own type information is validated as its own
  * polymorphic base — including its effective allowlist, which is the member's own
@@ -411,7 +424,16 @@ final class McpJsonProfileSafetyValidator {
             if (installed != null && !installed.sanctioned()) {
                 throw failure(reachable.path(), unsafeInstalledResolverReason("class", installed));
             }
-            return declaredAllowlist(reachable.path(), introspector.findSubtypes(classInfo));
+            Map<String, Class<?>> allowlist = declaredAllowlist(reachable.path(), introspector.findSubtypes(classInfo));
+            if (installed != null) {
+                requireTerminalDeserBinding(
+                        reachable.path(),
+                        "class",
+                        installed,
+                        allowlist,
+                        reachable.type().getRawClass());
+            }
+            return allowlist;
         }
 
         /**
@@ -488,11 +510,10 @@ final class McpJsonProfileSafetyValidator {
             }
             if (config instanceof DeserializationConfig deserialization) {
                 Collection<NamedType> subtypes = resolvedSubtypesByTypeId(reachable, classInfo);
-                return liveResolver(
+                return liveDeserResolver(
                         reachable.path(),
                         "class",
-                        () -> resolver.buildTypeDeserializer(deserialization, reachable.type(), subtypes),
-                        TypeDeserializer::getTypeIdResolver);
+                        () -> resolver.buildTypeDeserializer(deserialization, reachable.type(), subtypes));
             }
             throw failure(
                     reachable.path(),
@@ -513,29 +534,199 @@ final class McpJsonProfileSafetyValidator {
         @Nullable
         private <H> InstalledResolver liveResolver(
                 String path, String scope, Supplier<H> build, Function<H, TypeIdResolver> idResolverOf) {
-            TypeIdResolver idResolver;
+            boolean sanctioned;
+            String resolverType;
+            JsonTypeInfo.Id mechanism;
             try {
                 H handler = build.get();
                 if (handler == null) {
                     return null;
                 }
-                idResolver = idResolverOf.apply(handler);
+                TypeIdResolver idResolver = idResolverOf.apply(handler);
+                if (idResolver == null) {
+                    throw new NoLiveIdResolverException();
+                }
+                // The diagnostic mechanism and class reads run inside the guard too, so an impostor
+                // resolver whose getMechanism() or getClass() throws yields a bounded composition
+                // failure rather than a raw runtime exception escaping the walk.
+                sanctioned = idResolver instanceof TypeNameIdResolver;
+                resolverType = idResolver.getClass().getName();
+                mechanism = idResolver.getMechanism();
+            } catch (NoLiveIdResolverException noResolver) {
+                throw failure(
+                        path,
+                        "the mapper installs " + scope + "-level type handling reporting no type id resolver, so it"
+                                + " cannot be proven to be Jackson's sanctioned name resolver");
             } catch (RuntimeException failure) {
                 throw failure(
                         path,
                         scope + "-level type resolver construction failed: "
                                 + failure.getClass().getSimpleName());
             }
-            if (idResolver == null) {
+            return new InstalledResolver(sanctioned, resolverType, mechanism, null, null);
+        }
+
+        /**
+         * Builds one mapper's deserialization-side type handler and reports both the identity of its
+         * live type id resolver and its terminal binding — the exact {@code id → class} map the
+         * resolver consults and the default implementation an id-less payload instantiates.
+         *
+         * <p>This is the deserialization counterpart of {@link #liveResolver}. Where {@code
+         * liveResolver} proves only identity — sufficient on the serialization side, which never turns
+         * a wire id into a class — the deserialization side additionally reads the resolver's actual
+         * {@code _idToType} map and the handler's {@code getDefaultImpl()}, because a builder carrying a
+         * custom {@code TypeIdResolver} or a {@code defaultImpl} makes the live binding diverge from
+         * both the resolver's self-reported mechanism and the {@code SubtypeResolver}-collected mapping
+         * the class-level comparison checks.
+         *
+         * @param path the bounded reachable path of the scope being validated
+         * @param scope {@code "class"} or {@code "member"}, naming the failure message's scope
+         * @param build builds the deserialization-side type deserializer from the installed resolver
+         * @return the live resolver identity and terminal binding, or {@code null} when the resolver
+         *     builds no handler (Jackson's {@code Id.NONE} suppression signal)
+         */
+        @Nullable
+        private InstalledResolver liveDeserResolver(String path, String scope, Supplier<TypeDeserializer> build) {
+            boolean sanctioned;
+            String resolverType;
+            JsonTypeInfo.Id mechanism;
+            Map<String, Class<?>> liveIdToClass;
+            Class<?> defaultImpl;
+            try {
+                TypeDeserializer handler = build.get();
+                if (handler == null) {
+                    return null;
+                }
+                TypeIdResolver idResolver = handler.getTypeIdResolver();
+                if (idResolver == null) {
+                    throw new NoLiveIdResolverException();
+                }
+                sanctioned = idResolver instanceof TypeNameIdResolver;
+                resolverType = idResolver.getClass().getName();
+                mechanism = idResolver.getMechanism();
+                liveIdToClass = sanctioned ? liveIdToClass(path, scope, (TypeNameIdResolver) idResolver) : null;
+                defaultImpl = handler.getDefaultImpl();
+            } catch (NoLiveIdResolverException noResolver) {
                 throw failure(
                         path,
                         "the mapper installs " + scope + "-level type handling reporting no type id resolver, so it"
                                 + " cannot be proven to be Jackson's sanctioned name resolver");
+            } catch (RuntimeException failure) {
+                throw failure(
+                        path,
+                        scope + "-level type resolver construction failed: "
+                                + failure.getClass().getSimpleName());
             }
-            return new InstalledResolver(
-                    idResolver instanceof TypeNameIdResolver,
-                    idResolver.getClass().getName(),
-                    idResolver.getMechanism());
+            return new InstalledResolver(sanctioned, resolverType, mechanism, liveIdToClass, defaultImpl);
+        }
+
+        /**
+         * Reads the live {@code id → concrete class} map Jackson's {@code TypeNameIdResolver} consults
+         * at deserialization time.
+         *
+         * <p>The resolver's public surface exposes only {@code getDescForKnownTypeIds()} — a formatted
+         * {@code String} of ids that omits the class each id binds to and reflects only the
+         * deserialization-side {@code _idToType} field — and {@code typeFromId(DatabindContext, id)},
+         * which needs a live runtime context this composition-time walk does not have. Neither yields
+         * the {@code id → class} pairs the terminal proof requires, so the map is read from the
+         * resolver's own {@code _idToType} field: the exact map {@code _typeFromId} consults, and thus
+         * the ground truth of which class each wire id becomes. The read is fail-closed — a missing
+         * field or a {@code null} map (a Jackson internal change, or a serialization-side resolver
+         * reached where a deserialization one was expected) rejects rather than silently trusting an
+         * unreadable binding.
+         *
+         * @param path the bounded reachable path of the scope being validated
+         * @param scope {@code "class"} or {@code "member"}, naming the failure message's scope
+         * @param resolver the live sanctioned name resolver whose terminal map is read
+         * @return an immutable snapshot of the live {@code id → raw class} map
+         */
+        private Map<String, Class<?>> liveIdToClass(String path, String scope, TypeNameIdResolver resolver) {
+            Object rawMap;
+            try {
+                Field field = TypeNameIdResolver.class.getDeclaredField("_idToType");
+                field.setAccessible(true);
+                rawMap = field.get(resolver);
+            } catch (ReflectiveOperationException | RuntimeException failure) {
+                throw failure(
+                        path,
+                        "the mapper's " + scope + "-level name resolver does not expose its live id-to-class map, so"
+                                + " its terminal binding cannot be proven safe");
+            }
+            if (!(rawMap instanceof Map<?, ?> idToType)) {
+                throw failure(
+                        path,
+                        "the mapper's " + scope + "-level name resolver exposes no live id-to-class map, so its"
+                                + " terminal binding cannot be proven safe");
+            }
+            Map<String, Class<?>> live = new LinkedHashMap<>();
+            idToType.forEach((id, javaType) -> live.put(String.valueOf(id), ((JavaType) javaType).getRawClass()));
+            return live;
+        }
+
+        /**
+         * Requires one built deserialization handler's terminal binding to stay inside the validated
+         * allowlist: every live {@code id → class} pair, and the default implementation an id-less
+         * payload instantiates.
+         *
+         * <p>This is the sufficient proof the round replaces the identity/mechanism check with. Two
+         * escapes it closes both survive an {@code instanceof TypeNameIdResolver} identity check and a
+         * matching {@code SubtypeResolver} mapping: a builder whose {@code _customIdResolver} is a real
+         * {@code TypeNameIdResolver} constructed from a poisoned subtype collection binds a wire id to a
+         * base-subtype the finite {@code @JsonSubTypes} allowlist never listed; and a {@code defaultImpl}
+         * lets an id-less payload instantiate a class no id maps to. The allowlist entries are exactly
+         * the subtypes the walk enqueues and proves, so requiring the live binding to be a subset of it
+         * makes the acceptance criterion terminal — what Jackson will actually instantiate is proven ⊆
+         * the validated graph.
+         *
+         * <p>A {@code defaultImpl} equal to the polymorphic base itself is accepted: an id-less payload
+         * then instantiates the base, which is the very reachable type being visited and already proven,
+         * and an abstract base fails at runtime rather than escaping. Jackson's {@code Void} "no default"
+         * sentinel is likewise treated as absent.
+         *
+         * @param path the bounded reachable path of the scope being validated
+         * @param scope {@code "class"} or {@code "member"}, naming the failure message's scope
+         * @param installed the built deserialization handler's identity and terminal binding
+         * @param allowlist the finite explicit {@code @JsonSubTypes} allowlist the walk enqueues
+         * @param baseClass the polymorphic base's raw class, an accepted {@code defaultImpl} target
+         */
+        private void requireTerminalDeserBinding(
+                String path,
+                String scope,
+                InstalledResolver installed,
+                Map<String, Class<?>> allowlist,
+                Class<?> baseClass) {
+            Map<String, Class<?>> liveIdToClass = installed.liveIdToClass();
+            if (liveIdToClass != null) {
+                liveIdToClass.forEach((id, liveClass) -> {
+                    Class<?> allowed = allowlist.get(id);
+                    if (allowed == null) {
+                        throw failure(
+                                path,
+                                "the mapper installs " + scope + "-level name type handling whose live type id '" + id
+                                        + "' resolves to " + liveClass.getName()
+                                        + ", which the finite @JsonSubTypes allowlist never lists and the walk never"
+                                        + " proved; only ids bound to an allowlisted subtype are an accepted mechanism");
+                    }
+                    if (!allowed.equals(liveClass)) {
+                        throw failure(
+                                path,
+                                "the mapper installs " + scope + "-level name type handling whose live type id '" + id
+                                        + "' resolves to " + liveClass.getName()
+                                        + " but the @JsonSubTypes allowlist binds that id to " + allowed.getName());
+                    }
+                });
+            }
+            Class<?> defaultImpl = installed.defaultImpl();
+            if (defaultImpl != null
+                    && !Void.class.equals(defaultImpl)
+                    && !defaultImpl.equals(baseClass)
+                    && !allowlist.containsValue(defaultImpl)) {
+                throw failure(
+                        path,
+                        scope + "-level @JsonTypeInfo declares defaultImpl " + defaultImpl.getName()
+                                + ", which the finite @JsonSubTypes allowlist never lists, so an id-less payload would"
+                                + " instantiate a type the walk never proved");
+            }
         }
 
         /** Resolves the serialization-facing subtype mapping the handler build feeds on. */
@@ -827,10 +1018,12 @@ final class McpJsonProfileSafetyValidator {
                                 + (memberTypeInfo == null ? "unknown" : "Id." + memberTypeInfo.getIdType())
                                 + "' is not an accepted mechanism; only Id.NAME with an explicit @JsonSubTypes allowlist is");
             }
-            requireSanctionedMemberResolver(path, member, baseType, memberResolver, config);
+            InstalledResolver installed =
+                    requireSanctionedMemberResolver(path, member, baseType, memberResolver, config);
             Map<String, Class<?>> allowlist =
                     declaredAllowlist(path, memberSubtypes(member, baseType, config, introspector));
             Class<?> baseClass = baseType.getRawClass();
+            requireTerminalDeserBinding(path, "member", installed, allowlist, baseClass);
             requireResolvedSubtypesMatch(
                     path,
                     baseClass,
@@ -861,8 +1054,9 @@ final class McpJsonProfileSafetyValidator {
          * @param baseType the type the member-declared resolver is installed for
          * @param memberResolver the resolver builder Jackson installs for this member scope
          * @param config the mapper side whose introspection declared the resolver
+         * @return the built handler's identity and terminal binding, for the caller's terminal check
          */
-        private void requireSanctionedMemberResolver(
+        private InstalledResolver requireSanctionedMemberResolver(
                 String path,
                 AnnotatedMember member,
                 JavaType baseType,
@@ -878,11 +1072,10 @@ final class McpJsonProfileSafetyValidator {
                         TypeSerializer::getTypeIdResolver);
             } else if (config instanceof DeserializationConfig deserialization) {
                 Collection<NamedType> subtypes = subtypesByTypeId(member, baseType);
-                installed = liveResolver(
+                installed = liveDeserResolver(
                         path,
                         "member",
-                        () -> memberResolver.buildTypeDeserializer(deserialization, baseType, subtypes),
-                        TypeDeserializer::getTypeIdResolver);
+                        () -> memberResolver.buildTypeDeserializer(deserialization, baseType, subtypes));
             } else {
                 throw failure(
                         path,
@@ -898,6 +1091,7 @@ final class McpJsonProfileSafetyValidator {
             if (!installed.sanctioned()) {
                 throw failure(path, unsafeInstalledResolverReason("member", installed));
             }
+            return installed;
         }
 
         /** Reads the member's own allowlist, falling back to the declared base type's as Jackson does. */
@@ -1096,11 +1290,39 @@ final class McpJsonProfileSafetyValidator {
     private record ReachableType(JavaType type, String path) {}
 
     /**
-     * The identity of a live type id resolver one mapper side actually installs.
+     * Signals that a built type handler exposed no live type id resolver, so its identity cannot be
+     * proven. It is distinguished from a resolver-construction failure so each yields its own bounded
+     * composition message, and it is raised and caught only within a single handler build.
+     */
+    private static final class NoLiveIdResolverException extends RuntimeException {
+        private NoLiveIdResolverException() {
+            super(null, null, false, false);
+        }
+    }
+
+    /**
+     * The identity and terminal binding of a live type id resolver one mapper side actually installs.
+     *
+     * <p>The first three components prove the resolver's <em>identity</em> — a non-{@code
+     * TypeNameIdResolver} is rejected outright. The last two prove the resolver's <em>terminal
+     * behavior</em> on the deserialization side, where a wire-chosen id becomes a class: {@code
+     * liveIdToClass} is the exact {@code id → class} map Jackson's {@code TypeNameIdResolver} consults
+     * ({@code _idToType}), and {@code defaultImpl} is the class an id-less payload instantiates. Both
+     * are {@code null} on the serialization side and whenever the resolver is not the sanctioned name
+     * resolver, because neither terminal fact is meaningful there.
      *
      * @param sanctioned whether the resolver is Jackson's own {@code TypeNameIdResolver}
      * @param resolverType the resolver's concrete class name, for the rejection message
      * @param mechanism the mechanism the resolver reports, which an impostor may spoof as {@code Id.NAME}
+     * @param liveIdToClass the deserialization-side live {@code id → concrete class} map Jackson uses,
+     *     or {@code null} on the serialization side or for an unsanctioned resolver
+     * @param defaultImpl the deserialization-side default implementation an id-less payload
+     *     instantiates, or {@code null} when none is installed
      */
-    private record InstalledResolver(boolean sanctioned, String resolverType, JsonTypeInfo.Id mechanism) {}
+    private record InstalledResolver(
+            boolean sanctioned,
+            String resolverType,
+            JsonTypeInfo.Id mechanism,
+            @Nullable Map<String, Class<?>> liveIdToClass,
+            @Nullable Class<?> defaultImpl) {}
 }

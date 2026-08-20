@@ -33,6 +33,7 @@ import com.fasterxml.jackson.databind.jsontype.TypeResolverBuilder;
 import com.fasterxml.jackson.databind.jsontype.TypeSerializer;
 import com.fasterxml.jackson.databind.jsontype.impl.StdTypeResolverBuilder;
 import com.fasterxml.jackson.databind.jsontype.impl.TypeIdResolverBase;
+import com.fasterxml.jackson.databind.jsontype.impl.TypeNameIdResolver;
 import com.fasterxml.jackson.databind.module.SimpleModule;
 import com.fasterxml.jackson.databind.ser.std.StdSerializer;
 import dev.vertique.core.json.JsonMapperProfile;
@@ -60,7 +61,7 @@ import org.junit.jupiter.params.provider.MethodSource;
  * discovery, a custom type-id resolver, a polymorphism-supplying mix-in, and a trusted custom
  * serializer/deserializer pair. Every row traverses one reachable type graph once with the validator.
  *
- * <p>Ten rows isolate ten boundaries, one each:
+ * <p>Eleven rows isolate eleven boundaries, one each:
  *
  * <ol>
  *   <li>{@link #shouldTraverseMapperDerivedPrimitiveEnumContainerPropertyAndCyclicBoundaries()} — the
@@ -103,6 +104,13 @@ import org.junit.jupiter.params.provider.MethodSource;
  *       resolver gate introspects the erased raw class Jackson installs from, so a
  *       binding-discriminating introspector cannot hide an unsafe resolver behind a safe
  *       {@code List<Item>} view.</li>
+ *   <li>{@link #shouldRejectPoisonedLiveNameMapsAndDefaultImplEscapes()} — the acceptance criterion is
+ *       terminal: the class- and member-scope gates read the live {@code id → class} map Jackson's own
+ *       {@code TypeNameIdResolver} consults and the default implementation an id-less payload
+ *       instantiates, and require both a subset of the finite {@code @JsonSubTypes} allowlist. A
+ *       genuine {@code TypeNameIdResolver} carrying a poisoned map and a {@code defaultImpl} outside
+ *       the allowlist both pass identity yet are rejected on the terminal binding, while the
+ *       legitimate shape and an allowlisted {@code defaultImpl} stay accepted.</li>
  * </ol>
  */
 @DisplayName("MCP JSON profile safety — T002 contract matrix")
@@ -111,7 +119,7 @@ class McpJsonProfileSafetyTest {
     // --- Matrix ---
 
     /**
-     * The nine named rows of the T002 profile-safety matrix.
+     * The eleven named rows of the T002 profile-safety matrix.
      *
      * @return one row per boundary, named exactly as the proof contract lists it
      */
@@ -152,7 +160,10 @@ class McpJsonProfileSafetyTest {
                 new MatrixRow(
                         "shouldRejectLiveResolverIdentitySpoofsAndBindingDiscriminatedIntrospection",
                         McpJsonProfileSafetyTest
-                                ::shouldRejectLiveResolverIdentitySpoofsAndBindingDiscriminatedIntrospection));
+                                ::shouldRejectLiveResolverIdentitySpoofsAndBindingDiscriminatedIntrospection),
+                new MatrixRow(
+                        "shouldRejectPoisonedLiveNameMapsAndDefaultImplEscapes",
+                        McpJsonProfileSafetyTest::shouldRejectPoisonedLiveNameMapsAndDefaultImplEscapes));
     }
 
     @ParameterizedTest(name = "{0}")
@@ -767,6 +778,95 @@ class McpJsonProfileSafetyTest {
                 .doesNotThrowAnyException();
     }
 
+    // --- Row 11: poisoned live name maps and defaultImpl escapes ---
+
+    /**
+     * The acceptance criterion is terminal, not a proxy for it: the validator reads the exact {@code id
+     * → class} map Jackson's live {@code TypeNameIdResolver} consults and the default implementation an
+     * id-less payload instantiates, and requires both ⊆ the finite {@code @JsonSubTypes} allowlist the
+     * walk enqueues.
+     *
+     * <p>Two escapes survive every prior gate — a matching {@code SubtypeResolver} mapping and an
+     * {@code instanceof TypeNameIdResolver} identity check — yet the terminal read closes both. A
+     * builder whose {@code _customIdResolver} is a genuine {@code TypeNameIdResolver} constructed from a
+     * poisoned subtype collection binds a wire id to {@link PoisonGadget}, a base-subtype the allowlist
+     * never lists; installed on the deserialization side alone — so the serialization side does not
+     * reject first and mask the deserialization path — it is caught at class, member and container-content
+     * scope. The sharpest variant reuses the allowlisted id {@code safe} but binds it to the wrong class,
+     * which a live id-set-only check would miss and the id-to-class comparison catches. A
+     * {@code @JsonTypeInfo(defaultImpl = …)} pointing outside the allowlist is caught because an id-less
+     * payload would instantiate a class no id maps to.
+     *
+     * <p>The positive controls prove the terminal read does not over-reject: a {@code defaultImpl} that
+     * is itself the one allowlisted subtype stays accepted, and the legitimate {@code @JsonTypeInfo(use =
+     * NAME)} class and member shapes — whose live map equals their allowlist on both sides — stay
+     * accepted.
+     */
+    private static void shouldRejectPoisonedLiveNameMapsAndDefaultImplEscapes() {
+        McpJsonProfileSafetyValidator validator = new McpJsonProfileSafetyValidator();
+
+        assertThatThrownBy(() -> validator.validate(
+                        McpJsonProfileSafetyTestFixture.poisonedClassLiveMapProfile(), PoisonCarrier.class, null))
+                .as("a genuine TypeNameIdResolver whose live map binds a non-allowlisted id is rejected on the"
+                        + " class scope, terminal live map over instanceof identity")
+                .isInstanceOf(JsonProfileConfigurationException.class)
+                .hasMessageContaining("class-level name type handling whose live type id 'poison'")
+                .hasMessageContaining("PoisonGadget")
+                .hasMessageContaining("never lists");
+
+        assertThatThrownBy(() -> validator.validate(
+                        McpJsonProfileSafetyTestFixture.poisonedClassSwappedBindingProfile(),
+                        PoisonCarrier.class,
+                        null))
+                .as("a live id present in the allowlist by name but bound to the wrong class is rejected, so the"
+                        + " check compares id-to-class and not only the id set")
+                .isInstanceOf(JsonProfileConfigurationException.class)
+                .hasMessageContaining("live type id 'safe'")
+                .hasMessageContaining("PoisonGadget")
+                .hasMessageContaining("binds that id to");
+
+        assertThatThrownBy(() -> validator.validate(
+                        McpJsonProfileSafetyTestFixture.poisonedMemberLiveMapProfile(), PoisonCarrier.class, null))
+                .as("the same poison installed on a bean property is rejected on the member scope")
+                .isInstanceOf(JsonProfileConfigurationException.class)
+                .hasMessageContaining("member-level name type handling whose live type id 'poison'")
+                .hasMessageContaining("PoisonGadget");
+
+        assertThatThrownBy(() -> validator.validate(
+                        McpJsonProfileSafetyTestFixture.poisonedContentLiveMapProfile(),
+                        PoisonContentCarrier.class,
+                        null))
+                .as("the same poison installed on a container's content is rejected on the content scope")
+                .isInstanceOf(JsonProfileConfigurationException.class)
+                .hasMessageContaining("<content>")
+                .hasMessageContaining("live type id 'poison'")
+                .hasMessageContaining("PoisonGadget");
+
+        assertThatThrownBy(() -> validator.validate(
+                        McpJsonProfileSafetyTestFixture.defaultImplEscapeProfile(), DefaultEscapeCarrier.class, null))
+                .as("a @JsonTypeInfo defaultImpl outside the allowlist is rejected: an id-less payload would"
+                        + " instantiate a type the walk never proved")
+                .isInstanceOf(JsonProfileConfigurationException.class)
+                .hasMessageContaining("defaultImpl")
+                .hasMessageContaining("DefaultEscapeGadget")
+                .hasMessageContaining("id-less payload");
+
+        assertThatCode(() -> validator.validate(
+                        McpJsonProfileSafetyTestFixture.defaultImplInAllowlistProfile(),
+                        DefaultAllowedCarrier.class,
+                        null))
+                .as("a defaultImpl that is itself the one allowlisted subtype stays accepted")
+                .doesNotThrowAnyException();
+
+        assertThatCode(() -> validator.validate(
+                        McpJsonProfileSafetyTestFixture.safeClosedProfile(),
+                        ClosedShapeCarrier.class,
+                        MemberClosedAllowlistCarrier.class))
+                .as("the legitimate Id.NAME class and member shapes, whose live map equals their allowlist on"
+                        + " both sides, stay accepted under the terminal read")
+                .doesNotThrowAnyException();
+    }
+
     // --- Fixtures ---
 
     /** Framework wiring for the safety proof: the profile variants and the raw/wildcard root tokens. */
@@ -994,6 +1094,54 @@ class McpJsonProfileSafetyTest {
         static JsonMapperProfile bindingDiscriminatedProfile() {
             ObjectMapper mapper = new ObjectMapper().setAnnotationIntrospector(new BindingDiscriminatingIntrospector());
             return new StubProfile("binding-discriminated", mapper);
+        }
+
+        // --- Row 11: poisoned live name maps and defaultImpl escapes ---
+
+        /**
+         * Symmetric sanctioned metadata on both sides, poison only on the deserialization side's live
+         * class resolver: an extra id {@code poison} bound to the non-allowlisted {@link PoisonGadget}.
+         */
+        static JsonMapperProfile poisonedClassLiveMapProfile() {
+            return splitIntrospectorProfile(
+                    "poison-class",
+                    new PoisonClassIntrospector(false, "poison"),
+                    new PoisonClassIntrospector(true, "poison"));
+        }
+
+        /**
+         * The sharpest poison: the live id {@code safe} is present in the allowlist by name, but the
+         * deserialization side binds it to {@link PoisonGadget} instead of the allowlisted
+         * {@link PoisonSafe}. A live id-set-only check would miss it; the id-to-class comparison catches
+         * the swapped binding.
+         */
+        static JsonMapperProfile poisonedClassSwappedBindingProfile() {
+            return splitIntrospectorProfile(
+                    "poison-swap",
+                    new PoisonClassIntrospector(false, "safe"),
+                    new PoisonClassIntrospector(true, "safe"));
+        }
+
+        /** The same poison installed on a bean property through {@code findPropertyTypeResolver}. */
+        static JsonMapperProfile poisonedMemberLiveMapProfile() {
+            return splitIntrospectorProfile(
+                    "poison-member", new PoisonMemberIntrospector(false), new PoisonMemberIntrospector(true));
+        }
+
+        /** The same poison installed on a container's content through {@code findPropertyContentTypeResolver}. */
+        static JsonMapperProfile poisonedContentLiveMapProfile() {
+            return splitIntrospectorProfile(
+                    "poison-content", new PoisonContentIntrospector(false), new PoisonContentIntrospector(true));
+        }
+
+        /** A plain closed mapper over a base whose {@code @JsonTypeInfo} defaultImpl escapes the allowlist. */
+        static JsonMapperProfile defaultImplEscapeProfile() {
+            return new StubProfile("default-impl-escape", new ObjectMapper());
+        }
+
+        /** The positive control: a defaultImpl pointing at an allowlisted subtype stays accepted. */
+        static JsonMapperProfile defaultImplInAllowlistProfile() {
+            return new StubProfile("default-impl-allowlisted", new ObjectMapper());
         }
 
         /** A resolved {@code List<ContainerItem>} root, taken from a declared field. */
@@ -1718,6 +1866,169 @@ class McpJsonProfileSafetyTest {
             return super.findTypeResolver(config, annotated, baseType);
         }
     }
+
+    // --- Row 11 graph: poisoned live name maps and defaultImpl escapes ---
+
+    /** A plain base a custom introspector reports the sanctioned Id.NAME shape and allowlist {safe} for. */
+    private interface PoisonBase {}
+
+    /** The one allowlisted subtype the walk proves. */
+    private record PoisonSafe(String s) implements PoisonBase {}
+
+    /** A subtype outside the allowlist that a poisoned live {@code _idToType} map binds a wire id to. */
+    private record PoisonGadget(String s) implements PoisonBase {}
+
+    private record PoisonCarrier(PoisonBase value) {}
+
+    private record PoisonContentCarrier(List<PoisonBase> values) {}
+
+    /** The sanctioned Id.NAME metadata all poison introspectors report on both sides. */
+    private static final JsonTypeInfo.Value POISON_NAME_TYPE_INFO =
+            JsonTypeInfo.Value.from(NamePolymorphismMarker.class.getAnnotation(JsonTypeInfo.class));
+
+    /**
+     * Builds a poisoned but genuine {@code TypeNameIdResolver} — it passes {@code instanceof
+     * TypeNameIdResolver} — whose live {@code _idToType} map binds {@code poisonId} to the
+     * non-allowlisted {@link PoisonGadget}. Installed as a builder's {@code _customIdResolver} via
+     * {@code init(Id.NAME, resolver)}, it makes the live binding Jackson deserializes through diverge
+     * from both the sanctioned metadata and the {@code SubtypeResolver}-collected allowlist.
+     */
+    private static TypeResolverBuilder<?> poisonedNameBuilder(MapperConfig<?> config, JavaType baseType, String id) {
+        TypeNameIdResolver poisoned = TypeNameIdResolver.construct(
+                config, baseType, List.of(new NamedType(PoisonGadget.class, id)), false, true);
+        return new StdTypeResolverBuilder()
+                .init(Id.NAME, poisoned)
+                .inclusion(JsonTypeInfo.As.PROPERTY)
+                .typeProperty("kind");
+    }
+
+    /** Symmetric sanctioned metadata + allowlist {safe}; the poison flag installs the poisoned class resolver. */
+    private static final class PoisonClassIntrospector extends JacksonAnnotationIntrospector {
+
+        private final boolean poison;
+        private final String poisonId;
+
+        private PoisonClassIntrospector(boolean poison, String poisonId) {
+            this.poison = poison;
+            this.poisonId = poisonId;
+        }
+
+        @Override
+        public JsonTypeInfo.Value findPolymorphicTypeInfo(MapperConfig<?> config, Annotated annotated) {
+            if (annotated instanceof AnnotatedClass && PoisonBase.class.equals(annotated.getRawType())) {
+                return POISON_NAME_TYPE_INFO;
+            }
+            return super.findPolymorphicTypeInfo(config, annotated);
+        }
+
+        @Override
+        public List<NamedType> findSubtypes(Annotated annotated) {
+            if (PoisonBase.class.equals(annotated.getRawType())) {
+                return List.of(new NamedType(PoisonSafe.class, "safe"));
+            }
+            return super.findSubtypes(annotated);
+        }
+
+        @Override
+        public TypeResolverBuilder<?> findTypeResolver(
+                MapperConfig<?> config, AnnotatedClass annotated, JavaType baseType) {
+            if (poison && PoisonBase.class.equals(annotated.getRawType())) {
+                return poisonedNameBuilder(config, baseType, poisonId);
+            }
+            return super.findTypeResolver(config, annotated, baseType);
+        }
+    }
+
+    /** The member-scope poison, installed on a bean property through {@code findPropertyTypeResolver}. */
+    private static final class PoisonMemberIntrospector extends JacksonAnnotationIntrospector {
+
+        private final boolean poison;
+
+        private PoisonMemberIntrospector(boolean poison) {
+            this.poison = poison;
+        }
+
+        @Override
+        public JsonTypeInfo.Value findPolymorphicTypeInfo(MapperConfig<?> config, Annotated annotated) {
+            if (annotated instanceof AnnotatedMember && PoisonBase.class.equals(annotated.getRawType())) {
+                return POISON_NAME_TYPE_INFO;
+            }
+            return super.findPolymorphicTypeInfo(config, annotated);
+        }
+
+        @Override
+        public List<NamedType> findSubtypes(Annotated annotated) {
+            if (PoisonBase.class.equals(annotated.getRawType())) {
+                return List.of(new NamedType(PoisonSafe.class, "safe"));
+            }
+            return super.findSubtypes(annotated);
+        }
+
+        @Override
+        public TypeResolverBuilder<?> findPropertyTypeResolver(
+                MapperConfig<?> config, AnnotatedMember member, JavaType baseType) {
+            if (poison && baseType != null && PoisonBase.class.equals(baseType.getRawClass())) {
+                return poisonedNameBuilder(config, baseType, "poison");
+            }
+            return super.findPropertyTypeResolver(config, member, baseType);
+        }
+    }
+
+    /** The content-scope poison, installed on a container's content through {@code findPropertyContentTypeResolver}. */
+    private static final class PoisonContentIntrospector extends JacksonAnnotationIntrospector {
+
+        private final boolean poison;
+
+        private PoisonContentIntrospector(boolean poison) {
+            this.poison = poison;
+        }
+
+        @Override
+        public JsonTypeInfo.Value findPolymorphicTypeInfo(MapperConfig<?> config, Annotated annotated) {
+            if (annotated instanceof AnnotatedMember && List.class.equals(annotated.getRawType())) {
+                return POISON_NAME_TYPE_INFO;
+            }
+            return super.findPolymorphicTypeInfo(config, annotated);
+        }
+
+        @Override
+        public List<NamedType> findSubtypes(Annotated annotated) {
+            if (PoisonBase.class.equals(annotated.getRawType())) {
+                return List.of(new NamedType(PoisonSafe.class, "safe"));
+            }
+            return super.findSubtypes(annotated);
+        }
+
+        @Override
+        public TypeResolverBuilder<?> findPropertyContentTypeResolver(
+                MapperConfig<?> config, AnnotatedMember member, JavaType containerType) {
+            JavaType content = containerType == null ? null : containerType.getContentType();
+            if (poison && content != null && PoisonBase.class.equals(content.getRawClass())) {
+                return poisonedNameBuilder(config, content, "poison");
+            }
+            return super.findPropertyContentTypeResolver(config, member, containerType);
+        }
+    }
+
+    /** A closed base whose {@code defaultImpl} escapes the finite {@code @JsonSubTypes} allowlist. */
+    @JsonTypeInfo(use = Id.NAME, property = "kind", defaultImpl = DefaultEscapeGadget.class)
+    @JsonSubTypes({@JsonSubTypes.Type(value = DefaultEscapeSafe.class, name = "safe")})
+    private interface DefaultEscapeBase {}
+
+    private record DefaultEscapeSafe(String s) implements DefaultEscapeBase {}
+
+    private record DefaultEscapeGadget(String s) implements DefaultEscapeBase {}
+
+    private record DefaultEscapeCarrier(DefaultEscapeBase value) {}
+
+    /** The positive control: a {@code defaultImpl} that is itself the one allowlisted subtype stays accepted. */
+    @JsonTypeInfo(use = Id.NAME, property = "kind", defaultImpl = DefaultAllowedSafe.class)
+    @JsonSubTypes({@JsonSubTypes.Type(value = DefaultAllowedSafe.class, name = "safe")})
+    private interface DefaultAllowedBase {}
+
+    private record DefaultAllowedSafe(String s) implements DefaultAllowedBase {}
+
+    private record DefaultAllowedCarrier(DefaultAllowedBase value) {}
 
     /** One named row of the contract matrix. */
     private record MatrixRow(String rowName, Executable proof) {
