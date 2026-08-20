@@ -36,6 +36,14 @@ SPDX-License-Identifier: EUPL-1.2
         </dependency>
         <dependency>
             <groupId>dev.vertique</groupId>
+            <artifactId>vertique-mcp-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-mcp-server</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>dev.vertique</groupId>
             <artifactId>vertique-json</artifactId>
         </dependency>
         <dependency>

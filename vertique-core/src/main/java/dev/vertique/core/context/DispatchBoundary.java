@@ -16,6 +16,9 @@ package dev.vertique.core.context;
  */
 public final class DispatchBoundary {
 
+    /** Model Context Protocol server request dispatch. */
+    public static final String MCP = "mcp";
+
     /** Outgoing service-dispatch envelope built by the service client factory. */
     public static final String SERVICE_DISPATCH = "service-dispatch";
 

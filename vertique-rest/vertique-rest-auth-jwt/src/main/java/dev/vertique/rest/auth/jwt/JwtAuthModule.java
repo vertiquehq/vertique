@@ -252,6 +252,17 @@ public abstract class JwtAuthModule {
             public Handler<RoutingContext> createHandler() {
                 return schemeHandler;
             }
+
+            @Override
+            public Optional<Handler<RoutingContext>> createOptionalHandler() {
+                return Optional.of(ctx -> {
+                    if (ctx.request().getHeader("Authorization") == null) {
+                        ctx.next();
+                        return;
+                    }
+                    schemeHandler.handle(ctx);
+                });
+            }
         };
     }
 

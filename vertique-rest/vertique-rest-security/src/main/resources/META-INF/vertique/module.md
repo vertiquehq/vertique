@@ -57,6 +57,9 @@ Every request passes three separately-owned stages. Only the last two belong to 
    grants of every contributed Vert.x `AuthorizationProvider` into those claims (see
    [Vert.x authorization import](#vertx-authorization-import-opt-in)); then assembles the
    `SecurityContext`, binds it for the rest of the request, and emits `CredentialAcceptedEvent`.
+   `IdentityResolutionMiddleware.handle(...)` binds the REST invocation origin by default;
+   another transport reusing the same resolver must use `handlerFor(InvocationOrigin)` to bind its
+   explicit boundary identity instead.
 3. **Authorization** (priority 100) — evaluates the effective `SecurityPolicy` and any
    `@RequiresAction` gate, and emits exactly one `AuthorizationDecisionEvent`.
 
@@ -459,6 +462,12 @@ RouteAuthHandler bearerRouteAuth(JWTAuth jwtAuth) {
     };
 }
 ```
+
+`createHandler()` is required authentication. Implement `createOptionalHandler()` only when the
+scheme can distinguish absent credentials from invalid credentials: absent credentials continue
+without a user or evidence, while every presented invalid credential fails closed. The JWT module
+implements this capability for its bearer scheme; custom handlers remain required-only unless they
+make the same guarantee.
 
 ### `SecurityEventObserver` (multibinding)
 

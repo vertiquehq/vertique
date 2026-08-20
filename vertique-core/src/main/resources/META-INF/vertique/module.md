@@ -909,7 +909,7 @@ the record is `(Optional<T> value, List<ContextDecodeWarning> warnings)` with th
 `record (String key, String value, String reason)`.
 
 `DispatchBoundary` supplies the boundary identifiers an encoder or decoder can branch on:
-`SERVICE_DISPATCH`, `KAFKA`, `OUTBOX`, `OUTBOX_SERVICE`, `DELAYED_JOB`, `WORKFLOW`, `CAMEL`.
+`MCP`, `SERVICE_DISPATCH`, `KAFKA`, `OUTBOX`, `OUTBOX_SERVICE`, `DELAYED_JOB`, `WORKFLOW`, `CAMEL`.
 
 ---
 

@@ -1,0 +1,159 @@
+// SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
+// SPDX-License-Identifier: EUPL-1.2
+
+package dev.vertique.mcp.server;
+
+import dev.vertique.mcp.lifecycle.McpErrorType;
+import dev.vertique.mcp.lifecycle.McpMethod;
+import dev.vertique.mcp.lifecycle.McpRequestCompletedListener;
+import dev.vertique.mcp.lifecycle.McpRequestLifecycleObserver;
+import dev.vertique.mcp.lifecycle.McpRequestTerminalEvent;
+import dev.vertique.mcp.lifecycle.McpTransportOutcome;
+import io.vertx.core.buffer.Buffer;
+import io.vertx.core.http.HttpMethod;
+import io.vertx.core.json.JsonObject;
+import io.vertx.ext.web.RoutingContext;
+import jakarta.inject.Inject;
+import java.time.Instant;
+import java.util.Set;
+
+/** Dispatches the bounded T001 discovery endpoint without exposing tool registration or invocation. */
+final class McpRequestDispatcher {
+    private static final String DISCOVER_METHOD = "server/discover";
+    private static final String COMPLETION_COORDINATOR_KEY =
+            McpRequestDispatcher.class.getName() + ".completionCoordinator";
+    private final McpServerConfig config;
+    private final Set<McpRequestLifecycleObserver> lifecycleObservers;
+    private final Set<McpRequestCompletedListener> completedListeners;
+
+    @Inject
+    McpRequestDispatcher(
+            McpServerConfig config,
+            Set<McpRequestLifecycleObserver> lifecycleObservers,
+            Set<McpRequestCompletedListener> completedListeners) {
+        this.config = config;
+        this.lifecycleObservers = Set.copyOf(lifecycleObservers);
+        this.completedListeners = Set.copyOf(completedListeners);
+    }
+
+    /** Opens neutral lifecycle observation before authentication and identity establishment. */
+    void begin(RoutingContext context) {
+        Instant startedAt = Instant.now();
+        context.put(
+                COMPLETION_COORDINATOR_KEY,
+                new McpCompletionCoordinator(
+                        context.vertx().getOrCreateContext(), lifecycleObservers, completedListeners, startedAt));
+        context.put(McpRequestDispatcher.class.getName() + ".startedAt", startedAt);
+        if (context.request().method() != HttpMethod.POST) {
+            reject(context, McpMethod.OTHER, McpErrorType.HTTP, 405);
+            return;
+        }
+        context.next();
+    }
+
+    /** Handles one admitted MCP HTTP request. */
+    void dispatch(RoutingContext context) {
+        JsonObject request;
+        try {
+            request = context.body().asJsonObject();
+        } catch (RuntimeException exception) {
+            reject(context, McpMethod.OTHER, McpErrorType.PROTOCOL, 400);
+            return;
+        }
+        if (!DISCOVER_METHOD.equals(request.getString("method"))) {
+            reject(context, McpMethod.OTHER, McpErrorType.PROTOCOL, 404);
+            return;
+        }
+        JsonObject serverInfo =
+                new JsonObject().put("name", config.serverName()).put("version", config.serverVersion());
+        JsonObject result = new JsonObject()
+                .put("protocolVersion", "2026-07-28")
+                .put("capabilities", new JsonObject())
+                .put("serverInfo", serverInfo)
+                .put("_meta", new JsonObject().put("io.modelcontextprotocol/serverInfo", serverInfo));
+        JsonObject response =
+                new JsonObject().put("jsonrpc", "2.0").put("result", result).put("id", request.getValue("id"));
+        context.response().putHeader("content-type", "application/json").putHeader("x-mcp-dispatched", "true");
+        write(
+                context,
+                200,
+                response.encode(),
+                McpRequestTerminalEvent.success(
+                        startedAt(context),
+                        Instant.now(),
+                        McpMethod.SERVER_DISCOVER,
+                        McpRequestTerminalEvent.UNKNOWN_TOOL_NAME,
+                        200,
+                        null,
+                        null,
+                        null));
+    }
+
+    static void completeAuthenticationRejection(RoutingContext context) {
+        int status = context.statusCode();
+        reject(context, McpMethod.OTHER, McpErrorType.AUTHENTICATION, status >= 400 ? status : 401);
+    }
+
+    /** Completes failures from optional authentication and identity establishment without leakage. */
+    void handleFailure(RoutingContext context) {
+        if (context.response().ended()) {
+            return;
+        }
+        int status = context.statusCode();
+        if (status < 400) {
+            status = 500;
+        }
+        if (status == 401 || status == 403) {
+            reject(context, McpMethod.OTHER, McpErrorType.AUTHENTICATION, status);
+            return;
+        }
+        reject(context, McpMethod.OTHER, McpErrorType.INTERNAL, status);
+    }
+
+    private static void reject(RoutingContext context, McpMethod method, McpErrorType errorType, int status) {
+        write(
+                context,
+                status,
+                null,
+                McpRequestTerminalEvent.rejected(
+                        startedAt(context),
+                        Instant.now(),
+                        method,
+                        McpRequestTerminalEvent.UNKNOWN_TOOL_NAME,
+                        errorType,
+                        status,
+                        null,
+                        null,
+                        null,
+                        null));
+    }
+
+    private static Instant startedAt(RoutingContext context) {
+        Instant startedAt = context.get(McpRequestDispatcher.class.getName() + ".startedAt");
+        return startedAt == null ? Instant.now() : startedAt;
+    }
+
+    private static void write(RoutingContext context, int status, String body, McpRequestTerminalEvent terminal) {
+        context.response().setStatusCode(status);
+        if (body == null) {
+            context.response().end().onComplete(result -> complete(context, terminal, result.succeeded()));
+            return;
+        }
+        // end(body) sets Content-Length, so the response is framed by length instead of relying on
+        // connection-close framing the way a separate write() + end() pair does.
+        context.response()
+                .end(Buffer.buffer(body))
+                .onComplete(result -> complete(context, terminal, result.succeeded()));
+    }
+
+    private static void complete(RoutingContext context, McpRequestTerminalEvent terminal, boolean written) {
+        McpCompletionCoordinator coordinator = context.get(COMPLETION_COORDINATOR_KEY);
+        if (coordinator != null) {
+            coordinator.complete(
+                    terminal,
+                    written ? McpTransportOutcome.WRITTEN : McpTransportOutcome.WRITE_FAILED,
+                    written,
+                    Instant.now());
+        }
+    }
+}
