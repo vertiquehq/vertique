@@ -485,11 +485,11 @@ final class McpRequestDispatcher {
      * byte count would exceed the configured cap, so an over-cap response is classified before its
      * full byte array is ever materialized.
      */
-    private static final class CappedOutputStream extends OutputStream {
+    static final class CappedOutputStream extends OutputStream {
         private final int cap;
         private final java.io.ByteArrayOutputStream buffer = new java.io.ByteArrayOutputStream();
 
-        private CappedOutputStream(int cap) {
+        CappedOutputStream(int cap) {
             this.cap = cap;
         }
 
@@ -509,14 +509,14 @@ final class McpRequestDispatcher {
             buffer.write(b, off, len);
         }
 
-        private byte[] toByteArray() {
+        byte[] toByteArray() {
             return buffer.toByteArray();
         }
     }
 
     /** Signals that a response exceeded {@code mcp.output.maxBytes} while being serialized. */
-    private static final class OutputCapExceededException extends RuntimeException {
-        private OutputCapExceededException() {
+    static final class OutputCapExceededException extends RuntimeException {
+        OutputCapExceededException() {
             super("MCP response exceeded mcp.output.maxBytes");
         }
     }
