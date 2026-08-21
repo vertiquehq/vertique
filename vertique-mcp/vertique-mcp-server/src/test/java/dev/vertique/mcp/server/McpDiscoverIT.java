@@ -41,6 +41,7 @@ import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.http.HttpClient;
 import io.vertx.core.http.HttpServer;
+import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.auth.User;
 import io.vertx.ext.web.Router;
@@ -108,6 +109,10 @@ public class McpDiscoverIT {
             "shouldFailClosedOnUserOnlyOrEvidenceOnlyPostAuthenticationState";
     private static final String AMBIENT_USER_NO_SCHEME_ROW =
             "shouldRemainCanonicalAnonymousDespiteAmbientRoutingUserWhenNoScheme";
+    private static final String PRIVILEGED_AMBIENT_USER_NO_SCHEME_ROW =
+            "shouldStripPrivilegedAmbientUserClaimsFromCanonicalAnonymousWhenNoScheme";
+    private static final String AMBIENT_EVIDENCE_NO_SCHEME_ROW =
+            "shouldStripAmbientEvidenceFromCanonicalAnonymousWhenNoScheme";
 
     private static final String SERVER_NAME = "vertique-test";
     private static final String SERVER_VERSION = "1.0";
@@ -132,7 +137,9 @@ public class McpDiscoverIT {
                 IGNORE_HEADER_NO_SCHEME_ROW,
                 PREEXISTING_USER_ROW,
                 POST_AUTH_INCONSISTENT_ROW,
-                AMBIENT_USER_NO_SCHEME_ROW);
+                AMBIENT_USER_NO_SCHEME_ROW,
+                PRIVILEGED_AMBIENT_USER_NO_SCHEME_ROW,
+                AMBIENT_EVIDENCE_NO_SCHEME_ROW);
     }
 
     /**
@@ -282,6 +289,40 @@ public class McpDiscoverIT {
                 assertDiscoverResult(response);
                 assertBoundIdentity(PrincipalType.ANONYMOUS, "anonymous", AuthMethodKind.NONE);
             }
+            case PRIVILEGED_AMBIENT_USER_NO_SCHEME_ROW -> {
+                startServer(McpDiscoverITFixture.options()
+                        .injectAmbientUser(true)
+                        .ambientUserPrincipal(
+                                new JsonObject().put("sub", "ambient").put("roles", new JsonArray().add("admin"))));
+
+                // Given: a *privileged* ambient routing user (roles=[admin]) with no scheme configured.
+                // §4.7 stage 3 requires binding a canonical anonymous context without consulting the
+                // ambient Router user, so its authorization claims must NOT bleed into the bound
+                // identity (finding C1 — CWE-863). The status/actor assertions already pass because the
+                // resolver derives anonymous from empty evidence; the decisive assertion is that the
+                // bound authorization is empty despite the privileged ambient principal.
+                HttpResponse<Buffer> response = await(post().sendBuffer(discoverBody()));
+
+                assertThat(response.statusCode()).isEqualTo(200);
+                assertDiscoverResult(response);
+                assertBoundIdentity(PrincipalType.ANONYMOUS, "anonymous", AuthMethodKind.NONE);
+                assertBoundAuthorizationEmpty();
+            }
+            case AMBIENT_EVIDENCE_NO_SCHEME_ROW -> {
+                startServer(McpDiscoverITFixture.options().injectAmbientEvidence(true));
+
+                // Given: ambient authentication evidence (a non-NONE JWT method carrying sub) appended
+                // before the mount, with no scheme configured. §4.7 stage 3 requires the mount to bind a
+                // canonical anonymous context without consulting ambient evidence: the resolver must see
+                // an empty evidence list, so the bound identity is anonymous and the primary method NONE
+                // rather than the leaked JWT method/subject (finding C1 — CWE-863).
+                HttpResponse<Buffer> response = await(post().sendBuffer(discoverBody()));
+
+                assertThat(response.statusCode()).isEqualTo(200);
+                assertDiscoverResult(response);
+                assertBoundIdentity(PrincipalType.ANONYMOUS, "anonymous", AuthMethodKind.NONE);
+                assertBoundAuthorizationEmpty();
+            }
             default -> fail("unknown T004 discovery row: " + row);
         }
     }
@@ -312,6 +353,14 @@ public class McpDiscoverIT {
         assertThat(bound.identity().actor().type()).isEqualTo(actorType);
         assertThat(bound.identity().actor().id()).isEqualTo(actorId);
         assertThat(bound.authentication().primaryMethod().normalizedKind()).isEqualTo(methodKind);
+    }
+
+    private void assertBoundAuthorizationEmpty() {
+        SecurityContext bound = fixture.boundSecurityContext();
+        assertThat(bound).as("identity resolution must bind a context").isNotNull();
+        assertThat(bound.authorization().claims())
+                .as("ambient authorization claims must not leak into the canonical-anonymous identity")
+                .isEmpty();
     }
 
     private static void assertEstablishedSecurity(
@@ -378,9 +427,25 @@ public class McpDiscoverIT {
             Router router = Router.router(vertx);
             router.route().handler(new RequestContextLifecycle());
             if (options.injectAmbientUser) {
+                JsonObject principal = options.ambientUserPrincipal != null
+                        ? options.ambientUserPrincipal
+                        : new JsonObject().put("sub", "ambient");
                 router.route().handler(context -> {
-                    ((UserContextInternal) context.userContext())
-                            .setUser(User.create(new JsonObject().put("sub", "ambient")));
+                    ((UserContextInternal) context.userContext()).setUser(User.create(principal));
+                    context.next();
+                });
+            }
+            if (options.injectAmbientEvidence) {
+                router.route().handler(context -> {
+                    RestAuthenticationEvidence.append(
+                            context,
+                            new AuthenticationEvidence(
+                                    DefaultAuthMethod.jwt(),
+                                    Optional.of("ambient-evidence"),
+                                    Instant.now(),
+                                    Optional.empty(),
+                                    new CustomVerificationSource("test", Map.of()),
+                                    Map.of("sub", "ambient-evidence")));
                     context.next();
                 });
             }
@@ -394,7 +459,7 @@ public class McpDiscoverIT {
         }
 
         static Options options() {
-            return new Options(null, Set.of(), false);
+            return new Options(null, Set.of(), false, null, false);
         }
 
         HttpServer server() {
@@ -436,17 +501,31 @@ public class McpDiscoverIT {
         }
 
         /** Immutable per-row fixture configuration. */
-        private record Options(String scheme, Set<RouteAuthHandler> handlers, boolean injectAmbientUser) {
+        private record Options(
+                String scheme,
+                Set<RouteAuthHandler> handlers,
+                boolean injectAmbientUser,
+                JsonObject ambientUserPrincipal,
+                boolean injectAmbientEvidence) {
             Options scheme(String scheme) {
-                return new Options(scheme, handlers, injectAmbientUser);
+                return new Options(scheme, handlers, injectAmbientUser, ambientUserPrincipal, injectAmbientEvidence);
             }
 
             Options handler(RouteAuthHandler handler) {
-                return new Options(scheme, Set.of(handler), injectAmbientUser);
+                return new Options(
+                        scheme, Set.of(handler), injectAmbientUser, ambientUserPrincipal, injectAmbientEvidence);
             }
 
             Options injectAmbientUser(boolean injectAmbientUser) {
-                return new Options(scheme, handlers, injectAmbientUser);
+                return new Options(scheme, handlers, injectAmbientUser, ambientUserPrincipal, injectAmbientEvidence);
+            }
+
+            Options ambientUserPrincipal(JsonObject ambientUserPrincipal) {
+                return new Options(scheme, handlers, injectAmbientUser, ambientUserPrincipal, injectAmbientEvidence);
+            }
+
+            Options injectAmbientEvidence(boolean injectAmbientEvidence) {
+                return new Options(scheme, handlers, injectAmbientUser, ambientUserPrincipal, injectAmbientEvidence);
             }
         }
     }

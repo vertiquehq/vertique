@@ -73,6 +73,8 @@ class RestAuthenticationEvidenceTest {
             backingMap.put(inv.getArgument(0, String.class), inv.getArgument(1));
             return ctx;
         });
+        // remove(String) → delete from backing map, return the previous value
+        when(ctx.remove(anyString())).thenAnswer(inv -> backingMap.remove(inv.getArgument(0, String.class)));
         return ctx;
     }
 
@@ -172,6 +174,50 @@ class RestAuthenticationEvidenceTest {
     }
 
     @Nested
+    @DisplayName("clear — pre-authentication reset")
+    class Clear {
+
+        private RoutingContext ctx;
+
+        @BeforeEach
+        void setup() {
+            ctx = stubContext(new HashMap<>());
+        }
+
+        @Test
+        @DisplayName("clear empties a previously appended list")
+        void clearEmptiesAppendedList() {
+            RestAuthenticationEvidence.append(ctx, EVIDENCE_1);
+            RestAuthenticationEvidence.append(ctx, EVIDENCE_2);
+            assertEquals(2, RestAuthenticationEvidence.get(ctx).size());
+
+            RestAuthenticationEvidence.clear(ctx);
+
+            assertTrue(RestAuthenticationEvidence.get(ctx).isEmpty());
+        }
+
+        @Test
+        @DisplayName("clear on an empty context is a no-op that leaves get empty")
+        void clearOnEmptyContextIsNoOp() {
+            RestAuthenticationEvidence.clear(ctx);
+            assertTrue(RestAuthenticationEvidence.get(ctx).isEmpty());
+        }
+
+        @Test
+        @DisplayName("append after clear starts a fresh collector")
+        void appendAfterClearStartsFresh() {
+            RestAuthenticationEvidence.append(ctx, EVIDENCE_1);
+            RestAuthenticationEvidence.clear(ctx);
+
+            RestAuthenticationEvidence.append(ctx, EVIDENCE_2);
+
+            List<AuthenticationEvidence> result = RestAuthenticationEvidence.get(ctx);
+            assertEquals(1, result.size());
+            assertSame(EVIDENCE_2, result.get(0));
+        }
+    }
+
+    @Nested
     @DisplayName("null argument rejection")
     class NullArguments {
 
@@ -203,6 +249,14 @@ class RestAuthenticationEvidenceTest {
         void getNullContextThrowsNpe() {
             NullPointerException ex =
                     assertThrows(NullPointerException.class, () -> RestAuthenticationEvidence.get(null));
+            assertEquals("ctx", ex.getMessage());
+        }
+
+        @Test
+        @DisplayName("clear(null) throws NullPointerException with message 'ctx'")
+        void clearNullContextThrowsNpe() {
+            NullPointerException ex =
+                    assertThrows(NullPointerException.class, () -> RestAuthenticationEvidence.clear(null));
             assertEquals("ctx", ex.getMessage());
         }
     }

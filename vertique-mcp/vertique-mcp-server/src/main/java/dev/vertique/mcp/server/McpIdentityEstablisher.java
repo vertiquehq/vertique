@@ -10,6 +10,7 @@ import dev.vertique.rest.security.RestAuthenticationEvidence;
 import dev.vertique.security.authz.InvocationOrigin;
 import io.vertx.core.Handler;
 import io.vertx.ext.web.RoutingContext;
+import io.vertx.ext.web.impl.UserContextInternal;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -42,15 +43,21 @@ final class McpIdentityEstablisher {
      * <p>When a scheme is configured (§4.7 stage 3), only clean routing authentication state is
      * admitted: a pre-existing {@code RoutingContext.user()} or authentication evidence fails closed
      * before the selected scheme runs. When no scheme is configured, the mount binds an MCP-owned
-     * canonical anonymous context <em>without consulting</em> ambient Router user/evidence, so an
-     * ambient routing user is not a rejection — it is simply ignored.
+     * canonical anonymous context <em>without consulting</em> ambient Router user/evidence: it
+     * actively clears any ambient {@code RoutingContext.user()} and any ambient authentication
+     * evidence before advancing, so the whole downstream pipeline sees a clean canonical-anonymous
+     * context and no ambient authorization claims or evidence method can leak into the bound identity.
      *
      * @param context the request context inspected at the MCP trust boundary
      */
     void admit(RoutingContext context) {
-        if (schemeConfigured && !hasCleanAuthenticationState(context)) {
-            reject(context);
-            return;
+        if (schemeConfigured) {
+            if (!hasCleanAuthenticationState(context)) {
+                reject(context);
+                return;
+            }
+        } else {
+            clearAmbientAuthenticationState(context);
         }
         context.next();
     }
@@ -108,6 +115,15 @@ final class McpIdentityEstablisher {
 
     private static boolean hasCleanAuthenticationState(RoutingContext context) {
         return context.user() == null && RestAuthenticationEvidence.get(context).isEmpty();
+    }
+
+    /**
+     * Strips any ambient {@code RoutingContext.user()} and accumulated authentication evidence so the
+     * no-scheme canonical-anonymous path binds an identity without consulting ambient Router state.
+     */
+    private static void clearAmbientAuthenticationState(RoutingContext context) {
+        ((UserContextInternal) context.userContext()).setUser(null);
+        RestAuthenticationEvidence.clear(context);
     }
 
     private static void reject(RoutingContext context) {
