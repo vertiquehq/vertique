@@ -71,6 +71,8 @@ import org.junit.jupiter.params.provider.MethodSource;
  * request itself.
  */
 class McpLifecycleObserverCompositionTest {
+    private static final String PROTOCOL_VERSION = "2026-07-28";
+
     private Vertx vertx;
     private HttpServer server;
     private HttpClient rawClient;
@@ -254,13 +256,31 @@ class McpLifecycleObserverCompositionTest {
     }
 
     private JsonObject discover(int port) throws Exception {
-        JsonObject request = new JsonObject().put("jsonrpc", "2.0").put("id", 1).put("method", "server/discover");
+        JsonObject request = new JsonObject()
+                .put("jsonrpc", "2.0")
+                .put("id", 1)
+                .put("method", "server/discover")
+                .put("params", discoverParams());
         rawClient = vertx.createHttpClient();
         client = WebClient.wrap(rawClient);
         var response = await(client.post(port, "127.0.0.1", "/mcp/")
                 .putHeader("content-type", "application/json")
                 .sendBuffer(request.toBuffer()));
         return response.bodyAsJsonObject();
+    }
+
+    /**
+     * Builds a schema-valid {@code params._meta} for a {@code server/discover} frame, carrying the
+     * candidate protocol version and an empty client-capabilities object — both members are required
+     * by the vendored {@code RequestMetaObject} definition of {@code mcp/schema/2026-07-28}.
+     */
+    private static JsonObject discoverParams() {
+        return new JsonObject()
+                .put(
+                        "_meta",
+                        new JsonObject()
+                                .put("io.modelcontextprotocol/protocolVersion", PROTOCOL_VERSION)
+                                .put("io.modelcontextprotocol/clientCapabilities", new JsonObject()));
     }
 
     /** Posts a multipart body carrying one file part, which the MCP contract never accepts. */

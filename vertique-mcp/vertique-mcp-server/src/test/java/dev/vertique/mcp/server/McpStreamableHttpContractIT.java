@@ -80,6 +80,7 @@ public class McpStreamableHttpContractIT {
     private static final String DISALLOWED_ORIGIN = "https://evil.example";
     private static final String SERVER_NAME = "vertique-test";
     private static final String SERVER_VERSION = "1.0";
+    private static final String PROTOCOL_VERSION = "2026-07-28";
 
     private final Vertx vertx = Vertx.vertx();
 
@@ -129,8 +130,11 @@ public class McpStreamableHttpContractIT {
         server = fixture.server();
         rawClient = vertx.createHttpClient();
         client = WebClient.wrap(rawClient);
-        JsonObject discover =
-                new JsonObject().put("jsonrpc", "2.0").put("id", 1).put("method", "server/discover");
+        JsonObject discover = new JsonObject()
+                .put("jsonrpc", "2.0")
+                .put("id", 1)
+                .put("method", "server/discover")
+                .put("params", discoverParams());
 
         switch (row) {
             case VALID_POST_NO_ORIGIN_ROW -> {
@@ -225,6 +229,20 @@ public class McpStreamableHttpContractIT {
     private HttpRequest<Buffer> post() {
         return client.post(fixture.port(), "127.0.0.1", McpContractFixture.REQUEST_PATH)
                 .putHeader("content-type", "application/json");
+    }
+
+    /**
+     * Builds a schema-valid {@code params._meta} for a {@code server/discover} frame, carrying the
+     * candidate protocol version and an empty client-capabilities object — both members are required
+     * by the vendored {@code RequestMetaObject} definition of {@code mcp/schema/2026-07-28}.
+     */
+    private static JsonObject discoverParams() {
+        return new JsonObject()
+                .put(
+                        "_meta",
+                        new JsonObject()
+                                .put("io.modelcontextprotocol/protocolVersion", PROTOCOL_VERSION)
+                                .put("io.modelcontextprotocol/clientCapabilities", new JsonObject()));
     }
 
     private void assertNoToolInvoked() {

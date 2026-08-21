@@ -61,6 +61,7 @@ public class McpStatelessMultiInstanceIT {
     private static final String INSTANCE_A = "instance-a";
     private static final String INSTANCE_B = "instance-b";
     private static final String SERVER_VERSION = "1.0";
+    private static final String PROTOCOL_VERSION = "2026-07-28";
 
     private final Vertx vertx = Vertx.vertx();
 
@@ -129,10 +130,28 @@ public class McpStatelessMultiInstanceIT {
     }
 
     private HttpResponse<Buffer> discover(int port) throws Exception {
-        JsonObject request = new JsonObject().put("jsonrpc", "2.0").put("id", 1).put("method", "server/discover");
+        JsonObject request = new JsonObject()
+                .put("jsonrpc", "2.0")
+                .put("id", 1)
+                .put("method", "server/discover")
+                .put("params", discoverParams());
         return await(client.post(port, "127.0.0.1", McpStatelessMultiInstanceITFixture.REQUEST_PATH)
                 .putHeader("content-type", "application/json")
                 .sendBuffer(request.toBuffer()));
+    }
+
+    /**
+     * Builds a schema-valid {@code params._meta} for a {@code server/discover} frame, carrying the
+     * candidate protocol version and an empty client-capabilities object — both members are required
+     * by the vendored {@code RequestMetaObject} definition of {@code mcp/schema/2026-07-28}.
+     */
+    private static JsonObject discoverParams() {
+        return new JsonObject()
+                .put(
+                        "_meta",
+                        new JsonObject()
+                                .put("io.modelcontextprotocol/protocolVersion", PROTOCOL_VERSION)
+                                .put("io.modelcontextprotocol/clientCapabilities", new JsonObject()));
     }
 
     private boolean discoverSucceeds(int port, String expectedName) {

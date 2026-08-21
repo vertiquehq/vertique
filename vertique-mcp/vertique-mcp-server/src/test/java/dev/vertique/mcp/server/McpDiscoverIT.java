@@ -344,7 +344,22 @@ public class McpDiscoverIT {
                 .put("jsonrpc", "2.0")
                 .put("id", 1)
                 .put("method", "server/discover")
+                .put("params", discoverParams())
                 .toBuffer();
+    }
+
+    /**
+     * Builds a schema-valid {@code params._meta} for a {@code server/discover} frame, carrying the
+     * candidate protocol version and an empty client-capabilities object — both members are required
+     * by the vendored {@code RequestMetaObject} definition of {@code mcp/schema/2026-07-28}.
+     */
+    private static JsonObject discoverParams() {
+        return new JsonObject()
+                .put(
+                        "_meta",
+                        new JsonObject()
+                                .put("io.modelcontextprotocol/protocolVersion", PROTOCOL_VERSION)
+                                .put("io.modelcontextprotocol/clientCapabilities", new JsonObject()));
     }
 
     private void assertBoundIdentity(PrincipalType actorType, String actorId, AuthMethodKind methodKind) {

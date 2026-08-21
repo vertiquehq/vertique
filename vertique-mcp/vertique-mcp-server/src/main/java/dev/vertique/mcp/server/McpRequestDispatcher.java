@@ -76,7 +76,6 @@ final class McpRequestDispatcher {
     private final Set<McpRequestLifecycleObserver> lifecycleObservers;
     private final Set<McpRequestCompletedListener> completedListeners;
     private final McpProtocolCodec codec;
-    private final McpStrictJsonReader reader;
 
     @Inject
     McpRequestDispatcher(
@@ -89,7 +88,6 @@ final class McpRequestDispatcher {
         this.lifecycleObservers = Set.copyOf(lifecycleObservers);
         this.completedListeners = Set.copyOf(completedListeners);
         this.codec = new McpProtocolCodec(config);
-        this.reader = new McpStrictJsonReader(config);
     }
 
     /**
@@ -128,62 +126,24 @@ final class McpRequestDispatcher {
      *
      * <p>Runs after identity establishment, so every terminal event it creates carries the
      * established {@link SecurityContextSnapshot} — including the canonical anonymous one. The request
-     * body is decoded through the strict codec: a malformed frame, invalid envelope, or unknown method
-     * is classified to its final-spec JSON-RPC code and bounded HTTP status. The walking-skeleton
-     * {@code server/discover} still serves a frame that carries no {@code params}; params-content
-     * validation is a later slice, and the frozen discovery proofs send none.
+     * body is decoded exactly once through the strict codec, the single envelope authority: a
+     * validated {@code server/discover} frame is served, and every other outcome — a malformed frame,
+     * invalid envelope (including a {@code server/discover} that omits the schema-required
+     * {@code params}, which carries the protocol version and client capabilities), or unknown method
+     * — is classified to its final-spec JSON-RPC code and bounded HTTP status. Discovery is routed
+     * through the same codec decode as every other method, so it requires {@code params} exactly like
+     * the rest of the supported set.
      */
     void dispatch(RoutingContext context) {
         SecurityContextSnapshot security = establishedSecurity();
         byte[] body = bodyBytes(context);
-        // The walking skeleton serves server/discover whether or not it carries params — the frozen
-        // discovery proofs send none, and params-content validation is a later slice. Detect exactly
-        // that shape through the framework strict reader; every other frame is classified by the codec
-        // so the emitted HTTP status and JSON-RPC body code always agree.
-        JsonNode discovery = paramlessDiscoveryEnvelope(body);
-        if (discovery != null) {
-            writeDiscovery(context, discovery, security);
+        McpProtocolCodec.Decoded decoded = codec.decodeEnvelope(body);
+        if (!decoded.isError()
+                && DISCOVER_METHOD.equals(decoded.envelope().get("method").asText())) {
+            writeDiscovery(context, decoded.envelope(), security);
             return;
         }
-        emitProtocolError(context, body, security);
-    }
-
-    /**
-     * Detects an otherwise-valid {@code server/discover} envelope, with or without params. Returns the
-     * node when the frame is a strict-decodable object with {@code jsonrpc} {@code "2.0"}, a usable
-     * string/integer id, the discovery method, and (when present) an object params, and {@code null}
-     * for every other shape — so the codec's classification is preserved for a genuine failure.
-     *
-     * @param body the raw UTF-8 request bytes
-     * @return the discovery envelope node, or {@code null} when the frame is not a discovery frame
-     */
-    @Nullable
-    private JsonNode paramlessDiscoveryEnvelope(byte[] body) {
-        McpStrictJsonReader.Result parsed = reader.read(body);
-        if (parsed.isRejected()) {
-            return null;
-        }
-        JsonNode node = parsed.value();
-        if (node == null || !node.isObject()) {
-            return null;
-        }
-        JsonNode version = node.get("jsonrpc");
-        if (version == null || !version.isTextual() || !"2.0".equals(version.asText())) {
-            return null;
-        }
-        JsonNode id = node.get("id");
-        if (id == null || !(id.isTextual() || id.isIntegralNumber())) {
-            return null;
-        }
-        JsonNode method = node.get("method");
-        if (method == null || !method.isTextual() || !DISCOVER_METHOD.equals(method.asText())) {
-            return null;
-        }
-        JsonNode params = node.get("params");
-        if (params != null && !params.isObject()) {
-            return null;
-        }
-        return node;
+        emitProtocolError(context, decoded, body, security);
     }
 
     /**
@@ -359,11 +319,16 @@ final class McpRequestDispatcher {
      * arrives in T006/T007.
      *
      * @param context the request context
-     * @param body the raw request bytes the codec classifies for the error id and code
+     * @param decoded the already-decoded envelope this dispatch produced, reused so the body is
+     *     decoded only once on the dispatch path
+     * @param body the raw request bytes the codec re-analyzes for the error id and code
      * @param security the established security snapshot, or {@code null}
      */
-    private void emitProtocolError(RoutingContext context, byte[] body, @Nullable SecurityContextSnapshot security) {
-        McpProtocolCodec.Decoded decoded = codec.decodeEnvelope(body);
+    private void emitProtocolError(
+            RoutingContext context,
+            McpProtocolCodec.Decoded decoded,
+            byte[] body,
+            @Nullable SecurityContextSnapshot security) {
         int code = decoded.isError() ? decoded.error().code() : INTERNAL_ERROR;
         int status = httpStatusFor(code);
         McpErrorType errorType = code == INTERNAL_ERROR ? McpErrorType.INTERNAL : McpErrorType.PROTOCOL;

@@ -40,10 +40,14 @@ request to any instance. Every request is admitted through the fixed pipeline be
 - **Accept / content-type** — discovery always answers `application/json`; a client that accepts
   `application/json`, `text/event-stream`, or both receives the JSON discovery result.
 
-Once a JSON-RPC envelope is decoded, protocol failures use the final-spec JSON-RPC codes and their
-mapped HTTP status: a malformed frame is `-32700` (HTTP `400`), an invalid envelope is `-32600`
-(HTTP `400`), and an unknown method is `-32601` (HTTP `404`). None of these admission or protocol
-failures invokes a tool.
+Every admitted body is decoded exactly once through the strict codec — the single envelope
+authority — and `server/discover` is routed on that decoded result like every other method, so it
+requires a schema-valid `params` (carrying the protocol version and client capabilities) just as the
+rest of the supported set does. A `server/discover` frame that omits `params` is an invalid envelope,
+not an admitted discovery result. Protocol failures use the final-spec JSON-RPC codes and their
+mapped HTTP status: a malformed frame is `-32700` (HTTP `400`), an invalid envelope — including a
+paramless `server/discover` — is `-32600` (HTTP `400`), and an unknown method is `-32601`
+(HTTP `404`). None of these admission or protocol failures invokes a tool.
 
 ## Request lifecycle and exactly-once settlement
 

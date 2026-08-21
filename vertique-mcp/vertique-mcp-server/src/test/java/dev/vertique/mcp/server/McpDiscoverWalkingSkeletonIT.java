@@ -90,6 +90,7 @@ public class McpDiscoverWalkingSkeletonIT {
     private static final String MULTIPART_UPLOAD_ROW = "shouldRejectMultipartUploadWithoutPersistingAnyFile";
     private static final String NULL_JSON_BODY_ROW = "shouldRejectLiteralNullJsonBodyAsProtocolFailure";
     private static final String BODYLESS_REQUEST_ROW = "shouldRejectBodylessPostAsProtocolFailure";
+    private static final String PARAMLESS_DISCOVER_ROW = "shouldRejectParamlessDiscoverAsInvalidRequest";
 
     /**
      * Vert.x's default {@code BodyHandler} upload directory, resolved against the surefire/failsafe
@@ -121,7 +122,8 @@ public class McpDiscoverWalkingSkeletonIT {
                 DENIED_CREDENTIALS_ROW,
                 MULTIPART_UPLOAD_ROW,
                 NULL_JSON_BODY_ROW,
-                BODYLESS_REQUEST_ROW);
+                BODYLESS_REQUEST_ROW,
+                PARAMLESS_DISCOVER_ROW);
     }
 
     /**
@@ -152,8 +154,11 @@ public class McpDiscoverWalkingSkeletonIT {
         server = fixture.server();
         rawClient = vertx.createHttpClient();
         client = WebClient.wrap(rawClient);
-        JsonObject discoverRequest =
-                new JsonObject().put("jsonrpc", "2.0").put("id", 1).put("method", "server/discover");
+        JsonObject discoverRequest = new JsonObject()
+                .put("jsonrpc", "2.0")
+                .put("id", 1)
+                .put("method", "server/discover")
+                .put("params", discoverParams());
         HttpRequest<Buffer> request = client.post(fixture.port(), "127.0.0.1", McpWalkingSkeletonFixture.REQUEST_PATH)
                 .putHeader("content-type", "application/json");
 
@@ -256,12 +261,47 @@ public class McpDiscoverWalkingSkeletonIT {
                 assertThat(completed.terminal().httpStatus()).isEqualTo(400);
                 assertThat(completed.terminal().errorType()).isEqualTo(McpErrorType.PROTOCOL);
             }
+            case PARAMLESS_DISCOVER_ROW -> {
+                // Given: a server/discover frame that omits the schema-required params (protocol
+                // version + client capabilities). Discovery now flows through the one strict-codec
+                // envelope authority, so a paramless frame is an -32600 Invalid Request at HTTP 400 —
+                // it is no longer admitted as a discovery result. Against pre-fix HEAD this returned
+                // 200, so this row is the inverse proof guarding the enforcement.
+                JsonObject paramlessDiscover =
+                        new JsonObject().put("jsonrpc", "2.0").put("id", 1).put("method", "server/discover");
+                HttpResponse<Buffer> response = await(request.sendBuffer(paramlessDiscover.toBuffer()));
+
+                assertThat(response.statusCode())
+                        .as("a paramless server/discover must be an Invalid Request, never an admitted 200")
+                        .isEqualTo(400);
+                JsonObject body = new JsonObject(response.bodyAsString());
+                assertThat(body.getJsonObject("error").getInteger("code"))
+                        .as("a paramless server/discover carries JSON-RPC -32600 Invalid Request")
+                        .isEqualTo(-32600);
+                McpRequestCompletedEvent completed = fixture.awaitCompleted();
+                assertThat(completed.terminal().httpStatus()).isEqualTo(400);
+                assertThat(completed.terminal().errorType()).isEqualTo(McpErrorType.PROTOCOL);
+            }
             default -> fail("unknown T001 contract row: " + row);
         }
     }
 
     private static <T> T await(Future<T> future) throws Exception {
         return future.toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS);
+    }
+
+    /**
+     * Builds a schema-valid {@code params._meta} for a {@code server/discover} frame, carrying the
+     * candidate protocol version and an empty client-capabilities object — both members are required
+     * by the vendored {@code RequestMetaObject} definition of {@code mcp/schema/2026-07-28}.
+     */
+    private static JsonObject discoverParams() {
+        return new JsonObject()
+                .put(
+                        "_meta",
+                        new JsonObject()
+                                .put("io.modelcontextprotocol/protocolVersion", PROTOCOL_VERSION)
+                                .put("io.modelcontextprotocol/clientCapabilities", new JsonObject()));
     }
 
     /** Asserts the mount leaks no {@code x-mcp-*} response header, which Phase 1 never emits. */
