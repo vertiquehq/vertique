@@ -160,9 +160,12 @@ final class McpRequestDispatcher {
 
     /**
      * Enforces the present-only {@code Accept} admission check: an absent header is admitted, and a
-     * present one is admitted only when at least one comma-separated media range (q-parameters ignored,
-     * case-insensitive) matches {@code application/json}, {@code text/event-stream},
-     * {@code application/*}, or {@code *&#47;*}.
+     * present one is admitted only when at least one comma-separated media range matches
+     * {@code application/json}, {@code text/event-stream}, {@code application/*}, or {@code *&#47;*}
+     * (case-insensitive) <em>and</em> is not explicitly rejected with {@code q=0}. Per RFC 7231 a
+     * media-range with a quality value of zero is not acceptable, so such a range does not admit its
+     * media type; if every matching range carries {@code q=0} and no other range admits, the request
+     * is HTTP 406. This implements only the {@code q=0} exclusion, not full q-value preference ranking.
      *
      * @param context the request whose {@code Accept} header is inspected
      * @return {@code true} when the request may proceed, {@code false} when it is HTTP 406
@@ -174,11 +177,49 @@ final class McpRequestDispatcher {
         }
         for (String range : accept.split(",")) {
             String mediaRange = mediaTypeOf(range);
-            if (mediaRange.equalsIgnoreCase(JSON_CONTENT_TYPE)
-                    || mediaRange.equalsIgnoreCase(EVENT_STREAM_CONTENT_TYPE)
-                    || mediaRange.equalsIgnoreCase(APPLICATION_WILDCARD_RANGE)
-                    || mediaRange.equals(WILDCARD_RANGE)) {
+            if ((mediaRange.equalsIgnoreCase(JSON_CONTENT_TYPE)
+                            || mediaRange.equalsIgnoreCase(EVENT_STREAM_CONTENT_TYPE)
+                            || mediaRange.equalsIgnoreCase(APPLICATION_WILDCARD_RANGE)
+                            || mediaRange.equals(WILDCARD_RANGE))
+                    && !hasZeroQuality(range)) {
                 return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Reports whether an {@code Accept} range explicitly rejects its media type with a zero quality
+     * value ({@code q=0}, {@code q=0.0}, {@code q=0.000}, …). The {@code q} parameter name is
+     * matched case-insensitively and surrounding whitespace is tolerated. A range with no {@code q}
+     * parameter, or a {@code q} greater than zero, is not zero-quality; a {@code q} token that cannot
+     * be parsed as a number is left permissive (treated as non-zero) rather than over-engineered into
+     * full q-value handling.
+     *
+     * @param range one comma-separated {@code Accept} range, possibly carrying parameters
+     * @return {@code true} when the range carries a numerically-zero {@code q} parameter
+     */
+    private static boolean hasZeroQuality(String range) {
+        int semicolon = range.indexOf(';');
+        if (semicolon < 0) {
+            return false;
+        }
+        for (String parameter : range.substring(semicolon + 1).split(";")) {
+            int equals = parameter.indexOf('=');
+            if (equals < 0) {
+                continue;
+            }
+            String name = parameter.substring(0, equals).trim();
+            if (!"q".equalsIgnoreCase(name)) {
+                continue;
+            }
+            String value = parameter.substring(equals + 1).trim();
+            try {
+                return Double.parseDouble(value) == 0.0;
+            } catch (NumberFormatException unparseable) {
+                // An unparseable q token is left permissive rather than over-engineering full RFC
+                // q-value handling; only a cleanly numerically-zero q rejects the media type.
+                return false;
             }
         }
         return false;
@@ -493,7 +534,6 @@ final class McpRequestDispatcher {
 
     private static void write(
             RoutingContext context, int status, @Nullable byte[] body, McpRequestTerminalEvent terminal) {
-        cancelTimer(context);
         McpCompletionCoordinator coordinator = context.get(COMPLETION_COORDINATOR_KEY);
         // Logical settlement precedes the byte write: beginWrite publishes the terminal and claims
         // the shared first-observed latch. If a settlement (disconnect, reset, or the whole-request
@@ -501,6 +541,13 @@ final class McpRequestDispatcher {
         // otherwise a slow handler's late write would reach a client the timeout already abandoned.
         // The admission-rejection path (W4) has no coordinator and writes directly with no
         // terminal/observation.
+        //
+        // The whole-request timer stays armed across the write and is cancelled only once end()
+        // resolves (in onEnd below). Cancelling it here — before end() — would leave a stalled
+        // transport write (e.g. an HTTP/2 peer withholding flow-control on a still-open connection,
+        // so neither closeHandler nor exceptionHandler fires) unbounded, publishing a terminal with
+        // no completion. Leaving the timer armed lets the timeout fire, reset() the still-open
+        // response, and drive onEnd to a WRITE_FAILED completion — bounding the request.
         if (coordinator != null && !coordinator.beginWrite(terminal)) {
             return;
         }

@@ -76,6 +76,8 @@ public class McpStreamableHttpContractIT {
     private static final String EVENT_STREAM_ACCEPT_ROW = "shouldAcceptEventStreamAcceptHeader";
     private static final String INVALID_CONTENT_TYPE_ROW = "shouldRejectNonJsonContentTypeWithUnsupportedMediaType";
     private static final String INVALID_ACCEPT_ROW = "shouldRejectUnacceptableAcceptWithNotAcceptable";
+    private static final String ZERO_QUALITY_ACCEPT_ROW = "shouldRejectZeroQualityAcceptWithNotAcceptable";
+    private static final String ZERO_QUALITY_MIXED_ACCEPT_ROW = "shouldRejectZeroQualityMixedAcceptWithNotAcceptable";
     private static final String OVERSIZED_BODY_ROW = "shouldRejectOversizedBodyWithBoundedStatus";
     private static final String SESSION_HEADER_ROW = "shouldIgnoreUnsupportedSessionHeaderRemainingBounded";
 
@@ -103,6 +105,8 @@ public class McpStreamableHttpContractIT {
                 EVENT_STREAM_ACCEPT_ROW,
                 INVALID_CONTENT_TYPE_ROW,
                 INVALID_ACCEPT_ROW,
+                ZERO_QUALITY_ACCEPT_ROW,
+                ZERO_QUALITY_MIXED_ACCEPT_ROW,
                 OVERSIZED_BODY_ROW,
                 SESSION_HEADER_ROW);
     }
@@ -232,6 +236,31 @@ public class McpStreamableHttpContractIT {
 
                 assertThat(response.statusCode())
                         .as("an Accept that admits no allowed media range must be rejected with HTTP 406")
+                        .isEqualTo(406);
+                assertNoToolInvoked();
+                assertNoObservationOpened();
+            }
+            case ZERO_QUALITY_ACCEPT_ROW -> {
+                // Given: a discovery POST whose only Accept range explicitly rejects application/json
+                // with q=0. Per RFC 7231 a q=0 range is not acceptable, so the request is HTTP 406;
+                // pre-fix production strips the q parameter and admits it with 200.
+                HttpRequest<Buffer> request = post().putHeader("Accept", "application/json;q=0");
+                HttpResponse<Buffer> response = await(request.sendBuffer(discover.toBuffer()));
+
+                assertThat(response.statusCode())
+                        .as("an Accept range with q=0 does not admit its media type and must be HTTP 406")
+                        .isEqualTo(406);
+                assertNoToolInvoked();
+                assertNoObservationOpened();
+            }
+            case ZERO_QUALITY_MIXED_ACCEPT_ROW -> {
+                // Given: a discovery POST whose only supported range carries q=0 and whose other range
+                // is unsupported; no range admits, so the request is HTTP 406.
+                HttpRequest<Buffer> request = post().putHeader("Accept", "application/json;q=0, text/plain");
+                HttpResponse<Buffer> response = await(request.sendBuffer(discover.toBuffer()));
+
+                assertThat(response.statusCode())
+                        .as("when every matching Accept range carries q=0 and no other admits, HTTP 406")
                         .isEqualTo(406);
                 assertNoToolInvoked();
                 assertNoObservationOpened();

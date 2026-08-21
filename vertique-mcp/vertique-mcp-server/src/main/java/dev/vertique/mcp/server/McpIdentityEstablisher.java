@@ -122,6 +122,9 @@ final class McpIdentityEstablisher {
      * no-scheme canonical-anonymous path binds an identity without consulting ambient Router state.
      */
     private static void clearAmbientAuthenticationState(RoutingContext context) {
+        // Relies on the Vert.x-internal UserContextInternal because Vert.x 5.1.6 exposes no public
+        // "clear user" API — a Vert.x upgrade must re-verify this security-critical clear still works
+        // (exercised by the McpDiscoverIT no-scheme rows).
         ((UserContextInternal) context.userContext()).setUser(null);
         RestAuthenticationEvidence.clear(context);
     }
