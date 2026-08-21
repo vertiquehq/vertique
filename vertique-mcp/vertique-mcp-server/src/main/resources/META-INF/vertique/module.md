@@ -33,12 +33,17 @@ request to any instance. Every request is admitted through the fixed pipeline be
 - **Origin** — a request that carries an `Origin` outside a non-empty `mcp.allowedOrigins` allowlist
   is rejected with HTTP `403` before dispatch. An empty allowlist (the default) imposes no origin
   restriction, and a request with no `Origin` header is never origin-rejected.
+- **Content-Type** — a request that carries a `Content-Type` whose media type (parameters such as
+  `; charset=utf-8` ignored) is not `application/json` is rejected with HTTP `415`. A request with no
+  `Content-Type` header is never media-rejected (present-only, like `Origin`).
+- **Accept** — a request that carries an `Accept` admitting none of `application/json`,
+  `text/event-stream`, `application/*`, or `*/*` is rejected with HTTP `406`. A request with no
+  `Accept` header is never media-rejected. Discovery always answers `application/json`, so a client
+  that accepts `application/json`, `text/event-stream`, or both receives the JSON discovery result.
 - **Body limit** — a body larger than `http.maxBodySize` is a bounded HTTP failure, not a protocol
   result.
 - **Session headers** — the stateless protocol has no session concept, so an unsupported session
   header (for example `Mcp-Session-Id`) is ignored and the request stays bounded.
-- **Accept / content-type** — discovery always answers `application/json`; a client that accepts
-  `application/json`, `text/event-stream`, or both receives the JSON discovery result.
 
 Every admitted body is decoded exactly once through the strict codec — the single envelope
 authority — and `server/discover` is routed on that decoded result like every other method, so it
@@ -61,9 +66,10 @@ the first settlement wins is suppressed, so a disconnect that races a late handl
 produce a second terminal. A disconnect or reset before the first response byte records an
 uncommitted (`responseCommitted=false`) `DISCONNECTED`/`RESET` completion; a timeout records a
 `WRITE_FAILED` completion. Observer `open`, callback, null-session, and retention failures are
-isolated per observer and never change the protocol or business outcome. (A pre-pipeline failure,
-such as a body-limit rejection that fires before the coordinator is created, produces no lifecycle
-observation.)
+isolated per observer and never change the protocol or business outcome. The method, `Origin`,
+`Content-Type`, and `Accept` admission checks all run before the completion coordinator is created,
+so — like a body-limit rejection — a request that fails admission produces no lifecycle observation;
+only an admitted request opens observation.
 
 ## Bounded response output
 

@@ -34,8 +34,9 @@ import java.util.Set;
  * Dispatches the bounded discovery endpoint over the hardened stateless HTTP contract (§4.7).
  *
  * <p>The dispatcher wires the framework-owned strict codec onto the live request path, enforces the
- * method/origin admission checks, registers the disconnect/reset/timeout settlement seam, and bounds
- * the response write at {@code mcp.output.maxBytes}. Tool registration and invocation, and the
+ * method/origin/content-type/accept admission checks, registers the disconnect/reset/timeout
+ * settlement seam, and bounds the response write at {@code mcp.output.maxBytes}. Tool registration
+ * and invocation, and the
  * tool-level {@code -32602} classification, are owned by later slices and are deliberately absent.
  */
 final class McpRequestDispatcher {
@@ -50,6 +51,9 @@ final class McpRequestDispatcher {
 
     private static final String SERVER_INFO_META_KEY = "io.modelcontextprotocol/serverInfo";
     private static final String JSON_CONTENT_TYPE = "application/json";
+    private static final String EVENT_STREAM_CONTENT_TYPE = "text/event-stream";
+    private static final String APPLICATION_WILDCARD_RANGE = "application/*";
+    private static final String WILDCARD_RANGE = "*/*";
 
     private static final int PARSE_ERROR = -32700;
     private static final int INVALID_REQUEST = -32600;
@@ -91,22 +95,26 @@ final class McpRequestDispatcher {
     }
 
     /**
-     * Opens neutral lifecycle observation and applies the cheap HTTP admission checks (§4.7 stage 1)
-     * before authentication and identity establishment.
+     * Applies the cheap HTTP admission checks (§4.7 stage 1) before opening any lifecycle observation
+     * and before authentication and identity establishment.
      *
-     * <p>Only POST is accepted; GET/DELETE and any other method are HTTP 405. A present {@code Origin}
-     * outside a non-empty {@code mcp.allowedOrigins} allowlist is HTTP 403 before dispatch; an empty
-     * allowlist imposes no origin restriction. Admitted requests then register the disconnect, reset,
-     * and whole-request timeout settlement hooks (§4.7 stage 2) before continuing.
+     * <p>All admission checks run <em>before</em> the completion coordinator is constructed, so — like
+     * the body-limit rejection — a request that fails admission produces no lifecycle observation. Only
+     * POST is accepted; GET/DELETE and any other method are HTTP 405. A present {@code Origin} outside a
+     * non-empty {@code mcp.allowedOrigins} allowlist is HTTP 403; an empty allowlist imposes no origin
+     * restriction. A present {@code Content-Type} whose media type is not {@code application/json} is
+     * HTTP 415, and a present {@code Accept} that admits none of {@code application/json},
+     * {@code text/event-stream}, {@code application/*}, or {@code *&#47;*} is HTTP 406; an absent header
+     * imposes no restriction (present-only, mirroring Origin). Only once every check passes does the
+     * dispatcher construct the coordinator, register the disconnect, reset, and whole-request timeout
+     * settlement hooks (§4.7 stage 2), and continue.
      */
     void begin(RoutingContext context) {
         Instant startedAt = Instant.now();
-        McpCompletionCoordinator coordinator = new McpCompletionCoordinator(
-                context.vertx().getOrCreateContext(), lifecycleObservers, completedListeners, startedAt);
-        context.put(COMPLETION_COORDINATOR_KEY, coordinator);
         context.put(STARTED_AT_KEY, startedAt);
+        // Every admission check runs before the coordinator exists, so a rejection here opens no
+        // lifecycle observation — the reject path null-guards the (absent) coordinator and timer.
         if (context.request().method() != HttpMethod.POST) {
-            // Terminal before identity establishment: no security facts exist yet.
             reject(context, McpMethod.OTHER, McpErrorType.HTTP, 405, null);
             return;
         }
@@ -117,8 +125,74 @@ final class McpRequestDispatcher {
             reject(context, McpMethod.OTHER, McpErrorType.HTTP, 403, null);
             return;
         }
+        if (!contentTypeAdmitted(context)) {
+            reject(context, McpMethod.OTHER, McpErrorType.HTTP, 415, null);
+            return;
+        }
+        if (!acceptAdmitted(context)) {
+            reject(context, McpMethod.OTHER, McpErrorType.HTTP, 406, null);
+            return;
+        }
+        McpCompletionCoordinator coordinator = new McpCompletionCoordinator(
+                context.vertx().getOrCreateContext(), lifecycleObservers, completedListeners, startedAt);
+        context.put(COMPLETION_COORDINATOR_KEY, coordinator);
         registerSettlementHooks(context, coordinator, startedAt);
         context.next();
+    }
+
+    /**
+     * Enforces the present-only {@code Content-Type} admission check: an absent header is admitted, and
+     * a present one is admitted only when its media type (parameters such as {@code ; charset=utf-8}
+     * stripped, case-insensitive) is {@code application/json}.
+     *
+     * @param context the request whose {@code Content-Type} header is inspected
+     * @return {@code true} when the request may proceed, {@code false} when it is HTTP 415
+     */
+    private static boolean contentTypeAdmitted(RoutingContext context) {
+        String contentType = context.request().getHeader("Content-Type");
+        if (contentType == null) {
+            return true;
+        }
+        return JSON_CONTENT_TYPE.equalsIgnoreCase(mediaTypeOf(contentType));
+    }
+
+    /**
+     * Enforces the present-only {@code Accept} admission check: an absent header is admitted, and a
+     * present one is admitted only when at least one comma-separated media range (q-parameters ignored,
+     * case-insensitive) matches {@code application/json}, {@code text/event-stream},
+     * {@code application/*}, or {@code *&#47;*}.
+     *
+     * @param context the request whose {@code Accept} header is inspected
+     * @return {@code true} when the request may proceed, {@code false} when it is HTTP 406
+     */
+    private static boolean acceptAdmitted(RoutingContext context) {
+        String accept = context.request().getHeader("Accept");
+        if (accept == null) {
+            return true;
+        }
+        for (String range : accept.split(",")) {
+            String mediaRange = mediaTypeOf(range);
+            if (mediaRange.equalsIgnoreCase(JSON_CONTENT_TYPE)
+                    || mediaRange.equalsIgnoreCase(EVENT_STREAM_CONTENT_TYPE)
+                    || mediaRange.equalsIgnoreCase(APPLICATION_WILDCARD_RANGE)
+                    || mediaRange.equals(WILDCARD_RANGE)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Extracts the bare media type from a header value by dropping any {@code ;}-delimited parameters
+     * (charset, q-value) and surrounding whitespace.
+     *
+     * @param headerValue one media type or range, possibly carrying parameters
+     * @return the trimmed media type with parameters removed
+     */
+    private static String mediaTypeOf(String headerValue) {
+        int semicolon = headerValue.indexOf(';');
+        String mediaType = semicolon < 0 ? headerValue : headerValue.substring(0, semicolon);
+        return mediaType.trim();
     }
 
     /**

@@ -41,6 +41,7 @@ import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.AfterEach;
@@ -73,6 +74,8 @@ public class McpStreamableHttpContractIT {
     private static final String DELETE_ROW = "shouldRejectDeleteWithMethodNotAllowed";
     private static final String JSON_ACCEPT_ROW = "shouldAcceptJsonOnlyAcceptHeader";
     private static final String EVENT_STREAM_ACCEPT_ROW = "shouldAcceptEventStreamAcceptHeader";
+    private static final String INVALID_CONTENT_TYPE_ROW = "shouldRejectNonJsonContentTypeWithUnsupportedMediaType";
+    private static final String INVALID_ACCEPT_ROW = "shouldRejectUnacceptableAcceptWithNotAcceptable";
     private static final String OVERSIZED_BODY_ROW = "shouldRejectOversizedBodyWithBoundedStatus";
     private static final String SESSION_HEADER_ROW = "shouldIgnoreUnsupportedSessionHeaderRemainingBounded";
 
@@ -98,6 +101,8 @@ public class McpStreamableHttpContractIT {
                 DELETE_ROW,
                 JSON_ACCEPT_ROW,
                 EVENT_STREAM_ACCEPT_ROW,
+                INVALID_CONTENT_TYPE_ROW,
+                INVALID_ACCEPT_ROW,
                 OVERSIZED_BODY_ROW,
                 SESSION_HEADER_ROW);
     }
@@ -165,6 +170,7 @@ public class McpStreamableHttpContractIT {
                         .as("a present, disallowed Origin must be rejected with HTTP 403 before dispatch")
                         .isEqualTo(403);
                 assertNoToolInvoked();
+                assertNoObservationOpened();
             }
             case GET_ROW -> {
                 // Given: a GET against the mount, which the stateless protocol never accepts.
@@ -174,6 +180,7 @@ public class McpStreamableHttpContractIT {
 
                 assertThat(response.statusCode()).isEqualTo(405);
                 assertNoToolInvoked();
+                assertNoObservationOpened();
             }
             case DELETE_ROW -> {
                 // Given: a DELETE against the mount, which the stateless protocol never accepts.
@@ -183,6 +190,7 @@ public class McpStreamableHttpContractIT {
 
                 assertThat(response.statusCode()).isEqualTo(405);
                 assertNoToolInvoked();
+                assertNoObservationOpened();
             }
             case JSON_ACCEPT_ROW -> {
                 // Given: a discovery POST that accepts only application/json.
@@ -201,6 +209,32 @@ public class McpStreamableHttpContractIT {
                 assertThat(response.statusCode()).isEqualTo(200);
                 assertServerInfo(response);
                 assertNoToolInvoked();
+            }
+            case INVALID_CONTENT_TYPE_ROW -> {
+                // Given: a discovery POST whose Content-Type is not application/json.
+                // The present-only media admission (W5) rejects it with HTTP 415 before the coordinator
+                // is created; pre-fix production performs no content-type check and answers 200.
+                HttpRequest<Buffer> request = post().putHeader("content-type", "text/plain");
+                HttpResponse<Buffer> response = await(request.sendBuffer(discover.toBuffer()));
+
+                assertThat(response.statusCode())
+                        .as("a non-JSON Content-Type must be rejected with HTTP 415 before dispatch")
+                        .isEqualTo(415);
+                assertNoToolInvoked();
+                assertNoObservationOpened();
+            }
+            case INVALID_ACCEPT_ROW -> {
+                // Given: a discovery POST whose Accept admits none of the allowed media ranges.
+                // The present-only media admission (W5) rejects it with HTTP 406 before the coordinator
+                // is created; pre-fix production performs no Accept check and answers 200.
+                HttpRequest<Buffer> request = post().putHeader("Accept", "text/plain");
+                HttpResponse<Buffer> response = await(request.sendBuffer(discover.toBuffer()));
+
+                assertThat(response.statusCode())
+                        .as("an Accept that admits no allowed media range must be rejected with HTTP 406")
+                        .isEqualTo(406);
+                assertNoToolInvoked();
+                assertNoObservationOpened();
             }
             case OVERSIZED_BODY_ROW -> {
                 // Given: a body larger than the configured maxBodySize.
@@ -251,6 +285,21 @@ public class McpStreamableHttpContractIT {
                 .doesNotContain(McpMethod.TOOLS_CALL);
     }
 
+    /**
+     * Proves the W4 ordering: an admission rejection settles before the completion coordinator is
+     * created, so no lifecycle observation is ever opened — consistent with the body-limit path. The
+     * observer's {@code open} is called synchronously inside the coordinator constructor, so by the
+     * time the client has the response any observation that was going to open already has.
+     */
+    private void assertNoObservationOpened() {
+        assertThat(fixture.observationsOpened())
+                .as("an admission rejection fires before the coordinator is created and opens no observation")
+                .isZero();
+        assertThat(fixture.terminalMethods())
+                .as("an admission rejection that opens no observation delivers no terminal")
+                .isEmpty();
+    }
+
     private static void assertServerInfo(HttpResponse<Buffer> response) {
         JsonObject body = new JsonObject(response.bodyAsString());
         JsonObject serverInfo =
@@ -279,6 +328,7 @@ public class McpStreamableHttpContractIT {
         static final int MAX_BODY_BYTES = 64 * 1_024;
 
         private final List<McpMethod> terminalMethods = new CopyOnWriteArrayList<>();
+        private final AtomicInteger observationsOpened = new AtomicInteger();
         private final HttpServer server;
         private final int port;
 
@@ -321,12 +371,19 @@ public class McpStreamableHttpContractIT {
             return terminalMethods;
         }
 
+        int observationsOpened() {
+            return observationsOpened.get();
+        }
+
         private McpRequestLifecycleObserver recordingObserver() {
-            return startedAt -> new McpRequestObservation() {
-                @Override
-                public void onTerminal(McpRequestTerminalObservation observation) {
-                    terminalMethods.add(observation.event().method());
-                }
+            return startedAt -> {
+                observationsOpened.incrementAndGet();
+                return new McpRequestObservation() {
+                    @Override
+                    public void onTerminal(McpRequestTerminalObservation observation) {
+                        terminalMethods.add(observation.event().method());
+                    }
+                };
             };
         }
 
