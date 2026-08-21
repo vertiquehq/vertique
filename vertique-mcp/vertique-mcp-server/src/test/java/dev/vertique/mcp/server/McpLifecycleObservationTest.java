@@ -41,15 +41,14 @@ import org.junit.jupiter.params.provider.MethodSource;
  * paths the T004 seam introduces. An observer that throws from {@code open}, returns a null session,
  * or throws from a callback is isolated to itself and never suppresses a healthy observer.
  *
- * <p>This is a red-slice proof. Observers are opened in the coordinator constructor (already
- * implemented), but the disconnect settlement path that must then deliver the terminal and
- * completion callbacks is NON-FUNCTIONAL until the T004 green slice. Both rows therefore drive that
- * path and land red on the decisive assertion that a healthy observer receives its terminal and
- * completion. Value observation ({@code onToolInput}/{@code onToolOutput}) is owned by T009 and is
- * deliberately not exercised here.
+ * <p>Observers are opened in the coordinator constructor, and the disconnect settlement path then
+ * delivers the terminal and completion callbacks to every opened session. Both rows drive that path
+ * and assert that a healthy observer receives its terminal and completion in order. Value
+ * observation ({@code onToolInput}/{@code onToolOutput}) is owned by T009 and is deliberately not
+ * exercised here.
  *
- * <p>Sensitivity (for the eventual green run): injecting exactly one duplicate terminal/completion
- * signal must move the exactly-once count assertion from 1 to 2 while the callback order is unchanged.
+ * <p>Sensitivity: injecting exactly one duplicate terminal/completion signal must move the
+ * exactly-once count assertion from 1 to 2 while the callback order is unchanged.
  */
 class McpLifecycleObservationTest {
 
@@ -95,9 +94,8 @@ class McpLifecycleObservationTest {
                             .as("each contributed observer's open must be called exactly once at scope creation")
                             .isOne());
 
-                    // DECISIVE: settlement on the disconnect path must deliver the terminal and
-                    // completion callbacks to every opened session. The red-slice settlement entry
-                    // is NON-FUNCTIONAL, so no callback is delivered and this fails for count >= 1.
+                    // DECISIVE: settlement on the disconnect path delivers the terminal and completion
+                    // callbacks to every opened session, so every opened observer sees both callbacks.
                     coordinator.settleDisconnected(disconnectTerminal(), false);
                     for (RecordingObserver observer : observers) {
                         assertThat(observer.awaitCallbacks())

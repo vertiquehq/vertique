@@ -233,6 +233,11 @@ final class McpRequestDispatcher {
             payload = encodeCapped(discoveryResponse(envelope));
         } catch (OutputCapExceededException overCap) {
             byte[] fallback = codec.internalFallback(envelope.get("id"), overCap);
+            if (fallback.length > config.outputMaxBytes()) {
+                // Even the id-bearing internal-error can exceed the cap when the request id is itself
+                // large; degrade to the minimal id-less internal error, which is always under cap.
+                fallback = codec.internalFallback(null, overCap);
+            }
             McpRequestTerminalEvent terminal = McpRequestTerminalEvent.failed(
                     startedAt(context),
                     Instant.now(),
@@ -301,6 +306,9 @@ final class McpRequestDispatcher {
     /** Completes failures from optional authentication and identity establishment without leakage. */
     void handleFailure(RoutingContext context) {
         if (context.response().ended()) {
+            // The response already settled; cancel the whole-request timer so a live timeout cannot
+            // fire later and record a false timeout past the finished request (T001 watch-item c).
+            cancelTimer(context);
             return;
         }
         int status = context.statusCode();
@@ -416,6 +424,17 @@ final class McpRequestDispatcher {
         int code = decoded.isError() ? decoded.error().code() : INTERNAL_ERROR;
         int status = httpStatusFor(code);
         McpErrorType errorType = code == INTERNAL_ERROR ? McpErrorType.INTERNAL : McpErrorType.PROTOCOL;
+        byte[] errorBytes = codec.errorResponse(body);
+        if (errorBytes.length > config.outputMaxBytes()) {
+            // The classified error echoes the request id, whose only unbounded element can push the
+            // response past mcp.output.maxBytes (an id is bounded by jsonMaxStringChars, far above the
+            // minimum cap). Degrade to a bounded id-less internal error so the hard cap holds — the
+            // emitted status, terminal, and body stay consistent as a 500 internal error.
+            errorBytes = codec.internalFallback(null, new OutputCapExceededException());
+            code = INTERNAL_ERROR;
+            status = httpStatusFor(INTERNAL_ERROR);
+            errorType = McpErrorType.INTERNAL;
+        }
         context.response().putHeader("content-type", JSON_CONTENT_TYPE);
         McpRequestTerminalEvent terminal = McpRequestTerminalEvent.rejected(
                 startedAt(context),
@@ -428,7 +447,7 @@ final class McpRequestDispatcher {
                 null,
                 security,
                 null);
-        write(context, status, codec.errorResponse(body), terminal);
+        write(context, status, errorBytes, terminal);
     }
 
     private static int httpStatusFor(int protocolCode) {
