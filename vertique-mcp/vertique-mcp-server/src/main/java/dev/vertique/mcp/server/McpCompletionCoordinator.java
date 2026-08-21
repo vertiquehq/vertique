@@ -23,7 +23,14 @@ final class McpCompletionCoordinator {
     private final List<McpRequestObservation> observations;
     private final Set<McpRequestCompletedListener> listeners;
     private final InstantSource clock;
-    private boolean completed;
+
+    // Both latches are mutated only on the request-owning Vert.x context: the write path calls
+    // beginWrite/finishWrite synchronously on that context, and every settlement path redispatches
+    // onto it via context.runOnContext. They therefore need no memory barrier beyond the context's
+    // own serialization.
+    private boolean settled;
+    private boolean completionEmitted;
+    private McpRequestTerminalEvent writeTerminal;
 
     McpCompletionCoordinator(
             Context context,
@@ -37,9 +44,10 @@ final class McpCompletionCoordinator {
      * Constructs a coordinator whose completion timestamps are drawn from {@code clock}.
      *
      * <p>The injectable clock is the settlement seam's deterministic time source: the disconnect,
-     * reset, and timeout settlement paths (and the clock-timestamped {@link #complete} overload)
-     * read the completion instant from it, so a test can drive the exactly-once settlement races
-     * against a manual clock instead of wall time.
+     * reset, and timeout settlement paths read the completion instant from it, so a test can drive
+     * the exactly-once settlement races against a manual clock instead of wall time. The two-phase
+     * write path ({@link #beginWrite} then {@link #finishWrite}) is timestamped by its caller with
+     * the actual transport-completion instant rather than the clock.
      *
      * @param context the request-owning Vert.x context every off-context completion is redispatched onto
      * @param observers the neutral lifecycle observers opened once for this request
@@ -59,24 +67,57 @@ final class McpCompletionCoordinator {
         this.clock = clock;
     }
 
-    /** Settles once, redispatching off-context completion to the request-owning Vert.x context. */
-    void complete(
-            McpRequestTerminalEvent terminal,
-            McpTransportOutcome transport,
-            boolean responseCommitted,
-            Instant completedAt) {
-        context.runOnContext(ignored -> completeOnContext(terminal, transport, responseCommitted, completedAt));
+    // --- T004 two-phase write path ---
+    //
+    // The successful-write path settles logically before the byte write and completes after it, so
+    // the frozen lifecycle contract's ordering — logical settlement, terminal observation, write
+    // attempt, transport completion — holds: beginWrite publishes the terminal before end() runs, and
+    // finishWrite publishes the completion once end() has resolved. Both phases share the settled
+    // latch with the abort settlement paths below, so whichever fires first wins and the loser is
+    // suppressed (the abort paths supply no intervening write, so they still fire terminal and
+    // completion together).
+
+    /**
+     * Claims settlement for the successful-write path and publishes the terminal before the byte
+     * write, executed synchronously on the request-owning context ahead of {@code end()}.
+     *
+     * <p>Returns {@code false} when a settlement (disconnect, reset, or timeout) has already won, so
+     * the caller suppresses the now-superseded client-visible write. Otherwise it wins the shared
+     * first-observed latch, stores {@code terminal} for {@link #finishWrite}, publishes the terminal
+     * observation, and returns {@code true}.
+     *
+     * @param terminal the logical terminal facts to publish before the write
+     * @return {@code true} when this call wins settlement and the write should proceed, {@code false}
+     *     when a prior settlement already won and the write must be suppressed
+     */
+    boolean beginWrite(McpRequestTerminalEvent terminal) {
+        if (settled) {
+            return false;
+        }
+        settled = true;
+        writeTerminal = terminal;
+        publishTerminal(terminal);
+        return true;
     }
 
     /**
-     * Settles once using the injected clock for the completion instant.
+     * Publishes the completion for the successful-write path after {@code end()} has resolved,
+     * executed on the request-owning context by the {@link #beginWrite} winner.
      *
-     * @param terminal the logical terminal facts to publish before completion
-     * @param transport the transport outcome the completion records
-     * @param responseCommitted whether any response byte was committed
+     * <p>The completed event is built from the terminal {@code beginWrite} stored, recording the
+     * actual transport outcome and commit state the caller observed. Guarded by the completion latch
+     * so it publishes exactly once even under a redundant invocation.
+     *
+     * @param transport the transport outcome the write produced ({@code WRITTEN} or {@code WRITE_FAILED})
+     * @param responseCommitted whether any response byte was committed, from the response's actual state
+     * @param completedAt the instant the transport completed
      */
-    void complete(McpRequestTerminalEvent terminal, McpTransportOutcome transport, boolean responseCommitted) {
-        complete(terminal, transport, responseCommitted, clock.instant());
+    void finishWrite(McpTransportOutcome transport, boolean responseCommitted, Instant completedAt) {
+        if (completionEmitted) {
+            return;
+        }
+        completionEmitted = true;
+        publishCompletion(writeTerminal, transport, responseCommitted, completedAt);
     }
 
     // --- T004 settlement seam ---
@@ -145,12 +186,41 @@ final class McpCompletionCoordinator {
             McpTransportOutcome transport,
             boolean responseCommitted,
             Instant completedAt) {
-        if (completed) {
+        if (settled) {
             return;
         }
-        completed = true;
+        settled = true;
+        completionEmitted = true;
+        // An abort settlement supplies no intervening write, so the terminal and completion fire
+        // together here, unlike the two-phase write path that splits them around end().
+        publishTerminal(terminal);
+        publishCompletion(terminal, transport, responseCommitted, completedAt);
+    }
+
+    /**
+     * Publishes the terminal observation to every retained observation, isolating observer failures.
+     *
+     * @param terminal the terminal facts to publish
+     */
+    private void publishTerminal(McpRequestTerminalEvent terminal) {
         McpRequestTerminalObservation observation = new McpRequestTerminalObservation(terminal, null);
         observations.forEach(item -> invoke(() -> item.onTerminal(observation)));
+    }
+
+    /**
+     * Publishes the completion to every retained observation and completion listener, isolating
+     * their failures.
+     *
+     * @param terminal the terminal the completion is built from
+     * @param transport the transport outcome the completion records
+     * @param responseCommitted whether any response byte was committed
+     * @param completedAt the instant the request completed
+     */
+    private void publishCompletion(
+            McpRequestTerminalEvent terminal,
+            McpTransportOutcome transport,
+            boolean responseCommitted,
+            Instant completedAt) {
         // The completion instant can never precede logical settlement: the frozen lifecycle contract
         // requires completedAt >= terminalAt. Clamp to terminalAt so a settlement clock that reads
         // earlier than the terminal (clock skew, or a deterministic future-dated test terminal) still

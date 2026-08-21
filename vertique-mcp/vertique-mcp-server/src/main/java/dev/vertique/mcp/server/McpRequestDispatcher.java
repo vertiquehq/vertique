@@ -19,6 +19,8 @@ import dev.vertique.mcp.lifecycle.McpTransportOutcome;
 import dev.vertique.rest.core.security.SecurityRuntime;
 import dev.vertique.security.SecurityContext;
 import dev.vertique.security.SecurityContextSnapshot;
+import io.vertx.core.AsyncResult;
+import io.vertx.core.Handler;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.http.HttpMethod;
 import io.vertx.ext.web.RoutingContext;
@@ -327,11 +329,19 @@ final class McpRequestDispatcher {
      */
     private void registerSettlementHooks(
             RoutingContext context, McpCompletionCoordinator coordinator, Instant startedAt) {
-        long timerId = context.vertx()
-                .setTimer(
-                        config.requestTimeoutMs(),
-                        ignored -> coordinator.settleTimeout(
-                                settlementTerminal(context, startedAt, McpErrorType.TIMEOUT)));
+        long timerId = context.vertx().setTimer(config.requestTimeoutMs(), ignored -> {
+            coordinator.settleTimeout(settlementTerminal(context, startedAt, McpErrorType.TIMEOUT));
+            // Settlement records the terminal, but the request must also be bounded on the wire: a
+            // reset terminates the transport so the client is not left hanging and a slow handler's
+            // later write cannot succeed. beginWrite already returns false once the timeout settled,
+            // suppressing the late end(); the reset closes the still-open response. A reset — not an
+            // end(status) — is the faithful termination because the timeout records WRITE_FAILED with
+            // no successful body. On HTTP/1.x reset() closes the connection; on HTTP/2 it sends
+            // RST_STREAM.
+            if (!context.response().ended()) {
+                context.response().reset();
+            }
+        });
         context.put(TIMER_ID_KEY, timerId);
         context.response().closeHandler(ignored -> {
             cancelTimer(context);
@@ -465,28 +475,35 @@ final class McpRequestDispatcher {
     private static void write(
             RoutingContext context, int status, @Nullable byte[] body, McpRequestTerminalEvent terminal) {
         cancelTimer(context);
+        McpCompletionCoordinator coordinator = context.get(COMPLETION_COORDINATOR_KEY);
+        // Logical settlement precedes the byte write: beginWrite publishes the terminal and claims
+        // the shared first-observed latch. If a settlement (disconnect, reset, or the whole-request
+        // timeout) already won, the client-visible write is superseded and must be suppressed —
+        // otherwise a slow handler's late write would reach a client the timeout already abandoned.
+        // The admission-rejection path (W4) has no coordinator and writes directly with no
+        // terminal/observation.
+        if (coordinator != null && !coordinator.beginWrite(terminal)) {
+            return;
+        }
         context.response().setStatusCode(status);
+        Handler<AsyncResult<Void>> onEnd = result -> {
+            cancelTimer(context);
+            if (coordinator != null) {
+                coordinator.finishWrite(
+                        result.succeeded() ? McpTransportOutcome.WRITTEN : McpTransportOutcome.WRITE_FAILED,
+                        // The completion records the response's actual commit state, not the end()
+                        // success flag: a write can fail after the head was already committed.
+                        context.response().headWritten(),
+                        Instant.now());
+            }
+        };
         if (body == null) {
-            context.response().end().onComplete(result -> complete(context, terminal, result.succeeded()));
+            context.response().end().onComplete(onEnd);
             return;
         }
         // end(body) sets Content-Length, so the response is framed by length instead of relying on
         // connection-close framing the way a separate write() + end() pair does.
-        context.response()
-                .end(Buffer.buffer(body))
-                .onComplete(result -> complete(context, terminal, result.succeeded()));
-    }
-
-    private static void complete(RoutingContext context, McpRequestTerminalEvent terminal, boolean written) {
-        cancelTimer(context);
-        McpCompletionCoordinator coordinator = context.get(COMPLETION_COORDINATOR_KEY);
-        if (coordinator != null) {
-            coordinator.complete(
-                    terminal,
-                    written ? McpTransportOutcome.WRITTEN : McpTransportOutcome.WRITE_FAILED,
-                    written,
-                    Instant.now());
-        }
+        context.response().end(Buffer.buffer(body)).onComplete(onEnd);
     }
 
     private static void cancelTimer(RoutingContext context) {
