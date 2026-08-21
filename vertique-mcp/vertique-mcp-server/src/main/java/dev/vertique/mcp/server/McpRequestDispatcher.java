@@ -534,20 +534,16 @@ final class McpRequestDispatcher {
 
     private static void write(
             RoutingContext context, int status, @Nullable byte[] body, McpRequestTerminalEvent terminal) {
+        cancelTimer(context);
         McpCompletionCoordinator coordinator = context.get(COMPLETION_COORDINATOR_KEY);
         // Logical settlement precedes the byte write: beginWrite publishes the terminal and claims
         // the shared first-observed latch. If a settlement (disconnect, reset, or the whole-request
         // timeout) already won, the client-visible write is superseded and must be suppressed —
         // otherwise a slow handler's late write would reach a client the timeout already abandoned.
         // The admission-rejection path (W4) has no coordinator and writes directly with no
-        // terminal/observation.
-        //
-        // The whole-request timer stays armed across the write and is cancelled only once end()
-        // resolves (in onEnd below). Cancelling it here — before end() — would leave a stalled
-        // transport write (e.g. an HTTP/2 peer withholding flow-control on a still-open connection,
-        // so neither closeHandler nor exceptionHandler fires) unbounded, publishing a terminal with
-        // no completion. Leaving the timer armed lets the timeout fire, reset() the still-open
-        // response, and drive onEnd to a WRITE_FAILED completion — bounding the request.
+        // terminal/observation. A T004 discovery response is written in one bounded end(buffer) that
+        // resolves synchronously, so the write phase cannot stall; bounding a stalling/streaming
+        // write is a T007/T010 obligation (see the T004 review amendment), not a T004 concern.
         if (coordinator != null && !coordinator.beginWrite(terminal)) {
             return;
         }
