@@ -1,0 +1,217 @@
+{
+  "schemaVersion": 1,
+  "module": "vertique-mcp-core",
+  "comparisonBasis": "full-generic-signature",
+  "direction": "subset",
+  "scanScope": "hand-authored-public-surface; a top-level public type with no src/main/java source file is annotation-processor output and is excluded",
+  "packages": [
+    "dev.vertique.mcp.annotation",
+    "dev.vertique.mcp.interceptor",
+    "dev.vertique.mcp.lifecycle",
+    "dev.vertique.mcp.tool"
+  ],
+  "types": {
+    "dev.vertique.mcp.annotation.McpTool": [
+      "public abstract boolean dev.vertique.mcp.annotation.McpTool.destructiveHint()",
+      "public abstract boolean dev.vertique.mcp.annotation.McpTool.idempotentHint()",
+      "public abstract boolean dev.vertique.mcp.annotation.McpTool.openWorldHint()",
+      "public abstract boolean dev.vertique.mcp.annotation.McpTool.readOnlyHint()",
+      "public abstract java.lang.String dev.vertique.mcp.annotation.McpTool.description()",
+      "public abstract java.lang.String dev.vertique.mcp.annotation.McpTool.name()",
+      "public abstract java.lang.String dev.vertique.mcp.annotation.McpTool.title()"
+    ],
+    "dev.vertique.mcp.annotation.McpToolParam": [
+      "public abstract java.lang.String dev.vertique.mcp.annotation.McpToolParam.description()",
+      "public abstract java.lang.String dev.vertique.mcp.annotation.McpToolParam.name()"
+    ],
+    "dev.vertique.mcp.interceptor.McpTraceContext": [
+      "public boolean dev.vertique.mcp.interceptor.McpTraceContext.sampled()",
+      "public dev.vertique.mcp.interceptor.McpTraceContext(java.lang.String,java.lang.String,boolean,java.lang.String)",
+      "public final boolean dev.vertique.mcp.interceptor.McpTraceContext.equals(java.lang.Object)",
+      "public final int dev.vertique.mcp.interceptor.McpTraceContext.hashCode()",
+      "public final java.lang.String dev.vertique.mcp.interceptor.McpTraceContext.toString()",
+      "public java.lang.String dev.vertique.mcp.interceptor.McpTraceContext.spanId()",
+      "public java.lang.String dev.vertique.mcp.interceptor.McpTraceContext.traceId()",
+      "public java.lang.String dev.vertique.mcp.interceptor.McpTraceContext.traceState()"
+    ],
+    "dev.vertique.mcp.lifecycle.McpAuthorizationSummary": [
+      "public boolean dev.vertique.mcp.lifecycle.McpAuthorizationSummary.permitted()",
+      "public dev.vertique.mcp.lifecycle.McpAuthorizationSummary(boolean,java.lang.String,java.lang.String,java.lang.String)",
+      "public final boolean dev.vertique.mcp.lifecycle.McpAuthorizationSummary.equals(java.lang.Object)",
+      "public final int dev.vertique.mcp.lifecycle.McpAuthorizationSummary.hashCode()",
+      "public final java.lang.String dev.vertique.mcp.lifecycle.McpAuthorizationSummary.toString()",
+      "public java.lang.String dev.vertique.mcp.lifecycle.McpAuthorizationSummary.policyId()",
+      "public java.lang.String dev.vertique.mcp.lifecycle.McpAuthorizationSummary.policyVersion()",
+      "public java.lang.String dev.vertique.mcp.lifecycle.McpAuthorizationSummary.reasonCode()"
+    ],
+    "dev.vertique.mcp.lifecycle.McpErrorType": [
+      "public static dev.vertique.mcp.lifecycle.McpErrorType dev.vertique.mcp.lifecycle.McpErrorType.valueOf(java.lang.String)",
+      "public static dev.vertique.mcp.lifecycle.McpErrorType[] dev.vertique.mcp.lifecycle.McpErrorType.values()",
+      "public static final dev.vertique.mcp.lifecycle.McpErrorType dev.vertique.mcp.lifecycle.McpErrorType.AUTHENTICATION",
+      "public static final dev.vertique.mcp.lifecycle.McpErrorType dev.vertique.mcp.lifecycle.McpErrorType.AUTHORIZATION",
+      "public static final dev.vertique.mcp.lifecycle.McpErrorType dev.vertique.mcp.lifecycle.McpErrorType.HANDLER",
+      "public static final dev.vertique.mcp.lifecycle.McpErrorType dev.vertique.mcp.lifecycle.McpErrorType.HTTP",
+      "public static final dev.vertique.mcp.lifecycle.McpErrorType dev.vertique.mcp.lifecycle.McpErrorType.INPUT_PROCESSING",
+      "public static final dev.vertique.mcp.lifecycle.McpErrorType dev.vertique.mcp.lifecycle.McpErrorType.INPUT_VALIDATION",
+      "public static final dev.vertique.mcp.lifecycle.McpErrorType dev.vertique.mcp.lifecycle.McpErrorType.INTERCEPTOR",
+      "public static final dev.vertique.mcp.lifecycle.McpErrorType dev.vertique.mcp.lifecycle.McpErrorType.INTERNAL",
+      "public static final dev.vertique.mcp.lifecycle.McpErrorType dev.vertique.mcp.lifecycle.McpErrorType.NONE",
+      "public static final dev.vertique.mcp.lifecycle.McpErrorType dev.vertique.mcp.lifecycle.McpErrorType.OUTPUT_VALIDATION",
+      "public static final dev.vertique.mcp.lifecycle.McpErrorType dev.vertique.mcp.lifecycle.McpErrorType.PROTOCOL",
+      "public static final dev.vertique.mcp.lifecycle.McpErrorType dev.vertique.mcp.lifecycle.McpErrorType.SERIALIZATION",
+      "public static final dev.vertique.mcp.lifecycle.McpErrorType dev.vertique.mcp.lifecycle.McpErrorType.TIMEOUT",
+      "public static final dev.vertique.mcp.lifecycle.McpErrorType dev.vertique.mcp.lifecycle.McpErrorType.TRANSPORT"
+    ],
+    "dev.vertique.mcp.lifecycle.McpMethod": [
+      "public static dev.vertique.mcp.lifecycle.McpMethod dev.vertique.mcp.lifecycle.McpMethod.valueOf(java.lang.String)",
+      "public static dev.vertique.mcp.lifecycle.McpMethod[] dev.vertique.mcp.lifecycle.McpMethod.values()",
+      "public static final dev.vertique.mcp.lifecycle.McpMethod dev.vertique.mcp.lifecycle.McpMethod.OTHER",
+      "public static final dev.vertique.mcp.lifecycle.McpMethod dev.vertique.mcp.lifecycle.McpMethod.SERVER_DISCOVER",
+      "public static final dev.vertique.mcp.lifecycle.McpMethod dev.vertique.mcp.lifecycle.McpMethod.TOOLS_CALL",
+      "public static final dev.vertique.mcp.lifecycle.McpMethod dev.vertique.mcp.lifecycle.McpMethod.TOOLS_LIST"
+    ],
+    "dev.vertique.mcp.lifecycle.McpOutcome": [
+      "public static dev.vertique.mcp.lifecycle.McpOutcome dev.vertique.mcp.lifecycle.McpOutcome.valueOf(java.lang.String)",
+      "public static dev.vertique.mcp.lifecycle.McpOutcome[] dev.vertique.mcp.lifecycle.McpOutcome.values()",
+      "public static final dev.vertique.mcp.lifecycle.McpOutcome dev.vertique.mcp.lifecycle.McpOutcome.CANCELLED",
+      "public static final dev.vertique.mcp.lifecycle.McpOutcome dev.vertique.mcp.lifecycle.McpOutcome.FAILED",
+      "public static final dev.vertique.mcp.lifecycle.McpOutcome dev.vertique.mcp.lifecycle.McpOutcome.REJECTED",
+      "public static final dev.vertique.mcp.lifecycle.McpOutcome dev.vertique.mcp.lifecycle.McpOutcome.SUCCESS",
+      "public static final dev.vertique.mcp.lifecycle.McpOutcome dev.vertique.mcp.lifecycle.McpOutcome.TOOL_ERROR"
+    ],
+    "dev.vertique.mcp.lifecycle.McpRequestCompletedEvent": [
+      "public boolean dev.vertique.mcp.lifecycle.McpRequestCompletedEvent.responseCommitted()",
+      "public dev.vertique.mcp.lifecycle.McpRequestCompletedEvent(dev.vertique.mcp.lifecycle.McpRequestTerminalEvent,java.time.Instant,dev.vertique.mcp.lifecycle.McpTransportOutcome,boolean)",
+      "public dev.vertique.mcp.lifecycle.McpRequestTerminalEvent dev.vertique.mcp.lifecycle.McpRequestCompletedEvent.terminal()",
+      "public dev.vertique.mcp.lifecycle.McpTransportOutcome dev.vertique.mcp.lifecycle.McpRequestCompletedEvent.transportOutcome()",
+      "public final boolean dev.vertique.mcp.lifecycle.McpRequestCompletedEvent.equals(java.lang.Object)",
+      "public final int dev.vertique.mcp.lifecycle.McpRequestCompletedEvent.hashCode()",
+      "public final java.lang.String dev.vertique.mcp.lifecycle.McpRequestCompletedEvent.toString()",
+      "public java.time.Instant dev.vertique.mcp.lifecycle.McpRequestCompletedEvent.completedAt()",
+      "public static dev.vertique.mcp.lifecycle.McpRequestCompletedEvent dev.vertique.mcp.lifecycle.McpRequestCompletedEvent.disconnected(dev.vertique.mcp.lifecycle.McpRequestTerminalEvent,java.time.Instant,boolean)",
+      "public static dev.vertique.mcp.lifecycle.McpRequestCompletedEvent dev.vertique.mcp.lifecycle.McpRequestCompletedEvent.reset(dev.vertique.mcp.lifecycle.McpRequestTerminalEvent,java.time.Instant,boolean)",
+      "public static dev.vertique.mcp.lifecycle.McpRequestCompletedEvent dev.vertique.mcp.lifecycle.McpRequestCompletedEvent.writeFailed(dev.vertique.mcp.lifecycle.McpRequestTerminalEvent,java.time.Instant,boolean)",
+      "public static dev.vertique.mcp.lifecycle.McpRequestCompletedEvent dev.vertique.mcp.lifecycle.McpRequestCompletedEvent.written(dev.vertique.mcp.lifecycle.McpRequestTerminalEvent,java.time.Instant)"
+    ],
+    "dev.vertique.mcp.lifecycle.McpRequestCompletedListener": [
+      "public abstract void dev.vertique.mcp.lifecycle.McpRequestCompletedListener.onCompleted(dev.vertique.mcp.lifecycle.McpRequestCompletedEvent)"
+    ],
+    "dev.vertique.mcp.lifecycle.McpRequestLifecycleObserver": [
+      "public abstract dev.vertique.mcp.lifecycle.McpRequestObservation dev.vertique.mcp.lifecycle.McpRequestLifecycleObserver.open(java.time.Instant)"
+    ],
+    "dev.vertique.mcp.lifecycle.McpRequestObservation": [
+      "public default void dev.vertique.mcp.lifecycle.McpRequestObservation.onCompleted(dev.vertique.mcp.lifecycle.McpRequestCompletedEvent)",
+      "public default void dev.vertique.mcp.lifecycle.McpRequestObservation.onTerminal(dev.vertique.mcp.lifecycle.McpRequestTerminalObservation)"
+    ],
+    "dev.vertique.mcp.lifecycle.McpRequestTerminalEvent": [
+      "public dev.vertique.core.correlation.CorrelationContextSnapshot dev.vertique.mcp.lifecycle.McpRequestTerminalEvent.correlation()",
+      "public dev.vertique.mcp.lifecycle.McpAuthorizationSummary dev.vertique.mcp.lifecycle.McpRequestTerminalEvent.authorization()",
+      "public dev.vertique.mcp.lifecycle.McpErrorType dev.vertique.mcp.lifecycle.McpRequestTerminalEvent.errorType()",
+      "public dev.vertique.mcp.lifecycle.McpMethod dev.vertique.mcp.lifecycle.McpRequestTerminalEvent.method()",
+      "public dev.vertique.mcp.lifecycle.McpOutcome dev.vertique.mcp.lifecycle.McpRequestTerminalEvent.outcome()",
+      "public dev.vertique.mcp.lifecycle.McpRequestTerminalEvent(java.time.Instant,java.time.Instant,dev.vertique.mcp.lifecycle.McpMethod,java.lang.String,dev.vertique.mcp.lifecycle.McpOutcome,dev.vertique.mcp.lifecycle.McpErrorType,dev.vertique.mcp.lifecycle.McpResultType,int,java.lang.Integer,dev.vertique.mcp.lifecycle.McpAuthorizationSummary,dev.vertique.security.SecurityContextSnapshot,dev.vertique.core.correlation.CorrelationContextSnapshot)",
+      "public dev.vertique.mcp.lifecycle.McpResultType dev.vertique.mcp.lifecycle.McpRequestTerminalEvent.resultType()",
+      "public dev.vertique.security.SecurityContextSnapshot dev.vertique.mcp.lifecycle.McpRequestTerminalEvent.security()",
+      "public final boolean dev.vertique.mcp.lifecycle.McpRequestTerminalEvent.equals(java.lang.Object)",
+      "public final int dev.vertique.mcp.lifecycle.McpRequestTerminalEvent.hashCode()",
+      "public final java.lang.String dev.vertique.mcp.lifecycle.McpRequestTerminalEvent.toString()",
+      "public int dev.vertique.mcp.lifecycle.McpRequestTerminalEvent.httpStatus()",
+      "public java.lang.Integer dev.vertique.mcp.lifecycle.McpRequestTerminalEvent.protocolErrorCode()",
+      "public java.lang.String dev.vertique.mcp.lifecycle.McpRequestTerminalEvent.toolName()",
+      "public java.time.Instant dev.vertique.mcp.lifecycle.McpRequestTerminalEvent.startedAt()",
+      "public java.time.Instant dev.vertique.mcp.lifecycle.McpRequestTerminalEvent.terminalAt()",
+      "public static dev.vertique.mcp.lifecycle.McpRequestTerminalEvent dev.vertique.mcp.lifecycle.McpRequestTerminalEvent.cancelled(java.time.Instant,java.time.Instant,dev.vertique.mcp.lifecycle.McpMethod,java.lang.String,dev.vertique.mcp.lifecycle.McpErrorType,int,java.lang.Integer,dev.vertique.mcp.lifecycle.McpAuthorizationSummary,dev.vertique.security.SecurityContextSnapshot,dev.vertique.core.correlation.CorrelationContextSnapshot)",
+      "public static dev.vertique.mcp.lifecycle.McpRequestTerminalEvent dev.vertique.mcp.lifecycle.McpRequestTerminalEvent.failed(java.time.Instant,java.time.Instant,dev.vertique.mcp.lifecycle.McpMethod,java.lang.String,dev.vertique.mcp.lifecycle.McpErrorType,int,java.lang.Integer,dev.vertique.mcp.lifecycle.McpAuthorizationSummary,dev.vertique.security.SecurityContextSnapshot,dev.vertique.core.correlation.CorrelationContextSnapshot)",
+      "public static dev.vertique.mcp.lifecycle.McpRequestTerminalEvent dev.vertique.mcp.lifecycle.McpRequestTerminalEvent.rejected(java.time.Instant,java.time.Instant,dev.vertique.mcp.lifecycle.McpMethod,java.lang.String,dev.vertique.mcp.lifecycle.McpErrorType,int,java.lang.Integer,dev.vertique.mcp.lifecycle.McpAuthorizationSummary,dev.vertique.security.SecurityContextSnapshot,dev.vertique.core.correlation.CorrelationContextSnapshot)",
+      "public static dev.vertique.mcp.lifecycle.McpRequestTerminalEvent dev.vertique.mcp.lifecycle.McpRequestTerminalEvent.success(java.time.Instant,java.time.Instant,dev.vertique.mcp.lifecycle.McpMethod,java.lang.String,int,dev.vertique.mcp.lifecycle.McpAuthorizationSummary,dev.vertique.security.SecurityContextSnapshot,dev.vertique.core.correlation.CorrelationContextSnapshot)",
+      "public static dev.vertique.mcp.lifecycle.McpRequestTerminalEvent dev.vertique.mcp.lifecycle.McpRequestTerminalEvent.toolError(java.time.Instant,java.time.Instant,dev.vertique.mcp.lifecycle.McpMethod,java.lang.String,dev.vertique.mcp.lifecycle.McpErrorType,int,dev.vertique.mcp.lifecycle.McpAuthorizationSummary,dev.vertique.security.SecurityContextSnapshot,dev.vertique.core.correlation.CorrelationContextSnapshot)",
+      "public static final java.lang.String dev.vertique.mcp.lifecycle.McpRequestTerminalEvent.UNKNOWN_TOOL_NAME"
+    ],
+    "dev.vertique.mcp.lifecycle.McpRequestTerminalObservation": [
+      "public dev.vertique.mcp.interceptor.McpTraceContext dev.vertique.mcp.lifecycle.McpRequestTerminalObservation.bodyTraceContext()",
+      "public dev.vertique.mcp.lifecycle.McpRequestTerminalEvent dev.vertique.mcp.lifecycle.McpRequestTerminalObservation.event()",
+      "public dev.vertique.mcp.lifecycle.McpRequestTerminalObservation(dev.vertique.mcp.lifecycle.McpRequestTerminalEvent,dev.vertique.mcp.interceptor.McpTraceContext)",
+      "public final boolean dev.vertique.mcp.lifecycle.McpRequestTerminalObservation.equals(java.lang.Object)",
+      "public final int dev.vertique.mcp.lifecycle.McpRequestTerminalObservation.hashCode()",
+      "public final java.lang.String dev.vertique.mcp.lifecycle.McpRequestTerminalObservation.toString()"
+    ],
+    "dev.vertique.mcp.lifecycle.McpResultType": [
+      "public static dev.vertique.mcp.lifecycle.McpResultType dev.vertique.mcp.lifecycle.McpResultType.valueOf(java.lang.String)",
+      "public static dev.vertique.mcp.lifecycle.McpResultType[] dev.vertique.mcp.lifecycle.McpResultType.values()",
+      "public static final dev.vertique.mcp.lifecycle.McpResultType dev.vertique.mcp.lifecycle.McpResultType.COMPLETE",
+      "public static final dev.vertique.mcp.lifecycle.McpResultType dev.vertique.mcp.lifecycle.McpResultType.NONE"
+    ],
+    "dev.vertique.mcp.lifecycle.McpTransportOutcome": [
+      "public static dev.vertique.mcp.lifecycle.McpTransportOutcome dev.vertique.mcp.lifecycle.McpTransportOutcome.valueOf(java.lang.String)",
+      "public static dev.vertique.mcp.lifecycle.McpTransportOutcome[] dev.vertique.mcp.lifecycle.McpTransportOutcome.values()",
+      "public static final dev.vertique.mcp.lifecycle.McpTransportOutcome dev.vertique.mcp.lifecycle.McpTransportOutcome.DISCONNECTED",
+      "public static final dev.vertique.mcp.lifecycle.McpTransportOutcome dev.vertique.mcp.lifecycle.McpTransportOutcome.RESET",
+      "public static final dev.vertique.mcp.lifecycle.McpTransportOutcome dev.vertique.mcp.lifecycle.McpTransportOutcome.WRITE_FAILED",
+      "public static final dev.vertique.mcp.lifecycle.McpTransportOutcome dev.vertique.mcp.lifecycle.McpTransportOutcome.WRITTEN"
+    ],
+    "dev.vertique.mcp.tool.McpAccessMode": [
+      "public static dev.vertique.mcp.tool.McpAccessMode dev.vertique.mcp.tool.McpAccessMode.valueOf(java.lang.String)",
+      "public static dev.vertique.mcp.tool.McpAccessMode[] dev.vertique.mcp.tool.McpAccessMode.values()",
+      "public static final dev.vertique.mcp.tool.McpAccessMode dev.vertique.mcp.tool.McpAccessMode.DENY_ALL",
+      "public static final dev.vertique.mcp.tool.McpAccessMode dev.vertique.mcp.tool.McpAccessMode.PERMIT_ALL",
+      "public static final dev.vertique.mcp.tool.McpAccessMode dev.vertique.mcp.tool.McpAccessMode.RESTRICTED"
+    ],
+    "dev.vertique.mcp.tool.McpCancellationSignal": [
+      "public abstract boolean dev.vertique.mcp.tool.McpCancellationSignal.isCancelled()",
+      "public abstract io.vertx.core.Future<java.lang.Void> dev.vertique.mcp.tool.McpCancellationSignal.cancelled()"
+    ],
+    "dev.vertique.mcp.tool.McpPreparedToolCall": [
+      "public abstract io.vertx.core.Future<dev.vertique.mcp.tool.McpToolResult<?>> dev.vertique.mcp.tool.McpPreparedToolCall.invoke()",
+      "public abstract java.util.Map<java.lang.String, java.lang.Object> dev.vertique.mcp.tool.McpPreparedToolCall.normalizedArguments()"
+    ],
+    "dev.vertique.mcp.tool.McpToolAccess": [
+      "public dev.vertique.mcp.tool.McpAccessMode dev.vertique.mcp.tool.McpToolAccess.mode()",
+      "public dev.vertique.mcp.tool.McpToolAccess(dev.vertique.mcp.tool.McpAccessMode,java.util.List<java.lang.String>,dev.vertique.security.authz.ActionRef)",
+      "public dev.vertique.security.authz.ActionRef dev.vertique.mcp.tool.McpToolAccess.action()",
+      "public final boolean dev.vertique.mcp.tool.McpToolAccess.equals(java.lang.Object)",
+      "public final int dev.vertique.mcp.tool.McpToolAccess.hashCode()",
+      "public final java.lang.String dev.vertique.mcp.tool.McpToolAccess.toString()",
+      "public java.util.List<java.lang.String> dev.vertique.mcp.tool.McpToolAccess.roles()"
+    ],
+    "dev.vertique.mcp.tool.McpToolAnnotations": [
+      "public boolean dev.vertique.mcp.tool.McpToolAnnotations.destructiveHint()",
+      "public boolean dev.vertique.mcp.tool.McpToolAnnotations.idempotentHint()",
+      "public boolean dev.vertique.mcp.tool.McpToolAnnotations.openWorldHint()",
+      "public boolean dev.vertique.mcp.tool.McpToolAnnotations.readOnlyHint()",
+      "public dev.vertique.mcp.tool.McpToolAnnotations(boolean,boolean,boolean,boolean)",
+      "public final boolean dev.vertique.mcp.tool.McpToolAnnotations.equals(java.lang.Object)",
+      "public final int dev.vertique.mcp.tool.McpToolAnnotations.hashCode()",
+      "public final java.lang.String dev.vertique.mcp.tool.McpToolAnnotations.toString()"
+    ],
+    "dev.vertique.mcp.tool.McpToolDescriptor": [
+      "public dev.vertique.mcp.tool.McpToolAccess dev.vertique.mcp.tool.McpToolDescriptor.access()",
+      "public dev.vertique.mcp.tool.McpToolAnnotations dev.vertique.mcp.tool.McpToolDescriptor.annotations()",
+      "public dev.vertique.mcp.tool.McpToolDescriptor(java.lang.String,java.lang.String,java.lang.String,dev.vertique.mcp.tool.McpToolAnnotations,java.lang.String,java.lang.String,dev.vertique.mcp.tool.McpToolAccess)",
+      "public final boolean dev.vertique.mcp.tool.McpToolDescriptor.equals(java.lang.Object)",
+      "public final int dev.vertique.mcp.tool.McpToolDescriptor.hashCode()",
+      "public final java.lang.String dev.vertique.mcp.tool.McpToolDescriptor.toString()",
+      "public java.lang.String dev.vertique.mcp.tool.McpToolDescriptor.description()",
+      "public java.lang.String dev.vertique.mcp.tool.McpToolDescriptor.inputSchema()",
+      "public java.lang.String dev.vertique.mcp.tool.McpToolDescriptor.name()",
+      "public java.lang.String dev.vertique.mcp.tool.McpToolDescriptor.outputSchema()",
+      "public java.lang.String dev.vertique.mcp.tool.McpToolDescriptor.title()",
+      "public static final int dev.vertique.mcp.tool.McpToolDescriptor.MAX_DESCRIPTION_CHARS"
+    ],
+    "dev.vertique.mcp.tool.McpToolInvoker": [
+      "public abstract dev.vertique.mcp.tool.McpPreparedToolCall dev.vertique.mcp.tool.McpToolInvoker.prepare(java.util.Map<java.lang.String, java.lang.Object>,dev.vertique.mcp.tool.McpCancellationSignal)",
+      "public abstract dev.vertique.mcp.tool.McpToolDescriptor dev.vertique.mcp.tool.McpToolInvoker.descriptor()"
+    ],
+    "dev.vertique.mcp.tool.McpToolResult": [
+      "public T dev.vertique.mcp.tool.McpToolResult.structuredContent()",
+      "public boolean dev.vertique.mcp.tool.McpToolResult.isError()",
+      "public dev.vertique.mcp.tool.McpToolResult(java.util.List<java.lang.String>,T,boolean)",
+      "public final boolean dev.vertique.mcp.tool.McpToolResult.equals(java.lang.Object)",
+      "public final int dev.vertique.mcp.tool.McpToolResult.hashCode()",
+      "public final java.lang.String dev.vertique.mcp.tool.McpToolResult.toString()",
+      "public java.util.List<java.lang.String> dev.vertique.mcp.tool.McpToolResult.textContent()",
+      "public static <T> dev.vertique.mcp.tool.McpToolResult<T> dev.vertique.mcp.tool.McpToolResult.structured(T)",
+      "public static dev.vertique.mcp.tool.McpToolResult<java.lang.Void> dev.vertique.mcp.tool.McpToolResult.error(java.lang.String)",
+      "public static dev.vertique.mcp.tool.McpToolResult<java.lang.Void> dev.vertique.mcp.tool.McpToolResult.text(java.lang.String)"
+    ]
+  }
+}

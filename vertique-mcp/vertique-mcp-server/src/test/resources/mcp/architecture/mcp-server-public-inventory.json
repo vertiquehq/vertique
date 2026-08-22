@@ -1,0 +1,73 @@
+{
+  "schemaVersion": 1,
+  "module": "vertique-mcp-server",
+  "comparisonBasis": "full-generic-signature",
+  "direction": "subset",
+  "scanScope": "hand-authored-public-surface; a top-level public type with no src/main/java source file is annotation-processor output and is excluded",
+  "packages": [
+    "dev.vertique.mcp.server",
+    "dev.vertique.mcp.server.runtime"
+  ],
+  "types": {
+    "dev.vertique.mcp.server.McpServerConfig": [
+      "public boolean dev.vertique.mcp.server.McpServerConfig.enabled()",
+      "public dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder dev.vertique.mcp.server.McpServerConfig.toBuilder()",
+      "public int dev.vertique.mcp.server.McpServerConfig.jsonMaxDepth()",
+      "public int dev.vertique.mcp.server.McpServerConfig.jsonMaxItemsPerArray()",
+      "public int dev.vertique.mcp.server.McpServerConfig.jsonMaxPropertiesPerObject()",
+      "public int dev.vertique.mcp.server.McpServerConfig.jsonMaxStringChars()",
+      "public int dev.vertique.mcp.server.McpServerConfig.outputMaxBytes()",
+      "public int dev.vertique.mcp.server.McpServerConfig.toolsPageSize()",
+      "public java.lang.String dev.vertique.mcp.server.McpServerConfig.authenticationScheme()",
+      "public java.lang.String dev.vertique.mcp.server.McpServerConfig.instructions()",
+      "public java.lang.String dev.vertique.mcp.server.McpServerConfig.jsonProfile()",
+      "public java.lang.String dev.vertique.mcp.server.McpServerConfig.mountPath()",
+      "public java.lang.String dev.vertique.mcp.server.McpServerConfig.serverName()",
+      "public java.lang.String dev.vertique.mcp.server.McpServerConfig.serverVersion()",
+      "public java.util.Set<java.lang.String> dev.vertique.mcp.server.McpServerConfig.allowedOrigins()",
+      "public long dev.vertique.mcp.server.McpServerConfig.requestTimeoutMs()",
+      "public long dev.vertique.mcp.server.McpServerConfig.toolsTtlMs()",
+      "public static dev.vertique.mcp.server.McpServerConfig dev.vertique.mcp.server.McpServerConfig.defaults()",
+      "public static dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder dev.vertique.mcp.server.McpServerConfig.builder()"
+    ],
+    "dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder": [
+      "public dev.vertique.mcp.server.McpServerConfig dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder.build()",
+      "public dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder.allowedOrigins(java.util.Set<java.lang.String>)",
+      "public dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder.authenticationScheme(java.lang.String)",
+      "public dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder.enabled(boolean)",
+      "public dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder.instructions(java.lang.String)",
+      "public dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder.jsonMaxDepth(int)",
+      "public dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder.jsonMaxItemsPerArray(int)",
+      "public dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder.jsonMaxPropertiesPerObject(int)",
+      "public dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder.jsonMaxStringChars(int)",
+      "public dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder.jsonProfile(java.lang.String)",
+      "public dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder.mountPath(java.lang.String)",
+      "public dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder.outputMaxBytes(int)",
+      "public dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder.requestTimeoutMs(long)",
+      "public dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder.serverName(java.lang.String)",
+      "public dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder.serverVersion(java.lang.String)",
+      "public dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder.toolsPageSize(int)",
+      "public dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder.toolsTtlMs(long)",
+      "public java.lang.String dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder.toString()"
+    ],
+    "dev.vertique.mcp.server.McpServerModule": [
+    ],
+    "dev.vertique.mcp.server.runtime.McpToolParameterMetadata": [
+      "public dev.vertique.mcp.server.runtime.McpToolParameterMetadata(java.lang.String,java.lang.String,java.lang.String)",
+      "public final boolean dev.vertique.mcp.server.runtime.McpToolParameterMetadata.equals(java.lang.Object)",
+      "public final int dev.vertique.mcp.server.runtime.McpToolParameterMetadata.hashCode()",
+      "public final java.lang.String dev.vertique.mcp.server.runtime.McpToolParameterMetadata.toString()",
+      "public java.lang.String dev.vertique.mcp.server.runtime.McpToolParameterMetadata.carrierComponentName()",
+      "public java.lang.String dev.vertique.mcp.server.runtime.McpToolParameterMetadata.description()",
+      "public java.lang.String dev.vertique.mcp.server.runtime.McpToolParameterMetadata.externalName()"
+    ],
+    "dev.vertique.mcp.server.runtime.McpToolRuntime": [
+      "public I dev.vertique.mcp.server.runtime.McpToolRuntime.materializeArguments(java.util.Map<java.lang.String, java.lang.Object>)",
+      "public dev.vertique.mcp.tool.McpToolDescriptor dev.vertique.mcp.server.runtime.McpToolRuntime.descriptor()",
+      "public java.lang.Object dev.vertique.mcp.server.runtime.McpToolRuntime.normalizeStructuredContent(java.lang.Object)"
+    ],
+    "dev.vertique.mcp.server.runtime.McpToolRuntimeFactory": [
+      "public <I> dev.vertique.mcp.server.runtime.McpToolRuntime<I> dev.vertique.mcp.server.runtime.McpToolRuntimeFactory.create(java.lang.String,java.lang.String,java.lang.String,dev.vertique.mcp.tool.McpToolAnnotations,java.lang.Class<I>,java.lang.reflect.Type,java.util.List<dev.vertique.mcp.server.runtime.McpToolParameterMetadata>,dev.vertique.core.json.JsonProfileId,dev.vertique.mcp.tool.McpToolAccess)"
+    ]
+  }
+}
