@@ -128,6 +128,7 @@ class McpCacheHintsGoldenTest {
                     Set.of(),
                     Set.of(),
                     Set.of(),
+                    Set.of(),
                     HttpConfig.builder().build(),
                     registry,
                     policyEnforcer);

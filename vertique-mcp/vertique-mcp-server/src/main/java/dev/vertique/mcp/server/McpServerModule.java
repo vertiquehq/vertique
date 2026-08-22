@@ -9,6 +9,7 @@ import dagger.multibindings.IntoSet;
 import dagger.multibindings.Multibinds;
 import dev.vertique.core.lifecycle.ComposeValidator;
 import dev.vertique.mcp.interceptor.McpRequestInterceptor;
+import dev.vertique.mcp.interceptor.McpToolInterceptor;
 import dev.vertique.mcp.lifecycle.McpRequestCompletedListener;
 import dev.vertique.mcp.lifecycle.McpRequestLifecycleObserver;
 import dev.vertique.mcp.tool.McpToolInvoker;
@@ -39,6 +40,14 @@ public abstract class McpServerModule {
      */
     @Multibinds
     abstract Set<McpRequestInterceptor> requestInterceptors();
+
+    /**
+     * Declares the zero-or-more ordered, rejective post-validation tool-interceptor extension set
+     * (T017). {@link McpRequestDispatcher} sorts and validates the contributed set once at
+     * construction, so a graph with no contributions resolves an empty ordered chain.
+     */
+    @Multibinds
+    abstract Set<McpToolInterceptor> toolInterceptors();
 
     /**
      * Declares the zero-or-more generated tool invoker extension point. {@code vertique-codegen-mcp}

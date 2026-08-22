@@ -37,6 +37,17 @@
     "dev.vertique.mcp.interceptor.McpRequestInterceptor": [
       "public default io.vertx.core.Future<java.lang.Void> dev.vertique.mcp.interceptor.McpRequestInterceptor.beforeRequest(dev.vertique.mcp.interceptor.McpRequestContext)"
     ],
+    "dev.vertique.mcp.interceptor.McpToolInterceptor": [
+      "public default io.vertx.core.Future<java.lang.Void> dev.vertique.mcp.interceptor.McpToolInterceptor.beforeInvocation(dev.vertique.mcp.interceptor.McpToolInvocationContext)"
+    ],
+    "dev.vertique.mcp.interceptor.McpToolInvocationContext": [
+      "public dev.vertique.mcp.interceptor.McpRequestContext dev.vertique.mcp.interceptor.McpToolInvocationContext.request()",
+      "public dev.vertique.mcp.interceptor.McpToolInvocationContext(dev.vertique.mcp.interceptor.McpRequestContext,dev.vertique.mcp.tool.McpToolDescriptor)",
+      "public dev.vertique.mcp.tool.McpToolDescriptor dev.vertique.mcp.interceptor.McpToolInvocationContext.tool()",
+      "public final boolean dev.vertique.mcp.interceptor.McpToolInvocationContext.equals(java.lang.Object)",
+      "public final int dev.vertique.mcp.interceptor.McpToolInvocationContext.hashCode()",
+      "public final java.lang.String dev.vertique.mcp.interceptor.McpToolInvocationContext.toString()"
+    ],
     "dev.vertique.mcp.interceptor.McpTraceContext": [
       "public boolean dev.vertique.mcp.interceptor.McpTraceContext.sampled()",
       "public dev.vertique.mcp.interceptor.McpTraceContext(java.lang.String,java.lang.String,boolean,java.lang.String)",

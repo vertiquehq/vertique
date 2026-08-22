@@ -267,6 +267,7 @@ class McpRequestInterceptorPipelineTest {
                     Set.of(),
                     Set.of(),
                     interceptors,
+                    Set.of(),
                     HttpConfig.builder().build(),
                     McpToolRegistry.build(Set.of()),
                     mock(McpPolicyEnforcer.class));

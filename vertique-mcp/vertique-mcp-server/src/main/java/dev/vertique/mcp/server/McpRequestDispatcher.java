@@ -15,6 +15,8 @@ import dev.vertique.core.extension.ExtensionPhase;
 import dev.vertique.core.extension.OrderedExtension;
 import dev.vertique.mcp.interceptor.McpRequestContext;
 import dev.vertique.mcp.interceptor.McpRequestInterceptor;
+import dev.vertique.mcp.interceptor.McpToolInterceptor;
+import dev.vertique.mcp.interceptor.McpToolInvocationContext;
 import dev.vertique.mcp.lifecycle.McpErrorType;
 import dev.vertique.mcp.lifecycle.McpMethod;
 import dev.vertique.mcp.lifecycle.McpRequestCompletedListener;
@@ -120,6 +122,16 @@ final class McpRequestDispatcher {
     private static final String INTERCEPTOR_REJECTED_MESSAGE = "Request rejected";
 
     /**
+     * The bounded, non-leaking text returned as the sole content item of a post-validation
+     * {@link McpToolInterceptor} rejection (T017, contract §4.4). SSE was already selected before
+     * this stage runs (invocation always follows {@link #selectSse}), so — like a stage 1 schema
+     * rejection and a stage 2–4 {@link McpInputRejectionException} — this settles as a bounded
+     * text-only {@code isError=true} tool result through {@link #writeToolResult}, never a JSON-RPC
+     * protocol error. Carries no interceptor class name, reason, or exception text.
+     */
+    private static final String TOOL_INTERCEPTOR_REJECTED_MESSAGE = "Tool call rejected";
+
+    /**
      * The canonical anonymous {@link SecurityContext} — {@code PrincipalType.ANONYMOUS} actor,
      * {@code none} authentication method, empty claims — synthesized by {@link
      * #establishedSecurityContext()} when no context is yet bound, matching {@code
@@ -164,6 +176,7 @@ final class McpRequestDispatcher {
     private final Set<McpRequestLifecycleObserver> lifecycleObservers;
     private final Set<McpRequestCompletedListener> completedListeners;
     private final List<McpRequestInterceptor> orderedRequestInterceptors;
+    private final List<McpToolInterceptor> orderedToolInterceptors;
     private final McpProtocolCodec codec;
     private final McpToolRegistry toolRegistry;
     private final McpPolicyEnforcer policyEnforcer;
@@ -176,6 +189,7 @@ final class McpRequestDispatcher {
             Set<McpRequestLifecycleObserver> lifecycleObservers,
             Set<McpRequestCompletedListener> completedListeners,
             Set<McpRequestInterceptor> requestInterceptors,
+            Set<McpToolInterceptor> toolInterceptors,
             HttpConfig httpConfig,
             McpToolRegistry toolRegistry,
             McpPolicyEnforcer policyEnforcer) {
@@ -184,6 +198,7 @@ final class McpRequestDispatcher {
         this.lifecycleObservers = Set.copyOf(lifecycleObservers);
         this.completedListeners = Set.copyOf(completedListeners);
         this.orderedRequestInterceptors = sortedAndValidatedRequestInterceptors(requestInterceptors);
+        this.orderedToolInterceptors = sortedAndValidatedToolInterceptors(toolInterceptors);
         this.codec = new McpProtocolCodec(httpConfig);
         this.toolRegistry = toolRegistry;
         this.policyEnforcer = policyEnforcer;
@@ -213,6 +228,43 @@ final class McpRequestDispatcher {
             McpRequestInterceptor existing = byOrderKey.putIfAbsent(key, interceptor);
             if (existing != null) {
                 throw new IllegalStateException("Duplicate McpRequestInterceptor (phase="
+                        + key.phase()
+                        + ", priority="
+                        + key.priority()
+                        + ", orderKey="
+                        + key.orderKey()
+                        + ") between "
+                        + existing.getClass().getName()
+                        + " and "
+                        + interceptor.getClass().getName());
+            }
+        }
+        return List.copyOf(sorted);
+    }
+
+    /**
+     * Sorts {@code interceptors} by {@link OrderedExtension#comparator()} — phase, then priority,
+     * then {@code orderKey} — and validates that no two share the same {@code (phase, priority,
+     * orderKey)} triple (contract §4.4), reusing exactly the same ordering and duplicate-key
+     * validation {@link #sortedAndValidatedRequestInterceptors} establishes for the sibling T016
+     * stage. Ordering never falls back to Dagger set iteration: this is the one place that
+     * establishes it, at composition time, before any request reaches {@link #runToolInterceptors}.
+     *
+     * @param interceptors the contributed tool-interceptor set; must not be {@code null}
+     * @return an immutable, ordered list of the interceptors
+     * @throws IllegalStateException if two interceptors share the same {@code (phase, priority,
+     *     orderKey)} triple, naming both conflicting classes
+     */
+    private static List<McpToolInterceptor> sortedAndValidatedToolInterceptors(Set<McpToolInterceptor> interceptors) {
+        List<McpToolInterceptor> sorted = new ArrayList<>(interceptors);
+        sorted.sort(OrderedExtension.comparator());
+        record OrderKey(ExtensionPhase phase, int priority, String orderKey) {}
+        Map<OrderKey, McpToolInterceptor> byOrderKey = new LinkedHashMap<>();
+        for (McpToolInterceptor interceptor : sorted) {
+            OrderKey key = new OrderKey(interceptor.phase(), interceptor.priority(), interceptor.orderKey());
+            McpToolInterceptor existing = byOrderKey.putIfAbsent(key, interceptor);
+            if (existing != null) {
+                throw new IllegalStateException("Duplicate McpToolInterceptor (phase="
                         + key.phase()
                         + ", priority="
                         + key.priority()
@@ -529,6 +581,39 @@ final class McpRequestDispatcher {
                     new NullPointerException(interceptor.getClass().getName() + "#beforeRequest returned null"));
         }
         return outcome.compose(ignored -> runRequestInterceptors(index + 1, requestContext));
+    }
+
+    /**
+     * Runs the ordered post-validation tool-interceptor chain sequentially from {@code index},
+     * short-circuiting at the first rejection (T017, contract §4.4): a synchronous
+     * {@link McpToolInterceptor#beforeInvocation} throw, a {@code null} returned future, and a future
+     * that resolves failed all fail closed the same way — the next interceptor is never invoked and
+     * the generated invocation never runs. An empty ordered chain (the zero-interceptor composition)
+     * succeeds immediately. Mirrors {@link #runRequestInterceptors} exactly, reusing the same ordering
+     * and fail-closed semantics for this second, later stage.
+     *
+     * @param index the next interceptor to run, in {@link #orderedToolInterceptors} order
+     * @param toolContext the immutable, argument-free descriptor snapshot every interceptor in the
+     *     chain observes
+     * @return a future that succeeds once every interceptor has permitted, or fails with the first
+     *     rejection's cause
+     */
+    private Future<Void> runToolInterceptors(int index, McpToolInvocationContext toolContext) {
+        if (index >= orderedToolInterceptors.size()) {
+            return Future.succeededFuture();
+        }
+        McpToolInterceptor interceptor = orderedToolInterceptors.get(index);
+        Future<Void> outcome;
+        try {
+            outcome = interceptor.beforeInvocation(toolContext);
+        } catch (RuntimeException thrown) {
+            return Future.failedFuture(thrown);
+        }
+        if (outcome == null) {
+            return Future.failedFuture(
+                    new NullPointerException(interceptor.getClass().getName() + "#beforeInvocation returned null"));
+        }
+        return outcome.compose(ignored -> runToolInterceptors(index + 1, toolContext));
     }
 
     /**
@@ -1007,24 +1092,40 @@ final class McpRequestDispatcher {
             writeSseFallback(context, envelope, security, toolName, prepareFailure);
             return;
         }
-        Future<McpToolResult<?>> result;
-        try {
-            result = prepared.invoke();
-        } catch (RuntimeException invokeFailure) {
-            writeSseFallback(context, envelope, security, toolName, invokeFailure);
-            return;
-        }
-        result.onComplete(ar -> {
-            if (ar.failed() || ar.result() == null) {
-                writeSseFallback(
-                        context,
-                        envelope,
-                        security,
-                        toolName,
-                        ar.failed() ? ar.cause() : new NullPointerException("tool result"));
+        // T017: the ordered, fail-closed post-validation tool-interceptor stage runs here — strictly
+        // after Bean Validation (prepare() above already ran it) and strictly before the generated
+        // invocation (prepared.invoke() below). The context it exposes projects only the pre-dispatch
+        // McpRequestContext and the resolved descriptor: no raw or normalized argument ever reaches an
+        // interceptor. A rejection settles through the same bounded, SSE-framed writeToolResult path
+        // stage 1 and stages 2-4 already use, and prepared.invoke() is never called.
+        McpToolInvocationContext toolContext = new McpToolInvocationContext(
+                new McpRequestContext(McpMethod.TOOLS_CALL, establishedSecurityContext(), null, null),
+                invoker.descriptor());
+        runToolInterceptors(0, toolContext).onComplete(interceptorResult -> {
+            if (interceptorResult.failed()) {
+                writeToolResult(
+                        context, envelope, security, toolName, McpToolResult.error(TOOL_INTERCEPTOR_REJECTED_MESSAGE));
                 return;
             }
-            writeToolResult(context, envelope, security, toolName, ar.result());
+            Future<McpToolResult<?>> result;
+            try {
+                result = prepared.invoke();
+            } catch (RuntimeException invokeFailure) {
+                writeSseFallback(context, envelope, security, toolName, invokeFailure);
+                return;
+            }
+            result.onComplete(ar -> {
+                if (ar.failed() || ar.result() == null) {
+                    writeSseFallback(
+                            context,
+                            envelope,
+                            security,
+                            toolName,
+                            ar.failed() ? ar.cause() : new NullPointerException("tool result"));
+                    return;
+                }
+                writeToolResult(context, envelope, security, toolName, ar.result());
+            });
         });
     }
 

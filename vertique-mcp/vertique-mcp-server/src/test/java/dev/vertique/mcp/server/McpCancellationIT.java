@@ -404,6 +404,7 @@ class McpCancellationIT {
                             Set.of(observer),
                             Set.of(),
                             Set.of(),
+                            Set.of(),
                             httpConfig,
                             registry,
                             policyEnforcer),

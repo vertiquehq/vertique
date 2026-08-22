@@ -17,10 +17,12 @@ zero-argument authorized `tools/call` dispatch described in
 parameterized calls described in
 [Request-time input pipeline](#request-time-input-pipeline), the disconnect/reset/write-failure
 cancellation and write-phase settlement described in
-[Cancellation and write-phase settlement](#cancellation-and-write-phase-settlement), and the ordered,
+[Cancellation and write-phase settlement](#cancellation-and-write-phase-settlement), the ordered,
 fail-closed pre-dispatch request-interceptor stage described in
-[Request interceptor stage](#request-interceptor-stage). Ordered tool interceptors and rich
-structured output are introduced by their owning slice.
+[Request interceptor stage](#request-interceptor-stage), and the ordered, fail-closed
+post-validation tool-interceptor stage described in
+[Tool interceptor stage](#tool-interceptor-stage). Rich structured output is introduced by its
+owning slice.
 
 Configuration is disabled by default. When enabled, `serverName` and `serverVersion` are required,
 the mount is one literal path ending in `/*`, and every configured value is validated for range and
@@ -221,6 +223,36 @@ dispatch never run, and the caller receives the bounded, non-leaking `-32001`/`R
 JSON-RPC response (HTTP `403`) — never an exception message, never which interceptor rejected. A
 zero-interceptor composition is valid and always permits.
 
+## Tool interceptor stage
+
+Once a `tools/call` invocation has passed schema validation (stage 1) and the generated invoker's
+`prepare(...)` has returned — meaning stages 2–4 of the [Request-time input
+pipeline](#request-time-input-pipeline), including Bean Validation, already succeeded —
+`McpRequestDispatcher` runs the ordered, fail-closed post-validation `McpToolInterceptor` stage
+(T017, contract §4.4) strictly before the generated invocation (`McpPreparedToolCall#invoke()`) ever
+runs. This is the second and final live interceptor stage; the pre-dispatch
+[Request interceptor stage](#request-interceptor-stage) above already ran, earlier, before any tool
+was resolved.
+
+Contribute `McpToolInterceptor` through Dagger set multibinding (`McpServerModule`). The dispatcher
+sorts and validates the contributed set exactly once, at construction — never per request and never
+falling back to Dagger set iteration order — reusing the same `OrderedExtension`
+`phase` → `priority` → `orderKey` comparator and duplicate-order-key startup failure the request-
+interceptor stage establishes.
+
+Each permitted interceptor runs sequentially in that frozen order, on the request's owning Vert.x
+context, observing an `McpToolInvocationContext` that carries the pre-dispatch `McpRequestContext`
+and the resolved `McpToolDescriptor` — no raw wire argument, normalized argument, or invocation-
+result accessor exists, so an interceptor can reject a call but never observe or mutate the
+arguments it is guarding. A synchronous `beforeInvocation` throw, a `null` returned `Future`, or a
+`Future` that resolves failed all reject fail-closed the same way: the remaining interceptors and the
+generated invocation never run. Because SSE was already unconditionally selected before invocation
+began (see [Zero-argument tool calls](#zero-argument-tool-calls)), a rejection here settles through
+the same bounded, SSE-framed, text-only `isError=true` `CallToolResult` that a stage 1 schema
+rejection and a stage 2–4 rejection already use — never a JSON-RPC protocol error, and never an
+interceptor class name, reason, or exception text. A zero-interceptor composition is valid and always
+permits.
+
 ## Tool runtime
 
 Tools reach the server as generated Dagger multibindings, never by scanning. Install the
@@ -385,11 +417,10 @@ parameterized calls described in
 [Request-time input pipeline](#request-time-input-pipeline). What is deliberately still absent arrives
 with its owning slice:
 
-- **Ordered tool interceptors and opt-in value-observation.** Neither exists yet; every known,
-  authorized call reaches the generated invoker directly with no tool-stage interceptor. The
-  pre-dispatch request-interceptor stage described in
-  [Request interceptor stage](#request-interceptor-stage) exists and runs before this point; only the
-  later tool-stage hook is still absent.
+- **Opt-in value-observation.** Not yet present; no session receives normalized tool input or output.
+  Both live interceptor stages exist: the pre-dispatch request-interceptor stage described in
+  [Request interceptor stage](#request-interceptor-stage), and the post-validation tool-interceptor
+  stage described in [Tool interceptor stage](#tool-interceptor-stage).
 - **Rich and structured output.** A tool's `McpToolResult` is published as-is; output-schema
   validation and the single-pass bounded output normalization the frozen pipeline names are not yet
   applied beyond the existing `mcp.output.maxBytes` serialization cap shared with discovery and
@@ -464,9 +495,11 @@ complete, already-framed message.
 map as `{}` before reaching stage 1 of [Request-time input pipeline](#request-time-input-pipeline)
 below, exactly like a present object; a zero-argument tool's schema is the trivial empty object
 schema, so its stage 1 always passes. See [What is not here yet](#what-is-not-here-yet) for the
-interceptor and rich-output capabilities this version does not yet provide; cancellation and
-write-phase settlement (T013) are described in
-[Cancellation and write-phase settlement](#cancellation-and-write-phase-settlement).
+value-observation capability this version does not yet provide; cancellation and write-phase
+settlement (T013) are described in
+[Cancellation and write-phase settlement](#cancellation-and-write-phase-settlement), and the
+post-validation tool-interceptor stage is described in
+[Tool interceptor stage](#tool-interceptor-stage).
 
 ## Request-time input pipeline
 
@@ -493,8 +526,9 @@ policy, or constraint failed. Stage 1 failures are written directly by the dispa
 failure is signalled by the generated invoker throwing the package-private
 `McpInputRejectionException`, which the dispatcher maps to the identical bounded outcome — so a
 caller cannot tell which of the four stages rejected a call from the response shape. Only after all
-four stages succeed does the dispatcher call `invoke()`, and only then may an opt-in value-observation
-session ever receive the normalized carrier.
+four stages succeed does the dispatcher run the [Tool interceptor stage](#tool-interceptor-stage);
+only once every tool interceptor permits does it call `invoke()`, and only then may an opt-in
+value-observation session ever receive the normalized carrier.
 
 ## Authorization
 

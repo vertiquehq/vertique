@@ -391,6 +391,7 @@ class McpToolCallIT {
                             Set.of(),
                             Set.of(),
                             Set.of(),
+                            Set.of(),
                             httpConfig,
                             registry,
                             policyEnforcer),
