@@ -413,14 +413,26 @@ public class SecurityPolicyEnforcer {
             return Future.succeededFuture(AuthorizationDecision.permit(AuthzReasonCodes.PERMITTED));
         }
 
-        Map<String, Object> policyContext =
-                policy instanceof SecurityPolicy.Constrained c ? requireNonEmptyConstrained(c) : Map.of();
-        AuthorizationRequest authzRequest =
-                new AuthorizationRequest(securityContext, resource.id(), resource, origin, policyContext);
+        // Building the request can itself throw — requireNonEmptyConstrained rejects a Constrained
+        // policy with neither roles nor scopes, and AuthorizationRequest rejects a blank action, which
+        // a ResourceRef with a blank id produces. A Future-returning fail-closed API must not throw
+        // synchronously past its own envelope: one bad candidate would abort a whole tools/list loop,
+        // the exact failure decide() exists to avoid. So the construction sits inside the envelope and
+        // an invalid input denies rather than escapes.
+        AuthorizationRequest authzRequest;
+        try {
+            Map<String, Object> policyContext =
+                    policy instanceof SecurityPolicy.Constrained c ? requireNonEmptyConstrained(c) : Map.of();
+            authzRequest = new AuthorizationRequest(securityContext, resource.id(), resource, origin, policyContext);
+        } catch (RuntimeException e) {
+            log.warn("Authorization request could not be built; failing closed", e);
+            return Future.succeededFuture(
+                    roleScopeOnlyDecision(AuthorizationDecision.deny(AuthzReasonCodes.INTERNAL_AUTHZ_ERROR)));
+        }
 
         if (policy instanceof SecurityPolicy.DenyAll) {
             AuthorizationDecision decision =
-                    combinedDecision(AuthorizationDecision.deny(AuthzReasonCodes.DENY_ALL), null);
+                    roleScopeOnlyDecision(AuthorizationDecision.deny(AuthzReasonCodes.DENY_ALL));
             emitDecision(authzRequest, decision, correlation);
             return Future.succeededFuture(decision);
         }
@@ -454,8 +466,10 @@ public class SecurityPolicyEnforcer {
             }
             if (!roleScope.permitted() || requiredAction.isEmpty()) {
                 // Either the role/scope gate already denied (fail-fast — the action gate is not
-                // evaluated) or there is no action gate to compose.
-                AuthorizationDecision decision = combinedDecision(roleScope, null);
+                // evaluated) or there is no action gate to compose. Either way the decision point's
+                // own policyId/policyVersion/safeAttributes are carried through rather than dropped,
+                // matching what buildConstrainedHandler emits verbatim on the REST no-action path.
+                AuthorizationDecision decision = roleScopeOnlyDecision(roleScope);
                 emitDecision(authzRequest, decision, correlation);
                 promise.complete(decision);
                 return;
@@ -520,7 +534,7 @@ public class SecurityPolicyEnforcer {
     private AuthorizationDecision failClosedInternalError(
             AuthorizationRequest authzRequest, CorrelationContext correlation) {
         AuthorizationDecision decision =
-                combinedDecision(AuthorizationDecision.deny(AuthzReasonCodes.INTERNAL_AUTHZ_ERROR), null);
+                roleScopeOnlyDecision(AuthorizationDecision.deny(AuthzReasonCodes.INTERNAL_AUTHZ_ERROR));
         emitDecision(authzRequest, decision, correlation);
         return decision;
     }
@@ -926,12 +940,10 @@ public class SecurityPolicyEnforcer {
      * both pass. {@code safeAttributes} record {@code rolesSatisfied}, {@code actionSatisfied}, and
      * {@code actionEvaluated} so audit/observers can see each predicate's outcome.
      *
-     * <p>{@code action == null} means "no action gate was evaluated", which is reachable two ways:
-     * the role/scope gate already denied (fail-fast — every existing {@code buildComposedHandler}
-     * call site, where {@code roleScope} is then always a deny), or — since T005's {@link #decide}
-     * — there was no {@code requiredAction} to evaluate at all, in which case {@code roleScope} may
-     * legitimately permit. {@code permitted} therefore reduces to {@code rolesSatisfied} alone when
-     * there is no action decision, rather than being unconditionally forced to {@code false}.
+     * <p>{@code action == null} means the action gate was not evaluated because the role/scope gate
+     * already denied, so {@code permitted} is unconditionally {@code false} — the helper stays
+     * fail-closed by construction rather than by call-site discipline. A path that legitimately has
+     * no action gate at all and may still permit uses {@link #roleScopeOnlyDecision} instead.
      *
      * @param roleScope the role/scope gate decision; must not be {@code null}
      * @param action    the action gate decision, or {@code null} when the action gate was not evaluated
@@ -944,7 +956,7 @@ public class SecurityPolicyEnforcer {
         boolean rolesSatisfied = roleScope.permitted();
         boolean actionEvaluated = action != null;
         boolean actionSatisfied = action != null && action.permitted();
-        boolean permitted = rolesSatisfied && (action == null || actionSatisfied);
+        boolean permitted = rolesSatisfied && actionSatisfied;
 
         // First failing predicate wins the top-level reason: role/scope first, then action.
         String reasonCode;
@@ -964,6 +976,41 @@ public class SecurityPolicyEnforcer {
                 "actionSatisfied", actionSatisfied,
                 "actionEvaluated", actionEvaluated);
         return new AuthorizationDecision(permitted, reasonCode, Optional.empty(), Optional.empty(), safeAttributes);
+    }
+
+    /**
+     * Composes the single decision for an evaluation with <strong>no action gate</strong> — the
+     * {@link #decide} counterpart to {@link #combinedDecision}.
+     *
+     * <p>Kept separate from {@link #combinedDecision} deliberately. That helper's {@code action == null}
+     * case means "the action gate was skipped because role/scope already denied", so it must stay
+     * fail-closed by construction; here {@code action == null} means "there is no action gate", where a
+     * permit is the correct outcome. Folding the two into one helper would make a shared REST/WebSocket
+     * authorization primitive permit on a null action decision, which is exactly the fail-open shape the
+     * enforcer's F-W3 hardening exists to prevent.
+     *
+     * <p>Unlike {@link #combinedDecision}, this carries the decision point's own
+     * {@code policyId}, {@code policyVersion}, and {@code safeAttributes} through instead of discarding
+     * them, matching {@link #buildConstrainedHandler}, which emits the point's decision verbatim on the
+     * REST no-action path. The three composition keys are layered on top, so an audit consumer sees the
+     * same {@code rolesSatisfied}/{@code actionSatisfied}/{@code actionEvaluated} shape on every
+     * {@code decide} event; a decision-point attribute of the same name would be shadowed, which is the
+     * intended precedence.
+     *
+     * @param roleScope the role/scope gate decision; must not be {@code null}
+     * @return the decision to emit and return; never {@code null}
+     */
+    private static AuthorizationDecision roleScopeOnlyDecision(AuthorizationDecision roleScope) {
+        Map<String, Object> safeAttributes = new HashMap<>(roleScope.safeAttributes());
+        safeAttributes.put("rolesSatisfied", roleScope.permitted());
+        safeAttributes.put("actionSatisfied", false);
+        safeAttributes.put("actionEvaluated", false);
+        return new AuthorizationDecision(
+                roleScope.permitted(),
+                roleScope.reasonCode(),
+                roleScope.policyId(),
+                roleScope.policyVersion(),
+                Map.copyOf(safeAttributes));
     }
 
     /**

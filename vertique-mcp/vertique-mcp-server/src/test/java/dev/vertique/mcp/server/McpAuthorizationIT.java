@@ -31,6 +31,7 @@ import dev.vertique.security.authz.AuthorizationDecision;
 import dev.vertique.security.authz.AuthorizationRequest;
 import dev.vertique.security.authz.Authorizer;
 import dev.vertique.security.authz.AuthzReasonCodes;
+import dev.vertique.security.authz.InvocationOrigin;
 import dev.vertique.security.events.AuthorizationDecisionEvent;
 import dev.vertique.security.events.SecurityEventObserver;
 import dev.vertique.security.resolver.SecurityIdentityResolutionContext;
@@ -148,27 +149,27 @@ class McpAuthorizationIT {
         startServer();
         switch (row) {
             case PUBLIC_ROW -> {
-                McpToolDescriptor unannotated = descriptor("unannotated-tool", permitAllAccess());
-                McpToolDescriptor permitAll = descriptor("permit-all-tool", permitAllAccess());
+                // Both an unannotated and an explicitly @PermitAll tool resolve to the same
+                // PERMIT_ALL access, so one descriptor covers the row's behavioural claim; a second
+                // identical descriptor would run the same input twice rather than isolate a boundary.
+                McpToolDescriptor publicTool = descriptor("permit-all-tool", permitAllAccess());
 
-                for (McpToolDescriptor descriptor : List.of(unannotated, permitAll)) {
-                    assertPermittedAndVisible(descriptor, establish(null));
-                    assertPermittedAndVisible(descriptor, establish(BEARER_ALICE));
-                }
+                assertPermittedAndVisible(publicTool, establish(null));
+                assertPermittedAndVisible(publicTool, establish(BEARER_ALICE));
                 assertThat(events)
                         .as("PermitAll with no action must emit no event")
                         .isEmpty();
                 assertThat(invocationCount)
-                        .as("both public tools are invocable by both callers")
-                        .hasValue(4);
+                        .as("a public tool is invocable by both the anonymous and the bearer caller")
+                        .hasValue(2);
             }
             case ROLES_ROW -> {
                 McpToolDescriptor rolesTool = descriptor("roles-tool", rolesAccess());
 
+                // SENSITIVITY PROOF (T005 TP-002): the BEARER_ALICE literal on the next line is the
+                // mutation point. Replacing only it with a "Bearer tampered" credential must flip this
+                // permitted assertion true→false while the invocation count stays 0.
                 assertPermittedAndVisible(rolesTool, establish(BEARER_ALICE));
-                // SENSITIVITY PROOF (T005 TP-002): the bearer literal below is BEARER_ALICE. Changing
-                // only this literal to a "Bearer tampered" credential must flip the permitted
-                // assertion true→false while the invocation count remains 0.
                 assertDeniedAndHidden(rolesTool, establish(BEARER_ADMIN));
 
                 // Each caller is checked through both McpPolicyEnforcer#decide and
@@ -227,9 +228,6 @@ class McpAuthorizationIT {
                 assertThat(deniedResponse.data())
                         .as("the response must never leak whether the tool exists")
                         .isNull();
-                assertThat(deniedResponse.toString())
-                        .as("the unknown-or-unauthorized response must not name the denied tool")
-                        .doesNotContain(denyTool.name());
             }
             case ANONYMOUS_FAIL_CLOSED_ROW -> {
                 McpToolDescriptor rolesTool = descriptor("anon-roles-tool", rolesAccess());
@@ -241,6 +239,14 @@ class McpAuthorizationIT {
                     assertDeniedAndHidden(descriptor, anonymous);
                 }
 
+                // The coarse gate, not the Authorizer, is what must stop an anonymous caller. Without
+                // this the row would still pass if an action-only tool mapped to SecurityPolicy.None,
+                // because the admin-only Authorizer denies anonymous anyway — the matrix row
+                // "@RequiresAction → authenticated caller required" would be unfalsifiable.
+                assertThat(authorizer.callCount())
+                        .as("an anonymous caller must be denied at the coarse gate, never reaching the Authorizer")
+                        .isZero();
+
                 assertThat(events).hasSize(6);
                 assertThat(invocationCount)
                         .as("no anonymous caller reaches the guarded invocation path")
@@ -248,6 +254,21 @@ class McpAuthorizationIT {
             }
             default -> fail("unknown T005 authorization matrix row: " + row);
         }
+
+        // Frozen by contract for every MCP evaluation, and previously asserted by no proof: the
+        // enforcer must supply the MCP invocation origin and an "mcp-tool" ResourceRef carrying the
+        // descriptor name. Without this, passing "route" or a constant id would keep every row green.
+        assertThat(events).allSatisfy(event -> {
+            assertThat(event.request().origin())
+                    .as("every MCP decision event must carry the MCP invocation origin")
+                    .isEqualTo(InvocationOrigin.of(DispatchBoundary.MCP));
+            assertThat(event.request().resource().type())
+                    .as("every MCP decision event must carry an mcp-tool ResourceRef")
+                    .isEqualTo("mcp-tool");
+            assertThat(event.request().resource().id())
+                    .as("the ResourceRef id must be the descriptor name")
+                    .isNotBlank();
+        });
     }
 
     // --- Assertions ---

@@ -80,6 +80,59 @@ final class RestSecurityInventoryChecker {
         return signatures;
     }
 
+    /**
+     * Hand-authored public types of this module that extend a <strong>non-public</strong> type of the
+     * same module.
+     *
+     * <p>Such a supertype's public members are consumer-reachable through the public subtype, but the
+     * recorded set is built from declared, non-synthetic members, and javac surfaces the inherited
+     * member on the subtype as a <em>bridge</em> — which is synthetic, and therefore filtered out. So
+     * neither the supertype's own row (it is not public, so it is never scanned) nor the subtype's row
+     * records it, and the member escapes the guard entirely.
+     *
+     * <p>The check is structural rather than member-level for exactly that reason: a declaring-class
+     * comparison cannot see the escape, because reflection reports the bridge as declared by the
+     * public subtype. Nothing in the guarded modules does this today; the check exists because the
+     * mechanism is frozen for seven modules and the remaining task graph.
+     *
+     * @return the offending {@code subtype extends supertype} pairs, empty when the surface is clean
+     */
+    Set<String> publicTypesWithNonPublicModuleSupertypes() {
+        Set<String> offenders = new TreeSet<>();
+        for (Class<?> type : moduleClasses) {
+            if (!Modifier.isPublic(type.getModifiers()) || type.isSynthetic() || !handAuthored(type)) {
+                continue;
+            }
+            for (Class<?> supertype = type.getSuperclass();
+                    supertype != null && supertype != Object.class;
+                    supertype = supertype.getSuperclass()) {
+                if (!Modifier.isPublic(supertype.getModifiers()) && moduleClasses.contains(supertype)) {
+                    offenders.add(type.getName() + " extends " + supertype.getName());
+                }
+            }
+        }
+        return offenders;
+    }
+
+    /**
+     * Top-level types excluded from the scan as annotation-processor output, so an exclusion can be
+     * asserted rather than trusted.
+     *
+     * @return the excluded binary names, empty when nothing was excluded
+     */
+    Set<String> excludedAsGenerated() {
+        Set<String> excluded = new TreeSet<>();
+        for (Class<?> type : moduleClasses) {
+            if (Modifier.isPublic(type.getModifiers())
+                    && !type.isSynthetic()
+                    && !type.getName().contains("$")
+                    && !handAuthored(type)) {
+                excluded.add(type.getName());
+            }
+        }
+        return excluded;
+    }
+
     static JsonObject recordedInventory(String resourcePath) {
         try (InputStream stream =
                 RestSecurityInventoryChecker.class.getClassLoader().getResourceAsStream(resourcePath)) {

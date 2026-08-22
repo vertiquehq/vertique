@@ -101,6 +101,13 @@ class McpPolicyEnforcer {
      * Reports whether the given descriptor must be visible to the given caller in a {@code
      * tools/list} candidate set — {@code true} exactly when {@link #decide} would permit.
      *
+     * <p><strong>This is a full evaluation and it emits.</strong> Visibility is not a cached or
+     * cheaper check: it delegates to {@link #decide}, so a restrictive descriptor produces its own
+     * {@code AuthorizationDecisionEvent} here. A caller that filters a candidate and then acts on
+     * that same descriptor must reuse the decision it already obtained rather than calling both
+     * methods, or one logical authorization emits two events. The listing and call slices that
+     * consume this own that obligation.
+     *
      * @param descriptor the tool descriptor to evaluate; must not be {@code null}
      * @param caller     the already-established caller security context; must not be {@code null}
      * @return a future carrying {@code true} when the tool is visible to {@code caller}; never

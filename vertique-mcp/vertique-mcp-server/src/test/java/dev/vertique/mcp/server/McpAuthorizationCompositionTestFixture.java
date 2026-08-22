@@ -71,6 +71,22 @@ final class McpAuthorizationCompositionTestFixture {
         return (SecurityPolicyEnforcer) field.get(contributor);
     }
 
+    /**
+     * Reads back the {@link AuthorizationDecisionPoint} an enforcer instance selected in its
+     * constructor, so "both consumers see the same selected decision point" can be asserted directly
+     * instead of inferred from the two consumers sharing an enforcer instance.
+     *
+     * @param enforcer the enforcer instance to read; must not be {@code null}
+     * @return the decision point that enforcer selected, or {@code null} when it selected none
+     * @throws ReflectiveOperationException if the field cannot be read
+     */
+    static AuthorizationDecisionPoint selectedDecisionPointOf(SecurityPolicyEnforcer enforcer)
+            throws ReflectiveOperationException {
+        Field field = SecurityPolicyEnforcer.class.getDeclaredField("decisionPoint");
+        field.setAccessible(true);
+        return (AuthorizationDecisionPoint) field.get(enforcer);
+    }
+
     /** The production-shaped test component: REST security modules + the MCP server module. */
     @Singleton
     @Component(

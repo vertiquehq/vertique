@@ -47,9 +47,16 @@ class McpAuthorizationCompositionTest {
         assertThat(viaMcpPolicyEnforcer)
                 .as("McpPolicyEnforcer must see the same enforcer singleton the graph resolves")
                 .isSameAs(viaComponent);
-        // decisionPoint is a private final field SecurityPolicyEnforcer's constructor selects exactly
-        // once (see SecurityPolicyEnforcer#decisionPoint()'s javadoc); one shared enforcer instance
-        // therefore structurally implies one shared selected decision point for both consumers.
+        // "The same selected decision point" is asserted directly rather than argued from the shared
+        // enforcer instance: the enforcer selects its decision point once in its constructor, so reading
+        // the selection back off the very instance both consumers hold is what actually proves the two
+        // see the same evaluator.
+        assertThat(McpAuthorizationCompositionTestFixture.selectedDecisionPointOf(viaMcpPolicyEnforcer))
+                .as("the enforcer MCP holds must have selected exactly the app-provided decision point")
+                .isSameAs(appProvidedDecisionPoint);
+        assertThat(McpAuthorizationCompositionTestFixture.selectedDecisionPointOf(viaAuthorizationContributor))
+                .as("the enforcer the REST contributor holds must have selected the same decision point")
+                .isSameAs(appProvidedDecisionPoint);
 
         Optional<AuthorizationDecisionPoint> resolvedDecisionPoint = component.authorizationDecisionPoint();
         assertThat(resolvedDecisionPoint)

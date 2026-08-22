@@ -207,6 +207,10 @@ things are deliberately still absent, and both arrive with their owning slices:
 
 ## Authorization
 
+This authorization mapping is established now, ahead of the `tools/list` and `tools/call` wire
+endpoints that will consume it (see [What is not here yet](#what-is-not-here-yet)); it governs their
+authorization semantics once those methods are exposed by their owning slices.
+
 Each generated tool declares its access requirement — unannotated, `@PermitAll`, `@DenyAll`,
 `@RolesAllowed`, `@RequiresAction`, or `@RolesAllowed` plus `@RequiresAction` — exactly as a REST
 resource method does, and the server evaluates it through the same `SecurityPolicyEnforcer`
@@ -233,6 +237,3 @@ not use both resolve to the same `-32602` response, with no detail identifying w
 tool is never invoked. Every restrictive evaluation emits exactly one combined
 `AuthorizationDecisionEvent`.
 
-This authorization mapping is established now, ahead of the `tools/list` and `tools/call` wire
-endpoints that will consume it (see [What is not here yet](#what-is-not-here-yet)); it governs their
-authorization semantics once those methods are exposed by their owning slices.

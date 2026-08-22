@@ -58,6 +58,8 @@ class SecurityPolicyEnforcerDecisionTest {
     private static final ResourceRef TOOL_RESOURCE = new ResourceRef("mcp-tool", "sample-tool", Map.of());
     private static final InvocationOrigin MCP_ORIGIN = InvocationOrigin.of(DispatchBoundary.MCP);
     private static final ActionRef SAMPLE_ACTION = ActionRef.parse("mcp.tool.invoke");
+    private static final String POLICY_ID = "mcp-tool-policy";
+    private static final String POLICY_VERSION = "7";
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("t005ContractMatrixRows")
@@ -141,6 +143,16 @@ class SecurityPolicyEnforcerDecisionTest {
                 Map<String, Object> attrs = events.get(0).decision().safeAttributes();
                 assertThat(attrs.get("rolesSatisfied")).isEqualTo(Boolean.TRUE);
                 assertThat(attrs.get("actionEvaluated")).isEqualTo(Boolean.FALSE);
+
+                // A no-action evaluation must carry the decision point's own forensics through rather
+                // than rebuilding the decision from scratch — the REST no-action handler emits the
+                // point's decision verbatim, and an audit consumer must not see MCP strip policyId,
+                // policyVersion, or the point's own safe attributes.
+                assertThat(decision.policyId()).contains(POLICY_ID);
+                assertThat(decision.policyVersion()).contains(POLICY_VERSION);
+                assertThat(attrs.get("decisionPointAttribute"))
+                        .as("the decision point's own safe attributes must survive composition")
+                        .isEqualTo("carried");
             }
 
             case "shouldEvaluateActionOnlyThroughTheExistingAuthorizer" -> {
@@ -394,10 +406,15 @@ class SecurityPolicyEnforcerDecisionTest {
                 Set<String> actualRoles =
                         request.securityContext().authorization().valuesOf(AuthorityKind.ROLE);
                 boolean satisfied = actualRoles.containsAll(requiredRoles);
-                return Future.succeededFuture(
-                        satisfied
-                                ? AuthorizationDecision.permit(AuthzReasonCodes.PERMITTED)
-                                : AuthorizationDecision.deny(AuthzReasonCodes.ROLE_MISSING));
+                // Carries policy forensics and an own safe attribute so the no-action path can be
+                // checked for dropping them: a composed decision that rebuilt the record from scratch
+                // would silently discard all three.
+                return Future.succeededFuture(new AuthorizationDecision(
+                        satisfied,
+                        satisfied ? AuthzReasonCodes.PERMITTED : AuthzReasonCodes.ROLE_MISSING,
+                        Optional.of(POLICY_ID),
+                        Optional.of(POLICY_VERSION),
+                        Map.of("decisionPointAttribute", "carried")));
             });
         }
 
