@@ -151,6 +151,26 @@
       "public static dev.vertique.mcp.lifecycle.McpRequestTerminalEvent dev.vertique.mcp.lifecycle.McpRequestTerminalEvent.toolError(java.time.Instant,java.time.Instant,dev.vertique.mcp.lifecycle.McpMethod,java.lang.String,dev.vertique.mcp.lifecycle.McpErrorType,int,dev.vertique.mcp.lifecycle.McpAuthorizationSummary,dev.vertique.security.SecurityContextSnapshot,dev.vertique.core.correlation.CorrelationContextSnapshot)",
       "public static final java.lang.String dev.vertique.mcp.lifecycle.McpRequestTerminalEvent.UNKNOWN_TOOL_NAME"
     ],
+    "dev.vertique.mcp.lifecycle.McpToolInputObservation": [
+      "public dev.vertique.mcp.interceptor.McpToolInvocationContext dev.vertique.mcp.lifecycle.McpToolInputObservation.context()",
+      "public dev.vertique.mcp.lifecycle.McpToolInputObservation(dev.vertique.mcp.interceptor.McpToolInvocationContext,java.util.Map<java.lang.String, java.lang.Object>)",
+      "public final boolean dev.vertique.mcp.lifecycle.McpToolInputObservation.equals(java.lang.Object)",
+      "public final int dev.vertique.mcp.lifecycle.McpToolInputObservation.hashCode()",
+      "public final java.lang.String dev.vertique.mcp.lifecycle.McpToolInputObservation.toString()",
+      "public java.util.Map<java.lang.String, java.lang.Object> dev.vertique.mcp.lifecycle.McpToolInputObservation.normalizedArguments()"
+    ],
+    "dev.vertique.mcp.lifecycle.McpToolOutputObservation": [
+      "public dev.vertique.mcp.interceptor.McpToolInvocationContext dev.vertique.mcp.lifecycle.McpToolOutputObservation.context()",
+      "public dev.vertique.mcp.lifecycle.McpToolOutputObservation(dev.vertique.mcp.interceptor.McpToolInvocationContext,java.lang.Object)",
+      "public final boolean dev.vertique.mcp.lifecycle.McpToolOutputObservation.equals(java.lang.Object)",
+      "public final int dev.vertique.mcp.lifecycle.McpToolOutputObservation.hashCode()",
+      "public final java.lang.String dev.vertique.mcp.lifecycle.McpToolOutputObservation.toString()",
+      "public java.lang.Object dev.vertique.mcp.lifecycle.McpToolOutputObservation.normalizedOutput()"
+    ],
+    "dev.vertique.mcp.lifecycle.McpToolValueObservation": [
+      "public default void dev.vertique.mcp.lifecycle.McpToolValueObservation.onToolInput(dev.vertique.mcp.lifecycle.McpToolInputObservation)",
+      "public default void dev.vertique.mcp.lifecycle.McpToolValueObservation.onToolOutput(dev.vertique.mcp.lifecycle.McpToolOutputObservation)"
+    ],
     "dev.vertique.mcp.lifecycle.McpRequestTerminalObservation": [
       "public dev.vertique.mcp.interceptor.McpTraceContext dev.vertique.mcp.lifecycle.McpRequestTerminalObservation.bodyTraceContext()",
       "public dev.vertique.mcp.lifecycle.McpRequestTerminalEvent dev.vertique.mcp.lifecycle.McpRequestTerminalObservation.event()",

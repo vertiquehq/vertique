@@ -129,6 +129,30 @@ pre-dispatch `McpRequestContext` and the resolved `McpToolDescriptor`. It expose
 raw wire argument tree, the post-processing normalized argument tree, or any invocation result, so a
 tool interceptor can reject a call but never observe or mutate the arguments it is guarding.
 
+## Opt-in value observation
+
+`McpToolValueObservation` is a neutral capability a session returned from `McpRequestLifecycleObserver
+#open` may additionally implement to receive `onToolInput`/`onToolOutput` — the bounded, normalized
+tool argument and result values a plain `McpRequestObservation` session never receives. Least
+privilege is structural: the server delivers a value callback only to a session that is an instance
+of this interface, so an ordinary metrics or tracing session implementing only `McpRequestObservation`
+has no method on its own type capable of receiving an argument or result reference.
+
+`McpToolInputObservation` carries the pre-dispatch `McpToolInvocationContext` and the bounded
+`normalizedArguments` tree exactly as `McpPreparedToolCall#normalizedArguments()` produced it — after
+schema validation, INP-001 canonicalization and sanitization, materialization, and Bean Validation.
+`McpToolOutputObservation` carries the same context and a bounded, schema-valid `normalizedOutput`
+value; its dispatch belongs to the output pipeline. Both records deep-copy their value into an
+unmodifiable view at every level of its nested `Map`/`List` structure in their compact constructor,
+regardless of whether the value handed in was already immutable, and expose no accessor for raw body
+bytes, headers, credentials, or exception text.
+
+Values are callback-scoped: the framework retains no reference to a delivered observation or its
+value tree once the callback that received it returns. An implementor that keeps a reference beyond
+its own callback does so under its own documented obligation — an immutable record cannot revoke
+itself; only an installed audit adapter may copy a policy-permitted value into its own private
+evidence handle.
+
 ## Dependency boundary
 
 This module consumes only the public core correlation snapshot, the security snapshot and

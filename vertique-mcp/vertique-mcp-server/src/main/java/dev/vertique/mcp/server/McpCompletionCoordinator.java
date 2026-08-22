@@ -9,6 +9,8 @@ import dev.vertique.mcp.lifecycle.McpRequestLifecycleObserver;
 import dev.vertique.mcp.lifecycle.McpRequestObservation;
 import dev.vertique.mcp.lifecycle.McpRequestTerminalEvent;
 import dev.vertique.mcp.lifecycle.McpRequestTerminalObservation;
+import dev.vertique.mcp.lifecycle.McpToolInputObservation;
+import dev.vertique.mcp.lifecycle.McpToolValueObservation;
 import dev.vertique.mcp.lifecycle.McpTransportOutcome;
 import dev.vertique.mcp.tool.McpCancellationSignal;
 import io.vertx.core.Context;
@@ -86,6 +88,29 @@ final class McpCompletionCoordinator {
      */
     McpCancellationSignal cancellation() {
         return cancellationSignal;
+    }
+
+    /**
+     * Delivers {@code observation} to every retained session that implements the opt-in {@link
+     * McpToolValueObservation} capability, isolating each session's failure exactly like {@link
+     * #publishTerminal} (T018, contract §4.4).
+     *
+     * <p>Least privilege is structural: an ordinary {@link McpRequestObservation} session that does
+     * not implement {@link McpToolValueObservation} is never even tested here — the {@code
+     * instanceof} guard below is the sole gate, so such a session has no code path through which this
+     * method could reach it. The coordinator declares no field for {@code observation}: the parameter
+     * exists only on this call's stack and every session's synchronous callback frame, and is
+     * unreachable through this instance once every {@code onToolInput} call below has returned.
+     *
+     * @param observation the bounded, normalized input observation for this request's tool call;
+     *     must not be {@code null}
+     */
+    void publishToolInput(McpToolInputObservation observation) {
+        observations.forEach(session -> {
+            if (session instanceof McpToolValueObservation capable) {
+                invoke(() -> capable.onToolInput(observation));
+            }
+        });
     }
 
     // --- T004 two-phase write path ---

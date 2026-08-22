@@ -22,6 +22,7 @@ import dev.vertique.mcp.lifecycle.McpMethod;
 import dev.vertique.mcp.lifecycle.McpRequestCompletedListener;
 import dev.vertique.mcp.lifecycle.McpRequestLifecycleObserver;
 import dev.vertique.mcp.lifecycle.McpRequestTerminalEvent;
+import dev.vertique.mcp.lifecycle.McpToolInputObservation;
 import dev.vertique.mcp.lifecycle.McpTransportOutcome;
 import dev.vertique.mcp.tool.McpCancellationSignal;
 import dev.vertique.mcp.tool.McpPreparedToolCall;
@@ -1101,6 +1102,14 @@ final class McpRequestDispatcher {
         McpToolInvocationContext toolContext = new McpToolInvocationContext(
                 new McpRequestContext(McpMethod.TOOLS_CALL, establishedSecurityContext(), null, null),
                 invoker.descriptor());
+        // T018: the opt-in, capability-gated value-observation callback fires here — after Bean
+        // Validation (prepare() above already ran it) but strictly before the tool-interceptor stage
+        // just below (contract §4.4 callback order). Delivered only to a session implementing
+        // McpToolValueObservation; the coordinator retains no reference to the observation once every
+        // onToolInput call has returned (McpCompletionCoordinator#publishToolInput).
+        if (coordinator != null) {
+            coordinator.publishToolInput(new McpToolInputObservation(toolContext, prepared.normalizedArguments()));
+        }
         runToolInterceptors(0, toolContext).onComplete(interceptorResult -> {
             if (interceptorResult.failed()) {
                 writeToolResult(

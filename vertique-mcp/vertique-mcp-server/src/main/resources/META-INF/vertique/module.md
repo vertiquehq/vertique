@@ -19,10 +19,12 @@ parameterized calls described in
 cancellation and write-phase settlement described in
 [Cancellation and write-phase settlement](#cancellation-and-write-phase-settlement), the ordered,
 fail-closed pre-dispatch request-interceptor stage described in
-[Request interceptor stage](#request-interceptor-stage), and the ordered, fail-closed
+[Request interceptor stage](#request-interceptor-stage), the ordered, fail-closed
 post-validation tool-interceptor stage described in
-[Tool interceptor stage](#tool-interceptor-stage). Rich structured output is introduced by its
-owning slice.
+[Tool interceptor stage](#tool-interceptor-stage), and the opt-in, capability-gated `onToolInput`
+value-observation callback described in
+[Value observation stage](#value-observation-stage). Rich structured output and the `onToolOutput`
+value-observation callback are introduced by their owning slice.
 
 Configuration is disabled by default. When enabled, `serverName` and `serverVersion` are required,
 the mount is one literal path ending in `/*`, and every configured value is validated for range and
@@ -253,6 +255,27 @@ rejection and a stage 2–4 rejection already use — never a JSON-RPC protocol 
 interceptor class name, reason, or exception text. A zero-interceptor composition is valid and always
 permits.
 
+## Value observation stage
+
+Once the generated invoker's `prepare(...)` has returned — meaning stages 1–4 of the [Request-time
+input pipeline](#request-time-input-pipeline), including Bean Validation, already succeeded —
+`McpRequestDispatcher` delivers an `McpToolInputObservation` through
+`McpCompletionCoordinator#publishToolInput` (T018, contract §4.4), strictly before the [Tool
+interceptor stage](#tool-interceptor-stage) runs. Delivery is capability-gated: the coordinator
+delivers `onToolInput` only to a retained session that is an instance of `McpToolValueObservation`,
+never to a plain `McpRequestObservation` session — an ordinary metrics or tracing session never
+receives an argument or result reference through any callback. The coordinator declares no field for
+the observation; the reference exists only on the publish call's stack and each capable session's
+synchronous callback frame, and is unreachable through the coordinator once every `onToolInput` call
+has returned.
+
+The delivered `normalizedArguments` is exactly `McpPreparedToolCall#normalizedArguments()`, deep-copied
+into an unmodifiable view at every nesting level by `McpToolInputObservation`'s compact constructor.
+This is the whole of the framework's enforceable claim: nothing prevents a session from retaining the
+reference it is handed past its own callback — an immutable record cannot revoke itself — so
+callback-scoped use remains a documented obligation on implementors. The `onToolOutput` callback's
+dispatch belongs to the output pipeline slice and is not wired by this version.
+
 ## Tool runtime
 
 Tools reach the server as generated Dagger multibindings, never by scanning. Install the
@@ -417,10 +440,12 @@ parameterized calls described in
 [Request-time input pipeline](#request-time-input-pipeline). What is deliberately still absent arrives
 with its owning slice:
 
-- **Opt-in value-observation.** Not yet present; no session receives normalized tool input or output.
-  Both live interceptor stages exist: the pre-dispatch request-interceptor stage described in
-  [Request interceptor stage](#request-interceptor-stage), and the post-validation tool-interceptor
-  stage described in [Tool interceptor stage](#tool-interceptor-stage).
+- **Opt-in value-observation input callback.** Present since T018: `onToolInput` is delivered, only to
+  a capability-implementing session, through the [Value observation stage](#value-observation-stage).
+  `onToolOutput` is not yet wired; it arrives with the output pipeline slice. Both live interceptor
+  stages exist: the pre-dispatch request-interceptor stage described in [Request interceptor
+  stage](#request-interceptor-stage), and the post-validation tool-interceptor stage described in
+  [Tool interceptor stage](#tool-interceptor-stage).
 - **Rich and structured output.** A tool's `McpToolResult` is published as-is; output-schema
   validation and the single-pass bounded output normalization the frozen pipeline names are not yet
   applied beyond the existing `mcp.output.maxBytes` serialization cap shared with discovery and
@@ -494,9 +519,9 @@ complete, already-framed message.
 `arguments` — absent, explicit `null`, or a non-object value — normalizes to the same immutable empty
 map as `{}` before reaching stage 1 of [Request-time input pipeline](#request-time-input-pipeline)
 below, exactly like a present object; a zero-argument tool's schema is the trivial empty object
-schema, so its stage 1 always passes. See [What is not here yet](#what-is-not-here-yet) for the
-value-observation capability this version does not yet provide; cancellation and write-phase
-settlement (T013) are described in
+schema, so its stage 1 always passes. See [Value observation stage](#value-observation-stage) for the
+opt-in `onToolInput` capability this version delivers (`onToolOutput` is not yet wired — see [What is
+not here yet](#what-is-not-here-yet)); cancellation and write-phase settlement (T013) are described in
 [Cancellation and write-phase settlement](#cancellation-and-write-phase-settlement), and the
 post-validation tool-interceptor stage is described in
 [Tool interceptor stage](#tool-interceptor-stage).
@@ -526,9 +551,9 @@ policy, or constraint failed. Stage 1 failures are written directly by the dispa
 failure is signalled by the generated invoker throwing the package-private
 `McpInputRejectionException`, which the dispatcher maps to the identical bounded outcome — so a
 caller cannot tell which of the four stages rejected a call from the response shape. Only after all
-four stages succeed does the dispatcher run the [Tool interceptor stage](#tool-interceptor-stage);
-only once every tool interceptor permits does it call `invoke()`, and only then may an opt-in
-value-observation session ever receive the normalized carrier.
+four stages succeed does the dispatcher deliver the [Value observation stage](#value-observation-stage)
+`onToolInput` callback and then run the [Tool interceptor stage](#tool-interceptor-stage); only once
+every tool interceptor permits does it call `invoke()`.
 
 ## Authorization
 
