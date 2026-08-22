@@ -21,10 +21,11 @@ cancellation and write-phase settlement described in
 fail-closed pre-dispatch request-interceptor stage described in
 [Request interceptor stage](#request-interceptor-stage), the ordered, fail-closed
 post-validation tool-interceptor stage described in
-[Tool interceptor stage](#tool-interceptor-stage), and the opt-in, capability-gated `onToolInput`
-value-observation callback described in
-[Value observation stage](#value-observation-stage). Rich structured output and the `onToolOutput`
-value-observation callback are introduced by their owning slice.
+[Tool interceptor stage](#tool-interceptor-stage), the opt-in, capability-gated `onToolInput`/
+`onToolOutput` value-observation callbacks described in
+[Value observation stage](#value-observation-stage), and the single-pass bounded output
+normalization, output-schema validation, and observation placement described in
+[Bounded output pipeline](#bounded-output-pipeline).
 
 Configuration is disabled by default. When enabled, `serverName` and `serverVersion` are required,
 the mount is one literal path ending in `/*`, and every configured value is validated for range and
@@ -137,8 +138,9 @@ this: transport liveness stays exclusively with the shared `HttpConfig` idle/rea
 The response write is bounded by `mcp.output.maxBytes`: serialization streams through a byte-counting
 writer that stops the moment the running count would exceed the cap, so an over-cap response is
 classified as a bounded internal error and never emitted — the full over-cap byte array is never
-materialized. Discovery responses are far below the default cap; the bound exists for the larger
-structured outputs introduced by later slices.
+materialized. Discovery and `tools/list` responses are far below the default cap; a `tools/call`
+structured result is bounded the same way — see [Bounded output pipeline](#bounded-output-pipeline)
+for the full output-stage order this cap is one part of.
 
 ## Bounded JSON-RPC envelope codec
 
@@ -273,8 +275,42 @@ The delivered `normalizedArguments` is exactly `McpPreparedToolCall#normalizedAr
 into an unmodifiable view at every nesting level by `McpToolInputObservation`'s compact constructor.
 This is the whole of the framework's enforceable claim: nothing prevents a session from retaining the
 reference it is handed past its own callback — an immutable record cannot revoke itself — so
-callback-scoped use remains a documented obligation on implementors. The `onToolOutput` callback's
-dispatch belongs to the output pipeline slice and is not wired by this version.
+callback-scoped use remains a documented obligation on implementors.
+
+`onToolOutput` (T020) is delivered the same way, through `McpCompletionCoordinator#publishToolOutput`,
+strictly after the [Bounded output pipeline](#bounded-output-pipeline) has normalized and validated
+the result and strictly before the response is written. It fires for every completed result — success
+or tool error alike — carrying the normalized structured value (`@Nullable`, absent for a text-only
+result); a schema-invalid value never reaches this callback. Delivery is capability-gated identically
+to `onToolInput`, and the coordinator retains no reference to the output observation or its value once
+every `onToolOutput` call has returned.
+
+## Bounded output pipeline
+
+Every completed `tools/call` result (contract §4.7 stage 7) is normalized exactly once, bounded by
+`mcp.output.maxBytes` as bytes are produced, validated against the tool's advertised output schema,
+offered to the opt-in `onToolOutput` observation, and only then handed to the single terminal writer
+([Cancellation and write-phase settlement](#cancellation-and-write-phase-settlement)) — in that fixed
+order, introducing no second streaming, writing, completion, or settlement path.
+
+`McpRequestDispatcher` converts a handler's structured result (`McpToolResult#structuredContent()`)
+to its bounded, JSON-compatible canonical shape (`Map`/`List`/scalar) exactly once per call; that one
+normalized value is reused for output-schema validation, the `onToolOutput` observation, and the wire
+embed — nothing re-serializes the original application object a second time. A tool that declares no
+output schema, or a text-only/structured-content-free result, is trivially valid: there is nothing to
+normalize or validate.
+
+A structured result that fails its own declared output schema never reaches the wire and never
+reaches a session: it is rejected before the `onToolOutput` observation fires and before any response
+byte is produced, settling as a bounded internal error (`McpErrorType.OUTPUT_VALIDATION`, JSON-RPC
+`-32603`) through the same non-leaking degrade-to-id-less shape used elsewhere for a serialization or
+handler failure — carrying no schema keyword, property, or value detail.
+
+The response write itself is bounded exactly like discovery and `tools/list` ([Bounded response
+output](#bounded-response-output)): serialization streams to a byte-counting sink that aborts the
+moment the running count would exceed `mcp.output.maxBytes`, so an over-cap structured result is
+classified as a bounded internal error before its full byte array is ever materialized — the same T004
+mechanism, now also covering structured content rather than only discovery and listing payloads.
 
 ## Tool runtime
 
@@ -440,16 +476,17 @@ parameterized calls described in
 [Request-time input pipeline](#request-time-input-pipeline). What is deliberately still absent arrives
 with its owning slice:
 
-- **Opt-in value-observation input callback.** Present since T018: `onToolInput` is delivered, only to
-  a capability-implementing session, through the [Value observation stage](#value-observation-stage).
-  `onToolOutput` is not yet wired; it arrives with the output pipeline slice. Both live interceptor
-  stages exist: the pre-dispatch request-interceptor stage described in [Request interceptor
-  stage](#request-interceptor-stage), and the post-validation tool-interceptor stage described in
+- **Opt-in value-observation input and output callbacks.** Present since T018/T020: `onToolInput` and
+  `onToolOutput` are each delivered, only to a capability-implementing session, through the [Value
+  observation stage](#value-observation-stage). Both live interceptor stages exist: the pre-dispatch
+  request-interceptor stage described in [Request interceptor stage](#request-interceptor-stage), and
+  the post-validation tool-interceptor stage described in
   [Tool interceptor stage](#tool-interceptor-stage).
-- **Rich and structured output.** A tool's `McpToolResult` is published as-is; output-schema
-  validation and the single-pass bounded output normalization the frozen pipeline names are not yet
-  applied beyond the existing `mcp.output.maxBytes` serialization cap shared with discovery and
-  `tools/list`.
+- **Single-pass bounded structured output.** Present since T020: a structured `McpToolResult` is
+  normalized exactly once, validated against the tool's advertised output schema, and bounded at
+  `mcp.output.maxBytes` as bytes are produced — see [Bounded output
+  pipeline](#bounded-output-pipeline). Rich (non-scalar-graph) result shapes beyond this remain a
+  later slice.
 
 ## Authorized tool listing and pagination
 
@@ -520,8 +557,9 @@ complete, already-framed message.
 map as `{}` before reaching stage 1 of [Request-time input pipeline](#request-time-input-pipeline)
 below, exactly like a present object; a zero-argument tool's schema is the trivial empty object
 schema, so its stage 1 always passes. See [Value observation stage](#value-observation-stage) for the
-opt-in `onToolInput` capability this version delivers (`onToolOutput` is not yet wired — see [What is
-not here yet](#what-is-not-here-yet)); cancellation and write-phase settlement (T013) are described in
+opt-in `onToolInput`/`onToolOutput` capability this version delivers, and [Bounded output
+pipeline](#bounded-output-pipeline) for the output-side normalization, validation, and observation
+order; cancellation and write-phase settlement (T013) are described in
 [Cancellation and write-phase settlement](#cancellation-and-write-phase-settlement), and the
 post-validation tool-interceptor stage is described in
 [Tool interceptor stage](#tool-interceptor-stage).

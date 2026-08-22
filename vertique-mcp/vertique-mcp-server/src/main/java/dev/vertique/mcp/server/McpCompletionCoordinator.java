@@ -10,6 +10,7 @@ import dev.vertique.mcp.lifecycle.McpRequestObservation;
 import dev.vertique.mcp.lifecycle.McpRequestTerminalEvent;
 import dev.vertique.mcp.lifecycle.McpRequestTerminalObservation;
 import dev.vertique.mcp.lifecycle.McpToolInputObservation;
+import dev.vertique.mcp.lifecycle.McpToolOutputObservation;
 import dev.vertique.mcp.lifecycle.McpToolValueObservation;
 import dev.vertique.mcp.lifecycle.McpTransportOutcome;
 import dev.vertique.mcp.tool.McpCancellationSignal;
@@ -109,6 +110,32 @@ final class McpCompletionCoordinator {
         observations.forEach(session -> {
             if (session instanceof McpToolValueObservation capable) {
                 invoke(() -> capable.onToolInput(observation));
+            }
+        });
+    }
+
+    /**
+     * Delivers {@code observation} to every retained session that implements the opt-in {@link
+     * McpToolValueObservation} capability, isolating each session's failure exactly like {@link
+     * #publishToolInput} (T020, contract §4.4).
+     *
+     * <p>Called only after the dispatcher's output stage has already normalized the result exactly
+     * once and validated it against the tool's advertised output schema — this method itself performs
+     * neither and trusts {@code observation} to already carry only a bounded, schema-valid normalized
+     * value. Least privilege is structural, exactly like {@link #publishToolInput}: the {@code
+     * instanceof} guard below is the sole gate, so a plain {@link McpRequestObservation} session has no
+     * code path through which this method could ever reach it. The coordinator declares no field for
+     * {@code observation}: the parameter exists only on this call's stack and every session's
+     * synchronous callback frame, and is unreachable through this instance once every {@code
+     * onToolOutput} call below has returned.
+     *
+     * @param observation the bounded, normalized, schema-valid output observation for this request's
+     *     tool call; must not be {@code null}
+     */
+    void publishToolOutput(McpToolOutputObservation observation) {
+        observations.forEach(session -> {
+            if (session instanceof McpToolValueObservation capable) {
+                invoke(() -> capable.onToolOutput(observation));
             }
         });
     }

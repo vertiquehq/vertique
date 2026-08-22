@@ -23,6 +23,7 @@ import dev.vertique.mcp.lifecycle.McpRequestCompletedListener;
 import dev.vertique.mcp.lifecycle.McpRequestLifecycleObserver;
 import dev.vertique.mcp.lifecycle.McpRequestTerminalEvent;
 import dev.vertique.mcp.lifecycle.McpToolInputObservation;
+import dev.vertique.mcp.lifecycle.McpToolOutputObservation;
 import dev.vertique.mcp.lifecycle.McpTransportOutcome;
 import dev.vertique.mcp.tool.McpCancellationSignal;
 import dev.vertique.mcp.tool.McpPreparedToolCall;
@@ -81,8 +82,11 @@ import java.util.Set;
  * isError=true} tool-error outcome without ever calling {@code prepare()}. Only once schema validation
  * passes does the dispatcher invoke the generated invoker directly (no reflection); {@code prepare()}
  * itself then owns stages 2–4 (INP-001 canonicalization/sanitization, materialization, Bean
- * Validation), signalling a rejection there through {@link McpInputRejectionException}. Rich structured
- * output is a later slice.
+ * Validation), signalling a rejection there through {@link McpInputRejectionException}. Every complete
+ * result (T020) is then normalized exactly once, bounded at {@code mcp.output.maxBytes} as bytes are
+ * produced, validated against the tool's advertised output schema before exposure, offered to the
+ * opt-in {@code onToolOutput} observation only once validation passes, and only then handed to the
+ * single terminal writer — contract §4.7 stage 7's fixed order.
  */
 final class McpRequestDispatcher {
     private static final String DISCOVER_METHOD = "server/discover";
@@ -1069,7 +1073,7 @@ final class McpRequestDispatcher {
         selectSse(context);
         Map<String, Object> arguments = argumentsOf(envelope);
         if (!schemaValid(toolName, arguments)) {
-            writeToolResult(context, envelope, security, toolName, McpToolResult.error(SCHEMA_REJECTION_MESSAGE));
+            writeToolResult(context, envelope, security, toolName, McpToolResult.error(SCHEMA_REJECTION_MESSAGE), null);
             return;
         }
         McpCompletionCoordinator coordinator = context.get(COMPLETION_COORDINATOR_KEY);
@@ -1087,7 +1091,7 @@ final class McpRequestDispatcher {
             // Stages 2-4 (generated fixed input boundary) rejected before any application handler ran;
             // this is the same bounded tool-error outcome stage 1 produces above, never the internal
             // fallback a genuine bug in prepare()/invoke() produces.
-            writeToolResult(context, envelope, security, toolName, McpToolResult.error(rejected.getMessage()));
+            writeToolResult(context, envelope, security, toolName, McpToolResult.error(rejected.getMessage()), null);
             return;
         } catch (RuntimeException prepareFailure) {
             writeSseFallback(context, envelope, security, toolName, prepareFailure);
@@ -1113,7 +1117,12 @@ final class McpRequestDispatcher {
         runToolInterceptors(0, toolContext).onComplete(interceptorResult -> {
             if (interceptorResult.failed()) {
                 writeToolResult(
-                        context, envelope, security, toolName, McpToolResult.error(TOOL_INTERCEPTOR_REJECTED_MESSAGE));
+                        context,
+                        envelope,
+                        security,
+                        toolName,
+                        McpToolResult.error(TOOL_INTERCEPTOR_REJECTED_MESSAGE),
+                        null);
                 return;
             }
             Future<McpToolResult<?>> result;
@@ -1133,7 +1142,31 @@ final class McpRequestDispatcher {
                             ar.failed() ? ar.cause() : new NullPointerException("tool result"));
                     return;
                 }
-                writeToolResult(context, envelope, security, toolName, ar.result());
+                // T020: every complete result is normalized exactly once, bounded by
+                // mcp.output.maxBytes as bytes are produced, validated against the advertised output
+                // schema, offered to the opt-in output observation, and only then handed to the single
+                // terminal writer (contract §4.7 stage 7). The raw application value is converted to
+                // its bounded, JSON-compatible canonical shape here — once — and that exact same value
+                // is reused below for schema validation, the observation callback, and the wire embed;
+                // nothing downstream re-serializes the original application object.
+                McpToolResult<?> toolResult = ar.result();
+                Object normalizedOutput = normalizeStructuredContent(toolResult.structuredContent());
+                if (!outputSchemaValid(toolName, normalizedOutput)) {
+                    // The schema-invalid value never reaches writeToolResult/encodeCapped: it is
+                    // rejected here, before any wire byte is produced and before the output
+                    // observation fires, so an invalid structured result never reaches the wire or a
+                    // capable session.
+                    writeOutputValidationFailure(context, envelope, security, toolName);
+                    return;
+                }
+                // T020: the opt-in, capability-gated output-value callback fires here — strictly after
+                // bounded normalization and output-schema validation, strictly before the wire write
+                // below (contract §4.4 callback order). Delivered only to a session implementing
+                // McpToolValueObservation, exactly like publishToolInput above.
+                if (coordinator != null) {
+                    coordinator.publishToolOutput(new McpToolOutputObservation(toolContext, normalizedOutput));
+                }
+                writeToolResult(context, envelope, security, toolName, toolResult, normalizedOutput);
             });
         });
     }
@@ -1170,6 +1203,86 @@ final class McpRequestDispatcher {
     }
 
     /**
+     * Runs the T020 output stage's single normalization pass: converts an application handler's
+     * structured result value to the one bounded, JSON-compatible canonical shape ({@code Map}/
+     * {@code List}/scalar) reused for output-schema validation, the {@code onToolOutput} observation,
+     * and the wire embed.
+     *
+     * <p>Called exactly once per completed invocation, from {@link #invokeAndRespond}'s {@code
+     * result.onComplete} handler, before validation, observation, or encoding ever run. Nothing else in
+     * this class converts a handler's raw structured value a second time: {@link #writeToolResult} and
+     * {@link #toolCallResponse} accept and reuse the already-normalized value.
+     *
+     * @param value the application handler's structured content, or {@code null} for a text-only result
+     * @return the normalized JSON-compatible value, or {@code null} when {@code value} is {@code null}
+     */
+    private static @Nullable Object normalizeStructuredContent(@Nullable Object value) {
+        return value == null ? null : OUTPUT_ENCODER.convertValue(value, Object.class);
+    }
+
+    /**
+     * Runs the T020 output stage's schema-validation gate: validates an already-normalized structured
+     * value against {@code toolName}'s precompiled output validator, when the tool publishes a
+     * structured output schema.
+     *
+     * <p>Never compiles a schema or a validator here — {@link McpSchemaRegistry} compiled every output
+     * validator exactly once, at composition, alongside the input validators (T009); this call only
+     * invokes the already-compiled instance. A tool with no declared output schema, or a {@code null}
+     * normalized value (a text-only or structured-content-free result), is trivially valid: there is
+     * nothing to validate.
+     *
+     * @param toolName the resolved tool's name
+     * @param normalizedValue the value {@link #normalizeStructuredContent} already produced, or {@code
+     *     null}
+     * @return {@code true} when {@code normalizedValue} is {@code null}, the tool declares no output
+     *     schema, or {@code normalizedValue} satisfies the declared output schema
+     */
+    private boolean outputSchemaValid(String toolName, @Nullable Object normalizedValue) {
+        if (normalizedValue == null) {
+            return true;
+        }
+        return toolRegistry
+                .schemaRegistry()
+                .outputValidator(toolName)
+                .map(validator -> validator.validate(normalizedValue).getValid())
+                .orElse(true);
+    }
+
+    /**
+     * Settles a schema-invalid structured result through the bounded, non-leaking internal-error
+     * fallback (T020): the invalid value is never embedded in a response, so it never reaches the wire,
+     * and — because {@link #invokeAndRespond} calls this before publishing the output observation — it
+     * never reaches a capable session either. Mirrors {@link #writeSseFallback}'s degrade-to-id-less
+     * shape, framed as SSE since SSE was already selected before invocation began.
+     *
+     * @param context the request context
+     * @param envelope the validated request envelope whose id is echoed when it fits the cap
+     * @param security the established security snapshot, recorded on the terminal event
+     * @param toolName the resolved tool's name, recorded on the terminal event
+     */
+    private void writeOutputValidationFailure(
+            RoutingContext context, JsonNode envelope, @Nullable SecurityContextSnapshot security, String toolName) {
+        byte[] fallback = codec.internalFallback(envelope.get("id"), new OutputSchemaValidationException());
+        if (fallback.length > config.outputMaxBytes()) {
+            // Degrade to the id-less internal error so the hard cap holds, exactly like the discovery,
+            // tools/list, and writeSseFallback degrade paths.
+            fallback = codec.internalFallback(null, new OutputSchemaValidationException());
+        }
+        McpRequestTerminalEvent terminal = McpRequestTerminalEvent.failed(
+                startedAt(context),
+                Instant.now(),
+                McpMethod.TOOLS_CALL,
+                toolName,
+                McpErrorType.OUTPUT_VALIDATION,
+                500,
+                INTERNAL_ERROR,
+                null,
+                security,
+                null);
+        writeSse(context, 500, fallback, terminal);
+    }
+
+    /**
      * Normalizes the {@code tools/call} {@code arguments} member to a bounded, non-null map: absent,
      * explicit {@code null}, or non-object all normalize to the same immutable empty map as {@code {}}
      * (§4.7). A present object is shallow-converted to {@code Map<String, Object>}; deeper structure is
@@ -1188,16 +1301,23 @@ final class McpRequestDispatcher {
      * Writes a completed {@code CallToolResult}, bounding serialization at {@code mcp.output.maxBytes}
      * exactly like discovery and {@code tools/list}, and always through {@link #writeSse} — SSE was
      * already selected in {@link #invokeAndRespond} before this method is ever reached.
+     *
+     * <p>{@code normalizedStructuredContent} is the already-normalized, already-schema-validated value
+     * {@link #invokeAndRespond} computed exactly once (T020); this method never re-derives it from
+     * {@code result.structuredContent()} and never re-serializes the original application value. Every
+     * call site that never carries structured content (a schema, input-processing, or interceptor
+     * rejection) passes {@code null}, matching {@code result}'s own {@code null} structured content.
      */
     private void writeToolResult(
             RoutingContext context,
             JsonNode envelope,
             @Nullable SecurityContextSnapshot security,
             String toolName,
-            McpToolResult<?> result) {
+            McpToolResult<?> result,
+            @Nullable Object normalizedStructuredContent) {
         byte[] payload;
         try {
-            payload = encodeCapped(toolCallResponse(envelope, result));
+            payload = encodeCapped(toolCallResponse(envelope, result, normalizedStructuredContent));
         } catch (OutputCapExceededException overCap) {
             writeSseFallback(context, envelope, security, toolName, overCap);
             return;
@@ -1221,8 +1341,14 @@ final class McpRequestDispatcher {
     /**
      * Builds the canonical {@code CallToolResult} response node: the text content items, the optional
      * structured content, the {@code isError} flag, and the mandatory server-identity {@code _meta}.
+     *
+     * <p>Embeds {@code normalizedStructuredContent} — the T020 single-pass normalized value — rather
+     * than {@code result.structuredContent()}: converting the already-normalized bounded
+     * {@code Map}/{@code List}/scalar tree to a {@link JsonNode} is a structural copy, never a second
+     * serialization pass over the original application object.
      */
-    private ObjectNode toolCallResponse(JsonNode envelope, McpToolResult<?> result) {
+    private ObjectNode toolCallResponse(
+            JsonNode envelope, McpToolResult<?> result, @Nullable Object normalizedStructuredContent) {
         ArrayNode content = OUTPUT_ENCODER.createArrayNode();
         for (String text : result.textContent()) {
             ObjectNode item = OUTPUT_ENCODER.createObjectNode();
@@ -1238,8 +1364,8 @@ final class McpRequestDispatcher {
         ObjectNode toolResult = OUTPUT_ENCODER.createObjectNode();
         toolResult.set("content", content);
         toolResult.put("isError", result.isError());
-        if (result.structuredContent() != null) {
-            toolResult.set("structuredContent", OUTPUT_ENCODER.valueToTree(result.structuredContent()));
+        if (normalizedStructuredContent != null) {
+            toolResult.set("structuredContent", OUTPUT_ENCODER.valueToTree(normalizedStructuredContent));
         }
         toolResult.set("_meta", meta);
         ObjectNode response = OUTPUT_ENCODER.createObjectNode();
@@ -1617,6 +1743,18 @@ final class McpRequestDispatcher {
     static final class OutputCapExceededException extends RuntimeException {
         OutputCapExceededException() {
             super("MCP response exceeded mcp.output.maxBytes");
+        }
+    }
+
+    /**
+     * Signals that a tool's normalized structured result failed validation against its declared output
+     * schema (T020). Carries no schema detail, failing property, or value text — {@link
+     * #writeOutputValidationFailure} never reads this exception's message, matching {@link
+     * #OutputCapExceededException}'s established non-leaking convention for a different stage.
+     */
+    static final class OutputSchemaValidationException extends RuntimeException {
+        OutputSchemaValidationException() {
+            super("MCP tool structured output failed schema validation");
         }
     }
 }
