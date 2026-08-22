@@ -398,13 +398,15 @@ public class McpDiscoverWalkingSkeletonIT {
             // The one runtime both identity resolution binds into and dispatch snapshots from, so the
             // terminal event's security facts come from the context the pipeline actually established.
             RecordingSecurityRuntime securityRuntime = new RecordingSecurityRuntime(boundSecurityContext);
+            HttpConfig httpConfig = HttpConfig.builder().build();
             McpRouterMount mount = new McpRouterMount(
                     config,
                     new McpServerConfigValidator(),
-                    new McpRequestDispatcher(config, securityRuntime, Set.of(recordingObserver()), Set.of()),
+                    new McpRequestDispatcher(
+                            config, securityRuntime, Set.of(recordingObserver()), Set.of(), httpConfig),
                     Set.of(new BearerRouteAuthHandler()),
                     identityResolution(securityRuntime),
-                    HttpConfig.builder().build());
+                    httpConfig);
             Router router = Router.router(vertx);
             router.route().handler(new RequestContextLifecycle());
             router.route(config.mountPath()).subRouter(await(mount.createRouter(vertx)));

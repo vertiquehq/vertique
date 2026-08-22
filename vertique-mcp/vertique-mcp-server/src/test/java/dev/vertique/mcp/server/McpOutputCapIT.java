@@ -43,8 +43,8 @@ import org.junit.jupiter.api.Timeout;
  * Proves the classified protocol-error write is bounded at {@code mcp.output.maxBytes} end-to-end
  * (finding W2), even for a pathological frame whose request id is the only unbounded element.
  *
- * <p>The error response echoes the request id, and an id is bounded only by
- * {@code mcp.json.maxStringChars} (default 262144) — far above the minimum {@code mcp.output.maxBytes}
+ * <p>The error response echoes the request id, and an id is bounded only by the shared ingress
+ * {@code http.maxBodySize} cap (2 MiB default) — far above the minimum {@code mcp.output.maxBytes}
  * (1024). A frame carrying a multi-thousand-character string id that classifies as an error therefore
  * produced, before the fix, an over-cap error response that echoed the huge id and defeated the very
  * cap the dispatcher enforces on the discovery path. The dispatcher now degrades an over-cap error to
@@ -156,13 +156,14 @@ public class McpOutputCapIT {
                     .build();
             AtomicReference<SecurityContext> bound = new AtomicReference<>();
             RecordingSecurityRuntime securityRuntime = new RecordingSecurityRuntime(bound);
+            HttpConfig httpConfig = HttpConfig.builder().build();
             McpRouterMount mount = new McpRouterMount(
                     config,
                     new McpServerConfigValidator(),
-                    new McpRequestDispatcher(config, securityRuntime, Set.of(), Set.of()),
+                    new McpRequestDispatcher(config, securityRuntime, Set.of(), Set.of(), httpConfig),
                     Set.of(),
                     identityResolution(securityRuntime),
-                    HttpConfig.builder().build());
+                    httpConfig);
             Router router = Router.router(vertx);
             router.route().handler(new RequestContextLifecycle());
             router.route(config.mountPath()).subRouter(await(mount.createRouter(vertx)));

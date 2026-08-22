@@ -43,9 +43,9 @@ final class McpCompletionCoordinator {
     /**
      * Constructs a coordinator whose completion timestamps are drawn from {@code clock}.
      *
-     * <p>The injectable clock is the settlement seam's deterministic time source: the disconnect,
-     * reset, and timeout settlement paths read the completion instant from it, so a test can drive
-     * the exactly-once settlement races against a manual clock instead of wall time. The two-phase
+     * <p>The injectable clock is the settlement seam's deterministic time source: the disconnect and
+     * reset settlement paths read the completion instant from it, so a test can drive the
+     * exactly-once settlement races against a manual clock instead of wall time. The two-phase
      * write path ({@link #beginWrite} then {@link #finishWrite}) is timestamped by its caller with
      * the actual transport-completion instant rather than the clock.
      *
@@ -81,7 +81,7 @@ final class McpCompletionCoordinator {
      * Claims settlement for the successful-write path and publishes the terminal before the byte
      * write, executed synchronously on the request-owning context ahead of {@code end()}.
      *
-     * <p>Returns {@code false} when a settlement (disconnect, reset, or timeout) has already won, so
+     * <p>Returns {@code false} when a settlement (disconnect or reset) has already won, so
      * the caller suppresses the now-superseded client-visible write. Otherwise it wins the shared
      * first-observed latch, stores {@code terminal} for {@link #finishWrite}, publishes the terminal
      * observation, and returns {@code true}.
@@ -122,9 +122,11 @@ final class McpCompletionCoordinator {
 
     // --- T004 settlement seam ---
     //
-    // The disconnect, reset, and timeout settlement entries below are the internal seam the T004
-    // dispatcher calls once a client disconnects, the response stream resets, or the whole-request
-    // timeout elapses. Each drives exactly one terminal and exactly one completion through the same
+    // The disconnect and reset settlement entries below are the internal seam the T004 dispatcher
+    // calls once a client disconnects or the response stream resets. MCP arms no whole-request timer
+    // of its own (T007): a shared HttpConfig idle/read/write liveness expiry closes the connection, so
+    // it reaches this same seam through the ordinary disconnect/reset path rather than a distinct
+    // timeout entry. Each drives exactly one terminal and exactly one completion through the same
     // first-observed-wins completed-guard as the write path, redispatched onto the request-owning
     // Vert.x context, with the completion instant read from the injected clock. A signal that arrives
     // after settlement has already won is suppressed, so the frozen lifecycle contract's exactly-once
@@ -154,19 +156,6 @@ final class McpCompletionCoordinator {
      */
     void settleReset(McpRequestTerminalEvent terminal, boolean responseCommitted) {
         settle(terminal, McpTransportOutcome.RESET, responseCommitted);
-    }
-
-    /**
-     * Settles the request when the whole-request timeout elapses.
-     *
-     * <p>A timeout aborts the request without a successful write, so it records the
-     * {@code WRITE_FAILED} transport outcome with an uncommitted response. Publishes exactly one
-     * terminal and one completion when this is the first settlement; a later signal is suppressed.
-     *
-     * @param terminal the synthesized terminal facts to publish
-     */
-    void settleTimeout(McpRequestTerminalEvent terminal) {
-        settle(terminal, McpTransportOutcome.WRITE_FAILED, false);
     }
 
     /**

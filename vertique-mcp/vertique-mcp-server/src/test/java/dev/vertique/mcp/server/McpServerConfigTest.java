@@ -7,13 +7,22 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import dev.vertique.core.exception.ConfigurationException;
 import dev.vertique.rest.core.security.RouteAuthHandler;
 import io.vertx.core.Handler;
 import io.vertx.ext.web.RoutingContext;
+import java.io.UncheckedIOException;
+import java.lang.reflect.Field;
+import java.lang.reflect.Modifier;
+import java.util.Arrays;
+import java.util.LinkedHashSet;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.BiFunction;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -47,14 +56,39 @@ class McpServerConfigTest {
         assertThat(defaults.enabled()).isFalse();
         assertThat(defaults.mountPath()).isEqualTo("/mcp/*");
         assertThat(defaults.allowedOrigins()).isEmpty();
-        assertThat(defaults.jsonMaxDepth()).isEqualTo(64);
-        assertThat(defaults.jsonMaxPropertiesPerObject()).isEqualTo(1_000);
-        assertThat(defaults.jsonMaxItemsPerArray()).isEqualTo(10_000);
-        assertThat(defaults.jsonMaxStringChars()).isEqualTo(262_144);
         assertThat(defaults.outputMaxBytes()).isEqualTo(2_097_152);
-        assertThat(defaults.requestTimeoutMs()).isEqualTo(30_000L);
         assertThat(defaults.toolsPageSize()).isEqualTo(100);
         assertThat(defaults.toolsTtlMs()).isEqualTo(300_000L);
+    }
+
+    /**
+     * TP-002 — the whole-request-timeout property and the four JSON-limit properties (the pre-T007
+     * {@code requestTimeoutMs}, {@code jsonMaxDepth}, {@code jsonMaxPropertiesPerObject},
+     * {@code jsonMaxItemsPerArray}, and {@code jsonMaxStringChars} fields) were removed in the T007
+     * architecture rebaseline: transport liveness is now shared {@code HttpConfig} behavior and
+     * JSON-RPC envelope limits are Jackson's own bounded {@code StreamReadConstraints} inside the
+     * private envelope codec, not a consumer-visible MCP configuration surface.
+     */
+    @Test
+    @DisplayName("rejects the removed request-timeout and JSON-limit properties as unknown configuration")
+    void shouldRejectRemovedTimeoutAndJsonLimitKeys() {
+        McpServerConfigTestFixture.ConfigurationSource source = McpServerConfigTestFixture.sourceWithAllRemovedKeys();
+
+        McpServerConfig loaded = source.load();
+
+        assertThatCode(() -> validator.validate(loaded)).doesNotThrowAnyException();
+        assertThat(source.unknownProperties())
+                .as("the five removed properties are unknown to the configuration McpServerConfig now " + "recognizes")
+                .containsExactlyInAnyOrderElementsOf(McpServerConfigTestFixture.REMOVED_JAVA_PROPERTIES);
+        assertThat(McpServerConfigTestFixture.declaredPropertyNames())
+                .as("McpServerConfig exposes none of the five removed properties")
+                .doesNotContainAnyElementsOf(McpServerConfigTestFixture.REMOVED_JAVA_PROPERTIES);
+        assertThat(loaded.outputMaxBytes())
+                .as("a retained bounded key supplied alongside the removed keys still binds unchanged")
+                .isEqualTo(McpServerConfigTestFixture.RETAINED_OUTPUT_MAX_BYTES);
+        assertThat(loaded.toolsPageSize())
+                .as("a retained bounded key supplied alongside the removed keys still binds unchanged")
+                .isEqualTo(McpServerConfigTestFixture.RETAINED_TOOLS_PAGE_SIZE);
     }
 
     /**
@@ -226,32 +260,10 @@ class McpServerConfigTest {
     private static Stream<NumericProperty> numericProperties() {
         return Stream.of(
                 new NumericProperty(
-                        "mcp.json.maxDepth", 8, 256, (builder, value) -> builder.jsonMaxDepth(Math.toIntExact(value))),
-                new NumericProperty(
-                        "mcp.json.maxPropertiesPerObject",
-                        1,
-                        10_000,
-                        (builder, value) -> builder.jsonMaxPropertiesPerObject(Math.toIntExact(value))),
-                new NumericProperty(
-                        "mcp.json.maxItemsPerArray",
-                        1,
-                        100_000,
-                        (builder, value) -> builder.jsonMaxItemsPerArray(Math.toIntExact(value))),
-                new NumericProperty(
-                        "mcp.json.maxStringChars",
-                        1,
-                        1_048_576,
-                        (builder, value) -> builder.jsonMaxStringChars(Math.toIntExact(value))),
-                new NumericProperty(
                         "mcp.output.maxBytes",
                         1_024,
                         16_777_216,
                         (builder, value) -> builder.outputMaxBytes(Math.toIntExact(value))),
-                new NumericProperty(
-                        "mcp.request.timeoutMs",
-                        1_000,
-                        1_800_000,
-                        McpServerConfig.McpServerConfigBuilder::requestTimeoutMs),
                 new NumericProperty(
                         "mcp.tools.pageSize",
                         1,
@@ -430,6 +442,95 @@ class McpServerConfigTest {
 
         McpServerConfig apply(long value) {
             return mutator.apply(enabled().toBuilder(), value).build();
+        }
+    }
+
+    /**
+     * TP-002 framework wiring. Builds a raw JSON configuration source that carries the five properties
+     * the T007 architecture rebaseline removed — addressed by their real pre-removal Jackson binding
+     * names, since that is what a configuration loader actually deserializes — alongside a valid
+     * enabled configuration and the retained bounded properties, "loads" it through
+     * {@link McpServerConfig}'s {@code @Jacksonized} deserialization exactly once, and reports which of
+     * the supplied removed properties are unknown to {@link McpServerConfig}'s currently declared
+     * property set.
+     */
+    private static final class McpServerConfigTestFixture {
+
+        /** The real pre-removal {@code McpServerConfig} field names the T007 rebaseline removed. */
+        static final Set<String> REMOVED_JAVA_PROPERTIES = Set.of(
+                "requestTimeoutMs",
+                "jsonMaxDepth",
+                "jsonMaxPropertiesPerObject",
+                "jsonMaxItemsPerArray",
+                "jsonMaxStringChars");
+
+        static final int RETAINED_OUTPUT_MAX_BYTES = 4_096;
+        static final int RETAINED_TOOLS_PAGE_SIZE = 50;
+
+        private static final ObjectMapper MAPPER = new ObjectMapper();
+
+        private McpServerConfigTestFixture() {}
+
+        /** Builds a configuration source supplying all five removed properties alongside a valid config. */
+        static ConfigurationSource sourceWithAllRemovedKeys() {
+            return sourceOmitting(Set.of());
+        }
+
+        /**
+         * Builds a configuration source supplying every removed property except {@code omittedProperties},
+         * alongside a valid enabled configuration and the retained bounded properties.
+         *
+         * @param omittedProperties the removed property names to leave out of the built source
+         * @return the built configuration source
+         */
+        static ConfigurationSource sourceOmitting(Set<String> omittedProperties) {
+            ObjectNode json = MAPPER.createObjectNode();
+            json.put("enabled", true);
+            json.put("serverName", "server");
+            json.put("serverVersion", "1.0");
+            json.put("outputMaxBytes", RETAINED_OUTPUT_MAX_BYTES);
+            json.put("toolsPageSize", RETAINED_TOOLS_PAGE_SIZE);
+            Set<String> supplied = new LinkedHashSet<>(REMOVED_JAVA_PROPERTIES);
+            supplied.removeAll(omittedProperties);
+            for (String property : supplied) {
+                json.put(property, 999);
+            }
+            return new ConfigurationSource(json, Set.copyOf(supplied));
+        }
+
+        /** {@link McpServerConfig}'s currently declared instance property (field) names. */
+        static Set<String> declaredPropertyNames() {
+            return Arrays.stream(McpServerConfig.class.getDeclaredFields())
+                    .filter(field -> !field.isSynthetic() && !Modifier.isStatic(field.getModifiers()))
+                    .map(Field::getName)
+                    .collect(Collectors.toUnmodifiableSet());
+        }
+
+        /** One "loaded" configuration source and the set of removed properties it supplied. */
+        record ConfigurationSource(ObjectNode json, Set<String> suppliedRemovedProperties) {
+
+            /** Deserializes the source into {@link McpServerConfig}, exactly like a real config load. */
+            McpServerConfig load() {
+                try {
+                    return MAPPER.treeToValue(json, McpServerConfig.class);
+                } catch (JsonProcessingException malformed) {
+                    throw new UncheckedIOException(malformed);
+                }
+            }
+
+            /**
+             * The supplied removed properties that are not among {@link McpServerConfig}'s currently
+             * declared properties — i.e. the properties this loaded configuration silently dropped
+             * rather than bound.
+             *
+             * @return the supplied removed properties unknown to the currently declared property set
+             */
+            Set<String> unknownProperties() {
+                Set<String> declared = declaredPropertyNames();
+                return suppliedRemovedProperties.stream()
+                        .filter(property -> !declared.contains(property))
+                        .collect(Collectors.toUnmodifiableSet());
+            }
         }
     }
 }

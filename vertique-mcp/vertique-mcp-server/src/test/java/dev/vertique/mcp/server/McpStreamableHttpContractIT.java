@@ -370,13 +370,16 @@ public class McpStreamableHttpContractIT {
                     .build();
             AtomicReference<SecurityContext> bound = new AtomicReference<>();
             RecordingSecurityRuntime securityRuntime = new RecordingSecurityRuntime(bound);
+            HttpConfig httpConfig =
+                    HttpConfig.builder().maxBodySize(MAX_BODY_BYTES).build();
             McpRouterMount mount = new McpRouterMount(
                     config,
                     new McpServerConfigValidator(),
-                    new McpRequestDispatcher(config, securityRuntime, Set.of(recordingObserver()), Set.of()),
+                    new McpRequestDispatcher(
+                            config, securityRuntime, Set.of(recordingObserver()), Set.of(), httpConfig),
                     Set.of(),
                     identityResolution(securityRuntime),
-                    HttpConfig.builder().maxBodySize(MAX_BODY_BYTES).build());
+                    httpConfig);
             Router router = Router.router(vertx);
             router.route().handler(new RequestContextLifecycle());
             router.route(config.mountPath()).subRouter(await(mount.createRouter(vertx)));

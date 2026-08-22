@@ -5,6 +5,7 @@ package dev.vertique.mcp.server;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import dev.vertique.rest.core.config.HttpConfig;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.json.JsonObject;
 import java.io.IOException;
@@ -17,26 +18,30 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * TP-001 — pins the codec against the final-2026 golden wire fixtures.
+ * TP-003 — pins the replacement bounded Jackson envelope codec against the final-2026 golden wire
+ * fixtures, unchanged since T003.
  *
- * <p>Every valid frame must round-trip byte-identically through a strict decode and canonical encode,
- * and every invalid frame must yield the exact pinned final-spec JSON-RPC error code and message. A
- * one-byte mutation of a valid frame must flip it into a bounded rejection, proving the fixtures are
- * load-bearing rather than incidental.
+ * <p>Every valid frame must round-trip byte-identically through the T007 {@link McpEnvelopeJsonCodec}
+ * decode and a canonical encode, and every invalid frame must yield the exact pinned final-spec
+ * JSON-RPC error code and message. A one-byte mutation of a valid frame must flip it into a bounded
+ * rejection, proving the fixtures are load-bearing rather than incidental. Expected initial result:
+ * GREEN — the replacement codec must preserve every wire byte the protocol pins; a mismatch here is a
+ * regression in this slice, not an expected red.
  */
 class McpGoldenWireTest {
 
     @Test
     @DisplayName("valid frames round-trip byte-identically and invalid frames yield the pinned errors")
     void shouldMatchPinnedFinal2026WireFixtures() {
-        McpStrictJsonReader reader = new McpStrictJsonReader(McpServerConfig.defaults());
-        McpProtocolCodec codec = new McpProtocolCodec(McpServerConfig.defaults());
+        HttpConfig httpConfig = HttpConfig.builder().build();
+        McpEnvelopeJsonCodec envelopeCodec = new McpEnvelopeJsonCodec(httpConfig);
+        McpProtocolCodec codec = new McpProtocolCodec(httpConfig);
         List<byte[]> validFrames = McpGoldenWireTestFixture.loadValidFrames();
         List<McpGoldenWireTestFixture.InvalidCase> invalidCases = McpGoldenWireTestFixture.loadInvalidCases();
 
         for (byte[] frame : validFrames) {
             String rendered = new String(frame, StandardCharsets.UTF_8);
-            McpStrictJsonReader.Result parsed = reader.read(frame);
+            McpEnvelopeJsonCodec.Result parsed = envelopeCodec.decode(frame);
             assertThat(parsed.isRejected())
                     .as("valid frame decodes without rejection: %s", rendered)
                     .isFalse();
@@ -69,16 +74,16 @@ class McpGoldenWireTest {
 
         byte[] pinnedError = McpGoldenWireTestFixture.firstErrorResponse(codec, invalidCases);
         byte[] mutatedError = McpGoldenWireTestFixture.flipFirstByte(pinnedError);
-        assertThat(reader.read(mutatedError).isRejected())
+        assertThat(envelopeCodec.decode(mutatedError).isRejected())
                 .as("a one-byte mutation of a pinned canonical error response is no longer a decodable frame")
                 .isTrue();
 
         byte[] valid = validFrames.getFirst();
         byte[] mutant = McpGoldenWireTestFixture.appendTrailingByte(valid);
-        assertThat(reader.read(mutant).isRejected())
+        assertThat(envelopeCodec.decode(mutant).isRejected())
                 .as("one injected trailing byte turns the valid frame into a bounded rejection")
                 .isTrue();
-        assertThat(reader.read(valid).isRejected())
+        assertThat(envelopeCodec.decode(valid).isRejected())
                 .as("removing that byte restores a bounded canonical parse")
                 .isFalse();
     }

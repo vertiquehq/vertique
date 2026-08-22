@@ -14,14 +14,17 @@ bounded `server/discover` walking skeleton, and protocol tool calls and extensio
 introduced by their owning slices.
 
 Configuration is disabled by default. When enabled, `serverName` and `serverVersion` are required,
-the mount is one literal path ending in `/*`, and every request and JSON bound is validated for
-range and consistency at startup, before the router is mounted — so an out-of-range value fails
-composition rather than a live request. The JSON bounds (`jsonMaxDepth`,
-`jsonMaxPropertiesPerObject`, `jsonMaxItemsPerArray`, `jsonMaxStringChars`) are enforced by the
-strict bounded JSON-RPC codec described in [Strict bounded JSON-RPC codec](#strict-bounded-json-rpc-codec),
-which is now wired onto the live request path. Request body size is enforced from
-`http.maxBodySize`. A configured `jsonProfile` is validated during composition even if MCP is
-disabled, preventing a latent invalid deployment configuration.
+the mount is one literal path ending in `/*`, and every configured value is validated for range and
+consistency at startup, before the router is mounted — so an out-of-range value fails composition
+rather than a live request. JSON-RPC envelope parsing is bounded by Jackson's own frozen
+`StreamReadConstraints` inside the private
+[Bounded JSON-RPC envelope codec](#bounded-json-rpc-envelope-codec) — MCP owns JSON-RPC envelope
+semantics, not a second general-purpose JSON resource-limit subsystem, and exposes no configuration
+key for it. Request body size is enforced from `http.maxBodySize`, which also bounds the maximum
+decodable envelope document length. Transport liveness (idle, read, and write timeouts) is shared
+`HttpConfig` behavior; MCP arms no whole-request deadline of its own. A configured `jsonProfile` is
+validated during composition even if MCP is disabled, preventing a latent invalid deployment
+configuration.
 
 ## Stateless HTTP contract
 
@@ -60,13 +63,18 @@ Every admitted request opens neutral lifecycle observation (`McpRequestLifecycle
 authentication, and settles through a completion coordinator that captures the request-owning Vert.x
 context and redispatches every off-context completion onto it. Settlement is **first-observed-wins**
 and delivers **exactly one terminal event followed by exactly one completion event** on every
-path — a successful write, a client disconnect, a response-stream reset, or a whole-request timeout
-(`mcp.request.timeoutMs`). The terminal always precedes the completion, and any later signal after
-the first settlement wins is suppressed, so a disconnect that races a late handler result cannot
-produce a second terminal. A disconnect or reset before the first response byte records an
-uncommitted (`responseCommitted=false`) `DISCONNECTED`/`RESET` completion; a timeout records a
-`WRITE_FAILED` completion. Observer `open`, callback, null-session, and retention failures are
-isolated per observer and never change the protocol or business outcome. The method, `Origin`,
+path — a successful write, a client disconnect, or a response-stream reset. The terminal always
+precedes the completion, and any later signal after the first settlement wins is suppressed, so a
+disconnect that races a late handler result cannot produce a second terminal. A disconnect or reset
+before the first response byte records an uncommitted (`responseCommitted=false`)
+`DISCONNECTED`/`RESET` completion. MCP arms no whole-request timer of its own: transport liveness
+comes from the shared `HttpConfig` idle/read/write timeouts, so an idle or slow connection is closed
+by the shared HTTP layer and reaches MCP through this same disconnect/reset settlement path,
+classified as transport cancellation (`McpErrorType.TRANSPORT`) rather than a distinct timeout
+outcome. `McpErrorType.TIMEOUT` has no producer in this module; it is retained in the frozen
+lifecycle enum purely for enum stability, reserved for a future cross-transport server-operation
+`@Timeout` capability. Observer `open`, callback, null-session, and retention failures are isolated
+per observer and never change the protocol or business outcome. The method, `Origin`,
 `Content-Type`, and `Accept` admission checks all run before the completion coordinator is created,
 so — like a body-limit rejection — a request that fails admission produces no lifecycle observation;
 only an admitted request opens observation.
@@ -79,44 +87,52 @@ classified as a bounded internal error and never emitted — the full over-cap b
 materialized. Discovery responses are far below the default cap; the bound exists for the larger
 structured outputs introduced by later slices.
 
-## Strict bounded JSON-RPC codec
+## Bounded JSON-RPC envelope codec
 
-Wire decoding is framework-owned and trusts no application mapper. A strict UTF-8, bounded reader
-decodes exactly one complete JSON value and rejects — with a classified, bounded outcome and **no
-partial value** — any frame that carries:
+Wire decoding is framework-owned and trusts no application mapper. A package-private
+`McpEnvelopeJsonCodec`, built on Jackson's own `StreamReadConstraints`, decodes exactly one complete
+JSON value and rejects — with a classified, bounded outcome and **no partial value** — any frame that
+carries:
 
-- **duplicate object keys**, or **trailing tokens** after one complete top-level value;
-- nesting deeper than `jsonMaxDepth` (default 64), enforced by an explicit depth counter rather
-  than native recursion, so an adversarial deeply-nested frame is bounded rather than able to
-  overflow the call stack;
-- an object with more members than `jsonMaxPropertiesPerObject` (default 1,000), an array with more
-  items than `jsonMaxItemsPerArray` (default 10,000), or a string longer than `jsonMaxStringChars`
-  (default 262,144). The string bound is measured in UTF-16 code units (Java `String.length()`), not
-  Unicode code points, so a supplementary (astral) code point counts as two toward the bound;
-- invalid UTF-8, including lone surrogates.
+- **duplicate object keys** (`StreamReadFeature.STRICT_DUPLICATE_DETECTION`), or **trailing tokens**
+  after one complete top-level value (`DeserializationFeature.FAIL_ON_TRAILING_TOKENS`);
+- nesting deeper than 1,000 levels (`maxNestingDepth`), a numeric token longer than 1,000 characters
+  (`maxNumberLength`), a string longer than 20,000,000 characters (`maxStringLength`), or a property
+  name longer than 50,000 characters (`maxNameLength`) — Jackson's own default values, restated
+  explicitly so the codec never silently inherits a changed upstream default;
+- a document larger than the effective `http.maxBodySize` in bytes (`maxDocumentLength`) — the one
+  Jackson default (unlimited) this codec narrows, read from the shared `HttpConfig` rather than a
+  separate MCP configuration key;
+- invalid UTF-8.
+
+None of these bounds is a consumer-visible configuration key: the four generic JSON-limit properties
+and the handcrafted strict JSON reader that used to enforce them were removed in the T007
+architecture rebaseline in favor of Jackson's own bounded read constraints. MCP owns JSON-RPC
+envelope semantics, not a second general-purpose JSON resource-limit subsystem, and exposes no
+public parser API. Tool argument and result values continue to use the existing
+`JsonMapperProfile`/`JsonMapperProfileRegistry` contract, unaffected by this codec.
 
 Numeric values keep their exact lexical precision: a 64-bit-overflowing integer such as
 `9007199254740993` and a decimal such as `0.10000000000000001` survive decode and canonical
 re-encode without lossy `double` rounding, so downstream schema validation sees exactly what the
 client sent. Canonical encoding is a compact, insertion-order-preserving re-encode; an
-already-compact frame round-trips byte-for-byte. Precision is preserved within fixed internal
-hardening bounds: a numeric token whose lexical length or decimal-scale magnitude is far beyond any
-legitimate value — the vectors that would otherwise drive a quadratic big-integer parse or an
-out-of-memory plain-form encode — is rejected as a bounded classified outcome rather than
-materialized, and an exponent that overflows during materialization is classified rather than
-allowed to escape.
+already-compact frame round-trips byte-for-byte. A decimal whose scale magnitude is far beyond any
+legitimate value — the vector that would otherwise drive an out-of-memory plain-form encode — is
+rejected against a fixed internal hardening bound (retained unchanged from the T003 hardening: a
+decimal whose scale magnitude exceeds 9,999) rather than materialized into a value the encoder could
+later choke on.
 
-Over that reader, the codec validates the final-2026 JSON-RPC request envelope — `jsonrpc` must be
-`"2.0"`, `method` must name one of the bounded supported set (`server/discover`, `tools/list`,
-`tools/call`), the request `id` must be present and a string or integer (all three supported methods
-are requests, never notifications), and `params` must be present and an object (the vendored
-final-2026 request schema marks it required for every supported method) — and classifies failures
-deterministically to the standard JSON-RPC codes with the standard messages and no `data`:
-`-32700` *Parse error* (malformed JSON, or a strict-reader rejection such as a duplicate key or
-trailing token; null id), `-32600` *Invalid Request* (bad envelope — wrong version, a missing or
-non-string/non-integer id, a missing method, or a missing or non-object `params`; original usable id when the
-id itself is a trustworthy string or integer, else null), and `-32601` *Method not found* (unknown
-method; original usable id). Header/body-mismatch
+Over that codec, `McpProtocolCodec` validates the final-2026 JSON-RPC request envelope — `jsonrpc`
+must be `"2.0"`, `method` must name one of the bounded supported set (`server/discover`,
+`tools/list`, `tools/call`), the request `id` must be present and a string or integer (all three
+supported methods are requests, never notifications), and `params` must be present and an object
+(the vendored final-2026 request schema marks it required for every supported method) — and
+classifies failures deterministically to the standard JSON-RPC codes with the standard messages and
+no `data`: `-32700` *Parse error* (malformed JSON, or an envelope-codec rejection such as a duplicate
+key or trailing token; null id), `-32600` *Invalid Request* (bad envelope — wrong version, a missing
+or non-string/non-integer id, a missing method, or a missing or non-object `params`; original usable
+id when the id itself is a trustworthy string or integer, else null), and `-32601` *Method not
+found* (unknown method; original usable id). Header/body-mismatch
 (`-32020`) and tool-level authorization (`-32602`) classification belong to the HTTP-contract and
 tool-dispatch slices and are not part of this codec. An internal codec failure settles through a
 pre-encoded `-32603` *Internal error* response that is written exactly once and never carries the

@@ -65,29 +65,9 @@ public final class McpServerConfig {
     @Builder.Default
     private final Set<String> allowedOrigins = Set.of();
 
-    /** Maximum JSON nesting depth. Defaults to {@code 64}; range 8–256. */
-    @Builder.Default
-    private final int jsonMaxDepth = 64;
-
-    /** Maximum properties per JSON object. Defaults to {@code 1000}; range 1–10,000. */
-    @Builder.Default
-    private final int jsonMaxPropertiesPerObject = 1_000;
-
-    /** Maximum items per JSON array. Defaults to {@code 10000}; range 1–100,000. */
-    @Builder.Default
-    private final int jsonMaxItemsPerArray = 10_000;
-
-    /** Maximum characters per JSON string. Defaults to {@code 262144}; range 1–1,048,576. */
-    @Builder.Default
-    private final int jsonMaxStringChars = 262_144;
-
     /** Streaming output cap in bytes. Defaults to {@code 2097152}; range 1,024–16,777,216. */
     @Builder.Default
     private final int outputMaxBytes = 2_097_152;
-
-    /** Bound on one admitted request in milliseconds. Defaults to {@code 30000}; range 1,000–1,800,000. */
-    @Builder.Default
-    private final long requestTimeoutMs = 30_000;
 
     /** Maximum tools returned per {@code tools/list} page. Defaults to {@code 100}; range 1–500. */
     @Builder.Default

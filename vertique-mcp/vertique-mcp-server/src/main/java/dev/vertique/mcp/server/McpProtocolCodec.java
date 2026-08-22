@@ -10,6 +10,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.fasterxml.jackson.databind.node.NullNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import dev.vertique.rest.core.config.HttpConfig;
 import jakarta.annotation.Nullable;
 import java.io.UncheckedIOException;
 import java.util.Set;
@@ -27,7 +28,7 @@ import java.util.Set;
  * (internal error). Error messages are the standard JSON-RPC strings and no {@code data} member is
  * emitted.
  *
- * <p>Envelope validation trusts only the framework-owned {@link McpStrictJsonReader}; the supported
+ * <p>Envelope validation trusts only the framework-owned {@link McpEnvelopeJsonCodec}; the supported
  * request methods are the bounded set {@code server/discover}, {@code tools/list}, and
  * {@code tools/call}. Header/body-mismatch classification ({@code -32020}) and tool-level
  * authorization ({@code -32602}) belong to a later HTTP slice and are deliberately absent here.
@@ -54,15 +55,16 @@ final class McpProtocolCodec {
             .enable(StreamWriteFeature.WRITE_BIGDECIMAL_AS_PLAIN)
             .build();
 
-    private final McpStrictJsonReader reader;
+    private final McpEnvelopeJsonCodec envelopeCodec;
 
     /**
-     * Creates a codec bound to the supplied configuration's JSON limits.
+     * Creates a codec bound to the effective ingress cap.
      *
-     * @param config the MCP server configuration whose limits bound every decode and encode
+     * @param httpConfig the shared HTTP configuration whose {@link HttpConfig#maxBodySize()} bounds
+     *     the envelope codec's maximum decodable document length
      */
-    McpProtocolCodec(McpServerConfig config) {
-        this.reader = new McpStrictJsonReader(config);
+    McpProtocolCodec(HttpConfig httpConfig) {
+        this.envelopeCodec = new McpEnvelopeJsonCodec(httpConfig);
     }
 
     /**
@@ -129,7 +131,7 @@ final class McpProtocolCodec {
      * @return the parsed envelope with its usable id, or a bounded classified error
      */
     private Analysis analyze(byte[] utf8) {
-        McpStrictJsonReader.Result parsed = reader.read(utf8);
+        McpEnvelopeJsonCodec.Result parsed = envelopeCodec.decode(utf8);
         if (parsed.isRejected()) {
             return new Analysis(null, null, new CodecError(PARSE_ERROR, MSG_PARSE_ERROR, null));
         }

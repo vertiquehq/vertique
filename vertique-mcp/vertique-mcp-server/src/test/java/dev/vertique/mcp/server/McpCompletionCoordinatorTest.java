@@ -37,9 +37,12 @@ import org.junit.jupiter.params.provider.MethodSource;
  * Exercises the T004 exactly-once settlement contract of {@link McpCompletionCoordinator}.
  *
  * <p>The coordinator must publish exactly one terminal event before exactly one completion event on
- * every settlement path — the two-phase successful write, disconnect, reset, timeout, and a late
- * signal that loses the race — and must suppress every signal that arrives after the first
- * settlement wins. The successful-write path is split around the byte write: {@link
+ * every settlement path — the two-phase successful write, disconnect, reset, and a late signal that
+ * loses the race — and must suppress every signal that arrives after the first settlement wins. MCP
+ * arms no whole-request timer of its own (T007): transport liveness is shared {@code HttpConfig}
+ * idle/read/write behavior, so an idle or slow connection reaches the disconnect/reset settlement
+ * paths through the ordinary close path rather than a distinct timeout entry. The successful-write
+ * path is split around the byte write: {@link
  * McpCompletionCoordinator#beginWrite} publishes the terminal <em>before</em> the write and claims
  * the shared first-observed latch, and {@link McpCompletionCoordinator#finishWrite} publishes the
  * completion <em>after</em> the write resolves, recording the response's actual commit state.
@@ -52,7 +55,7 @@ import org.junit.jupiter.params.provider.MethodSource;
  */
 class McpCompletionCoordinatorTest {
 
-    private static final String SETTLE_ONCE_ROW = "shouldSettleOnceOnWriteDisconnectResetTimeoutAndLateSignal";
+    private static final String SETTLE_ONCE_ROW = "shouldSettleOnceOnWriteDisconnectResetAndLateSignal";
     private static final String REDISPATCH_ORDER_ROW = "shouldRedispatchSettlementOffContextTerminalBeforeCompletion";
 
     /** A deterministic timeline: started, logically settled 10ms later, completed 20ms after start. */
@@ -133,14 +136,6 @@ class McpCompletionCoordinatorTest {
                         .as("a reset before any write must settle exactly one terminal and one completion")
                         .isTrue();
                 resetAlone.assertExactlyOneTerminalThenOneCompletion();
-
-                RecordingObserver timeoutAlone = new RecordingObserver();
-                McpCompletionCoordinator timeoutWinner = coordinator(context, clock, timeoutAlone);
-                timeoutWinner.settleTimeout(cancelledTerminal(McpErrorType.TIMEOUT));
-                assertThat(timeoutAlone.awaitCallbacks())
-                        .as("a whole-request timeout must settle exactly one terminal and one completion")
-                        .isTrue();
-                timeoutAlone.assertExactlyOneTerminalThenOneCompletion();
             }
             case REDISPATCH_ORDER_ROW -> {
                 // Given: a settlement raised from a non-Vert.x thread must be redispatched onto the
@@ -164,7 +159,7 @@ class McpCompletionCoordinatorTest {
     }
 
     /**
-     * C2: proves that for each abort settlement path — disconnect, reset, timeout — a settlement that
+     * C2: proves that for each abort settlement path — disconnect, reset — a settlement that
      * wins first suppresses a later write. This is the missing reverse-order proof: without the
      * shared latch guard in {@link McpCompletionCoordinator#beginWrite}, a slow handler's late write
      * would return {@code true} and reach a client the settlement already abandoned. Each row asserts
@@ -281,8 +276,7 @@ class McpCompletionCoordinatorTest {
         return Stream.of(
                 new AbortSettlement(
                         "disconnect", c -> c.settleDisconnected(cancelledTerminal(McpErrorType.TRANSPORT), false)),
-                new AbortSettlement("reset", c -> c.settleReset(cancelledTerminal(McpErrorType.TRANSPORT), false)),
-                new AbortSettlement("timeout", c -> c.settleTimeout(cancelledTerminal(McpErrorType.TIMEOUT))));
+                new AbortSettlement("reset", c -> c.settleReset(cancelledTerminal(McpErrorType.TRANSPORT), false)));
     }
 
     private boolean beginWriteOnContext(

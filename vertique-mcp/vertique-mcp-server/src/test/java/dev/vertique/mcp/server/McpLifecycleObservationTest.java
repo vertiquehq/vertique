@@ -37,8 +37,8 @@ import org.junit.jupiter.params.provider.MethodSource;
  *
  * <p>Each contributed {@link McpRequestLifecycleObserver} is opened exactly once per request, and
  * every retained {@link McpRequestObservation} receives exactly one terminal callback followed by
- * exactly one completion callback — on every settlement path, including the disconnect and timeout
- * paths the T004 seam introduces. An observer that throws from {@code open}, returns a null session,
+ * exactly one completion callback — on every settlement path, including the disconnect path the T004
+ * seam introduces. An observer that throws from {@code open}, returns a null session,
  * or throws from a callback is isolated to itself and never suppresses a healthy observer.
  *
  * <p>Observers are opened in the coordinator constructor, and the disconnect settlement path then

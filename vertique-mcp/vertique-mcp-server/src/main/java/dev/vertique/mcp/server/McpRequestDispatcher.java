@@ -16,6 +16,7 @@ import dev.vertique.mcp.lifecycle.McpRequestCompletedListener;
 import dev.vertique.mcp.lifecycle.McpRequestLifecycleObserver;
 import dev.vertique.mcp.lifecycle.McpRequestTerminalEvent;
 import dev.vertique.mcp.lifecycle.McpTransportOutcome;
+import dev.vertique.rest.core.config.HttpConfig;
 import dev.vertique.rest.core.security.SecurityRuntime;
 import dev.vertique.security.SecurityContext;
 import dev.vertique.security.SecurityContextSnapshot;
@@ -36,9 +37,11 @@ import java.util.Set;
  * Dispatches the bounded discovery endpoint over the hardened stateless HTTP contract (§4.7).
  *
  * <p>The dispatcher wires the framework-owned strict codec onto the live request path, enforces the
- * method/origin/content-type/accept admission checks, registers the disconnect/reset/timeout
- * settlement seam, and bounds the response write at {@code mcp.output.maxBytes}. Tool registration
- * and invocation, and the
+ * method/origin/content-type/accept admission checks, registers the disconnect/reset settlement seam,
+ * and bounds the response write at {@code mcp.output.maxBytes}. MCP arms no whole-request deadline of
+ * its own: transport liveness comes from the shared {@link HttpConfig} idle/read/write timeouts, so an
+ * idle or slow connection is closed by the shared HTTP layer and reaches this dispatcher through the
+ * ordinary disconnect/reset settlement path (T007). Tool registration and invocation, and the
  * tool-level {@code -32602} classification, are owned by later slices and are deliberately absent.
  */
 final class McpRequestDispatcher {
@@ -65,7 +68,6 @@ final class McpRequestDispatcher {
     private static final String KEY_PREFIX = McpRequestDispatcher.class.getName();
     private static final String COMPLETION_COORDINATOR_KEY = KEY_PREFIX + ".completionCoordinator";
     private static final String STARTED_AT_KEY = KEY_PREFIX + ".startedAt";
-    private static final String TIMER_ID_KEY = KEY_PREFIX + ".timerId";
 
     /**
      * Compact, insertion-order-preserving success encoder, canonicalized identically to the codec's
@@ -88,12 +90,13 @@ final class McpRequestDispatcher {
             McpServerConfig config,
             SecurityRuntime securityRuntime,
             Set<McpRequestLifecycleObserver> lifecycleObservers,
-            Set<McpRequestCompletedListener> completedListeners) {
+            Set<McpRequestCompletedListener> completedListeners,
+            HttpConfig httpConfig) {
         this.config = config;
         this.securityRuntime = securityRuntime;
         this.lifecycleObservers = Set.copyOf(lifecycleObservers);
         this.completedListeners = Set.copyOf(completedListeners);
-        this.codec = new McpProtocolCodec(config);
+        this.codec = new McpProtocolCodec(httpConfig);
     }
 
     /**
@@ -108,8 +111,8 @@ final class McpRequestDispatcher {
      * HTTP 415, and a present {@code Accept} that admits none of {@code application/json},
      * {@code text/event-stream}, {@code application/*}, or {@code *&#47;*} is HTTP 406; an absent header
      * imposes no restriction (present-only, mirroring Origin). Only once every check passes does the
-     * dispatcher construct the coordinator, register the disconnect, reset, and whole-request timeout
-     * settlement hooks (§4.7 stage 2), and continue.
+     * dispatcher construct the coordinator, register the disconnect and reset settlement hooks (§4.7
+     * stage 2), and continue.
      */
     void begin(RoutingContext context) {
         Instant startedAt = Instant.now();
@@ -347,9 +350,7 @@ final class McpRequestDispatcher {
     /** Completes failures from optional authentication and identity establishment without leakage. */
     void handleFailure(RoutingContext context) {
         if (context.response().ended()) {
-            // The response already settled; cancel the whole-request timer so a live timeout cannot
-            // fire later and record a false timeout past the finished request (T001 watch-item c).
-            cancelTimer(context);
+            // The response already settled; nothing further to do.
             return;
         }
         int status = context.statusCode();
@@ -368,42 +369,26 @@ final class McpRequestDispatcher {
     // --- Settlement seam wiring ---
 
     /**
-     * Registers the disconnect, reset, and whole-request timeout settlement hooks for one request.
+     * Registers the disconnect and reset settlement hooks for one request.
      *
-     * <p>The response close handler settles a premature client disconnect, the response exception
-     * handler settles a stream reset, and a {@code mcp.request.timeoutMs} timer settles a
-     * whole-request timeout. Each drives the coordinator's first-observed-wins guard, so a hook that
-     * fires after a normal write is suppressed. The timer is cancelled on every settlement path to
-     * avoid leaking an event-loop timer past the request.
+     * <p>The response close handler settles a premature client disconnect and the response exception
+     * handler settles a stream reset. Each drives the coordinator's first-observed-wins guard, so a
+     * hook that fires after a normal write is suppressed. MCP arms no whole-request timer of its own:
+     * transport liveness is shared {@link HttpConfig} idle/read/write timeout behavior, so an idle or
+     * slow connection is closed by the shared HTTP layer and reaches these same hooks through the
+     * ordinary close/exception path (T007), classified as transport cancellation rather than a
+     * distinct timeout.
      */
     private void registerSettlementHooks(
             RoutingContext context, McpCompletionCoordinator coordinator, Instant startedAt) {
-        long timerId = context.vertx().setTimer(config.requestTimeoutMs(), ignored -> {
-            coordinator.settleTimeout(settlementTerminal(context, startedAt, McpErrorType.TIMEOUT));
-            // Settlement records the terminal, but the request must also be bounded on the wire: a
-            // reset terminates the transport so the client is not left hanging and a slow handler's
-            // later write cannot succeed. beginWrite already returns false once the timeout settled,
-            // suppressing the late end(); the reset closes the still-open response. A reset — not an
-            // end(status) — is the faithful termination because the timeout records WRITE_FAILED with
-            // no successful body. On HTTP/1.x reset() closes the connection; on HTTP/2 it sends
-            // RST_STREAM.
-            if (!context.response().ended()) {
-                context.response().reset();
-            }
-        });
-        context.put(TIMER_ID_KEY, timerId);
-        context.response().closeHandler(ignored -> {
-            cancelTimer(context);
-            coordinator.settleDisconnected(
-                    settlementTerminal(context, startedAt, McpErrorType.TRANSPORT),
-                    context.response().headWritten());
-        });
-        context.response().exceptionHandler(ignored -> {
-            cancelTimer(context);
-            coordinator.settleReset(
-                    settlementTerminal(context, startedAt, McpErrorType.TRANSPORT),
-                    context.response().headWritten());
-        });
+        context.response()
+                .closeHandler(ignored -> coordinator.settleDisconnected(
+                        settlementTerminal(context, startedAt, McpErrorType.TRANSPORT),
+                        context.response().headWritten()));
+        context.response()
+                .exceptionHandler(ignored -> coordinator.settleReset(
+                        settlementTerminal(context, startedAt, McpErrorType.TRANSPORT),
+                        context.response().headWritten()));
     }
 
     /**
@@ -534,22 +519,20 @@ final class McpRequestDispatcher {
 
     private static void write(
             RoutingContext context, int status, @Nullable byte[] body, McpRequestTerminalEvent terminal) {
-        cancelTimer(context);
         McpCompletionCoordinator coordinator = context.get(COMPLETION_COORDINATOR_KEY);
         // Logical settlement precedes the byte write: beginWrite publishes the terminal and claims
-        // the shared first-observed latch. If a settlement (disconnect, reset, or the whole-request
-        // timeout) already won, the client-visible write is superseded and must be suppressed —
-        // otherwise a slow handler's late write would reach a client the timeout already abandoned.
+        // the shared first-observed latch. If a settlement (disconnect or reset) already won, the
+        // client-visible write is superseded and must be suppressed — otherwise a slow handler's late
+        // write would reach a client the shared HttpConfig liveness timeout already abandoned.
         // The admission-rejection path (W4) has no coordinator and writes directly with no
         // terminal/observation. A T004 discovery response is written in one bounded end(buffer) that
         // resolves synchronously, so the write phase cannot stall; bounding a stalling/streaming
-        // write is a T007/T010 obligation (see the T004 review amendment), not a T004 concern.
+        // write is a T010 obligation (see the T004 review amendment), not a T004 concern.
         if (coordinator != null && !coordinator.beginWrite(terminal)) {
             return;
         }
         context.response().setStatusCode(status);
         Handler<AsyncResult<Void>> onEnd = result -> {
-            cancelTimer(context);
             if (coordinator != null) {
                 coordinator.finishWrite(
                         result.succeeded() ? McpTransportOutcome.WRITTEN : McpTransportOutcome.WRITE_FAILED,
@@ -566,14 +549,6 @@ final class McpRequestDispatcher {
         // end(body) sets Content-Length, so the response is framed by length instead of relying on
         // connection-close framing the way a separate write() + end() pair does.
         context.response().end(Buffer.buffer(body)).onComplete(onEnd);
-    }
-
-    private static void cancelTimer(RoutingContext context) {
-        Long timerId = context.get(TIMER_ID_KEY);
-        if (timerId != null) {
-            context.remove(TIMER_ID_KEY);
-            context.vertx().cancelTimer(timerId);
-        }
     }
 
     /**

@@ -31,12 +31,7 @@ final class McpServerConfigValidator {
                 config.authenticationScheme() == null
                         || !config.authenticationScheme().isBlank(),
                 "mcp.authenticationScheme");
-        requireRange(config.jsonMaxDepth(), 8, 256, "mcp.json.maxDepth");
-        requireRange(config.jsonMaxPropertiesPerObject(), 1, 10_000, "mcp.json.maxPropertiesPerObject");
-        requireRange(config.jsonMaxItemsPerArray(), 1, 100_000, "mcp.json.maxItemsPerArray");
-        requireRange(config.jsonMaxStringChars(), 1, 1_048_576, "mcp.json.maxStringChars");
         requireRange(config.outputMaxBytes(), 1_024, 16_777_216, "mcp.output.maxBytes");
-        requireRange(config.requestTimeoutMs(), 1_000, 1_800_000, "mcp.request.timeoutMs");
         requireRange(config.toolsPageSize(), 1, 500, "mcp.tools.pageSize");
         requireRange(config.toolsTtlMs(), 0, 3_600_000, "mcp.tools.ttlMs");
         validateOrigins(config.allowedOrigins());

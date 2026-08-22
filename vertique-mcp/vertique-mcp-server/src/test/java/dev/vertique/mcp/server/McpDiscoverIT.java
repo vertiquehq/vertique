@@ -432,13 +432,15 @@ public class McpDiscoverIT {
                     .authenticationScheme(options.scheme)
                     .build();
             RecordingSecurityRuntime securityRuntime = new RecordingSecurityRuntime(boundSecurityContext);
+            HttpConfig httpConfig = HttpConfig.builder().build();
             McpRouterMount mount = new McpRouterMount(
                     config,
                     new McpServerConfigValidator(),
-                    new McpRequestDispatcher(config, securityRuntime, Set.of(recordingObserver()), Set.of()),
+                    new McpRequestDispatcher(
+                            config, securityRuntime, Set.of(recordingObserver()), Set.of(), httpConfig),
                     options.handlers,
                     identityResolution(securityRuntime),
-                    HttpConfig.builder().build());
+                    httpConfig);
             Router router = Router.router(vertx);
             router.route().handler(new RequestContextLifecycle());
             if (options.injectAmbientUser) {

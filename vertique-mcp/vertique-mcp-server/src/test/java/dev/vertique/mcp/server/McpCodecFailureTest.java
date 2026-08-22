@@ -7,6 +7,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.IntNode;
+import dev.vertique.rest.core.config.HttpConfig;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.json.JsonObject;
 import jakarta.annotation.Nullable;
@@ -28,7 +29,7 @@ class McpCodecFailureTest {
     @Test
     @DisplayName("failure frames yield the pinned bounded error and the internal fallback never leaks SECRET")
     void shouldUsePreEncodedInternalFallbackOrDeterministicReset() {
-        McpProtocolCodec codec = new McpProtocolCodec(McpServerConfig.defaults());
+        McpProtocolCodec codec = new McpProtocolCodec(HttpConfig.builder().build());
 
         for (McpCodecFailureTestFixture.Row row : McpCodecFailureTestFixture.decodeRows()) {
             byte[] response = codec.errorResponse(row.frame());

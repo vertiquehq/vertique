@@ -211,13 +211,14 @@ public class McpStatelessMultiInstanceIT {
                     .serverVersion(SERVER_VERSION)
                     .build();
             RecordingSecurityRuntime securityRuntime = new RecordingSecurityRuntime(new AtomicReference<>());
+            HttpConfig httpConfig = HttpConfig.builder().build();
             McpRouterMount mount = new McpRouterMount(
                     config,
                     new McpServerConfigValidator(),
-                    new McpRequestDispatcher(config, securityRuntime, Set.of(), Set.of()),
+                    new McpRequestDispatcher(config, securityRuntime, Set.of(), Set.of(), httpConfig),
                     Set.of(),
                     identityResolution(securityRuntime),
-                    HttpConfig.builder().build());
+                    httpConfig);
             Router router = Router.router(vertx);
             router.route().handler(new RequestContextLifecycle());
             router.route(config.mountPath()).subRouter(await(mount.createRouter(vertx)));
