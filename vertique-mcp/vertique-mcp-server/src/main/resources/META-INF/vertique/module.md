@@ -15,10 +15,12 @@ bounded, authorized `tools/list` pagination described in
 zero-argument authorized `tools/call` dispatch described in
 [Zero-argument tool calls](#zero-argument-tool-calls), the fixed request-time input pipeline for
 parameterized calls described in
-[Request-time input pipeline](#request-time-input-pipeline), and the disconnect/reset/write-failure
+[Request-time input pipeline](#request-time-input-pipeline), the disconnect/reset/write-failure
 cancellation and write-phase settlement described in
-[Cancellation and write-phase settlement](#cancellation-and-write-phase-settlement). Ordered tool
-interceptors and rich structured output are introduced by their owning slice.
+[Cancellation and write-phase settlement](#cancellation-and-write-phase-settlement), and the ordered,
+fail-closed pre-dispatch request-interceptor stage described in
+[Request interceptor stage](#request-interceptor-stage). Ordered tool interceptors and rich
+structured output are introduced by their owning slice.
 
 Configuration is disabled by default. When enabled, `serverName` and `serverVersion` are required,
 the mount is one literal path ending in `/*`, and every configured value is validated for range and
@@ -194,6 +196,31 @@ reset — so an MCP request leaves no upload file behind after it ends.
 The module does not use an MCP Java SDK. It depends on `vertique-mcp-core` for the stable lifecycle
 boundary and owns the HTTP/router composition only.
 
+## Request interceptor stage
+
+Once — and only once — the envelope decodes successfully does `McpRequestDispatcher` run the ordered,
+fail-closed pre-dispatch `McpRequestInterceptor` stage (T016, contract §4.7 stage 5): after envelope
+decode, before the method dispatches to `server/discover`, `tools/list`, or `tools/call`, and before
+any tool is resolved or argument is processed. A decode failure never reaches this stage; it settles
+through [Bounded JSON-RPC envelope codec](#bounded-json-rpc-envelope-codec) exactly as before.
+
+Contribute `McpRequestInterceptor` through Dagger set multibinding (`McpServerModule`). The
+dispatcher sorts and validates the contributed set exactly once, at construction — never per request
+and never falling back to Dagger set iteration order — using the same `OrderedExtension`
+`phase` → `priority` → `orderKey` comparator every ordered extension in this framework shares. Two
+interceptors sharing the same `(phase, priority, orderKey)` triple fail startup, naming both
+conflicting implementation classes, rather than silently picking one order.
+
+Each permitted interceptor runs sequentially in that frozen order, on the request's owning Vert.x
+context, observing an `McpRequestContext` that carries the recognized method, the always-non-null
+established `SecurityContext`, and the optional correlation and body trace context — no request body,
+header, or credential accessor exists, so an interceptor can reject a request but never observe or
+mutate its payload. A synchronous `beforeRequest` throw, a `null` returned `Future`, or a `Future`
+that resolves failed all reject fail-closed the same way: the remaining interceptors and the method
+dispatch never run, and the caller receives the bounded, non-leaking `-32001`/`Request rejected`
+JSON-RPC response (HTTP `403`) — never an exception message, never which interceptor rejected. A
+zero-interceptor composition is valid and always permits.
+
 ## Tool runtime
 
 Tools reach the server as generated Dagger multibindings, never by scanning. Install the
@@ -359,7 +386,10 @@ parameterized calls described in
 with its owning slice:
 
 - **Ordered tool interceptors and opt-in value-observation.** Neither exists yet; every known,
-  authorized call reaches the generated invoker directly with no interceptor stage.
+  authorized call reaches the generated invoker directly with no tool-stage interceptor. The
+  pre-dispatch request-interceptor stage described in
+  [Request interceptor stage](#request-interceptor-stage) exists and runs before this point; only the
+  later tool-stage hook is still absent.
 - **Rich and structured output.** A tool's `McpToolResult` is published as-is; output-schema
   validation and the single-pass bounded output normalization the frozen pipeline names are not yet
   applied beyond the existing `mcp.output.maxBytes` serialization cap shared with discovery and

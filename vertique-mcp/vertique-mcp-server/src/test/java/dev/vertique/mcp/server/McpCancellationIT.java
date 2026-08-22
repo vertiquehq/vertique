@@ -399,7 +399,14 @@ class McpCancellationIT {
                     config,
                     new McpServerConfigValidator(),
                     new McpRequestDispatcher(
-                            config, securityRuntime, Set.of(observer), Set.of(), httpConfig, registry, policyEnforcer),
+                            config,
+                            securityRuntime,
+                            Set.of(observer),
+                            Set.of(),
+                            Set.of(),
+                            httpConfig,
+                            registry,
+                            policyEnforcer),
                     Set.of(),
                     identityResolution(securityRuntime),
                     httpConfig);

@@ -379,7 +379,14 @@ class McpInputPipelineIT {
                     config,
                     new McpServerConfigValidator(),
                     new McpRequestDispatcher(
-                            config, securityRuntime, Set.of(), Set.of(), httpConfig, registry, policyEnforcer),
+                            config,
+                            securityRuntime,
+                            Set.of(),
+                            Set.of(),
+                            Set.of(),
+                            httpConfig,
+                            registry,
+                            policyEnforcer),
                     Set.of(),
                     identityResolution(securityRuntime),
                     httpConfig);

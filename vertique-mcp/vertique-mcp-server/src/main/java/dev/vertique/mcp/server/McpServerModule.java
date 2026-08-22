@@ -8,6 +8,7 @@ import dagger.Provides;
 import dagger.multibindings.IntoSet;
 import dagger.multibindings.Multibinds;
 import dev.vertique.core.lifecycle.ComposeValidator;
+import dev.vertique.mcp.interceptor.McpRequestInterceptor;
 import dev.vertique.mcp.lifecycle.McpRequestCompletedListener;
 import dev.vertique.mcp.lifecycle.McpRequestLifecycleObserver;
 import dev.vertique.mcp.tool.McpToolInvoker;
@@ -30,6 +31,14 @@ public abstract class McpServerModule {
     /** Declares the zero-or-more post-transport completion-listener extension set. */
     @Multibinds
     abstract Set<McpRequestCompletedListener> completedListeners();
+
+    /**
+     * Declares the zero-or-more ordered, rejective pre-dispatch request-interceptor extension set
+     * (T016). {@link McpRequestDispatcher} sorts and validates the contributed set once at
+     * construction, so a graph with no contributions resolves an empty ordered chain.
+     */
+    @Multibinds
+    abstract Set<McpRequestInterceptor> requestInterceptors();
 
     /**
      * Declares the zero-or-more generated tool invoker extension point. {@code vertique-codegen-mcp}

@@ -11,6 +11,10 @@ import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.NullNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import dev.vertique.core.extension.ExtensionPhase;
+import dev.vertique.core.extension.OrderedExtension;
+import dev.vertique.mcp.interceptor.McpRequestContext;
+import dev.vertique.mcp.interceptor.McpRequestInterceptor;
 import dev.vertique.mcp.lifecycle.McpErrorType;
 import dev.vertique.mcp.lifecycle.McpMethod;
 import dev.vertique.mcp.lifecycle.McpRequestCompletedListener;
@@ -27,6 +31,8 @@ import dev.vertique.rest.core.config.HttpConfig;
 import dev.vertique.rest.core.security.SecurityRuntime;
 import dev.vertique.security.SecurityContext;
 import dev.vertique.security.SecurityContextSnapshot;
+import dev.vertique.security.SecurityContexts;
+import dev.vertique.security.SecurityIdentity;
 import io.vertx.core.AsyncResult;
 import io.vertx.core.Future;
 import io.vertx.core.Handler;
@@ -44,6 +50,7 @@ import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -98,6 +105,30 @@ final class McpRequestDispatcher {
     private static final int INTERNAL_ERROR = -32603;
 
     /**
+     * The bounded JSON-RPC server-error-range code (§4.7 "request-interceptor rejection ... return
+     * JSON") a pre-dispatch {@link McpRequestInterceptor} rejection settles as (T016). Reserved
+     * strictly for this stage, distinct from the protocol (-3270x/-3260x) and tool-authorization
+     * (-32602) codes above.
+     */
+    private static final int INTERCEPTOR_REJECTED = -32001;
+
+    /**
+     * The standard, non-leaking message paired with {@link #INTERCEPTOR_REJECTED}: no interceptor
+     * class name, reason, or exception text ever reaches the wire (contract §4.4 — "no exception
+     * message").
+     */
+    private static final String INTERCEPTOR_REJECTED_MESSAGE = "Request rejected";
+
+    /**
+     * The canonical anonymous {@link SecurityContext} — {@code PrincipalType.ANONYMOUS} actor,
+     * {@code none} authentication method, empty claims — synthesized by {@link
+     * #establishedSecurityContext()} when no context is yet bound, matching {@code
+     * McpIdentityEstablisher}'s own anonymous-binding shape for an unconfigured scheme.
+     */
+    private static final SecurityContext CANONICAL_ANONYMOUS =
+            SecurityContexts.unauthenticated(SecurityIdentity.anonymous());
+
+    /**
      * The bounded, non-leaking text returned as the sole content item of a stage-1 (schema) rejection
      * — §4.7's "bounded invalid-arguments/tool-error outcome". Deliberately generic rather than
      * echoing the failing keyword or property: the compiled validator's {@code OutputUnit} detail is
@@ -132,6 +163,7 @@ final class McpRequestDispatcher {
     private final SecurityRuntime securityRuntime;
     private final Set<McpRequestLifecycleObserver> lifecycleObservers;
     private final Set<McpRequestCompletedListener> completedListeners;
+    private final List<McpRequestInterceptor> orderedRequestInterceptors;
     private final McpProtocolCodec codec;
     private final McpToolRegistry toolRegistry;
     private final McpPolicyEnforcer policyEnforcer;
@@ -143,6 +175,7 @@ final class McpRequestDispatcher {
             SecurityRuntime securityRuntime,
             Set<McpRequestLifecycleObserver> lifecycleObservers,
             Set<McpRequestCompletedListener> completedListeners,
+            Set<McpRequestInterceptor> requestInterceptors,
             HttpConfig httpConfig,
             McpToolRegistry toolRegistry,
             McpPolicyEnforcer policyEnforcer) {
@@ -150,10 +183,48 @@ final class McpRequestDispatcher {
         this.securityRuntime = securityRuntime;
         this.lifecycleObservers = Set.copyOf(lifecycleObservers);
         this.completedListeners = Set.copyOf(completedListeners);
+        this.orderedRequestInterceptors = sortedAndValidatedRequestInterceptors(requestInterceptors);
         this.codec = new McpProtocolCodec(httpConfig);
         this.toolRegistry = toolRegistry;
         this.policyEnforcer = policyEnforcer;
         this.cursorCodec = new McpCursorCodec();
+    }
+
+    /**
+     * Sorts {@code interceptors} by {@link OrderedExtension#comparator()} — phase, then priority,
+     * then {@code orderKey} — and validates that no two share the same {@code (phase, priority,
+     * orderKey)} triple (contract §4.4). Ordering never falls back to Dagger set iteration: this is
+     * the one place that establishes it, at composition time, before any request reaches {@link
+     * #runRequestInterceptors}.
+     *
+     * @param interceptors the contributed request-interceptor set; must not be {@code null}
+     * @return an immutable, ordered list of the interceptors
+     * @throws IllegalStateException if two interceptors share the same {@code (phase, priority,
+     *     orderKey)} triple, naming both conflicting classes
+     */
+    private static List<McpRequestInterceptor> sortedAndValidatedRequestInterceptors(
+            Set<McpRequestInterceptor> interceptors) {
+        List<McpRequestInterceptor> sorted = new ArrayList<>(interceptors);
+        sorted.sort(OrderedExtension.comparator());
+        record OrderKey(ExtensionPhase phase, int priority, String orderKey) {}
+        Map<OrderKey, McpRequestInterceptor> byOrderKey = new LinkedHashMap<>();
+        for (McpRequestInterceptor interceptor : sorted) {
+            OrderKey key = new OrderKey(interceptor.phase(), interceptor.priority(), interceptor.orderKey());
+            McpRequestInterceptor existing = byOrderKey.putIfAbsent(key, interceptor);
+            if (existing != null) {
+                throw new IllegalStateException("Duplicate McpRequestInterceptor (phase="
+                        + key.phase()
+                        + ", priority="
+                        + key.priority()
+                        + ", orderKey="
+                        + key.orderKey()
+                        + ") between "
+                        + existing.getClass().getName()
+                        + " and "
+                        + interceptor.getClass().getName());
+            }
+        }
+        return List.copyOf(sorted);
     }
 
     /**
@@ -310,27 +381,193 @@ final class McpRequestDispatcher {
      * — is classified to its final-spec JSON-RPC code and bounded HTTP status. Discovery is routed
      * through the same codec decode as every other method, so it requires {@code params} exactly like
      * the rest of the supported set.
+     *
+     * <p>Only once the envelope validates does this method run the ordered, fail-closed pre-dispatch
+     * request-interceptor stage (T016, contract §4.7 stage 5) — after envelope decode, before method
+     * dispatch, before any tool is resolved, and before any argument is processed. A permitted request
+     * continues to {@link #dispatchByMethod}; a rejection never reaches it.
      */
     void dispatch(RoutingContext context) {
         SecurityContextSnapshot security = establishedSecurity();
         byte[] body = bodyBytes(context);
         McpProtocolCodec.Decoded decoded = codec.decodeEnvelope(body);
-        if (!decoded.isError()) {
-            String method = decoded.envelope().get("method").asText();
-            if (DISCOVER_METHOD.equals(method)) {
-                writeDiscovery(context, decoded.envelope(), security);
-                return;
-            }
-            if (TOOLS_LIST_METHOD.equals(method)) {
-                writeToolsList(context, decoded.envelope(), security);
-                return;
-            }
-            if (TOOLS_CALL_METHOD.equals(method)) {
-                writeToolsCall(context, decoded.envelope(), security);
-                return;
-            }
+        if (decoded.isError()) {
+            emitProtocolError(context, decoded, body, security);
+            return;
         }
-        emitProtocolError(context, decoded, body, security);
+        JsonNode envelope = decoded.envelope();
+        McpMethod method = classifyMethod(envelope.get("method").asText());
+        McpRequestContext requestContext = new McpRequestContext(method, establishedSecurityContext(), null, null);
+        runRequestInterceptors(0, requestContext).onComplete(ar -> {
+            if (ar.failed()) {
+                writeInterceptorRejection(context, envelope, method, security);
+                return;
+            }
+            dispatchByMethod(context, envelope, method, security);
+        });
+    }
+
+    /**
+     * Resolves the caller {@link SecurityContext} for {@link McpRequestContext}, which the frozen
+     * contract requires to always be non-null: a bound identity is used as-is, and the canonical
+     * anonymous context ({@code PrincipalType.ANONYMOUS}, authentication method {@code none}, empty
+     * claims) is synthesized when none is bound — exactly the same anonymous shape {@code
+     * McpIdentityEstablisher} binds for an unconfigured scheme, so an interceptor never distinguishes
+     * "no context bound yet" from "genuinely anonymous."
+     *
+     * @return the caller's established security context, or the canonical anonymous context; never
+     *     {@code null}
+     */
+    private SecurityContext establishedSecurityContext() {
+        SecurityContext current = securityRuntime.current();
+        return current != null ? current : CANONICAL_ANONYMOUS;
+    }
+
+    /**
+     * Classifies a decoded envelope's {@code method} string into its recognized {@link McpMethod}.
+     *
+     * <p>{@link McpProtocolCodec#decodeEnvelope} already restricts a non-error decode's {@code method}
+     * to the bounded supported set, so every branch below except the defensive default is reachable
+     * here; {@link McpMethod#OTHER} exists for {@link #emitProtocolError}'s classification, not this
+     * one.
+     *
+     * @param method the decoded envelope's {@code method} string
+     * @return the recognized method class
+     */
+    private static McpMethod classifyMethod(String method) {
+        if (DISCOVER_METHOD.equals(method)) {
+            return McpMethod.SERVER_DISCOVER;
+        }
+        if (TOOLS_LIST_METHOD.equals(method)) {
+            return McpMethod.TOOLS_LIST;
+        }
+        if (TOOLS_CALL_METHOD.equals(method)) {
+            return McpMethod.TOOLS_CALL;
+        }
+        return McpMethod.OTHER;
+    }
+
+    /**
+     * Dispatches one interceptor-permitted, envelope-validated request to its method-specific handler.
+     *
+     * @param context the request context
+     * @param envelope the validated request envelope
+     * @param method the classified method, as {@link #classifyMethod} produced it for this same
+     *     envelope
+     * @param security the established security snapshot, recorded on the terminal event
+     */
+    private void dispatchByMethod(
+            RoutingContext context, JsonNode envelope, McpMethod method, @Nullable SecurityContextSnapshot security) {
+        switch (method) {
+            case SERVER_DISCOVER:
+                writeDiscovery(context, envelope, security);
+                return;
+            case TOOLS_LIST:
+                writeToolsList(context, envelope, security);
+                return;
+            case TOOLS_CALL:
+                writeToolsCall(context, envelope, security);
+                return;
+            default:
+                // Unreachable in practice (see classifyMethod): decodeEnvelope already restricts a
+                // non-error decode's method to the three cases above. Kept as a defensive fallback,
+                // through the same bounded internal-error shape every other defensive fallback in this
+                // class uses, rather than an uncaught exception.
+                writeDispatchFallback(context, envelope, security);
+        }
+    }
+
+    /**
+     * Settles the defensive, practically-unreachable {@link #dispatchByMethod} default branch through
+     * the bounded internal-error fallback, exactly like {@link #writeToolsListFallback}.
+     */
+    private void writeDispatchFallback(
+            RoutingContext context, JsonNode envelope, @Nullable SecurityContextSnapshot security) {
+        byte[] fallback = codec.internalFallback(
+                envelope.get("id"), new IllegalStateException("Unrecognized method reached dispatchByMethod"));
+        McpRequestTerminalEvent terminal = McpRequestTerminalEvent.failed(
+                startedAt(context),
+                Instant.now(),
+                McpMethod.OTHER,
+                McpRequestTerminalEvent.UNKNOWN_TOOL_NAME,
+                McpErrorType.INTERNAL,
+                500,
+                INTERNAL_ERROR,
+                null,
+                security,
+                null);
+        write(context, 500, fallback, terminal);
+    }
+
+    /**
+     * Runs the ordered pre-dispatch request-interceptor chain sequentially from {@code index},
+     * short-circuiting at the first rejection (contract §4.4): a synchronous
+     * {@link McpRequestInterceptor#beforeRequest} throw, a {@code null} returned future, and a future
+     * that resolves failed all fail closed the same way — the next interceptor is never invoked and
+     * dispatch never runs. An empty ordered chain (the zero-interceptor composition) succeeds
+     * immediately.
+     *
+     * @param index the next interceptor to run, in {@link #orderedRequestInterceptors} order
+     * @param requestContext the immutable, payload-free pre-dispatch snapshot every interceptor in the
+     *     chain observes
+     * @return a future that succeeds once every interceptor has permitted, or fails with the first
+     *     rejection's cause
+     */
+    private Future<Void> runRequestInterceptors(int index, McpRequestContext requestContext) {
+        if (index >= orderedRequestInterceptors.size()) {
+            return Future.succeededFuture();
+        }
+        McpRequestInterceptor interceptor = orderedRequestInterceptors.get(index);
+        Future<Void> outcome;
+        try {
+            outcome = interceptor.beforeRequest(requestContext);
+        } catch (RuntimeException thrown) {
+            return Future.failedFuture(thrown);
+        }
+        if (outcome == null) {
+            return Future.failedFuture(
+                    new NullPointerException(interceptor.getClass().getName() + "#beforeRequest returned null"));
+        }
+        return outcome.compose(ignored -> runRequestInterceptors(index + 1, requestContext));
+    }
+
+    /**
+     * Writes the bounded, non-leaking JSON-RPC error response for a pre-dispatch interceptor
+     * rejection (contract §4.7 — "request-interceptor rejection ... return JSON"). Carries no
+     * interceptor class name, reason, or exception text — only the fixed
+     * {@link #INTERCEPTOR_REJECTED}/{@link #INTERCEPTOR_REJECTED_MESSAGE} pair, exactly like
+     * {@link McpPolicyEnforcer#unknownOrUnauthorizedError()} does for its own stage.
+     *
+     * @param context the request context
+     * @param envelope the validated envelope whose id is echoed
+     * @param method the classified method, recorded on the terminal event
+     * @param security the established security snapshot, recorded on the terminal event
+     */
+    private void writeInterceptorRejection(
+            RoutingContext context, JsonNode envelope, McpMethod method, @Nullable SecurityContextSnapshot security) {
+        context.response().putHeader("content-type", JSON_CONTENT_TYPE);
+        ObjectNode response = OUTPUT_ENCODER.createObjectNode();
+        response.put("jsonrpc", "2.0");
+        JsonNode id = envelope.get("id");
+        response.set("id", id != null ? id : NullNode.getInstance());
+        ObjectNode errorNode = OUTPUT_ENCODER.createObjectNode();
+        errorNode.put("code", INTERCEPTOR_REJECTED);
+        errorNode.put("message", INTERCEPTOR_REJECTED_MESSAGE);
+        response.set("error", errorNode);
+        byte[] responseBytes = codec.encode(response);
+        int status = httpStatusFor(INTERCEPTOR_REJECTED);
+        McpRequestTerminalEvent terminal = McpRequestTerminalEvent.rejected(
+                startedAt(context),
+                Instant.now(),
+                method,
+                McpRequestTerminalEvent.UNKNOWN_TOOL_NAME,
+                McpErrorType.INTERCEPTOR,
+                status,
+                INTERCEPTOR_REJECTED,
+                null,
+                security,
+                null);
+        write(context, status, responseBytes, terminal);
     }
 
     /**
@@ -1130,6 +1367,7 @@ final class McpRequestDispatcher {
             case METHOD_NOT_FOUND -> 404;
             case PARSE_ERROR, INVALID_REQUEST -> 400;
             case McpPolicyEnforcer.UNKNOWN_OR_UNAUTHORIZED_CODE -> 400;
+            case INTERCEPTOR_REJECTED -> 403;
             default -> 500;
         };
     }

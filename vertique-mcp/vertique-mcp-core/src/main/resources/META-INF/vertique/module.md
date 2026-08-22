@@ -92,6 +92,24 @@ request outcome.
 `McpTraceContext` is the optional normalized W3C trace reference associated with a terminal
 observation. It carries no baggage.
 
+## Request interceptor extension
+
+Contribute `McpRequestInterceptor` through Dagger set multibinding to reject a request at the frozen
+pre-dispatch stage — after the envelope decodes and identity is established, but before the method
+dispatches and before any tool is resolved or argument is processed. `beforeRequest` runs once per
+applicable request, on the request's owning Vert.x context, and must not block or return `null`; a
+request is rejected only by completing the returned `Future` with a failure. Zero or more
+interceptors run in the `OrderedExtension` `phase` → `priority` → `orderKey` order, never Dagger set
+iteration order; two interceptors sharing the same `(phase, priority, orderKey)` triple fail startup
+naming both classes. Named implementors include a tenant-entitlement guard and a maintenance-window
+guard.
+
+`McpRequestContext` is the immutable, payload-free snapshot an interceptor observes: the recognized
+method, the always-non-null established `SecurityContext`, and the optional correlation and body
+trace context. It exposes no request body, header, or credential accessor, and an interceptor can
+never mutate arguments, reorder a fixed stage, or recover a failure another stage produced — it may
+only permit or reject.
+
 ## Dependency boundary
 
 This module consumes only the public core correlation snapshot, the security snapshot and

@@ -221,6 +221,7 @@ public class McpStatelessMultiInstanceIT {
                             securityRuntime,
                             Set.of(),
                             Set.of(),
+                            Set.of(),
                             httpConfig,
                             McpToolRegistry.build(Set.of()),
                             new McpPolicyEnforcer(new SecurityPolicyEnforcer(

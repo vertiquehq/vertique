@@ -386,7 +386,14 @@ class McpToolCallIT {
                     config,
                     new McpServerConfigValidator(),
                     new McpRequestDispatcher(
-                            config, securityRuntime, Set.of(), Set.of(), httpConfig, registry, policyEnforcer),
+                            config,
+                            securityRuntime,
+                            Set.of(),
+                            Set.of(),
+                            Set.of(),
+                            httpConfig,
+                            registry,
+                            policyEnforcer),
                     Set.of(new BearerRouteAuthHandler()),
                     identityResolution(securityRuntime),
                     httpConfig);

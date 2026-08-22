@@ -24,6 +24,19 @@
       "public abstract java.lang.String dev.vertique.mcp.annotation.McpToolParam.description()",
       "public abstract java.lang.String dev.vertique.mcp.annotation.McpToolParam.name()"
     ],
+    "dev.vertique.mcp.interceptor.McpRequestContext": [
+      "public dev.vertique.core.correlation.CorrelationContextSnapshot dev.vertique.mcp.interceptor.McpRequestContext.correlation()",
+      "public dev.vertique.mcp.interceptor.McpRequestContext(dev.vertique.mcp.lifecycle.McpMethod,dev.vertique.security.SecurityContext,dev.vertique.core.correlation.CorrelationContextSnapshot,dev.vertique.mcp.interceptor.McpTraceContext)",
+      "public dev.vertique.mcp.interceptor.McpTraceContext dev.vertique.mcp.interceptor.McpRequestContext.bodyTraceContext()",
+      "public dev.vertique.mcp.lifecycle.McpMethod dev.vertique.mcp.interceptor.McpRequestContext.method()",
+      "public dev.vertique.security.SecurityContext dev.vertique.mcp.interceptor.McpRequestContext.securityContext()",
+      "public final boolean dev.vertique.mcp.interceptor.McpRequestContext.equals(java.lang.Object)",
+      "public final int dev.vertique.mcp.interceptor.McpRequestContext.hashCode()",
+      "public final java.lang.String dev.vertique.mcp.interceptor.McpRequestContext.toString()"
+    ],
+    "dev.vertique.mcp.interceptor.McpRequestInterceptor": [
+      "public default io.vertx.core.Future<java.lang.Void> dev.vertique.mcp.interceptor.McpRequestInterceptor.beforeRequest(dev.vertique.mcp.interceptor.McpRequestContext)"
+    ],
     "dev.vertique.mcp.interceptor.McpTraceContext": [
       "public boolean dev.vertique.mcp.interceptor.McpTraceContext.sampled()",
       "public dev.vertique.mcp.interceptor.McpTraceContext(java.lang.String,java.lang.String,boolean,java.lang.String)",

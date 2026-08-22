@@ -381,6 +381,7 @@ public class McpStreamableHttpContractIT {
                             securityRuntime,
                             Set.of(recordingObserver()),
                             Set.of(),
+                            Set.of(),
                             httpConfig,
                             McpToolRegistry.build(Set.of()),
                             new McpPolicyEnforcer(new SecurityPolicyEnforcer(
