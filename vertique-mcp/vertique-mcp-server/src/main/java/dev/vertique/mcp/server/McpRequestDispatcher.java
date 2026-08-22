@@ -718,9 +718,17 @@ final class McpRequestDispatcher {
             McpToolInvoker invoker) {
         selectSse(context);
         Map<String, Object> arguments = argumentsOf(envelope);
+        McpCompletionCoordinator coordinator = context.get(COMPLETION_COORDINATOR_KEY);
+        // T013: the coordinator owns the request's cancellation signal, fired exactly once when the
+        // request settles as a disconnect, a stream reset, or a failed write. Every admitted request
+        // has a coordinator by the time invocation is reached (begin() always constructs one before
+        // dispatch); the fallback exists only as the same defensive null-guard the write path below
+        // already uses.
+        McpCancellationSignal cancellation =
+                coordinator != null ? coordinator.cancellation() : NoOpCancellationSignal.INSTANCE;
         McpPreparedToolCall prepared;
         try {
-            prepared = invoker.prepare(arguments, NoOpCancellationSignal.INSTANCE);
+            prepared = invoker.prepare(arguments, cancellation);
         } catch (RuntimeException prepareFailure) {
             writeSseFallback(context, envelope, security, toolName, prepareFailure);
             return;
@@ -894,10 +902,12 @@ final class McpRequestDispatcher {
     }
 
     /**
-     * A cancellation signal that is never cancelled: T012 owns only the zero-argument happy/error call
-     * path, not cancellation races (T013). {@link #cancelled()} returns a future backed by a {@link
-     * Promise} that is deliberately never completed, matching the interface's "never completed
-     * otherwise" contract for an invocation this dispatcher never cancels.
+     * A cancellation signal that is never cancelled, used only as the defensive fallback for a null
+     * completion coordinator ({@link #invokeAndRespond} above) — the same null-guard every other
+     * coordinator use in this class already applies. Every ordinarily admitted request instead
+     * receives {@link McpCompletionCoordinator#cancellation()} (T013), which fires on disconnect,
+     * reset, or a failed write. {@link #cancelled()} returns a future backed by a {@link Promise} that
+     * is deliberately never completed, matching the interface's "never completed otherwise" contract.
      */
     private static final class NoOpCancellationSignal implements McpCancellationSignal {
         static final NoOpCancellationSignal INSTANCE = new NoOpCancellationSignal();
@@ -1100,8 +1110,12 @@ final class McpRequestDispatcher {
                         null));
     }
 
-    private static void write(
-            RoutingContext context, int status, @Nullable byte[] body, McpRequestTerminalEvent terminal) {
+    // T013 TP-002: package-private (not private) so McpWritePhaseSettlementTest can drive this exact
+    // write path directly, stubbing HttpServerResponse#end(...) to return a Promise-backed future the
+    // test owns and completes explicitly — no socket, no timing dependency. This is the only visibility
+    // change; the write orchestration itself (beginWrite before the byte write, finishWrite after) is
+    // unchanged from the T004/P03 behavior.
+    static void write(RoutingContext context, int status, @Nullable byte[] body, McpRequestTerminalEvent terminal) {
         McpCompletionCoordinator coordinator = context.get(COMPLETION_COORDINATOR_KEY);
         // Logical settlement precedes the byte write: beginWrite publishes the terminal and claims
         // the shared first-observed latch. If a settlement (disconnect or reset) already won, the

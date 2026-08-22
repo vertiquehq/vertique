@@ -13,8 +13,11 @@ during composition (see [Tool runtime](#tool-runtime)); the mount serves `server
 bounded, authorized `tools/list` pagination described in
 [Authorized tool listing and pagination](#authorized-tool-listing-and-pagination), and the
 zero-argument authorized `tools/call` dispatch described in
-[Zero-argument tool calls](#zero-argument-tool-calls). Parameterized-call argument processing, tool
-interceptors, rich structured output, and cancellation races are introduced by their owning slice.
+[Zero-argument tool calls](#zero-argument-tool-calls), and the disconnect/reset/write-failure
+cancellation and write-phase settlement described in
+[Cancellation and write-phase settlement](#cancellation-and-write-phase-settlement). Parameterized-call
+argument processing, tool interceptors, and rich structured output are introduced by their owning
+slice.
 
 Configuration is disabled by default. When enabled, `serverName` and `serverVersion` are required,
 the mount is one literal path ending in `/*`, and every configured value is validated for range and
@@ -98,6 +101,29 @@ per observer and never change the protocol or business outcome. The method, `Ori
 `Content-Type`, and `Accept` admission checks all run before the completion coordinator is created,
 so — like a body-limit rejection — a request that fails admission produces no lifecycle observation;
 only an admitted request opens observation.
+
+## Cancellation and write-phase settlement
+
+A disconnect, a stream reset, or a failed terminal write fires the request's `McpCancellationSignal`
+exactly once, in addition to the exactly-once terminal/completion settlement above. The completion
+coordinator owns this signal and fires it from the same first-observed-wins guard that governs
+completion: a genuinely successful write never fires it, but every other settlement path does,
+including the stalled-write recovery below. Every `tools/call` invocation receives this signal through
+`McpToolInvoker#prepare`; a cooperative handler may register `cancellation.cancelled()` to stop early,
+but cancellation remains cooperative only — the framework cannot forcibly stop a handler that ignores
+it, and a late result from a handler that never checked or never stopped is still suppressed at the
+write boundary (below), never delivered to a client whose connection is already gone.
+
+The successful-write path is two-phase: the terminal publishes before the byte write begins and the
+completion publishes only after it resolves. A slow client can leave that write pending indefinitely —
+this is not bounded by a request timer, since MCP arms none of its own — so a disconnect or reset
+signal that arrives while a write is still pending drives that same write's completion directly with
+the signal's own transport outcome (`DISCONNECTED` or `RESET`) instead of being dropped, guarded
+exactly-once by the same completion latch; a write that does genuinely resolve afterward is then a
+suppressed no-op. A write whose own transport future fails settles directly as `WRITE_FAILED`,
+recording the response's real commit state (`headWritten()` at settlement time) rather than a value
+inferred from the write's success flag. No MCP-owned whole-request deadline is introduced by any of
+this: transport liveness stays exclusively with the shared `HttpConfig` idle/read/write timeouts.
 
 ## Bounded response output
 
@@ -316,11 +342,6 @@ still absent arrives with its owning slice:
   validation and the single-pass bounded output normalization the frozen pipeline names are not yet
   applied beyond the existing `mcp.output.maxBytes` serialization cap shared with discovery and
   `tools/list`.
-- **Cancellation races.** The dispatcher supplies a permanently non-cancelled
-  `McpCancellationSignal` to every invocation; a client disconnect or reset during an in-flight call
-  is not yet observed by the handler or reflected in `McpToolResult`. The two-phase settlement
-  (logical terminal before the byte write, exactly-once completion) already covers the transport side
-  of a disconnect during `tools/call`, matching every other response.
 
 ## Authorized tool listing and pagination
 
@@ -390,8 +411,9 @@ complete, already-framed message.
 **Zero-argument only.** `arguments` — absent, explicit `null`, or a non-object value — normalizes to
 the same immutable empty map as `{}` and is handed to the generated invoker unvalidated: no schema
 check, no INP-001 processing, no Bean Validation. See
-[What is not here yet](#what-is-not-here-yet) for the parameterized-call, interceptor, rich-output,
-and cancellation-race capabilities this version does not yet provide.
+[What is not here yet](#what-is-not-here-yet) for the parameterized-call, interceptor, and rich-output
+capabilities this version does not yet provide; cancellation and write-phase settlement (T013) are
+described in [Cancellation and write-phase settlement](#cancellation-and-write-phase-settlement).
 
 ## Authorization
 

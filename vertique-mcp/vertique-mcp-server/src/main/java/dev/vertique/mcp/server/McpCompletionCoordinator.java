@@ -10,19 +10,28 @@ import dev.vertique.mcp.lifecycle.McpRequestObservation;
 import dev.vertique.mcp.lifecycle.McpRequestTerminalEvent;
 import dev.vertique.mcp.lifecycle.McpRequestTerminalObservation;
 import dev.vertique.mcp.lifecycle.McpTransportOutcome;
+import dev.vertique.mcp.tool.McpCancellationSignal;
 import io.vertx.core.Context;
+import io.vertx.core.Future;
+import io.vertx.core.Promise;
 import java.time.Instant;
 import java.time.InstantSource;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 
-/** Coordinates one request's failure-isolated terminal and completion observation. */
+/**
+ * Coordinates one request's failure-isolated terminal and completion observation, and owns the
+ * request's {@link McpCancellationSignal} (T013): a disconnect, a stream reset, or a failed write
+ * fires it exactly once, confined to the same first-observed-wins settlement this class already
+ * enforces, so a cooperative tool handler can stop early.
+ */
 final class McpCompletionCoordinator {
     private final Context context;
     private final List<McpRequestObservation> observations;
     private final Set<McpRequestCompletedListener> listeners;
     private final InstantSource clock;
+    private final McpRequestCancellationSignal cancellationSignal = new McpRequestCancellationSignal();
 
     // Both latches are mutated only on the request-owning Vert.x context: the write path calls
     // beginWrite/finishWrite synchronously on that context, and every settlement path redispatches
@@ -65,6 +74,18 @@ final class McpCompletionCoordinator {
         this.observations = openObservers(observers, startedAt);
         this.listeners = Set.copyOf(listeners);
         this.clock = clock;
+    }
+
+    /**
+     * Returns this request's {@link McpCancellationSignal} (T013), fired exactly once when the
+     * request settles as anything other than a successful write — a disconnect, a stream reset, or a
+     * failed write — so a cooperative tool handler invoked with it can stop early. A tool invoked
+     * before this coordinator ever settles observes an unfired signal, exactly like every other call.
+     *
+     * @return the coordinator-owned cancellation signal for this request
+     */
+    McpCancellationSignal cancellation() {
+        return cancellationSignal;
     }
 
     // --- T004 two-phase write path ---
@@ -125,6 +146,12 @@ final class McpCompletionCoordinator {
             return;
         }
         completionEmitted = true;
+        if (transport != McpTransportOutcome.WRITTEN) {
+            // T013: a failed write, or a disconnect/reset that recovered a stalled write, fires
+            // cancellation exactly once, guarded by the same completionEmitted latch as everything
+            // else this method publishes — a genuinely successful write never fires it.
+            cancellationSignal.cancel();
+        }
         publishCompletion(writeTerminal, transport, responseCommitted, completedAt);
     }
 
@@ -204,6 +231,9 @@ final class McpCompletionCoordinator {
         }
         settled = true;
         completionEmitted = true;
+        // T013: an abort settlement (disconnect or reset before any write) is never WRITTEN, so it
+        // always fires cancellation, guarded exactly-once by the same completionEmitted latch.
+        cancellationSignal.cancel();
         // An abort settlement supplies no intervening write, so the terminal and completion fire
         // together here, unlike the two-phase write path that splits them around end().
         publishTerminal(terminal);
@@ -278,6 +308,38 @@ final class McpCompletionCoordinator {
             callback.run();
         } catch (RuntimeException ignored) {
             // Framework observer/listener failures must not affect request settlement.
+        }
+    }
+
+    /**
+     * The coordinator-owned {@link McpCancellationSignal} for one request (T013).
+     *
+     * <p>{@link #cancel()} is called only from {@link #finishWrite} and the abort branch of {@link
+     * #completeOnContext}, both already guarded by {@code completionEmitted} so this fires at most
+     * once; the idempotent check here is a defensive second guard, not load-bearing. Every call site
+     * runs on the request-owning context (the same invariant every other settlement field relies on),
+     * so a handler registered through {@link #cancelled()} observes it on that same context.
+     */
+    private static final class McpRequestCancellationSignal implements McpCancellationSignal {
+        private final Promise<Void> cancelled = Promise.promise();
+        private boolean cancelledFlag;
+
+        @Override
+        public boolean isCancelled() {
+            return cancelledFlag;
+        }
+
+        @Override
+        public Future<Void> cancelled() {
+            return cancelled.future();
+        }
+
+        void cancel() {
+            if (cancelledFlag) {
+                return;
+            }
+            cancelledFlag = true;
+            cancelled.complete();
         }
     }
 }
