@@ -34,9 +34,19 @@ excluded from the input schema and lets a handler stop cooperative work when the
 or the call times out. Cancellation is cooperative: the framework cannot stop a handler that
 ignores the signal.
 
-`McpToolResult` is the immutable result type a handler may return when it needs explicit text
-content or a tool execution error; use its `text`, `structured`, and `error` factories. A handler
-that returns a plain value has its result wrapped by generated code instead.
+`McpToolResult` is the immutable, complete-only result type a handler may return when it needs
+explicit text content or a tool execution error; use its `text`, `structured`, and `error`
+factories. It carries no partial or intermediate state — a call either produces a settled
+`McpToolResult`, or it never produces one at all.
+
+A tool method's declared return type must be one of exactly four supported shapes: a plain `T`, a
+`Future<T>`, a handler-authored `McpToolResult<T>`, or a `Future<McpToolResult<T>>`; every other
+declared return type (`void`, `Future<Void>`, a raw or wildcard type, an SDK or Reactor type,
+`RoutingContext`) is a compile error. `vertique-codegen-mcp` adapts a plain `T` or a resolved
+`Future<T>` onto `McpToolResult` for you — a `String` becomes one text content item, any other
+value becomes structured content — while a handler-authored `McpToolResult<T>` (sync or via
+`Future`) is passed through untouched, including an explicit `isError=true`. A failed `Future`
+never reaches a `McpToolResult`; the call settles as a bounded protocol-level error instead.
 
 ## Selecting a JSON profile
 
@@ -71,8 +81,11 @@ exists for a failed stage.
 
 `McpRequestTerminalEvent` records the single logical settlement of a request. Construct it through
 its named factories (`success`, `toolError`, `rejected`, `failed`, or `cancelled`) so that outcome,
-result type, and error classification remain internally consistent. `McpRequestCompletedEvent`
-records the later transport outcome after the response was written, disconnected, reset, or failed.
+result type, and error classification remain internally consistent. Its `resultType` is
+complete-only: `success` and `toolError` always settle as `McpResultType.COMPLETE`, and `rejected`,
+`failed`, and `cancelled` always settle as `McpResultType.NONE` — the enum itself declares no third,
+partial state to construct. `McpRequestCompletedEvent` records the later transport outcome after the
+response was written, disconnected, reset, or failed.
 
 Both records are immutable, validate their temporal and protocol-state invariants, and retain only
 bounded protocol facts. They never carry request bodies, headers, credentials, exception text, or

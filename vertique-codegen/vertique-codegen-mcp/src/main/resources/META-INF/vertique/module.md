@@ -129,6 +129,26 @@ For every parameterized tool the processor emits:
 `McpInputPolicyResolver` is MCP's own frozen derivation (§4.6): `vertique-input-processing` publishes
 `EffectiveInputPolicies` but no annotation→policy resolver, so each transport derives its own.
 
+### A handler's return type is adapted onto `McpToolResult`, never coerced to a partial shape
+
+Exactly four handler return shapes are accepted: a plain `T`, a `Future<T>`, a handler-authored
+`McpToolResult<T>`, and a `Future<McpToolResult<T>>`. Every other declared return type — `void`,
+`Future<Void>`, a raw or wildcard result, an SDK or Reactor type, `RoutingContext` — is a compile
+error, so the generated invoker always has an honest adaptation to emit.
+
+The generated `invoke()` always returns `Future<McpToolResult<?>>`:
+
+| Declared shape | Generated adaptation |
+|---|---|
+| `T` | `Future.succeededFuture(McpToolResult.text(value))` for a `String`, or `McpToolResult.structured(value)` for any other type |
+| `Future<T>` | The same `text`/`structured` choice, applied via `.map(...)` on the resolved value; a failed `Future<T>` propagates its failure unchanged — no `McpToolResult` is ever built |
+| `McpToolResult<T>` | Wrapped in an already-succeeded `Future`, passed through exactly as the handler built it, including `isError=true` |
+| `Future<McpToolResult<T>>` | Passed through exactly as returned; a failed future again propagates its failure unchanged |
+
+`McpToolResult` carries no partial or intermediate result state, and the emitter never fabricates
+one: a settled invocation produces a complete `McpToolResult` or the future fails — there is no
+third outcome for the caller to adapt.
+
 ### Access mode is derived from the annotations REST already uses
 
 `@PermitAll`, `@DenyAll`, `@RolesAllowed`, and `@RequiresAction` resolve over the same ordered source
