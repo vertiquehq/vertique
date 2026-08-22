@@ -101,14 +101,22 @@ final class McpCompletionCoordinator {
     }
 
     /**
-     * Publishes the completion for the successful-write path after {@code end()} has resolved,
-     * executed on the request-owning context by the {@link #beginWrite} winner.
+     * Publishes the completion for the successful-write path, executed on the request-owning context.
+     *
+     * <p>Normally called by the {@link #beginWrite} winner after its {@code end()} resolves. It is also
+     * the recovery path for a stalled write: if a close/exception settlement arrives on the
+     * request-owning context while {@code end()} is still pending, {@link #completeOnContext} calls
+     * this directly with that settlement's transport outcome so the write's observation is not
+     * stranded waiting for an {@code end()} that may never resolve.
      *
      * <p>The completed event is built from the terminal {@code beginWrite} stored, recording the
      * actual transport outcome and commit state the caller observed. Guarded by the completion latch
-     * so it publishes exactly once even under a redundant invocation.
+     * so it publishes exactly once even under a redundant invocation (a genuinely resolved {@code
+     * end()} arriving after a stalled-write recovery already settled, or vice versa).
      *
-     * @param transport the transport outcome the write produced ({@code WRITTEN} or {@code WRITE_FAILED})
+     * @param transport the transport outcome the write produced ({@code WRITTEN} or {@code WRITE_FAILED}),
+     *     or the outcome of the settlement that recovered a stalled write ({@code DISCONNECTED} or
+     *     {@code RESET})
      * @param responseCommitted whether any response byte was committed, from the response's actual state
      * @param completedAt the instant the transport completed
      */
@@ -136,7 +144,11 @@ final class McpCompletionCoordinator {
      * Settles the request when the client disconnects before or after the first write.
      *
      * <p>Publishes exactly one terminal and one {@code DISCONNECTED} completion when this is the first
-     * settlement; a later signal is suppressed.
+     * settlement. A signal that arrives after {@link #beginWrite} already won settlement, but before
+     * that write's {@code end()} has resolved (a stalled write — e.g. a stopped TCP receive window),
+     * drives {@link #finishWrite} with this outcome instead of being suppressed, so the stranded
+     * observation still settles. A signal that arrives after completion has already been emitted (by
+     * a resolved write or an earlier abort settlement) is suppressed.
      *
      * @param terminal the synthesized terminal facts to publish
      * @param responseCommitted whether any response byte had been committed before the disconnect
@@ -149,7 +161,10 @@ final class McpCompletionCoordinator {
      * Settles the request when the response stream is reset.
      *
      * <p>Publishes exactly one terminal and one {@code RESET} completion when this is the first
-     * settlement; a later signal is suppressed.
+     * settlement. A signal that arrives after {@link #beginWrite} already won settlement, but before
+     * that write's {@code end()} has resolved (a stalled write), drives {@link #finishWrite} with this
+     * outcome instead of being suppressed, so the stranded observation still settles. A signal that
+     * arrives after completion has already been emitted is suppressed.
      *
      * @param terminal the synthesized terminal facts to publish
      * @param responseCommitted whether any response byte had been committed before the reset
@@ -176,6 +191,15 @@ final class McpCompletionCoordinator {
             boolean responseCommitted,
             Instant completedAt) {
         if (settled) {
+            // beginWrite already won settlement and published the write's terminal. If its end() has
+            // not yet resolved, this close/exception signal is the only thing that can ever complete
+            // the request: a stalled write (e.g. a client that stopped reading, so end() never
+            // resolves) would otherwise strand the connection, the coordinator, and every open
+            // observation forever, because finishWrite is the write path's sole completion publisher.
+            // Drive it now with this settlement's transport outcome instead of dropping the signal.
+            // finishWrite's own completionEmitted guard keeps this exactly-once: if end() later
+            // resolves anyway, that redundant finishWrite call is a no-op.
+            finishWrite(transport, responseCommitted, completedAt);
             return;
         }
         settled = true;

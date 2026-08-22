@@ -21,10 +21,27 @@ rather than a live request. JSON-RPC envelope parsing is bounded by Jackson's ow
 [Bounded JSON-RPC envelope codec](#bounded-json-rpc-envelope-codec) — MCP owns JSON-RPC envelope
 semantics, not a second general-purpose JSON resource-limit subsystem, and exposes no configuration
 key for it. Request body size is enforced from `http.maxBodySize`, which also bounds the maximum
-decodable envelope document length. Transport liveness (idle, read, and write timeouts) is shared
-`HttpConfig` behavior; MCP arms no whole-request deadline of its own. A configured `jsonProfile` is
-validated during composition even if MCP is disabled, preventing a latent invalid deployment
-configuration.
+decodable envelope document length. A configured `jsonProfile` is validated during composition even
+if MCP is disabled, preventing a latent invalid deployment configuration.
+
+**Transport liveness is not provided out of the box.** MCP arms no whole-request deadline of its
+own (T007 removed the earlier `mcp.requestTimeoutMs`); it relies entirely on the shared `HttpConfig`
+idle/read/write timeouts to ever close a stalled or abandoned connection. Those three settings —
+`http.idleTimeoutSeconds`, `http.readIdleTimeoutSeconds`, and `http.writeIdleTimeoutSeconds` — all
+**default to `0`, which disables them**. A deployment that mounts MCP without setting at least one of
+these has no liveness bound at all: a client that stops reading or writing mid-request can hold its
+connection, and the MCP request lifecycle observation opened for it, open indefinitely. Set at least
+one non-zero `HttpConfig` timeout for any MCP deployment.
+
+**Upgrading past T007:** `mcp.requestTimeoutMs`, `mcp.jsonMaxDepth`, `mcp.jsonMaxPropertiesPerObject`,
+`mcp.jsonMaxItemsPerArray`, and `mcp.jsonMaxStringChars` no longer exist. `McpServerConfig` ignores
+unknown JSON properties, so a deployment config that still sets any of these five keys loads
+successfully but the setting has **no effect** — it is silently dropped, not rejected. An operator who
+had tightened any of them (most importantly `requestTimeoutMs`, MCP's only prior deadline) must move
+the equivalent protection to `HttpConfig`'s idle/read/write timeouts above; the four JSON-shape limits
+have no direct replacement key because they are now Jackson's own frozen `StreamReadConstraints`
+inside the envelope codec (see [Bounded JSON-RPC envelope codec](#bounded-json-rpc-envelope-codec)),
+not a configurable value.
 
 ## Stateless HTTP contract
 

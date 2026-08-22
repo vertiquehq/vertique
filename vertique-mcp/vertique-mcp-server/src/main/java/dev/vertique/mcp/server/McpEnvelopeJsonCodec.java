@@ -15,6 +15,13 @@ import com.fasterxml.jackson.databind.node.DecimalNode;
 import dev.vertique.rest.core.config.HttpConfig;
 import jakarta.annotation.Nullable;
 import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.charset.CharacterCodingException;
+import java.nio.charset.CodingErrorAction;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayDeque;
+import java.util.Deque;
+import java.util.Iterator;
 
 /**
  * Bounded Jackson JSON-RPC envelope codec for the MCP wire layer (T007).
@@ -22,12 +29,14 @@ import java.io.IOException;
  * <p>Decodes exactly one complete JSON value and rejects — with a bounded, classified {@link Result}
  * and no partial value — any input that carries duplicate object keys, trailing tokens after a
  * complete value, an over-deep document, an over-long numeric token, an over-long string or property
- * name, an over-large document, or invalid UTF-8. Every bound is enforced by Jackson's own {@link
- * StreamReadConstraints} rather than a handcrafted reader: this class replaces the T003/T004
- * handcrafted strict JSON reader and the four generic JSON-limit configuration properties it
- * enforced. None of the constraints below is a consumer-visible configuration key — they are frozen
- * by the T007 contract amendment, not chosen at implementation time, so the codec cannot silently
- * inherit a changed upstream Jackson default.
+ * name, an over-large document, or invalid UTF-8 (including a well-formed-looking but non-shortest
+ * "overlong" encoding, which {@link #decode} rejects with a strict pre-parse gate before Jackson's own
+ * more permissive UTF-8 decoding ever runs — see {@link #rejectsInvalidUtf8}). Every other bound is
+ * enforced by Jackson's own {@link StreamReadConstraints} rather than a handcrafted reader: this class
+ * replaces the T003/T004 handcrafted strict JSON reader and the four generic JSON-limit configuration
+ * properties it enforced. None of the constraints below is a consumer-visible configuration key — they
+ * are frozen by the T007 contract amendment, not chosen at implementation time, so the codec cannot
+ * silently inherit a changed upstream Jackson default.
  *
  * <ul>
  *   <li>{@code maxNestingDepth} 1000 — matches Jackson's own default, restated explicitly.
@@ -111,6 +120,9 @@ final class McpEnvelopeJsonCodec {
         if (utf8 == null) {
             return Result.rejected();
         }
+        if (rejectsInvalidUtf8(utf8)) {
+            return Result.rejected();
+        }
         JsonNode value;
         try {
             value = mapper.readValue(utf8, JsonNode.class);
@@ -120,6 +132,17 @@ final class McpEnvelopeJsonCodec {
             // Jackson's own bounded read constraints; every one collapses to the same bounded
             // rejection, matching the frozen protocol contract's single -32700 classification.
             return Result.rejected();
+        } catch (RuntimeException unbounded) {
+            // NOT redundant with the IOException catch above: Jackson throws an UNCHECKED
+            // NumberFormatException (not an IOException) when a numeric token's decimal exponent
+            // overflows int range while still under the frozen maxNumberLength bound (e.g.
+            // "1E2147483649", including nested inside an otherwise well-formed envelope). Left
+            // uncaught, that exception would escape this codec's boundary entirely, surface as a bare
+            // Vert.x route failure, and return an HTTP 500 with no body instead of the pinned -32700
+            // envelope every other malformed-input path produces. Collapsing it to the same bounded
+            // rejection keeps this decode boundary total over every RuntimeException Jackson may throw
+            // while walking untrusted bytes, not only the checked ones its own Javadoc documents.
+            return Result.rejected();
         }
         if (value == null || exceedsDecimalScaleBound(value)) {
             return Result.rejected();
@@ -128,21 +151,56 @@ final class McpEnvelopeJsonCodec {
     }
 
     /**
-     * Walks the decoded tree for a decimal whose scale magnitude exceeds the fixed internal hardening
-     * bound. The walk cannot itself run away: nesting is already bounded at {@link #MAX_NESTING_DEPTH}
-     * by the decode that produced this tree.
+     * Strictly validates {@code utf8} as well-formed, shortest-form UTF-8 before Jackson ever parses
+     * it, using the JDK's own strict decoder rather than relying on Jackson's parser-level UTF-8
+     * handling.
      *
-     * @param node the node (or subtree) to check
+     * <p>Jackson's UTF-8 decoding rejects malformed byte sequences but admits non-shortest ("overlong")
+     * encodings — e.g. the two-byte sequence {@code C1 81} decodes to the ASCII letter {@code A}, and
+     * {@code C0 80} decodes to NUL — which is a canonicalization bypass at the outermost trust boundary:
+     * a string that visually or semantically differs from its shortest-form encoding can smuggle
+     * characters past later name/authorization checks that operate on the decoded {@link String}. The
+     * JDK {@link java.nio.charset.CharsetDecoder} with {@link CodingErrorAction#REPORT} on both
+     * malformed and unmappable input rejects every overlong and otherwise non-canonical sequence, so
+     * gating on it here closes that bypass before Jackson's own (more permissive) UTF-8 handling runs.
+     *
+     * @param utf8 the raw request bytes to validate
+     * @return {@code true} when {@code utf8} is not strictly well-formed, shortest-form UTF-8
+     */
+    private static boolean rejectsInvalidUtf8(byte[] utf8) {
+        try {
+            StandardCharsets.UTF_8
+                    .newDecoder()
+                    .onMalformedInput(CodingErrorAction.REPORT)
+                    .onUnmappableCharacter(CodingErrorAction.REPORT)
+                    .decode(ByteBuffer.wrap(utf8));
+            return false;
+        } catch (CharacterCodingException invalid) {
+            return true;
+        }
+    }
+
+    /**
+     * Walks the decoded tree for a decimal whose scale magnitude exceeds the fixed internal hardening
+     * bound, using an explicit stack rather than native call recursion so the walk cannot grow the JVM
+     * call stack on the Vert.x event-loop thread it runs on. The walk cannot itself run away regardless:
+     * nesting is already bounded at {@link #MAX_NESTING_DEPTH} by the decode that produced this tree.
+     *
+     * @param root the decoded tree to check
      * @return {@code true} when any decimal in the tree exceeds the scale-magnitude bound
      */
-    private static boolean exceedsDecimalScaleBound(JsonNode node) {
-        if (node instanceof DecimalNode decimal) {
-            return Math.abs((long) decimal.decimalValue().scale()) > MAX_DECIMAL_SCALE;
-        }
-        if (node.isContainerNode()) {
-            for (JsonNode child : node) {
-                if (exceedsDecimalScaleBound(child)) {
+    private static boolean exceedsDecimalScaleBound(JsonNode root) {
+        Deque<JsonNode> pending = new ArrayDeque<>();
+        pending.push(root);
+        while (!pending.isEmpty()) {
+            JsonNode node = pending.pop();
+            if (node instanceof DecimalNode decimal) {
+                if (Math.abs((long) decimal.decimalValue().scale()) > MAX_DECIMAL_SCALE) {
                     return true;
+                }
+            } else if (node.isContainerNode()) {
+                for (Iterator<JsonNode> children = node.elements(); children.hasNext(); ) {
+                    pending.push(children.next());
                 }
             }
         }
@@ -150,22 +208,23 @@ final class McpEnvelopeJsonCodec {
     }
 
     /**
+     * Exposes this codec's mapper for structural assertions on its frozen {@link StreamReadConstraints}
+     * (test-only seam; no production caller).
+     *
+     * @return this codec's mapper
+     */
+    ObjectMapper mapper() {
+        return mapper;
+    }
+
+    /**
      * The outcome of a strict decode: either a bounded {@code value} or a classified rejection, never
      * both and never a partial value.
      *
      * @param value the decoded JSON value, or {@code null} when the decode was rejected
-     * @param wasRejected whether the decode was rejected
+     * @param isRejected whether the decode was rejected
      */
-    record Result(@Nullable JsonNode value, boolean wasRejected) {
-
-        /**
-         * Reports whether the decode was rejected.
-         *
-         * @return {@code true} when a bounded rejection was produced
-         */
-        boolean isRejected() {
-            return wasRejected;
-        }
+    record Result(@Nullable JsonNode value, boolean isRejected) {
 
         /**
          * Wraps a successfully decoded value.

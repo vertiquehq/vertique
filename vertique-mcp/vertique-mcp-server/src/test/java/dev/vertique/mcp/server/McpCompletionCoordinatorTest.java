@@ -272,6 +272,53 @@ class McpCompletionCoordinatorTest {
                 .isTrue();
     }
 
+    /**
+     * P03 item 2: proves a stalled write — one whose {@code end()} future never resolves, e.g. a
+     * client with a stopped TCP receive window — is still settled exactly once when the connection
+     * closes, and that a genuinely resolved {@code end()} arriving afterward publishes nothing more.
+     * Before the fix, {@code completeOnContext} found {@code settled} already {@code true} (set by
+     * {@code beginWrite}) and returned immediately, dropping the disconnect signal and stranding the
+     * observation forever.
+     *
+     * @throws Exception if the context-marshalled write calls do not complete within their bound
+     */
+    @DisplayName("stalled write: a disconnect after beginWrite wins still settles exactly one completion")
+    @Test
+    void shouldSettleAStalledWriteOnDisconnect() throws Exception {
+        Context context = vertx.getOrCreateContext();
+        ManualClock clock = new ManualClock(COMPLETED_AT);
+        RecordingObserver observer = new RecordingObserver();
+        McpCompletionCoordinator coordinator = coordinator(context, clock, observer);
+
+        // beginWrite wins settlement and publishes the terminal synchronously; its end() is modeled as
+        // never resolving, so finishWrite is never reached from the write path itself.
+        assertThat(beginWriteOnContext(context, coordinator, successTerminal()))
+                .as("beginWrite must win settlement")
+                .isTrue();
+        assertThat(observer.terminalCount())
+                .as("the terminal must already be published before the stalled write settles")
+                .isOne();
+        assertThat(observer.completionCount())
+                .as("no completion may be published while the write is stalled")
+                .isZero();
+
+        // The client goes away while end() is still pending; this is the only signal that can ever
+        // complete this request.
+        coordinator.settleDisconnected(cancelledTerminal(McpErrorType.TRANSPORT), true);
+
+        assertThat(observer.awaitCallbacks())
+                .as("the disconnect must drive the stalled write's completion instead of being dropped")
+                .isTrue();
+        observer.assertExactlyOneTerminalThenOneCompletion();
+        assertThat(observer.lastCompleted().transportOutcome())
+                .as("the completion records the disconnect's outcome, not a fabricated WRITTEN outcome")
+                .isEqualTo(McpTransportOutcome.DISCONNECTED);
+
+        // A late, genuine end() resolution must not publish a second completion.
+        finishWriteOnContext(context, coordinator, McpTransportOutcome.WRITTEN, true);
+        observer.assertExactlyOneTerminalThenOneCompletion();
+    }
+
     private static Stream<AbortSettlement> abortSettlements() {
         return Stream.of(
                 new AbortSettlement(

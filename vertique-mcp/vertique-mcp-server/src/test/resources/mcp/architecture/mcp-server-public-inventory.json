@@ -12,10 +12,6 @@
     "dev.vertique.mcp.server.McpServerConfig": [
       "public boolean dev.vertique.mcp.server.McpServerConfig.enabled()",
       "public dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder dev.vertique.mcp.server.McpServerConfig.toBuilder()",
-      "public int dev.vertique.mcp.server.McpServerConfig.jsonMaxDepth()",
-      "public int dev.vertique.mcp.server.McpServerConfig.jsonMaxItemsPerArray()",
-      "public int dev.vertique.mcp.server.McpServerConfig.jsonMaxPropertiesPerObject()",
-      "public int dev.vertique.mcp.server.McpServerConfig.jsonMaxStringChars()",
       "public int dev.vertique.mcp.server.McpServerConfig.outputMaxBytes()",
       "public int dev.vertique.mcp.server.McpServerConfig.toolsPageSize()",
       "public java.lang.String dev.vertique.mcp.server.McpServerConfig.authenticationScheme()",
@@ -25,7 +21,6 @@
       "public java.lang.String dev.vertique.mcp.server.McpServerConfig.serverName()",
       "public java.lang.String dev.vertique.mcp.server.McpServerConfig.serverVersion()",
       "public java.util.Set<java.lang.String> dev.vertique.mcp.server.McpServerConfig.allowedOrigins()",
-      "public long dev.vertique.mcp.server.McpServerConfig.requestTimeoutMs()",
       "public long dev.vertique.mcp.server.McpServerConfig.toolsTtlMs()",
       "public static dev.vertique.mcp.server.McpServerConfig dev.vertique.mcp.server.McpServerConfig.defaults()",
       "public static dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder dev.vertique.mcp.server.McpServerConfig.builder()"
@@ -36,22 +31,16 @@
       "public dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder.authenticationScheme(java.lang.String)",
       "public dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder.enabled(boolean)",
       "public dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder.instructions(java.lang.String)",
-      "public dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder.jsonMaxDepth(int)",
-      "public dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder.jsonMaxItemsPerArray(int)",
-      "public dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder.jsonMaxPropertiesPerObject(int)",
-      "public dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder.jsonMaxStringChars(int)",
       "public dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder.jsonProfile(java.lang.String)",
       "public dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder.mountPath(java.lang.String)",
       "public dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder.outputMaxBytes(int)",
-      "public dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder.requestTimeoutMs(long)",
       "public dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder.serverName(java.lang.String)",
       "public dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder.serverVersion(java.lang.String)",
       "public dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder.toolsPageSize(int)",
       "public dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder.toolsTtlMs(long)",
       "public java.lang.String dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder.toString()"
     ],
-    "dev.vertique.mcp.server.McpServerModule": [
-    ],
+    "dev.vertique.mcp.server.McpServerModule": [],
     "dev.vertique.mcp.server.runtime.McpToolParameterMetadata": [
       "public dev.vertique.mcp.server.runtime.McpToolParameterMetadata(java.lang.String,java.lang.String,java.lang.String)",
       "public final boolean dev.vertique.mcp.server.runtime.McpToolParameterMetadata.equals(java.lang.Object)",

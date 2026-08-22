@@ -453,9 +453,10 @@ final class McpRequestDispatcher {
         byte[] errorBytes = codec.errorResponse(body);
         if (errorBytes.length > config.outputMaxBytes()) {
             // The classified error echoes the request id, whose only unbounded element can push the
-            // response past mcp.output.maxBytes (an id is bounded by jsonMaxStringChars, far above the
-            // minimum cap). Degrade to a bounded id-less internal error so the hard cap holds — the
-            // emitted status, terminal, and body stay consistent as a 500 internal error.
+            // response past mcp.output.maxBytes (a string id is bounded by the envelope codec's frozen
+            // maxStringLength, 20,000,000 chars, far above the minimum cap). Degrade to a bounded
+            // id-less internal error so the hard cap holds — the emitted status, terminal, and body
+            // stay consistent as a 500 internal error.
             errorBytes = codec.internalFallback(null, new OutputCapExceededException());
             code = INTERNAL_ERROR;
             status = httpStatusFor(INTERNAL_ERROR);
@@ -525,9 +526,13 @@ final class McpRequestDispatcher {
         // client-visible write is superseded and must be suppressed — otherwise a slow handler's late
         // write would reach a client the shared HttpConfig liveness timeout already abandoned.
         // The admission-rejection path (W4) has no coordinator and writes directly with no
-        // terminal/observation. A T004 discovery response is written in one bounded end(buffer) that
-        // resolves synchronously, so the write phase cannot stall; bounding a stalling/streaming
-        // write is a T010 obligation (see the T004 review amendment), not a T004 concern.
+        // terminal/observation. A slow client (e.g. a stopped TCP receive window) can leave this
+        // end(buffer) future pending indefinitely, so the write phase CAN stall. That is not left
+        // unbounded: the disconnect/exception settlement hooks registered in registerSettlementHooks
+        // reach the coordinator on the same request-owning context, and McpCompletionCoordinator's
+        // completeOnContext drives finishWrite from there when it finds settlement already claimed by
+        // this beginWrite — so a stalled end() cannot strand the request past the shared HttpConfig
+        // liveness bound that eventually closes the connection.
         if (coordinator != null && !coordinator.beginWrite(terminal)) {
             return;
         }
