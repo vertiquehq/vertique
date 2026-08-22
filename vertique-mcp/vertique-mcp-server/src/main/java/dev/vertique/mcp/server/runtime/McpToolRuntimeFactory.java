@@ -184,6 +184,14 @@ public final class McpToolRuntimeFactory {
      * each contribution is asked for its immutable descriptor exactly once. The result is keyed by
      * tool name in global name order, so the published order never depends on contribution order.
      *
+     * <p><strong>T010:</strong> the owned production composition path for the tool registry —
+     * including this same duplicate-name rule, the compiled {@code McpSchemaRegistry} it now also
+     * builds, and the registry-visibility startup rule — is
+     * {@code dev.vertique.mcp.server.McpToolRegistry#build(Set)}. That type is package-private per the
+     * frozen artifact inventory and cannot be referenced from this package, so this method is retained
+     * here, unchanged in behavior, solely for {@code McpGeneratedRegistryTest}'s existing focused proof
+     * of the duplicate-name rule in isolation from schema compilation.
+     *
      * @param contributedInvokers the generated {@code @IntoSet} invoker contributions
      * @return the immutable registry, keyed by tool name in global name order
      * @throws ConfigurationException if two contributions publish the same tool name; the message

@@ -182,6 +182,33 @@ it, and `McpToolRuntime` has no public constructor. Per tool it resolves the eff
 returns an immutable binding that privately retains the exact stable mapper. No profile lookup
 happens on the request path.
 
+### Immutable registry and startup validation
+
+The contributed invoker set is composed into one immutable, global-name-ordered tool registry and
+one compiled schema registry, both owned per deployed server Vert.x `Context` — one Dagger graph per
+verticle instance in this framework's stateless multi-instance deployment model yields exactly that.
+Composition fails before any route mounts for any of these:
+
+- **a duplicate tool name** — two contributions publishing the same name;
+- **an unsupported or uncompilable schema** — a descriptor whose input or output schema JSON-005
+  cannot generate, or the compiled `vertx-json-schema` validator cannot accept;
+- **a restricted registry with no configured authentication scheme** — when the server is enabled
+  with no `mcp.authenticationScheme`, the endpoint establishes only a canonical anonymous identity, so
+  every registered tool must be reachable without authentication (public or unreachable); a
+  registered `@RolesAllowed`/`@RequiresAction` tool with no scheme configured fails the same way. An
+  unconfigured registry containing only public and/or deny-all tools is allowed. This composition
+  validator seam is independent of, and in addition to, the existing per-scheme optional-capability
+  check (§4.5): a configured scheme whose selected `RouteAuthHandler.createOptionalHandler()`
+  capability is absent still fails composition regardless of registry content.
+
+Every one of these failures raises exactly one bounded startup error naming the offending
+configuration key or tool. The published registry order never depends on contribution order, and the
+registry exposes a stable digest — computed from the exact tool name and schema content of every
+entry, in global name order — that a later slice's cursor codec binds to invalidate a stale cursor
+across deployments. Neither the registry nor the schema registry is mutated after composition, and
+neither is consulted on the request path by this slice: `tools/list` and `tools/call` dispatch are
+introduced by their owning slices (see [What is not here yet](#what-is-not-here-yet)).
+
 ### Effective profile resolution
 
 The effective tool-payload profile is resolved once per tool at composition time, in this order:
@@ -266,12 +293,14 @@ compilation occurs on the request path.
 
 ### What is not here yet
 
-This version composes the tool registry, the effective profile, and the hardened startup schema
-capability. What is deliberately still absent arrives with its owning slice:
+This version composes the immutable tool and schema registries, the effective profile, the hardened
+startup schema capability, and fail-before-mount startup validation for the registry. What is
+deliberately still absent arrives with its owning slice:
 
 - **Tool calls over the wire.** The mount still serves only the bounded `server/discover` walking
-  skeleton; `tools/list` and `tools/call` are not exposed. Argument materialization against the
-  compiled validators, input-policy application, and Bean Validation land with that work.
+  skeleton; `tools/list` and `tools/call` are not exposed, and neither reads the composed registry
+  yet. Argument materialization against the compiled validators, input-policy application, and Bean
+  Validation land with that work.
 
 ## Authorization
 

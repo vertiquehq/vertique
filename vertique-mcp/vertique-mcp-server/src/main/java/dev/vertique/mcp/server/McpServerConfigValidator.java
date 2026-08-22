@@ -4,6 +4,8 @@
 package dev.vertique.mcp.server;
 
 import dev.vertique.core.exception.ConfigurationException;
+import dev.vertique.mcp.tool.McpAccessMode;
+import dev.vertique.mcp.tool.McpToolDescriptor;
 import dev.vertique.rest.core.security.RouteAuthHandler;
 import io.vertx.core.Handler;
 import io.vertx.ext.web.RoutingContext;
@@ -50,6 +52,37 @@ final class McpServerConfigValidator {
         require(matches.size() == 1, "mcp.authenticationScheme");
         Optional<Handler<RoutingContext>> optionalHandler = matches.getFirst().createOptionalHandler();
         require(optionalHandler != null && optionalHandler.isPresent(), "mcp.authenticationScheme");
+    }
+
+    /**
+     * Validates the selected optional-authentication capability exactly as {@link #validate(McpServerConfig,
+     * Set)} does, and additionally enforces the registry-visibility rule (§4.5): when the server is
+     * enabled with no configured scheme, every tool the registry publishes must be reachable without
+     * authentication — {@link McpAccessMode#PERMIT_ALL} (public) or {@link McpAccessMode#DENY_ALL}
+     * (unreachable) — because an anonymous-only endpoint can never satisfy a
+     * {@link McpAccessMode#RESTRICTED} tool's requirement. This is the registry-visibility seam the
+     * composition validator exposes to callers that own a built {@link McpToolRegistry}; it discharges
+     * the T004 red-slice deferral recorded as {@code shouldAllowUnconfiguredPublicOrDenyAllRegistryAndRejectUnconfiguredRestrictedRegistry}.
+     *
+     * @param config the bounded configuration to validate
+     * @param routeAuthHandlers every registered optional-authentication-capable handler
+     * @param registry the immutable tool registry built before this validation runs
+     * @throws ConfigurationException if the scheme selection is invalid, or if no scheme is configured
+     *     while the registry publishes a restricted tool
+     */
+    void validate(McpServerConfig config, Set<RouteAuthHandler> routeAuthHandlers, McpToolRegistry registry) {
+        validate(config, routeAuthHandlers);
+        require(registry != null, "mcp.tools");
+        if (!config.enabled() || config.authenticationScheme() != null) {
+            // A disabled endpoint is inert, and a configured scheme was already fully validated above
+            // (including its optional-handler capability); registry visibility is only decisive for the
+            // canonical-anonymous, no-scheme case.
+            return;
+        }
+        boolean everyToolReachableWithoutAuthentication = registry.descriptorsByName().values().stream()
+                .map(McpToolDescriptor::access)
+                .allMatch(access -> access.mode() != McpAccessMode.RESTRICTED);
+        require(everyToolReachableWithoutAuthentication, "mcp.authenticationScheme");
     }
 
     /**
