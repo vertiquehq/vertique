@@ -1,0 +1,157 @@
+{
+  "schemaVersion": 1,
+  "module": "vertique-rest-security",
+  "comparisonBasis": "full-generic-signature",
+  "direction": "subset",
+  "scanScope": "hand-authored-public-surface; a top-level public type with no src/main/java source file is annotation-processor output and is excluded",
+  "packages": [
+    "dev.vertique.rest.security",
+    "dev.vertique.rest.security.dispatch"
+  ],
+  "types": {
+    "dev.vertique.rest.security.ActionGateAuthenticationContributor": [
+      "public dev.vertique.rest.security.ActionGateAuthenticationContributor(java.util.Set<dev.vertique.rest.core.security.RouteAuthHandler>)",
+      "public int dev.vertique.rest.security.ActionGateAuthenticationContributor.priority()",
+      "public static final int dev.vertique.rest.security.ActionGateAuthenticationContributor.PRIORITY",
+      "public void dev.vertique.rest.security.ActionGateAuthenticationContributor.contribute(dev.vertique.rest.core.router.OperationRegistrationContext)"
+    ],
+    "dev.vertique.rest.security.AuthModule": [
+      "public dev.vertique.rest.security.AuthModule()"
+    ],
+    "dev.vertique.rest.security.AuthorizationContributor": [
+      "public dev.vertique.rest.security.AuthorizationContributor(dev.vertique.rest.security.SecurityPolicyEnforcer)",
+      "public int dev.vertique.rest.security.AuthorizationContributor.priority()",
+      "public void dev.vertique.rest.security.AuthorizationContributor.contribute(dev.vertique.rest.core.router.OperationRegistrationContext)"
+    ],
+    "dev.vertique.rest.security.AuthorizationDecisionPoint": [
+      "public abstract io.vertx.core.Future<dev.vertique.security.authz.AuthorizationDecision> dev.vertique.rest.security.AuthorizationDecisionPoint.decide(dev.vertique.security.authz.AuthorizationRequest)"
+    ],
+    "dev.vertique.rest.security.CredentialRejectionReporter": [
+      "public abstract void dev.vertique.rest.security.CredentialRejectionReporter.report(io.vertx.ext.web.RoutingContext,dev.vertique.security.AuthMethod,java.util.Optional<java.lang.String>,java.util.Optional<dev.vertique.security.verification.VerificationSource>,java.lang.String,java.util.Map<java.lang.String, java.lang.Object>)"
+    ],
+    "dev.vertique.rest.security.DefaultChannelIdentityManager": [
+      "public dev.vertique.rest.security.DefaultChannelIdentityManager(io.vertx.core.Vertx,dev.vertique.security.runtime.events.SecurityEventEmitter,dev.vertique.core.context.ContextHolder)",
+      "public io.vertx.core.Future<java.lang.Void> dev.vertique.rest.security.DefaultChannelIdentityManager.closeChannel(java.lang.String,java.lang.String)",
+      "public io.vertx.core.Future<java.lang.Void> dev.vertique.rest.security.DefaultChannelIdentityManager.deregister(java.lang.String,java.lang.String)",
+      "public io.vertx.core.Future<java.lang.Void> dev.vertique.rest.security.DefaultChannelIdentityManager.refreshIdentity(java.lang.String,dev.vertique.security.SecurityContext)",
+      "public io.vertx.core.Future<java.lang.Void> dev.vertique.rest.security.DefaultChannelIdentityManager.register(java.lang.String,dev.vertique.security.SecurityContext,dev.vertique.security.channel.ChannelBinding)",
+      "public java.util.Optional<dev.vertique.security.SecurityContext> dev.vertique.rest.security.DefaultChannelIdentityManager.current(java.lang.String)"
+    ],
+    "dev.vertique.rest.security.DefaultCredentialRejectionReporter": [
+      "public dev.vertique.rest.security.DefaultCredentialRejectionReporter(dev.vertique.core.context.ContextHolder,dev.vertique.security.runtime.events.SecurityEventEmitter)",
+      "public void dev.vertique.rest.security.DefaultCredentialRejectionReporter.report(io.vertx.ext.web.RoutingContext,dev.vertique.security.AuthMethod,java.util.Optional<java.lang.String>,java.util.Optional<dev.vertique.security.verification.VerificationSource>,java.lang.String,java.util.Map<java.lang.String, java.lang.Object>)"
+    ],
+    "dev.vertique.rest.security.DefaultSecurityClaimMapper": [
+      "public dev.vertique.rest.security.DefaultSecurityClaimMapper()",
+      "public dev.vertique.security.authz.AuthorizationClaims dev.vertique.rest.security.DefaultSecurityClaimMapper.map(java.util.Map<java.lang.String, java.lang.Object>)"
+    ],
+    "dev.vertique.rest.security.DefaultSecurityIdentityResolver": [
+      "public int dev.vertique.rest.security.DefaultSecurityIdentityResolver.priority()",
+      "public io.vertx.core.Future<java.util.Optional<dev.vertique.security.SecurityIdentity>> dev.vertique.rest.security.DefaultSecurityIdentityResolver.resolve(dev.vertique.security.resolver.SecurityIdentityResolutionContext)"
+    ],
+    "dev.vertique.rest.security.DefaultSecurityPolicyValidator": [
+      "public dev.vertique.rest.security.DefaultSecurityPolicyValidator(java.util.Set<dev.vertique.rest.core.security.SecuritySchemeHandler>)",
+      "public java.util.List<dev.vertique.rest.core.security.SecurityPolicyViolation> dev.vertique.rest.security.DefaultSecurityPolicyValidator.validate(dev.vertique.rest.core.routing.RestOperationDescriptor,dev.vertique.rest.core.security.SecurityPolicy)"
+    ],
+    "dev.vertique.rest.security.HolderBackedSecurityRuntime": [
+      "public dev.vertique.core.context.ContextHolder$Scope dev.vertique.rest.security.HolderBackedSecurityRuntime.bindCurrent(dev.vertique.security.SecurityContext)",
+      "public dev.vertique.rest.security.HolderBackedSecurityRuntime(dev.vertique.rest.security.JaxRsSecurityContextFactory)",
+      "public dev.vertique.security.SecurityContext dev.vertique.rest.security.HolderBackedSecurityRuntime.current()",
+      "public jakarta.ws.rs.core.SecurityContext dev.vertique.rest.security.HolderBackedSecurityRuntime.toJaxRs(dev.vertique.security.SecurityContext,boolean)"
+    ],
+    "dev.vertique.rest.security.IdentityResolutionContributor": [
+      "public dev.vertique.rest.security.IdentityResolutionContributor(dev.vertique.rest.security.IdentityResolutionMiddleware)",
+      "public int dev.vertique.rest.security.IdentityResolutionContributor.priority()",
+      "public static final int dev.vertique.rest.security.IdentityResolutionContributor.PRIORITY",
+      "public void dev.vertique.rest.security.IdentityResolutionContributor.contribute(dev.vertique.rest.core.router.OperationRegistrationContext)"
+    ],
+    "dev.vertique.rest.security.IdentityResolutionMiddleware": [
+      "public dev.vertique.rest.security.IdentityResolutionMiddleware(java.util.Set<dev.vertique.security.resolver.SecurityIdentityResolver>,java.util.Optional<dev.vertique.rest.security.SecurityClaimMapper>,dev.vertique.security.runtime.events.SecurityEventEmitter,dev.vertique.rest.core.security.SecurityRuntime,dev.vertique.core.context.ContextHolder)",
+      "public dev.vertique.rest.security.IdentityResolutionMiddleware(java.util.Set<dev.vertique.security.resolver.SecurityIdentityResolver>,java.util.Optional<dev.vertique.rest.security.SecurityClaimMapper>,dev.vertique.security.runtime.events.SecurityEventEmitter,dev.vertique.rest.core.security.SecurityRuntime,dev.vertique.core.context.ContextHolder,java.util.Optional<dev.vertique.security.runtime.IdentitySnapshotCapture>)",
+      "public dev.vertique.rest.security.IdentityResolutionMiddleware(java.util.Set<dev.vertique.security.resolver.SecurityIdentityResolver>,java.util.Optional<dev.vertique.rest.security.SecurityClaimMapper>,dev.vertique.security.runtime.events.SecurityEventEmitter,dev.vertique.rest.core.security.SecurityRuntime,dev.vertique.core.context.ContextHolder,java.util.Optional<dev.vertique.security.runtime.IdentitySnapshotCapture>,java.util.Optional<dev.vertique.rest.security.VertxAuthorizationImporter>)",
+      "public io.vertx.core.Handler<io.vertx.ext.web.RoutingContext> dev.vertique.rest.security.IdentityResolutionMiddleware.handlerFor(dev.vertique.security.authz.InvocationOrigin)",
+      "public void dev.vertique.rest.security.IdentityResolutionMiddleware.handle(io.vertx.ext.web.RoutingContext)"
+    ],
+    "dev.vertique.rest.security.JaxRsSecurityContext": [
+      "public boolean dev.vertique.rest.security.JaxRsSecurityContext.isSecure()",
+      "public boolean dev.vertique.rest.security.JaxRsSecurityContext.isUserInRole(java.lang.String)",
+      "public dev.vertique.rest.security.JaxRsSecurityContext(dev.vertique.security.SecurityContext,boolean)",
+      "public java.lang.String dev.vertique.rest.security.JaxRsSecurityContext.getAuthenticationScheme()",
+      "public java.security.Principal dev.vertique.rest.security.JaxRsSecurityContext.getUserPrincipal()"
+    ],
+    "dev.vertique.rest.security.JaxRsSecurityContextFactory": [
+      "public abstract jakarta.ws.rs.core.SecurityContext dev.vertique.rest.security.JaxRsSecurityContextFactory.create(dev.vertique.security.SecurityContext,boolean)"
+    ],
+    "dev.vertique.rest.security.JwtClaimExtractor": [
+      "public static java.util.Set<java.lang.String> dev.vertique.rest.security.JwtClaimExtractor.extractPermissions(io.vertx.core.json.JsonObject)",
+      "public static java.util.Set<java.lang.String> dev.vertique.rest.security.JwtClaimExtractor.extractRoles(io.vertx.core.json.JsonObject)",
+      "public static java.util.Set<java.lang.String> dev.vertique.rest.security.JwtClaimExtractor.extractScopes(io.vertx.core.json.JsonObject)"
+    ],
+    "dev.vertique.rest.security.OriginCaptureMiddleware": [
+      "public dev.vertique.rest.core.middleware.MiddlewareScope dev.vertique.rest.security.OriginCaptureMiddleware.scope()",
+      "public dev.vertique.rest.security.OriginCaptureMiddleware(dev.vertique.rest.security.RequestOriginCapturer)",
+      "public int dev.vertique.rest.security.OriginCaptureMiddleware.priority()",
+      "public static final int dev.vertique.rest.security.OriginCaptureMiddleware.ORDER",
+      "public void dev.vertique.rest.security.OriginCaptureMiddleware.handle(io.vertx.ext.web.RoutingContext)"
+    ],
+    "dev.vertique.rest.security.RequestOriginCapturer": [
+      "public dev.vertique.rest.security.RequestOriginCapturer(dev.vertique.rest.security.RequestOriginConfig)",
+      "public dev.vertique.security.origin.RequestOrigin dev.vertique.rest.security.RequestOriginCapturer.capture(io.vertx.core.http.HttpServerRequest)"
+    ],
+    "dev.vertique.rest.security.RequestOriginConfig": [
+      "public boolean dev.vertique.rest.security.RequestOriginConfig.trustForwardedHost()",
+      "public boolean dev.vertique.rest.security.RequestOriginConfig.trustForwardedScheme()",
+      "public dev.vertique.rest.security.RequestOriginConfig(java.util.Set<java.lang.String>,int,boolean,boolean)",
+      "public final boolean dev.vertique.rest.security.RequestOriginConfig.equals(java.lang.Object)",
+      "public final int dev.vertique.rest.security.RequestOriginConfig.hashCode()",
+      "public final java.lang.String dev.vertique.rest.security.RequestOriginConfig.toString()",
+      "public int dev.vertique.rest.security.RequestOriginConfig.forwardedForCap()",
+      "public java.util.Set<java.lang.String> dev.vertique.rest.security.RequestOriginConfig.trustedProxyCidrs()",
+      "public static dev.vertique.rest.security.RequestOriginConfig dev.vertique.rest.security.RequestOriginConfig.defaults()",
+      "public static final int dev.vertique.rest.security.RequestOriginConfig.DEFAULT_FORWARDED_FOR_CAP"
+    ],
+    "dev.vertique.rest.security.RestAuthenticationEvidence": [
+      "public static java.util.List<dev.vertique.security.AuthenticationEvidence> dev.vertique.rest.security.RestAuthenticationEvidence.get(io.vertx.ext.web.RoutingContext)",
+      "public static void dev.vertique.rest.security.RestAuthenticationEvidence.append(io.vertx.ext.web.RoutingContext,dev.vertique.security.AuthenticationEvidence)",
+      "public static void dev.vertique.rest.security.RestAuthenticationEvidence.clear(io.vertx.ext.web.RoutingContext)"
+    ],
+    "dev.vertique.rest.security.SecurityClaimMapper": [
+      "public abstract dev.vertique.security.authz.AuthorizationClaims dev.vertique.rest.security.SecurityClaimMapper.map(java.util.Map<java.lang.String, java.lang.Object>)"
+    ],
+    "dev.vertique.rest.security.SecurityModule": [
+      "public dev.vertique.rest.security.SecurityModule()"
+    ],
+    "dev.vertique.rest.security.SecurityPolicyEnforcer": [
+      "public dev.vertique.rest.security.SecurityPolicyEnforcer(java.util.Optional<dev.vertique.rest.security.AuthorizationDecisionPoint>,java.util.Optional<dev.vertique.security.authz.AuthorizationPolicy>,java.util.Set<io.vertx.ext.auth.authorization.AuthorizationProvider>,dev.vertique.security.runtime.events.SecurityEventEmitter,dev.vertique.core.context.ContextHolder,dev.vertique.rest.core.security.SecurityRuntime,java.util.Optional<dev.vertique.security.authz.Authorizer>)",
+      "public io.vertx.core.Future<dev.vertique.security.authz.AuthorizationDecision> dev.vertique.rest.security.SecurityPolicyEnforcer.decide(dev.vertique.security.SecurityContext,dev.vertique.rest.core.security.SecurityPolicy,java.util.Optional<dev.vertique.security.authz.ActionRef>,dev.vertique.security.authz.ResourceRef,dev.vertique.security.authz.InvocationOrigin)",
+      "public io.vertx.core.Handler<io.vertx.ext.web.RoutingContext> dev.vertique.rest.security.SecurityPolicyEnforcer.createHandler(dev.vertique.rest.core.security.SecurityPolicy$Constrained,java.lang.String)",
+      "public io.vertx.core.Handler<io.vertx.ext.web.RoutingContext> dev.vertique.rest.security.SecurityPolicyEnforcer.createHandler(dev.vertique.rest.core.security.SecurityPolicy)",
+      "public io.vertx.core.Handler<io.vertx.ext.web.RoutingContext> dev.vertique.rest.security.SecurityPolicyEnforcer.createHandler(dev.vertique.rest.core.security.SecurityPolicy,java.util.Optional<dev.vertique.security.authz.ActionRef>)"
+    ],
+    "dev.vertique.rest.security.SyncPolicyDecisionPoint": [
+      "public dev.vertique.rest.security.SyncPolicyDecisionPoint(dev.vertique.security.authz.AuthorizationPolicy)",
+      "public io.vertx.core.Future<dev.vertique.security.authz.AuthorizationDecision> dev.vertique.rest.security.SyncPolicyDecisionPoint.decide(dev.vertique.security.authz.AuthorizationRequest)"
+    ],
+    "dev.vertique.rest.security.VertxAuthorizationImportModule": [
+      "public dev.vertique.rest.security.VertxAuthorizationImportModule()"
+    ],
+    "dev.vertique.rest.security.VertxAuthorizationImporter": [
+      "public dev.vertique.rest.security.VertxAuthorizationImporter(java.util.Set<io.vertx.ext.auth.authorization.AuthorizationProvider>)",
+      "public io.vertx.core.Future<dev.vertique.security.authz.AuthorizationClaims> dev.vertique.rest.security.VertxAuthorizationImporter.importInto(io.vertx.ext.auth.User,dev.vertique.security.authz.AuthorizationClaims)"
+    ],
+    "dev.vertique.rest.security.VertxProviderDecisionPoint": [
+      "public dev.vertique.rest.security.VertxProviderDecisionPoint(java.util.Set<io.vertx.ext.auth.authorization.AuthorizationProvider>)",
+      "public io.vertx.core.Future<dev.vertique.security.authz.AuthorizationDecision> dev.vertique.rest.security.VertxProviderDecisionPoint.decide(dev.vertique.security.authz.AuthorizationRequest)"
+    ],
+    "dev.vertique.rest.security.dispatch.SecurityContextServiceDispatchDecoder": [
+      "public dev.vertique.core.context.ContextDecodeResult<dev.vertique.security.SecurityContext> dev.vertique.rest.security.dispatch.SecurityContextServiceDispatchDecoder.decode(java.lang.Object,dev.vertique.core.context.ServiceDispatchDecodeContext)",
+      "public dev.vertique.rest.security.dispatch.SecurityContextServiceDispatchDecoder()",
+      "public java.lang.Class<dev.vertique.security.SecurityContext> dev.vertique.rest.security.dispatch.SecurityContextServiceDispatchDecoder.type()"
+    ],
+    "dev.vertique.rest.security.dispatch.SecurityContextServiceDispatchEncoder": [
+      "public dev.vertique.rest.security.dispatch.SecurityContextServiceDispatchEncoder()",
+      "public java.lang.Class<dev.vertique.security.SecurityContext> dev.vertique.rest.security.dispatch.SecurityContextServiceDispatchEncoder.type()",
+      "public java.lang.Object dev.vertique.rest.security.dispatch.SecurityContextServiceDispatchEncoder.encode(dev.vertique.security.SecurityContext,dev.vertique.core.context.ServiceDispatchEncodeContext)"
+    ]
+  }
+}

@@ -328,6 +328,7 @@ when registering non-JAX-RS routes (for example a WebSocket upgrade) that need t
 | `createHandler(SecurityPolicy)` | Role/scope enforcement only |
 | `createHandler(SecurityPolicy, Optional<ActionRef>)` | AND-composes the role/scope gate with the action gate into one handler emitting one event |
 | `createHandler(SecurityPolicy.Constrained, String)` | Constrained enforcement with a context label used in error messages |
+| `decide(SecurityContext, SecurityPolicy, Optional<ActionRef>, ResourceRef, InvocationOrigin)` | Non-HTTP counterpart to `createHandler(SecurityPolicy, Optional<ActionRef>)`: returns the composed decision instead of installing a handler |
 
 It returns `null` — install no handler — for `None` and `PermitAll` with no action. With an action
 present, even an action-only `None` route gets a handler.
@@ -338,6 +339,23 @@ The decision point is selected once, at construction, in this order:
 2. an application-provided sync `AuthorizationPolicy`, wrapped as `SyncPolicyDecisionPoint`;
 3. the built-in decision point, which evaluates roles, scopes, and permissions from
    `AuthorizationClaims`.
+
+`decide(...)` is for a caller with no `RoutingContext` to drive — for example a non-HTTP-routed
+transport that has already established a `SecurityContext` for the caller. It mirrors
+`createHandler(SecurityPolicy, Optional<ActionRef>)` exactly: the same role/scope-plus-action AND
+composition, the same fail-fast ordering (the action gate is evaluated only once the role/scope gate
+permits), the same first-failing-predicate `reasonCode`, and the same `rolesSatisfied` /
+`actionSatisfied` / `actionEvaluated` safe attributes — but it returns the `AuthorizationDecision`
+instead of driving a `RoutingContext`, performs no HTTP status mapping, and never resolves ambient
+state; the caller supplies an already-established `SecurityContext` and its own `ResourceRef` and
+`InvocationOrigin`. `None` and `PermitAll` with no action permit and emit **no** event, matching the
+handler factories that install no handler for the same shape; `DenyAll` denies with
+`AuthzReasonCodes.DENY_ALL` and emits one event; every other combination emits exactly one combined
+`AuthorizationDecisionEvent`. The returned future is never `null` and never fails for an ordinary
+deny — a contract-violating decision point or `Authorizer` resolves a fail-closed
+`INTERNAL_AUTHZ_ERROR` deny instead of propagating. `vertique-mcp-server` is the framework's own
+caller, using it to authorize a tool invocation against the caller's already-resolved
+`SecurityContext` instead of a Vert.x route.
 
 ### `JaxRsSecurityContext`
 

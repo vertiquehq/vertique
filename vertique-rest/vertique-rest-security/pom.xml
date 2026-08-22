@@ -63,6 +63,14 @@ SPDX-License-Identifier: EUPL-1.2
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter</artifactId>
         </dependency>
+        <!-- Test-only: SecurityPolicyEnforcerDecisionTest (T005 TP-001) uses AssertJ fluent
+             assertions for the decide() contract matrix. -->
+        <dependency>
+            <groupId>org.assertj</groupId>
+            <artifactId>assertj-core</artifactId>
+            <version>3.27.7</version>
+            <scope>test</scope>
+        </dependency>
         <dependency>
             <groupId>io.vertx</groupId>
             <artifactId>vertx-junit5</artifactId>

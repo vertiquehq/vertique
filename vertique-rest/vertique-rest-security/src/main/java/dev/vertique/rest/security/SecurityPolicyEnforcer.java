@@ -25,6 +25,7 @@ import dev.vertique.security.origin.RequestOrigin;
 import dev.vertique.security.runtime.events.SecurityEventEmitter;
 import io.vertx.core.Future;
 import io.vertx.core.Handler;
+import io.vertx.core.Promise;
 import io.vertx.ext.auth.authorization.AuthorizationProvider;
 import io.vertx.ext.web.RoutingContext;
 import jakarta.inject.Inject;
@@ -323,6 +324,205 @@ public class SecurityPolicyEnforcer {
      */
     public Handler<RoutingContext> createHandler(SecurityPolicy.Constrained policy, String contextLabel) {
         return buildConstrainedHandler(policy, contextLabel);
+    }
+
+    /**
+     * Evaluates a {@link SecurityPolicy} plus an optional {@code @RequiresAction} gate against an
+     * already-resolved {@link SecurityContext} and <strong>returns</strong> the composed
+     * {@link AuthorizationDecision}, instead of driving a {@link RoutingContext} (T005).
+     *
+     * <p>This is the non-HTTP counterpart to {@link #createHandler(SecurityPolicy, Optional)}: it
+     * mirrors that method's contract exactly (ADR-0113 / ADR-0114) — the same role/scope-plus-action
+     * AND-composition, the same fail-fast ordering, the same first-failing-predicate
+     * {@code reasonCode}, the same {@code rolesSatisfied}/{@code actionSatisfied}/{@code
+     * actionEvaluated} safe attributes, and the same fail-closed handling of a contract-violating
+     * gate — but it never touches a {@link RoutingContext}, never synthesizes one, and performs no
+     * HTTP status mapping. The caller (e.g. the MCP policy enforcer) owns translating the returned
+     * decision to its own transport response. {@code securityContext} is the already-established
+     * canonical anonymous or authenticated context; this operation never resolves ambient state
+     * itself.
+     *
+     * <p>{@link ResourceRef#id() resource.id()} is threaded as the coarse
+     * {@link AuthorizationRequest#action()} on the role/scope-gate request, mirroring how the REST
+     * path threads the HTTP method into that same field: it names the operation being attempted
+     * rather than a granted authority. Note what that field is <em>not</em> on this request: it is
+     * never parsed as an {@link ActionRef}, and the role/scope gate never reads it at all — neither
+     * {@code SyncPolicyDecisionPoint} nor {@link VertxProviderDecisionPoint} references
+     * {@code action()}, which reaches the decision point only as descriptive context and reaches the
+     * emitted event as forensics. The same is already true of the REST path's {@code "GET"}, so a
+     * custom {@link AuthorizationDecisionPoint} must not assume this field is
+     * {@link ActionRef}-parseable on a role/scope request. The action gate is different: its
+     * separate request carries {@code action.value()}, which narrowers do parse.
+     *
+     * <ul>
+     *   <li>{@link SecurityPolicy.None} or {@link SecurityPolicy.PermitAll} with an
+     *       {@linkplain Optional#isEmpty() empty} {@code requiredAction} resolve a permit decision
+     *       ({@link AuthzReasonCodes#PERMITTED}) and emit <strong>no</strong> event — the only path
+     *       that emits nothing, matching the handler factories that install no handler.</li>
+     *   <li>{@link SecurityPolicy.DenyAll} resolves a deny carrying
+     *       {@link AuthzReasonCodes#DENY_ALL} and emits exactly one event.</li>
+     *   <li>Every other combination evaluates the role/scope gate through
+     *       {@link #evaluateRoleScopeGate}, then AND-composes a present action gate through the core
+     *       {@link Authorizer} — only once the role/scope gate permits (fail-fast;
+     *       {@code actionEvaluated=false} when it denies or when no action is required) — and emits
+     *       exactly one combined event per restrictive evaluation via {@link #combinedDecision},
+     *       identical in shape to {@link #buildComposedHandler}.</li>
+     *   <li>A contract-violating gate — a synchronous throw, a {@code null} future, a failed future,
+     *       or a {@code null} decision, from either the {@link AuthorizationDecisionPoint} or the
+     *       {@link Authorizer} — resolves a fail-closed {@link AuthzReasonCodes#INTERNAL_AUTHZ_ERROR}
+     *       deny (via {@link #combinedDecision}) with exactly one event, rather than propagating or
+     *       failing the returned future.</li>
+     * </ul>
+     *
+     * @param securityContext the already-resolved security context of the caller; must not be
+     *                        {@code null}
+     * @param policy          the security policy to enforce; must not be {@code null}
+     * @param requiredAction  the resolved action gate, or {@link Optional#empty()} when the
+     *                        operation declares no action gate; must not be {@code null}
+     * @param resource        the target resource; {@link ResourceRef#id()} is threaded as the
+     *                        coarse role/scope-gate action, mirroring the REST path's use of the
+     *                        HTTP method; must not be {@code null}
+     * @param origin          the invocation origin the caller was raised through; must not be
+     *                        {@code null}
+     * @return a future carrying the composed {@link AuthorizationDecision}; never {@code null} and
+     *     never a failed future — an ordinary deny and a fail-closed contract violation both resolve
+     *     a succeeded future carrying a deny decision
+     * @throws IllegalStateException if {@code policy} is a {@link SecurityPolicy.Constrained} with
+     *     both empty roles and empty scopes (invariant violation)
+     */
+    public Future<AuthorizationDecision> decide(
+            SecurityContext securityContext,
+            SecurityPolicy policy,
+            Optional<ActionRef> requiredAction,
+            ResourceRef resource,
+            InvocationOrigin origin) {
+        Objects.requireNonNull(securityContext, "securityContext");
+        Objects.requireNonNull(policy, "policy");
+        Objects.requireNonNull(requiredAction, "requiredAction");
+        Objects.requireNonNull(resource, "resource");
+        Objects.requireNonNull(origin, "origin");
+
+        // Capture correlation once at entry, before any async hop — mirrors buildComposedHandler so
+        // an off-context gate completion (remote PDP / async Authorizer) still emits the inbound
+        // correlation (FR-054).
+        CorrelationContext correlation = captureCorrelation();
+
+        if (requiredAction.isEmpty()
+                && (policy instanceof SecurityPolicy.None || policy instanceof SecurityPolicy.PermitAll)) {
+            // The only path that emits nothing — mirrors createHandler's null-handler case.
+            return Future.succeededFuture(AuthorizationDecision.permit(AuthzReasonCodes.PERMITTED));
+        }
+
+        Map<String, Object> policyContext =
+                policy instanceof SecurityPolicy.Constrained c ? requireNonEmptyConstrained(c) : Map.of();
+        AuthorizationRequest authzRequest =
+                new AuthorizationRequest(securityContext, resource.id(), resource, origin, policyContext);
+
+        if (policy instanceof SecurityPolicy.DenyAll) {
+            AuthorizationDecision decision =
+                    combinedDecision(AuthorizationDecision.deny(AuthzReasonCodes.DENY_ALL), null);
+            emitDecision(authzRequest, decision, correlation);
+            return Future.succeededFuture(decision);
+        }
+
+        // Fail-closed against a contract-violating role/scope gate (mirrors buildComposedHandler): a
+        // synchronous throw or a null Future from the decision point must not escape (F-W3).
+        Future<AuthorizationDecision> roleScopeFuture;
+        try {
+            roleScopeFuture = evaluateRoleScopeGate(policy, authzRequest);
+        } catch (RuntimeException e) {
+            log.warn("Authorization decision point threw at role/scope gate; failing closed", e);
+            return Future.succeededFuture(failClosedInternalError(authzRequest, correlation));
+        }
+        if (roleScopeFuture == null) {
+            log.warn("Authorization decision point returned a null future at role/scope gate; failing closed");
+            return Future.succeededFuture(failClosedInternalError(authzRequest, correlation));
+        }
+
+        Promise<AuthorizationDecision> promise = Promise.promise();
+        roleScopeFuture.onComplete(roleScopeAr -> {
+            if (roleScopeAr.failed()) {
+                log.warn("Authorization decision point failed", roleScopeAr.cause());
+                promise.complete(failClosedInternalError(authzRequest, correlation));
+                return;
+            }
+            AuthorizationDecision roleScope = roleScopeAr.result();
+            if (roleScope == null) {
+                log.warn("Authorization decision point resolved to a null role/scope decision; failing closed");
+                promise.complete(failClosedInternalError(authzRequest, correlation));
+                return;
+            }
+            if (!roleScope.permitted() || requiredAction.isEmpty()) {
+                // Either the role/scope gate already denied (fail-fast — the action gate is not
+                // evaluated) or there is no action gate to compose.
+                AuthorizationDecision decision = combinedDecision(roleScope, null);
+                emitDecision(authzRequest, decision, correlation);
+                promise.complete(decision);
+                return;
+            }
+
+            // Role/scope permitted and an action gate is present → evaluate it. authorizer is
+            // guaranteed non-null here because a present requiredAction implies the engine is
+            // installed (slice 11). Built as an explicit 5-arg AuthorizationRequest reusing the SAME
+            // origin passed to decide(), not a fresh ambient read — mirrors buildComposedHandler's
+            // reuse of authzRequest.origin() (W1 residual fix).
+            ActionRef action = requiredAction.get();
+            AuthorizationRequest actionRequest =
+                    new AuthorizationRequest(securityContext, action.value(), resource, origin, Map.of());
+
+            // Fail-closed against a contract-violating Authorizer (mirrors buildComposedHandler): a
+            // synchronous throw or a null Future must not escape the gate (F-W3).
+            Future<AuthorizationDecision> actionFuture;
+            try {
+                actionFuture = authorizer.authorize(actionRequest);
+            } catch (RuntimeException e) {
+                log.warn("Authorizer threw at action gate; failing closed", e);
+                promise.complete(failClosedInternalError(authzRequest, correlation));
+                return;
+            }
+            if (actionFuture == null) {
+                log.warn("Authorizer returned a null future at action gate; failing closed");
+                promise.complete(failClosedInternalError(authzRequest, correlation));
+                return;
+            }
+            actionFuture.onComplete(actionAr -> {
+                AuthorizationDecision actionResult = actionAr.succeeded() ? actionAr.result() : null;
+                // The Authorizer contract forbids a failed future for a normal deny and forbids a
+                // null decision; fail closed (INTERNAL_AUTHZ_ERROR) if a misbehaving impl does either.
+                AuthorizationDecision actionDecision = actionResult != null
+                        ? actionResult
+                        : AuthorizationDecision.deny(AuthzReasonCodes.INTERNAL_AUTHZ_ERROR);
+                AuthorizationDecision decision = combinedDecision(roleScope, actionDecision);
+                emitDecision(authzRequest, decision, correlation);
+                promise.complete(decision);
+            });
+        });
+        return promise.future();
+    }
+
+    /**
+     * Fail-closed deny used by {@link #decide} when a gate violates its contract (the
+     * {@link AuthorizationDecisionPoint} or the {@link Authorizer} throws synchronously, returns a
+     * {@code null} future, or resolves to a {@code null} decision). Emits exactly one combined deny
+     * event whose top-level reason is {@link AuthzReasonCodes#INTERNAL_AUTHZ_ERROR} — mirroring
+     * {@link #internalErrorDenyComposed}, but returning the decision instead of failing a
+     * {@link RoutingContext} closed.
+     *
+     * <p>The action gate is recorded as not evaluated ({@code action == null} into
+     * {@link #combinedDecision}), matching the existing role/scope-gate-failure shape.
+     *
+     * @param authzRequest the request that was being evaluated, carried on the emitted event; must
+     *                     not be {@code null}
+     * @param correlation  the correlation captured at call entry; must not be {@code null}
+     * @return the fail-closed {@link AuthzReasonCodes#INTERNAL_AUTHZ_ERROR} deny decision; never
+     *     {@code null}
+     */
+    private AuthorizationDecision failClosedInternalError(
+            AuthorizationRequest authzRequest, CorrelationContext correlation) {
+        AuthorizationDecision decision =
+                combinedDecision(AuthorizationDecision.deny(AuthzReasonCodes.INTERNAL_AUTHZ_ERROR), null);
+        emitDecision(authzRequest, decision, correlation);
+        return decision;
     }
 
     /**
@@ -726,9 +926,17 @@ public class SecurityPolicyEnforcer {
      * both pass. {@code safeAttributes} record {@code rolesSatisfied}, {@code actionSatisfied}, and
      * {@code actionEvaluated} so audit/observers can see each predicate's outcome.
      *
+     * <p>{@code action == null} means "no action gate was evaluated", which is reachable two ways:
+     * the role/scope gate already denied (fail-fast — every existing {@code buildComposedHandler}
+     * call site, where {@code roleScope} is then always a deny), or — since T005's {@link #decide}
+     * — there was no {@code requiredAction} to evaluate at all, in which case {@code roleScope} may
+     * legitimately permit. {@code permitted} therefore reduces to {@code rolesSatisfied} alone when
+     * there is no action decision, rather than being unconditionally forced to {@code false}.
+     *
      * @param roleScope the role/scope gate decision; must not be {@code null}
      * @param action    the action gate decision, or {@code null} when the action gate was not evaluated
-     *                  (role/scope already failed, or a missing-context short-circuit)
+     *                  (role/scope already failed, a missing-context short-circuit, or no action gate
+     *                  was required)
      * @return the combined decision; never {@code null}
      */
     private static AuthorizationDecision combinedDecision(
@@ -736,7 +944,7 @@ public class SecurityPolicyEnforcer {
         boolean rolesSatisfied = roleScope.permitted();
         boolean actionEvaluated = action != null;
         boolean actionSatisfied = action != null && action.permitted();
-        boolean permitted = rolesSatisfied && actionSatisfied;
+        boolean permitted = rolesSatisfied && (action == null || actionSatisfied);
 
         // First failing predicate wins the top-level reason: role/scope first, then action.
         String reasonCode;

@@ -204,3 +204,35 @@ things are deliberately still absent, and both arrive with their owning slices:
   input-policy application, and Bean Validation land with the same work.
 - **Tool calls over the wire.** The mount still serves only the bounded `server/discover` walking
   skeleton; `tools/list` and `tools/call` are not exposed.
+
+## Authorization
+
+Each generated tool declares its access requirement — unannotated, `@PermitAll`, `@DenyAll`,
+`@RolesAllowed`, `@RequiresAction`, or `@RolesAllowed` plus `@RequiresAction` — exactly as a REST
+resource method does, and the server evaluates it through the same `SecurityPolicyEnforcer`
+instance the REST authorization contributor composes. MCP adds no parallel authorization
+architecture, no separate decision engine, and no separate policy model: it reuses the same
+selected `AuthorizationDecisionPoint` and the same core `Authorizer` REST uses, supplying only its
+own `ResourceRef("mcp-tool", <toolName>, {})` and `InvocationOrigin.of(DispatchBoundary.MCP)`. An
+application `AuthorizationDecisionPoint`, `AuthorizationPolicy`, or `Authorizer` override therefore
+applies to MCP tools as well as REST resources, and a custom implementation may legitimately return
+a different decision per transport.
+
+The mapping from a tool's declared access to its effective authorization result is frozen:
+
+| Tool declaration | Coarse gate | Fine gate | Effective result |
+|---|---|---|---|
+| Unannotated or `@PermitAll` | None | None | Public to anonymous and authenticated callers; no decision event |
+| `@DenyAll` | Static deny | None | Excluded from `tools/list`; a direct `tools/call` does not invoke it and returns the externally indistinguishable unknown-or-unauthorized `-32602` response |
+| `@RolesAllowed` | Direct role claim check | None | Permitted when the authenticated caller has an allowed role |
+| `@RequiresAction` | Authenticated caller required | Existing core `Authorizer` | Permitted when the role-to-policy-to-action decision permits |
+| `@RolesAllowed` plus `@RequiresAction` | Direct role claim check | Existing core `Authorizer` | Permitted only when both gates permit |
+
+Denial and absence are externally indistinguishable — an unknown tool name and a tool the caller may
+not use both resolve to the same `-32602` response, with no detail identifying which — and a denied
+tool is never invoked. Every restrictive evaluation emits exactly one combined
+`AuthorizationDecisionEvent`.
+
+This authorization mapping is established now, ahead of the `tools/list` and `tools/call` wire
+endpoints that will consume it (see [What is not here yet](#what-is-not-here-yet)); it governs their
+authorization semantics once those methods are exposed by their owning slices.
