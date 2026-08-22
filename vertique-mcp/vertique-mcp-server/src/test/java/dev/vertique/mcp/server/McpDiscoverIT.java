@@ -23,6 +23,7 @@ import dev.vertique.rest.core.security.SecurityRuntime;
 import dev.vertique.rest.security.DefaultSecurityClaimMapper;
 import dev.vertique.rest.security.IdentityResolutionMiddleware;
 import dev.vertique.rest.security.RestAuthenticationEvidence;
+import dev.vertique.rest.security.SecurityPolicyEnforcer;
 import dev.vertique.security.AuthMethodKind;
 import dev.vertique.security.AuthenticationEvidence;
 import dev.vertique.security.DefaultAuthMethod;
@@ -437,7 +438,20 @@ public class McpDiscoverIT {
                     config,
                     new McpServerConfigValidator(),
                     new McpRequestDispatcher(
-                            config, securityRuntime, Set.of(recordingObserver()), Set.of(), httpConfig),
+                            config,
+                            securityRuntime,
+                            Set.of(recordingObserver()),
+                            Set.of(),
+                            httpConfig,
+                            McpToolRegistry.build(Set.of()),
+                            new McpPolicyEnforcer(new SecurityPolicyEnforcer(
+                                    Optional.empty(),
+                                    Optional.empty(),
+                                    Set.of(),
+                                    new SecurityEventEmitter(Set.of()),
+                                    NO_OP_CONTEXT_HOLDER,
+                                    securityRuntime,
+                                    Optional.empty()))),
                     options.handlers,
                     identityResolution(securityRuntime),
                     httpConfig);

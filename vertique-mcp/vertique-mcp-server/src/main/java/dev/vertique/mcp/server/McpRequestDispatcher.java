@@ -16,11 +16,14 @@ import dev.vertique.mcp.lifecycle.McpRequestCompletedListener;
 import dev.vertique.mcp.lifecycle.McpRequestLifecycleObserver;
 import dev.vertique.mcp.lifecycle.McpRequestTerminalEvent;
 import dev.vertique.mcp.lifecycle.McpTransportOutcome;
+import dev.vertique.mcp.tool.McpToolAnnotations;
+import dev.vertique.mcp.tool.McpToolDescriptor;
 import dev.vertique.rest.core.config.HttpConfig;
 import dev.vertique.rest.core.security.SecurityRuntime;
 import dev.vertique.security.SecurityContext;
 import dev.vertique.security.SecurityContextSnapshot;
 import io.vertx.core.AsyncResult;
+import io.vertx.core.Future;
 import io.vertx.core.Handler;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.http.HttpMethod;
@@ -31,6 +34,8 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.io.UncheckedIOException;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Set;
 
 /**
@@ -46,12 +51,13 @@ import java.util.Set;
  */
 final class McpRequestDispatcher {
     private static final String DISCOVER_METHOD = "server/discover";
-    private static final String PROTOCOL_VERSION = "2026-07-28";
+    private static final String TOOLS_LIST_METHOD = "tools/list";
+    private static final String PROTOCOL_VERSION = McpCursorCodec.PROTOCOL_VERSION;
 
     /** The official schema treats an absent {@code resultType} as this completed-result value. */
     private static final String COMPLETE_RESULT_TYPE = "complete";
 
-    /** Discovery results are never shared across authorization contexts. */
+    /** Discovery and listing results are never shared across authorization contexts. */
     private static final String PRIVATE_CACHE_SCOPE = "private";
 
     private static final String SERVER_INFO_META_KEY = "io.modelcontextprotocol/serverInfo";
@@ -64,6 +70,13 @@ final class McpRequestDispatcher {
     private static final int INVALID_REQUEST = -32600;
     private static final int METHOD_NOT_FOUND = -32601;
     private static final int INTERNAL_ERROR = -32603;
+
+    /**
+     * The hard per-page examination cap (§4.7): a page examines at most this many multiples of
+     * {@code mcp.tools.pageSize} candidates, bounding the authorization fan-out an unauthenticated
+     * {@code tools/list} scan can trigger (issue #416).
+     */
+    private static final int EXAMINATION_BUDGET_MULTIPLIER = 4;
 
     private static final String KEY_PREFIX = McpRequestDispatcher.class.getName();
     private static final String COMPLETION_COORDINATOR_KEY = KEY_PREFIX + ".completionCoordinator";
@@ -84,6 +97,9 @@ final class McpRequestDispatcher {
     private final Set<McpRequestLifecycleObserver> lifecycleObservers;
     private final Set<McpRequestCompletedListener> completedListeners;
     private final McpProtocolCodec codec;
+    private final McpToolRegistry toolRegistry;
+    private final McpPolicyEnforcer policyEnforcer;
+    private final McpCursorCodec cursorCodec;
 
     @Inject
     McpRequestDispatcher(
@@ -91,12 +107,17 @@ final class McpRequestDispatcher {
             SecurityRuntime securityRuntime,
             Set<McpRequestLifecycleObserver> lifecycleObservers,
             Set<McpRequestCompletedListener> completedListeners,
-            HttpConfig httpConfig) {
+            HttpConfig httpConfig,
+            McpToolRegistry toolRegistry,
+            McpPolicyEnforcer policyEnforcer) {
         this.config = config;
         this.securityRuntime = securityRuntime;
         this.lifecycleObservers = Set.copyOf(lifecycleObservers);
         this.completedListeners = Set.copyOf(completedListeners);
         this.codec = new McpProtocolCodec(httpConfig);
+        this.toolRegistry = toolRegistry;
+        this.policyEnforcer = policyEnforcer;
+        this.cursorCodec = new McpCursorCodec();
     }
 
     /**
@@ -258,10 +279,16 @@ final class McpRequestDispatcher {
         SecurityContextSnapshot security = establishedSecurity();
         byte[] body = bodyBytes(context);
         McpProtocolCodec.Decoded decoded = codec.decodeEnvelope(body);
-        if (!decoded.isError()
-                && DISCOVER_METHOD.equals(decoded.envelope().get("method").asText())) {
-            writeDiscovery(context, decoded.envelope(), security);
-            return;
+        if (!decoded.isError()) {
+            String method = decoded.envelope().get("method").asText();
+            if (DISCOVER_METHOD.equals(method)) {
+                writeDiscovery(context, decoded.envelope(), security);
+                return;
+            }
+            if (TOOLS_LIST_METHOD.equals(method)) {
+                writeToolsList(context, decoded.envelope(), security);
+                return;
+            }
         }
         emitProtocolError(context, decoded, body, security);
     }
@@ -338,6 +365,257 @@ final class McpRequestDispatcher {
         JsonNode id = envelope.get("id");
         response.set("id", id != null ? id : NullNode.getInstance());
         return response;
+    }
+
+    // --- tools/list ---
+
+    /**
+     * Serves one bounded, authorized page of the immutable tool registry (§4.7).
+     *
+     * <p>Scans the registry in global name order starting from the request's cursor anchor (or the
+     * beginning, when absent), reauthorizing every candidate examined through {@link
+     * McpPolicyEnforcer#decide} — never {@link McpPolicyEnforcer#isVisible}, so exactly one decision
+     * (and at most one {@code AuthorizationDecisionEvent}) is produced per candidate. Examination stops
+     * at the first of: the page reaching {@code mcp.tools.pageSize} visible tools, examining {@code
+     * 4 * mcp.tools.pageSize} candidates (the fan-out bound, issue #416), or the registry being
+     * exhausted. A present, malformed, or otherwise invalid cursor is rejected with the same
+     * indistinguishable {@code -32602} response {@link McpPolicyEnforcer#unknownOrUnauthorizedError()}
+     * produces for a denied or unknown tool (issue #420), never a distinct code or status.
+     *
+     * @param context the request context
+     * @param envelope the validated {@code tools/list} request envelope
+     * @param security the established security snapshot, recorded on the terminal event
+     */
+    private void writeToolsList(RoutingContext context, JsonNode envelope, @Nullable SecurityContextSnapshot security) {
+        JsonNode cursorNode = envelope.get("params").get("cursor");
+        if (cursorNode != null && !cursorNode.isTextual()) {
+            writeUnknownOrUnauthorized(context, envelope, security, McpMethod.TOOLS_LIST);
+            return;
+        }
+        List<String> names = List.copyOf(toolRegistry.descriptorsByName().keySet());
+        int startIndex;
+        if (cursorNode == null) {
+            startIndex = 0;
+        } else {
+            McpCursorCodec.Decoded decoded = cursorCodec.decode(
+                    cursorNode.asText(),
+                    toolRegistry.digest(),
+                    toolRegistry.descriptorsByName().keySet());
+            if (decoded.isInvalid()) {
+                writeUnknownOrUnauthorized(context, envelope, security, McpMethod.TOOLS_LIST);
+                return;
+            }
+            startIndex = names.indexOf(decoded.anchor()) + 1;
+        }
+        int pageSize = config.toolsPageSize();
+        int budget = pageSize * EXAMINATION_BUDGET_MULTIPLIER;
+        SecurityContext caller = securityRuntime.current();
+        scan(names, startIndex, pageSize, budget, 0, List.of(), null, caller).onComplete(ar -> {
+            if (ar.failed()) {
+                // McpPolicyEnforcer#decide never fails per its own contract; defended here so a
+                // contract-violating extension cannot escape as an unhandled exception.
+                writeToolsListFallback(context, envelope, security, ar.cause());
+                return;
+            }
+            writeToolsListResult(context, envelope, security, ar.result());
+        });
+    }
+
+    /**
+     * Scans candidates {@code names[index..)} for one bounded page, reauthorizing every candidate it
+     * examines exactly once, and stopping at the first of: the page reaching {@code pageSize} visible
+     * tools, {@code examined} reaching {@code budget}, or the candidate list being exhausted.
+     */
+    private Future<ScanResult> scan(
+            List<String> names,
+            int index,
+            int pageSize,
+            int budget,
+            int examined,
+            List<McpToolDescriptor> visible,
+            @Nullable String lastExaminedName,
+            SecurityContext caller) {
+        if (visible.size() >= pageSize || examined >= budget || index >= names.size()) {
+            boolean candidatesRemain = index < names.size();
+            return Future.succeededFuture(
+                    new ScanResult(visible, candidatesRemain ? lastExaminedName : null, examined));
+        }
+        String name = names.get(index);
+        McpToolDescriptor descriptor = toolRegistry.descriptorsByName().get(name);
+        return policyEnforcer.decide(descriptor, caller).compose(decision -> {
+            List<McpToolDescriptor> updated = visible;
+            if (decision.permitted()) {
+                updated = new ArrayList<>(visible);
+                updated.add(descriptor);
+            }
+            return scan(names, index + 1, pageSize, budget, examined + 1, updated, name, caller);
+        });
+    }
+
+    /** One bounded page's outcome: the visible tools, the next-page anchor, and the examined count. */
+    private record ScanResult(
+            List<McpToolDescriptor> visible, @Nullable String nextAnchor, int examined) {}
+
+    /** Settles a {@link McpPolicyEnforcer#decide} contract violation through the internal fallback. */
+    private void writeToolsListFallback(
+            RoutingContext context, JsonNode envelope, @Nullable SecurityContextSnapshot security, Throwable cause) {
+        byte[] fallback = codec.internalFallback(envelope.get("id"), cause);
+        McpRequestTerminalEvent terminal = McpRequestTerminalEvent.failed(
+                startedAt(context),
+                Instant.now(),
+                McpMethod.TOOLS_LIST,
+                McpRequestTerminalEvent.UNKNOWN_TOOL_NAME,
+                McpErrorType.INTERNAL,
+                500,
+                INTERNAL_ERROR,
+                null,
+                security,
+                null);
+        write(context, 500, fallback, terminal);
+    }
+
+    /**
+     * Writes the bounded {@code tools/list} result, bounding serialization at {@code
+     * mcp.output.maxBytes} exactly like discovery.
+     */
+    private void writeToolsListResult(
+            RoutingContext context, JsonNode envelope, @Nullable SecurityContextSnapshot security, ScanResult result) {
+        context.response().putHeader("content-type", JSON_CONTENT_TYPE);
+        byte[] payload;
+        try {
+            payload = encodeCapped(toolsListResponse(envelope, result));
+        } catch (OutputCapExceededException overCap) {
+            byte[] fallback = codec.internalFallback(envelope.get("id"), overCap);
+            if (fallback.length > config.outputMaxBytes()) {
+                fallback = codec.internalFallback(null, overCap);
+            }
+            McpRequestTerminalEvent terminal = McpRequestTerminalEvent.failed(
+                    startedAt(context),
+                    Instant.now(),
+                    McpMethod.TOOLS_LIST,
+                    McpRequestTerminalEvent.UNKNOWN_TOOL_NAME,
+                    McpErrorType.SERIALIZATION,
+                    500,
+                    INTERNAL_ERROR,
+                    null,
+                    security,
+                    null);
+            write(context, 500, fallback, terminal);
+            return;
+        }
+        McpRequestTerminalEvent terminal = McpRequestTerminalEvent.success(
+                startedAt(context),
+                Instant.now(),
+                McpMethod.TOOLS_LIST,
+                McpRequestTerminalEvent.UNKNOWN_TOOL_NAME,
+                200,
+                null,
+                security,
+                null);
+        write(context, 200, payload, terminal);
+    }
+
+    /**
+     * Builds the canonical {@code ListToolsResult} response node: the visible tools in scanned order,
+     * an opaque {@code nextCursor} when unexamined candidates remain, and the mandatory {@code ttlMs}
+     * and {@code cacheScope=private} cache hints.
+     */
+    private ObjectNode toolsListResponse(JsonNode envelope, ScanResult result) {
+        ArrayNode tools = OUTPUT_ENCODER.createArrayNode();
+        for (McpToolDescriptor descriptor : result.visible()) {
+            tools.add(toolNode(descriptor));
+        }
+        ObjectNode serverInfo = OUTPUT_ENCODER.createObjectNode();
+        serverInfo.put("name", config.serverName());
+        serverInfo.put("version", config.serverVersion());
+        ObjectNode meta = OUTPUT_ENCODER.createObjectNode();
+        meta.set(SERVER_INFO_META_KEY, serverInfo);
+        ObjectNode result0 = OUTPUT_ENCODER.createObjectNode();
+        result0.put("resultType", COMPLETE_RESULT_TYPE);
+        result0.set("tools", tools);
+        if (result.nextAnchor() != null) {
+            result0.put("nextCursor", cursorCodec.encode(result.nextAnchor(), toolRegistry.digest()));
+        }
+        result0.put("ttlMs", config.toolsTtlMs());
+        result0.put("cacheScope", PRIVATE_CACHE_SCOPE);
+        result0.set("_meta", meta);
+        ObjectNode response = OUTPUT_ENCODER.createObjectNode();
+        response.put("jsonrpc", "2.0");
+        response.set("result", result0);
+        JsonNode id = envelope.get("id");
+        response.set("id", id != null ? id : NullNode.getInstance());
+        return response;
+    }
+
+    /** Builds one {@code Tool} node from a visible descriptor. */
+    private static JsonNode toolNode(McpToolDescriptor descriptor) {
+        ObjectNode node = OUTPUT_ENCODER.createObjectNode();
+        node.put("name", descriptor.name());
+        if (descriptor.title() != null) {
+            node.put("title", descriptor.title());
+        }
+        node.put("description", descriptor.description());
+        node.set("inputSchema", parseSchema(descriptor.inputSchema()));
+        if (descriptor.outputSchema() != null) {
+            node.set("outputSchema", parseSchema(descriptor.outputSchema()));
+        }
+        node.set("annotations", annotationsNode(descriptor.annotations()));
+        return node;
+    }
+
+    /** Builds the {@code ToolAnnotations} node from the descriptor's published behavior hints. */
+    private static JsonNode annotationsNode(McpToolAnnotations annotations) {
+        ObjectNode node = OUTPUT_ENCODER.createObjectNode();
+        node.put("readOnlyHint", annotations.readOnlyHint());
+        node.put("destructiveHint", annotations.destructiveHint());
+        node.put("idempotentHint", annotations.idempotentHint());
+        node.put("openWorldHint", annotations.openWorldHint());
+        return node;
+    }
+
+    /** Parses an already-validated canonical schema JSON string into a node for embedding. */
+    private static JsonNode parseSchema(String json) {
+        try {
+            return OUTPUT_ENCODER.readTree(json);
+        } catch (IOException impossible) {
+            // The schema strings embedded here were already compiled by McpSchemaRegistry at startup;
+            // a failure here is a programming error, not a wire condition.
+            throw new UncheckedIOException(impossible);
+        }
+    }
+
+    /**
+     * Writes the same externally indistinguishable {@code -32602} response {@link
+     * McpPolicyEnforcer#unknownOrUnauthorizedError()} defines, so an invalid cursor, a denied tool, and
+     * an unknown tool all yield byte-identical bodies and the same HTTP status (issue #420) — the
+     * status comes from the shared {@link #httpStatusFor} mapping, never a bespoke one.
+     */
+    private void writeUnknownOrUnauthorized(
+            RoutingContext context, JsonNode envelope, @Nullable SecurityContextSnapshot security, McpMethod method) {
+        context.response().putHeader("content-type", JSON_CONTENT_TYPE);
+        McpProtocolCodec.CodecError error = McpPolicyEnforcer.unknownOrUnauthorizedError();
+        ObjectNode response = OUTPUT_ENCODER.createObjectNode();
+        response.put("jsonrpc", "2.0");
+        JsonNode id = envelope.get("id");
+        response.set("id", id != null ? id : NullNode.getInstance());
+        ObjectNode errorNode = OUTPUT_ENCODER.createObjectNode();
+        errorNode.put("code", error.code());
+        errorNode.put("message", error.message());
+        response.set("error", errorNode);
+        byte[] body = codec.encode(response);
+        int status = httpStatusFor(error.code());
+        McpRequestTerminalEvent terminal = McpRequestTerminalEvent.rejected(
+                startedAt(context),
+                Instant.now(),
+                method,
+                McpRequestTerminalEvent.UNKNOWN_TOOL_NAME,
+                McpErrorType.AUTHORIZATION,
+                status,
+                error.code(),
+                null,
+                security,
+                null);
+        write(context, status, body, terminal);
     }
 
     static void completeAuthenticationRejection(RoutingContext context) {
@@ -477,10 +755,17 @@ final class McpRequestDispatcher {
         write(context, status, errorBytes, terminal);
     }
 
+    /**
+     * The shared JSON-RPC-code-to-HTTP-status mapping. {@code INVALID_PARAMS} ({@code -32602}) maps to
+     * {@code 400} here — once, in this one shared factory — so a denied tool, an unknown tool, and an
+     * invalid cursor all resolve the same status alongside the same response body (issue #420);
+     * splitting the mapping per call site would reinstate an existence oracle.
+     */
     private static int httpStatusFor(int protocolCode) {
         return switch (protocolCode) {
             case METHOD_NOT_FOUND -> 404;
             case PARSE_ERROR, INVALID_REQUEST -> 400;
+            case McpPolicyEnforcer.UNKNOWN_OR_UNAUTHORIZED_CODE -> 400;
             default -> 500;
         };
     }

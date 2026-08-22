@@ -438,6 +438,19 @@ class McpLifecycleObserverCompositionTest {
         static HttpConfig httpConfig() {
             return HttpConfig.builder().build();
         }
+
+        /**
+         * Supplies the MCP authorization enforcer as a stub, because this test observes lifecycle
+         * composition, not tool authorization, and {@link McpServerModule}'s empty-by-default {@code
+         * Set<McpToolInvoker>} multibinding already yields an empty registry that never calls it.
+         *
+         * @return a stub policy enforcer
+         */
+        @Provides
+        @Singleton
+        static McpPolicyEnforcer policyEnforcer() {
+            return mock(McpPolicyEnforcer.class);
+        }
     }
 
     /**

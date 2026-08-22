@@ -10,6 +10,7 @@ import dagger.multibindings.Multibinds;
 import dev.vertique.core.lifecycle.ComposeValidator;
 import dev.vertique.mcp.lifecycle.McpRequestCompletedListener;
 import dev.vertique.mcp.lifecycle.McpRequestLifecycleObserver;
+import dev.vertique.mcp.tool.McpToolInvoker;
 import dev.vertique.rest.core.config.HttpConfig;
 import dev.vertique.rest.core.router.RouterMount;
 import dev.vertique.rest.core.security.RouteAuthHandler;
@@ -29,6 +30,24 @@ public abstract class McpServerModule {
     /** Declares the zero-or-more post-transport completion-listener extension set. */
     @Multibinds
     abstract Set<McpRequestCompletedListener> completedListeners();
+
+    /**
+     * Declares the zero-or-more generated tool invoker extension point. {@code vertique-codegen-mcp}
+     * contributes into this set; a graph with no generated tools resolves an empty set, so {@link
+     * #toolRegistry} still builds (an empty registry) without a generated module present (T011).
+     */
+    @Multibinds
+    abstract Set<McpToolInvoker> toolInvokers();
+
+    /**
+     * Builds the one immutable, global-name-ordered tool registry {@link McpRequestDispatcher}'s {@code
+     * tools/list} listing scans (T010/T011).
+     */
+    @Provides
+    @Singleton
+    static McpToolRegistry toolRegistry(Set<McpToolInvoker> toolInvokers) {
+        return McpToolRegistry.build(toolInvokers);
+    }
 
     /** Contributes profile validation to the mandatory compose-validation phase. */
     @Provides

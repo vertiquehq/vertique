@@ -46,7 +46,9 @@ class McpHandleFailureAlreadyEndedTest {
                 mock(SecurityRuntime.class),
                 Set.of(),
                 Set.of(),
-                HttpConfig.builder().build());
+                HttpConfig.builder().build(),
+                McpToolRegistry.build(Set.of()),
+                mock(McpPolicyEnforcer.class));
 
         dispatcher.handleFailure(context);
 

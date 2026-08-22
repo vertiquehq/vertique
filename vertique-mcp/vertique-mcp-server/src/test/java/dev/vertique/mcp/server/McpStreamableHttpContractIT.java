@@ -17,6 +17,7 @@ import dev.vertique.rest.core.middleware.RequestContextLifecycle;
 import dev.vertique.rest.core.security.SecurityRuntime;
 import dev.vertique.rest.security.DefaultSecurityClaimMapper;
 import dev.vertique.rest.security.IdentityResolutionMiddleware;
+import dev.vertique.rest.security.SecurityPolicyEnforcer;
 import dev.vertique.security.PrincipalRef;
 import dev.vertique.security.PrincipalType;
 import dev.vertique.security.SecurityContext;
@@ -376,7 +377,20 @@ public class McpStreamableHttpContractIT {
                     config,
                     new McpServerConfigValidator(),
                     new McpRequestDispatcher(
-                            config, securityRuntime, Set.of(recordingObserver()), Set.of(), httpConfig),
+                            config,
+                            securityRuntime,
+                            Set.of(recordingObserver()),
+                            Set.of(),
+                            httpConfig,
+                            McpToolRegistry.build(Set.of()),
+                            new McpPolicyEnforcer(new SecurityPolicyEnforcer(
+                                    Optional.empty(),
+                                    Optional.empty(),
+                                    Set.of(),
+                                    new SecurityEventEmitter(Set.of()),
+                                    NO_OP_CONTEXT_HOLDER,
+                                    securityRuntime,
+                                    Optional.empty()))),
                     Set.of(),
                     identityResolution(securityRuntime),
                     httpConfig);

@@ -9,9 +9,10 @@
 `vertique-mcp-server` composes the optional HTTP Model Context Protocol server. Include
 `McpServerModule` explicitly in the application's Dagger component and supply an immutable
 `McpServerConfig` binding. Generated tools are registered and bound to their effective JSON profile
-during composition (see [Tool runtime](#tool-runtime)); the mount itself still serves only the
-bounded `server/discover` walking skeleton, and protocol tool calls and extension hooks are
-introduced by their owning slices.
+during composition (see [Tool runtime](#tool-runtime)); the mount serves `server/discover` and the
+bounded, authorized `tools/list` pagination described in
+[Authorized tool listing and pagination](#authorized-tool-listing-and-pagination), and `tools/call`
+dispatch and extension hooks are introduced by their owning slice.
 
 Configuration is disabled by default. When enabled, `serverName` and `serverVersion` are required,
 the mount is one literal path ending in `/*`, and every configured value is validated for range and
@@ -204,10 +205,12 @@ Composition fails before any route mounts for any of these:
 Every one of these failures raises exactly one bounded startup error naming the offending
 configuration key or tool. The published registry order never depends on contribution order, and the
 registry exposes a stable digest — computed from the exact tool name and schema content of every
-entry, in global name order — that a later slice's cursor codec binds to invalidate a stale cursor
-across deployments. Neither the registry nor the schema registry is mutated after composition, and
-neither is consulted on the request path by this slice: `tools/list` and `tools/call` dispatch are
-introduced by their owning slices (see [What is not here yet](#what-is-not-here-yet)).
+entry, in global name order — that the `tools/list` cursor codec binds to invalidate a stale cursor
+across deployments (see
+[Authorized tool listing and pagination](#authorized-tool-listing-and-pagination)). Neither the
+registry nor the schema registry is mutated after composition; `tools/list` scans the registry
+read-only on every request, and `tools/call` dispatch is introduced by its owning slice (see
+[What is not here yet](#what-is-not-here-yet)).
 
 ### Effective profile resolution
 
@@ -294,19 +297,58 @@ compilation occurs on the request path.
 ### What is not here yet
 
 This version composes the immutable tool and schema registries, the effective profile, the hardened
-startup schema capability, and fail-before-mount startup validation for the registry. What is
-deliberately still absent arrives with its owning slice:
+startup schema capability, fail-before-mount startup validation for the registry, and the bounded,
+authorized `tools/list` pagination described below. What is deliberately still absent arrives with
+its owning slice:
 
-- **Tool calls over the wire.** The mount still serves only the bounded `server/discover` walking
-  skeleton; `tools/list` and `tools/call` are not exposed, and neither reads the composed registry
-  yet. Argument materialization against the compiled validators, input-policy application, and Bean
-  Validation land with that work.
+- **Tool calls over the wire.** `tools/call` is not exposed, and the compiled schema registry
+  (`McpSchemaRegistry`) is not yet consulted on the request path. Argument materialization against
+  the compiled validators, input-policy application, Bean Validation, and direct generated
+  invocation land with that work.
+
+## Authorized tool listing and pagination
+
+`tools/list` scans the immutable registry (above) in global name order, starting from an absent
+cursor (the beginning) or a validated cursor's anchor, and reauthorizes **every** candidate it
+examines through the same `SecurityPolicyEnforcer`/`McpPolicyEnforcer` pair
+[Authorization](#authorization) describes — never a cached or assumed result, and never both
+`McpPolicyEnforcer#decide` and `#isVisible` for the same candidate, which would double-emit its
+authorization event. Examination for one page stops at the first of:
+
+- the page reaching `mcp.tools.pageSize` visible tools;
+- examining `4 * mcp.tools.pageSize` candidates — the fixed fan-out bound that caps how many
+  authorization evaluations (and, with a remote decision point, network round trips) an
+  unauthenticated or narrowly-scoped `tools/list` scan can trigger;
+- the registry being exhausted.
+
+A page may therefore be underfilled or empty and still carry a `nextCursor` while unexamined
+candidates remain past the budget; only a scan that reaches the registry's end omits it. Only
+tools the decision permits are returned — a hidden `@DenyAll` or role-mismatched candidate examined
+within the scan window never appears in the page, even though it was authorized.
+
+The cursor is unsigned, non-expiring, opaque base64url (no padding) JSON: the frozen protocol
+version, the current registry digest, and the last global-name candidate examined (not merely the
+last visible tool). It carries no signature, HMAC, or expiry member — tampering cannot bypass
+authorization, since every candidate reached from a resumed cursor is reauthorized exactly like any
+other, and the immutable registry digest (not a client-enforceable expiry) invalidates a cursor
+across deployments. `McpCursorCodec` bounds the base64url-decoded byte length **before** any JSON
+parsing is attempted, so an over-long or expensive-to-parse payload never reaches the parser. A
+wrong protocol version, a stale digest, an anchor absent from the current registry, an over-long
+payload, or a malformed one all collapse to the same indistinguishable outcome — no field of the
+rejection reveals which check failed.
+
+Both `server/discover` and `tools/list` carry the mandatory `ttlMs` (`mcp.tools.ttlMs`) and
+`cacheScope=private` cache hints. An invalid cursor is rejected with the exact same externally
+indistinguishable `-32602`/`Invalid params` response, and the same HTTP status, that a denied or
+unknown tool produces (`McpPolicyEnforcer#unknownOrUnauthorizedError()` mapped through the one
+shared `httpStatusFor` factory) — never a distinct code or status that would let a caller
+distinguish "malformed cursor" from any other `-32602` cause.
 
 ## Authorization
 
-This authorization mapping is established now, ahead of the `tools/list` and `tools/call` wire
-endpoints that will consume it (see [What is not here yet](#what-is-not-here-yet)); it governs their
-authorization semantics once those methods are exposed by their owning slices.
+`tools/list` (see [Authorized tool listing and pagination](#authorized-tool-listing-and-pagination))
+is the first wire consumer of this authorization mapping; `tools/call` is introduced by its owning
+slice (see [What is not here yet](#what-is-not-here-yet)) and reuses the same mapping unchanged.
 
 Each generated tool declares its access requirement — unannotated, `@PermitAll`, `@DenyAll`,
 `@RolesAllowed`, `@RequiresAction`, or `@RolesAllowed` plus `@RequiresAction` — exactly as a REST

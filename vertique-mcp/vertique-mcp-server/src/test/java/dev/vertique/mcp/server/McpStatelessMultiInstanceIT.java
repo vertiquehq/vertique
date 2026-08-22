@@ -12,6 +12,7 @@ import dev.vertique.rest.core.middleware.RequestContextLifecycle;
 import dev.vertique.rest.core.security.SecurityRuntime;
 import dev.vertique.rest.security.DefaultSecurityClaimMapper;
 import dev.vertique.rest.security.IdentityResolutionMiddleware;
+import dev.vertique.rest.security.SecurityPolicyEnforcer;
 import dev.vertique.security.SecurityContext;
 import dev.vertique.security.SecurityIdentity;
 import dev.vertique.security.resolver.SecurityIdentityResolutionContext;
@@ -215,7 +216,21 @@ public class McpStatelessMultiInstanceIT {
             McpRouterMount mount = new McpRouterMount(
                     config,
                     new McpServerConfigValidator(),
-                    new McpRequestDispatcher(config, securityRuntime, Set.of(), Set.of(), httpConfig),
+                    new McpRequestDispatcher(
+                            config,
+                            securityRuntime,
+                            Set.of(),
+                            Set.of(),
+                            httpConfig,
+                            McpToolRegistry.build(Set.of()),
+                            new McpPolicyEnforcer(new SecurityPolicyEnforcer(
+                                    Optional.empty(),
+                                    Optional.empty(),
+                                    Set.of(),
+                                    new SecurityEventEmitter(Set.of()),
+                                    NO_OP_CONTEXT_HOLDER,
+                                    securityRuntime,
+                                    Optional.empty()))),
                     Set.of(),
                     identityResolution(securityRuntime),
                     httpConfig);
