@@ -33,7 +33,9 @@ import io.vertx.core.Handler;
 import io.vertx.core.Promise;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.http.HttpMethod;
+import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.RoutingContext;
+import io.vertx.json.schema.Validator;
 import jakarta.annotation.Nullable;
 import jakarta.inject.Inject;
 import java.io.IOException;
@@ -63,9 +65,14 @@ import java.util.Set;
  * invoked on that path. Only once a call is known and authorized does the dispatcher select
  * request-scoped SSE ({@code text/event-stream}, {@code X-Accel-Buffering: no}) — unconditionally,
  * before {@link McpToolInvoker#prepare} runs, so the response is committed to SSE framing regardless
- * of how invocation later resolves and never falls back to JSON afterward — and only then invokes the
- * generated invoker directly (no reflection). Argument-schema validation, INP-001 processing, and rich
- * structured output are later slices; this task's scope is the zero-argument call.
+ * of how invocation later resolves and never falls back to JSON afterward — and only then runs stage 1
+ * of the fixed request-time input pipeline (T015, contract §4.7): the precompiled input schema
+ * validator T009 compiled at composition. A schema rejection settles as the bounded text-only {@code
+ * isError=true} tool-error outcome without ever calling {@code prepare()}. Only once schema validation
+ * passes does the dispatcher invoke the generated invoker directly (no reflection); {@code prepare()}
+ * itself then owns stages 2–4 (INP-001 canonicalization/sanitization, materialization, Bean
+ * Validation), signalling a rejection there through {@link McpInputRejectionException}. Rich structured
+ * output is a later slice.
  */
 final class McpRequestDispatcher {
     private static final String DISCOVER_METHOD = "server/discover";
@@ -89,6 +96,16 @@ final class McpRequestDispatcher {
     private static final int INVALID_REQUEST = -32600;
     private static final int METHOD_NOT_FOUND = -32601;
     private static final int INTERNAL_ERROR = -32603;
+
+    /**
+     * The bounded, non-leaking text returned as the sole content item of a stage-1 (schema) rejection
+     * — §4.7's "bounded invalid-arguments/tool-error outcome". Deliberately generic rather than
+     * echoing the failing keyword or property: the compiled validator's {@code OutputUnit} detail is
+     * diagnostic-only and never reaches the wire, matching {@link
+     * McpPolicyEnforcer#unknownOrUnauthorizedError()}'s established non-leaking-message convention for
+     * a different stage.
+     */
+    private static final String SCHEMA_REJECTION_MESSAGE = "Invalid tool arguments: schema validation failed";
 
     /**
      * The hard per-page examination cap (§4.7): a page examines at most this many multiples of
@@ -700,15 +717,25 @@ final class McpRequestDispatcher {
     }
 
     /**
-     * Selects request-scoped SSE, then invokes the resolved tool directly.
+     * Selects request-scoped SSE, runs stage 1 of the fixed request-time input pipeline (contract
+     * §4.7), then invokes the resolved tool directly.
      *
      * <p>{@link #selectSse} runs unconditionally as the first statement here — strictly before {@link
      * McpToolInvoker#prepare} is ever called — so the response is committed to SSE framing before
      * invocation begins and independently of how invocation later resolves: a synchronous {@code
      * prepare}/{@code invoke} throw and a failed invocation future both settle through {@link
      * #writeSseFallback}, never a JSON response. {@code arguments} is the bounded empty map for an
-     * absent or non-object {@code arguments} member — schema validation and INP-001 processing are
-     * later slices, out of this zero-argument task's scope.
+     * absent or non-object {@code arguments} member.
+     *
+     * <p>Stage 1 — the precompiled schema validator T009 compiled at composition — runs next, on
+     * exactly this {@code arguments} tree, before {@code prepare()} is ever called: a schema rejection
+     * settles through {@link #writeToolResult} as the bounded text-only {@code isError=true} outcome
+     * and never invokes {@code prepare()}. Stages 2–4 (INP-001 canonicalization/sanitization at
+     * {@code InputLocation.PAYLOAD}, materialization through the effective mapper, and Bean Validation)
+     * are the generated fixed input boundary's own responsibility inside {@code prepare()}; a stage
+     * 2–4 rejection is signalled by {@link McpInputRejectionException} and settles exactly like a
+     * stage-1 rejection, while any other {@code RuntimeException} from {@code prepare()}/{@code
+     * invoke()} stays the pre-existing internal-error fallback.
      */
     private void invokeAndRespond(
             RoutingContext context,
@@ -718,6 +745,10 @@ final class McpRequestDispatcher {
             McpToolInvoker invoker) {
         selectSse(context);
         Map<String, Object> arguments = argumentsOf(envelope);
+        if (!schemaValid(toolName, arguments)) {
+            writeToolResult(context, envelope, security, toolName, McpToolResult.error(SCHEMA_REJECTION_MESSAGE));
+            return;
+        }
         McpCompletionCoordinator coordinator = context.get(COMPLETION_COORDINATOR_KEY);
         // T013: the coordinator owns the request's cancellation signal, fired exactly once when the
         // request settles as a disconnect, a stream reset, or a failed write. Every admitted request
@@ -729,6 +760,12 @@ final class McpRequestDispatcher {
         McpPreparedToolCall prepared;
         try {
             prepared = invoker.prepare(arguments, cancellation);
+        } catch (McpInputRejectionException rejected) {
+            // Stages 2-4 (generated fixed input boundary) rejected before any application handler ran;
+            // this is the same bounded tool-error outcome stage 1 produces above, never the internal
+            // fallback a genuine bug in prepare()/invoke() produces.
+            writeToolResult(context, envelope, security, toolName, McpToolResult.error(rejected.getMessage()));
+            return;
         } catch (RuntimeException prepareFailure) {
             writeSseFallback(context, envelope, security, toolName, prepareFailure);
             return;
@@ -763,6 +800,26 @@ final class McpRequestDispatcher {
     private static void selectSse(RoutingContext context) {
         context.response().putHeader("content-type", EVENT_STREAM_CONTENT_TYPE);
         context.response().putHeader("X-Accel-Buffering", "no");
+    }
+
+    /**
+     * Runs stage 1 of the fixed request-time input pipeline (contract §4.7): validates {@code
+     * arguments} against {@code toolName}'s precompiled input schema.
+     *
+     * <p>Never compiles a schema or a validator here — {@link McpSchemaRegistry} compiled every
+     * validator exactly once, at composition, from {@link McpToolRegistry}'s descriptor set (T009);
+     * this call only invokes the already-compiled instance. {@code toolName} is guaranteed present in
+     * {@link McpToolRegistry#schemaRegistry()} because {@link #writeToolsCall} only reaches this method
+     * once a {@link McpToolInvoker} for {@code toolName} was already resolved from the same registry
+     * the schema registry was compiled from.
+     *
+     * @param toolName the resolved tool's name
+     * @param arguments the {@code tools/call} argument tree, as {@link #argumentsOf} normalizes it
+     * @return {@code true} when {@code arguments} satisfies the tool's input schema
+     */
+    private boolean schemaValid(String toolName, Map<String, Object> arguments) {
+        Validator inputValidator = toolRegistry.schemaRegistry().inputValidator(toolName);
+        return inputValidator.validate(new JsonObject(arguments)).getValid();
     }
 
     /**

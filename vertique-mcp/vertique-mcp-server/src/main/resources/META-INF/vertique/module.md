@@ -13,11 +13,12 @@ during composition (see [Tool runtime](#tool-runtime)); the mount serves `server
 bounded, authorized `tools/list` pagination described in
 [Authorized tool listing and pagination](#authorized-tool-listing-and-pagination), and the
 zero-argument authorized `tools/call` dispatch described in
-[Zero-argument tool calls](#zero-argument-tool-calls), and the disconnect/reset/write-failure
+[Zero-argument tool calls](#zero-argument-tool-calls), the fixed request-time input pipeline for
+parameterized calls described in
+[Request-time input pipeline](#request-time-input-pipeline), and the disconnect/reset/write-failure
 cancellation and write-phase settlement described in
-[Cancellation and write-phase settlement](#cancellation-and-write-phase-settlement). Parameterized-call
-argument processing, tool interceptors, and rich structured output are introduced by their owning
-slice.
+[Cancellation and write-phase settlement](#cancellation-and-write-phase-settlement). Ordered tool
+interceptors and rich structured output are introduced by their owning slice.
 
 Configuration is disabled by default. When enabled, `serverName` and `serverVersion` are required,
 the mount is one literal path ending in `/*`, and every configured value is validated for range and
@@ -336,10 +337,11 @@ whether any of them declares a canonicalization/sanitization policy. MCP never c
 `InputObjectProcessor.declaresPolicies(Type)` to weaken this into an optional, tools-dependent
 requirement the way `vertique-rest-jaxrs` does; the binding is unconditional here.
 
-This binding is not yet consulted on the request path — see
-[What is not here yet](#what-is-not-here-yet) — so installing it today has no observable per-call
-effect until the request-time pipeline (T015) lands. Its purpose now is solely the fail-fast startup
-guarantee above, and to freeze the eventual `McpPreparedToolCall` boundary
+This binding is consulted on the request path by [Request-time input
+pipeline](#request-time-input-pipeline): stages 2–4 of that fixed order run inside a generated
+invoker's `prepare(...)`, which calls `InputObjectProcessor.processInput(...)` exactly once per
+call. Its startup purpose remains the fail-fast guarantee above regardless of what the currently
+registered tool set declares, and it freezes the `McpPreparedToolCall` boundary
 ([Zero-argument tool calls](#zero-argument-tool-calls) describes the interface): the prepared call a
 generated invoker's `prepare(...)` returns exposes exactly `normalizedArguments()` and `invoke()` —
 the descriptor, cancellation signal, effective mapper, and generated input carrier are closure-captured
@@ -350,17 +352,12 @@ implementation detail, never a getter or any other public member.
 This version composes the immutable tool and schema registries, the effective profile, the hardened
 startup schema capability, fail-before-mount startup validation for the registry, the mandatory
 input-processing composition binding described above, the bounded, authorized `tools/list` pagination
-described below, and the zero-argument authorized `tools/call` dispatch described in
-[Zero-argument tool calls](#zero-argument-tool-calls). What is deliberately still absent arrives with
-its owning slice:
+described below, the zero-argument authorized `tools/call` dispatch described in
+[Zero-argument tool calls](#zero-argument-tool-calls), and the fixed request-time input pipeline for
+parameterized calls described in
+[Request-time input pipeline](#request-time-input-pipeline). What is deliberately still absent arrives
+with its owning slice:
 
-- **Parameterized tool calls.** The compiled schema registry (`McpSchemaRegistry`) is not yet
-  consulted on the `tools/call` request path: argument-schema validation against the compiled
-  validators, INP-001 input-policy application (the mandatory binding above is wired but not yet
-  called), typed parameter materialization, and Bean Validation are not wired into dispatch. A call
-  to a tool that declares parameters is dispatched exactly like a zero-argument one — whatever
-  `arguments` the request carries reaches the generated invoker's `prepare(...)` unvalidated — so
-  only zero-argument tools are a supported, tested surface today.
 - **Ordered tool interceptors and opt-in value-observation.** Neither exists yet; every known,
   authorized call reaches the generated invoker directly with no interceptor stage.
 - **Rich and structured output.** A tool's `McpToolResult` is published as-is; output-schema
@@ -433,12 +430,41 @@ JSON-RPC response — is ready; header mutation alone reaches no byte onto the w
 defers sending them until the first `write`/`end`, and this dispatcher's only write is that one
 complete, already-framed message.
 
-**Zero-argument only.** `arguments` — absent, explicit `null`, or a non-object value — normalizes to
-the same immutable empty map as `{}` and is handed to the generated invoker unvalidated: no schema
-check, no INP-001 processing, no Bean Validation. See
-[What is not here yet](#what-is-not-here-yet) for the parameterized-call, interceptor, and rich-output
-capabilities this version does not yet provide; cancellation and write-phase settlement (T013) are
-described in [Cancellation and write-phase settlement](#cancellation-and-write-phase-settlement).
+`arguments` — absent, explicit `null`, or a non-object value — normalizes to the same immutable empty
+map as `{}` before reaching stage 1 of [Request-time input pipeline](#request-time-input-pipeline)
+below, exactly like a present object; a zero-argument tool's schema is the trivial empty object
+schema, so its stage 1 always passes. See [What is not here yet](#what-is-not-here-yet) for the
+interceptor and rich-output capabilities this version does not yet provide; cancellation and
+write-phase settlement (T013) are described in
+[Cancellation and write-phase settlement](#cancellation-and-write-phase-settlement).
+
+## Request-time input pipeline
+
+Every parameterized `tools/call` runs a fixed, fail-closed order (contract §4.7) before the
+application handler ever runs:
+
+1. **Schema validation.** `McpRequestDispatcher` validates `arguments` against the compiled `Validator`
+   `McpSchemaRegistry` ([Tool runtime](#tool-runtime)) already compiled for this tool at composition —
+   no schema is generated, hardened, or compiled on the request path. A rejection here means the
+   generated invoker's `prepare(...)` is never called. This stage is also the legitimate request-time
+   replacement for the withdrawn startup polymorphism check: an unknown polymorphic discriminator
+   fails here, before invocation, exactly like an unknown property on a closed schema.
+2. **INP-001 canonicalization and sanitization**, applied by the generated invoker's `prepare(...)` at
+   `InputLocation.PAYLOAD` — never `InputLocation.BODY`, at every traversal depth. A custom
+   `Canonicalizer`/`Sanitizer`/`CharacterPolicy` that branches on `InputLocation.BODY` silently covers
+   nothing on MCP; there is no BODY compatibility mode.
+3. **Materialization** through the effective JSON profile mapper — the same mapper
+   [Tool runtime](#tool-runtime) resolved for this tool's schema.
+4. **Bean Validation** on the materialized carrier.
+
+A failure at any of the four stages yields the same bounded outcome: one text-only, `isError=true`
+`CallToolResult` — never a JSON-RPC protocol error, and never a detail of which schema keyword,
+policy, or constraint failed. Stage 1 failures are written directly by the dispatcher; a stage 2–4
+failure is signalled by the generated invoker throwing the package-private
+`McpInputRejectionException`, which the dispatcher maps to the identical bounded outcome — so a
+caller cannot tell which of the four stages rejected a call from the response shape. Only after all
+four stages succeed does the dispatcher call `invoke()`, and only then may an opt-in value-observation
+session ever receive the normalized carrier.
 
 ## Authorization
 
