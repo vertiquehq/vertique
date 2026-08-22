@@ -18,6 +18,8 @@ SPDX-License-Identifier: EUPL-1.2
     <dependencies>
         <dependency><groupId>${project.groupId}</groupId><artifactId>vertique-mcp-core</artifactId><version>${project.version}</version></dependency>
         <dependency><groupId>${project.groupId}</groupId><artifactId>vertique-core</artifactId></dependency>
+        <!-- T014: mandatory InputObjectProcessor composition binding (contract §4.7). -->
+        <dependency><groupId>${project.groupId}</groupId><artifactId>vertique-input-processing</artifactId></dependency>
         <dependency><groupId>${project.groupId}</groupId><artifactId>vertique-json</artifactId></dependency>
         <dependency><groupId>${project.groupId}</groupId><artifactId>vertique-json-schema</artifactId></dependency>
         <dependency><groupId>io.vertx</groupId><artifactId>vertx-json-schema</artifactId></dependency>
@@ -38,6 +40,9 @@ SPDX-License-Identifier: EUPL-1.2
              (test scope only — vertique-mcp-server never depends on the codegen module at compile/runtime). -->
         <dependency><groupId>${project.groupId}</groupId><artifactId>vertique-codegen-mcp</artifactId><scope>test</scope></dependency>
         <dependency><groupId>${project.groupId}</groupId><artifactId>vertique-codegen-test</artifactId><scope>test</scope></dependency>
+        <!-- T014 TP-001: runs the real Dagger ComponentProcessor over in-memory compile fixtures to
+             prove a missing InputObjectProcessor binding fails Dagger compilation (test scope only). -->
+        <dependency><groupId>com.google.dagger</groupId><artifactId>dagger-compiler</artifactId><version>${dagger.version}</version><scope>test</scope></dependency>
     </dependencies>
     <build><plugins><plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-failsafe-plugin</artifactId></plugin></plugins></build>
 </project>

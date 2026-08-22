@@ -57,6 +57,20 @@ public abstract class McpServerModule {
         return validator;
     }
 
+    /**
+     * Contributes the mandatory input-processing binding guard to the compose-validation phase
+     * (T014, contract §4.7). Merely constructing {@link McpInputProcessingCompositionValidator}
+     * requires a direct {@link dev.vertique.input.processing.InputObjectProcessor} binding, so a
+     * composition that omits one fails Dagger compilation before any route mounts — regardless of
+     * how many tools are registered.
+     */
+    @Provides
+    @Singleton
+    @IntoSet
+    static ComposeValidator inputProcessingCompositionValidator(McpInputProcessingCompositionValidator validator) {
+        return validator;
+    }
+
     /** Constructs the bounded configuration validator used before every MCP mount. */
     @Provides
     @Singleton

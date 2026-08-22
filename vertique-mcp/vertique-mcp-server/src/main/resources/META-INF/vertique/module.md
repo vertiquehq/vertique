@@ -3,8 +3,8 @@
 > **Status:** Alpha
 > **Package:** `dev.vertique.mcp.server`
 > **Artifact:** `vertique-mcp-server`
-> **Depends on:** `vertique-mcp-core`, `vertique-core`, `vertique-json`, `vertique-json-schema`,
-> `vertique-rest-core`, `vertique-rest-security`
+> **Depends on:** `vertique-mcp-core`, `vertique-core`, `vertique-input-processing`, `vertique-json`,
+> `vertique-json-schema`, `vertique-rest-core`, `vertique-rest-security`
 
 `vertique-mcp-server` composes the optional HTTP Model Context Protocol server. Include
 `McpServerModule` explicitly in the application's Dagger component and supply an immutable
@@ -322,20 +322,45 @@ Dagger graph per verticle instance in this framework's stateless multi-instance 
 yields exactly that. No validator instance is ever shared across two contexts, and no schema
 compilation occurs on the request path.
 
+### Mandatory input-processing binding
+
+Every `McpServerModule` composition requires a direct, non-`Optional`
+`dev.vertique.input.processing.InputObjectProcessor` binding — install a module that provides one
+(for example `SanitizationModule`) alongside `McpServerModule`. This is enforced at Dagger
+compile time, not merely at runtime: `McpInputProcessingCompositionValidator`, a package-private
+`ComposeValidator` contributed unconditionally by `McpServerModule`, requires `InputObjectProcessor`
+in its own `@Inject` constructor (the established *constructible-as-validation* pattern this module
+already uses for `McpJsonProfileDefaultValidator`), so a composition that omits the binding fails
+Dagger code generation before any route mounts — regardless of how many tools are registered or
+whether any of them declares a canonicalization/sanitization policy. MCP never calls
+`InputObjectProcessor.declaresPolicies(Type)` to weaken this into an optional, tools-dependent
+requirement the way `vertique-rest-jaxrs` does; the binding is unconditional here.
+
+This binding is not yet consulted on the request path — see
+[What is not here yet](#what-is-not-here-yet) — so installing it today has no observable per-call
+effect until the request-time pipeline (T015) lands. Its purpose now is solely the fail-fast startup
+guarantee above, and to freeze the eventual `McpPreparedToolCall` boundary
+([Zero-argument tool calls](#zero-argument-tool-calls) describes the interface): the prepared call a
+generated invoker's `prepare(...)` returns exposes exactly `normalizedArguments()` and `invoke()` —
+the descriptor, cancellation signal, effective mapper, and generated input carrier are closure-captured
+implementation detail, never a getter or any other public member.
+
 ### What is not here yet
 
 This version composes the immutable tool and schema registries, the effective profile, the hardened
-startup schema capability, fail-before-mount startup validation for the registry, the bounded,
-authorized `tools/list` pagination described below, and the zero-argument authorized `tools/call`
-dispatch described in [Zero-argument tool calls](#zero-argument-tool-calls). What is deliberately
-still absent arrives with its owning slice:
+startup schema capability, fail-before-mount startup validation for the registry, the mandatory
+input-processing composition binding described above, the bounded, authorized `tools/list` pagination
+described below, and the zero-argument authorized `tools/call` dispatch described in
+[Zero-argument tool calls](#zero-argument-tool-calls). What is deliberately still absent arrives with
+its owning slice:
 
 - **Parameterized tool calls.** The compiled schema registry (`McpSchemaRegistry`) is not yet
   consulted on the `tools/call` request path: argument-schema validation against the compiled
-  validators, INP-001 input-policy application, typed parameter materialization, and Bean Validation
-  are not wired into dispatch. A call to a tool that declares parameters is dispatched exactly like a
-  zero-argument one — whatever `arguments` the request carries reaches the generated invoker's
-  `prepare(...)` unvalidated — so only zero-argument tools are a supported, tested surface today.
+  validators, INP-001 input-policy application (the mandatory binding above is wired but not yet
+  called), typed parameter materialization, and Bean Validation are not wired into dispatch. A call
+  to a tool that declares parameters is dispatched exactly like a zero-argument one — whatever
+  `arguments` the request carries reaches the generated invoker's `prepare(...)` unvalidated — so
+  only zero-argument tools are a supported, tested surface today.
 - **Ordered tool interceptors and opt-in value-observation.** Neither exists yet; every known,
   authorized call reaches the generated invoker directly with no interceptor stage.
 - **Rich and structured output.** A tool's `McpToolResult` is published as-is; output-schema
