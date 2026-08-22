@@ -9,6 +9,7 @@ import com.palantir.javapoet.CodeBlock;
 import com.palantir.javapoet.FieldSpec;
 import com.palantir.javapoet.JavaFile;
 import com.palantir.javapoet.MethodSpec;
+import com.palantir.javapoet.ParameterSpec;
 import com.palantir.javapoet.ParameterizedTypeName;
 import com.palantir.javapoet.TypeName;
 import com.palantir.javapoet.TypeSpec;
@@ -59,16 +60,25 @@ import javax.lang.model.type.TypeMirror;
  *
  *     private final class PreparedCall implements McpPreparedToolCall { … tool.lookup(input.city()) … }
  *
- *     private record Input(String city) {}
+ *     private record Input(@JsonProperty("city") String argument0) {}
  * }
  * }</pre>
  *
- * <p><strong>Composition-time scope.</strong> This slice emits the generation shape — direct
- * invoker, typed carrier, immutable descriptor, resolved effective JSON profile — for zero-argument
- * tools. The input schema is the minimal object schema and argument materialization is a direct
- * carrier construction; the profile-aware schema synthesis, input-policy application, and Bean
- * Validation that {@code prepare(...)} owns arrive with the shared schema and call-pipeline slices,
- * which replace {@link #INPUT_SCHEMA_PLACEHOLDER} and the carrier construction below.
+ * <p><strong>Carrier and metadata (T008).</strong> Every carrier component is named positionally
+ * ({@code argument0}, {@code argument1}, ...) so it can never collide regardless of the declared
+ * protocol names, and carries {@code @JsonProperty(protocolName)} plus the parameter's resolved
+ * final REST-effective {@code @Canonicalize}/{@code @Sanitize} base chain (never {@code @Skip*}),
+ * resolved at compile time by {@link McpInputPolicyResolver}. A parameterized tool also emits a
+ * position-stable {@code List<McpToolParameterMetadata>} pairing each component name with its
+ * external protocol name and description, and the effective {@code @JsonProfile} id — resolved
+ * method-over-type — is emitted as a typed {@code JsonProfileId} literal.
+ *
+ * <p><strong>Composition-time scope.</strong> This slice emits the carrier, metadata, and profile
+ * literal shape above; it generates no schema and compiles no validator. The input schema is still
+ * the minimal object schema and argument materialization is still a direct carrier construction —
+ * the profile-aware schema synthesis, input-policy application, and Bean Validation that
+ * {@code prepare(...)} owns arrive with the shared schema and call-pipeline slices, which replace
+ * {@link #INPUT_SCHEMA_PLACEHOLDER} and the carrier construction below.
  */
 final class McpToolInvokerEmitter {
 
@@ -94,6 +104,12 @@ final class McpToolInvokerEmitter {
     private static final ClassName FUTURE = ClassName.get("io.vertx.core", "Future");
     private static final ClassName JAKARTA_INJECT = ClassName.get("jakarta.inject", "Inject");
     private static final ClassName JAKARTA_SINGLETON = ClassName.get("jakarta.inject", "Singleton");
+    private static final ClassName JSON_PROFILE_ID = ClassName.get("dev.vertique.core.json", "JsonProfileId");
+    private static final ClassName JSON_PROPERTY = ClassName.get("com.fasterxml.jackson.annotation", "JsonProperty");
+    private static final ClassName CANONICALIZE = ClassName.get("dev.vertique.core.sanitization", "Canonicalize");
+    private static final ClassName SANITIZE = ClassName.get("dev.vertique.core.sanitization", "Sanitize");
+    private static final ClassName MCP_TOOL_PARAMETER_METADATA =
+            ClassName.get("dev.vertique.mcp.server.runtime", "McpToolParameterMetadata");
 
     private static final TypeName TOOL_RESULT_WILDCARD =
             ParameterizedTypeName.get(MCP_TOOL_RESULT, WildcardTypeName.subtypeOf(ClassName.OBJECT));
@@ -151,11 +167,16 @@ final class McpToolInvokerEmitter {
                         .build());
 
         if (model.jsonProfile() != null) {
-            invoker.addField(FieldSpec.builder(String.class, "JSON_PROFILE", Modifier.STATIC, Modifier.FINAL)
+            invoker.addField(FieldSpec.builder(JSON_PROFILE_ID, "JSON_PROFILE", Modifier.STATIC, Modifier.FINAL)
                     .addJavadoc("The effective {@code @JsonProfile} id resolved method-over-type at compile time; the\n"
                             + "server selects this profile's mapper for this tool at composition.\n")
-                    .initializer("$S", model.jsonProfile())
+                    .initializer("$T.of($S)", JSON_PROFILE_ID, model.jsonProfile())
                     .build());
+        }
+
+        List<McpToolParameterModel> schemaParameters = model.schemaParameters();
+        if (!schemaParameters.isEmpty()) {
+            invoker.addField(parameterMetadataField(schemaParameters));
         }
 
         invoker.addField(toolType, TOOL_FIELD, Modifier.PRIVATE, Modifier.FINAL)
@@ -348,20 +369,65 @@ final class McpToolInvokerEmitter {
                 : "structured";
     }
 
+    /**
+     * Builds the {@code PARAMETERS} field: the position-stable, immutable
+     * {@code List<McpToolParameterMetadata>} carrying each parameter's collision-safe carrier
+     * component name, its external protocol name, and its description.
+     */
+    private FieldSpec parameterMetadataField(List<McpToolParameterModel> schemaParameters) {
+        TypeName parametersType = ParameterizedTypeName.get(ClassName.get(List.class), MCP_TOOL_PARAMETER_METADATA);
+        CodeBlock entries = schemaParameters.stream()
+                .map(parameter -> CodeBlock.of(
+                        "new $T($S, $S, $S)",
+                        MCP_TOOL_PARAMETER_METADATA,
+                        parameter.componentName(),
+                        parameter.protocolName(),
+                        parameter.description()))
+                .collect(CodeBlock.joining(", "));
+        return FieldSpec.builder(parametersType, "PARAMETERS", Modifier.STATIC, Modifier.FINAL)
+                .addJavadoc("The position-stable, declaration-ordered parameter metadata: each carrier component name\n"
+                        + "paired with its external protocol name and description.\n")
+                .initializer("$T.of($L)", List.class, entries)
+                .build();
+    }
+
     private TypeSpec inputCarrier(McpToolModel model, ClassName inputType) {
         MethodSpec.Builder components = MethodSpec.constructorBuilder();
-        model.schemaParameters()
-                .forEach(parameter ->
-                        components.addParameter(TypeName.get(parameter.type()), parameter.componentName()));
+        model.schemaParameters().forEach(parameter -> {
+            ParameterSpec.Builder component = ParameterSpec.builder(
+                            TypeName.get(parameter.type()), parameter.componentName())
+                    .addAnnotation(AnnotationSpec.builder(JSON_PROPERTY)
+                            .addMember("value", "$S", parameter.protocolName())
+                            .build());
+            addPolicyAnnotation(component, CANONICALIZE, parameter.canonicalizers());
+            addPolicyAnnotation(component, SANITIZE, parameter.sanitizers());
+            components.addParameter(component.build());
+        });
 
         return TypeSpec.recordBuilder(inputType)
                 .addJavadoc(
                         "The typed input carrier for {@code $L}: one component per input-schema member, named with a\n"
-                                + "collision-safe Java identifier while the protocol keeps the declared argument names.\n",
+                                + "collision-safe positional Java identifier ({@code argument0}, {@code argument1}, ...)\n"
+                                + "while {@code @JsonProperty} preserves the declared protocol name on the wire.\n",
                         model.toolName())
                 .addModifiers(Modifier.PRIVATE)
                 .recordConstructor(components.build())
                 .build();
+    }
+
+    /**
+     * Adds a {@code @Canonicalize}/{@code @Sanitize} annotation carrying the resolved chain to the
+     * given carrier component, when the chain is non-empty. JavaPoet renders repeated same-name
+     * members as a {@code {A.class, B.class}} array automatically.
+     */
+    private void addPolicyAnnotation(
+            ParameterSpec.Builder component, ClassName policyAnnotation, List<TypeMirror> chain) {
+        if (chain.isEmpty()) {
+            return;
+        }
+        AnnotationSpec.Builder annotation = AnnotationSpec.builder(policyAnnotation);
+        chain.forEach(type -> annotation.addMember("value", "$T.class", TypeName.get(type)));
+        component.addAnnotation(annotation.build());
     }
 
     private boolean isParameterized(TypeMirror type) {

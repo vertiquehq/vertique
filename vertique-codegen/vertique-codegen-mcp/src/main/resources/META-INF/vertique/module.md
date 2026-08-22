@@ -103,10 +103,31 @@ never bind.
 ### Effective JSON profile is resolved at compile time
 
 The processor resolves the tool's `@JsonProfile` method-over-type, validates and normalizes the id
-through `JsonProfileId`, and emits the normalized id as a nullable string literal on the invoker.
-A blank annotation value is a compile error. Resolving the remaining tail of the precedence chain — the MCP boundary default, the
-global default, then the reserved `vertx` profile — and rejecting an unknown id belongs to
-composition in `vertique-mcp-server`.
+through `JsonProfileId`, and emits the normalized id as a nullable **typed `JsonProfileId` literal**
+(`JsonProfileId.of("…")`) on the invoker — not a raw string. A blank annotation value is a compile
+error. Resolving the remaining tail of the precedence chain — the MCP boundary default, the global
+default, then the reserved `vertx` profile — and rejecting an unknown id belongs to composition in
+`vertique-mcp-server`.
+
+### Generated parameter carriers and metadata
+
+For every parameterized tool the processor emits:
+
+- a private nested `Input` record whose components are named **positionally** —
+  `argument0`, `argument1`, ... — so a carrier component can never collide with another regardless of
+  the declared protocol names;
+- `@JsonProperty(protocolName)` on each component, so the wire's declared argument name (which may be
+  a Java keyword, contain hyphens, or otherwise not be a legal identifier) is preserved exactly
+  without deriving a Java identifier from it;
+- each parameter's resolved final REST-effective input-policy chain as normalized base
+  `@Canonicalize`/`@Sanitize` annotations on the component (never `@Skip*`), resolved at compile time
+  by the package-private `McpInputPolicyResolver` — method over declaring type, then the parameter's
+  own override, mirroring `ParameterExtractor.resolveParamPolicies`'s precedence;
+- a position-stable `List<McpToolParameterMetadata>` pairing each component name with its external
+  protocol name and description.
+
+`McpInputPolicyResolver` is MCP's own frozen derivation (§4.6): `vertique-input-processing` publishes
+`EffectiveInputPolicies` but no annotation→policy resolver, so each transport derives its own.
 
 ### Access mode is derived from the annotations REST already uses
 
@@ -139,6 +160,7 @@ targeted diagnostic and no model, so a rejected tool never produces a second, de
 | Protocol metadata | Tool names are unique across the compilation and match `[A-Za-z0-9_.-]{1,128}`; the description is non-blank and bounded; a blank title is omitted |
 | Honest type contracts | No raw, wildcard, type-variable, or unresolved type in a parameter or result; no `void` result; no input member without a JSON schema representation |
 | Effective JSON profile | Resolved method-over-type; a blank id is rejected at compile time rather than surfacing as an unresolvable mapper during composition |
+| Input-policy conflicts | A `@Canonicalize`/`@Sanitize` declaration and its `@Skip*` counterpart on the same element (method, declaring type, or parameter) is a compile error |
 
 Output-schema synthesis stays a composition-time concern: a result type that is structurally valid
 here but that the shared runtime schema generator cannot synthesize fails startup, before the router
@@ -164,6 +186,13 @@ package; `-Avertique.codegen.package` only pins which package that is.
 
 The processor writes the module but cannot install it. Without the module in the application's Dagger
 component, the server composes with an empty tool set and no error is reported by the compiler.
+
+### Assuming the carrier component name tells you the protocol name
+
+It does not, by design. `argument0`, `argument1`, ... is a positional Java identifier with no
+relationship to the declared `@McpToolParam` name; the protocol name lives only in
+`@JsonProperty(...)` and in the emitted `McpToolParameterMetadata` list. Do not pattern-match on
+component names in generated-source tooling.
 
 ---
 

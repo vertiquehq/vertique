@@ -107,6 +107,364 @@ class McpToolProcessorCompileTest {
         row.proof().execute();
     }
 
+    // ==================================================================================
+    // T008 — generated parameter carriers, profile, and access metadata
+    // ==================================================================================
+
+    /**
+     * The five named rows of the T008 contract matrix.
+     *
+     * @return one row per boundary, named exactly as the proof contract lists it
+     */
+    static Stream<MatrixRow> t008ContractMatrix() {
+        return Stream.of(
+                new MatrixRow(
+                        "shouldEmitCollisionSafeCarrierComponents",
+                        McpToolProcessorCompileTest::shouldEmitCollisionSafeCarrierComponents),
+                new MatrixRow(
+                        "shouldPreserveExternalProtocolNames",
+                        McpToolProcessorCompileTest::shouldPreserveExternalProtocolNames),
+                new MatrixRow(
+                        "shouldEmitTheResolvedProfileIdLiteral",
+                        McpToolProcessorCompileTest::shouldEmitTheResolvedProfileIdLiteral),
+                new MatrixRow(
+                        "shouldResolveGenericParameterMetadata",
+                        McpToolProcessorCompileTest::shouldResolveGenericParameterMetadata),
+                new MatrixRow(
+                        "shouldRejectAnUnresolvableParameterType",
+                        McpToolProcessorCompileTest::shouldRejectAnUnresolvableParameterType));
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("t008ContractMatrix")
+    @DisplayName("enforces the T008 contract matrix")
+    void shouldEnforceT008ContractMatrix(MatrixRow row) throws Throwable {
+        row.proof().execute();
+    }
+
+    // --- Row 1: collision-safe positional carrier components ---
+
+    /**
+     * Two parameters whose protocol names differ but would collide once naively sanitized to Java
+     * identifiers ({@code "user-name"} and {@code "user.name"} both sanitize to {@code user_name})
+     * emit distinct, positional {@code argument0}/{@code argument1} components — the carrier's
+     * collision safety is structural, not name-derived.
+     *
+     * <p>The mutation is the genuine collision the contract still rejects: two parameters declaring
+     * the identical protocol name is ambiguous on the wire and must fail with exactly one diagnostic;
+     * renaming the duplicate to a unique protocol name is what the sensitivity proof restores.
+     */
+    private static void shouldEmitCollisionSafeCarrierComponents() {
+        JavaFileObject nearCollisionNames = SourceFiles.inline(TOOLS_PACKAGE + ".CollisionSafeTools", """
+                package com.example.tools;
+
+                import dev.vertique.mcp.annotation.McpTool;
+                import dev.vertique.mcp.annotation.McpToolParam;
+                import io.vertx.core.Future;
+                import jakarta.inject.Inject;
+
+                public class CollisionSafeTools {
+
+                    @Inject
+                    public CollisionSafeTools() {}
+
+                    @McpTool(name = "identity.merge", description = "Merge two candidate user names.")
+                    public Future<WeatherReport> merge(
+                            @McpToolParam(name = "user-name", description = "The first candidate.") String first,
+                            @McpToolParam(name = "user.name", description = "The second candidate.") String second) {
+                        return Future.succeededFuture(new WeatherReport(first, 0));
+                    }
+                }
+                """);
+        try (McpToolCompilation valid = McpToolCompilation.of(weatherReport(), nearCollisionNames)) {
+            String invokerFqn = TOOLS_PACKAGE + ".CollisionSafeTools_merge_McpToolInvoker";
+            valid.result()
+                    .assertSuccess()
+                    .assertGeneratedSourceContains(invokerFqn, "argument0")
+                    .assertGeneratedSourceContains(invokerFqn, "argument1")
+                    .assertGeneratedSourceContains(invokerFqn, "@JsonProperty(\"user-name\")")
+                    .assertGeneratedSourceContains(invokerFqn, "@JsonProperty(\"user.name\")");
+        }
+
+        // Mutation — a genuine duplicate: both parameters declare the identical protocol name. Valid
+        // control: rename the second to a unique name.
+        JavaFileObject duplicateProtocolName = SourceFiles.inline(TOOLS_PACKAGE + ".DuplicateComponentTools", """
+                package com.example.tools;
+
+                import dev.vertique.mcp.annotation.McpTool;
+                import dev.vertique.mcp.annotation.McpToolParam;
+                import io.vertx.core.Future;
+                import jakarta.inject.Inject;
+
+                public class DuplicateComponentTools {
+
+                    @Inject
+                    public DuplicateComponentTools() {}
+
+                    @McpTool(name = "identity.duplicate", description = "Merge two candidate cities.")
+                    public Future<WeatherReport> merge(
+                            @McpToolParam(name = "city", description = "The first city.") String first,
+                            @McpToolParam(name = "city", description = "The second city.") String second) {
+                        return Future.succeededFuture(new WeatherReport(first, 0));
+                    }
+                }
+                """);
+        try (McpToolCompilation duplicate = McpToolCompilation.of(weatherReport(), duplicateProtocolName)) {
+            duplicate.result().assertFailed();
+            assertEquals(
+                    1,
+                    duplicate.errorsNaming("ambiguous", "city"),
+                    "two parameters declaring the identical protocol name must be rejected once");
+        }
+
+        JavaFileObject renamedDuplicate = SourceFiles.inline(TOOLS_PACKAGE + ".DuplicateComponentTools", """
+                package com.example.tools;
+
+                import dev.vertique.mcp.annotation.McpTool;
+                import dev.vertique.mcp.annotation.McpToolParam;
+                import io.vertx.core.Future;
+                import jakarta.inject.Inject;
+
+                public class DuplicateComponentTools {
+
+                    @Inject
+                    public DuplicateComponentTools() {}
+
+                    @McpTool(name = "identity.duplicate", description = "Merge two candidate cities.")
+                    public Future<WeatherReport> merge(
+                            @McpToolParam(name = "city", description = "The first city.") String first,
+                            @McpToolParam(name = "destinationCity", description = "The second city.") String second) {
+                        return Future.succeededFuture(new WeatherReport(first, 0));
+                    }
+                }
+                """);
+        try (McpToolCompilation renamed = McpToolCompilation.of(weatherReport(), renamedDuplicate)) {
+            renamed.result()
+                    .assertSuccess()
+                    .assertGeneratedSourceContains(
+                            TOOLS_PACKAGE + ".DuplicateComponentTools_merge_McpToolInvoker", "record Input");
+            assertEquals(0, renamed.errorsNaming("ambiguous", "city"), "the renamed duplicate compiles cleanly");
+        }
+    }
+
+    // --- Row 2: preserved external protocol names ---
+
+    /**
+     * A protocol name that is not a legal Java identifier — it contains a hyphen — is preserved
+     * verbatim on the wire via {@code @JsonProperty}, while the generated carrier component uses the
+     * collision-safe positional identifier.
+     */
+    private static void shouldPreserveExternalProtocolNames() {
+        JavaFileObject nonIdentifierProtocolName =
+                SourceFiles.inline(TOOLS_PACKAGE + ".NonIdentifierProtocolTools", """
+                package com.example.tools;
+
+                import dev.vertique.mcp.annotation.McpTool;
+                import dev.vertique.mcp.annotation.McpToolParam;
+                import io.vertx.core.Future;
+                import jakarta.inject.Inject;
+
+                public class NonIdentifierProtocolTools {
+
+                    @Inject
+                    public NonIdentifierProtocolTools() {}
+
+                    @McpTool(name = "identity.lookup", description = "Look up a user by external id.")
+                    public Future<WeatherReport> lookup(
+                            @McpToolParam(name = "user-id", description = "The external user id.") String userId) {
+                        return Future.succeededFuture(new WeatherReport(userId, 0));
+                    }
+                }
+                """);
+        try (McpToolCompilation valid = McpToolCompilation.of(weatherReport(), nonIdentifierProtocolName)) {
+            String invokerFqn = TOOLS_PACKAGE + ".NonIdentifierProtocolTools_lookup_McpToolInvoker";
+            valid.result()
+                    .assertSuccess()
+                    .assertGeneratedSourceContains(invokerFqn, "@JsonProperty(\"user-id\") String argument0");
+        }
+
+        // A Java reserved word is likewise preserved verbatim rather than rejected or mangled.
+        JavaFileObject reservedWordProtocolName = SourceFiles.inline(TOOLS_PACKAGE + ".ReservedWordProtocolTools", """
+                package com.example.tools;
+
+                import dev.vertique.mcp.annotation.McpTool;
+                import dev.vertique.mcp.annotation.McpToolParam;
+                import io.vertx.core.Future;
+                import jakarta.inject.Inject;
+
+                public class ReservedWordProtocolTools {
+
+                    @Inject
+                    public ReservedWordProtocolTools() {}
+
+                    @McpTool(name = "identity.category", description = "Look up by reserved-word category.")
+                    public Future<WeatherReport> lookup(
+                            @McpToolParam(name = "class", description = "The reserved-word category.") String kind) {
+                        return Future.succeededFuture(new WeatherReport(kind, 0));
+                    }
+                }
+                """);
+        try (McpToolCompilation reserved = McpToolCompilation.of(weatherReport(), reservedWordProtocolName)) {
+            reserved.result()
+                    .assertSuccess()
+                    .assertGeneratedSourceContains(
+                            TOOLS_PACKAGE + ".ReservedWordProtocolTools_lookup_McpToolInvoker",
+                            "@JsonProperty(\"class\") String argument0");
+        }
+    }
+
+    // --- Row 3: typed JsonProfileId literal ---
+
+    /**
+     * The effective {@code @JsonProfile} id — resolved method-over-type — is emitted as a typed
+     * {@code JsonProfileId} literal, not a raw {@code String} constant.
+     */
+    private static void shouldEmitTheResolvedProfileIdLiteral() {
+        JavaFileObject methodOverTypeProfile = SourceFiles.inline(TOOLS_PACKAGE + ".TypedProfileWeatherTools", """
+                package com.example.tools;
+
+                import dev.vertique.core.json.JsonProfile;
+                import dev.vertique.mcp.annotation.McpTool;
+                import dev.vertique.mcp.annotation.McpToolParam;
+                import io.vertx.core.Future;
+                import jakarta.inject.Inject;
+
+                @JsonProfile("type-profile")
+                public class TypedProfileWeatherTools {
+
+                    @Inject
+                    public TypedProfileWeatherTools() {}
+
+                    @JsonProfile("method-profile")
+                    @McpTool(name = "weather.typedProfile", description = "Look up the current weather.")
+                    public Future<WeatherReport> lookup(
+                            @McpToolParam(name = "city", description = "The city to look up.") String city) {
+                        return Future.succeededFuture(new WeatherReport(city, 21));
+                    }
+                }
+                """);
+        try (McpToolCompilation profiles = McpToolCompilation.of(weatherReport(), methodOverTypeProfile)) {
+            String invokerFqn = TOOLS_PACKAGE + ".TypedProfileWeatherTools_lookup_McpToolInvoker";
+            profiles.result()
+                    .assertSuccess()
+                    .assertGeneratedSourceContains(invokerFqn, "JsonProfileId JSON_PROFILE")
+                    .assertGeneratedSourceContains(invokerFqn, "JsonProfileId.of(\"method-profile\")")
+                    .assertGeneratedSourceDoesNotContain(invokerFqn, "String JSON_PROFILE")
+                    .assertGeneratedSourceDoesNotContain(invokerFqn, "type-profile");
+        }
+    }
+
+    // --- Row 4: resolved generic parameter metadata ---
+
+    /**
+     * A record parameter and an {@code Optional<T>} parameter both preserve their full generic
+     * carrier component type, and the generated {@code List<McpToolParameterMetadata>} pairs each
+     * component with its external protocol name and description, in declaration order.
+     */
+    private static void shouldResolveGenericParameterMetadata() {
+        JavaFileObject address = SourceFiles.inline(TOOLS_PACKAGE + ".Address", """
+                package com.example.tools;
+
+                public record Address(String city, String zip) {}
+                """);
+        JavaFileObject genericMetadataTool = SourceFiles.inline(TOOLS_PACKAGE + ".GenericMetadataTools", """
+                package com.example.tools;
+
+                import dev.vertique.mcp.annotation.McpTool;
+                import dev.vertique.mcp.annotation.McpToolParam;
+                import io.vertx.core.Future;
+                import jakarta.inject.Inject;
+                import java.util.Optional;
+
+                public class GenericMetadataTools {
+
+                    @Inject
+                    public GenericMetadataTools() {}
+
+                    @McpTool(name = "identity.register", description = "Register an address and nickname.")
+                    public Future<WeatherReport> register(
+                            @McpToolParam(name = "address", description = "The address to register.") Address address,
+                            @McpToolParam(name = "nickname", description = "The optional nickname.")
+                            Optional<String> nickname) {
+                        return Future.succeededFuture(new WeatherReport(address.city(), 0));
+                    }
+                }
+                """);
+        try (McpToolCompilation valid = McpToolCompilation.of(weatherReport(), address, genericMetadataTool)) {
+            String invokerFqn = TOOLS_PACKAGE + ".GenericMetadataTools_register_McpToolInvoker";
+            valid.result()
+                    .assertSuccess()
+                    .assertGeneratedSourceContains(invokerFqn, "Address argument0")
+                    .assertGeneratedSourceContains(invokerFqn, "Optional<String> argument1")
+                    .assertGeneratedSourceContains(
+                            invokerFqn, "new McpToolParameterMetadata(\"argument0\", \"address\",")
+                    .assertGeneratedSourceContains(
+                            invokerFqn, "new McpToolParameterMetadata(\"argument1\", \"nickname\",");
+        }
+    }
+
+    // --- Row 5: rejected unresolvable parameter type ---
+
+    /**
+     * A parameter of a type the compiler cannot resolve is rejected with exactly one diagnostic
+     * naming the offending type; the same tool with a resolvable type compiles cleanly.
+     */
+    private static void shouldRejectAnUnresolvableParameterType() {
+        JavaFileObject unresolvableParameter = SourceFiles.inline(TOOLS_PACKAGE + ".UnresolvableParameterTools", """
+                package com.example.tools;
+
+                import dev.vertique.mcp.annotation.McpTool;
+                import dev.vertique.mcp.annotation.McpToolParam;
+                import io.vertx.core.Future;
+                import jakarta.inject.Inject;
+
+                public class UnresolvableParameterTools {
+
+                    @Inject
+                    public UnresolvableParameterTools() {}
+
+                    @McpTool(name = "weather.unresolvableParam", description = "Look up the current weather.")
+                    public Future<WeatherReport> lookup(
+                            @McpToolParam(name = "report", description = "The report to reuse.")
+                            StillMissingType report) {
+                        return Future.succeededFuture(new WeatherReport("nowhere", 21));
+                    }
+                }
+                """);
+        try (McpToolCompilation unresolvable = McpToolCompilation.of(weatherReport(), unresolvableParameter)) {
+            unresolvable.result().assertFailed();
+            assertEquals(
+                    1,
+                    unresolvable.errorsNaming("unknown type", "StillMissingType"),
+                    "a parameter of an unresolvable type must be rejected, naming the offending type");
+        }
+
+        JavaFileObject resolvableParameter = SourceFiles.inline(TOOLS_PACKAGE + ".ResolvableParameterTools", """
+                package com.example.tools;
+
+                import dev.vertique.mcp.annotation.McpTool;
+                import dev.vertique.mcp.annotation.McpToolParam;
+                import io.vertx.core.Future;
+                import jakarta.inject.Inject;
+
+                public class ResolvableParameterTools {
+
+                    @Inject
+                    public ResolvableParameterTools() {}
+
+                    @McpTool(name = "weather.resolvableParam", description = "Look up the current weather.")
+                    public Future<WeatherReport> lookup(
+                            @McpToolParam(name = "report", description = "The report to reuse.")
+                            WeatherReport report) {
+                        return Future.succeededFuture(new WeatherReport("nowhere", 21));
+                    }
+                }
+                """);
+        try (McpToolCompilation resolvable = McpToolCompilation.of(weatherReport(), resolvableParameter)) {
+            resolvable.result().assertSuccess();
+        }
+    }
+
     // --- Row 1: generation shape ---
 
     /**
@@ -1118,16 +1476,41 @@ class McpToolProcessorCompileTest {
         }
 
         /**
-         * Compiles the given sources once with the real processor.
+         * Compiles the given sources once with the real processor, plus the always-present
+         * {@link #mcpToolParameterMetadataStub()} every parameterized tool's generated invoker
+         * references.
          *
          * @param sources the fixture sources; must not be empty
          * @return the open compilation, to be used in try-with-resources
          */
         static McpToolCompilation of(JavaFileObject... sources) {
             List<JavaFileObject> retained = new ArrayList<>(List.of(sources));
+            retained.add(mcpToolParameterMetadataStub());
             return new McpToolCompilation(
                     retained,
                     ProcessorTestHarness.run(new McpToolProcessor(), retained.toArray(JavaFileObject[]::new)));
+        }
+
+        /**
+         * A compiled stub of {@code dev.vertique.mcp.server.runtime.McpToolParameterMetadata}, the
+         * frozen runtime record every parameterized tool's generated invoker references by name.
+         *
+         * <p>{@code vertique-mcp-server} is deliberately not a dependency of this module (T006/T008:
+         * "{@code vertique-mcp-server} is not a dependency and must not become one") and must not
+         * become one even at test scope, so this mirrors the existing {@code authorizedAnnotation()}
+         * pattern: the only way to let {@code compile-testing} actually compile generated source that
+         * references a runtime type outside this module's dependency graph is to declare a stub of
+         * that exact type, under its exact FQN, in the compiled source set.
+         *
+         * @return the {@code dev.vertique.mcp.server.runtime.McpToolParameterMetadata} stub source
+         */
+        private static JavaFileObject mcpToolParameterMetadataStub() {
+            return SourceFiles.inline("dev.vertique.mcp.server.runtime.McpToolParameterMetadata", """
+                    package dev.vertique.mcp.server.runtime;
+
+                    public record McpToolParameterMetadata(
+                            String carrierComponentName, String externalName, String description) {}
+                    """);
         }
 
         /**

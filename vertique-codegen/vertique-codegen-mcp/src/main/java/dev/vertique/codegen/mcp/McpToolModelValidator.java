@@ -5,7 +5,6 @@ package dev.vertique.codegen.mcp;
 
 import dev.vertique.codegen.AnnotationMirrors;
 import dev.vertique.codegen.CodegenContext;
-import dev.vertique.codegen.support.Identifiers;
 import dev.vertique.codegen.validate.InjectConstructorValidator;
 import dev.vertique.core.json.JsonProfileId;
 import dev.vertique.mcp.tool.McpToolDescriptor;
@@ -68,6 +67,12 @@ final class McpToolModelValidator {
 
     /** The protocol tool-name grammar, mirroring {@link McpToolDescriptor}'s own bound. */
     private static final Pattern TOOL_NAME = Pattern.compile("[A-Za-z0-9_.-]{1,128}");
+
+    /**
+     * The frozen prefix of every generated carrier component name ({@code argument0},
+     * {@code argument1}, ...) — positional, so it never collides regardless of protocol names.
+     */
+    private static final String CARRIER_COMPONENT_PREFIX = "argument";
 
     /** Scalar types with a direct JSON schema representation. */
     private static final Set<String> SCALARS = Set.of(
@@ -138,6 +143,7 @@ final class McpToolModelValidator {
     private final CodegenContext ctx;
     private final McpAuthorizationAnnotationResolver authorization;
     private final InjectConstructorValidator injectConstructors;
+    private final McpInputPolicyResolver inputPolicies;
 
     /**
      * Constructs a validator bound to the given codegen context.
@@ -148,6 +154,7 @@ final class McpToolModelValidator {
         this.ctx = ctx;
         this.authorization = new McpAuthorizationAnnotationResolver(ctx);
         this.injectConstructors = new InjectConstructorValidator(ctx);
+        this.inputPolicies = new McpInputPolicyResolver(ctx);
     }
 
     // --- Declaring type ---
@@ -525,18 +532,12 @@ final class McpToolModelValidator {
             TypeElement declaringType, ExecutableElement method) {
         List<McpToolParameterModel> parameters = new ArrayList<>();
         Set<String> protocolNames = new LinkedHashSet<>();
-        Set<String> componentNames = new LinkedHashSet<>();
+        int schemaMemberIndex = 0;
 
         for (VariableElement parameter : method.getParameters()) {
             TypeMirror type = parameter.asType();
             if (erasureIs(type, McpToolProcessor.MCP_CANCELLATION_SIGNAL)) {
-                parameters.add(new McpToolParameterModel(
-                        parameter,
-                        "",
-                        uniqueComponentName(parameter.getSimpleName().toString(), componentNames),
-                        "",
-                        type,
-                        true));
+                parameters.add(new McpToolParameterModel(parameter, "", "", "", type, true, List.of(), List.of()));
                 continue;
             }
             if (!validateParameterType(declaringType, method, parameter, type)) {
@@ -580,13 +581,20 @@ final class McpToolModelValidator {
                                 method.getSimpleName());
                 return Optional.empty();
             }
+            Optional<McpInputPolicyResolver.EffectivePolicies> policies =
+                    inputPolicies.resolve(declaringType, method, parameter);
+            if (policies.isEmpty()) {
+                return Optional.empty();
+            }
             parameters.add(new McpToolParameterModel(
                     parameter,
                     protocolName,
-                    uniqueComponentName(protocolName, componentNames),
+                    CARRIER_COMPONENT_PREFIX + schemaMemberIndex++,
                     description,
                     type,
-                    false));
+                    false,
+                    policies.get().canonicalizers(),
+                    policies.get().sanitizers()));
         }
         return Optional.of(List.copyOf(parameters));
     }
@@ -837,15 +845,5 @@ final class McpToolModelValidator {
 
     private boolean flag(AnnotationMirror mirror, String name, boolean fallback) {
         return ctx.annotations().attribute(mirror, name, Boolean.class).orElse(fallback);
-    }
-
-    private static String uniqueComponentName(String source, Set<String> used) {
-        String base = Identifiers.sanitize(source);
-        String candidate = base;
-        int ordinal = 2;
-        while (!used.add(candidate)) {
-            candidate = base + "_" + ordinal++;
-        }
-        return candidate;
     }
 }
