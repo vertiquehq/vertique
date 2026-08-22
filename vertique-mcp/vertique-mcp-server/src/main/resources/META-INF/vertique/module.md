@@ -9,10 +9,12 @@
 `vertique-mcp-server` composes the optional HTTP Model Context Protocol server. Include
 `McpServerModule` explicitly in the application's Dagger component and supply an immutable
 `McpServerConfig` binding. Generated tools are registered and bound to their effective JSON profile
-during composition (see [Tool runtime](#tool-runtime)); the mount serves `server/discover` and the
+during composition (see [Tool runtime](#tool-runtime)); the mount serves `server/discover`, the
 bounded, authorized `tools/list` pagination described in
-[Authorized tool listing and pagination](#authorized-tool-listing-and-pagination), and `tools/call`
-dispatch and extension hooks are introduced by their owning slice.
+[Authorized tool listing and pagination](#authorized-tool-listing-and-pagination), and the
+zero-argument authorized `tools/call` dispatch described in
+[Zero-argument tool calls](#zero-argument-tool-calls). Parameterized-call argument processing, tool
+interceptors, rich structured output, and cancellation races are introduced by their owning slice.
 
 Configuration is disabled by default. When enabled, `serverName` and `serverVersion` are required,
 the mount is one literal path ending in `/*`, and every configured value is validated for range and
@@ -209,8 +211,8 @@ entry, in global name order — that the `tools/list` cursor codec binds to inva
 across deployments (see
 [Authorized tool listing and pagination](#authorized-tool-listing-and-pagination)). Neither the
 registry nor the schema registry is mutated after composition; `tools/list` scans the registry
-read-only on every request, and `tools/call` dispatch is introduced by its owning slice (see
-[What is not here yet](#what-is-not-here-yet)).
+read-only on every request, and a known, authorized `tools/call` resolves through this same registry
+(see [Zero-argument tool calls](#zero-argument-tool-calls)).
 
 ### Effective profile resolution
 
@@ -297,14 +299,28 @@ compilation occurs on the request path.
 ### What is not here yet
 
 This version composes the immutable tool and schema registries, the effective profile, the hardened
-startup schema capability, fail-before-mount startup validation for the registry, and the bounded,
-authorized `tools/list` pagination described below. What is deliberately still absent arrives with
-its owning slice:
+startup schema capability, fail-before-mount startup validation for the registry, the bounded,
+authorized `tools/list` pagination described below, and the zero-argument authorized `tools/call`
+dispatch described in [Zero-argument tool calls](#zero-argument-tool-calls). What is deliberately
+still absent arrives with its owning slice:
 
-- **Tool calls over the wire.** `tools/call` is not exposed, and the compiled schema registry
-  (`McpSchemaRegistry`) is not yet consulted on the request path. Argument materialization against
-  the compiled validators, input-policy application, Bean Validation, and direct generated
-  invocation land with that work.
+- **Parameterized tool calls.** The compiled schema registry (`McpSchemaRegistry`) is not yet
+  consulted on the `tools/call` request path: argument-schema validation against the compiled
+  validators, INP-001 input-policy application, typed parameter materialization, and Bean Validation
+  are not wired into dispatch. A call to a tool that declares parameters is dispatched exactly like a
+  zero-argument one — whatever `arguments` the request carries reaches the generated invoker's
+  `prepare(...)` unvalidated — so only zero-argument tools are a supported, tested surface today.
+- **Ordered tool interceptors and opt-in value-observation.** Neither exists yet; every known,
+  authorized call reaches the generated invoker directly with no interceptor stage.
+- **Rich and structured output.** A tool's `McpToolResult` is published as-is; output-schema
+  validation and the single-pass bounded output normalization the frozen pipeline names are not yet
+  applied beyond the existing `mcp.output.maxBytes` serialization cap shared with discovery and
+  `tools/list`.
+- **Cancellation races.** The dispatcher supplies a permanently non-cancelled
+  `McpCancellationSignal` to every invocation; a client disconnect or reset during an in-flight call
+  is not yet observed by the handler or reflected in `McpToolResult`. The two-phase settlement
+  (logical terminal before the byte write, exactly-once completion) already covers the transport side
+  of a disconnect during `tools/call`, matching every other response.
 
 ## Authorized tool listing and pagination
 
@@ -344,11 +360,45 @@ unknown tool produces (`McpPolicyEnforcer#unknownOrUnauthorizedError()` mapped t
 shared `httpStatusFor` factory) — never a distinct code or status that would let a caller
 distinguish "malformed cursor" from any other `-32602` cause.
 
+## Zero-argument tool calls
+
+A known, authorized zero-argument `tools/call` resolves through the same immutable registry
+`tools/list` scans, reauthorizes the resolved descriptor through the same
+`McpPolicyEnforcer#decide`/`SecurityPolicyEnforcer` pair [Authorization](#authorization) describes —
+never a cached or assumed result — and, only once permitted, invokes the resolved tool's generated
+invoker directly: no reflection, no scanning, the same `McpToolInvoker#prepare`/
+`McpPreparedToolCall#invoke` calls a Dagger-composed application would make.
+
+**Unknown and denied are the same response, and neither reaches SSE.** A structurally missing/blank
+tool name, an unresolved name, and a denied decision all settle through the exact same code path
+`tools/list` uses for an invalid cursor: byte-identical `-32602`/`Invalid params` JSON, the same HTTP
+status, no tool ever invoked. This holds regardless of which of the three causes produced it — an
+unknown name and a `@DenyAll` tool are externally indistinguishable, matching the `tools/list`
+guarantee above.
+
+**SSE selection precedes invocation, unconditionally.** Only once a call is both known and
+authorized does the dispatcher select request-scoped SSE (`Content-Type: text/event-stream`,
+`X-Accel-Buffering: no`) — as the first step, before the generated invoker's `prepare(...)` is ever
+called, and independently of how invocation later resolves. A synchronous `prepare`/`invoke` throw
+and a failed invocation future both settle through the bounded pre-encoded internal-error fallback,
+still SSE-framed: once SSE is selected the response never falls back to JSON. No response byte is
+written until the complete SSE message — one `event: message` / `data:` block carrying the full
+JSON-RPC response — is ready; header mutation alone reaches no byte onto the wire because Vert.x
+defers sending them until the first `write`/`end`, and this dispatcher's only write is that one
+complete, already-framed message.
+
+**Zero-argument only.** `arguments` — absent, explicit `null`, or a non-object value — normalizes to
+the same immutable empty map as `{}` and is handed to the generated invoker unvalidated: no schema
+check, no INP-001 processing, no Bean Validation. See
+[What is not here yet](#what-is-not-here-yet) for the parameterized-call, interceptor, rich-output,
+and cancellation-race capabilities this version does not yet provide.
+
 ## Authorization
 
 `tools/list` (see [Authorized tool listing and pagination](#authorized-tool-listing-and-pagination))
-is the first wire consumer of this authorization mapping; `tools/call` is introduced by its owning
-slice (see [What is not here yet](#what-is-not-here-yet)) and reuses the same mapping unchanged.
+and the zero-argument `tools/call` above (see
+[Zero-argument tool calls](#zero-argument-tool-calls)) are this mapping's two wire consumers, and
+reuse it unchanged.
 
 Each generated tool declares its access requirement — unannotated, `@PermitAll`, `@DenyAll`,
 `@RolesAllowed`, `@RequiresAction`, or `@RolesAllowed` plus `@RequiresAction` — exactly as a REST

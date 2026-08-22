@@ -4,6 +4,7 @@
 package dev.vertique.mcp.server;
 
 import com.fasterxml.jackson.core.StreamWriteFeature;
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.json.JsonMapper;
@@ -16,8 +17,12 @@ import dev.vertique.mcp.lifecycle.McpRequestCompletedListener;
 import dev.vertique.mcp.lifecycle.McpRequestLifecycleObserver;
 import dev.vertique.mcp.lifecycle.McpRequestTerminalEvent;
 import dev.vertique.mcp.lifecycle.McpTransportOutcome;
+import dev.vertique.mcp.tool.McpCancellationSignal;
+import dev.vertique.mcp.tool.McpPreparedToolCall;
 import dev.vertique.mcp.tool.McpToolAnnotations;
 import dev.vertique.mcp.tool.McpToolDescriptor;
+import dev.vertique.mcp.tool.McpToolInvoker;
+import dev.vertique.mcp.tool.McpToolResult;
 import dev.vertique.rest.core.config.HttpConfig;
 import dev.vertique.rest.core.security.SecurityRuntime;
 import dev.vertique.security.SecurityContext;
@@ -25,6 +30,7 @@ import dev.vertique.security.SecurityContextSnapshot;
 import io.vertx.core.AsyncResult;
 import io.vertx.core.Future;
 import io.vertx.core.Handler;
+import io.vertx.core.Promise;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.http.HttpMethod;
 import io.vertx.ext.web.RoutingContext;
@@ -33,9 +39,11 @@ import jakarta.inject.Inject;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.io.UncheckedIOException;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -46,12 +54,23 @@ import java.util.Set;
  * and bounds the response write at {@code mcp.output.maxBytes}. MCP arms no whole-request deadline of
  * its own: transport liveness comes from the shared {@link HttpConfig} idle/read/write timeouts, so an
  * idle or slow connection is closed by the shared HTTP layer and reaches this dispatcher through the
- * ordinary disconnect/reset settlement path (T007). Tool registration and invocation, and the
- * tool-level {@code -32602} classification, are owned by later slices and are deliberately absent.
+ * ordinary disconnect/reset settlement path (T007).
+ *
+ * <p>{@code tools/call} (T012) resolves the requested name through the immutable {@link
+ * McpToolRegistry}, reauthorizes the resolved descriptor through {@link McpPolicyEnforcer#decide}
+ * exactly like {@code tools/list}, and maps an unknown name or a denied decision to the same
+ * {@code -32602} JSON response {@link #writeUnknownOrUnauthorized} already produces — no tool is ever
+ * invoked on that path. Only once a call is known and authorized does the dispatcher select
+ * request-scoped SSE ({@code text/event-stream}, {@code X-Accel-Buffering: no}) — unconditionally,
+ * before {@link McpToolInvoker#prepare} runs, so the response is committed to SSE framing regardless
+ * of how invocation later resolves and never falls back to JSON afterward — and only then invokes the
+ * generated invoker directly (no reflection). Argument-schema validation, INP-001 processing, and rich
+ * structured output are later slices; this task's scope is the zero-argument call.
  */
 final class McpRequestDispatcher {
     private static final String DISCOVER_METHOD = "server/discover";
     private static final String TOOLS_LIST_METHOD = "tools/list";
+    private static final String TOOLS_CALL_METHOD = "tools/call";
     private static final String PROTOCOL_VERSION = McpCursorCodec.PROTOCOL_VERSION;
 
     /** The official schema treats an absent {@code resultType} as this completed-result value. */
@@ -289,6 +308,10 @@ final class McpRequestDispatcher {
                 writeToolsList(context, decoded.envelope(), security);
                 return;
             }
+            if (TOOLS_CALL_METHOD.equals(method)) {
+                writeToolsCall(context, decoded.envelope(), security);
+                return;
+            }
         }
         emitProtocolError(context, decoded, body, security);
     }
@@ -389,7 +412,8 @@ final class McpRequestDispatcher {
     private void writeToolsList(RoutingContext context, JsonNode envelope, @Nullable SecurityContextSnapshot security) {
         JsonNode cursorNode = envelope.get("params").get("cursor");
         if (cursorNode != null && !cursorNode.isTextual()) {
-            writeUnknownOrUnauthorized(context, envelope, security, McpMethod.TOOLS_LIST);
+            writeUnknownOrUnauthorized(
+                    context, envelope, security, McpMethod.TOOLS_LIST, McpRequestTerminalEvent.UNKNOWN_TOOL_NAME);
             return;
         }
         List<String> names = List.copyOf(toolRegistry.descriptorsByName().keySet());
@@ -402,7 +426,8 @@ final class McpRequestDispatcher {
                     toolRegistry.digest(),
                     toolRegistry.descriptorsByName().keySet());
             if (decoded.isInvalid()) {
-                writeUnknownOrUnauthorized(context, envelope, security, McpMethod.TOOLS_LIST);
+                writeUnknownOrUnauthorized(
+                        context, envelope, security, McpMethod.TOOLS_LIST, McpRequestTerminalEvent.UNKNOWN_TOOL_NAME);
                 return;
             }
             startIndex = names.indexOf(decoded.anchor()) + 1;
@@ -588,10 +613,22 @@ final class McpRequestDispatcher {
      * Writes the same externally indistinguishable {@code -32602} response {@link
      * McpPolicyEnforcer#unknownOrUnauthorizedError()} defines, so an invalid cursor, a denied tool, and
      * an unknown tool all yield byte-identical bodies and the same HTTP status (issue #420) — the
-     * status comes from the shared {@link #httpStatusFor} mapping, never a bespoke one.
+     * status comes from the shared {@link #httpStatusFor} mapping, never a bespoke one. Always
+     * {@code application/json}: an unknown or denied {@code tools/call} never reaches SSE selection
+     * (§4.7 — "unknown tool[s] and authorization denial return JSON").
+     *
+     * @param toolName the requested tool name recorded on the internal terminal event for telemetry
+     *     only — never serialized to the wire, so it has no bearing on the indistinguishability
+     *     guarantee; callers with no tool identity (an invalid {@code tools/list} cursor, or a
+     *     structurally invalid {@code tools/call} name) pass {@link
+     *     McpRequestTerminalEvent#UNKNOWN_TOOL_NAME}
      */
     private void writeUnknownOrUnauthorized(
-            RoutingContext context, JsonNode envelope, @Nullable SecurityContextSnapshot security, McpMethod method) {
+            RoutingContext context,
+            JsonNode envelope,
+            @Nullable SecurityContextSnapshot security,
+            McpMethod method,
+            String toolName) {
         context.response().putHeader("content-type", JSON_CONTENT_TYPE);
         McpProtocolCodec.CodecError error = McpPolicyEnforcer.unknownOrUnauthorizedError();
         ObjectNode response = OUTPUT_ENCODER.createObjectNode();
@@ -608,7 +645,7 @@ final class McpRequestDispatcher {
                 startedAt(context),
                 Instant.now(),
                 method,
-                McpRequestTerminalEvent.UNKNOWN_TOOL_NAME,
+                method == McpMethod.TOOLS_CALL ? toolName : McpRequestTerminalEvent.UNKNOWN_TOOL_NAME,
                 McpErrorType.AUTHORIZATION,
                 status,
                 error.code(),
@@ -616,6 +653,266 @@ final class McpRequestDispatcher {
                 security,
                 null);
         write(context, status, body, terminal);
+    }
+
+    // --- tools/call ---
+
+    /**
+     * Resolves, reauthorizes, and dispatches one zero-argument {@code tools/call} request (T012).
+     *
+     * <p>A structurally missing/blank name, an unresolved name, or a denied decision all settle
+     * through {@link #writeUnknownOrUnauthorized} — the exact same JSON response {@code tools/list}
+     * produces for an invalid cursor — before any invocation is attempted. Only a known, authorized
+     * call reaches {@link #invokeAndRespond}.
+     *
+     * @param context the request context
+     * @param envelope the validated {@code tools/call} request envelope
+     * @param security the established security snapshot, recorded on the terminal event
+     */
+    private void writeToolsCall(RoutingContext context, JsonNode envelope, @Nullable SecurityContextSnapshot security) {
+        JsonNode nameNode = envelope.get("params").get("name");
+        if (nameNode == null || !nameNode.isTextual() || nameNode.asText().isBlank()) {
+            writeUnknownOrUnauthorized(
+                    context, envelope, security, McpMethod.TOOLS_CALL, McpRequestTerminalEvent.UNKNOWN_TOOL_NAME);
+            return;
+        }
+        String toolName = nameNode.asText();
+        McpToolInvoker invoker = toolRegistry.invokersByName().get(toolName);
+        if (invoker == null) {
+            writeUnknownOrUnauthorized(context, envelope, security, McpMethod.TOOLS_CALL, toolName);
+            return;
+        }
+        SecurityContext caller = securityRuntime.current();
+        policyEnforcer.decide(invoker.descriptor(), caller).onComplete(ar -> {
+            if (ar.failed()) {
+                // McpPolicyEnforcer#decide never fails per its own contract; defended here so a
+                // contract-violating extension cannot escape as an unhandled exception. No invocation
+                // was ever attempted, so this stays a JSON (never SSE) response.
+                writeUnknownOrUnauthorized(context, envelope, security, McpMethod.TOOLS_CALL, toolName);
+                return;
+            }
+            if (!ar.result().permitted()) {
+                writeUnknownOrUnauthorized(context, envelope, security, McpMethod.TOOLS_CALL, toolName);
+                return;
+            }
+            invokeAndRespond(context, envelope, security, toolName, invoker);
+        });
+    }
+
+    /**
+     * Selects request-scoped SSE, then invokes the resolved tool directly.
+     *
+     * <p>{@link #selectSse} runs unconditionally as the first statement here — strictly before {@link
+     * McpToolInvoker#prepare} is ever called — so the response is committed to SSE framing before
+     * invocation begins and independently of how invocation later resolves: a synchronous {@code
+     * prepare}/{@code invoke} throw and a failed invocation future both settle through {@link
+     * #writeSseFallback}, never a JSON response. {@code arguments} is the bounded empty map for an
+     * absent or non-object {@code arguments} member — schema validation and INP-001 processing are
+     * later slices, out of this zero-argument task's scope.
+     */
+    private void invokeAndRespond(
+            RoutingContext context,
+            JsonNode envelope,
+            @Nullable SecurityContextSnapshot security,
+            String toolName,
+            McpToolInvoker invoker) {
+        selectSse(context);
+        Map<String, Object> arguments = argumentsOf(envelope);
+        McpPreparedToolCall prepared;
+        try {
+            prepared = invoker.prepare(arguments, NoOpCancellationSignal.INSTANCE);
+        } catch (RuntimeException prepareFailure) {
+            writeSseFallback(context, envelope, security, toolName, prepareFailure);
+            return;
+        }
+        Future<McpToolResult<?>> result;
+        try {
+            result = prepared.invoke();
+        } catch (RuntimeException invokeFailure) {
+            writeSseFallback(context, envelope, security, toolName, invokeFailure);
+            return;
+        }
+        result.onComplete(ar -> {
+            if (ar.failed() || ar.result() == null) {
+                writeSseFallback(
+                        context,
+                        envelope,
+                        security,
+                        toolName,
+                        ar.failed() ? ar.cause() : new NullPointerException("tool result"));
+                return;
+            }
+            writeToolResult(context, envelope, security, toolName, ar.result());
+        });
+    }
+
+    /**
+     * Selects request-scoped SSE for this response: mutates the buffered response headers only — no
+     * byte reaches the wire from this call, since Vert.x defers sending headers until the first
+     * {@code write}/{@code end} — so this may run freely before invocation without violating "no byte
+     * until a terminal message is ready" (§4.7).
+     */
+    private static void selectSse(RoutingContext context) {
+        context.response().putHeader("content-type", EVENT_STREAM_CONTENT_TYPE);
+        context.response().putHeader("X-Accel-Buffering", "no");
+    }
+
+    /**
+     * Normalizes the {@code tools/call} {@code arguments} member to a bounded, non-null map: absent,
+     * explicit {@code null}, or non-object all normalize to the same immutable empty map as {@code {}}
+     * (§4.7). A present object is shallow-converted to {@code Map<String, Object>}; deeper structure is
+     * preserved as nested {@code Map}/{@code List}/scalar values exactly as Jackson's generic
+     * conversion produces them.
+     */
+    private static Map<String, Object> argumentsOf(JsonNode envelope) {
+        JsonNode arguments = envelope.get("params").get("arguments");
+        if (arguments == null || !arguments.isObject()) {
+            return Map.of();
+        }
+        return OUTPUT_ENCODER.convertValue(arguments, new TypeReference<Map<String, Object>>() {});
+    }
+
+    /**
+     * Writes a completed {@code CallToolResult}, bounding serialization at {@code mcp.output.maxBytes}
+     * exactly like discovery and {@code tools/list}, and always through {@link #writeSse} — SSE was
+     * already selected in {@link #invokeAndRespond} before this method is ever reached.
+     */
+    private void writeToolResult(
+            RoutingContext context,
+            JsonNode envelope,
+            @Nullable SecurityContextSnapshot security,
+            String toolName,
+            McpToolResult<?> result) {
+        byte[] payload;
+        try {
+            payload = encodeCapped(toolCallResponse(envelope, result));
+        } catch (OutputCapExceededException overCap) {
+            writeSseFallback(context, envelope, security, toolName, overCap);
+            return;
+        }
+        McpRequestTerminalEvent terminal = result.isError()
+                ? McpRequestTerminalEvent.toolError(
+                        startedAt(context),
+                        Instant.now(),
+                        McpMethod.TOOLS_CALL,
+                        toolName,
+                        McpErrorType.HANDLER,
+                        200,
+                        null,
+                        security,
+                        null)
+                : McpRequestTerminalEvent.success(
+                        startedAt(context), Instant.now(), McpMethod.TOOLS_CALL, toolName, 200, null, security, null);
+        writeSse(context, 200, payload, terminal);
+    }
+
+    /**
+     * Builds the canonical {@code CallToolResult} response node: the text content items, the optional
+     * structured content, the {@code isError} flag, and the mandatory server-identity {@code _meta}.
+     */
+    private ObjectNode toolCallResponse(JsonNode envelope, McpToolResult<?> result) {
+        ArrayNode content = OUTPUT_ENCODER.createArrayNode();
+        for (String text : result.textContent()) {
+            ObjectNode item = OUTPUT_ENCODER.createObjectNode();
+            item.put("type", "text");
+            item.put("text", text);
+            content.add(item);
+        }
+        ObjectNode serverInfo = OUTPUT_ENCODER.createObjectNode();
+        serverInfo.put("name", config.serverName());
+        serverInfo.put("version", config.serverVersion());
+        ObjectNode meta = OUTPUT_ENCODER.createObjectNode();
+        meta.set(SERVER_INFO_META_KEY, serverInfo);
+        ObjectNode toolResult = OUTPUT_ENCODER.createObjectNode();
+        toolResult.set("content", content);
+        toolResult.put("isError", result.isError());
+        if (result.structuredContent() != null) {
+            toolResult.set("structuredContent", OUTPUT_ENCODER.valueToTree(result.structuredContent()));
+        }
+        toolResult.set("_meta", meta);
+        ObjectNode response = OUTPUT_ENCODER.createObjectNode();
+        response.put("jsonrpc", "2.0");
+        response.set("result", toolResult);
+        JsonNode id = envelope.get("id");
+        response.set("id", id != null ? id : NullNode.getInstance());
+        return response;
+    }
+
+    /**
+     * Settles an invocation-path failure — a synchronous {@code prepare}/{@code invoke} throw, a
+     * failed invocation future, or a null direct result — through the bounded pre-encoded
+     * internal-error fallback, framed as SSE: SSE was already selected before invocation began, and
+     * the response never falls back to JSON after that point (§4.7).
+     */
+    private void writeSseFallback(
+            RoutingContext context,
+            JsonNode envelope,
+            @Nullable SecurityContextSnapshot security,
+            String toolName,
+            Throwable cause) {
+        byte[] fallback = codec.internalFallback(envelope.get("id"), cause);
+        if (fallback.length > config.outputMaxBytes()) {
+            // Degrade to the id-less internal error so the hard cap holds, exactly like the discovery
+            // and tools/list fallback paths.
+            fallback = codec.internalFallback(null, cause);
+        }
+        McpRequestTerminalEvent terminal = McpRequestTerminalEvent.failed(
+                startedAt(context),
+                Instant.now(),
+                McpMethod.TOOLS_CALL,
+                toolName,
+                McpErrorType.INTERNAL,
+                500,
+                INTERNAL_ERROR,
+                null,
+                security,
+                null);
+        writeSse(context, 500, fallback, terminal);
+    }
+
+    /**
+     * Writes one complete JSON-RPC message SSE-framed as a single {@code event: message} / {@code
+     * data:} block, through the same {@link #write} settlement path every other response uses — so the
+     * two-phase logical-settlement-before-byte-write ordering, the coordinator's first-observed-wins
+     * guard, and the completion accounting are identical to the JSON write paths. Framing and writing
+     * happen in the same call, so no byte of this SSE message reaches the wire before it is complete.
+     */
+    private static void writeSse(
+            RoutingContext context, int status, byte[] jsonPayload, McpRequestTerminalEvent terminal) {
+        write(context, status, sseFrame(jsonPayload), terminal);
+    }
+
+    /** Frames one complete JSON-RPC message as a single {@code event: message} / {@code data:} SSE block. */
+    private static byte[] sseFrame(byte[] jsonPayload) {
+        byte[] prefix = "event: message\ndata: ".getBytes(StandardCharsets.UTF_8);
+        byte[] suffix = "\n\n".getBytes(StandardCharsets.UTF_8);
+        byte[] framed = new byte[prefix.length + jsonPayload.length + suffix.length];
+        System.arraycopy(prefix, 0, framed, 0, prefix.length);
+        System.arraycopy(jsonPayload, 0, framed, prefix.length, jsonPayload.length);
+        System.arraycopy(suffix, 0, framed, prefix.length + jsonPayload.length, suffix.length);
+        return framed;
+    }
+
+    /**
+     * A cancellation signal that is never cancelled: T012 owns only the zero-argument happy/error call
+     * path, not cancellation races (T013). {@link #cancelled()} returns a future backed by a {@link
+     * Promise} that is deliberately never completed, matching the interface's "never completed
+     * otherwise" contract for an invocation this dispatcher never cancels.
+     */
+    private static final class NoOpCancellationSignal implements McpCancellationSignal {
+        static final NoOpCancellationSignal INSTANCE = new NoOpCancellationSignal();
+
+        private final Future<Void> neverCompletes = Promise.<Void>promise().future();
+
+        @Override
+        public boolean isCancelled() {
+            return false;
+        }
+
+        @Override
+        public Future<Void> cancelled() {
+            return neverCompletes;
+        }
     }
 
     static void completeAuthenticationRejection(RoutingContext context) {

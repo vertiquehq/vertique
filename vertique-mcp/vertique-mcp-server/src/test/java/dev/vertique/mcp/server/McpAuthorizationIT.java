@@ -78,8 +78,9 @@ import org.junit.jupiter.params.provider.MethodSource;
  * <p>Each row establishes a caller's real {@link SecurityContext} over HTTP — anonymous, bearer
  * {@code alice} (role {@code ops}), or bearer {@code admin} — then evaluates one or more directly
  * constructed {@link McpToolDescriptor}s against that context through {@link McpPolicyEnforcer}
- * alone, never through a {@code tools/list}/{@code tools/call} wire path (T011/T012 own that). The
- * in-test {@link Authorizer} double permits the fine action gate only for the {@code admin} identity,
+ * alone, never through a {@code tools/list}/{@code tools/call} wire path — {@link McpToolPaginationIT}
+ * and {@link McpToolCallIT} own those (T011 and T012 respectively). The in-test {@link Authorizer}
+ * double permits the fine action gate only for the {@code admin} identity,
  * isolating the fine gate from the coarse role gate the {@code ops} role drives.
  *
  * <p>Modeled on {@link McpDiscoverIT}'s harness: bind and connect explicitly to {@code 127.0.0.1}
@@ -308,7 +309,8 @@ class McpAuthorizationIT {
     }
 
     /**
-     * The guarded call path a dispatcher takes (T012 owns the wire form): the tool is invoked only
+     * The guarded call path a dispatcher takes ({@link McpToolCallIT} owns the wire form, T012): the
+     * tool is invoked only
      * when the decision permits. Driving both the permitted and the denied assertions through this
      * one path is what gives the zero-invocation claim its teeth — a decision that wrongly permits
      * shows up immediately as an incremented counter.
