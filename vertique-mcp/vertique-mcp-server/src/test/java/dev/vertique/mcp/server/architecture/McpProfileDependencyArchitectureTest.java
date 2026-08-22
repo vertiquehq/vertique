@@ -17,6 +17,7 @@ import com.tngtech.archunit.lang.ConditionEvents;
 import com.tngtech.archunit.lang.SimpleConditionEvent;
 import dev.vertique.core.json.JsonProfileId;
 import dev.vertique.json.DefaultJsonMapperProfileRegistry;
+import dev.vertique.json.schema.AnnotationJsonSchemaGenerator;
 import dev.vertique.mcp.server.runtime.McpToolRuntime;
 import dev.vertique.mcp.tool.McpToolDescriptor;
 import dev.vertique.mcp.tool.SyntheticReversedMcpCoreToServerEdge;
@@ -42,12 +43,13 @@ import org.junit.jupiter.api.Test;
  * consumes {@code vertique-json} for the registry/config and {@code vertique-json-schema} for schema generation;
  * neither JSON artifact depends on MCP; and no reversed edge exists.
  *
- * <p><strong>Scanned scope.</strong> The rule reads the compiled production bytecode of the four artifacts that
+ * <p><strong>Scanned scope.</strong> The rule reads the compiled production bytecode of the five artifacts that
  * {@code vertique-mcp-server} compiles against — {@code vertique-core}, {@code vertique-json},
- * {@code vertique-mcp-core}, {@code vertique-mcp-server} — so a newly added production type is covered without
- * touching this test. {@code vertique-codegen-mcp} and generated application source are not on this module's
- * classpath, so their <em>outgoing</em> edges cannot be read here; their zones are still pinned as forbidden
- * <em>targets</em>, which is what keeps the server and core artifacts from ever reaching into the processor.
+ * {@code vertique-json-schema} (T009), {@code vertique-mcp-core}, {@code vertique-mcp-server} — so a newly added
+ * production type is covered without touching this test. {@code vertique-codegen-mcp} and generated application
+ * source are not on this module's classpath, so their <em>outgoing</em> edges cannot be read here; their zones are
+ * still pinned as forbidden <em>targets</em>, which is what keeps the server and core artifacts from ever reaching
+ * into the processor.
  */
 class McpProfileDependencyArchitectureTest {
 
@@ -68,6 +70,7 @@ class McpProfileDependencyArchitectureTest {
                 .contains(
                         "dev.vertique.core.json.JsonProfileId",
                         "dev.vertique.json.DefaultJsonMapperProfileRegistry",
+                        "dev.vertique.json.schema.AnnotationJsonSchemaGenerator",
                         "dev.vertique.mcp.tool.McpToolDescriptor",
                         "dev.vertique.mcp.server.runtime.McpToolRuntime");
         assertThat(productionViolations)
@@ -80,7 +83,9 @@ class McpProfileDependencyArchitectureTest {
                         "mcp-server -> core",
                         "mcp-server -> mcp-core",
                         "mcp-server -> json",
-                        "json -> core");
+                        "mcp-server -> json-schema",
+                        "json -> core",
+                        "json-schema -> core");
         assertThat(syntheticViolations).hasSize(1);
         assertThat(syntheticViolations.getFirst())
                 .contains(
@@ -124,8 +129,9 @@ class McpProfileDependencyArchitectureTest {
         }
 
         /**
-         * Imports every compiled production class of the four artifacts {@code vertique-mcp-server} compiles against:
-         * {@code vertique-core}, {@code vertique-json}, {@code vertique-mcp-core} and {@code vertique-mcp-server}.
+         * Imports every compiled production class of the five artifacts {@code vertique-mcp-server} compiles
+         * against: {@code vertique-core}, {@code vertique-json}, {@code vertique-json-schema} (T009),
+         * {@code vertique-mcp-core} and {@code vertique-mcp-server}.
          */
         static JavaClasses importCompiledProfileGraph() {
             return new ClassFileImporter()
@@ -133,6 +139,7 @@ class McpProfileDependencyArchitectureTest {
                     .importUrls(List.of(
                             compiledLocationOf(JsonProfileId.class),
                             compiledLocationOf(DefaultJsonMapperProfileRegistry.class),
+                            compiledLocationOf(AnnotationJsonSchemaGenerator.class),
                             compiledLocationOf(McpToolDescriptor.class),
                             compiledLocationOf(McpToolRuntime.class)));
         }

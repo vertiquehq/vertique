@@ -19,6 +19,8 @@ SPDX-License-Identifier: EUPL-1.2
         <dependency><groupId>${project.groupId}</groupId><artifactId>vertique-mcp-core</artifactId><version>${project.version}</version></dependency>
         <dependency><groupId>${project.groupId}</groupId><artifactId>vertique-core</artifactId></dependency>
         <dependency><groupId>${project.groupId}</groupId><artifactId>vertique-json</artifactId></dependency>
+        <dependency><groupId>${project.groupId}</groupId><artifactId>vertique-json-schema</artifactId></dependency>
+        <dependency><groupId>io.vertx</groupId><artifactId>vertx-json-schema</artifactId></dependency>
         <dependency><groupId>${project.groupId}</groupId><artifactId>vertique-rest-core</artifactId></dependency>
         <dependency><groupId>${project.groupId}</groupId><artifactId>vertique-rest-security</artifactId></dependency>
         <dependency><groupId>io.vertx</groupId><artifactId>vertx-web</artifactId></dependency>

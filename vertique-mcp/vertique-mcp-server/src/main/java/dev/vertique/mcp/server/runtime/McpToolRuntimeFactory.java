@@ -4,23 +4,28 @@
 package dev.vertique.mcp.server.runtime;
 
 import dev.vertique.core.exception.ConfigurationException;
+import dev.vertique.core.json.JsonMapperProfile;
 import dev.vertique.core.json.JsonMapperProfileRegistry;
 import dev.vertique.core.json.JsonProfileId;
 import dev.vertique.json.JsonConfig;
+import dev.vertique.json.schema.AnnotationJsonSchemaGenerator;
 import dev.vertique.mcp.server.McpServerConfig;
 import dev.vertique.mcp.tool.McpToolAccess;
 import dev.vertique.mcp.tool.McpToolAnnotations;
+import dev.vertique.mcp.tool.McpToolDescriptor;
 import dev.vertique.mcp.tool.McpToolInvoker;
 import jakarta.annotation.Nullable;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
 import java.lang.reflect.Type;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * The sole construction path for generated tool descriptors and their profile bindings.
@@ -37,11 +42,34 @@ import java.util.TreeMap;
  * framework-shipped profiles are safe by default. The unsafe mapper configurations an
  * application-supplied profile must not enable for a remotely reachable tool are documented in the
  * module reference, not enforced here.
+ *
+ * <p>Schema construction (T009): for each distinct effective profile used by a tool, this factory
+ * creates or reuses one {@link AnnotationJsonSchemaGenerator#forInputProfile(JsonMapperProfile)}
+ * and, when a structured output type is declared, one
+ * {@link AnnotationJsonSchemaGenerator#forOutputProfile(JsonMapperProfile)} — never
+ * {@link AnnotationJsonSchemaGenerator#withVictoolsDefaults()}, and never a directly configured
+ * Victools instance. The generated input schema is then hardened at the protocol argument-object
+ * boundary by {@link McpSchemaHardener} and re-serialized deterministically by
+ * {@link McpCanonicalJsonWriter}; a declared structured-output schema is published exactly as
+ * JSON-005 generates it, since output is server-produced and carries no argument-object boundary to
+ * close. None of this happens on the request path: it runs exactly once per tool, here, during
+ * composition.
  */
 @Singleton
 public final class McpToolRuntimeFactory {
 
     private final McpJsonProfileResolver profileResolver;
+
+    /**
+     * One profile-aware input-direction generator per distinct effective {@link JsonProfileId},
+     * created or reused across every tool sharing that profile, never rebuilt per tool.
+     */
+    private final Map<JsonProfileId, AnnotationJsonSchemaGenerator> inputGeneratorsByProfile =
+            new ConcurrentHashMap<>();
+
+    /** The output-direction counterpart of {@link #inputGeneratorsByProfile}. */
+    private final Map<JsonProfileId, AnnotationJsonSchemaGenerator> outputGeneratorsByProfile =
+            new ConcurrentHashMap<>();
 
     /**
      * Binds the factory to the registries and configuration that select an effective profile.
@@ -58,9 +86,10 @@ public final class McpToolRuntimeFactory {
     /**
      * Builds the one immutable runtime binding of a generated tool.
      *
-     * <p>The effective JSON profile is resolved once. Binding the resolved profile to the
-     * profile-aware schema generator, and with it the returned {@link McpToolRuntime}, lands with the
-     * schema slice; until then this method resolves the profile and then reports the unbound step.
+     * <p>The effective JSON profile is resolved once, JSON-005's profile-aware generator contract
+     * builds the canonical input (and, when declared, output) schema, MCP's own hardening and
+     * canonical re-serialization apply to the input schema, and the resulting descriptor and stable
+     * mapper are bound into the returned, immutable runtime.
      *
      * @param <I> the generated input-carrier record type
      * @param name the unique published tool name
@@ -75,6 +104,7 @@ public final class McpToolRuntimeFactory {
      *     tool declares none
      * @param access the resolved authorization policy
      * @return the immutable schema-and-mapper binding for this tool
+     * @throws ConfigurationException if two parameters declare the same external name
      */
     public <I> McpToolRuntime<I> create(
             String name,
@@ -86,9 +116,65 @@ public final class McpToolRuntimeFactory {
             List<McpToolParameterMetadata> parameters,
             @Nullable JsonProfileId declaredJsonProfile,
             McpToolAccess access) {
-        profileResolver.resolve(declaredJsonProfile);
-        throw new UnsupportedOperationException(
-                "MCP tool schema generation is bound to the profile-aware schema generator in a later slice");
+        Objects.requireNonNull(inputCarrierType, "inputCarrierType");
+        List<McpToolParameterMetadata> parameterMetadata =
+                List.copyOf(Objects.requireNonNull(parameters, "parameters"));
+        requireUniqueExternalNames(name, parameterMetadata);
+
+        JsonMapperProfile profile = profileResolver.resolve(declaredJsonProfile);
+
+        String hardenedInputSchema = McpCanonicalJsonWriter.writeCanonical(McpSchemaHardener.harden(
+                McpCanonicalJsonWriter.read(inputGeneratorFor(profile).generateCanonical(inputCarrierType)),
+                parameterMetadata));
+
+        String outputSchema = structuredOutputType == null
+                ? null
+                : outputGeneratorFor(profile).generateCanonical(structuredOutputType);
+
+        McpToolDescriptor descriptor =
+                new McpToolDescriptor(name, title, description, annotations, hardenedInputSchema, outputSchema, access);
+        return new McpToolRuntime<>(descriptor, profile.mapper(), inputCarrierType);
+    }
+
+    /**
+     * Returns the shared input-direction generator for {@code profile}'s id, building it once on
+     * first use.
+     *
+     * @param profile the resolved effective profile
+     * @return the shared generator for this profile's input direction
+     */
+    private AnnotationJsonSchemaGenerator inputGeneratorFor(JsonMapperProfile profile) {
+        return inputGeneratorsByProfile.computeIfAbsent(
+                profile.id(), unusedId -> AnnotationJsonSchemaGenerator.forInputProfile(profile));
+    }
+
+    /**
+     * Returns the shared output-direction generator for {@code profile}'s id, building it once on
+     * first use.
+     *
+     * @param profile the resolved effective profile
+     * @return the shared generator for this profile's output direction
+     */
+    private AnnotationJsonSchemaGenerator outputGeneratorFor(JsonMapperProfile profile) {
+        return outputGeneratorsByProfile.computeIfAbsent(
+                profile.id(), unusedId -> AnnotationJsonSchemaGenerator.forOutputProfile(profile));
+    }
+
+    /**
+     * Rejects a parameter list carrying two entries with the same external name.
+     *
+     * @param toolName the owning tool's name, for the failure message
+     * @param parameters the declared-parameter metadata
+     * @throws ConfigurationException if a duplicate external name is found
+     */
+    private static void requireUniqueExternalNames(String toolName, List<McpToolParameterMetadata> parameters) {
+        Set<String> seenExternalNames = new HashSet<>();
+        for (McpToolParameterMetadata parameter : parameters) {
+            if (!seenExternalNames.add(parameter.externalName())) {
+                throw new ConfigurationException("Duplicate MCP tool parameter external name '"
+                        + parameter.externalName() + "' for tool '" + toolName + "'");
+            }
+        }
     }
 
     /**

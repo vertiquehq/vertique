@@ -3,8 +3,8 @@
 > **Status:** Alpha
 > **Package:** `dev.vertique.mcp.server`
 > **Artifact:** `vertique-mcp-server`
-> **Depends on:** `vertique-mcp-core`, `vertique-core`, `vertique-json`, `vertique-rest-core`,
-> `vertique-rest-security`
+> **Depends on:** `vertique-mcp-core`, `vertique-core`, `vertique-json`, `vertique-json-schema`,
+> `vertique-rest-core`, `vertique-rest-security`
 
 `vertique-mcp-server` composes the optional HTTP Model Context Protocol server. Include
 `McpServerModule` explicitly in the application's Dagger component and supply an immutable
@@ -227,16 +227,51 @@ Custom serializers and deserializers on otherwise-supported types are ordinary t
 code and need no special treatment. If a tool has no application-supplied profile, it inherits a
 framework profile and this section does not apply.
 
+### Startup schema assembly and hardening
+
+`McpToolRuntimeFactory.create(...)` consumes `vertique-json-schema`'s
+`AnnotationJsonSchemaGenerator.forInputProfile(profile)` / `forOutputProfile(profile)` — never
+`withVictoolsDefaults()` and never a directly configured Victools instance. For each distinct
+effective profile used by a tool, the factory creates or reuses one generator per direction, never
+rebuilding one per tool.
+
+The generated input schema is then hardened at the protocol argument-object boundary, document-driven
+and never type-graph-driven:
+
+- the root carrier object is closed unconditionally — including a zero-argument carrier — with
+  `additionalProperties: false`, so a zero-arg tool rejects arbitrary arguments;
+- a non-root object schema is closed the same way exactly when it declares a non-empty `properties`
+  member and no sibling `$ref`; a property-less non-root object — a resolved `Map<K,V>` included —
+  stays open and schema-unconstrained for values;
+- `additionalProperties` is never placed beside a `$ref`, and a `$ref` is never dereferenced during
+  hardening;
+- the walk descends a fixed grammar — `properties`, `items`, `prefixItems`, `anyOf`, `oneOf`, `allOf`,
+  `$defs` — so a closed polymorphic base is hardened by closing each `anyOf`/`oneOf` branch
+  individually;
+- each declared parameter's description is attached to its matching root-carrier property only, as a
+  separate pass.
+
+After hardening, the document is re-serialized deterministically (recursive UTF-16 key ordering,
+compact encoding) through MCP's own package-private writer — never through JSON-005's canonicalizer,
+which is package-private inside `vertique-json-schema`, and never through a profile's payload mapper.
+A declared structured-output schema is published exactly as JSON-005 generates it: output is
+server-produced and carries no argument-object boundary to close. None of this schema work happens on
+the request path; it runs exactly once per tool, during composition.
+
+Because `vertx-json-schema` publishes no cross-`Context` concurrency guarantee for a compiled
+validator, one compiled, immutable validator set exists per deployed server Vert.x `Context` — one
+Dagger graph per verticle instance in this framework's stateless multi-instance deployment model
+yields exactly that. No validator instance is ever shared across two contexts, and no schema
+compilation occurs on the request path.
+
 ### What is not here yet
 
-This version composes the tool registry and the effective profile. Two
-things are deliberately still absent, and both arrive with their owning slices:
+This version composes the tool registry, the effective profile, and the hardened startup schema
+capability. What is deliberately still absent arrives with its owning slice:
 
-- **Schema generation.** Descriptors carry a minimal, valid object input schema rather than a
-  profile-aware synthesized one, and no output schema is generated. Argument materialization,
-  input-policy application, and Bean Validation land with the same work.
 - **Tool calls over the wire.** The mount still serves only the bounded `server/discover` walking
-  skeleton; `tools/list` and `tools/call` are not exposed.
+  skeleton; `tools/list` and `tools/call` are not exposed. Argument materialization against the
+  compiled validators, input-policy application, and Bean Validation land with that work.
 
 ## Authorization
 
