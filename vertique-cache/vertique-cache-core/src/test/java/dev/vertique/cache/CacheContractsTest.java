@@ -10,7 +10,13 @@ import dev.vertique.cache.config.CacheConfig;
 import dev.vertique.cache.config.CacheEntryConfig;
 import dev.vertique.cache.spi.CacheKey;
 import dev.vertique.cache.spi.CacheRegion;
+import dev.vertique.core.codegen.MethodMetadata;
+import dev.vertique.core.codegen.ParameterMetadata;
+import java.lang.reflect.Method;
+import java.lang.reflect.Type;
+import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -70,6 +76,111 @@ class CacheContractsTest {
                         100,
                         Map.of("profile", new CacheEntryConfig(CacheMode.LOCAL, 121))));
     }
+
+    @Test
+    @DisplayName("key templates percent-encode scalars and resolve named record properties")
+    void keyTemplatesRenderBoundedScalarSelectors() {
+        MethodMetadata metadata = metadata("user");
+
+        assertEquals(
+                "user/%C3%85sa/true",
+                CacheKeyRenderer.render("user/{user.name}/{0.active}", metadata, new Object[] {new User("Åsa", true)}));
+    }
+
+    @Test
+    @DisplayName("key templates reject unmatched braces and object terminals")
+    void keyTemplatesRejectUnsupportedSelectors() {
+        MethodMetadata metadata = metadata("user");
+
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> CacheKeyRenderer.render("{user.missing}", metadata, new Object[] {new User("Åsa", true)}));
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> CacheKeyRenderer.render("{user", metadata, new Object[] {new User("Åsa", true)}));
+    }
+
+    private static MethodMetadata metadata(String parameterName) {
+        ParameterMetadata parameter = new ParameterMetadata() {
+            @Override
+            public int index() {
+                return 0;
+            }
+
+            @Override
+            public String name() {
+                return parameterName;
+            }
+
+            @Override
+            public Class<?> type() {
+                return User.class;
+            }
+
+            @Override
+            public <A extends java.lang.annotation.Annotation> Optional<A> findAnnotation(Class<A> type) {
+                return Optional.empty();
+            }
+
+            @Override
+            public boolean hasAnnotation(Class<? extends java.lang.annotation.Annotation> type) {
+                return false;
+            }
+
+            @Override
+            public Type genericType() {
+                return User.class;
+            }
+        };
+        return new MethodMetadata() {
+            @Override
+            public String name() {
+                return "cached";
+            }
+
+            @Override
+            public Class<?> declaringType() {
+                return Sample.class;
+            }
+
+            @Override
+            public Class<?> returnType() {
+                return Object.class;
+            }
+
+            @Override
+            public Class<?>[] parameterTypes() {
+                return new Class<?>[] {User.class};
+            }
+
+            @Override
+            public List<ParameterMetadata> parameters() {
+                return List.of(parameter);
+            }
+
+            @Override
+            public <A extends java.lang.annotation.Annotation> Optional<A> findAnnotation(Class<A> type) {
+                return Optional.empty();
+            }
+
+            @Override
+            public boolean hasAnnotation(Class<? extends java.lang.annotation.Annotation> type) {
+                return false;
+            }
+
+            @Override
+            public Type genericReturnType() {
+                return Object.class;
+            }
+
+            @Override
+            public Method asMethod() {
+                throw new UnsupportedOperationException();
+            }
+        };
+    }
+
+    private record User(String name, boolean active) {}
 
     static final class Sample {
         @Cacheable(name = "profile", key = "{0}")
