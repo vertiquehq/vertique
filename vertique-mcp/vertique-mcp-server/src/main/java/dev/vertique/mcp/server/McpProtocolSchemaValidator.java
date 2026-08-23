@@ -22,7 +22,7 @@ import java.util.Map;
 /**
  * Compiles and runs {@code params} validation against the pinned official per-method request
  * schema (contract §4.9 — {@code schema/2026-07-28/schema.json}, upstream commit {@code
- * aa7306efa4dcc03a2a9f2f223e3b2d7a0c5f3ded}), closing R08 (issue #438): {@link
+ * aa7306efa4dcc03a2a9f2f223e3b2d7a0c5f3ded}), closing R08 (merge blocker 1): {@link
  * McpProtocolCodec#validateNegotiation} previously checked only selected {@code _meta} fields, the
  * three required headers, and the reserved MRTR fields — never the pinned schema itself — so a
  * structurally invalid {@code cursor} or {@code name} reached interceptors, tool lookup, or

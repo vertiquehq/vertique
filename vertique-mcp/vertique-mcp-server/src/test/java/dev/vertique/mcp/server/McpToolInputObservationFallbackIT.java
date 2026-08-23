@@ -62,12 +62,28 @@ import org.junit.jupiter.api.Timeout;
  * would escape before any response was begun: no response, no terminal, no completion, permanently
  * stranding the request.
  *
- * <p>Drives a real port-0 server with a lifecycle observer whose session deliberately throws a
- * {@code StackOverflowError} from {@code onToolInput} — the harder of the two failure modes to
- * isolate, since {@code McpCompletionCoordinator#publishToolInput}'s own per-session {@code invoke()}
- * wrapper catches only {@code RuntimeException}, not {@code Error} — and asserts the request still
- * settles through the same bounded, SSE-framed internal-error fallback stage 7 uses, rather than
- * hanging.
+ * <p>Drives a real port-0 server against both failure modes and asserts, in both, that the request
+ * still settles rather than hanging — which is what P05 finding #5 is about.
+ *
+ * <p><strong>R14 item 3 changed the settled outcome of the callback row, and this is deliberate.</strong>
+ * This proof used to assert that a {@code StackOverflowError} from a session's {@code onToolInput}
+ * degraded the whole request to a bounded {@code 500}, and its javadoc explained why: {@code
+ * McpCompletionCoordinator#invoke} caught only {@code RuntimeException}, so an {@code Error} escaped
+ * the coordinator and stage 5's dispatcher guard caught it instead. That made one callback class
+ * behave two ways — a {@code RuntimeException} from the same callback was isolated and the request
+ * succeeded, an {@code Error} turned it into a 500 — and contradicted this module's own frozen
+ * contract, which says observer callback failures "are isolated per observer and never change the
+ * protocol or business outcome". R14 item 3 applies the project's narrow {@code RuntimeException |
+ * StackOverflowError} policy at {@code invoke}, so the {@code Error} is now isolated exactly like the
+ * {@code RuntimeException} always was and the tool call returns its ordinary {@code 200} result. The
+ * request still settles; it settles better.
+ *
+ * <p>Stage 5's dispatcher guard is not thereby left unproven. The second row exercises it directly,
+ * through a <em>framework-side</em> stage-5 failure that {@code invoke} neither sees nor can isolate:
+ * {@code McpToolInputObservation}'s compact constructor rejecting a {@code null} normalized-argument
+ * tree, thrown while building the observation, before any session is reached. That still degrades to
+ * the bounded, SSE-framed internal-error response, which is the correct answer there — the framework,
+ * not an observer, failed.
  */
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
 class McpToolInputObservationFallbackIT {
@@ -103,23 +119,58 @@ class McpToolInputObservationFallbackIT {
     }
 
     @Test
-    @DisplayName("degrades a StackOverflowError from a value-observer's onToolInput to the bounded "
-            + "internal-error fallback, instead of stranding the request")
-    void shouldDegradeAStackOverflowFromOnToolInputToTheBoundedFallback() throws Exception {
-        fixture = Fixture.start(vertx);
+    @DisplayName("isolates a StackOverflowError from a value-observer's onToolInput, settling the tool "
+            + "call normally instead of stranding the request")
+    void shouldIsolateAStackOverflowFromOnToolInputAndStillSettleTheRequest() throws Exception {
+        fixture = Fixture.start(vertx, false);
         server = fixture.server();
         rawClient = vertx.createHttpClient();
         client = WebClient.wrap(rawClient);
 
         HttpResponse<Buffer> response = await(callTool(1));
 
-        // DECISIVE: the request must settle — a real HTTP response within the test's bounded await,
-        // not a hang. Before the fix, the StackOverflowError escaping publishToolInput's call site
-        // (before selectSse's headers were ever followed by a beginWrite) would leave this await to
-        // time out instead.
+        // DECISIVE (P05 finding #5, unchanged): the request must settle — a real HTTP response within
+        // the test's bounded await, not a hang. Before that fix, the StackOverflowError escaping
+        // publishToolInput's call site (before selectSse's headers were ever followed by a beginWrite)
+        // left this await to time out instead.
+        //
+        // DECISIVE (R14 item 3): the settled outcome is the tool's own successful result, not a 500.
+        // A misbehaving observer must not change the protocol outcome — this module's frozen contract
+        // — and a RuntimeException from this exact callback always behaved this way. Reverting
+        // McpCompletionCoordinator#invoke to RuntimeException-only turns this row red with a 500.
         assertThat(response.statusCode())
-                .as("DECISIVE: a StackOverflowError from onToolInput must degrade to a bounded response, "
-                        + "never hang")
+                .as("DECISIVE: an observer callback failure must not change the protocol outcome, and "
+                        + "must not hang either")
+                .isEqualTo(200);
+        String rawBody = response.bodyAsString();
+        assertThat(rawBody).startsWith(SSE_PREFIX);
+        JsonObject decoded =
+                new JsonObject(rawBody.substring(SSE_PREFIX.length()).stripTrailing());
+        assertThat(decoded.containsKey("error"))
+                .as("the observer's failure must not be reported to the client at all")
+                .isFalse();
+        assertThat(decoded.getJsonObject("result").getBoolean("isError"))
+                .as("the tool's own result must be delivered untouched")
+                .isFalse();
+    }
+
+    @Test
+    @DisplayName("degrades a framework-side stage-5 failure to the bounded internal-error fallback")
+    void shouldDegradeAFrameworkSideStage5FailureToTheBoundedFallback() throws Exception {
+        fixture = Fixture.start(vertx, true);
+        server = fixture.server();
+        rawClient = vertx.createHttpClient();
+        client = WebClient.wrap(rawClient);
+
+        HttpResponse<Buffer> response = await(callTool(1));
+
+        // DECISIVE (P05 finding #5): this failure happens while the framework builds the observation —
+        // McpToolInputObservation's compact constructor rejecting a null normalized-argument tree —
+        // so no session is reached and McpCompletionCoordinator#invoke can neither see nor isolate it.
+        // Only stage 5's own dispatcher guard stands between it and a stranded request with no
+        // response, no terminal and no completion. Removing that guard turns this row red.
+        assertThat(response.statusCode())
+                .as("DECISIVE: a framework-side stage-5 failure must degrade to a bounded response, " + "never hang")
                 .isEqualTo(500);
         String rawBody = response.bodyAsString();
         assertThat(rawBody).startsWith(SSE_PREFIX);
@@ -152,12 +203,23 @@ class McpToolInputObservationFallbackIT {
         return future.toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS);
     }
 
-    /** A zero-argument, zero-result tool — the value under test is the observer, not the tool. */
+    /**
+     * A zero-argument, zero-result tool — the value under test is the observer, not the tool.
+     *
+     * <p>{@code nullNormalizedArguments} makes {@code normalizedArguments()} return {@code null},
+     * which {@code McpToolInputObservation}'s compact constructor rejects. That is a deterministic,
+     * framework-side stage-5 failure: it is thrown while the dispatcher builds the observation, before
+     * any session is reached, so it isolates stage 5's own guard from the coordinator's per-session
+     * isolation. Chosen over a pathologically deep argument tree, which would depend on the JVM's
+     * actual stack depth and be flaky.
+     */
     private static final class NoopToolInvoker implements McpToolInvoker {
         private final McpToolDescriptor descriptor;
+        private final boolean nullNormalizedArguments;
 
-        NoopToolInvoker(McpToolDescriptor descriptor) {
+        NoopToolInvoker(McpToolDescriptor descriptor, boolean nullNormalizedArguments) {
             this.descriptor = descriptor;
+            this.nullNormalizedArguments = nullNormalizedArguments;
         }
 
         @Override
@@ -170,7 +232,7 @@ class McpToolInputObservationFallbackIT {
             return new McpPreparedToolCall() {
                 @Override
                 public Map<String, Object> normalizedArguments() {
-                    return Map.of();
+                    return nullNormalizedArguments ? null : Map.of();
                 }
 
                 @Override
@@ -237,7 +299,7 @@ class McpToolInputObservationFallbackIT {
         private final HttpServer server;
         private final int port;
 
-        private Fixture(Vertx vertx) throws Exception {
+        private Fixture(Vertx vertx, boolean frameworkSideFailure) throws Exception {
             McpServerConfig config = McpServerConfig.builder()
                     .enabled(true)
                     .serverName(SERVER_NAME)
@@ -251,7 +313,8 @@ class McpToolInputObservationFallbackIT {
                     "{\"type\":\"object\"}",
                     null,
                     new McpToolAccess(McpAccessMode.PERMIT_ALL, List.of(), null));
-            McpToolRegistry registry = McpToolRegistry.build(Set.of(new NoopToolInvoker(descriptor)));
+            McpToolRegistry registry =
+                    McpToolRegistry.build(Set.of(new NoopToolInvoker(descriptor, frameworkSideFailure)));
 
             RecordingSecurityRuntime securityRuntime = new RecordingSecurityRuntime();
             McpPolicyEnforcer policyEnforcer = new McpPolicyEnforcer(new SecurityPolicyEnforcer(
@@ -290,8 +353,8 @@ class McpToolInputObservationFallbackIT {
             this.port = server.actualPort();
         }
 
-        static Fixture start(Vertx vertx) throws Exception {
-            return new Fixture(vertx);
+        static Fixture start(Vertx vertx, boolean frameworkSideFailure) throws Exception {
+            return new Fixture(vertx, frameworkSideFailure);
         }
 
         HttpServer server() {

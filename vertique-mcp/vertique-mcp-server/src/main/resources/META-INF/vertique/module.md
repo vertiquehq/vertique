@@ -52,6 +52,20 @@ greater than zero**, naming all three keys in the `ConfigurationException` messa
 Set at least one non-zero `HttpConfig` timeout for any MCP deployment — the mount will not start
 otherwise.
 
+**Configuration keys are flat under `mcp`.** `McpServerConfig` is bound from the `mcp` section by
+Jackson using the field names exactly as declared, so the accepted key for the scan deadline is
+`mcp.toolsListDeadlineMs`, not `mcp.tools.listDeadlineMs`, and for the output cap it is
+`mcp.outputMaxBytes`, not `mcp.output.maxBytes`. There is no nested `tools`, `output`, or `json`
+object. Because everything except the five retired keys below is deliberately forward-compatible
+(`ignoreUnknown = true`), a dotted key is **silently ignored** and the deployment starts on the
+default with no warning — so the difference is not cosmetic. Earlier revisions of this document wrote
+several of these keys in dotted form; `mcp.toolsListDeadlineMs` is corrected above, and the remaining
+dotted spellings elsewhere in this document (`mcp.output.maxBytes`, `mcp.tools.pageSize`,
+`mcp.tools.ttlMs`, `mcp.jsonProfile`) are prose references to the same flat fields —
+`outputMaxBytes`, `toolsPageSize`, `toolsTtlMs`, `jsonProfile` — and are being corrected as their
+owning sections are next revised. When in doubt, the field names on `McpServerConfig` are the
+contract.
+
 **Upgrading past T007:** `mcp.requestTimeoutMs`, `mcp.jsonMaxDepth`, `mcp.jsonMaxPropertiesPerObject`,
 `mcp.jsonMaxItemsPerArray`, and `mcp.jsonMaxStringChars` no longer exist. `McpServerConfig` fails
 startup on any one of these five retired keys for one release (issue #424 fix), naming the offending
@@ -118,7 +132,26 @@ shared HTTP layer and reaches MCP through this same disconnect/reset settlement 
 transport cancellation (`McpErrorType.TRANSPORT`) rather than a distinct timeout outcome. `McpErrorType.TIMEOUT` has no producer in this module; it is retained in the frozen
 lifecycle enum purely for enum stability, reserved for a future cross-transport server-operation
 `@Timeout` capability. Observer `open`, callback, null-session, and retention failures are isolated
-per observer and never change the protocol or business outcome. The method, `Origin`,
+per observer and never change the protocol or business outcome — including a `StackOverflowError` from
+an observer's `open` or from any `onToolInput`/`onToolOutput`/`onTerminal`/`onCompleted` callback,
+which is isolated exactly like a `RuntimeException` (R14 item 3): a deeply recursive application
+callback can no longer abort the coordinator's construction or strand the completion behind a
+half-published terminal. **This changed one observable outcome:** a `StackOverflowError` from a
+capable session's `onToolInput` used to escape the coordinator and degrade the whole `tools/call` to
+a bounded `500`, while a `RuntimeException` from the same callback was isolated and the call
+succeeded. Both are now isolated and the call succeeds, which is what "never change the protocol or
+business outcome" always said. A failure the *framework* hits while building an observation — as
+opposed to one an observer throws — still degrades to the bounded internal-error response.
+
+**A disconnect or reset also runs the ordinary request-scoped cleanup (R14 item 5).** Settlement is
+driven from the routing context's own end handler rather than from the response close/exception
+handlers. Those two are single-slot, and Vert.x Web installs its own there to drive every registered
+end handler, so registering on them replaced them and silently disabled the framework's request
+cleanup on this mount for exactly the paths it matters on: nothing registered with
+`RequestContextLifecycle` — the correlation binding, any other holder binding, or the mount's own
+request-scoped upload cleanup — ran when a client vanished mid-request. It does now. Transport
+outcome classification also became more accurate as a result: an orderly client disconnect records
+`DISCONNECTED` where it previously recorded `RESET`. The method, `Origin`,
 `Content-Type`, and `Accept` admission checks all run before the completion coordinator is created,
 so — like a body-limit rejection — a request that fails admission produces no lifecycle observation;
 only an admitted request opens observation.
@@ -241,7 +274,7 @@ through a pre-encoded `-32603` *Internal error* response that is written exactly
 carries the cause's text, so an internal exception message cannot leak to a client.
 
 Once a decode succeeds, `McpProtocolCodec#validateNegotiation` validates protocol negotiation (R05,
-issue #429; R08, issue #438): `params` must satisfy the pinned official per-method schema
+issue #429; R08, merge blocker 1): `params` must satisfy the pinned official per-method schema
 (`schema/2026-07-28/schema.json` — `RequestParams` for `server/discover`, `PaginatedRequestParams`
 for `tools/list`, `CallToolRequestParams` for `tools/call`), so a schema-invalid `cursor` or `name` is
 rejected here — one narrow, deliberate exception: `tools/call`'s `arguments` is excluded from this
@@ -405,6 +438,21 @@ earlier, because a probe-then-convert shape would serialize the handler's raw va
 `encodeCapped` as the sole serialization step avoids that by construction. The complete terminal
 message is bounded the same way, by the same mechanism, when the normalized value is re-embedded into
 the full envelope.
+
+**The reparse is bounded in nodes as well as in bytes (R14 item 1).** A byte cap alone does not bound
+what the reparse costs in memory: a two-megabyte document of nothing but `[` characters is inside any
+byte cap and still materializes roughly a million container objects. The reader that parses
+`encodeCapped`'s bounded bytes back into the canonical `Map`/`List`/scalar tree therefore also caps
+the number of parser tokens, and that cap is derived from a heap budget — the same 512 MiB / 10% / 256
+concurrent-request budget the envelope codec's own token cap is derived from — divided by a measured
+worst-case retained cost of 100 bytes per materialized node. **A structured result that materializes
+more than 2,000 nodes is rejected**, however far inside `mcp.output.maxBytes` it is, and degrades to
+the same bounded internal-error response every other failure in this stage uses. This is a real limit
+on tool output shape, not only on tool output size: a result with thousands of small elements will hit
+it. `mcp.output.maxBytes` continues to bound the reparse in bytes and continues to scale with
+configuration; the node bound is fixed, because scaling it with a byte figure is exactly what made the
+previous revision's token bound unreachable — a JSON token always costs at least one source byte, so a
+token cap set to the byte cap could never fire.
 
 The output-value observation (`onToolOutput`) is published only after the terminal envelope has been
 successfully encoded — never before. A capable session can therefore never observe a structured value
@@ -630,7 +678,8 @@ authorization event. Examination for one page stops at the first of:
 - the registry being exhausted.
 
 A page may therefore be underfilled or empty and still carry a `nextCursor` while unexamined
-candidates remain past the budget; only a scan that reaches the registry's end omits it. Only
+candidates remain past the budget. A `nextCursor` is omitted in exactly two cases: a scan that
+reached the registry's end, and the forward-progress bound below. Only
 tools the decision permits are returned — a hidden `@DenyAll` or role-mismatched candidate examined
 within the scan window never appears in the page, even though it was authorized.
 
@@ -643,10 +692,24 @@ very first candidate of the scan is the one that times out, with no previous can
 the cursor then carries a reserved "resume from the beginning" anchor instead, so this case is
 retried too, never silently and permanently excluded.
 
+**Pagination is guaranteed to make progress (R14 item 2).** A page that stops before examining
+anything past the resume point it was given — a gate timeout on its very first candidate, an
+exhausted scan deadline, or an observed cancellation — hands back a `nextCursor` resolving to the
+*same* resume point, so that the candidate it stopped on is retried rather than permanently skipped.
+Because this document tells clients to follow an empty page's cursor, a persistently slow or
+unavailable decision point would otherwise spin a conforming client forever, one full gate deadline
+per request, with an identical empty body every time; the per-request scan deadline cannot bound
+that, because the loop spans requests. The cursor therefore carries an opaque count of consecutive
+non-progressing pages. **After two consecutive pages that do not advance the resume point, no
+`nextCursor` is returned at all** and the cursor chain ends. Clients need no change: this is the
+ordinary "no more pages" signal. A page that does advance resets the count, and a fresh, cursor-less
+`tools/list` always starts a new chain — so a client that comes back after the backend recovers
+paginates normally.
+
 **Request-scoped scan budget (R10, issue #438).** The per-candidate gate deadline above bounds only
 one decision; it does not bound the sum of up to `4 * mcp.tools.pageSize` of them. A decision point
 that consistently answers just under its own deadline never trips the gate-timeout stop, so the walk
-still needs its own aggregate bound. `mcp.tools.listDeadlineMs` (default `30000`, range
+still needs its own aggregate bound. `mcp.toolsListDeadlineMs` (default `30000`, range
 1,000–600,000) is a single, request-scoped absolute wall-clock deadline computed once when the scan
 starts; once it elapses, the scan stops exactly like the gate-timeout and budget-exhaustion stops
 above — a truncated page whose `nextCursor` still reaches every unexamined candidate. Independently,
@@ -658,8 +721,9 @@ authorization decisions, whether the disconnect lands between candidates or whil
 flight.
 
 The cursor is unsigned, non-expiring, opaque base64url (no padding) JSON: the frozen protocol
-version, the current registry digest, and the last global-name candidate examined (not merely the
-last visible tool). It carries no signature, HMAC, or expiry member — tampering cannot bypass
+version, the current registry digest, the last global-name candidate examined (not merely the last
+visible tool), and the consecutive non-progressing-page count the forward-progress bound above
+spends. It carries no signature, HMAC, or expiry member — tampering cannot bypass
 authorization, since every candidate reached from a resumed cursor is reauthorized exactly like any
 other, and the immutable registry digest (not a client-enforceable expiry) invalidates a cursor
 across deployments. `McpCursorCodec` bounds the base64url-decoded byte length **before** any JSON

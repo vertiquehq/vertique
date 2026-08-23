@@ -100,7 +100,12 @@ final class McpRouterMount implements RouterMount {
         // runs before the sub-router and materialises multipart parts on disk; the cleanup call is
         // delegated to the root routing context, so it deletes those ancestor-spooled uploads too, even
         // for a request cheap admission goes on to reject. Routing context end handlers cover normal
-        // completion, failures, and connection/stream resets (see JaxRsRouterMount). This handler reads
+        // completion, failures, and connection/stream resets (see JaxRsRouterMount) — a claim that was
+        // false on this mount until R14 item 5: McpRequestDispatcher#registerSettlementHooks used to
+        // overwrite the single-slot response close/exception handlers Vert.x Web's routing context
+        // installs to drive those end handlers, so none of them fired on a disconnect or a reset, this
+        // upload cleanup included. Settlement now uses the multicast addEndHandler instead, which
+        // restores the coverage this comment claims; McpDisconnectCleanupIT pins it. This handler reads
         // no body itself, so mounting it ahead of cheap admission does not reopen the body-consumption
         // gap that admission ordering exists to close.
         router.route().order(Integer.MIN_VALUE).handler(context -> {

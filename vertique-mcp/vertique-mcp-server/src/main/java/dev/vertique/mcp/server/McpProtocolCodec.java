@@ -33,7 +33,7 @@ import java.util.Set;
  * request methods are the bounded set {@code server/discover}, {@code tools/list}, and
  * {@code tools/call}. Tool-level authorization ({@code -32602}) belongs to a later HTTP slice and is
  * deliberately absent here. Protocol negotiation — validation of {@code params} against the pinned
- * official per-method schema (R08, issue #438), the required header/body agreement, the per-method
+ * official per-method schema (R08, merge blocker 1), the required header/body agreement, the per-method
  * {@code _meta} shape (issue #429), and the reserved {@code tools/call} MRTR fields — is {@link
  * #validateNegotiation}, a distinct step the caller runs strictly after a successful {@link
  * #decodeEnvelope} and strictly before any interceptor, tool lookup, or authorization; this class has
@@ -57,7 +57,7 @@ final class McpProtocolCodec {
      * shape, and a rejected reserved {@code tools/call} field — rather than the header/body comparison
      * alone: every one of these is a negotiation-stage failure in the sense R05's own title names, and
      * splitting them across two codes would give a caller no reliable signal that "negotiation failed"
-     * without also parsing the specific reason. Widened again (R08, issue #438) to also cover a
+     * without also parsing the specific reason. Widened again (R08, merge blocker 1) to also cover a
      * {@code params} value that fails the pinned official per-method schema — {@link
      * McpProtocolSchemaValidator} — for exactly the same reason: it is still a negotiation-stage
      * failure, and the contract's own frozen stage-4 language ("strict JSON decode, official envelope
@@ -192,7 +192,7 @@ final class McpProtocolCodec {
      * PaginatedRequestParams} ({@code tools/list}: types {@code cursor} as a string when present),
      * {@code CallToolRequestParams} ({@code tools/call}: requires {@code name} as a non-absent string;
      * {@code arguments} is deliberately excluded from this check — see {@link
-     * McpProtocolSchemaValidator}'s javadoc for why). This is the check R08 (issue #438) adds: before
+     * McpProtocolSchemaValidator}'s javadoc for why). This is the check R08 (merge blocker 1) adds: before
      * it, an invalid {@code cursor} or {@code name} reached interceptors, tool lookup, or authorization,
      * because none of the narrower checks below ever inspected them (a non-object {@code arguments}
      * value also reached them, and by design still does — {@link McpRequestDispatcher}'s pre-existing
@@ -250,7 +250,7 @@ final class McpProtocolCodec {
     NegotiationResult validateNegotiation(JsonNode envelope, MultiMap headers) {
         String method = envelope.get("method").asText();
         JsonNode params = envelope.get("params");
-        // R08 (issue #438): official envelope validation — contract §4.7 stage 4 names this before
+        // R08 (merge blocker 1): official envelope validation — contract §4.7 stage 4 names this before
         // "required-header comparison" — against the pinned per-method schema runs first, so a
         // structurally invalid cursor or name (neither of which the hand-rolled checks below ever
         // inspected) is rejected here, before any of the narrower _meta/header/reserved-field checks
@@ -344,9 +344,34 @@ final class McpProtocolCodec {
         }
     }
 
+    // --- Unbounded wire-format helpers: test-only, unreachable from any write path (R14 item 4) ---
+    //
+    // Every one of the three methods below serializes through an unrestricted writeValueAsBytes: none
+    // of them observes mcp.output.maxBytes. R12 (merge blocker 5) rerouted every dispatcher write path
+    // off them and onto McpRequestDispatcher#boundedErrorResponse, which streams through the capped
+    // stream instead. What remains here exists solely so McpGoldenWireTest and McpCodecFailureTest can
+    // pin this codec's own canonical error bytes without a dispatcher, a routing context, or a cap in
+    // the way.
+    //
+    // R14 item 4 deleted the fourth, errorResponseFor(JsonNode, NegotiationResult): after R12 it had
+    // zero callers in main OR test source, and deleting it makes R12's own documented mutation —
+    // putting codec.errorResponseFor(...) back into writeNegotiationRejection — fail to COMPILE. That
+    // is the regression protection R12's evidence reported as impossible to obtain: no test can
+    // distinguish the defective and fixed byte output, but a method that no longer exists cannot be
+    // called back into a write path at all.
+    //
+    // The three survivors are held off every write path by McpBoundedWritePathArchitectureTest, an
+    // ArchUnit rule over the compiled production bytecode: no production class other than this one may
+    // call them. That rule — not a javadoc note — is what keeps this comment true.
+
     /**
-     * Produces the bounded external JSON-RPC error response for a failing request frame, stamping the
+     * Produces the external JSON-RPC error response for a failing request frame, stamping the
      * original usable request id or a null id, and never leaking internal exception text.
+     *
+     * <p><strong>Test-only (R14 item 4).</strong> Bounded in <em>content</em> — the message text is a
+     * fixed constant and never carries internal detail — but not in <em>bytes</em>: it has no {@code
+     * mcp.output.maxBytes} check. No production caller exists, and none may be added; see this
+     * section's banner comment.
      *
      * <p>Re-analyzes {@code utf8} from scratch: a full strict-UTF-8 validation and Jackson parse of up
      * to the body limit, exactly like {@link #decodeEnvelope} did. Prefer {@link #errorResponseFor}
@@ -364,10 +389,13 @@ final class McpProtocolCodec {
     }
 
     /**
-     * Produces the same bounded external JSON-RPC error response {@link #errorResponse} does, from an
+     * Produces the same external JSON-RPC error response {@link #errorResponse} does, from an
      * already-computed {@link Decoded} failure rather than re-decoding the original bytes — the body
      * is analyzed exactly once per request on the {@link #decodeEnvelope} call that produced {@code
      * decoded}.
+     *
+     * <p><strong>Test-only (R14 item 4).</strong> Byte-unbounded, exactly like {@link #errorResponse};
+     * no production caller exists and none may be added — see this section's banner comment.
      *
      * @param decoded a failed decode this codec already produced for the same request
      * @return the complete, bounded JSON-RPC error response bytes
@@ -382,25 +410,11 @@ final class McpProtocolCodec {
     }
 
     /**
-     * Produces the bounded external JSON-RPC error response for a failed {@link #validateNegotiation}
-     * result, stamping the given usable request id.
+     * Settles an internal codec failure through the pre-encoded internal-error response, written
+     * exactly once and never carrying the cause's text.
      *
-     * @param id the original usable request id, or {@code null} when none is trustworthy
-     * @param negotiation a failed negotiation result this codec already produced for the same request
-     * @return the complete, bounded JSON-RPC error response bytes
-     * @throws IllegalArgumentException if {@code negotiation} is not an error ({@link
-     *     NegotiationResult#isError()} is {@code false})
-     */
-    byte[] errorResponseFor(@Nullable JsonNode id, NegotiationResult negotiation) {
-        if (!negotiation.isError()) {
-            throw new IllegalArgumentException("errorResponseFor requires a failed NegotiationResult");
-        }
-        return encodeError(id, negotiation.error().code(), negotiation.error().message());
-    }
-
-    /**
-     * Settles an internal codec failure through the bounded pre-encoded internal-error response,
-     * written exactly once and never carrying the cause's text.
+     * <p><strong>Test-only (R14 item 4).</strong> Byte-unbounded, exactly like {@link #errorResponse};
+     * no production caller exists and none may be added — see this section's banner comment.
      *
      * @param id the original usable request id, or {@code null} when none is available
      * @param cause the internal failure whose text must never reach the client

@@ -71,7 +71,7 @@ import org.mockito.ArgumentCaptor;
  * accidentally triggering {@code -32020}, so a negative row's rejection is attributable to the one
  * mutated fact it names.
  *
- * <p><strong>R08 (issue #438) rows.</strong> The {@code SCHEMA_INVALID_..._ROW} rows above mutate only
+ * <p><strong>R08 (merge blocker 1) rows.</strong> The {@code SCHEMA_INVALID_..._ROW} rows above mutate only
  * {@code _meta} — exactly why R08 found this suite could pass while {@link McpProtocolCodec} validated
  * nothing else against the pinned official schema. The {@code NON_META_...} rows below each mutate a
  * schema-typed field <em>outside</em> {@code _meta} — {@code cursor} ({@code tools/list}), {@code name}
@@ -116,13 +116,13 @@ class McpProtocolNegotiationTest {
     private static final String RESERVED_FIELD_ROW = "shouldRejectAToolsCallReservedFieldBeforeDispatch";
 
     /**
-     * R08 (issue #438): a {@code cursor} value the pinned schema types as a string, mutated to a
+     * R08 (merge blocker 1): a {@code cursor} value the pinned schema types as a string, mutated to a
      * number — a schema violation entirely outside {@code _meta}.
      */
     private static final String NON_META_INVALID_CURSOR_ROW = "shouldRejectANonStringCursorBeforeDispatch";
 
     /**
-     * R08 (issue #438): a {@code tools/call} request whose {@code name} — schema-required and typed as
+     * R08 (merge blocker 1): a {@code tools/call} request whose {@code name} — schema-required and typed as
      * a string — is absent. The pinned schema's {@code name} type carries no {@code minLength}, so a
      * present-but-blank {@code name} stays schema-valid and is deliberately left to the downstream
      * {@code -32602} unknown-or-unauthorized path (not this row's concern); an <em>absent</em> {@code
@@ -131,7 +131,7 @@ class McpProtocolNegotiationTest {
     private static final String NON_META_MISSING_NAME_ROW = "shouldRejectAMissingToolNameBeforeDispatch";
 
     /**
-     * R08 (issue #438): a {@code tools/call} request whose {@code name} is present but non-textual (a
+     * R08 (merge blocker 1): a {@code tools/call} request whose {@code name} is present but non-textual (a
      * number) — the pinned schema's {@code name} type is {@code string}, so this is also a genuine
      * schema violation, distinct from the missing-name row above.
      */
@@ -269,7 +269,7 @@ class McpProtocolNegotiationTest {
         assertRejectedBeforeDispatch(outcome, "a tools/call params carrying the reserved inputResponses field");
     }
 
-    // --- R08 (issue #438): schema violations outside _meta, one row per field the pinned schema types ---
+    // --- R08 (merge blocker 1): schema violations outside _meta, one row per field the pinned schema types ---
 
     private void shouldRejectANonStringCursorBeforeDispatch() {
         JsonObject body = toolsListBody();
@@ -299,7 +299,7 @@ class McpProtocolNegotiationTest {
     }
 
     /**
-     * R08 (issue #438), decisive boundary proof: a present non-object {@code arguments} value must
+     * R08 (merge blocker 1), decisive boundary proof: a present non-object {@code arguments} value must
      * still pass negotiation — it is deliberately excluded from {@link McpProtocolSchemaValidator}'s
      * compiled {@code tools/call} schema (see that class's javadoc) because {@code
      * McpToolCallMalformedArgumentsIT} already, decisively, pins a different wire shape for the exact

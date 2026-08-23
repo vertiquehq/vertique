@@ -518,6 +518,118 @@ class McpCompletionCoordinatorTest {
                 .containsExactlyInAnyOrder("A:close", "B:close");
     }
 
+    // --- R14 item 3: the callback-isolation sweep reaches this class's own callback sites ---
+
+    /**
+     * R14 item 3 — a {@link StackOverflowError} from an observer's {@code open} must not abort the
+     * coordinator's construction.
+     *
+     * <p>R13 item 1 widened seven application-callback sites in {@code McpRequestDispatcher} from
+     * {@code RuntimeException} to the project's narrow {@code RuntimeException | StackOverflowError}
+     * policy, but stopped at that file's boundary: {@code openObservers} here is the same class of
+     * application-supplied callback and still caught {@code RuntimeException} alone. The coordinator is
+     * constructed inside {@code McpRequestDispatcher#begin}, so an escaping {@code Error} takes the
+     * whole request down before any settlement hook, terminal event, or later observer exists.
+     *
+     * <p>Decisive by construction: the failing observer is opened <em>first</em>, so the healthy
+     * observer's session only exists at all if the loop survived. A {@code RuntimeException} row could
+     * not prove this — that was already caught before the fix.
+     */
+    @Test
+    @DisplayName("R14 item 3: a StackOverflowError from one observer's open leaves the coordinator usable")
+    void shouldIsolateAStackOverflowErrorFromAnObserversOpen() throws Exception {
+        Context context = vertx.getOrCreateContext();
+        ManualClock clock = new ManualClock(COMPLETED_AT);
+        List<String> log = new CopyOnWriteArrayList<>();
+        RecordingObserver healthy = new RecordingObserver();
+
+        McpCompletionCoordinator coordinator = new McpCompletionCoordinator(
+                context,
+                new LinkedHashSet<>(List.of(new StackOverflowOnOpenObserver(log), healthy)),
+                Set.<McpRequestCompletedListener>of(),
+                STARTED_AT,
+                clock);
+
+        coordinator.settleDisconnected(cancelledTerminal(McpErrorType.TRANSPORT), false);
+        flushContext(context);
+
+        assertThat(log)
+                .as("the failing observer's open must genuinely have been reached, or this proof is vacuous")
+                .containsExactly("open-attempted");
+        assertThat(healthy.awaitCallbacks())
+                .as("DECISIVE: the observer opened after the throwing one must still have a live session — "
+                        + "under RuntimeException-only isolation the Error escapes the constructor and this "
+                        + "request has no coordinator, no terminal event and no completion at all")
+                .isTrue();
+        healthy.assertExactlyOneTerminalThenOneCompletion();
+    }
+
+    /**
+     * R14 item 3 — a {@link StackOverflowError} from a session's {@code onTerminal} must not swallow the
+     * completion that has to follow it.
+     *
+     * <p>{@code invoke} is the single funnel for every observer and listener callback this class makes.
+     * With {@code RuntimeException}-only isolation, an {@code Error} from {@code onTerminal} escapes
+     * {@code publishTerminal} mid-loop, so {@code publishCompletion} never runs at all — the frozen
+     * lifecycle contract's "exactly one terminal, then exactly one completion" becomes "one terminal,
+     * no completion", inside a {@code runOnContext} task with no caller left to notice.
+     *
+     * <p>Decisive on a single session, so it does not depend on the unspecified iteration order of the
+     * observer set: the same object that throws from {@code onTerminal} must still receive {@code
+     * onCompleted}.
+     */
+    @Test
+    @DisplayName("R14 item 3: a StackOverflowError from onTerminal still lets the completion be published")
+    void shouldIsolateAStackOverflowErrorFromATerminalCallback() throws Exception {
+        Context context = vertx.getOrCreateContext();
+        ManualClock clock = new ManualClock(COMPLETED_AT);
+        List<String> log = new CopyOnWriteArrayList<>();
+
+        McpCompletionCoordinator coordinator = new McpCompletionCoordinator(
+                context,
+                Set.<McpRequestLifecycleObserver>of(new StackOverflowOnTerminalObserver(log)),
+                Set.<McpRequestCompletedListener>of(),
+                STARTED_AT,
+                clock);
+
+        coordinator.settleDisconnected(cancelledTerminal(McpErrorType.TRANSPORT), false);
+        flushContext(context);
+
+        assertThat(log)
+                .as("DECISIVE: the completion must still be published after the terminal callback threw an "
+                        + "Error — under RuntimeException-only isolation the log stops at the terminal")
+                .containsExactly("terminal-attempted", "completed");
+    }
+
+    /** A lifecycle observer whose {@code open} throws a {@link StackOverflowError} (R14 item 3). */
+    private record StackOverflowOnOpenObserver(List<String> log) implements McpRequestLifecycleObserver {
+        @Override
+        public McpRequestObservation open(Instant startedAt) {
+            log.add("open-attempted");
+            throw new StackOverflowError("r14 item 3: deliberate native-recursion proof");
+        }
+    }
+
+    /** A session whose {@code onTerminal} throws a {@link StackOverflowError} (R14 item 3). */
+    private record StackOverflowOnTerminalObserver(List<String> log)
+            implements McpRequestLifecycleObserver, McpRequestObservation {
+        @Override
+        public McpRequestObservation open(Instant startedAt) {
+            return this;
+        }
+
+        @Override
+        public void onTerminal(McpRequestTerminalObservation observation) {
+            log.add("terminal-attempted");
+            throw new StackOverflowError("r14 item 3: deliberate native-recursion proof");
+        }
+
+        @Override
+        public void onCompleted(McpRequestCompletedEvent event) {
+            log.add("completed");
+        }
+    }
+
     private static List<String> eventsEndingWith(List<String> log, String suffix) {
         return log.stream().filter(entry -> entry.endsWith(suffix)).toList();
     }

@@ -421,6 +421,29 @@ final class McpCompletionCoordinator {
         }
     }
 
+    /**
+     * Opens every contributed lifecycle observer once, isolating each failure so one misbehaving
+     * observer never affects the protocol outcome or any other observer's session.
+     *
+     * <p><strong>R14 item 3.</strong> Isolates {@code RuntimeException | StackOverflowError}, not
+     * {@code RuntimeException} alone. {@code observer.open} is application-supplied code in exactly the
+     * same class as the seven dispatcher callback sites R13 item 1 widened to this same narrow policy,
+     * and a native-recursion {@link StackOverflowError} from it is no less able to strand the request:
+     * this method runs from the coordinator's own constructor, inside {@code McpRequestDispatcher#begin},
+     * so an escaping {@code Error} aborts the request before the coordinator exists at all — no
+     * coordinator, no settlement hooks, no terminal event, and every later observer left unopened.
+     * R13's sweep stopped at the dispatcher's file boundary rather than at the callback boundary; this
+     * closes the same class of site in this class.
+     *
+     * <p>Deliberately narrower than {@link #openCompletionScopes}/{@link #closeCompletionScopes}, which
+     * catch {@link Throwable}: those two must additionally survive an {@code Error} that would otherwise
+     * abandon a scope this same loop has <em>already opened</em> (R07 item 6), an obligation no callback
+     * site here carries.
+     *
+     * @param observers the contributed lifecycle observers
+     * @param startedAt the instant this request began
+     * @return the successfully opened sessions, in iteration order
+     */
     private static List<McpRequestObservation> openObservers(
             Set<McpRequestLifecycleObserver> observers, Instant startedAt) {
         List<McpRequestObservation> sessions = new ArrayList<>();
@@ -430,8 +453,12 @@ final class McpCompletionCoordinator {
                 if (session != null) {
                     sessions.add(session);
                 }
-            } catch (RuntimeException ignored) {
-                // Observer failures are deliberately isolated from the protocol outcome.
+            } catch (RuntimeException | StackOverflowError failure) {
+                // Observer failures are deliberately isolated from the protocol outcome; never logs the
+                // failure's own message, only the failing observer's class.
+                log.warn(
+                        "MCP lifecycle observer open failed on {}",
+                        observer.getClass().getName());
             }
         });
         return List.copyOf(sessions);
@@ -452,7 +479,8 @@ final class McpCompletionCoordinator {
 
     /**
      * Runs {@code callback} — one observer/listener lifecycle invocation — isolating a {@link
-     * RuntimeException} so a misbehaving observer or listener never affects request settlement.
+     * RuntimeException} or {@link StackOverflowError} so a misbehaving observer or listener never
+     * affects request settlement.
      *
      * <p>R07 item 6 (security review): this class previously had no logger at all, so a failing
      * observer/listener callback was silently and permanently discarded with no operator-visible
@@ -460,13 +488,24 @@ final class McpCompletionCoordinator {
      * failure's own message, matching {@link #openCompletionScopes}/{@link #closeCompletionScopes}'s
      * established non-leaking pattern for this same class.
      *
+     * <p><strong>R14 item 3.</strong> Widened from {@code RuntimeException} to the project's narrow
+     * {@code RuntimeException | StackOverflowError} isolation policy — the same one R13 item 1 applied
+     * at the dispatcher's seven application-callback sites, and the same class of callback. Every
+     * settlement path funnels through here: {@code onToolInput}, {@code onToolOutput}, {@code
+     * onTerminal}, and {@code onCompleted} on every retained session, plus {@code onCompleted} on every
+     * completion listener. A {@code StackOverflowError} from any one of them previously escaped {@link
+     * #publishCompletion} mid-loop, so every session and listener still queued behind it lost its
+     * callback, the completion scopes opened around the loop were never closed, and — on the settlement
+     * paths — the escape happened inside a {@code context.runOnContext} task with no caller left to
+     * catch it. Deliberately not {@link Throwable}: see {@link #openObservers}.
+     *
      * @param owner the observation session or completion listener {@code callback} was built from
      * @param callback the lifecycle invocation to run
      */
     private static void invoke(Object owner, Runnable callback) {
         try {
             callback.run();
-        } catch (RuntimeException ignored) {
+        } catch (RuntimeException | StackOverflowError failure) {
             log.warn("MCP lifecycle callback failed on {}", owner.getClass().getName());
         }
     }

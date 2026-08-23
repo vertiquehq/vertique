@@ -57,6 +57,7 @@ import io.vertx.core.Future;
 import io.vertx.core.Handler;
 import io.vertx.core.Promise;
 import io.vertx.core.buffer.Buffer;
+import io.vertx.core.http.HttpClosedException;
 import io.vertx.core.http.HttpMethod;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.RoutingContext;
@@ -303,31 +304,64 @@ final class McpRequestDispatcher {
      * arguments} (see {@link #argumentsOf}) with its unmodified default numeric handling, which this
      * repair has no contract to change.
      *
-     * <p><strong>R12.</strong> Configured with an explicit {@link StreamReadConstraints#getMaxTokenCount()
-     * maxTokenCount} and {@link StreamReadConstraints#getMaxDocumentLength() maxDocumentLength}, both
-     * derived from {@link McpServerConfig#outputMaxBytes()} rather than left at Jackson's own implicit,
-     * silently-inheritable defaults ({@code Long.MAX_VALUE} and {@code -1}/unbounded, respectively) —
-     * mirroring {@link McpEnvelopeJsonCodec}'s own established "freeze every bound explicitly" philosophy
-     * for its ingress decode. {@code bounded} — the only input {@link #normalizeStructuredContent} ever
-     * hands this reader — is already {@link #encodeCapped}'s own output and therefore already at most
-     * {@code outputMaxBytes} bytes long, so {@code maxTokenCount = outputMaxBytes} is a deliberately
-     * generous but mathematically tight worst-case bound: a JSON token can never be shorter than one byte
-     * of source text, so no valid document within that byte budget can ever carry more tokens than the
-     * budget has bytes.
+     * <p><strong>R12, superseded by R14 item 1.</strong> R12 set both {@link
+     * StreamReadConstraints#getMaxTokenCount() maxTokenCount} and {@link
+     * StreamReadConstraints#getMaxDocumentLength() maxDocumentLength} to {@code outputMaxBytes},
+     * and argued that {@code maxTokenCount = outputMaxBytes} was "deliberately generous but
+     * mathematically tight". The second half of that claim was true and the first half made it
+     * worthless: {@code bounded} is {@link #encodeCapped}'s own output and therefore already at most
+     * {@code outputMaxBytes} bytes, and <strong>a JSON token always consumes at least one source
+     * byte, so {@code tokens <= bytes} holds for every document that can ever reach this reader</strong>
+     * — with {@code maxDocumentLength} rejecting first at equality. The token bound was therefore
+     * unreachable by construction: <strong>a no-op</strong>. A 2 MiB {@code [[[[…} structured result
+     * still materialized roughly a million nodes after R12, exactly as before it. R12's evidence
+     * presenting that derivation as a fix is corrected in place.
      *
-     * <p>This deliberately does not reuse R11's fixed, heap-and-concurrency-derived {@code maxTokenCount}
-     * (8,000, independent of body size) for the ingress envelope decode. Three differences make that
-     * derivation the wrong fit here rather than the right one to copy: (1) this reparse runs once per
-     * already-authorized, already-invoked {@code tools/call} completion — R11's derivation exists to
-     * divide one shared heap budget across {@code N=256} concurrent <em>anonymous, pre-authorization</em>
-     * requests, a concurrency shape that does not apply to a single accepted request's own
-     * already-budgeted output; (2) this reader's input is already hard-capped to {@code outputMaxBytes}
-     * (2 MiB default, 16 MiB validator ceiling), a materially smaller and already-enforced bound than the
-     * {@code maxBodySize} R11 bounds; and (3) this reader's source bytes are the framework's own {@link
-     * #encodeCapped} output produced moments earlier in the same request, not fresh untrusted bytes
-     * arriving at a new trust boundary. Building an instance field rather than a {@code static final}
-     * constant is what this derivation costs: {@code outputMaxBytes} is a per-{@link McpServerConfig}
-     * instance value, so this reader can no longer be shared before a config instance exists.
+     * <p><strong>R14 item 1 — the node budget this bound is actually derived from.</strong> Retained
+     * heap is a function of materialized {@link com.fasterxml.jackson.databind.JsonNode} count, not of
+     * source byte count, so the bound is derived the same way {@code McpEnvelopeJsonCodec}'s own
+     * {@code MAX_TOKEN_COUNT} is — from a stated heap budget divided by a measured per-node cost — and
+     * not from any byte figure:
+     *
+     * <ul>
+     *   <li><b>Heap budget.</b> The same one R11 states for the ingress side, because it is the same
+     *       heap: a 512 MiB container floor, of which at most 10% (53,687,091 bytes) may be retained by
+     *       MCP request trees.
+     *   <li><b>Concurrency.</b> The same stated design ceiling of {@code N = 256} simultaneous in-flight
+     *       requests. This reparse is post-authorization, but that buys nothing: a framework-level
+     *       {@code @PermitAll} tool is reachable anonymously, this layer enforces no concurrency or rate
+     *       limit (deferred to MCP-002), and the normalized tree stays reachable until the terminal
+     *       write resolves — which a client that simply stops reading holds open for as long as the
+     *       shared {@link HttpConfig} liveness bound allows. Per-request allowance =
+     *       53,687,091 / 256 &#8776; 209,715 bytes.
+     *   <li><b>Per-node cost.</b> 100 bytes per materialized node, the worst case re-measured under
+     *       R14 item 8 over the container-heavy shapes (95.4 bytes/node for nested-array chains,
+     *       99.6 bytes/node for a short-key object whose field names are unique to its own tree),
+     *       stable within 0.2% across a 10&times; range of tree sizes and within 0.6% across two
+     *       collectors. R11's own summary figure of 45&ndash;50 bytes/node is <em>not</em> reused here:
+     *       item 8 reproduced it and identified it as a harness artifact — every measured tree parsed
+     *       byte-identical source through one shared {@code JsonFactory}, so Jackson canonicalized each
+     *       field name once and all 256 trees shared those strings, which no real workload does.
+     *   <li><b>Arithmetic.</b> 209,715 / 100 &#8776; 2,097 nodes, rounded down to {@value
+     *       #NORMALIZATION_NODE_BUDGET}. Both container-heavy shapes materialize one node per two
+     *       parser tokens, so the token bound is 2 &times; {@value #NORMALIZATION_NODE_BUDGET} =
+     *       {@value #NORMALIZATION_MAX_TOKEN_COUNT}.
+     * </ul>
+     *
+     * <p>The bound now genuinely bites well inside the byte cap: a ~12 KB document of empty arrays
+     * carries far more nodes than the budget while passing {@code maxDocumentLength} untouched, and is
+     * rejected. Rejection is not an outage — the reparse failure surfaces as an {@link
+     * UncheckedIOException} inside {@code invokeAndRespond}'s already-existing stage-7
+     * {@code catch (RuntimeException | StackOverflowError)}, which degrades to the same bounded,
+     * SSE-framed internal-error response every other stage-7 failure uses. <strong>It is nonetheless a
+     * behavioral narrowing:</strong> a tool whose structured result materializes more than {@value
+     * #NORMALIZATION_NODE_BUDGET} nodes now fails where it previously succeeded, regardless of how far
+     * inside {@code mcp.output.maxBytes} it was. That consequence is stated, not hidden; the cap's
+     * value carries the same pending ruling as {@code McpEnvelopeJsonCodec.MAX_TOKEN_COUNT}.
+     *
+     * <p>{@code maxDocumentLength} stays at {@code outputMaxBytes} — that one <em>is</em> a byte bound
+     * and is genuinely per-instance, which is why this reader remains an instance field rather than a
+     * {@code static final} constant.
      *
      * <p><strong>Serialized once.</strong> This reader only parses bytes {@link #encodeCapped} already
      * wrote; it never serializes {@code value} a second time — see {@link #normalizeStructuredContent}'s
@@ -379,16 +413,33 @@ final class McpRequestDispatcher {
     }
 
     /**
-     * Builds {@link #normalizationDecoder}, constraining {@code maxTokenCount} and {@code
-     * maxDocumentLength} to {@code outputMaxBytes} — see {@link #normalizationDecoder}'s own javadoc for
-     * the full R12 derivation and why it deliberately diverges from R11's ingress-side derivation.
+     * The maximum number of {@link com.fasterxml.jackson.databind.JsonNode} instances one tool result's
+     * normalization reparse may materialize (R14 item 1), derived in {@link #normalizationDecoder}'s own
+     * javadoc from a 209,715-byte per-request heap allowance and a re-measured worst case of 100 bytes
+     * per node. Expressed as a node count, never a byte count, because retained heap tracks node count.
+     */
+    static final int NORMALIZATION_NODE_BUDGET = 2_000;
+
+    /**
+     * {@link #normalizationDecoder}'s {@code maxTokenCount} (R14 item 1): two parser tokens per
+     * materialized node for both container-heavy worst-case shapes, so {@code 2 *} {@value
+     * #NORMALIZATION_NODE_BUDGET}. Fixed, and deliberately independent of {@code outputMaxBytes} — the
+     * byte-derived form R12 shipped could never reject anything (see {@link #normalizationDecoder}).
+     */
+    static final long NORMALIZATION_MAX_TOKEN_COUNT = 2L * NORMALIZATION_NODE_BUDGET;
+
+    /**
+     * Builds {@link #normalizationDecoder}: {@code maxTokenCount} from the fixed node budget (R14 item
+     * 1) and {@code maxDocumentLength} from this instance's {@code outputMaxBytes} — see {@link
+     * #normalizationDecoder}'s own javadoc for the full derivation, and for why R12's byte-derived token
+     * bound was a no-op.
      *
      * @param outputMaxBytes this instance's configured {@code mcp.output.maxBytes}
-     * @return a reader scoped to that bound
+     * @return a reader bounded by the node budget in tokens and by {@code outputMaxBytes} in bytes
      */
     private static ObjectMapper buildNormalizationDecoder(int outputMaxBytes) {
         StreamReadConstraints constraints = StreamReadConstraints.builder()
-                .maxTokenCount(outputMaxBytes)
+                .maxTokenCount(NORMALIZATION_MAX_TOKEN_COUNT)
                 .maxDocumentLength(outputMaxBytes)
                 .build();
         JsonFactory factory =
@@ -578,6 +629,15 @@ final class McpRequestDispatcher {
      * normal completion, an interceptor or authorization rejection, a thrown failure, a client
      * disconnect, or a stream reset — exactly like every other holder binding on this request, and
      * never leaks onto the next request scheduled on the same event-loop thread.
+     *
+     * <p><strong>R09's original claim was false when written; R14 item 5 made it true.</strong> The
+     * last two of those exit paths did not hold: {@link #registerSettlementHooks} overwrote the
+     * single-slot response {@code closeHandler}/{@code exceptionHandler} that Vert.x Web's own routing
+     * context installs to drive its end handlers, so {@link RequestContextLifecycle.Handle#closeAll()}
+     * — and therefore this scope's close — never ran for a disconnect or a reset. Settlement now runs
+     * through {@link RoutingContext#addEndHandler} instead, which is multicast and leaves Vert.x Web's
+     * handlers in place; see {@link #registerSettlementHooks} for the measurement, and {@code
+     * McpDisconnectCleanupIT} for the proof that this scope is genuinely closed on a real disconnect.
      *
      * <p>This is the single live context every downstream consumer reads: {@code
      * IdentityResolutionMiddleware} (via {@code ContextHolder.current(CorrelationContext.class)}, for
@@ -1254,6 +1314,15 @@ final class McpRequestDispatcher {
      * indistinguishable {@code -32602} response {@link McpPolicyEnforcer#unknownOrUnauthorizedError()}
      * produces for a denied or unknown tool (issue #420), never a distinct code or status.
      *
+     * <p><strong>Forward progress is bounded, not assumed (R14 item 2).</strong> Both stop branches
+     * that can fire before this page examines a single candidate — R13's {@code BEFORE_FIRST_ANCHOR}
+     * fallback on the true first page, and R07's {@code seedAnchor} fallback on page 2+ — return an
+     * empty page whose cursor resolves to the state this request already started from. Module.md tells
+     * clients to follow an empty page's cursor, so a persistently slow or unavailable decision point
+     * would otherwise spin a conforming client forever at one gate deadline per iteration. The cursor
+     * therefore carries a consecutive-non-progressing-page count ({@link McpCursorCodec}); this method
+     * seeds it from the incoming cursor and {@link #toolsListResponse} spends it.
+     *
      * @param context the request context
      * @param envelope the validated {@code tools/list} request envelope
      * @param security the established security snapshot, recorded on the terminal event
@@ -1278,9 +1347,13 @@ final class McpRequestDispatcher {
         // to it again on a repeat timeout, keeps retrying the very first candidate rather than
         // excluding it.
         String seedAnchor;
+        // R14 item 2: the incoming cursor's own consecutive-non-progressing-page count, zero when this
+        // is the true first page — see writeToolsListResult for where it is spent.
+        int seedAttempts;
         if (cursorNode == null) {
             startIndex = 0;
             seedAnchor = null;
+            seedAttempts = 0;
         } else {
             McpCursorCodec.Decoded decoded = cursorCodec.decode(
                     cursorNode.asText(),
@@ -1293,6 +1366,7 @@ final class McpRequestDispatcher {
             }
             startIndex = names.indexOf(decoded.anchor()) + 1;
             seedAnchor = decoded.anchor();
+            seedAttempts = decoded.attempts();
         }
         int pageSize = config.toolsPageSize();
         int budget = pageSize * EXAMINATION_BUDGET_MULTIPLIER;
@@ -1319,7 +1393,7 @@ final class McpRequestDispatcher {
                         writeToolsListFallback(context, envelope, security, ar.cause());
                         return;
                     }
-                    writeToolsListResult(context, envelope, security, ar.result());
+                    writeToolsListResult(context, envelope, security, ar.result(), seedAnchor, seedAttempts);
                 });
     }
 
@@ -1556,12 +1630,17 @@ final class McpRequestDispatcher {
      * mcp.output.maxBytes} exactly like discovery.
      */
     private void writeToolsListResult(
-            RoutingContext context, JsonNode envelope, @Nullable SecurityContextSnapshot security, ScanResult result) {
+            RoutingContext context,
+            JsonNode envelope,
+            @Nullable SecurityContextSnapshot security,
+            ScanResult result,
+            @Nullable String seedAnchor,
+            int seedAttempts) {
         context.response().putHeader("content-type", JSON_CONTENT_TYPE);
         putIdentityFilteredCacheHeaders(context);
         byte[] payload;
         try {
-            payload = encodeCapped(toolsListResponse(envelope, result));
+            payload = encodeCapped(toolsListResponse(envelope, result, seedAnchor, seedAttempts));
         } catch (OutputCapExceededException overCap) {
             // R12: see writeDiscovery's identical note — boundedErrorResponse replaces the previous
             // materialize-then-measure idiom.
@@ -1596,10 +1675,17 @@ final class McpRequestDispatcher {
 
     /**
      * Builds the canonical {@code ListToolsResult} response node: the visible tools in scanned order,
-     * an opaque {@code nextCursor} when unexamined candidates remain, and the mandatory {@code ttlMs}
-     * and {@code cacheScope=private} cache hints.
+     * an opaque {@code nextCursor} when unexamined candidates remain <em>and</em> pagination still has
+     * forward progress left to offer (R14 item 2), and the mandatory {@code ttlMs} and {@code
+     * cacheScope=private} cache hints.
+     *
+     * @param seedAnchor the resume point this request arrived with, or {@code null} when no cursor was
+     *     presented
+     * @param seedAttempts the consecutive non-progressing-page count carried by the request's own
+     *     cursor, or {@code 0} when no cursor was presented
      */
-    private ObjectNode toolsListResponse(JsonNode envelope, ScanResult result) {
+    private ObjectNode toolsListResponse(
+            JsonNode envelope, ScanResult result, @Nullable String seedAnchor, int seedAttempts) {
         ArrayNode tools = OUTPUT_ENCODER.createArrayNode();
         for (McpToolDescriptor descriptor : result.visible()) {
             tools.add(toolNode(descriptor));
@@ -1613,7 +1699,23 @@ final class McpRequestDispatcher {
         result0.put("resultType", COMPLETE_RESULT_TYPE);
         result0.set("tools", tools);
         if (result.nextAnchor() != null) {
-            result0.put("nextCursor", cursorCodec.encode(result.nextAnchor(), toolRegistry.digest()));
+            // R14 item 2: a page makes forward progress exactly when the resume point it hands back
+            // differs from the one it started from. Two stop branches can hand back the same one: R13's
+            // BEFORE_FIRST_ANCHOR fallback on the true first page, and R07's seedAnchor fallback on page
+            // 2+ (both fire when the scan stops before any candidate past the resume point was examined
+            // successfully). Such a page returns no tools and a cursor resolving to the exact state the
+            // request arrived in, and module.md instructs a client to follow an empty page's cursor —
+            // so against a persistently slow or unavailable decision point a conforming client would
+            // loop forever, one full gate deadline per iteration, for nothing. R10's deadline cannot
+            // bound that: the loop spans requests. Counting consecutive non-progressing pages in the
+            // cursor and dropping the cursor at the bound is what stops it. Deliberately not "examined
+            // zero candidates": a gate timeout DOES count its candidate as examined (fail-closed denied)
+            // while still handing back the caller's own resume point, which is precisely the shape that
+            // loops.
+            int nextAttempts = progressed(seedAnchor, result.nextAnchor()) ? 0 : seedAttempts + 1;
+            if (nextAttempts < McpCursorCodec.MAX_NON_PROGRESSING_PAGES) {
+                result0.put("nextCursor", cursorCodec.encode(result.nextAnchor(), toolRegistry.digest(), nextAttempts));
+            }
         }
         result0.put("ttlMs", config.toolsTtlMs());
         result0.put("cacheScope", PRIVATE_CACHE_SCOPE);
@@ -1624,6 +1726,25 @@ final class McpRequestDispatcher {
         JsonNode id = envelope.get("id");
         response.set("id", id != null ? id : NullNode.getInstance());
         return response;
+    }
+
+    /**
+     * Reports whether one page advanced the scan's resume point (R14 item 2).
+     *
+     * <p>A cursor-less request resumes from the very beginning, which is exactly what {@link
+     * McpCursorCodec#BEFORE_FIRST_ANCHOR} names, so a {@code null} {@code seedAnchor} is normalized to
+     * it rather than special-cased. Because candidate names are scanned in strictly increasing order
+     * from {@code indexOf(anchor) + 1}, a page that genuinely examined anything past its resume point
+     * can never hand that same resume point back — so equality here is precisely "this page changed
+     * nothing", and never a false alarm on a page that did work.
+     *
+     * @param seedAnchor the resume point this request arrived with, or {@code null} for the first page
+     * @param nextAnchor the resume point this page hands back; never {@code null} at this call site
+     * @return {@code true} when the resume point moved
+     */
+    private static boolean progressed(@Nullable String seedAnchor, String nextAnchor) {
+        String startAnchor = seedAnchor != null ? seedAnchor : McpCursorCodec.BEFORE_FIRST_ANCHOR;
+        return !startAnchor.equals(nextAnchor);
     }
 
     /** Builds one {@code Tool} node from a visible descriptor. */
@@ -2482,26 +2603,58 @@ final class McpRequestDispatcher {
     // --- Settlement seam wiring ---
 
     /**
-     * Registers the disconnect and reset settlement hooks for one request.
+     * Registers the disconnect and reset settlement hook for one request.
      *
-     * <p>The response close handler settles a premature client disconnect and the response exception
-     * handler settles a stream reset. Each drives the coordinator's first-observed-wins guard, so a
-     * hook that fires after a normal write is suppressed. MCP arms no whole-request timer of its own:
-     * transport liveness is shared {@link HttpConfig} idle/read/write timeout behavior, so an idle or
-     * slow connection is closed by the shared HTTP layer and reaches these same hooks through the
-     * ordinary close/exception path (T007), classified as transport cancellation rather than a
-     * distinct timeout.
+     * <p>Settlement is driven from {@link RoutingContext#addEndHandler}, which Vert.x Web multicasts to
+     * every registered handler and which fires on normal end, on an exception, and on a connection
+     * close. A failed outcome is a premature disconnect or a stream reset, classified by cause; a
+     * succeeded outcome is a normal end, already settled by the two-phase write path, so nothing is done
+     * with it. Each settlement drives the coordinator's first-observed-wins guard, so a hook that fires
+     * after a normal write is suppressed. MCP arms no whole-request timer of its own: transport liveness
+     * is shared {@link HttpConfig} idle/read/write timeout behavior, so an idle or slow connection is
+     * closed by the shared HTTP layer and reaches this same hook (T007), classified as transport
+     * cancellation rather than a distinct timeout.
+     *
+     * <p><strong>R14 item 5 — why not the response handlers.</strong> This previously called {@code
+     * context.response().closeHandler(...)} and {@code .exceptionHandler(...)}. Both are single-slot
+     * setters: last writer wins. Vert.x Web's {@code RoutingContextImpl} installs its <em>own</em>
+     * response {@code endHandler}, {@code exceptionHandler} and {@code closeHandler} the first time
+     * anything calls {@code addEndHandler} — which {@link RequestContextLifecycle} does, first, for
+     * every request — so registering here silently replaced Vert.x Web's, and every routing-context end
+     * handler stopped firing on this mount for a disconnect or a reset. The victim was {@link
+     * RequestContextLifecycle.Handle#closeAll()}: the correlation binding {@link #bindCorrelation}
+     * registers with it, and every other holder binding on the request, were never torn down when a
+     * client vanished. Not cross-request contamination — those bindings live in duplicated-context
+     * storage that dies with the request — but the framework's cleanup contract was disabled here, and
+     * R09's javadoc claiming teardown on "a client disconnect, or a stream reset" was false. Measured
+     * against a real Vert.x 5.1.6 server rather than assumed: with the response handlers overwritten,
+     * neither {@code addEndHandler} nor {@code closeAll} ran for an orderly FIN close or a hard RST;
+     * without the overwrite, both ran for both. {@code McpDisconnectCleanupIT} pins it.
+     *
+     * <p><strong>Classification.</strong> The same measurement fixes the transport outcome, which the
+     * single {@code AsyncResult} must now carry rather than two separate handlers: Vert.x 5.1.6
+     * delivers {@link HttpClosedException} for an orderly close and a plain {@code SocketException}
+     * ("Connection reset") for a hard RST, so the class of the cause — not which of two handlers fired —
+     * selects {@code DISCONNECTED} or {@code RESET}. This is the same "classify by the end-handler
+     * cause's class" technique {@code RestRequestCompletionEmitter} already uses, and it is strictly
+     * more accurate than what it replaces: through the response handlers an orderly FIN close reached
+     * {@code exceptionHandler} first and was recorded as {@code RESET}.
      */
     private void registerSettlementHooks(
             RoutingContext context, McpCompletionCoordinator coordinator, Instant startedAt) {
-        context.response()
-                .closeHandler(ignored -> coordinator.settleDisconnected(
-                        settlementTerminal(context, startedAt, McpErrorType.TRANSPORT),
-                        context.response().headWritten()));
-        context.response()
-                .exceptionHandler(ignored -> coordinator.settleReset(
-                        settlementTerminal(context, startedAt, McpErrorType.TRANSPORT),
-                        context.response().headWritten()));
+        context.addEndHandler(outcome -> {
+            if (outcome.succeeded()) {
+                // A normal response end: the two-phase write path owns this settlement.
+                return;
+            }
+            McpRequestTerminalEvent terminal = settlementTerminal(context, startedAt, McpErrorType.TRANSPORT);
+            boolean responseCommitted = context.response().headWritten();
+            if (outcome.cause() instanceof HttpClosedException) {
+                coordinator.settleDisconnected(terminal, responseCommitted);
+            } else {
+                coordinator.settleReset(terminal, responseCommitted);
+            }
+        });
     }
 
     /**
