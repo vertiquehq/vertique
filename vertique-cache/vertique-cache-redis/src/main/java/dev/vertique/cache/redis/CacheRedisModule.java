@@ -5,6 +5,7 @@ package dev.vertique.cache.redis;
 
 import dagger.Module;
 import dagger.Provides;
+import dev.vertique.cache.CacheCoreModule;
 import dev.vertique.cache.spi.CacheStore;
 import dev.vertique.core.VertxConfig;
 import dev.vertique.core.config.ConfigParser;
@@ -14,7 +15,7 @@ import io.vertx.core.json.JsonObject;
 import jakarta.inject.Singleton;
 
 /** Dagger contribution for the clustered Redis cache store. */
-@Module
+@Module(includes = CacheCoreModule.class)
 public final class CacheRedisModule {
     @Provides
     @Singleton

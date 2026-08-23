@@ -5,12 +5,13 @@ package dev.vertique.cache.injvm;
 
 import dagger.Module;
 import dagger.Provides;
+import dev.vertique.cache.CacheCoreModule;
 import dev.vertique.cache.config.CacheConfig;
 import dev.vertique.cache.spi.CacheStore;
 import jakarta.inject.Singleton;
 
 /** Dagger contribution for the local Caffeine cache store. */
-@Module
+@Module(includes = CacheCoreModule.class)
 public final class CacheInJvmModule {
     @Provides
     @Singleton
