@@ -101,6 +101,18 @@ final class McpProtocolCodec {
      */
     private static final int MAX_PROTOCOL_VERSION_CHARS = 64;
 
+    /**
+     * The bounded set of {@code io.modelcontextprotocol/protocolVersion} values this server actually
+     * supports — the single final-2026 version {@code server/discover} itself advertises ({@link
+     * McpCursorCodec#PROTOCOL_VERSION}). Security-review finding (post-R05): {@link #validateNegotiation}
+     * previously compared the header and body values only against each other, never against this set,
+     * so any non-blank, ≤{@value #MAX_PROTOCOL_VERSION_CHARS}-char string negotiated successfully and
+     * then flowed verbatim into every terminal event and the {@code mcp.protocol.version} span
+     * attribute. A negotiation stage that never rejects an unsupported version is not a negotiation
+     * stage.
+     */
+    private static final Set<String> SUPPORTED_PROTOCOL_VERSIONS = Set.of(McpCursorCodec.PROTOCOL_VERSION);
+
     private static final String JSONRPC_VERSION = "2.0";
 
     /** Compact, insertion-order-preserving encoder; writes big decimals in plain (non-scientific) form. */
@@ -188,9 +200,15 @@ final class McpProtocolCodec {
      *
      * <p><strong>{@code _meta} shape.</strong> {@code params._meta} must be an object; {@code
      * io.modelcontextprotocol/protocolVersion} must be a non-blank string of at most {@value
-     * #MAX_PROTOCOL_VERSION_CHARS} characters (mirroring {@code McpRequestTerminalEvent}'s own bound on
-     * the same fact); {@code io.modelcontextprotocol/clientCapabilities} must be an object. Both are
-     * schema-required on every supported method's {@code RequestMetaObject}.
+     * #MAX_PROTOCOL_VERSION_CHARS} characters containing no ISO control character (mirroring {@code
+     * McpRequestTerminalEvent}'s own bound and control-character rejection on the same fact, so a
+     * negotiated value can never reach that record's compact constructor already knowing it would be
+     * rejected there — Netty's non-first-byte header validation admits HTAB (0x09) and 0x80-0x9F, both
+     * of which {@link Character#isISOControl} still classifies as control characters, so this check
+     * cannot be skipped in favor of trusting the header alone) and must be a member of {@link
+     * #SUPPORTED_PROTOCOL_VERSIONS} — the single final-2026 version this server actually advertises;
+     * {@code io.modelcontextprotocol/clientCapabilities} must be an object. Both are schema-required on
+     * every supported method's {@code RequestMetaObject}.
      *
      * <p><strong>Reserved fields.</strong> A {@code tools/call} {@code params} containing {@code
      * inputResponses} or {@code requestState} — schema-permitted MRTR fields Phase 1 does not implement
@@ -212,7 +230,9 @@ final class McpProtocolCodec {
         if (protocolVersionNode == null
                 || !protocolVersionNode.isTextual()
                 || protocolVersionNode.asText().isBlank()
-                || protocolVersionNode.asText().length() > MAX_PROTOCOL_VERSION_CHARS) {
+                || protocolVersionNode.asText().length() > MAX_PROTOCOL_VERSION_CHARS
+                || protocolVersionNode.asText().chars().anyMatch(Character::isISOControl)
+                || !SUPPORTED_PROTOCOL_VERSIONS.contains(protocolVersionNode.asText())) {
             return NegotiationResult.failed(negotiationError());
         }
         JsonNode clientCapabilities = meta.get(META_CLIENT_CAPABILITIES);

@@ -5,6 +5,7 @@ package dev.vertique.mcp.server;
 
 import com.fasterxml.jackson.core.StreamWriteFeature;
 import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.json.JsonMapper;
@@ -266,6 +267,33 @@ final class McpRequestDispatcher {
             .enable(StreamWriteFeature.WRITE_BIGDECIMAL_AS_PLAIN)
             .build();
 
+    /**
+     * The reader {@link #normalizeStructuredContent} uses to parse the bytes {@link #encodeCapped}
+     * already produced back into the canonical {@code Map}/{@code List}/scalar shape (R07 item 4,
+     * closing a security-review finding on R04's normalization pass).
+     *
+     * <p>{@code USE_BIG_DECIMAL_FOR_FLOATS} is enabled so a floating-point JSON literal parses back to
+     * {@link java.math.BigDecimal} — matching {@link #OUTPUT_ENCODER}'s own {@code
+     * WRITE_BIGDECIMAL_AS_PLAIN} encode side, and Jackson's own default handling of a value that already
+     * carried a {@code BigDecimal} through its original serialization path — instead of the mapper
+     * default {@link Double}. Without this, {@code OUTPUT_ENCODER.readValue(bounded, Object.class)}
+     * silently changed tool output numerics twice over: {@code BigDecimal("0.1000")} lost its trailing
+     * zeros as {@code Double} {@code 0.1}, and a large-magnitude finite decimal literal — one whose text
+     * {@link #encodeCapped} wrote correctly and in full — overflowed {@code Double} parsing to {@code
+     * Double.POSITIVE_INFINITY}, which Jackson's default {@code QUOTE_NON_NUMERIC_NUMBERS} then emitted
+     * to the wire as the <em>string</em> {@code "Infinity"} for a field the tool's own advertised output
+     * schema declares as a number — a value {@link #outputSchemaValid} validates against the Java value
+     * (still a legitimate, in-range {@code Double}, i.e. {@code Infinity}) before that later string
+     * substitution ever happens, so the schema gate could never see the corruption. A separate reader
+     * instance — never applied to {@link #OUTPUT_ENCODER} itself — keeps this fix scoped to output
+     * normalization only: {@link #OUTPUT_ENCODER} still deserializes {@code tools/call} input {@code
+     * arguments} (see {@link #argumentsOf}) with its unmodified default numeric handling, which this
+     * repair has no contract to change.
+     */
+    private static final ObjectMapper NORMALIZATION_DECODER = JsonMapper.builder()
+            .enable(DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS)
+            .build();
+
     private final McpServerConfig config;
     private final SecurityRuntime securityRuntime;
     private final Set<McpRequestLifecycleObserver> lifecycleObservers;
@@ -481,13 +509,35 @@ final class McpRequestDispatcher {
     }
 
     /**
+     * The maximum accepted length of a stored negotiated protocol version, mirroring {@link
+     * dev.vertique.mcp.lifecycle.McpRequestTerminalEvent}'s own bound on the same fact.
+     */
+    private static final int MAX_PROTOCOL_VERSION_CHARS = 64;
+
+    /**
      * Returns this request's negotiated {@code io.modelcontextprotocol/protocolVersion}, or {@code
      * null} when negotiation never ran or did not complete (contract §4.7 — "emit only when negotiation
      * completed").
+     *
+     * <p>Security review finding (post-R05): total by construction — every terminal-event construction
+     * site in this class feeds this method's return value straight into a factory that would throw
+     * {@link IllegalArgumentException} for a blank, over-length, or control-character-bearing value
+     * ({@link McpRequestTerminalEvent}'s own compact constructor). {@link McpProtocolCodec#validateNegotiation}
+     * already rejects such a value before it is ever stored under {@link #PROTOCOL_VERSION_KEY}, so this
+     * re-check is defense in depth, not the primary gate: it exists so that no construction site can ever
+     * throw regardless of how a value happened to reach the routing context, rather than trusting every
+     * future caller of {@code context.put(PROTOCOL_VERSION_KEY, ...)} to already have validated it.
      */
     @Nullable
     private static String protocolVersionOf(RoutingContext context) {
-        return context.get(PROTOCOL_VERSION_KEY);
+        String stored = context.get(PROTOCOL_VERSION_KEY);
+        if (stored == null
+                || stored.isBlank()
+                || stored.length() > MAX_PROTOCOL_VERSION_CHARS
+                || stored.chars().anyMatch(Character::isISOControl)) {
+            return null;
+        }
+        return stored;
     }
 
     /**
@@ -864,6 +914,14 @@ final class McpRequestDispatcher {
      * {@link #INTERCEPTOR_REJECTED}/{@link #INTERCEPTOR_REJECTED_MESSAGE} pair, exactly like
      * {@link McpPolicyEnforcer#unknownOrUnauthorizedError()} does for its own stage.
      *
+     * <p>This method is reached from {@link #dispatch} only once {@link McpProtocolCodec#validateNegotiation}
+     * has already succeeded — negotiation always completes strictly before {@link #runRequestInterceptors}
+     * ever runs — so, unlike {@link #writeNegotiationRejection}, the terminal event here does carry the
+     * negotiated {@code protocolVersion} via {@link #protocolVersionOf}. (Security review, post-R05: an
+     * earlier revision passed a hardcoded {@code null} on the normal-response branch below while the
+     * over-cap branch correctly used {@link #protocolVersionOf} — the same request reported a version
+     * only when its error response happened to exceed the output cap.)
+     *
      * @param context the request context
      * @param envelope the validated envelope whose id is echoed
      * @param method the classified method, recorded on the terminal event
@@ -916,7 +974,7 @@ final class McpRequestDispatcher {
                 McpErrorType.INTERCEPTOR,
                 status,
                 INTERCEPTOR_REJECTED,
-                null,
+                protocolVersionOf(context),
                 authorizationOf(context),
                 security,
                 correlationOf(context));
@@ -925,10 +983,12 @@ final class McpRequestDispatcher {
 
     /**
      * Writes the bounded, non-leaking JSON-RPC error response for a failed protocol-negotiation check
-     * (R05, issue #429; contract §4.7 — "Header/body mismatch is HTTP 400 with -32020"). Runs before
-     * {@link #runRequestInterceptors}, tool lookup, or authorization, so — like {@link
-     * #writeInterceptorRejection} — the terminal event carries no {@code protocolVersion}: negotiation
-     * did not complete for this request (contract §4.7 — "emit only when negotiation completed").
+     * (R05, issue #429; contract §4.7 — "Header/body mismatch is HTTP 400 with -32020"). Runs strictly
+     * before negotiation could ever succeed for this request — this method is called exactly when {@link
+     * McpProtocolCodec#validateNegotiation} itself failed — so the terminal event carries no {@code
+     * protocolVersion}: negotiation did not complete for this request (contract §4.7 — "emit only when
+     * negotiation completed"). This is unlike {@link #writeInterceptorRejection}, which runs only after
+     * negotiation has already succeeded and so does carry the negotiated version.
      * Correlation and security are already established by this point (stages 2 and 3 both precede
      * stage 4's negotiation check) and are still recorded.
      *
@@ -1101,8 +1161,15 @@ final class McpRequestDispatcher {
         }
         List<String> names = List.copyOf(toolRegistry.descriptorsByName().keySet());
         int startIndex;
+        // R07 item 7: seeded from the incoming cursor's own anchor (or null when this is the first
+        // page) rather than an unconditional null, so a gate timeout on the very first candidate
+        // examined on page 2+ still has a genuine previous-candidate anchor to fall back to instead of
+        // one it can never have (see scan()'s own R07 item 7 comment for why a null anchor is still
+        // correct specifically on the true first page).
+        String seedAnchor;
         if (cursorNode == null) {
             startIndex = 0;
+            seedAnchor = null;
         } else {
             McpCursorCodec.Decoded decoded = cursorCodec.decode(
                     cursorNode.asText(),
@@ -1114,6 +1181,7 @@ final class McpRequestDispatcher {
                 return;
             }
             startIndex = names.indexOf(decoded.anchor()) + 1;
+            seedAnchor = decoded.anchor();
         }
         int pageSize = config.toolsPageSize();
         int budget = pageSize * EXAMINATION_BUDGET_MULTIPLIER;
@@ -1121,15 +1189,16 @@ final class McpRequestDispatcher {
         // McpPolicyEnforcer#decide null-checks its caller and would throw for the null the raw runtime
         // value can carry.
         SecurityContext caller = establishedSecurityContext();
-        scan(names, startIndex, pageSize, budget, 0, List.of(), null, caller).onComplete(ar -> {
-            if (ar.failed()) {
-                // McpPolicyEnforcer#decide never fails per its own contract; defended here so a
-                // contract-violating extension cannot escape as an unhandled exception.
-                writeToolsListFallback(context, envelope, security, ar.cause());
-                return;
-            }
-            writeToolsListResult(context, envelope, security, ar.result());
-        });
+        scan(names, startIndex, pageSize, budget, 0, List.of(), seedAnchor, caller)
+                .onComplete(ar -> {
+                    if (ar.failed()) {
+                        // McpPolicyEnforcer#decide never fails per its own contract; defended here so a
+                        // contract-violating extension cannot escape as an unhandled exception.
+                        writeToolsListFallback(context, envelope, security, ar.cause());
+                        return;
+                    }
+                    writeToolsListResult(context, envelope, security, ar.result());
+                });
     }
 
     /**
@@ -1176,6 +1245,9 @@ final class McpRequestDispatcher {
                 List<McpToolDescriptor> visibleSnapshot = currentVisible;
                 int examinedSnapshot = currentExamined;
                 int indexSnapshot = currentIndex;
+                // R07 item 7: captured before this candidate's own decision resolves, so a timeout can
+                // anchor to the candidate BEFORE this one — see the timeout branch below.
+                String previousAnchor = currentLastExaminedName;
                 return decisionFuture.compose(decision -> {
                     List<McpToolDescriptor> updated = visibleSnapshot;
                     if (decision.permitted()) {
@@ -1187,11 +1259,24 @@ final class McpRequestDispatcher {
                         // Stop scanning (issue #417): the gate SecurityPolicyEnforcer#decide just
                         // bounded already paid its deadline once; continuing would pay it again for
                         // every remaining candidate — the exact per-candidate amplification a shared
-                        // decision-gate deadline must not reintroduce. One timeout ends this page here,
-                        // with the timed-out candidate itself as the next-page anchor.
-                        boolean candidatesRemain = indexSnapshot + 1 < names.size();
-                        return Future.succeededFuture(
-                                new ScanResult(updated, candidatesRemain ? name : null, updatedExamined));
+                        // decision-gate deadline must not reintroduce. One timeout ends this page here.
+                        //
+                        // R07 item 7 (security review): the next-page anchor is the PREVIOUS candidate
+                        // (previousAnchor), not this timed-out one. The cursor grammar's anchor is
+                        // exclusive (McpCursorCodec decodes a page's startIndex as indexOf(anchor)+1),
+                        // so anchoring to the timed-out candidate itself made it permanently unreachable
+                        // on every future page — fail-closed is correct, permanently-skipped is not.
+                        // Anchoring one candidate earlier means the very next tools/list call (using the
+                        // nextCursor this page returns) re-examines this exact candidate instead of
+                        // silently excluding it forever. A null previousAnchor means this was the very
+                        // first candidate examined across the whole scan (module.md's own contract: "a
+                        // page may be empty and still carry a nextCursor while unexamined candidates
+                        // remain" — so nextCursor must never silently disappear here); the cursor
+                        // grammar has no anchor that means "before the beginning", so this one narrow
+                        // case falls back to the pre-fix self-anchor shape (excluding only this single
+                        // candidate) rather than dropping nextCursor and falsely signalling "no more".
+                        String anchor = previousAnchor != null ? previousAnchor : name;
+                        return Future.succeededFuture(new ScanResult(updated, anchor, updatedExamined));
                     }
                     return scan(names, indexSnapshot + 1, pageSize, budget, updatedExamined, updated, name, caller);
                 });
@@ -1205,18 +1290,21 @@ final class McpRequestDispatcher {
                 updated.add(descriptor);
                 currentVisible = updated;
             }
-            currentLastExaminedName = name;
             currentExamined = currentExamined + 1;
-            currentIndex = currentIndex + 1;
             if (gateTimedOut(decision)) {
-                // Defensive mirror of the async stop above. In practice a genuine gate timeout is
-                // scheduled by Future#timeout on a later event-loop tick, so it is never observed
-                // through this already-complete synchronous branch — but stopping here too means this
-                // method's termination guarantee does not depend on that scheduling detail.
-                boolean candidatesRemain = currentIndex < names.size();
-                return Future.succeededFuture(new ScanResult(
-                        currentVisible, candidatesRemain ? currentLastExaminedName : null, currentExamined));
+                // Defensive mirror of the async stop above, same R07 item 7 fix (including the same
+                // null-previousAnchor self-anchor fallback — see that branch's comment): anchor to
+                // currentLastExaminedName as it stood BEFORE this candidate (not yet advanced to
+                // `name`), so this timed-out candidate is retried on the next page rather than
+                // permanently skipped. In practice a genuine gate timeout is scheduled by
+                // Future#timeout on a later event-loop tick, so it is never observed through this
+                // already-complete synchronous branch — but stopping here too means this method's
+                // termination guarantee does not depend on that scheduling detail.
+                String anchor = currentLastExaminedName != null ? currentLastExaminedName : name;
+                return Future.succeededFuture(new ScanResult(currentVisible, anchor, currentExamined));
             }
+            currentLastExaminedName = name;
+            currentIndex = currentIndex + 1;
         }
     }
 
@@ -1776,7 +1864,11 @@ final class McpRequestDispatcher {
      * #encodeCapped}, which aborts with {@link OutputCapExceededException} the moment the running byte
      * count would exceed {@code mcp.output.maxBytes} — before a full byte array, let alone a full tree,
      * is ever materialized. The resulting bounded byte array — never {@code value} itself again — is
-     * then parsed back into the canonical {@code Map}/{@code List}/scalar shape. This still touches
+     * then parsed back into the canonical {@code Map}/{@code List}/scalar shape through {@link
+     * #NORMALIZATION_DECODER}, never {@link #OUTPUT_ENCODER}: a plain {@code readValue} loses precision
+     * relative to {@link #encodeCapped}'s own {@code WRITE_BIGDECIMAL_AS_PLAIN} encode (see {@link
+     * #NORMALIZATION_DECODER}'s own javadoc for the two ways that showed up on the wire — R07 item 4).
+     * This still touches
      * {@code value}'s own state (bean getters, {@code toString}, custom serializers) exactly once: the
      * parse step reads the bytes {@link #encodeCapped} already produced, not {@code value}. An earlier
      * remediation attempt rejected an independent byte-counting probe ahead of an unbounded {@code
@@ -1798,7 +1890,7 @@ final class McpRequestDispatcher {
         }
         byte[] bounded = encodeCapped(value);
         try {
-            return OUTPUT_ENCODER.readValue(bounded, Object.class);
+            return NORMALIZATION_DECODER.readValue(bounded, Object.class);
         } catch (IOException parseFailure) {
             // Parsing bytes encodeCapped just produced from a well-formed write cannot fail on I/O or
             // malformed content; a failure here is a programming error, not a wire condition — mirrors
@@ -2030,6 +2122,20 @@ final class McpRequestDispatcher {
      * than {@code result.structuredContent()}: converting the already-normalized bounded
      * {@code Map}/{@code List}/scalar tree to a {@link JsonNode} is a structural copy, never a second
      * serialization pass over the original application object.
+     *
+     * <p><strong>R07 item 4 (security review).</strong> {@code structuredContent} is attached via
+     * {@link ObjectNode#putPOJO}, not {@link ObjectMapper#valueToTree}: {@code valueToTree} (and {@code
+     * convertValue(..., JsonNode.class)}, which shares the same code path) materializes a real {@code
+     * BigDecimal}-typed value through Jackson's {@code TokenBuffer}-backed tree construction, which —
+     * independently of {@code WRITE_BIGDECIMAL_AS_PLAIN} and independently of {@link
+     * #NORMALIZATION_DECODER}'s own fix — silently strips trailing zeros in the process ({@code
+     * BigDecimal("0.1000")} becomes a {@code DecimalNode} whose own value is {@code
+     * BigDecimal("0.1")}). {@code putPOJO} instead wraps {@code normalizedStructuredContent} in a
+     * {@code POJONode} that defers to this exact object's ordinary bean/collection serializer when the
+     * whole envelope is later written by {@link #encodeCapped} — the same code path that already
+     * writes a directly-serialized {@code BigDecimal} losslessly (as plain text, {@code
+     * WRITE_BIGDECIMAL_AS_PLAIN}) — so no intermediate tree-node materialization ever touches the
+     * value's numeric precision.
      */
     private ObjectNode toolCallResponse(
             JsonNode envelope, McpToolResult<?> result, @Nullable Object normalizedStructuredContent) {
@@ -2049,7 +2155,7 @@ final class McpRequestDispatcher {
         toolResult.set("content", content);
         toolResult.put("isError", result.isError());
         if (normalizedStructuredContent != null) {
-            toolResult.set("structuredContent", OUTPUT_ENCODER.valueToTree(normalizedStructuredContent));
+            toolResult.putPOJO("structuredContent", normalizedStructuredContent);
         }
         toolResult.set("_meta", meta);
         ObjectNode response = OUTPUT_ENCODER.createObjectNode();

@@ -15,6 +15,11 @@ import static org.mockito.Mockito.when;
 import dev.vertique.core.extension.ExtensionPhase;
 import dev.vertique.mcp.interceptor.McpRequestContext;
 import dev.vertique.mcp.interceptor.McpRequestInterceptor;
+import dev.vertique.mcp.lifecycle.McpRequestCompletedEvent;
+import dev.vertique.mcp.lifecycle.McpRequestCompletedListener;
+import dev.vertique.mcp.lifecycle.McpRequestLifecycleObserver;
+import dev.vertique.mcp.lifecycle.McpRequestObservation;
+import dev.vertique.mcp.lifecycle.McpRequestTerminalObservation;
 import dev.vertique.rest.core.config.HttpConfig;
 import dev.vertique.rest.core.security.SecurityRuntime;
 import dev.vertique.security.SecurityContext;
@@ -29,9 +34,15 @@ import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.RequestBody;
 import io.vertx.ext.web.RoutingContext;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.ArgumentCaptor;
@@ -75,6 +86,24 @@ class McpProtocolNegotiationTest {
             "shouldRejectSchemaInvalidMetaForToolsCallBeforeDispatch";
     private static final String RESERVED_FIELD_ROW = "shouldRejectAToolsCallReservedFieldBeforeDispatch";
 
+    /**
+     * R07 item 1 (security review): HTAB (0x09) survives Netty's own non-first-byte header validation
+     * ({@code c < 32 && c != 9}), so a header/body-mirrored {@code protocolVersion} carrying one is
+     * neither textually blank nor over-length — the two checks {@code validateNegotiation} previously
+     * enforced — yet still satisfies {@link Character#isISOControl}, the exact bound {@code
+     * McpRequestTerminalEvent}'s own compact constructor throws on. This row proves the mirrored bound
+     * added to {@code validateNegotiation} rejects it before any terminal-event construction site can
+     * ever see it.
+     */
+    private static final String CONTROL_CHARACTER_ROW = "shouldRejectAControlCharacterInProtocolVersionBeforeDispatch";
+
+    /**
+     * R07 item 2 (security review): a well-formed, non-blank, ≤64-char, control-character-free version
+     * the header and body still agree on — so neither pre-existing check catches it — but that is not
+     * {@code McpCursorCodec#PROTOCOL_VERSION}, the single version this server actually supports.
+     */
+    private static final String UNSUPPORTED_VERSION_ROW = "shouldRejectAnUnsupportedProtocolVersionBeforeDispatch";
+
     private static Stream<String> r05Tp001Rows() {
         return Stream.of(
                 BASELINE_ROW,
@@ -83,7 +112,9 @@ class McpProtocolNegotiationTest {
                 SCHEMA_INVALID_DISCOVER_ROW,
                 SCHEMA_INVALID_TOOLS_LIST_ROW,
                 SCHEMA_INVALID_TOOLS_CALL_ROW,
-                RESERVED_FIELD_ROW);
+                RESERVED_FIELD_ROW,
+                CONTROL_CHARACTER_ROW,
+                UNSUPPORTED_VERSION_ROW);
     }
 
     @ParameterizedTest(name = "{0}")
@@ -98,6 +129,8 @@ class McpProtocolNegotiationTest {
             case SCHEMA_INVALID_TOOLS_LIST_ROW -> shouldRejectSchemaInvalidMetaForToolsListBeforeDispatch();
             case SCHEMA_INVALID_TOOLS_CALL_ROW -> shouldRejectSchemaInvalidMetaForToolsCallBeforeDispatch();
             case RESERVED_FIELD_ROW -> shouldRejectAToolsCallReservedFieldBeforeDispatch();
+            case CONTROL_CHARACTER_ROW -> shouldRejectAControlCharacterInProtocolVersionBeforeDispatch();
+            case UNSUPPORTED_VERSION_ROW -> shouldRejectAnUnsupportedProtocolVersionBeforeDispatch();
             default -> throw new IllegalArgumentException("unknown R05 TP-001 row: " + row);
         }
     }
@@ -177,6 +210,165 @@ class McpProtocolNegotiationTest {
         Outcome outcome = drive(body, validHeaders("tools/call", KNOWN_TOOL));
 
         assertRejectedBeforeDispatch(outcome, "a tools/call params carrying the reserved inputResponses field");
+    }
+
+    // --- R07 item 1: a control character in protocolVersion ---
+
+    private void shouldRejectAControlCharacterInProtocolVersionBeforeDispatch() {
+        // HTAB (0x09) specifically: Netty's own non-first-byte header-value validation
+        // (`c < 32 && c != 9`) admits it, so this is not merely a synthetic test value — it is the one
+        // control character that can genuinely reach this codec over the wire. Mirrored identically
+        // into the header and the body's _meta field so the header/body-mismatch check cannot be what
+        // catches this row.
+        String poisoned = PROTOCOL_VERSION + "\t";
+        JsonObject body = discoverBody();
+        body.getJsonObject("params").getJsonObject("_meta").put("io.modelcontextprotocol/protocolVersion", poisoned);
+        MultiMap headers = validHeaders("server/discover", null);
+        headers.set(HEADER_PROTOCOL_VERSION, poisoned);
+
+        Outcome outcome = drive(body, headers);
+
+        assertRejectedBeforeDispatch(outcome, "a protocolVersion carrying an embedded HTAB control character");
+    }
+
+    // --- R07 item 2: a well-formed but unsupported protocolVersion ---
+
+    private void shouldRejectAnUnsupportedProtocolVersionBeforeDispatch() {
+        // Well-formed, non-blank, under the length cap, no control characters — the header and body
+        // still fully agree — so only the new supported-version-set check can reject this row.
+        String unsupported = "1999-01-01";
+        JsonObject body = discoverBody();
+        body.getJsonObject("params").getJsonObject("_meta").put("io.modelcontextprotocol/protocolVersion", unsupported);
+        MultiMap headers = validHeaders("server/discover", null);
+        headers.set(HEADER_PROTOCOL_VERSION, unsupported);
+
+        Outcome outcome = drive(body, headers);
+
+        assertRejectedBeforeDispatch(
+                outcome, "a well-formed protocolVersion the header and body agree on but the server does not support");
+    }
+
+    // --- R07 item 1 (decisive): the control-character row settles bounded, not with a crash, and ---
+    // --- still emits a terminal event ---
+
+    /**
+     * R07 item 1's fully decisive proof: {@link #shouldRejectAControlCharacterInProtocolVersionBeforeDispatch()}
+     * above (part of the shared negotiation matrix) proves the response is rejected {@code -32020} and
+     * that the interceptor stage never runs, but the shared {@link #drive} fixture never calls {@link
+     * McpRequestDispatcher#begin}, so it cannot observe whether a terminal event is actually published
+     * through the lifecycle-observation pipeline — the exact question this defect turns on: before the
+     * fix, the same poisoned value reached {@code McpRequestTerminalEvent}'s compact constructor twice
+     * (once on the direct construction path, once from inside the {@code catch (RuntimeException |
+     * StackOverflowError)} recovery that reconstructs the identical record with the identical poisoned
+     * value), so the recovery itself threw and no terminal was ever published — a request that settles
+     * with nothing: no bounded response actually reaching the wire in that failure mode, and a total
+     * audit blackout for that request class. This test drives the full {@code begin()} → {@code
+     * dispatch()} pipeline against a real {@link McpCompletionCoordinator} and a real recording {@link
+     * McpRequestLifecycleObserver} session (mirroring {@code McpLifecycleFactsTest}'s harness), and
+     * asserts both that {@code dispatch()} returns normally (no crash escapes past it) and that exactly
+     * one terminal event was published.
+     */
+    @Test
+    @DisplayName("R07 item 1 (decisive): a control character settles bounded and still emits a terminal event")
+    void shouldSettleBoundedAndStillEmitATerminalForAControlCharacter() {
+        String poisoned = PROTOCOL_VERSION + "\t";
+        JsonObject body = discoverBody();
+        body.getJsonObject("params").getJsonObject("_meta").put("io.modelcontextprotocol/protocolVersion", poisoned);
+        MultiMap headers = validHeaders("server/discover", null);
+        headers.set(HEADER_PROTOCOL_VERSION, poisoned);
+
+        McpPolicyEnforcer policyEnforcer = mock(McpPolicyEnforcer.class);
+        SecurityRuntime securityRuntime = mock(SecurityRuntime.class);
+        SecurityContext anonymous = SecurityContexts.unauthenticated(SecurityIdentity.anonymous());
+        when(securityRuntime.current()).thenReturn(anonymous);
+        RecordingTerminalObserver observer = new RecordingTerminalObserver();
+        McpRequestDispatcher dispatcher = new McpRequestDispatcher(
+                McpServerConfig.defaults(),
+                securityRuntime,
+                Set.of(observer),
+                Set.<McpRequestCompletedListener>of(),
+                Set.of(),
+                Set.of(),
+                HttpConfig.builder().build(),
+                McpToolRegistry.build(Set.of()),
+                policyEnforcer);
+
+        RoutingContext context = mockStatefulRoutingContext(body, headers);
+
+        // DECISIVE: dispatch() must return normally — a crash here (e.g. an IllegalArgumentException
+        // escaping from a poisoned McpRequestTerminalEvent construction, and then again from its own
+        // recovery path) is exactly the pre-fix failure mode this proof exists to catch.
+        dispatcher.begin(context);
+        dispatcher.dispatch(context);
+
+        int status = statusOf(context);
+        assertThat(status)
+                .as("a control-character protocolVersion must settle bounded HTTP 400")
+                .isEqualTo(400);
+        assertThat(observer.terminals)
+                .as("DECISIVE: exactly one terminal event must still be published for this request — the "
+                        + "pre-fix double-construction failure mode published none at all")
+                .hasSize(1);
+        assertThat(observer.terminals.get(0).event().protocolErrorCode())
+                .as("the published terminal must carry the -32020 negotiation-mismatch code")
+                .isEqualTo(-32020);
+    }
+
+    private static int statusOf(RoutingContext context) {
+        ArgumentCaptor<Integer> statusCaptor = ArgumentCaptor.forClass(Integer.class);
+        verify(context.response()).setStatusCode(statusCaptor.capture());
+        return statusCaptor.getValue();
+    }
+
+    /** A {@link RoutingContext} mock whose {@code put}/{@code get} are backed by a real attribute map. */
+    private static RoutingContext mockStatefulRoutingContext(JsonObject body, MultiMap headers) {
+        RoutingContext context = mock(RoutingContext.class);
+        io.vertx.core.Vertx contextVertx = mock(io.vertx.core.Vertx.class);
+        io.vertx.core.Context vertxContext = mock(io.vertx.core.Context.class);
+        HttpServerRequest request = mock(HttpServerRequest.class);
+        HttpServerResponse response = mock(HttpServerResponse.class);
+        RequestBody requestBody = mock(RequestBody.class);
+        Map<Object, Object> attributes = new HashMap<>();
+
+        when(context.vertx()).thenReturn(contextVertx);
+        when(contextVertx.getOrCreateContext()).thenReturn(vertxContext);
+        when(context.request()).thenReturn(request);
+        when(context.response()).thenReturn(response);
+        when(context.body()).thenReturn(requestBody);
+        when(requestBody.buffer()).thenReturn(Buffer.buffer(body.toBuffer().getBytes()));
+        when(request.headers()).thenReturn(headers);
+        when(response.putHeader(anyString(), anyString())).thenReturn(response);
+        when(response.setStatusCode(anyInt())).thenReturn(response);
+        when(response.end(any(Buffer.class))).thenReturn(Future.succeededFuture());
+        when(response.end()).thenReturn(Future.succeededFuture());
+        when(response.closeHandler(any())).thenReturn(response);
+        when(response.exceptionHandler(any())).thenReturn(response);
+        when(context.put(anyString(), any())).thenAnswer(invocation -> {
+            attributes.put(invocation.getArgument(0), invocation.getArgument(1));
+            return context;
+        });
+        when(context.get(anyString())).thenAnswer(invocation -> attributes.get(invocation.getArgument(0)));
+        return context;
+    }
+
+    /** Records every published terminal observation. */
+    private static final class RecordingTerminalObserver implements McpRequestLifecycleObserver, McpRequestObservation {
+        private final List<McpRequestTerminalObservation> terminals = new ArrayList<>();
+
+        @Override
+        public McpRequestObservation open(Instant startedAt) {
+            return this;
+        }
+
+        @Override
+        public void onTerminal(McpRequestTerminalObservation observation) {
+            terminals.add(observation);
+        }
+
+        @Override
+        public void onCompleted(McpRequestCompletedEvent event) {
+            // not needed for this proof
+        }
     }
 
     // --- Shared assertion ---

@@ -23,9 +23,11 @@ import dev.vertique.security.authz.ResourceRef;
 import dev.vertique.security.events.AuthorizationDecisionEvent;
 import dev.vertique.security.origin.RequestOrigin;
 import dev.vertique.security.runtime.events.SecurityEventEmitter;
+import io.vertx.core.Context;
 import io.vertx.core.Future;
 import io.vertx.core.Handler;
 import io.vertx.core.Promise;
+import io.vertx.core.Vertx;
 import io.vertx.ext.auth.authorization.AuthorizationProvider;
 import io.vertx.ext.web.RoutingContext;
 import jakarta.inject.Inject;
@@ -473,6 +475,10 @@ public class SecurityPolicyEnforcer {
         Objects.requireNonNull(resource, "resource");
         Objects.requireNonNull(origin, "origin");
 
+        // R07 item 5 (security/architecture review, post-R01): captured here, before any async hop,
+        // so the promise built below can be re-anchored to it — see that promise's own comment for why.
+        Context callerContext = Vertx.currentContext();
+
         // Capture correlation once at entry, before any async hop — mirrors buildComposedHandler so
         // an off-context gate completion (remote PDP / async Authorizer) still emits the inbound
         // correlation (FR-054).
@@ -527,20 +533,46 @@ public class SecurityPolicyEnforcer {
         // against gateDeadlineMs and forwards it unchanged when it settles first — inert for a gate
         // that completes normally (verified by the unmodified SecurityPolicyEnforcerDecisionTest
         // permit/deny suite still passing byte-for-byte after this change).
+        //
+        // R07 item 5 (security/architecture review, post-R01): Vert.x 5.1.6's FutureBase#timeout
+        // branches on the SOURCE future's context, not the caller's. A gate future built with the
+        // static Promise.promise() — or bridged from a CompletableFuture by a remote-PDP client, the
+        // exact case this deadline exists for — has context == null, so its .timeout() continuation
+        // runs on Netty's GlobalEventExecutor rather than any Vert.x event-loop thread. Left
+        // unaddressed, that thread would then be the one that eventually calls promise.complete(...)
+        // below, and McpCompletionCoordinator's non-volatile settled/completionEmitted latches are
+        // documented as "mutated only on the request-owning Vert.x context" — a torn latch on this
+        // path means double settlement or a lost completion. This method does not attempt to re-anchor
+        // roleScopeFuture/actionFuture themselves (their own timeout continuations may still run off
+        // any context); instead it re-anchors the one future this method actually hands back to its
+        // caller — see completeOnCallerContext, used at every promise.complete(...) call site below.
         roleScopeFuture = roleScopeFuture.timeout(gateDeadlineMs, TimeUnit.MILLISECONDS);
 
+        // R07 item 5: {@code promise} itself stays the plain, context-less default — Vert.x 5.1.6's
+        // {@link Context} exposes no {@code promise()} factory to anchor one to a context directly.
+        // Every settlement of it instead goes through {@link #completeOnCallerContext}, which
+        // redispatches onto {@code callerContext} via {@link Context#runOnContext} before completing —
+        // mirroring McpCompletionCoordinator's own established {@code context.runOnContext(...)}
+        // re-anchoring idiom — so every caller of decide() (McpPolicyEnforcer,
+        // McpRequestDispatcher's tools/list scan) keeps observing this future settle on the same
+        // context it called decide() from, closing the gap a context-less gate future's own
+        // off-context timeout would otherwise reopen. When decide() is itself called off any Vert.x
+        // context (a unit test with no Vertx instance, matching this class's own pre-existing
+        // SecurityPolicyEnforcerGateDeadlineTest fixture), callerContext is null and this degrades to
+        // the exact pre-fix behavior — completing directly, on whichever thread settled the gate.
         Promise<AuthorizationDecision> promise = Promise.promise();
         roleScopeFuture.onComplete(roleScopeAr -> {
             if (roleScopeAr.failed()) {
                 log.warn("Authorization decision point failed", roleScopeAr.cause());
                 boolean gateTimedOut = roleScopeAr.cause() instanceof TimeoutException;
-                promise.complete(failClosedInternalError(authzRequest, correlation, gateTimedOut));
+                completeOnCallerContext(
+                        promise, callerContext, failClosedInternalError(authzRequest, correlation, gateTimedOut));
                 return;
             }
             AuthorizationDecision roleScope = roleScopeAr.result();
             if (roleScope == null) {
                 log.warn("Authorization decision point resolved to a null role/scope decision; failing closed");
-                promise.complete(failClosedInternalError(authzRequest, correlation));
+                completeOnCallerContext(promise, callerContext, failClosedInternalError(authzRequest, correlation));
                 return;
             }
             if (!roleScope.permitted() || requiredAction.isEmpty()) {
@@ -550,7 +582,7 @@ public class SecurityPolicyEnforcer {
                 // matching what buildConstrainedHandler emits verbatim on the REST no-action path.
                 AuthorizationDecision decision = roleScopeOnlyDecision(roleScope);
                 emitDecision(authzRequest, decision, correlation);
-                promise.complete(decision);
+                completeOnCallerContext(promise, callerContext, decision);
                 return;
             }
 
@@ -570,12 +602,12 @@ public class SecurityPolicyEnforcer {
                 actionFuture = authorizer.authorize(actionRequest);
             } catch (RuntimeException e) {
                 log.warn("Authorizer threw at action gate; failing closed", e);
-                promise.complete(failClosedInternalError(authzRequest, correlation));
+                completeOnCallerContext(promise, callerContext, failClosedInternalError(authzRequest, correlation));
                 return;
             }
             if (actionFuture == null) {
                 log.warn("Authorizer returned a null future at action gate; failing closed");
-                promise.complete(failClosedInternalError(authzRequest, correlation));
+                completeOnCallerContext(promise, callerContext, failClosedInternalError(authzRequest, correlation));
                 return;
             }
             // Bound the action gate exactly like the role/scope gate above (issue #417): the same
@@ -593,10 +625,34 @@ public class SecurityPolicyEnforcer {
                     decision = withGateTimeoutAttribute(decision);
                 }
                 emitDecision(authzRequest, decision, correlation);
-                promise.complete(decision);
+                completeOnCallerContext(promise, callerContext, decision);
             });
         });
         return promise.future();
+    }
+
+    /**
+     * Completes {@code promise} with {@code decision}, redispatched onto {@code callerContext} first
+     * when it is non-{@code null} (R07 item 5), so every handler {@code promise.future()} carries —
+     * however many async hops away, and from whatever thread the settling gate future happened to run
+     * its continuation on — observes the completion on the exact Vert.x context {@link #decide} was
+     * originally called from. {@code callerContext == null} (no Vert.x context was active when {@link
+     * #decide} was called — e.g. a plain unit test with no {@link Vertx} instance) completes directly,
+     * on whatever thread this method runs on; this is the pre-fix behavior and is unaffected.
+     *
+     * @param promise the promise this {@link #decide} invocation returned the future of; must not be
+     *                {@code null}
+     * @param callerContext the context captured at {@link #decide} entry, or {@code null} when none
+     *                      was active
+     * @param decision the decision to complete {@code promise} with; must not be {@code null}
+     */
+    private static void completeOnCallerContext(
+            Promise<AuthorizationDecision> promise, Context callerContext, AuthorizationDecision decision) {
+        if (callerContext != null) {
+            callerContext.runOnContext(ignored -> promise.complete(decision));
+        } else {
+            promise.complete(decision);
+        }
     }
 
     /**

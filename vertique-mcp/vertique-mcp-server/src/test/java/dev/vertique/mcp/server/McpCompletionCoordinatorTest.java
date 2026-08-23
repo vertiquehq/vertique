@@ -449,6 +449,75 @@ class McpCompletionCoordinatorTest {
                 .containsExactlyInAnyOrder("A:close", "B:close");
     }
 
+    // --- R07 item 6 (security review): an Error must not abandon an already-opened scope ---
+
+    /**
+     * R07 item 6: before this fix, {@code openCompletionScopes()} caught only {@link RuntimeException}
+     * and was called <em>before</em> the try/finally even began, so an {@link Error} escaping one
+     * session's {@code openCompletionScope()} propagated out of the whole call — abandoning the
+     * already-opened earlier session's scope with no finally ever reached to close it. This is the
+     * decisive proof an ordinary {@code RuntimeException} row (see {@link
+     * #shouldIsolateAScopeOpenFailureFromOtherSessions()} above) cannot give: {@code RuntimeException}
+     * was already caught per-session before this fix, so that row would pass identically whether or
+     * not this fix exists. Only an {@link Error} distinguishes the two: the healthy session opens
+     * <em>first</em>, so its scope is the one an unfixed implementation would lose.
+     */
+    @Test
+    @DisplayName("R07 item 6: an Error from one session's scope open does not abandon an earlier-opened scope")
+    void shouldNotAbandonAnEarlierOpenedScopeWhenALaterSessionsOpenThrowsAnError() throws Exception {
+        Context context = vertx.getOrCreateContext();
+        ManualClock clock = new ManualClock(COMPLETED_AT);
+        List<String> log = new CopyOnWriteArrayList<>();
+        ScopeOrderObserver healthy = ScopeOrderObserver.healthy(log, "B");
+        ScopeOrderObserver failingWithError = ScopeOrderObserver.failingOpenWithError(log, "A");
+
+        McpCompletionCoordinator coordinator = new McpCompletionCoordinator(
+                context,
+                new LinkedHashSet<>(List.of(healthy, failingWithError)),
+                Set.<McpRequestCompletedListener>of(),
+                STARTED_AT,
+                clock);
+
+        coordinator.settleDisconnected(cancelledTerminal(McpErrorType.TRANSPORT), false);
+        flushContext(context);
+
+        assertThat(log)
+                .as("DECISIVE: the earlier-opened healthy scope must still close, and every session's "
+                        + "completion must still run, even though a later session's open threw an Error")
+                .contains("B:open", "A:open", "B:close", "A:completed", "B:completed")
+                .doesNotContain("A:close");
+    }
+
+    /**
+     * R07 item 6: mirrors {@link #shouldIsolateAScopeCloseFailureFromOtherScopes()} but with an {@link
+     * Error} instead of a {@link RuntimeException} — the pre-fix {@code closeCompletionScopes} caught
+     * only {@code Exception}, so an {@code Error} closing one scope would have skipped every scope
+     * still queued to close after it.
+     */
+    @Test
+    @DisplayName("R07 item 6: an Error from one scope's close does not prevent another scope's close")
+    void shouldIsolateAScopeCloseErrorFromOtherScopes() throws Exception {
+        Context context = vertx.getOrCreateContext();
+        ManualClock clock = new ManualClock(COMPLETED_AT);
+        List<String> log = new CopyOnWriteArrayList<>();
+        ScopeOrderObserver scopeA = ScopeOrderObserver.failingCloseWithError(log, "A");
+        ScopeOrderObserver scopeB = ScopeOrderObserver.failingCloseWithError(log, "B");
+
+        McpCompletionCoordinator coordinator = new McpCompletionCoordinator(
+                context,
+                new LinkedHashSet<>(List.of(scopeA, scopeB)),
+                Set.<McpRequestCompletedListener>of(),
+                STARTED_AT,
+                clock);
+
+        coordinator.settleDisconnected(cancelledTerminal(McpErrorType.TRANSPORT), false);
+        flushContext(context);
+
+        assertThat(eventsEndingWith(log, ":close"))
+                .as("DECISIVE: every opened scope's close must run even though both throw an Error")
+                .containsExactlyInAnyOrder("A:close", "B:close");
+    }
+
     private static List<String> eventsEndingWith(List<String> log, String suffix) {
         return log.stream().filter(entry -> entry.endsWith(suffix)).toList();
     }
@@ -623,12 +692,34 @@ class McpCompletionCoordinatorTest {
         private final String name;
         private final boolean failOpen;
         private final boolean failClose;
+        private final boolean useError;
 
         ScopeOrderObserver(List<String> log, String name, boolean failOpen, boolean failClose) {
+            this(log, name, failOpen, failClose, false);
+        }
+
+        private ScopeOrderObserver(
+                List<String> log, String name, boolean failOpen, boolean failClose, boolean useError) {
             this.log = log;
             this.name = name;
             this.failOpen = failOpen;
             this.failClose = failClose;
+            this.useError = useError;
+        }
+
+        /** A session whose scope opens and closes without failing. */
+        static ScopeOrderObserver healthy(List<String> log, String name) {
+            return new ScopeOrderObserver(log, name, false, false, false);
+        }
+
+        /** A session whose {@code openCompletionScope()} throws an {@link Error} (R07 item 6). */
+        static ScopeOrderObserver failingOpenWithError(List<String> log, String name) {
+            return new ScopeOrderObserver(log, name, true, false, true);
+        }
+
+        /** A session whose scope's {@code close()} throws an {@link Error} (R07 item 6). */
+        static ScopeOrderObserver failingCloseWithError(List<String> log, String name) {
+            return new ScopeOrderObserver(log, name, false, true, true);
         }
 
         @Override
@@ -640,11 +731,17 @@ class McpCompletionCoordinatorTest {
         public AutoCloseable openCompletionScope() {
             log.add(name + ":open");
             if (failOpen) {
+                if (useError) {
+                    throw new Error("scope-open-failure:" + name);
+                }
                 throw new RuntimeException("scope-open-failure:" + name);
             }
             return () -> {
                 log.add(name + ":close");
                 if (failClose) {
+                    if (useError) {
+                        throw new Error("scope-close-failure:" + name);
+                    }
                     throw new RuntimeException("scope-close-failure:" + name);
                 }
             };

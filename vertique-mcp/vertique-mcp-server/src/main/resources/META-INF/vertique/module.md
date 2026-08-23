@@ -227,7 +227,8 @@ issue #429): the required `MCP-Protocol-Version`, `Mcp-Method`, and `Mcp-Name` h
 body-mirrored values (`params._meta`'s `io.modelcontextprotocol/protocolVersion`, the envelope's
 `method`, and — for `tools/call` only, when present — `params.name`), the per-method `_meta` shape is
 structurally valid (`io.modelcontextprotocol/protocolVersion` a non-blank string of at most 64
-characters; `io.modelcontextprotocol/clientCapabilities` an object), and — for `tools/call` only —
+characters containing no control character, and a member of the versions this server actually
+supports; `io.modelcontextprotocol/clientCapabilities` an object), and — for `tools/call` only —
 `params` carries neither of the reserved multi-round-trip fields `inputResponses`/`requestState`. Any
 violation classifies as `-32020` *Header/body mismatch*, mapped to HTTP 400 through the same bounded,
 capped writer every other terminal response uses. This runs strictly after envelope decode and
@@ -598,6 +599,12 @@ A page may therefore be underfilled or empty and still carry a `nextCursor` whil
 candidates remain past the budget; only a scan that reaches the registry's end omits it. Only
 tools the decision permits are returned — a hidden `@DenyAll` or role-mismatched candidate examined
 within the scan window never appears in the page, even though it was authorized.
+
+A candidate whose authorization decision exceeds the shared gate deadline also ends the page early —
+the same amplification bound above, applied to a single hanging candidate rather than the whole
+scan — and is denied for this request (fail-closed). The returned `nextCursor` anchors to the
+candidate *before* the timed-out one, not the timed-out candidate itself, so the next `tools/list`
+call re-examines it rather than permanently excluding it from every future page.
 
 The cursor is unsigned, non-expiring, opaque base64url (no padding) JSON: the frozen protocol
 version, the current registry digest, and the last global-name candidate examined (not merely the

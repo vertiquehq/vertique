@@ -11,6 +11,8 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import dev.vertique.core.correlation.CorrelationContextSnapshot;
+import dev.vertique.mcp.interceptor.McpRequestContext;
+import dev.vertique.mcp.interceptor.McpRequestInterceptor;
 import dev.vertique.mcp.lifecycle.McpAuthorizationSummary;
 import dev.vertique.mcp.lifecycle.McpErrorType;
 import dev.vertique.mcp.lifecycle.McpOutcome;
@@ -63,16 +65,18 @@ import org.junit.jupiter.params.provider.MethodSource;
  * <p>Drives {@link McpRequestDispatcher#begin}, then either {@link McpRequestDispatcher#dispatch} or
  * {@link McpRequestDispatcher#completeAuthenticationRejection}, against a mocked {@link
  * RoutingContext} wired to a real {@link McpCompletionCoordinator} (so terminal delivery is genuine,
- * not simulated) and a real recording {@link McpRequestLifecycleObserver} session. Four rows enumerate
+ * not simulated) and a real recording {@link McpRequestLifecycleObserver} session. Five rows enumerate
  * the named terminal paths: a successful {@code tools/call}, a policy-denied {@code tools/call}, an
- * authentication rejection (terminates before negotiation ever runs), and a handler failure inside an
+ * authentication rejection (terminates before negotiation ever runs), a handler failure inside an
  * otherwise-authorized {@code tools/call} (a "lifecycle-observed failure" — the terminal event a
- * genuine handler throw produces, observed through the same lifecycle session every other row uses).
- * Every row asserts the terminal event's {@code protocolVersion}, {@code correlation}, and {@code
- * authorization} facts (or their documented absence) rather than only the wire response, because the
- * frozen record's own fields are exactly what {@code vertique-audit-mcp} and the OpenTelemetry adapter
- * consume — a proof that only inspected the HTTP response could not tell them apart from the
- * pre-repair {@code null} facts.
+ * genuine handler throw produces, observed through the same lifecycle session every other row uses),
+ * and (R07 item 3) a pre-dispatch request-interceptor rejection, which — unlike the authentication
+ * rejection — runs strictly after negotiation has already completed and so must still carry the
+ * negotiated version. Every row asserts the terminal event's {@code protocolVersion}, {@code
+ * correlation}, and {@code authorization} facts (or their documented absence) rather than only the
+ * wire response, because the frozen record's own fields are exactly what {@code vertique-audit-mcp}
+ * and the OpenTelemetry adapter consume — a proof that only inspected the HTTP response could not
+ * tell them apart from the pre-repair {@code null} facts.
  *
  * <p>Enterprise-side consumption ({@code McpAuditProjector} reading {@link
  * McpRequestTerminalEvent#correlation()} instead of {@code AuditCorrelation.empty()}) is outside this
@@ -90,6 +94,16 @@ class McpLifecycleFactsTest {
     private static final String AUTHENTICATION_FAILURE_ROW = "shouldCarryFactsOnAnAuthenticationRejection";
     private static final String LIFECYCLE_FAILURE_ROW = "shouldCarryFactsOnAHandlerFailureInsideAnAuthorizedCall";
 
+    /**
+     * R07 item 3 (post-R05 security/architecture review): {@link McpRequestDispatcher#writeInterceptorRejection}
+     * previously passed a hardcoded {@code null} {@code protocolVersion} on its normal-response branch
+     * while its own over-cap branch correctly derived it from {@link
+     * McpRequestDispatcher#protocolVersionOf} — even though negotiation has always completed by the time
+     * either branch runs. This row is the missing 5th of the 21 {@code McpRequestTerminalEvent} factory
+     * call sites the original R05 evidence enumerated only 4 of.
+     */
+    private static final String INTERCEPTOR_REJECTION_ROW = "shouldCarryFactsOnAnInterceptorRejectedRequest";
+
     private final List<Vertx> openedVertx = new ArrayList<>();
 
     @AfterEach
@@ -99,7 +113,8 @@ class McpLifecycleFactsTest {
     }
 
     private static Stream<String> r05Tp002Rows() {
-        return Stream.of(SUCCESS_ROW, DENIAL_ROW, AUTHENTICATION_FAILURE_ROW, LIFECYCLE_FAILURE_ROW);
+        return Stream.of(
+                SUCCESS_ROW, DENIAL_ROW, AUTHENTICATION_FAILURE_ROW, LIFECYCLE_FAILURE_ROW, INTERCEPTOR_REJECTION_ROW);
     }
 
     @ParameterizedTest(name = "{0}")
@@ -111,6 +126,7 @@ class McpLifecycleFactsTest {
             case DENIAL_ROW -> shouldCarryFactsOnAPolicyDeniedToolCall();
             case AUTHENTICATION_FAILURE_ROW -> shouldCarryFactsOnAnAuthenticationRejection();
             case LIFECYCLE_FAILURE_ROW -> shouldCarryFactsOnAHandlerFailureInsideAnAuthorizedCall();
+            case INTERCEPTOR_REJECTION_ROW -> shouldCarryFactsOnAnInterceptorRejectedRequest();
             default -> throw new IllegalArgumentException("unknown R05 TP-002 row: " + row);
         }
     }
@@ -192,6 +208,34 @@ class McpLifecycleFactsTest {
                 .isEqualTo(new McpAuthorizationSummary(true, "permitted", null, null));
     }
 
+    // --- Interceptor rejection (negotiation already completed; no policy evaluation ever runs) ---
+
+    private void shouldCarryFactsOnAnInterceptorRejectedRequest() {
+        Fixture fixture = build(
+                AuthorizationDecision.permit("PERMITTED"),
+                FakeInvoker.succeeding(McpToolResult.text("unreachable")),
+                Set.of(new RejectingInterceptor()));
+
+        fixture.dispatcher.dispatch(fixture.context);
+
+        McpRequestTerminalEvent terminal = onlyTerminal(fixture);
+        assertThat(terminal.outcome()).isEqualTo(McpOutcome.REJECTED);
+        assertThat(terminal.errorType()).isEqualTo(McpErrorType.INTERCEPTOR);
+        assertProtocolVersionPresent(terminal);
+        assertCorrelationPresent(terminal);
+        assertThat(terminal.authorization())
+                .as("no policy evaluation ever occurs for a request an interceptor rejects before tool " + "resolution")
+                .isNull();
+    }
+
+    /** Unconditionally rejects, driving {@link McpRequestDispatcher#writeInterceptorRejection}. */
+    private static final class RejectingInterceptor implements McpRequestInterceptor {
+        @Override
+        public Future<Void> beforeRequest(McpRequestContext context) {
+            return Future.failedFuture(new IllegalStateException("fixture interceptor rejection"));
+        }
+    }
+
     // --- Shared assertions ---
 
     private static void assertProtocolVersionPresent(McpRequestTerminalEvent terminal) {
@@ -222,6 +266,11 @@ class McpLifecycleFactsTest {
     // --- Fixture construction ---
 
     private Fixture build(AuthorizationDecision decision, FakeInvoker invoker) {
+        return build(decision, invoker, Set.of());
+    }
+
+    private Fixture build(
+            AuthorizationDecision decision, FakeInvoker invoker, Set<McpRequestInterceptor> requestInterceptors) {
         Vertx vertx = Vertx.vertx();
         openedVertx.add(vertx);
         Context vertxContext = vertx.getOrCreateContext();
@@ -239,7 +288,7 @@ class McpLifecycleFactsTest {
                 securityRuntime,
                 Set.of(observer),
                 Set.<McpRequestCompletedListener>of(),
-                Set.of(),
+                requestInterceptors,
                 Set.of(),
                 HttpConfig.builder().build(),
                 McpToolRegistry.build(Set.of(invoker)),

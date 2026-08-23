@@ -23,6 +23,7 @@ import java.time.InstantSource;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
+import lombok.extern.slf4j.Slf4j;
 
 /**
  * Coordinates one request's failure-isolated terminal and completion observation, and owns the
@@ -30,6 +31,7 @@ import java.util.Set;
  * fires it exactly once, confined to the same first-observed-wins settlement this class already
  * enforces, so a cooperative tool handler can stop early.
  */
+@Slf4j
 final class McpCompletionCoordinator {
     private final Context context;
     private final List<McpRequestObservation> observations;
@@ -130,7 +132,7 @@ final class McpCompletionCoordinator {
     void publishToolInput(McpToolInputObservation observation) {
         observations.forEach(session -> {
             if (session instanceof McpToolValueObservation capable) {
-                invoke(() -> capable.onToolInput(observation));
+                invoke(session, () -> capable.onToolInput(observation));
             }
         });
     }
@@ -156,7 +158,7 @@ final class McpCompletionCoordinator {
     void publishToolOutput(McpToolOutputObservation observation) {
         observations.forEach(session -> {
             if (session instanceof McpToolValueObservation capable) {
-                invoke(() -> capable.onToolOutput(observation));
+                invoke(session, () -> capable.onToolOutput(observation));
             }
         });
     }
@@ -320,7 +322,7 @@ final class McpCompletionCoordinator {
      */
     private void publishTerminal(McpRequestTerminalEvent terminal) {
         McpRequestTerminalObservation observation = new McpRequestTerminalObservation(terminal, null);
-        observations.forEach(item -> invoke(() -> item.onTerminal(observation)));
+        observations.forEach(item -> invoke(item, () -> item.onTerminal(observation)));
     }
 
     /**
@@ -344,25 +346,39 @@ final class McpCompletionCoordinator {
         // produces a contract-valid completion rather than throwing between terminal and completion.
         Instant settledAt = completedAt.isBefore(terminal.terminalAt()) ? terminal.terminalAt() : completedAt;
         McpRequestCompletedEvent event = completedEvent(terminal, transport, responseCommitted, settledAt);
-        List<AutoCloseable> openedScopes = openCompletionScopes();
+        // R07 item 6 (security review): the opened-scope list is declared here, before the try, and
+        // populated incrementally by openCompletionScopes — which now runs INSIDE the try below — so
+        // that a session's openCompletionScope() throwing an Error (not merely a RuntimeException)
+        // still leaves every already-opened scope reachable to the finally. Before this fix,
+        // openCompletionScopes() built and returned its own local list in one call made BEFORE the
+        // try/finally even began; an Error escaping that call (its per-session catch was RuntimeException
+        // only) abandoned the whole local list — including every scope already successfully opened —
+        // with no finally ever entered to close them. The shipped OpenTelemetry consumer's scope is
+        // span.makeCurrent(): an unclosed one leaves the span attached to the event-loop thread, and
+        // every later request dispatched on that same thread inherits it — cross-request trace
+        // contamination, not merely a resource leak.
+        List<AutoCloseable> openedScopes = new ArrayList<>();
         try {
-            observations.forEach(item -> invoke(() -> item.onCompleted(event)));
-            listeners.forEach(listener -> invoke(() -> listener.onCompleted(event)));
+            openCompletionScopes(openedScopes);
+            observations.forEach(item -> invoke(item, () -> item.onCompleted(event)));
+            listeners.forEach(listener -> invoke(listener, () -> listener.onCompleted(event)));
         } finally {
             closeCompletionScopes(openedScopes);
         }
     }
 
     /**
-     * Opens every retained session's {@link McpCompletionScope}, isolating each session's open
-     * failure exactly like every other lifecycle callback. A session whose {@code openCompletionScope}
-     * throws, or returns {@code null}, contributes no entry — its absence never affects any other
-     * session's scope or the completion dispatch itself.
+     * Opens every retained session's {@link McpCompletionScope}, appending each opened scope to
+     * {@code opened} immediately as it succeeds — so a later session's failure never loses an earlier
+     * session's already-opened scope — and isolating each session's open failure (including an
+     * {@link Error}, not merely a {@link RuntimeException}) exactly like {@link #closeCompletionScopes}
+     * isolates each close (R07 item 6). A session whose {@code openCompletionScope} throws, or returns
+     * {@code null}, contributes no entry — its absence never affects any other session's scope or the
+     * completion dispatch itself.
      *
-     * @return the opened scopes, in the order their sessions were opened; never {@code null}
+     * @param opened the mutable, caller-owned accumulator scopes are appended to as they open
      */
-    private List<AutoCloseable> openCompletionScopes() {
-        List<AutoCloseable> opened = new ArrayList<>();
+    private void openCompletionScopes(List<AutoCloseable> opened) {
         for (McpRequestObservation session : observations) {
             if (session instanceof McpCompletionScope capable) {
                 try {
@@ -370,26 +386,37 @@ final class McpCompletionCoordinator {
                     if (scope != null) {
                         opened.add(scope);
                     }
-                } catch (RuntimeException ignored) {
-                    // Scope-open failures are isolated exactly like every other observer callback.
+                } catch (Throwable failure) {
+                    // Throwable, not RuntimeException (R07 item 6): an Error here must not abandon the
+                    // scopes already opened by earlier sessions in this same loop — never logs the
+                    // failure's own message, only the failing session's class.
+                    log.warn(
+                            "McpCompletionScope open failed on {}",
+                            session.getClass().getName());
                 }
             }
         }
-        return opened;
     }
 
     /**
      * Closes every scope {@link #openCompletionScopes} opened, in reverse order, isolating each
-     * scope's close failure so one misbehaving scope cannot prevent another from closing.
+     * scope's close failure — including an {@link Error} (R07 item 6) — so one misbehaving scope
+     * cannot prevent another from closing.
      *
      * @param scopes the scopes to close, in open order
      */
     private static void closeCompletionScopes(List<AutoCloseable> scopes) {
         for (int i = scopes.size() - 1; i >= 0; i--) {
+            AutoCloseable scope = scopes.get(i);
             try {
-                scopes.get(i).close();
-            } catch (Exception ignored) {
-                // Scope-close failures are isolated exactly like every other observer callback.
+                scope.close();
+            } catch (Throwable failure) {
+                // Throwable, not Exception (R07 item 6): an Error closing one scope must not prevent an
+                // earlier-opened scope from closing — never logs the failure's own message, only the
+                // failing scope's class.
+                log.warn(
+                        "McpCompletionScope close failed on {}",
+                        scope.getClass().getName());
             }
         }
     }
@@ -423,11 +450,24 @@ final class McpCompletionCoordinator {
         };
     }
 
-    private static void invoke(Runnable callback) {
+    /**
+     * Runs {@code callback} — one observer/listener lifecycle invocation — isolating a {@link
+     * RuntimeException} so a misbehaving observer or listener never affects request settlement.
+     *
+     * <p>R07 item 6 (security review): this class previously had no logger at all, so a failing
+     * observer/listener callback was silently and permanently discarded with no operator-visible
+     * signal. {@code owner} identifies which retained session or listener failed; never logs the
+     * failure's own message, matching {@link #openCompletionScopes}/{@link #closeCompletionScopes}'s
+     * established non-leaking pattern for this same class.
+     *
+     * @param owner the observation session or completion listener {@code callback} was built from
+     * @param callback the lifecycle invocation to run
+     */
+    private static void invoke(Object owner, Runnable callback) {
         try {
             callback.run();
         } catch (RuntimeException ignored) {
-            // Framework observer/listener failures must not affect request settlement.
+            log.warn("MCP lifecycle callback failed on {}", owner.getClass().getName());
         }
     }
 
