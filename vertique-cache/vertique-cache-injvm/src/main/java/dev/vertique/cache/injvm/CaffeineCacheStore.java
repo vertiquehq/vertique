@@ -19,7 +19,7 @@ import java.util.Optional;
 /** Bounded local cache store backed by Caffeine. */
 @Singleton
 public final class CaffeineCacheStore implements CacheStore {
-    private final Cache<CacheKey, Object> entries;
+    private final Cache<CacheKey, Entry> entries;
 
     @Inject
     public CaffeineCacheStore(CacheConfig config) {
@@ -29,15 +29,20 @@ public final class CaffeineCacheStore implements CacheStore {
 
     @Override
     public Future<Optional<Object>> get(CacheKey key, Type declaredType) {
-        return Future.succeededFuture(Optional.ofNullable(entries.getIfPresent(key)));
+        Entry entry = entries.getIfPresent(key);
+        if (entry == null || entry.expired()) {
+            if (entry != null) {
+                entries.invalidate(key);
+            }
+            return Future.succeededFuture(Optional.empty());
+        }
+        return Future.succeededFuture(Optional.of(entry.value()));
     }
 
     @Override
     public Future<Void> put(CacheKey key, Object value, Type declaredType, Duration ttl) {
-        if (!ttl.isNegative() && !ttl.isZero()) {
-            entries.put(key, value);
-        } else if (ttl.isZero()) {
-            entries.put(key, value);
+        if (!ttl.isNegative()) {
+            entries.put(key, new Entry(value, ttl.isZero() ? 0 : deadline(ttl)));
         }
         return Future.succeededFuture();
     }
@@ -52,5 +57,18 @@ public final class CaffeineCacheStore implements CacheStore {
     public Future<Void> clear(CacheRegion region) {
         entries.asMap().keySet().removeIf(key -> key.region().equals(region));
         return Future.succeededFuture();
+    }
+
+    private static long deadline(Duration ttl) {
+        long nanos = ttl.toNanos();
+        long now = System.nanoTime();
+        long deadline = now + nanos;
+        return deadline < now ? Long.MAX_VALUE : deadline;
+    }
+
+    private record Entry(Object value, long expiresAtNanos) {
+        private boolean expired() {
+            return expiresAtNanos != 0 && System.nanoTime() - expiresAtNanos >= 0;
+        }
     }
 }
