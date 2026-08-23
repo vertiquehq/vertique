@@ -59,14 +59,17 @@ before the terminal write."
 - `rpc.system.name` — always the literal `jsonrpc`.
 - `mcp.method.name` — an `McpMethod` name, with `McpMethod.OTHER` remapped to the underscore-prefixed
   literal `_OTHER`, mirroring the sibling Micrometer adapter's `method` tag convention.
+- `mcp.protocol.version` — the terminal event's negotiated protocol version (R05, issue #431), set only
+  when non-null: a request whose protocol negotiation never completed (rejected at or before
+  negotiation) sets no value here at all, rather than a hardcoded or default literal.
 - `vertique.mcp.outcome` — the terminal event's `McpOutcome` enum name.
 - `vertique.mcp.result.type` — the terminal event's `McpResultType` enum name.
 - `gen_ai.tool.name` — set only when the terminal event carries a resolved tool identity (never the
   `UNKNOWN` placeholder).
 
-`rpc.system.name`, `mcp.method.name`, and `gen_ai.tool.name` are experimental OpenTelemetry
-semantic-convention names; rather than depending on an incubating semconv artifact, they are declared
-as internal, Vertique-owned `AttributeKey` constants on `McpServerSpanObserver`.
+`rpc.system.name`, `mcp.method.name`, `mcp.protocol.version`, and `gen_ai.tool.name` are experimental
+OpenTelemetry semantic-convention names; rather than depending on an incubating semconv artifact, they
+are declared as internal, Vertique-owned `AttributeKey` constants on `McpServerSpanObserver`.
 
 **At most one body-trace link, never a child span — path exists but is not yet fed (P05 review
 remediation).** When the request's terminal observation carries a non-null `bodyTraceContext` (a

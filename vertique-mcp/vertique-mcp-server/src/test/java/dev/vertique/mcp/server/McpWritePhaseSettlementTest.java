@@ -257,7 +257,7 @@ class McpWritePhaseSettlementTest {
 
     private static McpRequestTerminalEvent successTerminal() {
         return McpRequestTerminalEvent.success(
-                STARTED_AT, TERMINAL_AT, McpMethod.TOOLS_CALL, "call.stalledTool", 200, null, null, null);
+                STARTED_AT, TERMINAL_AT, McpMethod.TOOLS_CALL, "call.stalledTool", 200, null, null, null, null);
     }
 
     private static McpRequestTerminalEvent cancelledTerminal() {
@@ -268,6 +268,7 @@ class McpWritePhaseSettlementTest {
                 McpRequestTerminalEvent.UNKNOWN_TOOL_NAME,
                 McpErrorType.TRANSPORT,
                 0,
+                null,
                 null,
                 null,
                 null,

@@ -117,6 +117,9 @@ class McpToolListMaxBudgetStackSafetyIT {
         // guard and reported as a 500 internal error, never the correct paginated 200 asserted below.
         HttpResponse<Buffer> response = await(client.post(fixture.port(), "127.0.0.1", REQUEST_PATH)
                 .putHeader("content-type", "application/json")
+                .putHeader("MCP-Protocol-Version", PROTOCOL_VERSION)
+                .putHeader("Mcp-Method", "tools/list")
+                .putHeader("Mcp-Name", "tools/list")
                 .sendBuffer(listToolsBody()));
 
         assertThat(response.statusCode())

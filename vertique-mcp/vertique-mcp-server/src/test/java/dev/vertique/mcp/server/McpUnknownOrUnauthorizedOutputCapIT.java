@@ -178,6 +178,9 @@ class McpUnknownOrUnauthorizedOutputCapIT {
                 .put("params", params);
         return client.post(fixture.port(), "127.0.0.1", REQUEST_PATH)
                 .putHeader("content-type", "application/json")
+                .putHeader("MCP-Protocol-Version", PROTOCOL_VERSION)
+                .putHeader("Mcp-Method", "tools/call")
+                .putHeader("Mcp-Name", toolName)
                 .sendBuffer(body.toBuffer());
     }
 
@@ -193,6 +196,9 @@ class McpUnknownOrUnauthorizedOutputCapIT {
                 .put("params", params);
         return client.post(fixture.port(), "127.0.0.1", REQUEST_PATH)
                 .putHeader("content-type", "application/json")
+                .putHeader("MCP-Protocol-Version", PROTOCOL_VERSION)
+                .putHeader("Mcp-Method", "tools/list")
+                .putHeader("Mcp-Name", "tools/list")
                 .sendBuffer(body.toBuffer());
     }
 

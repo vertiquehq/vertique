@@ -161,7 +161,10 @@ public class McpDiscoverWalkingSkeletonIT {
                 .put("method", "server/discover")
                 .put("params", discoverParams());
         HttpRequest<Buffer> request = client.post(fixture.port(), "127.0.0.1", McpWalkingSkeletonFixture.REQUEST_PATH)
-                .putHeader("content-type", "application/json");
+                .putHeader("content-type", "application/json")
+                .putHeader("MCP-Protocol-Version", PROTOCOL_VERSION)
+                .putHeader("Mcp-Method", "server/discover")
+                .putHeader("Mcp-Name", "server/discover");
 
         switch (row) {
             case ABSENT_CREDENTIALS_ROW -> {

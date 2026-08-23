@@ -206,11 +206,22 @@ no `data`: `-32700` *Parse error* (malformed JSON, or an envelope-codec rejectio
 key or trailing token; null id), `-32600` *Invalid Request* (bad envelope — wrong version, a missing
 or non-string/non-integer id, a missing method, or a missing or non-object `params`; original usable
 id when the id itself is a trustworthy string or integer, else null), and `-32601` *Method not
-found* (unknown method; original usable id). Header/body-mismatch
-(`-32020`) and tool-level authorization (`-32602`) classification belong to the HTTP-contract and
-tool-dispatch slices and are not part of this codec. An internal codec failure settles through a
-pre-encoded `-32603` *Internal error* response that is written exactly once and never carries the
-cause's text, so an internal exception message cannot leak to a client.
+found* (unknown method; original usable id). Tool-level authorization (`-32602`) classification
+belongs to the tool-dispatch slice and is not part of this codec. An internal codec failure settles
+through a pre-encoded `-32603` *Internal error* response that is written exactly once and never
+carries the cause's text, so an internal exception message cannot leak to a client.
+
+Once a decode succeeds, `McpProtocolCodec#validateNegotiation` validates protocol negotiation (R05,
+issue #429): the required `MCP-Protocol-Version`, `Mcp-Method`, and `Mcp-Name` headers agree with their
+body-mirrored values (`params._meta`'s `io.modelcontextprotocol/protocolVersion`, the envelope's
+`method`, and — for `tools/call` only, when present — `params.name`), the per-method `_meta` shape is
+structurally valid (`io.modelcontextprotocol/protocolVersion` a non-blank string of at most 64
+characters; `io.modelcontextprotocol/clientCapabilities` an object), and — for `tools/call` only —
+`params` carries neither of the reserved multi-round-trip fields `inputResponses`/`requestState`. Any
+violation classifies as `-32020` *Header/body mismatch*, mapped to HTTP 400 through the same bounded,
+capped writer every other terminal response uses. This runs strictly after envelope decode and
+strictly before the request-interceptor stage below, tool lookup, or authorization — see
+[Request interceptor stage](#request-interceptor-stage).
 
 The mount handles no file uploads of its own, but it does not rely on that alone: an
 application-composed ancestor `BodyHandler` with uploads enabled spools multipart parts to disk
@@ -223,11 +234,15 @@ boundary and owns the HTTP/router composition only.
 
 ## Request interceptor stage
 
-Once — and only once — the envelope decodes successfully does `McpRequestDispatcher` run the ordered,
-fail-closed pre-dispatch `McpRequestInterceptor` stage (T016, contract §4.7 stage 5): after envelope
-decode, before the method dispatches to `server/discover`, `tools/list`, or `tools/call`, and before
-any tool is resolved or argument is processed. A decode failure never reaches this stage; it settles
-through [Bounded JSON-RPC envelope codec](#bounded-json-rpc-envelope-codec) exactly as before.
+Once — and only once — the envelope decodes successfully *and* protocol negotiation passes does
+`McpRequestDispatcher` run the ordered, fail-closed pre-dispatch `McpRequestInterceptor` stage (T016,
+contract §4.7 stage 5): after envelope decode and negotiation, before the method dispatches to
+`server/discover`, `tools/list`, or `tools/call`, and before any tool is resolved or argument is
+processed. A decode failure never reaches this stage; it settles through
+[Bounded JSON-RPC envelope codec](#bounded-json-rpc-envelope-codec) exactly as before. A negotiation
+failure likewise never reaches this stage — see that same section's negotiation paragraph — so neither
+this interceptor stage nor anything after it ever observes a request whose required headers disagree
+with its body.
 
 Contribute `McpRequestInterceptor` through Dagger set multibinding (`McpServerModule`). The
 dispatcher sorts and validates the contributed set exactly once, at construction — never per request

@@ -63,6 +63,7 @@ class McpLifecycleEventTest {
     private static final Set<McpOutcome> ERROR_OUTCOMES =
             EnumSet.of(McpOutcome.REJECTED, McpOutcome.FAILED, McpOutcome.CANCELLED);
 
+    private static final String PROTOCOL_VERSION = "2026-07-28";
     private static final McpAuthorizationSummary AUTHORIZATION =
             new McpAuthorizationSummary(true, "policy.permitted", "tenant/policy-1", "2026.08.20");
     private static final SecurityContextSnapshot SECURITY = new SecurityContextSnapshot(
@@ -101,6 +102,7 @@ class McpLifecycleEventTest {
             assertThat(event.resultType()).isEqualTo(tuple.resultType());
             assertThat(event.httpStatus()).isEqualTo(tuple.httpStatus());
             assertThat(event.protocolErrorCode()).isEqualTo(tuple.protocolErrorCode());
+            assertThat(event.protocolVersion()).isEqualTo(PROTOCOL_VERSION);
             assertThat(event.authorization()).isEqualTo(AUTHORIZATION);
             assertThat(event.security()).isEqualTo(security);
             assertThat(event.correlation()).isEqualTo(CORRELATION);
@@ -557,14 +559,23 @@ class McpLifecycleEventTest {
                                 McpMethod.SERVER_DISCOVER,
                                 McpRequestTerminalEvent.UNKNOWN_TOOL_NAME,
                                 200,
+                                PROTOCOL_VERSION,
                                 null,
                                 null,
                                 null)),
                 Arguments.of("a non-tool method carrying a named tool", (ThrowingConstruction)
                         () -> McpRequestTerminalEvent.success(
-                                STARTED_AT, TERMINAL_AT, McpMethod.SERVER_DISCOVER, "greet", 200, null, null, null)),
+                                STARTED_AT,
+                                TERMINAL_AT,
+                                McpMethod.SERVER_DISCOVER,
+                                "greet",
+                                200,
+                                PROTOCOL_VERSION,
+                                null,
+                                null,
+                                null)),
                 Arguments.of("a blank tool name", (ThrowingConstruction) () -> McpRequestTerminalEvent.success(
-                        STARTED_AT, TERMINAL_AT, McpMethod.TOOLS_CALL, "  ", 200, null, null, null)),
+                        STARTED_AT, TERMINAL_AT, McpMethod.TOOLS_CALL, "  ", 200, PROTOCOL_VERSION, null, null, null)),
                 // P04 remediation (issue W7): a resolved tool identity must be bounded by the published
                 // McpToolDescriptor name grammar ([A-Za-z0-9_.-]{1,128}), not merely non-blank — an
                 // unresolved name never touches a real descriptor, so nothing else would bound it before
@@ -576,12 +587,21 @@ class McpLifecycleEventTest {
                                 McpMethod.TOOLS_CALL,
                                 "not a valid name",
                                 200,
+                                PROTOCOL_VERSION,
                                 null,
                                 null,
                                 null)),
                 Arguments.of("a tool name longer than the published 128-character bound", (ThrowingConstruction)
                         () -> McpRequestTerminalEvent.success(
-                                STARTED_AT, TERMINAL_AT, McpMethod.TOOLS_CALL, "a".repeat(129), 200, null, null, null)),
+                                STARTED_AT,
+                                TERMINAL_AT,
+                                McpMethod.TOOLS_CALL,
+                                "a".repeat(129),
+                                200,
+                                PROTOCOL_VERSION,
+                                null,
+                                null,
+                                null)),
                 Arguments.of("an authentication rejection carrying security facts", (ThrowingConstruction)
                         () -> McpRequestTerminalEvent.rejected(
                                 STARTED_AT,
@@ -591,9 +611,36 @@ class McpLifecycleEventTest {
                                 McpErrorType.AUTHENTICATION,
                                 401,
                                 null,
+                                PROTOCOL_VERSION,
                                 null,
                                 SECURITY,
-                                null)));
+                                null)),
+                // R05 (issue #431): a protocolVersion past the bound this record shares with the
+                // negotiation stage that produces it (McpProtocolCodec#MAX_PROTOCOL_VERSION_CHARS) must
+                // never reach an observer — see the BoundedValues nested class for the full boundary
+                // matrix; this row anchors it into the same illegal-facts table every other terminal
+                // invariant is proven through.
+                Arguments.of("a protocolVersion one character past the 64-character bound", (ThrowingConstruction)
+                        () -> McpRequestTerminalEvent.success(
+                                STARTED_AT,
+                                TERMINAL_AT,
+                                McpMethod.SERVER_DISCOVER,
+                                McpRequestTerminalEvent.UNKNOWN_TOOL_NAME,
+                                200,
+                                "v".repeat(65),
+                                null,
+                                null,
+                                null)),
+                Arguments.of("a blank protocolVersion", (ThrowingConstruction) () -> McpRequestTerminalEvent.success(
+                        STARTED_AT,
+                        TERMINAL_AT,
+                        McpMethod.SERVER_DISCOVER,
+                        McpRequestTerminalEvent.UNKNOWN_TOOL_NAME,
+                        200,
+                        "   ",
+                        null,
+                        null,
+                        null)));
     }
 
     private static Stream<Arguments> acceptedTerminalFactRows() {
@@ -605,12 +652,21 @@ class McpLifecycleEventTest {
                                 McpMethod.SERVER_DISCOVER,
                                 McpRequestTerminalEvent.UNKNOWN_TOOL_NAME,
                                 200,
+                                PROTOCOL_VERSION,
                                 null,
                                 null,
                                 null)),
                 Arguments.of("a tool call carrying a named tool", (ThrowingConstruction)
                         () -> McpRequestTerminalEvent.success(
-                                STARTED_AT, TERMINAL_AT, McpMethod.TOOLS_CALL, "greet", 200, null, null, null)),
+                                STARTED_AT,
+                                TERMINAL_AT,
+                                McpMethod.TOOLS_CALL,
+                                "greet",
+                                200,
+                                PROTOCOL_VERSION,
+                                null,
+                                null,
+                                null)),
                 Arguments.of("a tool call using the UNKNOWN literal", (ThrowingConstruction)
                         () -> McpRequestTerminalEvent.success(
                                 STARTED_AT,
@@ -618,6 +674,7 @@ class McpLifecycleEventTest {
                                 McpMethod.TOOLS_CALL,
                                 McpRequestTerminalEvent.UNKNOWN_TOOL_NAME,
                                 200,
+                                PROTOCOL_VERSION,
                                 null,
                                 null,
                                 null)),
@@ -630,6 +687,7 @@ class McpLifecycleEventTest {
                                 McpErrorType.AUTHENTICATION,
                                 401,
                                 null,
+                                PROTOCOL_VERSION,
                                 null,
                                 null,
                                 null)),
@@ -642,8 +700,33 @@ class McpLifecycleEventTest {
                                 McpErrorType.AUTHORIZATION,
                                 403,
                                 null,
+                                PROTOCOL_VERSION,
                                 AUTHORIZATION,
                                 SECURITY,
+                                null)),
+                // R05 (issue #431): a null protocolVersion is always legal — "emit only when negotiation
+                // completed" (contract §4.7) means every rejection path this repair did not touch (and
+                // every request that never negotiates) must still construct cleanly.
+                Arguments.of("a null protocolVersion", (ThrowingConstruction) () -> McpRequestTerminalEvent.success(
+                        STARTED_AT,
+                        TERMINAL_AT,
+                        McpMethod.SERVER_DISCOVER,
+                        McpRequestTerminalEvent.UNKNOWN_TOOL_NAME,
+                        200,
+                        null,
+                        null,
+                        null,
+                        null)),
+                Arguments.of("a protocolVersion at the 64-character bound", (ThrowingConstruction)
+                        () -> McpRequestTerminalEvent.success(
+                                STARTED_AT,
+                                TERMINAL_AT,
+                                McpMethod.SERVER_DISCOVER,
+                                McpRequestTerminalEvent.UNKNOWN_TOOL_NAME,
+                                200,
+                                "v".repeat(64),
+                                null,
+                                null,
                                 null)));
     }
 
@@ -795,6 +878,7 @@ class McpLifecycleEventTest {
                 tuple.resultType(),
                 tuple.httpStatus(),
                 tuple.protocolErrorCode(),
+                PROTOCOL_VERSION,
                 AUTHORIZATION,
                 securityFor(tuple),
                 CORRELATION);
@@ -818,6 +902,7 @@ class McpLifecycleEventTest {
                 McpMethod.SERVER_DISCOVER,
                 McpRequestTerminalEvent.UNKNOWN_TOOL_NAME,
                 200,
+                PROTOCOL_VERSION,
                 null,
                 null,
                 null);

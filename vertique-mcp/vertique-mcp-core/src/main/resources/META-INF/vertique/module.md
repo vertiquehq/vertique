@@ -111,6 +111,13 @@ Both records are immutable, validate their temporal and protocol-state invariant
 bounded protocol facts. They never carry request bodies, headers, credentials, exception text, or
 arbitrary client-provided method or tool names.
 
+`McpRequestTerminalEvent.protocolVersion` carries the request's negotiated protocol version — never a
+hardcoded constant — and is non-null only for a request whose protocol negotiation completed; a request
+rejected at or before negotiation carries `null`. When present it is bounded: non-blank, free of
+control characters, at most 64 characters. `authorization` is present only after an actual policy
+evaluation, and `correlation` is established for every request that reaches the completion coordinator
+(a cheap-admission rejection, which precedes that point, carries neither).
+
 ## Observation extensions
 
 Contribute `McpRequestLifecycleObserver` through Dagger set multibinding. The server opens one

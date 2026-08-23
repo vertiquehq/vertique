@@ -337,7 +337,10 @@ public class McpDiscoverIT {
 
     private HttpRequest<Buffer> post() {
         return client.post(fixture.port(), "127.0.0.1", McpDiscoverITFixture.REQUEST_PATH)
-                .putHeader("content-type", "application/json");
+                .putHeader("content-type", "application/json")
+                .putHeader("MCP-Protocol-Version", PROTOCOL_VERSION)
+                .putHeader("Mcp-Method", "server/discover")
+                .putHeader("Mcp-Name", "server/discover");
     }
 
     private static Buffer discoverBody() {

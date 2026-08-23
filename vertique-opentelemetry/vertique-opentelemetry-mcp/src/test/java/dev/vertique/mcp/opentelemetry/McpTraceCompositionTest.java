@@ -191,6 +191,9 @@ class McpTraceCompositionTest {
                         McpTraceCompositionTestFixture.LOOPBACK,
                         McpTraceCompositionTestFixture.REQUEST_PATH)
                 .putHeader("content-type", "application/json")
+                .putHeader("MCP-Protocol-Version", PROTOCOL_VERSION)
+                .putHeader("Mcp-Method", "tools/call")
+                .putHeader("Mcp-Name", McpTraceCompositionTestFixture.TOOL_NAME)
                 .sendBuffer(body.toBuffer());
     }
 

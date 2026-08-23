@@ -4,6 +4,7 @@
 package dev.vertique.mcp.server;
 
 import dev.vertique.core.context.DispatchBoundary;
+import dev.vertique.mcp.lifecycle.McpAuthorizationSummary;
 import dev.vertique.mcp.tool.McpAccessMode;
 import dev.vertique.mcp.tool.McpToolAccess;
 import dev.vertique.mcp.tool.McpToolDescriptor;
@@ -15,12 +16,15 @@ import dev.vertique.security.authz.AuthorizationDecision;
 import dev.vertique.security.authz.InvocationOrigin;
 import dev.vertique.security.authz.ResourceRef;
 import io.vertx.core.Future;
+import jakarta.annotation.Nullable;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.regex.Pattern;
 
 /**
  * The only MCP caller of {@link SecurityPolicyEnforcer#decide}: maps a generated
@@ -128,6 +132,68 @@ class McpPolicyEnforcer {
      */
     static McpProtocolCodec.CodecError unknownOrUnauthorizedError() {
         return new McpProtocolCodec.CodecError(UNKNOWN_OR_UNAUTHORIZED_CODE, UNKNOWN_OR_UNAUTHORIZED_MESSAGE, null);
+    }
+
+    /**
+     * The bounded {@link McpAuthorizationSummary#reasonCode()} substituted whenever {@code decision}'s
+     * own {@link AuthorizationDecision#reasonCode()} cannot be safely carried — see {@link #summarize}.
+     */
+    private static final String UNMAPPED_REASON_CODE = "unmapped";
+
+    private static final int MAX_REASON_CODE_CHARS = 64;
+
+    /**
+     * Maps a real {@link AuthorizationDecision} — the same shape every {@link #decide} call already
+     * produces — to the bounded {@link McpAuthorizationSummary} the lifecycle contract carries (R05,
+     * issue #431).
+     *
+     * <p><strong>Why this cannot simply pass the decision's fields through.</strong> {@link
+     * AuthorizationDecision#reasonCode()}'s established vocabulary ({@link
+     * dev.vertique.security.authz.AuthzReasonCodes}, e.g. {@code "PERMITTED"}, {@code "DENY_ALL"}) is
+     * upper-case, while {@link McpAuthorizationSummary}'s compact constructor requires the lower-case
+     * machine-token grammar {@code [a-z0-9][a-z0-9._-]{0,63}} and throws {@link
+     * IllegalArgumentException} on a mismatch. A blind pass-through would crash a request the moment any
+     * {@link dev.vertique.security.authz.Authorizer} — including a future or application-supplied one,
+     * not only the shipped default engine — returned a code this grammar rejects (upper-case, too long,
+     * or carrying an unexpected character). This method lower-cases the common case and never throws:
+     * a reason code, policy id, or policy version that still cannot satisfy {@link
+     * McpAuthorizationSummary}'s bounds after normalization is dropped to a safe substitute instead of
+     * propagating the violation, so the summary's shape can never grow — or fail to construct — from
+     * caller-supplied authorization metadata, however that metadata was produced.
+     *
+     * <p>{@code policyId}/{@code policyVersion} are the application's own configured policy identity,
+     * not client request input, so they carry no attacker-controlled growth path independent of this
+     * same normalization; they are still passed through the identical bounded-or-dropped rule for a
+     * single, uniform guarantee rather than trusting two different sources by two different rules.
+     *
+     * @param decision the real decision to summarize; must not be {@code null}
+     * @return the bounded summary; never {@code null}, never throws
+     */
+    static McpAuthorizationSummary summarize(AuthorizationDecision decision) {
+        Objects.requireNonNull(decision, "decision");
+        String reasonCode = boundedReasonCode(decision.reasonCode());
+        String policyId = boundedOrNull(decision.policyId().orElse(null), 256);
+        String policyVersion = boundedOrNull(decision.policyVersion().orElse(null), 64);
+        return new McpAuthorizationSummary(decision.permitted(), reasonCode, policyId, policyVersion);
+    }
+
+    private static final Pattern REASON_CODE_PATTERN = Pattern.compile("[a-z0-9][a-z0-9._-]{0,63}");
+
+    private static String boundedReasonCode(String rawReasonCode) {
+        String candidate = rawReasonCode.toLowerCase(Locale.ROOT);
+        if (candidate.length() <= MAX_REASON_CODE_CHARS
+                && REASON_CODE_PATTERN.matcher(candidate).matches()) {
+            return candidate;
+        }
+        return UNMAPPED_REASON_CODE;
+    }
+
+    @Nullable
+    private static String boundedOrNull(@Nullable String value, int maxChars) {
+        if (value == null || value.isBlank() || value.length() > maxChars) {
+            return null;
+        }
+        return value.chars().anyMatch(Character::isISOControl) ? null : value;
     }
 
     /**

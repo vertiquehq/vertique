@@ -164,6 +164,9 @@ class McpToolCallMalformedArgumentsIT {
                 + argumentsMember + "}}";
         return client.post(fixture.port(), "127.0.0.1", REQUEST_PATH)
                 .putHeader("content-type", "application/json")
+                .putHeader("MCP-Protocol-Version", PROTOCOL_VERSION)
+                .putHeader("Mcp-Method", "tools/call")
+                .putHeader("Mcp-Name", PUBLIC_TOOL)
                 .sendBuffer(Buffer.buffer(body));
     }
 

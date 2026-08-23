@@ -115,6 +115,7 @@ class McpServerMetricsObserverTest {
                 200,
                 null,
                 null,
+                null,
                 null);
         openAndComplete(observer, otherMethod, McpRequestCompletedEvent.written(otherMethod, COMPLETED_AT));
 
@@ -281,7 +282,15 @@ class McpServerMetricsObserverTest {
                 new McpAuthorizationSummary(true, "policy-permit", "POLICY-alice-secret-id-42", "v3");
 
         McpRequestTerminalEvent successWithFacts = McpRequestTerminalEvent.success(
-                STARTED_AT, TERMINAL_AT, McpMethod.TOOLS_CALL, KNOWN_TOOL, 200, authorization, null, correlation);
+                STARTED_AT,
+                TERMINAL_AT,
+                McpMethod.TOOLS_CALL,
+                KNOWN_TOOL,
+                200,
+                "2026-07-28",
+                authorization,
+                null,
+                correlation);
         openAndComplete(observer, successWithFacts, McpRequestCompletedEvent.written(successWithFacts, COMPLETED_AT));
 
         // DECISIVE: enumerate every tag key and value the registry actually received across every
@@ -374,19 +383,58 @@ class McpServerMetricsObserverTest {
         return switch (outcome) {
             case SUCCESS ->
                 McpRequestTerminalEvent.success(
-                        STARTED_AT, TERMINAL_AT, McpMethod.TOOLS_CALL, toolName, 200, null, null, null);
+                        STARTED_AT, TERMINAL_AT, McpMethod.TOOLS_CALL, toolName, 200, null, null, null, null);
             case TOOL_ERROR ->
                 McpRequestTerminalEvent.toolError(
-                        STARTED_AT, TERMINAL_AT, McpMethod.TOOLS_CALL, toolName, errorType, 200, null, null, null);
+                        STARTED_AT,
+                        TERMINAL_AT,
+                        McpMethod.TOOLS_CALL,
+                        toolName,
+                        errorType,
+                        200,
+                        null,
+                        null,
+                        null,
+                        null);
             case REJECTED ->
                 McpRequestTerminalEvent.rejected(
-                        STARTED_AT, TERMINAL_AT, McpMethod.TOOLS_CALL, toolName, errorType, 0, null, null, null, null);
+                        STARTED_AT,
+                        TERMINAL_AT,
+                        McpMethod.TOOLS_CALL,
+                        toolName,
+                        errorType,
+                        0,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null);
             case FAILED ->
                 McpRequestTerminalEvent.failed(
-                        STARTED_AT, TERMINAL_AT, McpMethod.TOOLS_CALL, toolName, errorType, 0, null, null, null, null);
+                        STARTED_AT,
+                        TERMINAL_AT,
+                        McpMethod.TOOLS_CALL,
+                        toolName,
+                        errorType,
+                        0,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null);
             case CANCELLED ->
                 McpRequestTerminalEvent.cancelled(
-                        STARTED_AT, TERMINAL_AT, McpMethod.TOOLS_CALL, toolName, errorType, 0, null, null, null, null);
+                        STARTED_AT,
+                        TERMINAL_AT,
+                        McpMethod.TOOLS_CALL,
+                        toolName,
+                        errorType,
+                        0,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null);
         };
     }
 
@@ -412,6 +460,7 @@ class McpServerMetricsObserverTest {
                 toolName,
                 McpErrorType.HANDLER,
                 0,
+                null,
                 null,
                 null,
                 null,

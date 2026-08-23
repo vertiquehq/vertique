@@ -149,6 +149,7 @@ class McpCacheHintsGoldenTest {
             when(context.response()).thenReturn(response);
             when(context.body()).thenReturn(body);
             when(body.buffer()).thenReturn(Buffer.buffer(requestBody));
+            when(request.headers()).thenReturn(negotiationHeadersFor(requestBody));
             when(response.putHeader(anyString(), anyString())).thenReturn(response);
             when(response.setStatusCode(anyInt())).thenReturn(response);
             when(response.end(any(Buffer.class))).thenReturn(Future.succeededFuture());
@@ -158,6 +159,21 @@ class McpCacheHintsGoldenTest {
             ArgumentCaptor<Buffer> written = ArgumentCaptor.forClass(Buffer.class);
             verify(response).end(written.capture());
             return written.getValue().getBytes();
+        }
+
+        /**
+         * Builds the required negotiation headers (R05, issue #429) self-consistent with
+         * {@code requestBody}'s own method and {@code _meta.protocolVersion} — this fixture drives
+         * cache-hint bytes, not negotiation, so its headers always agree with the body.
+         */
+        private static io.vertx.core.MultiMap negotiationHeadersFor(byte[] requestBody) {
+            JsonObject decoded = new JsonObject(Buffer.buffer(requestBody));
+            String method = decoded.getString("method");
+            io.vertx.core.MultiMap headers = io.vertx.core.MultiMap.caseInsensitiveMultiMap();
+            headers.set("MCP-Protocol-Version", PROTOCOL_VERSION);
+            headers.set("Mcp-Method", method);
+            headers.set("Mcp-Name", method);
+            return headers;
         }
 
         static byte[] discoverRequestBody() {

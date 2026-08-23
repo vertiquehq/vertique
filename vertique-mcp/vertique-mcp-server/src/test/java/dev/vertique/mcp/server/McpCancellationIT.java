@@ -321,6 +321,9 @@ class McpCancellationIT {
         String head = "POST " + REQUEST_PATH + " HTTP/1.1\r\n"
                 + "Host: " + LOOPBACK + "\r\n"
                 + "Content-Type: application/json\r\n"
+                + "MCP-Protocol-Version: " + PROTOCOL_VERSION + "\r\n"
+                + "Mcp-Method: tools/call\r\n"
+                + "Mcp-Name: " + toolName + "\r\n"
                 + "Content-Length: " + body.length + "\r\n"
                 + "Connection: close\r\n\r\n";
         socket.getOutputStream().write(head.getBytes(StandardCharsets.US_ASCII));

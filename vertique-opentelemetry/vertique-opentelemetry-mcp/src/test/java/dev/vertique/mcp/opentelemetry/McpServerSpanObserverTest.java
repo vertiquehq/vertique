@@ -60,6 +60,7 @@ class McpServerSpanObserverTest {
     private static final String DISTINCT_LINK_ROW = "shouldAddOneLinkForAValidDistinctBodyContext";
     private static final String MATCHING_LINK_ROW = "shouldAddNoLinkForAMatchingBodyContext";
     private static final String MALFORMED_LINK_ROW = "shouldIgnoreMalformedBodyTraceDataWithABoundedDiagnostic";
+    private static final String PROTOCOL_VERSION_ROW = "shouldEmitProtocolVersionOnlyWhenNegotiated";
 
     private static final Instant STARTED_AT = Instant.parse("2026-08-23T00:00:00Z");
     private static final Instant TERMINAL_AT = STARTED_AT.plusMillis(25);
@@ -76,7 +77,8 @@ class McpServerSpanObserverTest {
                 OFF_CONTEXT_TERMINAL_ROW,
                 DISTINCT_LINK_ROW,
                 MATCHING_LINK_ROW,
-                MALFORMED_LINK_ROW);
+                MALFORMED_LINK_ROW,
+                PROTOCOL_VERSION_ROW);
     }
 
     @ParameterizedTest(name = "{0}")
@@ -89,6 +91,7 @@ class McpServerSpanObserverTest {
             case DISTINCT_LINK_ROW -> shouldAddOneLinkForAValidDistinctBodyContext();
             case MATCHING_LINK_ROW -> shouldAddNoLinkForAMatchingBodyContext();
             case MALFORMED_LINK_ROW -> shouldIgnoreMalformedBodyTraceDataWithABoundedDiagnostic();
+            case PROTOCOL_VERSION_ROW -> shouldEmitProtocolVersionOnlyWhenNegotiated();
             default -> fail("unknown T022 observer row: " + row);
         }
     }
@@ -248,11 +251,58 @@ class McpServerSpanObserverTest {
         }
     }
 
+    // --- shouldEmitProtocolVersionOnlyWhenNegotiated ---
+
+    /**
+     * R05 (issue #431): {@code mcp.protocol.version} is set only from a terminal event whose {@link
+     * McpRequestTerminalEvent#protocolVersion()} is non-{@code null} — never a hardcoded constant, and
+     * never emitted for a request whose negotiation never completed.
+     */
+    private void shouldEmitProtocolVersionOnlyWhenNegotiated() {
+        try (TracerFixture fixture = TracerFixture.create()) {
+            Span negotiatedSpan = fixture.startSpan("http-server-span-protocol-version-negotiated");
+            McpServerSpanObserver negotiatedObserver = new McpServerSpanObserver();
+            McpRequestObservation negotiatedSession;
+            try (Scope scope = negotiatedSpan.makeCurrent()) {
+                negotiatedSession = negotiatedObserver.open(STARTED_AT);
+            }
+            negotiatedSession.onTerminal(terminalObservation(successTerminalWithProtocolVersion("2026-07-28"), null));
+            negotiatedSpan.end();
+
+            assertThat(((ReadableSpan) negotiatedSpan).getAttribute(McpServerSpanObserver.MCP_PROTOCOL_VERSION))
+                    .as("DECISIVE: the negotiated value from the terminal event is emitted verbatim, never a "
+                            + "hardcoded literal chosen by this observer")
+                    .isEqualTo("2026-07-28");
+
+            Span unnegotiatedSpan = fixture.startSpan("http-server-span-protocol-version-absent");
+            McpServerSpanObserver unnegotiatedObserver = new McpServerSpanObserver();
+            McpRequestObservation unnegotiatedSession;
+            try (Scope scope = unnegotiatedSpan.makeCurrent()) {
+                unnegotiatedSession = unnegotiatedObserver.open(STARTED_AT);
+            }
+            unnegotiatedSession.onTerminal(terminalObservation(successTerminal(), null));
+            unnegotiatedSpan.end();
+
+            assertThat(((ReadableSpan) unnegotiatedSpan).getAttribute(McpServerSpanObserver.MCP_PROTOCOL_VERSION))
+                    .as("DECISIVE: a terminal event whose negotiation never completed (protocolVersion=null) "
+                            + "emits no attribute at all, not an empty or default one")
+                    .isNull();
+            assertThat(((ReadableSpan) unnegotiatedSpan).getAttribute(McpServerSpanObserver.VERTIQUE_MCP_OUTCOME))
+                    .as("the rest of enrichment must still happen even when protocolVersion is absent")
+                    .isEqualTo("SUCCESS");
+        }
+    }
+
     // --- Fixtures ---
 
     private static McpRequestTerminalEvent successTerminal() {
         return McpRequestTerminalEvent.success(
-                STARTED_AT, TERMINAL_AT, McpMethod.TOOLS_CALL, KNOWN_TOOL, 200, null, null, null);
+                STARTED_AT, TERMINAL_AT, McpMethod.TOOLS_CALL, KNOWN_TOOL, 200, null, null, null, null);
+    }
+
+    private static McpRequestTerminalEvent successTerminalWithProtocolVersion(String protocolVersion) {
+        return McpRequestTerminalEvent.success(
+                STARTED_AT, TERMINAL_AT, McpMethod.TOOLS_CALL, KNOWN_TOOL, 200, protocolVersion, null, null, null);
     }
 
     private static McpRequestTerminalObservation terminalObservation(

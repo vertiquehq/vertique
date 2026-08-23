@@ -104,7 +104,15 @@ class McpMetricsCompositionTest {
         Instant startedAt = Instant.parse("2026-06-05T10:00:00Z");
         Instant terminalAt = startedAt.plusMillis(5);
         McpRequestTerminalEvent terminal = McpRequestTerminalEvent.success(
-                startedAt, terminalAt, McpMethod.TOOLS_CALL, "metrics.composition.fixture.tool", 200, null, null, null);
+                startedAt,
+                terminalAt,
+                McpMethod.TOOLS_CALL,
+                "metrics.composition.fixture.tool",
+                200,
+                null,
+                null,
+                null,
+                null);
         return McpRequestCompletedEvent.written(terminal, terminalAt.plusMillis(1));
     }
 }

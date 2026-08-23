@@ -99,8 +99,8 @@ class McpGeneratedGenericStructuredOutputIT {
                 .isEqualTo(1);
 
         // --- Then (b): a call whose returned element violates that schema is rejected ---
-        HttpResponse<Buffer> invalid =
-                await(post().sendBuffer(callBody(McpGeneratedGenericStructuredOutputITFixture.INVALID_TOOL_NAME)));
+        HttpResponse<Buffer> invalid = await(post(McpGeneratedGenericStructuredOutputITFixture.INVALID_TOOL_NAME)
+                .sendBuffer(callBody(McpGeneratedGenericStructuredOutputITFixture.INVALID_TOOL_NAME)));
         SoftAssertions softly = new SoftAssertions();
         softly.assertThat(invalid.statusCode())
                 .as("DECISIVE: an output element violating its own advertised schema must never reach "
@@ -115,8 +115,8 @@ class McpGeneratedGenericStructuredOutputIT {
                 .isEqualTo(-32603);
 
         // --- Then (c): the sibling call whose element satisfies the same schema succeeds ---
-        HttpResponse<Buffer> valid =
-                await(post().sendBuffer(callBody(McpGeneratedGenericStructuredOutputITFixture.VALID_TOOL_NAME)));
+        HttpResponse<Buffer> valid = await(post(McpGeneratedGenericStructuredOutputITFixture.VALID_TOOL_NAME)
+                .sendBuffer(callBody(McpGeneratedGenericStructuredOutputITFixture.VALID_TOOL_NAME)));
         softly.assertThat(valid.statusCode())
                 .as("an element satisfying the advertised schema must succeed")
                 .isEqualTo(200);
@@ -127,8 +127,12 @@ class McpGeneratedGenericStructuredOutputIT {
 
     // --- Wire helpers ---
 
-    private HttpRequest<Buffer> post() {
-        return client.post(fixture.port(), "127.0.0.1", REQUEST_PATH).putHeader("content-type", "application/json");
+    private HttpRequest<Buffer> post(String toolName) {
+        return client.post(fixture.port(), "127.0.0.1", REQUEST_PATH)
+                .putHeader("content-type", "application/json")
+                .putHeader("MCP-Protocol-Version", PROTOCOL_VERSION)
+                .putHeader("Mcp-Method", "tools/call")
+                .putHeader("Mcp-Name", toolName);
     }
 
     private static Buffer callBody(String toolName) {

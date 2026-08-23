@@ -206,6 +206,9 @@ class McpAdmissionAndCacheHeadersIT {
                 .put("params", new JsonObject().put("_meta", meta));
         HttpResponse<Buffer> response = await(client.post(fixture.port(), LOOPBACK, REQUEST_PATH)
                 .putHeader("content-type", "application/json")
+                .putHeader("MCP-Protocol-Version", PROTOCOL_VERSION)
+                .putHeader("Mcp-Method", "tools/list")
+                .putHeader("Mcp-Name", "tools/list")
                 .sendBuffer(body.toBuffer()));
 
         assertThat(response.statusCode()).isEqualTo(200);
@@ -227,7 +230,11 @@ class McpAdmissionAndCacheHeadersIT {
     }
 
     private HttpRequest<Buffer> discoverRequest() {
-        return client.post(fixture.port(), LOOPBACK, REQUEST_PATH).putHeader("content-type", "application/json");
+        return client.post(fixture.port(), LOOPBACK, REQUEST_PATH)
+                .putHeader("content-type", "application/json")
+                .putHeader("MCP-Protocol-Version", PROTOCOL_VERSION)
+                .putHeader("Mcp-Method", "server/discover")
+                .putHeader("Mcp-Name", "server/discover");
     }
 
     private static JsonObject discoverBody() {

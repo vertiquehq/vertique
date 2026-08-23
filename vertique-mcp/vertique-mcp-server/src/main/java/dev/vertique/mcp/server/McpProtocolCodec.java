@@ -11,6 +11,7 @@ import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.fasterxml.jackson.databind.node.NullNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import dev.vertique.rest.core.config.HttpConfig;
+import io.vertx.core.MultiMap;
 import jakarta.annotation.Nullable;
 import java.io.UncheckedIOException;
 import java.util.Set;
@@ -30,8 +31,11 @@ import java.util.Set;
  *
  * <p>Envelope validation trusts only the framework-owned {@link McpEnvelopeJsonCodec}; the supported
  * request methods are the bounded set {@code server/discover}, {@code tools/list}, and
- * {@code tools/call}. Header/body-mismatch classification ({@code -32020}) and tool-level
- * authorization ({@code -32602}) belong to a later HTTP slice and are deliberately absent here.
+ * {@code tools/call}. Tool-level authorization ({@code -32602}) belongs to a later HTTP slice and is
+ * deliberately absent here. Protocol negotiation — the required header/body agreement and per-method
+ * {@code _meta} shape (issue #429) — is {@link #validateNegotiation}, a distinct step the caller runs
+ * strictly after a successful {@link #decodeEnvelope} and strictly before any interceptor, tool
+ * lookup, or authorization; this class has no dependency on any of those later stages.
  */
 final class McpProtocolCodec {
 
@@ -43,10 +47,59 @@ final class McpProtocolCodec {
     private static final int METHOD_NOT_FOUND = -32601;
     private static final int INTERNAL_ERROR = -32603;
 
+    /**
+     * The implementation-defined JSON-RPC server-error-range code (contract §4.7 — "Header/body
+     * mismatch is HTTP 400 with -32020") this class's {@link #validateNegotiation} settles as. Widened
+     * (R05, issues #429/#431) to cover the whole pre-dispatch protocol-negotiation stage this method
+     * owns — a missing/mismatched required header, a structurally invalid {@code _meta} negotiation
+     * shape, and a rejected reserved {@code tools/call} field — rather than the header/body comparison
+     * alone: every one of these is a negotiation-stage failure in the sense R05's own title names, and
+     * splitting them across two codes would give a caller no reliable signal that "negotiation failed"
+     * without also parsing the specific reason.
+     */
+    private static final int NEGOTIATION_MISMATCH = -32020;
+
     private static final String MSG_PARSE_ERROR = "Parse error";
     private static final String MSG_INVALID_REQUEST = "Invalid Request";
     private static final String MSG_METHOD_NOT_FOUND = "Method not found";
     private static final String MSG_INTERNAL_ERROR = "Internal error";
+
+    /**
+     * The standard, non-leaking message paired with {@link #NEGOTIATION_MISMATCH}: never echoes the
+     * offending header name, header value, or body field, matching {@link
+     * McpPolicyEnforcer#UNKNOWN_OR_UNAUTHORIZED_MESSAGE}'s established non-leaking convention for a
+     * different stage.
+     */
+    private static final String MSG_NEGOTIATION_MISMATCH = "Header/body mismatch";
+
+    // --- Protocol negotiation (contract §4.7, issue #429) ---
+
+    private static final String HEADER_PROTOCOL_VERSION = "MCP-Protocol-Version";
+    private static final String HEADER_METHOD = "Mcp-Method";
+    private static final String HEADER_NAME = "Mcp-Name";
+
+    private static final String META_FIELD = "_meta";
+    private static final String META_PROTOCOL_VERSION = "io.modelcontextprotocol/protocolVersion";
+    private static final String META_CLIENT_CAPABILITIES = "io.modelcontextprotocol/clientCapabilities";
+
+    /**
+     * The two {@code tools/call} {@code CallToolRequestParams} fields the official schema permits for
+     * multi-round-trip tool execution (MRTR) that Phase 1 deliberately does not implement (contract
+     * §4.7 — "Phase 1 rejects {@code inputResponses}/{@code requestState} rather than pretending to
+     * support MRTR"). Present only on {@code CallToolRequestParams} (and {@code
+     * ReadResourceRequestParams}, which Phase 1 never exposes) in the vendored schema — never on
+     * {@code RequestParams} ({@code server/discover}) or {@code PaginatedRequestParams} ({@code
+     * tools/list}) — so this check applies only to {@code tools/call}.
+     */
+    private static final Set<String> RESERVED_TOOLS_CALL_PARAM_FIELDS = Set.of("inputResponses", "requestState");
+
+    /**
+     * The maximum accepted length of a candidate {@code io.modelcontextprotocol/protocolVersion}
+     * value, mirroring {@link dev.vertique.mcp.lifecycle.McpRequestTerminalEvent}'s own bound on the
+     * same fact so a negotiated value can never reach that record's compact constructor already
+     * knowing it would be rejected there.
+     */
+    private static final int MAX_PROTOCOL_VERSION_CHARS = 64;
 
     private static final String JSONRPC_VERSION = "2.0";
 
@@ -100,6 +153,141 @@ final class McpProtocolCodec {
     }
 
     /**
+     * Validates protocol negotiation for one already envelope-validated request (contract §4.7, issue
+     * #429): the required {@code MCP-Protocol-Version} / {@code Mcp-Method} / {@code Mcp-Name} headers
+     * against their body-mirrored values, the mandatory per-method {@code _meta} negotiation shape, and
+     * — for {@code tools/call} only — the rejected reserved MRTR fields.
+     *
+     * <p><strong>Ordering is the caller's obligation, not this method's.</strong> This method reads
+     * only {@code envelope} and {@code headers}; it has no dependency on interceptors, the tool
+     * registry, or authorization, so a caller that invokes it immediately after a successful {@link
+     * #decodeEnvelope} and before anything else necessarily satisfies contract §4.7's "before
+     * interceptors, lookup, or authorization" ordering.
+     *
+     * <p><strong>Header comparison.</strong> {@code MCP-Protocol-Version} must equal {@code
+     * params._meta["io.modelcontextprotocol/protocolVersion"]} — the vendored schema's own {@code
+     * RequestMetaObject} description: "For the HTTP transport, this value MUST match the {@code
+     * MCP-Protocol-Version} header; otherwise the server MUST return a 400 Bad Request." {@code
+     * Mcp-Method} must equal {@code envelope.method}. {@code Mcp-Name} is required on every request,
+     * but its value is compared against {@code params.name} only for {@code tools/call} when {@code
+     * name} is itself present and textual; {@code server/discover} and {@code tools/list} carry no
+     * schema-level "name" concept to mirror, so their {@code Mcp-Name} value is accepted as sent. A
+     * {@code tools/call} request whose {@code name} is absent, blank, or non-textual is left to {@link
+     * McpRequestDispatcher#writeToolsCall}'s existing, already-tested {@code -32602}
+     * unknown-or-unauthorized handling — this method never duplicates or preempts that check, so this
+     * repair does not change that scenario's wire response. All three header <em>values</em> are
+     * compared case-sensitively; the header <em>name</em> lookup is case-insensitive ({@link
+     * MultiMap#get(String)}'s own contract). This method does not implement the contract's "Base64
+     * sentinel values are decoded before comparison" clause: no concrete sentinel syntax is specified
+     * anywhere in this feature's governance corpus, and the three values compared here (the fixed
+     * protocol-version literal, the fixed method-string enum, and a tool name already bounded to
+     * {@code [A-Za-z0-9_.-]{1,128}} once resolved) never need one — see the R05 evidence for the full
+     * reasoning. The vendored schema's {@code x-mcp-header}/{@code Mcp-Param-*} argument-mirroring
+     * mechanism (§4.7 — "Phase 1 emits no {@code x-mcp-header}") is the more plausible owner of that
+     * clause, and Phase 1 does not implement it either.
+     *
+     * <p><strong>{@code _meta} shape.</strong> {@code params._meta} must be an object; {@code
+     * io.modelcontextprotocol/protocolVersion} must be a non-blank string of at most {@value
+     * #MAX_PROTOCOL_VERSION_CHARS} characters (mirroring {@code McpRequestTerminalEvent}'s own bound on
+     * the same fact); {@code io.modelcontextprotocol/clientCapabilities} must be an object. Both are
+     * schema-required on every supported method's {@code RequestMetaObject}.
+     *
+     * <p><strong>Reserved fields.</strong> A {@code tools/call} {@code params} containing {@code
+     * inputResponses} or {@code requestState} — schema-permitted MRTR fields Phase 1 does not implement
+     * — fails negotiation (contract §4.7).
+     *
+     * @param envelope a successfully decoded envelope, as {@link Decoded#envelope()} carries it
+     * @param headers the request's HTTP headers
+     * @return the negotiated protocol version when every check passes, or a bounded classified error
+     *     when any check fails; never both
+     */
+    NegotiationResult validateNegotiation(JsonNode envelope, MultiMap headers) {
+        String method = envelope.get("method").asText();
+        JsonNode params = envelope.get("params");
+        JsonNode meta = params.get(META_FIELD);
+        if (meta == null || !meta.isObject()) {
+            return NegotiationResult.failed(negotiationError());
+        }
+        JsonNode protocolVersionNode = meta.get(META_PROTOCOL_VERSION);
+        if (protocolVersionNode == null
+                || !protocolVersionNode.isTextual()
+                || protocolVersionNode.asText().isBlank()
+                || protocolVersionNode.asText().length() > MAX_PROTOCOL_VERSION_CHARS) {
+            return NegotiationResult.failed(negotiationError());
+        }
+        JsonNode clientCapabilities = meta.get(META_CLIENT_CAPABILITIES);
+        if (clientCapabilities == null || !clientCapabilities.isObject()) {
+            return NegotiationResult.failed(negotiationError());
+        }
+        if ("tools/call".equals(method)) {
+            for (String reserved : RESERVED_TOOLS_CALL_PARAM_FIELDS) {
+                if (params.has(reserved)) {
+                    return NegotiationResult.failed(negotiationError());
+                }
+            }
+        }
+        String protocolVersion = protocolVersionNode.asText();
+        if (!headerMatches(headers, HEADER_PROTOCOL_VERSION, protocolVersion)) {
+            return NegotiationResult.failed(negotiationError());
+        }
+        if (!headerMatches(headers, HEADER_METHOD, method)) {
+            return NegotiationResult.failed(negotiationError());
+        }
+        String nameHeader = headers.get(HEADER_NAME);
+        if (nameHeader == null) {
+            return NegotiationResult.failed(negotiationError());
+        }
+        if ("tools/call".equals(method)) {
+            JsonNode nameNode = params.get("name");
+            if (nameNode != null && nameNode.isTextual() && !nameNode.asText().isBlank()) {
+                if (!nameHeader.equals(nameNode.asText())) {
+                    return NegotiationResult.failed(negotiationError());
+                }
+            }
+        }
+        return NegotiationResult.ok(protocolVersion);
+    }
+
+    /**
+     * Reports whether {@code headers} carries {@code headerName} with a value exactly equal
+     * (case-sensitively) to {@code expected}. The header name lookup is case-insensitive per {@link
+     * MultiMap#get(String)}'s own contract; an absent header never matches.
+     */
+    private static boolean headerMatches(MultiMap headers, String headerName, String expected) {
+        String actual = headers.get(headerName);
+        return actual != null && actual.equals(expected);
+    }
+
+    private static CodecError negotiationError() {
+        return new CodecError(NEGOTIATION_MISMATCH, MSG_NEGOTIATION_MISMATCH, null);
+    }
+
+    /**
+     * The outcome of {@link #validateNegotiation}: either the negotiated protocol version or a bounded
+     * classified error, never both.
+     *
+     * @param protocolVersion the negotiated {@code io.modelcontextprotocol/protocolVersion} value, or
+     *     {@code null} on failure
+     * @param error the bounded classified error, or {@code null} on success
+     */
+    record NegotiationResult(
+            @Nullable String protocolVersion, @Nullable CodecError error) {
+
+        /** Reports whether negotiation failed. */
+        boolean isError() {
+            return error != null;
+        }
+
+        static NegotiationResult ok(String protocolVersion) {
+            return new NegotiationResult(protocolVersion, null);
+        }
+
+        static NegotiationResult failed(CodecError error) {
+            return new NegotiationResult(null, error);
+        }
+    }
+
+    /**
      * Produces the bounded external JSON-RPC error response for a failing request frame, stamping the
      * original usable request id or a null id, and never leaking internal exception text.
      *
@@ -134,6 +322,23 @@ final class McpProtocolCodec {
             throw new IllegalArgumentException("errorResponseFor requires a failed Decoded");
         }
         return encodeError(decoded.id(), decoded.error().code(), decoded.error().message());
+    }
+
+    /**
+     * Produces the bounded external JSON-RPC error response for a failed {@link #validateNegotiation}
+     * result, stamping the given usable request id.
+     *
+     * @param id the original usable request id, or {@code null} when none is trustworthy
+     * @param negotiation a failed negotiation result this codec already produced for the same request
+     * @return the complete, bounded JSON-RPC error response bytes
+     * @throws IllegalArgumentException if {@code negotiation} is not an error ({@link
+     *     NegotiationResult#isError()} is {@code false})
+     */
+    byte[] errorResponseFor(@Nullable JsonNode id, NegotiationResult negotiation) {
+        if (!negotiation.isError()) {
+            throw new IllegalArgumentException("errorResponseFor requires a failed NegotiationResult");
+        }
+        return encodeError(id, negotiation.error().code(), negotiation.error().message());
     }
 
     /**

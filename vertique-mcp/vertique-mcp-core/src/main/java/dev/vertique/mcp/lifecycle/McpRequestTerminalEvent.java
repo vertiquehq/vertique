@@ -26,12 +26,25 @@ public record McpRequestTerminalEvent(
         McpResultType resultType,
         int httpStatus,
         @Nullable Integer protocolErrorCode,
+        @Nullable String protocolVersion,
         @Nullable McpAuthorizationSummary authorization,
         @Nullable SecurityContextSnapshot security,
         @Nullable CorrelationContextSnapshot correlation) {
 
     /** Literal used whenever the request has no generated, known tool identity. */
     public static final String UNKNOWN_TOOL_NAME = "UNKNOWN";
+
+    /**
+     * The maximum length of a present {@link #protocolVersion}. Bounded rather than left to the
+     * wire's general string cap: this value is a client-supplied {@code
+     * params._meta["io.modelcontextprotocol/protocolVersion"]} candidate (issue #431), and it flows
+     * unmodified into observability attributes and audit correlation once negotiated, so it must be
+     * bounded at the one point every producer shares — this record's own compact constructor —
+     * rather than trusted to whatever an individual negotiation-stage caller happens to enforce.
+     * Sized generously above the pinned {@code 2026-07-28} literal for a future second supported
+     * version while still closing off an attacker-sized string.
+     */
+    private static final int MAX_PROTOCOL_VERSION_CHARS = 64;
 
     /**
      * Validates the lifecycle facts and their state-dependent invariants.
@@ -52,6 +65,18 @@ public record McpRequestTerminalEvent(
         }
         if (toolName.isBlank()) {
             throw new IllegalArgumentException("toolName must not be blank");
+        }
+        if (protocolVersion != null) {
+            if (protocolVersion.isBlank()) {
+                throw new IllegalArgumentException("protocolVersion must not be blank when present");
+            }
+            if (protocolVersion.length() > MAX_PROTOCOL_VERSION_CHARS) {
+                throw new IllegalArgumentException(
+                        "protocolVersion must not exceed " + MAX_PROTOCOL_VERSION_CHARS + " characters");
+            }
+            if (protocolVersion.chars().anyMatch(Character::isISOControl)) {
+                throw new IllegalArgumentException("protocolVersion must not contain control characters");
+            }
         }
         if (method != McpMethod.TOOLS_CALL && !UNKNOWN_TOOL_NAME.equals(toolName)) {
             throw new IllegalArgumentException("non-tool requests must use toolName UNKNOWN");
@@ -80,6 +105,7 @@ public record McpRequestTerminalEvent(
             McpMethod method,
             String toolName,
             int httpStatus,
+            @Nullable String protocolVersion,
             @Nullable McpAuthorizationSummary authorization,
             @Nullable SecurityContextSnapshot security,
             @Nullable CorrelationContextSnapshot correlation) {
@@ -93,6 +119,7 @@ public record McpRequestTerminalEvent(
                 McpResultType.COMPLETE,
                 httpStatus,
                 null,
+                protocolVersion,
                 authorization,
                 security,
                 correlation);
@@ -106,6 +133,7 @@ public record McpRequestTerminalEvent(
             String toolName,
             McpErrorType errorType,
             int httpStatus,
+            @Nullable String protocolVersion,
             @Nullable McpAuthorizationSummary authorization,
             @Nullable SecurityContextSnapshot security,
             @Nullable CorrelationContextSnapshot correlation) {
@@ -119,6 +147,7 @@ public record McpRequestTerminalEvent(
                 McpResultType.COMPLETE,
                 httpStatus,
                 null,
+                protocolVersion,
                 authorization,
                 security,
                 correlation);
@@ -133,6 +162,7 @@ public record McpRequestTerminalEvent(
             McpErrorType errorType,
             int httpStatus,
             @Nullable Integer protocolErrorCode,
+            @Nullable String protocolVersion,
             @Nullable McpAuthorizationSummary authorization,
             @Nullable SecurityContextSnapshot security,
             @Nullable CorrelationContextSnapshot correlation) {
@@ -145,6 +175,7 @@ public record McpRequestTerminalEvent(
                 errorType,
                 httpStatus,
                 protocolErrorCode,
+                protocolVersion,
                 authorization,
                 security,
                 correlation);
@@ -159,6 +190,7 @@ public record McpRequestTerminalEvent(
             McpErrorType errorType,
             int httpStatus,
             @Nullable Integer protocolErrorCode,
+            @Nullable String protocolVersion,
             @Nullable McpAuthorizationSummary authorization,
             @Nullable SecurityContextSnapshot security,
             @Nullable CorrelationContextSnapshot correlation) {
@@ -171,6 +203,7 @@ public record McpRequestTerminalEvent(
                 errorType,
                 httpStatus,
                 protocolErrorCode,
+                protocolVersion,
                 authorization,
                 security,
                 correlation);
@@ -185,6 +218,7 @@ public record McpRequestTerminalEvent(
             McpErrorType errorType,
             int httpStatus,
             @Nullable Integer protocolErrorCode,
+            @Nullable String protocolVersion,
             @Nullable McpAuthorizationSummary authorization,
             @Nullable SecurityContextSnapshot security,
             @Nullable CorrelationContextSnapshot correlation) {
@@ -197,6 +231,7 @@ public record McpRequestTerminalEvent(
                 errorType,
                 httpStatus,
                 protocolErrorCode,
+                protocolVersion,
                 authorization,
                 security,
                 correlation);
@@ -211,6 +246,7 @@ public record McpRequestTerminalEvent(
             McpErrorType errorType,
             int httpStatus,
             @Nullable Integer protocolErrorCode,
+            @Nullable String protocolVersion,
             @Nullable McpAuthorizationSummary authorization,
             @Nullable SecurityContextSnapshot security,
             @Nullable CorrelationContextSnapshot correlation) {
@@ -224,6 +260,7 @@ public record McpRequestTerminalEvent(
                 McpResultType.NONE,
                 httpStatus,
                 protocolErrorCode,
+                protocolVersion,
                 authorization,
                 security,
                 correlation);

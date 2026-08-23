@@ -138,6 +138,9 @@ public class McpStatelessMultiInstanceIT {
                 .put("params", discoverParams());
         return await(client.post(port, "127.0.0.1", McpStatelessMultiInstanceITFixture.REQUEST_PATH)
                 .putHeader("content-type", "application/json")
+                .putHeader("MCP-Protocol-Version", PROTOCOL_VERSION)
+                .putHeader("Mcp-Method", "server/discover")
+                .putHeader("Mcp-Name", "server/discover")
                 .sendBuffer(request.toBuffer()));
     }
 

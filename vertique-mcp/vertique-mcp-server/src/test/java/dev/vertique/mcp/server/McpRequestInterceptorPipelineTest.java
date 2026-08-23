@@ -288,6 +288,7 @@ class McpRequestInterceptorPipelineTest {
             when(context.response()).thenReturn(response);
             when(context.body()).thenReturn(body);
             when(body.buffer()).thenReturn(Buffer.buffer(discoverRequestBody()));
+            when(request.headers()).thenReturn(negotiationHeaders());
             when(response.putHeader(anyString(), anyString())).thenReturn(response);
             when(response.setStatusCode(anyInt())).thenReturn(response);
             when(response.end(any(Buffer.class))).thenReturn(Future.succeededFuture());
@@ -304,6 +305,15 @@ class McpRequestInterceptorPipelineTest {
             JsonObject error = decoded.getJsonObject("error");
             Integer errorCode = error == null ? null : error.getInteger("code");
             return new DispatchOutcome(status, errorCode, status == 200 ? 1 : 0);
+        }
+
+        /** The negotiation headers (R05, issue #429) self-consistent with {@link #discoverRequestBody()}. */
+        private static io.vertx.core.MultiMap negotiationHeaders() {
+            io.vertx.core.MultiMap headers = io.vertx.core.MultiMap.caseInsensitiveMultiMap();
+            headers.set("MCP-Protocol-Version", "2026-07-28");
+            headers.set("Mcp-Method", "server/discover");
+            headers.set("Mcp-Name", "server/discover");
+            return headers;
         }
 
         private static byte[] discoverRequestBody() {

@@ -181,6 +181,9 @@ class McpInputLifecycleObservationIT {
                 .put("params", params);
         return client.post(port, LOOPBACK, REQUEST_PATH)
                 .putHeader("content-type", "application/json")
+                .putHeader("MCP-Protocol-Version", PROTOCOL_VERSION)
+                .putHeader("Mcp-Method", "tools/call")
+                .putHeader("Mcp-Name", McpInputLifecycleObservationITFixture.TOOL_NAME)
                 .sendBuffer(body.toBuffer());
     }
 

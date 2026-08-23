@@ -77,9 +77,11 @@ class McpGeneratedHelloToolIT {
 
         // --- When: discover, list, and call the generated tool once, in that order, over the same
         // mount, with no initialization request and no session id sent or ever established. ---
-        HttpResponse<Buffer> discover = await(post().sendBuffer(discoverBody()));
-        HttpResponse<Buffer> list = await(post().sendBuffer(listBody()));
-        HttpResponse<Buffer> call = await(post().sendBuffer(callBody()));
+        HttpResponse<Buffer> discover =
+                await(post("server/discover", "server/discover").sendBuffer(discoverBody()));
+        HttpResponse<Buffer> list = await(post("tools/list", "tools/list").sendBuffer(listBody()));
+        HttpResponse<Buffer> call = await(
+                post("tools/call", McpGeneratedHelloToolITFixture.TOOL_NAME).sendBuffer(callBody()));
 
         // --- Then: all three interactions succeed over the same mount, no session id is ever
         // established, and the call reaches the real generated invoker: the greeting text can only
@@ -121,8 +123,12 @@ class McpGeneratedHelloToolIT {
 
     // --- Wire helpers ---
 
-    private HttpRequest<Buffer> post() {
-        return client.post(fixture.port(), "127.0.0.1", REQUEST_PATH).putHeader("content-type", "application/json");
+    private HttpRequest<Buffer> post(String negotiatedMethod, String negotiatedName) {
+        return client.post(fixture.port(), "127.0.0.1", REQUEST_PATH)
+                .putHeader("content-type", "application/json")
+                .putHeader("MCP-Protocol-Version", PROTOCOL_VERSION)
+                .putHeader("Mcp-Method", negotiatedMethod)
+                .putHeader("Mcp-Name", negotiatedName);
     }
 
     private static Buffer discoverBody() {

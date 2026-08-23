@@ -336,6 +336,7 @@ class McpToolInterceptorPipelineTest {
             when(context.response()).thenReturn(response);
             when(context.body()).thenReturn(body);
             when(body.buffer()).thenReturn(Buffer.buffer(toolCallRequestBody(toolName)));
+            when(request.headers()).thenReturn(negotiationHeaders(toolName));
             when(response.putHeader(anyString(), anyString())).thenReturn(response);
             when(response.setStatusCode(anyInt())).thenReturn(response);
             when(response.end(any(Buffer.class))).thenReturn(Future.succeededFuture());
@@ -364,14 +365,35 @@ class McpToolInterceptorPipelineTest {
             return new JsonObject(text.substring(prefix.length(), text.length() - suffix.length()));
         }
 
+        private static final String PROTOCOL_VERSION = "2026-07-28";
+
         private static byte[] toolCallRequestBody(String toolName) {
             return new JsonObject()
                     .put("jsonrpc", "2.0")
                     .put("id", 1)
                     .put("method", "tools/call")
-                    .put("params", new JsonObject().put("name", toolName))
+                    .put(
+                            "params",
+                            new JsonObject()
+                                    .put(
+                                            "_meta",
+                                            new JsonObject()
+                                                    .put("io.modelcontextprotocol/protocolVersion", PROTOCOL_VERSION)
+                                                    .put(
+                                                            "io.modelcontextprotocol/clientCapabilities",
+                                                            new JsonObject()))
+                                    .put("name", toolName))
                     .toBuffer()
                     .getBytes();
+        }
+
+        /** The negotiation headers (R05, issue #429) self-consistent with {@link #toolCallRequestBody}. */
+        private static io.vertx.core.MultiMap negotiationHeaders(String toolName) {
+            io.vertx.core.MultiMap headers = io.vertx.core.MultiMap.caseInsensitiveMultiMap();
+            headers.set("MCP-Protocol-Version", PROTOCOL_VERSION);
+            headers.set("Mcp-Method", "tools/call");
+            headers.set("Mcp-Name", toolName);
+            return headers;
         }
 
         /** One dispatch's observed outcome: HTTP status and the decoded {@code CallToolResult} facts. */

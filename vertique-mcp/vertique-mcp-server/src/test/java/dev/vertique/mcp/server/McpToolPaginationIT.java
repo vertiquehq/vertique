@@ -253,7 +253,10 @@ class McpToolPaginationIT {
 
     private HttpRequest<Buffer> post() {
         return client.post(fixture.port(), "127.0.0.1", McpToolPaginationITFixture.REQUEST_PATH)
-                .putHeader("content-type", "application/json");
+                .putHeader("content-type", "application/json")
+                .putHeader("MCP-Protocol-Version", PROTOCOL_VERSION)
+                .putHeader("Mcp-Method", "tools/list")
+                .putHeader("Mcp-Name", "tools/list");
     }
 
     private Future<HttpResponse<Buffer>> listTools(String bearer, String cursor) {

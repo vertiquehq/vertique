@@ -151,6 +151,9 @@ class McpServerSpanObserverIT {
                         McpServerSpanObserverITFixture.LOOPBACK,
                         McpServerSpanObserverITFixture.REQUEST_PATH)
                 .putHeader("content-type", "application/json")
+                .putHeader("MCP-Protocol-Version", PROTOCOL_VERSION)
+                .putHeader("Mcp-Method", "tools/call")
+                .putHeader("Mcp-Name", McpServerSpanObserverITFixture.TOOL_NAME)
                 .putHeader("traceparent", traceparent)
                 .putHeader("Authorization", McpServerSpanObserverITFixture.VALID_BEARER)
                 .sendBuffer(body.toBuffer());

@@ -48,6 +48,15 @@ import lombok.extern.slf4j.Slf4j;
  * are declared as internal, Vertique-owned {@link AttributeKey} constants here rather than pulled
  * from an incubating semconv artifact dependency.
  *
+ * <p><b>{@code mcp.protocol.version} (R05, issue #431).</b> Set only when {@link
+ * McpRequestTerminalEvent#protocolVersion()} is non-{@code null} — i.e. only when this request's
+ * protocol negotiation actually completed (contract §4.7). A request rejected at or before
+ * negotiation, or one whose terminal event predates negotiation in the fixed pipeline (a
+ * cheap-admission rejection, a malformed envelope), carries no value here and none is emitted: this
+ * observer never falls back to a hardcoded version literal, exactly as the frozen {@code
+ * RequestMetaObject} field this attribute mirrors is a per-request negotiated fact, not a server
+ * constant.
+ *
  * <p>It then <em>would</em> add at most one {@link Span#addLink(SpanContext) link} for the request's
  * optional body trace context ({@link McpRequestTerminalObservation#bodyTraceContext()}): a link is
  * added only when the body trace context is present, structurally convertible into a valid
@@ -78,6 +87,12 @@ final class McpServerSpanObserver implements McpRequestLifecycleObserver {
 
     /** Experimental MCP method-name attribute key. */
     static final AttributeKey<String> MCP_METHOD_NAME = AttributeKey.stringKey("mcp.method.name");
+
+    /**
+     * Experimental MCP protocol-version attribute key (R05, issue #431). Set only when the request's
+     * terminal event carries a negotiated {@link McpRequestTerminalEvent#protocolVersion()}.
+     */
+    static final AttributeKey<String> MCP_PROTOCOL_VERSION = AttributeKey.stringKey("mcp.protocol.version");
 
     /** Vertique-owned bounded logical outcome attribute key. */
     static final AttributeKey<String> VERTIQUE_MCP_OUTCOME = AttributeKey.stringKey("vertique.mcp.outcome");
@@ -182,6 +197,9 @@ final class McpServerSpanObserver implements McpRequestLifecycleObserver {
         }
         span.setAttribute(RPC_SYSTEM_NAME, RPC_SYSTEM_JSONRPC);
         span.setAttribute(MCP_METHOD_NAME, methodTag(terminal.method()));
+        if (terminal.protocolVersion() != null) {
+            span.setAttribute(MCP_PROTOCOL_VERSION, terminal.protocolVersion());
+        }
         span.setAttribute(VERTIQUE_MCP_OUTCOME, terminal.outcome().name());
         span.setAttribute(VERTIQUE_MCP_RESULT_TYPE, terminal.resultType().name());
         if (!McpRequestTerminalEvent.UNKNOWN_TOOL_NAME.equals(terminal.toolName())) {

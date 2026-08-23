@@ -237,6 +237,9 @@ class McpToolCallIT {
                 HttpClientRequest request =
                         await(rawClient.request(HttpMethod.POST, fixture.port(), "127.0.0.1", REQUEST_PATH));
                 request.putHeader("content-type", "application/json");
+                request.putHeader("MCP-Protocol-Version", PROTOCOL_VERSION);
+                request.putHeader("Mcp-Method", "tools/call");
+                request.putHeader("Mcp-Name", PUBLIC_TOOL);
                 Future<HttpClientResponse> responseFuture = request.response();
                 // Compose the body future BEFORE sending. Attaching body() only after awaiting the
                 // headers leaves a window in which the SSE body buffers arrive with no handler
@@ -300,8 +303,11 @@ class McpToolCallIT {
     }
 
     private Future<HttpResponse<Buffer>> callTool(String bearer, String toolName, Object id) {
-        HttpRequest<Buffer> request =
-                client.post(fixture.port(), "127.0.0.1", REQUEST_PATH).putHeader("content-type", "application/json");
+        HttpRequest<Buffer> request = client.post(fixture.port(), "127.0.0.1", REQUEST_PATH)
+                .putHeader("content-type", "application/json")
+                .putHeader("MCP-Protocol-Version", PROTOCOL_VERSION)
+                .putHeader("Mcp-Method", "tools/call")
+                .putHeader("Mcp-Name", toolName);
         if (bearer != null) {
             request = request.putHeader("Authorization", bearer);
         }

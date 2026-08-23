@@ -11,12 +11,15 @@ import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.NullNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import dev.vertique.core.correlation.CorrelationContextSnapshot;
+import dev.vertique.core.correlation.CorrelationIdentifier;
 import dev.vertique.core.extension.ExtensionPhase;
 import dev.vertique.core.extension.OrderedExtension;
 import dev.vertique.mcp.interceptor.McpRequestContext;
 import dev.vertique.mcp.interceptor.McpRequestInterceptor;
 import dev.vertique.mcp.interceptor.McpToolInterceptor;
 import dev.vertique.mcp.interceptor.McpToolInvocationContext;
+import dev.vertique.mcp.lifecycle.McpAuthorizationSummary;
 import dev.vertique.mcp.lifecycle.McpErrorType;
 import dev.vertique.mcp.lifecycle.McpMethod;
 import dev.vertique.mcp.lifecycle.McpOutcome;
@@ -64,6 +67,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 
 /**
  * Dispatches the bounded discovery endpoint over the hardened stateless HTTP contract (§4.7).
@@ -122,6 +126,15 @@ final class McpRequestDispatcher {
     private static final int INVALID_REQUEST = -32600;
     private static final int METHOD_NOT_FOUND = -32601;
     private static final int INTERNAL_ERROR = -32603;
+
+    /**
+     * The bounded JSON-RPC server-error-range code {@link McpProtocolCodec#validateNegotiation} settles
+     * a protocol-negotiation failure as (R05, issue #429; contract §4.7 — "Header/body mismatch is HTTP
+     * 400 with -32020"). Mirrors {@link McpProtocolCodec}'s own private constant of the same value —
+     * this class already redeclares every other codec-classified code above for the same reason: {@link
+     * #httpStatusFor} needs it locally.
+     */
+    private static final int NEGOTIATION_MISMATCH = -32020;
 
     /**
      * The bounded JSON-RPC server-error-range code (§4.7 "request-interceptor rejection ... return
@@ -209,6 +222,39 @@ final class McpRequestDispatcher {
     private static final String KEY_PREFIX = McpRequestDispatcher.class.getName();
     private static final String COMPLETION_COORDINATOR_KEY = KEY_PREFIX + ".completionCoordinator";
     private static final String STARTED_AT_KEY = KEY_PREFIX + ".startedAt";
+
+    /**
+     * Routing-context key for this request's {@link CorrelationContextSnapshot} (R05, issue #431),
+     * established once in {@link #begin} — contract §4.7 stage 2, "establish correlation ... before
+     * optional authentication" — and read by every terminal-event construction site for the remainder
+     * of the request through {@link #correlationOf}. {@code null} (the key absent) only before {@link
+     * #begin} runs, i.e. for a cheap-admission rejection in {@link #admitCheap}.
+     */
+    private static final String CORRELATION_KEY = KEY_PREFIX + ".correlation";
+
+    /**
+     * Routing-context key for this request's negotiated {@code
+     * io.modelcontextprotocol/protocolVersion} (R05, issue #431), set only once {@link
+     * McpProtocolCodec#validateNegotiation} succeeds in {@link #dispatch}, and read by every later
+     * terminal-event construction site through {@link #protocolVersionOf}. {@code null} whenever
+     * negotiation never ran or did not complete — a request rejected at or before negotiation carries
+     * no negotiated version, exactly as contract §4.7's "emit only when negotiation completed" requires.
+     */
+    private static final String PROTOCOL_VERSION_KEY = KEY_PREFIX + ".protocolVersion";
+
+    /**
+     * Routing-context key for the {@link McpAuthorizationSummary} of the one real {@link
+     * McpPolicyEnforcer#decide} evaluation a {@code tools/call} request's dispatch performs (R05, issue
+     * #431), set in {@link #writeToolsCall} immediately once that decision resolves and read by every
+     * later terminal-event construction site on the same request through {@link #authorizationOf}.
+     * {@code null} for every other method, and for a {@code tools/call} request that never reaches an
+     * actual policy evaluation (a structurally missing/blank name) — matching contract §4.7's
+     * "authorization is present only after an actual policy evaluation."
+     */
+    private static final String AUTHORIZATION_KEY = KEY_PREFIX + ".authorization";
+
+    /** The origin label stamped on every {@link CorrelationIdentifier} this dispatcher mints. */
+    private static final String CORRELATION_SOURCE = "seeded:mcp";
 
     /**
      * Compact, insertion-order-preserving success encoder, canonicalized identically to the codec's
@@ -397,11 +443,61 @@ final class McpRequestDispatcher {
      */
     void begin(RoutingContext context) {
         Instant startedAt = startedAt(context);
+        context.put(CORRELATION_KEY, establishCorrelation());
         McpCompletionCoordinator coordinator = new McpCompletionCoordinator(
                 context.vertx().getOrCreateContext(), lifecycleObservers, completedListeners, startedAt);
         context.put(COMPLETION_COORDINATOR_KEY, coordinator);
         registerSettlementHooks(context, coordinator, startedAt);
         context.next();
+    }
+
+    /**
+     * Mints a fresh {@link CorrelationContextSnapshot} for one request (R05, issue #431; contract §4.7
+     * stage 2 — "establish correlation ... before optional authentication"). MCP defines no inbound
+     * correlation header of its own — unlike REST's {@code CorrelationIngressMiddleware}, deliberately
+     * not reused here — so this mints two independently generated identifiers, matching {@code
+     * CorrelationContextFactory#seed}'s own shape for the existing non-REST first-ingress boundaries
+     * (Kafka, the outbox relay, a delayed job), each tagged {@value #CORRELATION_SOURCE}. The snapshot
+     * is stored on this request's {@link RoutingContext} only ({@link #begin}), never bound onto the
+     * shared {@code ContextHolder} substrate: nothing else on the MCP request path reads correlation
+     * ambiently, and every terminal-event construction site reads it back explicitly through {@link
+     * #correlationOf}.
+     */
+    private static CorrelationContextSnapshot establishCorrelation() {
+        CorrelationIdentifier requestId =
+                new CorrelationIdentifier(UUID.randomUUID().toString(), CORRELATION_SOURCE);
+        CorrelationIdentifier correlationId =
+                new CorrelationIdentifier(UUID.randomUUID().toString(), CORRELATION_SOURCE);
+        return CorrelationContextSnapshot.of(requestId, correlationId);
+    }
+
+    /**
+     * Returns this request's {@link CorrelationContextSnapshot}, or {@code null} when {@link #begin}
+     * has not yet run (a cheap-admission rejection).
+     */
+    @Nullable
+    private static CorrelationContextSnapshot correlationOf(RoutingContext context) {
+        return context.get(CORRELATION_KEY);
+    }
+
+    /**
+     * Returns this request's negotiated {@code io.modelcontextprotocol/protocolVersion}, or {@code
+     * null} when negotiation never ran or did not complete (contract §4.7 — "emit only when negotiation
+     * completed").
+     */
+    @Nullable
+    private static String protocolVersionOf(RoutingContext context) {
+        return context.get(PROTOCOL_VERSION_KEY);
+    }
+
+    /**
+     * Returns the {@link McpAuthorizationSummary} of this request's one real policy evaluation, or
+     * {@code null} when this request never reached one (contract §4.7 — "authorization is present only
+     * after an actual policy evaluation").
+     */
+    @Nullable
+    private static McpAuthorizationSummary authorizationOf(RoutingContext context) {
+        return context.get(AUTHORIZATION_KEY);
     }
 
     /**
@@ -532,7 +628,21 @@ final class McpRequestDispatcher {
         }
         JsonNode envelope = decoded.envelope();
         McpMethod method = classifyMethod(envelope.get("method").asText());
-        McpRequestContext requestContext = new McpRequestContext(method, establishedSecurityContext(), null, null);
+        // R05 (issue #429): protocol negotiation — the required header/body agreement and per-method
+        // _meta shape — runs here, strictly after strict decoding succeeded and strictly before the
+        // request-interceptor stage immediately below, tool lookup, or authorization. This ordering is
+        // the fix: a validation that instead ran inside a per-method handler (as the pre-existing
+        // tools/call params.name shape check does) would run after interceptors already had, since
+        // dispatchByMethod is reached only once runRequestInterceptors below has already permitted.
+        McpProtocolCodec.NegotiationResult negotiation =
+                codec.validateNegotiation(envelope, context.request().headers());
+        if (negotiation.isError()) {
+            writeNegotiationRejection(context, envelope, method, security, negotiation);
+            return;
+        }
+        context.put(PROTOCOL_VERSION_KEY, negotiation.protocolVersion());
+        McpRequestContext requestContext =
+                new McpRequestContext(method, establishedSecurityContext(), correlationOf(context), null);
         runRequestInterceptors(0, requestContext).onComplete(ar -> {
             if (ar.failed()) {
                 writeInterceptorRejection(context, envelope, method, security);
@@ -637,9 +747,10 @@ final class McpRequestDispatcher {
                 McpErrorType.INTERNAL,
                 500,
                 INTERNAL_ERROR,
-                null,
+                protocolVersionOf(context),
+                authorizationOf(context),
                 security,
-                null);
+                correlationOf(context));
         write(context, 500, fallback, terminal);
     }
 
@@ -674,9 +785,10 @@ final class McpRequestDispatcher {
                 McpErrorType.INTERNAL,
                 500,
                 INTERNAL_ERROR,
-                null,
+                protocolVersionOf(context),
+                authorizationOf(context),
                 security,
-                null);
+                correlationOf(context));
         write(context, 500, fallback, terminal);
     }
 
@@ -789,9 +901,10 @@ final class McpRequestDispatcher {
                     McpErrorType.SERIALIZATION,
                     500,
                     INTERNAL_ERROR,
-                    null,
+                    protocolVersionOf(context),
+                    authorizationOf(context),
                     security,
-                    null);
+                    correlationOf(context));
             write(context, 500, fallback, overCapTerminal);
             return;
         }
@@ -804,9 +917,67 @@ final class McpRequestDispatcher {
                 status,
                 INTERCEPTOR_REJECTED,
                 null,
+                authorizationOf(context),
                 security,
-                null);
+                correlationOf(context));
         write(context, status, responseBytes, terminal);
+    }
+
+    /**
+     * Writes the bounded, non-leaking JSON-RPC error response for a failed protocol-negotiation check
+     * (R05, issue #429; contract §4.7 — "Header/body mismatch is HTTP 400 with -32020"). Runs before
+     * {@link #runRequestInterceptors}, tool lookup, or authorization, so — like {@link
+     * #writeInterceptorRejection} — the terminal event carries no {@code protocolVersion}: negotiation
+     * did not complete for this request (contract §4.7 — "emit only when negotiation completed").
+     * Correlation and security are already established by this point (stages 2 and 3 both precede
+     * stage 4's negotiation check) and are still recorded.
+     *
+     * @param context the request context
+     * @param envelope the successfully decoded envelope whose id is echoed when it fits the cap
+     * @param method the classified method, recorded on the terminal event
+     * @param security the established security snapshot, recorded on the terminal event
+     * @param negotiation the failed {@link McpProtocolCodec.NegotiationResult}
+     */
+    private void writeNegotiationRejection(
+            RoutingContext context,
+            JsonNode envelope,
+            McpMethod method,
+            @Nullable SecurityContextSnapshot security,
+            McpProtocolCodec.NegotiationResult negotiation) {
+        context.response().putHeader("content-type", JSON_CONTENT_TYPE);
+        int code = negotiation.error().code();
+        int status = httpStatusFor(code);
+        byte[] errorBytes = codec.errorResponseFor(envelope.get("id"), negotiation);
+        if (errorBytes.length > config.outputMaxBytes()) {
+            byte[] fallback = codec.internalFallback(null, new OutputCapExceededException());
+            McpRequestTerminalEvent overCapTerminal = McpRequestTerminalEvent.failed(
+                    startedAt(context),
+                    Instant.now(),
+                    method,
+                    McpRequestTerminalEvent.UNKNOWN_TOOL_NAME,
+                    McpErrorType.SERIALIZATION,
+                    500,
+                    INTERNAL_ERROR,
+                    null,
+                    null,
+                    security,
+                    correlationOf(context));
+            write(context, 500, fallback, overCapTerminal);
+            return;
+        }
+        McpRequestTerminalEvent terminal = McpRequestTerminalEvent.rejected(
+                startedAt(context),
+                Instant.now(),
+                method,
+                McpRequestTerminalEvent.UNKNOWN_TOOL_NAME,
+                McpErrorType.PROTOCOL,
+                status,
+                code,
+                null,
+                null,
+                security,
+                correlationOf(context));
+        write(context, status, errorBytes, terminal);
     }
 
     /**
@@ -834,9 +1005,10 @@ final class McpRequestDispatcher {
                     McpErrorType.SERIALIZATION,
                     500,
                     INTERNAL_ERROR,
-                    null,
+                    protocolVersionOf(context),
+                    authorizationOf(context),
                     security,
-                    null);
+                    correlationOf(context));
             write(context, 500, fallback, terminal);
             return;
         }
@@ -846,9 +1018,10 @@ final class McpRequestDispatcher {
                 McpMethod.SERVER_DISCOVER,
                 McpRequestTerminalEvent.UNKNOWN_TOOL_NAME,
                 200,
-                null,
+                protocolVersionOf(context),
+                authorizationOf(context),
                 security,
-                null);
+                correlationOf(context));
         write(context, 200, payload, terminal);
     }
 
@@ -1072,9 +1245,10 @@ final class McpRequestDispatcher {
                 McpErrorType.INTERNAL,
                 500,
                 INTERNAL_ERROR,
-                null,
+                protocolVersionOf(context),
+                authorizationOf(context),
                 security,
-                null);
+                correlationOf(context));
         write(context, 500, fallback, terminal);
     }
 
@@ -1102,9 +1276,10 @@ final class McpRequestDispatcher {
                     McpErrorType.SERIALIZATION,
                     500,
                     INTERNAL_ERROR,
-                    null,
+                    protocolVersionOf(context),
+                    authorizationOf(context),
                     security,
-                    null);
+                    correlationOf(context));
             write(context, 500, fallback, terminal);
             return;
         }
@@ -1114,9 +1289,10 @@ final class McpRequestDispatcher {
                 McpMethod.TOOLS_LIST,
                 McpRequestTerminalEvent.UNKNOWN_TOOL_NAME,
                 200,
-                null,
+                protocolVersionOf(context),
+                authorizationOf(context),
                 security,
-                null);
+                correlationOf(context));
         write(context, 200, payload, terminal);
     }
 
@@ -1240,9 +1416,10 @@ final class McpRequestDispatcher {
                     McpErrorType.SERIALIZATION,
                     500,
                     INTERNAL_ERROR,
-                    null,
+                    protocolVersionOf(context),
+                    authorizationOf(context),
                     security,
-                    null);
+                    correlationOf(context));
             write(context, 500, fallback, overCapTerminal);
             return;
         }
@@ -1254,9 +1431,10 @@ final class McpRequestDispatcher {
                 McpErrorType.AUTHORIZATION,
                 status,
                 error.code(),
-                null,
+                protocolVersionOf(context),
+                authorizationOf(context),
                 security,
-                null);
+                correlationOf(context));
         write(context, status, body, terminal);
     }
 
@@ -1297,24 +1475,36 @@ final class McpRequestDispatcher {
         // value can carry.
         SecurityContext caller = establishedSecurityContext();
         if (invoker == null) {
-            policyEnforcer
-                    .decide(UNKNOWN_TOOL_PLACEHOLDER_DESCRIPTOR, caller)
-                    .onComplete(ar -> writeUnknownOrUnauthorized(
-                            context,
-                            envelope,
-                            security,
-                            McpMethod.TOOLS_CALL,
-                            McpRequestTerminalEvent.UNKNOWN_TOOL_NAME));
+            policyEnforcer.decide(UNKNOWN_TOOL_PLACEHOLDER_DESCRIPTOR, caller).onComplete(ar -> {
+                // R05 (issue #431): a real policy evaluation occurred — against the synthetic
+                // placeholder, exactly like a known-but-denied name — so its summary is recorded
+                // like every other actual decision, even though ar.result() here is always a
+                // denial. ar.failed() never happens per McpPolicyEnforcer#decide's own contract
+                // (defended below for the same reason the sibling branch defends it); recording
+                // nothing on that unreachable branch matches "authorization is present only
+                // after an actual policy evaluation".
+                if (ar.succeeded()) {
+                    context.put(AUTHORIZATION_KEY, McpPolicyEnforcer.summarize(ar.result()));
+                }
+                writeUnknownOrUnauthorized(
+                        context, envelope, security, McpMethod.TOOLS_CALL, McpRequestTerminalEvent.UNKNOWN_TOOL_NAME);
+            });
             return;
         }
         policyEnforcer.decide(invoker.descriptor(), caller).onComplete(ar -> {
             if (ar.failed()) {
                 // McpPolicyEnforcer#decide never fails per its own contract; defended here so a
                 // contract-violating extension cannot escape as an unhandled exception. No invocation
-                // was ever attempted, so this stays a JSON (never SSE) response.
+                // was ever attempted, so this stays a JSON (never SSE) response. No decision was ever
+                // actually produced, so no summary is recorded (contract §4.7 — "authorization is
+                // present only after an actual policy evaluation").
                 writeUnknownOrUnauthorized(context, envelope, security, McpMethod.TOOLS_CALL, toolName);
                 return;
             }
+            // R05 (issue #431): recorded for every terminal event this request still produces,
+            // whether the decision denies (writeUnknownOrUnauthorized below) or permits (every
+            // terminal writeToolResult/writeSseFallback eventually reaches inside invokeAndRespond).
+            context.put(AUTHORIZATION_KEY, McpPolicyEnforcer.summarize(ar.result()));
             if (!ar.result().permitted()) {
                 writeUnknownOrUnauthorized(context, envelope, security, McpMethod.TOOLS_CALL, toolName);
                 return;
@@ -1673,9 +1863,10 @@ final class McpRequestDispatcher {
                 McpErrorType.OUTPUT_VALIDATION,
                 500,
                 INTERNAL_ERROR,
-                null,
+                protocolVersionOf(context),
+                authorizationOf(context),
                 security,
-                null);
+                correlationOf(context));
         writeSse(context, 500, fallback, terminal);
     }
 
@@ -1794,7 +1985,15 @@ final class McpRequestDispatcher {
             McpErrorType errorType) {
         if (!result.isError()) {
             return McpRequestTerminalEvent.success(
-                    startedAt(context), Instant.now(), McpMethod.TOOLS_CALL, toolName, 200, null, security, null);
+                    startedAt(context),
+                    Instant.now(),
+                    McpMethod.TOOLS_CALL,
+                    toolName,
+                    200,
+                    protocolVersionOf(context),
+                    authorizationOf(context),
+                    security,
+                    correlationOf(context));
         }
         if (errorType == McpErrorType.INTERCEPTOR) {
             return McpRequestTerminalEvent.rejected(
@@ -1805,9 +2004,10 @@ final class McpRequestDispatcher {
                     errorType,
                     200,
                     null,
-                    null,
+                    protocolVersionOf(context),
+                    authorizationOf(context),
                     security,
-                    null);
+                    correlationOf(context));
         }
         return McpRequestTerminalEvent.toolError(
                 startedAt(context),
@@ -1816,9 +2016,10 @@ final class McpRequestDispatcher {
                 toolName,
                 errorType,
                 200,
-                null,
+                protocolVersionOf(context),
+                authorizationOf(context),
                 security,
-                null);
+                correlationOf(context));
     }
 
     /**
@@ -1885,9 +2086,10 @@ final class McpRequestDispatcher {
                 McpErrorType.INTERNAL,
                 500,
                 INTERNAL_ERROR,
-                null,
+                protocolVersionOf(context),
+                authorizationOf(context),
                 security,
-                null);
+                correlationOf(context));
         writeSse(context, 500, fallback, terminal);
     }
 
@@ -2008,9 +2210,10 @@ final class McpRequestDispatcher {
                 errorType,
                 0,
                 null,
-                null,
+                protocolVersionOf(context),
+                authorizationOf(context),
                 establishedSecurity(),
-                null);
+                correlationOf(context));
     }
 
     /**
@@ -2074,9 +2277,10 @@ final class McpRequestDispatcher {
                 errorType,
                 status,
                 code,
-                null,
+                protocolVersionOf(context),
+                authorizationOf(context),
                 security,
-                null);
+                correlationOf(context));
         write(context, status, errorBytes, terminal);
     }
 
@@ -2091,6 +2295,7 @@ final class McpRequestDispatcher {
             case METHOD_NOT_FOUND -> 404;
             case PARSE_ERROR, INVALID_REQUEST -> 400;
             case McpPolicyEnforcer.UNKNOWN_OR_UNAUTHORIZED_CODE -> 400;
+            case NEGOTIATION_MISMATCH -> 400;
             case INTERCEPTOR_REJECTED -> 403;
             default -> 500;
         };
@@ -2124,9 +2329,10 @@ final class McpRequestDispatcher {
                         errorType,
                         status,
                         null,
-                        null,
+                        protocolVersionOf(context),
+                        authorizationOf(context),
                         security,
-                        null));
+                        correlationOf(context)));
     }
 
     // T013 TP-002: package-private (not private) so McpWritePhaseSettlementTest can drive this exact
