@@ -8,6 +8,7 @@ import dev.vertique.mcp.tool.McpAccessMode;
 import dev.vertique.mcp.tool.McpToolDescriptor;
 import dev.vertique.rest.core.config.HttpConfig;
 import dev.vertique.rest.core.security.RouteAuthHandler;
+import dev.vertique.security.authz.Authorizer;
 import io.vertx.core.Handler;
 import io.vertx.ext.web.RoutingContext;
 import java.util.List;
@@ -129,6 +130,88 @@ final class McpServerConfigValidator {
                         + "(at least one must be greater than zero while mcp is enabled, so a hanging "
                         + "interceptor, tool handler, or non-reading client cannot strand a connection "
                         + "indefinitely)");
+    }
+
+    /**
+     * Validates exactly as {@link #validate(McpServerConfig, Set, McpToolRegistry)} does, and
+     * additionally refuses to start an enabled MCP mount when the registry publishes an {@code
+     * @RequiresAction} tool but no core {@link Authorizer} is installed (issue #421).
+     *
+     * <p>Without this gate, {@code SecurityPolicyEnforcer.decide} NPEs on its {@code null} authorizer
+     * field at the first request for such a tool, and the surrounding fail-closed catch converts that
+     * into a deny — safe, but accidental: the tool is unreachable for a reason no operator ever sees
+     * until traffic hits it. REST already rejects the equivalent shape at startup ({@code
+     * JaxRsRouteRegistrar#resolveRequiredAction}'s "No Authorizer" case); this is the MCP mount-time
+     * equivalent, naming every affected tool in one bounded configuration error rather than deferring
+     * to a per-request NPE.
+     *
+     * @param config the bounded configuration to validate
+     * @param routeAuthHandlers every registered optional-authentication-capable handler
+     * @param registry the immutable tool registry built before this validation runs
+     * @param authorizer the optional core {@link Authorizer}; empty when the authorization engine is
+     *     not installed
+     * @throws ConfigurationException if any check {@link #validate(McpServerConfig, Set,
+     *     McpToolRegistry)} performs fails, or if the mount is enabled, {@code authorizer} is absent,
+     *     and the registry publishes at least one {@code @RequiresAction} tool
+     */
+    void validate(
+            McpServerConfig config,
+            Set<RouteAuthHandler> routeAuthHandlers,
+            McpToolRegistry registry,
+            Optional<Authorizer> authorizer) {
+        validate(config, routeAuthHandlers, registry);
+        requireAuthorizerForActionTools(config, registry, authorizer);
+    }
+
+    /**
+     * Validates exactly as {@link #validate(McpServerConfig, Set, McpToolRegistry, HttpConfig)} does,
+     * and additionally applies the no-authorizer-for-{@code @RequiresAction} gate documented on
+     * {@link #validate(McpServerConfig, Set, McpToolRegistry, Optional)} (issue #421). This is the
+     * overload {@link McpRouterMount}'s constructor — the one real production mount point — calls, so
+     * every check this validator performs runs there together.
+     *
+     * @param config the bounded configuration to validate
+     * @param routeAuthHandlers every registered optional-authentication-capable handler
+     * @param registry the immutable tool registry built before this validation runs
+     * @param httpConfig the shared HTTP configuration whose liveness timeouts are checked
+     * @param authorizer the optional core {@link Authorizer}; empty when the authorization engine is
+     *     not installed
+     * @throws ConfigurationException if any check {@link #validate(McpServerConfig, Set,
+     *     McpToolRegistry, HttpConfig)} or {@link #validate(McpServerConfig, Set, McpToolRegistry,
+     *     Optional)} performs fails
+     */
+    void validate(
+            McpServerConfig config,
+            Set<RouteAuthHandler> routeAuthHandlers,
+            McpToolRegistry registry,
+            HttpConfig httpConfig,
+            Optional<Authorizer> authorizer) {
+        validate(config, routeAuthHandlers, registry, httpConfig);
+        requireAuthorizerForActionTools(config, registry, authorizer);
+    }
+
+    /**
+     * Rejects, with one bounded configuration error naming every affected tool, an enabled mount whose
+     * registry publishes at least one {@code @RequiresAction} tool while {@code authorizer} is absent
+     * (issue #421). A disabled mount is inert and never checked; an installed authorizer always passes
+     * regardless of the registry's contents.
+     */
+    private static void requireAuthorizerForActionTools(
+            McpServerConfig config, McpToolRegistry registry, Optional<Authorizer> authorizer) {
+        require(authorizer != null, "mcp.tools");
+        if (!config.enabled() || authorizer.isPresent()) {
+            return;
+        }
+        List<String> unenforceableActionTools = registry.descriptorsByName().values().stream()
+                .filter(descriptor -> descriptor.access().action() != null)
+                .map(McpToolDescriptor::name)
+                .sorted()
+                .toList();
+        require(
+                unenforceableActionTools.isEmpty(),
+                "mcp.tools " + unenforceableActionTools + " declare @RequiresAction but no Authorizer is "
+                        + "installed to enforce it. Include SecurityAuthzModule in your Dagger component to "
+                        + "enable the authorization engine.");
     }
 
     /**

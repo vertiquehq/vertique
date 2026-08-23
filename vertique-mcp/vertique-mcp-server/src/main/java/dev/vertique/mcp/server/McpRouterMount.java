@@ -8,10 +8,12 @@ import dev.vertique.rest.core.router.MountMeta;
 import dev.vertique.rest.core.router.RouterMount;
 import dev.vertique.rest.core.security.RouteAuthHandler;
 import dev.vertique.rest.security.IdentityResolutionMiddleware;
+import dev.vertique.security.authz.Authorizer;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.ext.web.Router;
 import io.vertx.ext.web.handler.BodyHandler;
+import java.util.Optional;
 import java.util.Set;
 
 /** Installs the one validated MCP Router mount owned by the server module. */
@@ -30,14 +32,46 @@ final class McpRouterMount implements RouterMount {
             IdentityResolutionMiddleware identityResolutionMiddleware,
             HttpConfig httpConfig,
             McpToolRegistry toolRegistry) {
+        this(
+                config,
+                configValidator,
+                dispatcher,
+                routeAuthHandlers,
+                identityResolutionMiddleware,
+                httpConfig,
+                toolRegistry,
+                Optional.empty());
+    }
+
+    /**
+     * As the seven-argument constructor above, but additionally threads the optional core {@link
+     * Authorizer} so mount validation can reject a registry that publishes an {@code @RequiresAction}
+     * tool with no engine installed (issue #421). {@link McpServerModule#routerMount} — the one real
+     * production mount point — calls this overload; the seven-argument overload is the pre-existing
+     * convenience form for callers (chiefly this module's own test fixtures) that never register an
+     * action-gated tool, and is exactly equivalent to passing {@link Optional#empty()} here.
+     *
+     * @param authorizer the optional core {@link Authorizer}; empty when the authorization engine is
+     *                   not installed
+     */
+    McpRouterMount(
+            McpServerConfig config,
+            McpServerConfigValidator configValidator,
+            McpRequestDispatcher dispatcher,
+            Set<RouteAuthHandler> routeAuthHandlers,
+            IdentityResolutionMiddleware identityResolutionMiddleware,
+            HttpConfig httpConfig,
+            McpToolRegistry toolRegistry,
+            Optional<Authorizer> authorizer) {
         this.config = config;
         this.configValidator = configValidator;
         this.dispatcher = dispatcher;
         this.httpConfig = httpConfig;
-        // The three-argument (registry-visibility, §4.5) and HttpConfig-liveness-gate rules both
-        // matter only at the one real production mount point: this constructor. Test fixtures that
-        // exercise a narrower slice of McpServerConfigValidator call its narrower overloads directly.
-        configValidator.validate(config, routeAuthHandlers, toolRegistry, httpConfig);
+        // The three-argument (registry-visibility, §4.5), HttpConfig-liveness-gate, and
+        // no-authorizer-for-@RequiresAction (issue #421) rules all matter only at the one real
+        // production mount point: this constructor. Test fixtures that exercise a narrower slice of
+        // McpServerConfigValidator call its narrower overloads directly.
+        configValidator.validate(config, routeAuthHandlers, toolRegistry, httpConfig, authorizer);
         this.identityEstablisher = new McpIdentityEstablisher(config, routeAuthHandlers, identityResolutionMiddleware);
     }
 

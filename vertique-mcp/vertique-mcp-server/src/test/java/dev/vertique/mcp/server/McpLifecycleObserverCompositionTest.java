@@ -8,6 +8,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import dagger.BindsOptionalOf;
 import dagger.Component;
 import dagger.Module;
 import dagger.Provides;
@@ -23,6 +24,7 @@ import dev.vertique.rest.core.router.RouterMount;
 import dev.vertique.rest.core.security.RouteAuthHandler;
 import dev.vertique.rest.core.security.SecurityRuntime;
 import dev.vertique.rest.security.IdentityResolutionMiddleware;
+import dev.vertique.security.authz.Authorizer;
 import io.vertx.core.Context;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
@@ -453,6 +455,16 @@ class McpLifecycleObserverCompositionTest {
         static McpPolicyEnforcer policyEnforcer() {
             return mock(McpPolicyEnforcer.class);
         }
+
+        /**
+         * Declares the optional core {@link dev.vertique.security.authz.Authorizer} binding {@link
+         * McpServerModule#routerMount} now requires (issue #421 mount-time gate), mirroring {@code
+         * AuthModule#optionalAuthorizer}. This graph never installs {@code AuthModule}, so the binding
+         * resolves empty — correct here since {@code Set<McpToolInvoker>} is also empty, so no {@code
+         * @RequiresAction} tool can ever trip the gate this test does not exercise.
+         */
+        @BindsOptionalOf
+        abstract Authorizer optionalAuthorizer();
     }
 
     /**

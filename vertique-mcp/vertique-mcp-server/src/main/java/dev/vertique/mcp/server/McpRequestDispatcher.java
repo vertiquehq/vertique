@@ -37,10 +37,12 @@ import dev.vertique.mcp.tool.McpToolInvoker;
 import dev.vertique.mcp.tool.McpToolResult;
 import dev.vertique.rest.core.config.HttpConfig;
 import dev.vertique.rest.core.security.SecurityRuntime;
+import dev.vertique.rest.security.SecurityPolicyEnforcer;
 import dev.vertique.security.SecurityContext;
 import dev.vertique.security.SecurityContextSnapshot;
 import dev.vertique.security.SecurityContexts;
 import dev.vertique.security.SecurityIdentity;
+import dev.vertique.security.authz.AuthorizationDecision;
 import io.vertx.core.AsyncResult;
 import io.vertx.core.Future;
 import io.vertx.core.Handler;
@@ -1006,14 +1008,25 @@ final class McpRequestDispatcher {
                         updated = new ArrayList<>(visibleSnapshot);
                         updated.add(descriptor);
                     }
-                    return scan(
-                            names, indexSnapshot + 1, pageSize, budget, examinedSnapshot + 1, updated, name, caller);
+                    int updatedExamined = examinedSnapshot + 1;
+                    if (gateTimedOut(decision)) {
+                        // Stop scanning (issue #417): the gate SecurityPolicyEnforcer#decide just
+                        // bounded already paid its deadline once; continuing would pay it again for
+                        // every remaining candidate — the exact per-candidate amplification a shared
+                        // decision-gate deadline must not reintroduce. One timeout ends this page here,
+                        // with the timed-out candidate itself as the next-page anchor.
+                        boolean candidatesRemain = indexSnapshot + 1 < names.size();
+                        return Future.succeededFuture(
+                                new ScanResult(updated, candidatesRemain ? name : null, updatedExamined));
+                    }
+                    return scan(names, indexSnapshot + 1, pageSize, budget, updatedExamined, updated, name, caller);
                 });
             }
             if (decisionFuture.failed()) {
                 return Future.failedFuture(decisionFuture.cause());
             }
-            if (decisionFuture.result().permitted()) {
+            AuthorizationDecision decision = decisionFuture.result();
+            if (decision.permitted()) {
                 List<McpToolDescriptor> updated = new ArrayList<>(currentVisible);
                 updated.add(descriptor);
                 currentVisible = updated;
@@ -1021,7 +1034,25 @@ final class McpRequestDispatcher {
             currentLastExaminedName = name;
             currentExamined = currentExamined + 1;
             currentIndex = currentIndex + 1;
+            if (gateTimedOut(decision)) {
+                // Defensive mirror of the async stop above. In practice a genuine gate timeout is
+                // scheduled by Future#timeout on a later event-loop tick, so it is never observed
+                // through this already-complete synchronous branch — but stopping here too means this
+                // method's termination guarantee does not depend on that scheduling detail.
+                boolean candidatesRemain = currentIndex < names.size();
+                return Future.succeededFuture(new ScanResult(
+                        currentVisible, candidatesRemain ? currentLastExaminedName : null, currentExamined));
+            }
         }
+    }
+
+    /**
+     * Reports whether {@code decision} is the specific fail-closed shape {@link
+     * SecurityPolicyEnforcer#decide} produces when a gate future missed the shared decision deadline
+     * (issue #417), as opposed to any other deny (including a different fail-closed cause).
+     */
+    private static boolean gateTimedOut(AuthorizationDecision decision) {
+        return Boolean.TRUE.equals(decision.safeAttributes().get(SecurityPolicyEnforcer.GATE_TIMEOUT_ATTRIBUTE));
     }
 
     /** One bounded page's outcome: the visible tools, the next-page anchor, and the examined count. */

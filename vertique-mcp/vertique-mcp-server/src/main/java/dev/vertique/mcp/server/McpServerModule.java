@@ -17,7 +17,9 @@ import dev.vertique.rest.core.config.HttpConfig;
 import dev.vertique.rest.core.router.RouterMount;
 import dev.vertique.rest.core.security.RouteAuthHandler;
 import dev.vertique.rest.security.IdentityResolutionMiddleware;
+import dev.vertique.security.authz.Authorizer;
 import jakarta.inject.Singleton;
+import java.util.Optional;
 import java.util.Set;
 
 /** Dagger composition module for the optional MCP HTTP server. */
@@ -96,7 +98,14 @@ public abstract class McpServerModule {
         return new McpServerConfigValidator();
     }
 
-    /** Contributes the validated MCP mount to the application's plain Vert.x router. */
+    /**
+     * Contributes the validated MCP mount to the application's plain Vert.x router.
+     *
+     * <p>{@code authorizer} threads the optional core {@link Authorizer} into mount validation so a
+     * registry publishing an {@code @RequiresAction} tool with no engine installed is rejected here,
+     * before any route mounts (issue #421) — resolved the same way {@code SecurityPolicyEnforcer}
+     * already resolves it, via the {@code AuthModule}-declared optional binding.
+     */
     @Provides
     @Singleton
     @IntoSet
@@ -107,7 +116,8 @@ public abstract class McpServerModule {
             Set<RouteAuthHandler> routeAuthHandlers,
             IdentityResolutionMiddleware identityResolutionMiddleware,
             HttpConfig httpConfig,
-            McpToolRegistry toolRegistry) {
+            McpToolRegistry toolRegistry,
+            Optional<Authorizer> authorizer) {
         return new McpRouterMount(
                 config,
                 configValidator,
@@ -115,6 +125,7 @@ public abstract class McpServerModule {
                 routeAuthHandlers,
                 identityResolutionMiddleware,
                 httpConfig,
-                toolRegistry);
+                toolRegistry,
+                authorizer);
     }
 }
