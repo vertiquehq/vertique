@@ -6,6 +6,7 @@ package dev.vertique.cache.redis;
 import dagger.Module;
 import dagger.Provides;
 import dev.vertique.cache.CacheCoreModule;
+import dev.vertique.cache.config.CacheConfig;
 import dev.vertique.cache.spi.CacheStore;
 import dev.vertique.core.VertxConfig;
 import dev.vertique.core.config.ConfigParser;
@@ -25,7 +26,7 @@ public final class CacheRedisModule {
 
     @Provides
     @Singleton
-    static CacheStore cacheStore(RedisClientRegistry clients, CacheRedisConfig config) {
-        return new RedisCacheStore(clients, config);
+    static CacheStore cacheStore(RedisClientRegistry clients, CacheRedisConfig config, CacheConfig cacheConfig) {
+        return new RedisCacheStore(clients, config, cacheConfig);
     }
 }

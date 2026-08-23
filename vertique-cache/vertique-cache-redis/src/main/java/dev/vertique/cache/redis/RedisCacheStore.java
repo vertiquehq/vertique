@@ -3,6 +3,7 @@
 
 package dev.vertique.cache.redis;
 
+import dev.vertique.cache.config.CacheConfig;
 import dev.vertique.cache.spi.CacheKey;
 import dev.vertique.cache.spi.CacheRegion;
 import dev.vertique.cache.spi.CacheStore;
@@ -13,6 +14,7 @@ import io.vertx.redis.client.RedisAPI;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
 import java.lang.reflect.Type;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
 import java.util.Optional;
@@ -23,11 +25,13 @@ import java.util.UUID;
 public final class RedisCacheStore implements CacheStore {
     private final RedisAPI redis;
     private final CacheRedisConfig config;
+    private final CacheConfig cacheConfig;
 
     @Inject
-    public RedisCacheStore(RedisClientRegistry clients, CacheRedisConfig config) {
+    public RedisCacheStore(RedisClientRegistry clients, CacheRedisConfig config, CacheConfig cacheConfig) {
         this.redis = RedisAPI.api(clients.client(config.connection()));
         this.config = config;
+        this.cacheConfig = cacheConfig;
     }
 
     @Override
@@ -47,6 +51,9 @@ public final class RedisCacheStore implements CacheStore {
     @Override
     public Future<Void> put(CacheKey key, Object value, Type declaredType, Duration ttl) {
         String json = Json.encode(value);
+        if (json.getBytes(StandardCharsets.UTF_8).length > cacheConfig.maxValueBytes()) {
+            return Future.failedFuture("Redis cache value exceeds maxValueBytes");
+        }
         return generation(key.region()).compose(token -> {
             List<String> command = ttl.isZero()
                     ? List.of(storageKey(key, token), json)
