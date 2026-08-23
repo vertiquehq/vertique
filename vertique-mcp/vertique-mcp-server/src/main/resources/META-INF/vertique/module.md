@@ -53,14 +53,17 @@ Set at least one non-zero `HttpConfig` timeout for any MCP deployment — the mo
 otherwise.
 
 **Upgrading past T007:** `mcp.requestTimeoutMs`, `mcp.jsonMaxDepth`, `mcp.jsonMaxPropertiesPerObject`,
-`mcp.jsonMaxItemsPerArray`, and `mcp.jsonMaxStringChars` no longer exist. `McpServerConfig` ignores
-unknown JSON properties, so a deployment config that still sets any of these five keys loads
-successfully but the setting has **no effect** — it is silently dropped, not rejected. An operator who
-had tightened any of them (most importantly `requestTimeoutMs`, MCP's only prior deadline) must move
-the equivalent protection to `HttpConfig`'s idle/read/write timeouts above; the four JSON-shape limits
-have no direct replacement key because they are now Jackson's own frozen `StreamReadConstraints`
-inside the envelope codec (see [Bounded JSON-RPC envelope codec](#bounded-json-rpc-envelope-codec)),
-not a configurable value.
+`mcp.jsonMaxItemsPerArray`, and `mcp.jsonMaxStringChars` no longer exist. `McpServerConfig` fails
+startup on any one of these five retired keys for one release (issue #424 fix), naming the offending
+key and its replacement in the `ConfigurationException` message, rather than silently dropping it —
+an earlier version of this module silently ignored them, which let an operator who had tightened
+`requestTimeoutMs` (MCP's only prior deadline) upgrade into no deadline at all without any warning.
+Move the equivalent protection to `HttpConfig`'s idle/read/write timeouts above; the four JSON-shape
+limits have no direct replacement key because they are now Jackson's own frozen
+`StreamReadConstraints` inside the envelope codec (see [Bounded JSON-RPC envelope
+codec](#bounded-json-rpc-envelope-codec)), not a configurable value. An **ordinary** unknown key —
+anything other than these five retired names — stays forward-compatible and is still silently
+ignored, exactly as before.
 
 ## Stateless HTTP contract
 
@@ -169,6 +172,11 @@ carries:
 - a document larger than the effective `http.maxBodySize` in bytes (`maxDocumentLength`) — the one
   Jackson default (unlimited) this codec narrows, read from the shared `HttpConfig` rather than a
   separate MCP configuration key;
+- more than `max(1024, http.maxBodySize / 4)` JSON tokens (`maxTokenCount`) — derived, not configured
+  (issue #423 fix). A bounded document *length* alone does not bound retained node allocation: a
+  deeply nested or token-dense shape can amplify tens of times past its own byte size before the
+  document-length check would ever matter. This bound rejects such a shape once its token count
+  exceeds the derived budget, before the oversized tree is retained;
 - invalid UTF-8.
 
 None of these bounds is a consumer-visible configuration key: the four generic JSON-limit properties

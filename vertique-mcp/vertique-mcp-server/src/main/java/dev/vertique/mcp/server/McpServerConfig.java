@@ -3,9 +3,12 @@
 
 package dev.vertique.mcp.server;
 
+import com.fasterxml.jackson.annotation.JsonAnySetter;
 import com.fasterxml.jackson.annotation.JsonAutoDetect;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import dev.vertique.core.exception.ConfigurationException;
 import jakarta.annotation.Nullable;
+import java.util.Map;
 import java.util.Set;
 import lombok.Builder;
 import lombok.Getter;
@@ -83,5 +86,60 @@ public final class McpServerConfig {
     /** Returns the complete, programmatic MCP default configuration. */
     public static McpServerConfig defaults() {
         return builder().build();
+    }
+
+    /**
+     * Manually declared only so {@code @Builder} merges its generated fields and fluent setters into
+     * this pre-existing class — Lombok's documented "reuse an existing builder class" behavior —
+     * instead of generating a brand new one, letting this class additionally carry exactly one
+     * hand-written method: {@link #rejectRetiredKey}, a package-private {@code @JsonAnySetter} that
+     * fails startup on one of the five configuration keys the T007 rebaseline removed (issue #424)
+     * while leaving every other unrecognized property forward-compatible, matching {@link
+     * McpServerConfig}'s class-level {@code ignoreUnknown = true} for everything that is not a retired
+     * key. Jackson checks a builder's {@code @JsonAnySetter} before falling back to "ignore unknown",
+     * so this one method intercepts both cases without adding any public field, getter, or builder
+     * setter to {@link McpServerConfig}'s frozen public shape (contract §4.5) — {@link
+     * #rejectRetiredKey} itself is package-private, invoked by Jackson via reflection only.
+     */
+    public static class McpServerConfigBuilder {
+
+        /** Guidance shared by all four removed {@code mcp.json.max*} JSON-shape limit keys. */
+        private static final String RETIRED_JSON_LIMIT_GUIDANCE =
+                "JSON-shape limits are now Jackson's own frozen StreamReadConstraints inside the "
+                        + "private envelope codec (see the module reference); there is no direct "
+                        + "replacement configuration key";
+
+        /**
+         * The five keys the T007 architecture rebaseline removed, mapped to the operator-facing
+         * replacement guidance issue #424 requires — each message names the retired key's successor
+         * (or explains why none exists) rather than merely saying the key is gone.
+         */
+        private static final Map<String, String> RETIRED_KEYS = Map.of(
+                "requestTimeoutMs",
+                        "MCP arms no whole-request deadline of its own; move the equivalent protection to "
+                                + "http.idleTimeoutSeconds / http.readIdleTimeoutSeconds / "
+                                + "http.writeIdleTimeoutSeconds",
+                "jsonMaxDepth", RETIRED_JSON_LIMIT_GUIDANCE,
+                "jsonMaxPropertiesPerObject", RETIRED_JSON_LIMIT_GUIDANCE,
+                "jsonMaxItemsPerArray", RETIRED_JSON_LIMIT_GUIDANCE,
+                "jsonMaxStringChars", RETIRED_JSON_LIMIT_GUIDANCE);
+
+        /**
+         * Intercepts every property Jackson would otherwise treat as unrecognized. A retired key
+         * (issue #424) fails startup naming its successor; any other unrecognized property is
+         * silently ignored, staying forward-compatible exactly as {@link McpServerConfig}'s
+         * class-level {@code ignoreUnknown = true} already promises for everything else.
+         *
+         * @param name the unrecognized JSON property name
+         * @param value the unrecognized property's value; never inspected — only presence matters
+         * @throws ConfigurationException if {@code name} is one of the five retired keys
+         */
+        @JsonAnySetter
+        void rejectRetiredKey(String name, Object value) {
+            String guidance = RETIRED_KEYS.get(name);
+            if (guidance != null) {
+                throw new ConfigurationException("mcp." + name + " was removed; " + guidance);
+            }
+        }
     }
 }

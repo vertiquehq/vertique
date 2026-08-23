@@ -295,8 +295,10 @@ class McpEnvelopeJsonCodecTest {
                         .as("maxDocumentLength must equal the codec's configured HttpConfig#maxBodySize")
                         .isEqualTo(HttpConfig.builder().build().maxBodySize());
                 assertThat(constraints.getMaxTokenCount())
-                        .as("maxTokenCount must stay unlimited (-1)")
-                        .isEqualTo(-1L);
+                        .as("maxTokenCount must be derived as maxBodySize / 4 (issue #423), not left "
+                                + "unlimited — see McpEnvelopeTokenBudgetTest for the full derivation and "
+                                + "rejection-ordering proof")
+                        .isEqualTo(HttpConfig.builder().build().maxBodySize() / 4);
             }
             default -> fail("unknown T007 contract row: " + row);
         }

@@ -46,8 +46,22 @@ import java.util.Iterator;
  *   <li>{@code maxDocumentLength} — the one Jackson default that is unbounded ({@code -1}); set
  *       explicitly to the effective {@link HttpConfig#maxBodySize()} in bytes so this codec introduces
  *       no separate MCP ingress bound.
- *   <li>{@code maxTokenCount} — stays unlimited ({@code -1}); a finite document length already bounds
- *       it, so a separate token budget would be a second unshared policy.
+ *   <li>{@code maxTokenCount} — derived as {@code max(1024, maxBodySize / 4)} rather than left
+ *       unlimited (issue #423). A bounded document length only bounds the parser's <em>input</em>; it
+ *       does not bound retained node allocation, because a deeply nested or token-dense shape can
+ *       amplify far past its byte size. Measured against the shipped default {@code maxBodySize} of 2
+ *       MiB: an unlimited token count let repeated 999-deep nested-array chains retain roughly 52x the
+ *       body size (~109 MB for a 2 MB body, ~1,047,901 tree nodes) before this codec's IOException
+ *       catch ever ran, because the whole tree had already been built by the time the document-length
+ *       check (which fires only at end-of-document) would have mattered. A {@code bodyBytes/4} token
+ *       budget bounds that same adversarial shape to roughly a quarter of its unbounded node count
+ *       (25% materialized before rejection in the same benchmark) and rejects two independent
+ *       adversarial shapes — deeply nested containers and a flat array of ~1M tiny integers — before
+ *       the full tree is ever retained, not merely as a post-hoc outcome. The floor of 1,024 keeps a
+ *       pathologically small configured {@code maxBodySize} from producing a token budget too tight
+ *       for any legitimate envelope. This is still not a second unshared policy: the divisor is a
+ *       fixed internal constant derived from the existing {@code maxBodySize} bound, not a new
+ *       consumer-visible configuration key.
  * </ul>
  *
  * <p>{@link StreamReadFeature#STRICT_DUPLICATE_DETECTION} and {@link
@@ -66,7 +80,20 @@ final class McpEnvelopeJsonCodec {
     private static final int MAX_NUMBER_LENGTH = 1_000;
     private static final int MAX_STRING_LENGTH = 20_000_000;
     private static final int MAX_NAME_LENGTH = 50_000;
-    private static final long UNLIMITED_TOKEN_COUNT = -1L;
+
+    /**
+     * Divisor deriving {@code maxTokenCount} from the effective {@code maxBodySize} (issue #423):
+     * {@code maxBodySize / TOKEN_COUNT_DIVISOR}, floored at {@link #MIN_TOKEN_COUNT}. Benchmarked
+     * against the shipped 2 MiB {@code maxBodySize} default: this divisor caps the worst measured
+     * adversarial shape (repeated 999-deep nested-array chains) to roughly a quarter of its unlimited
+     * node-materialization count, and rejects both that shape and a flat ~1M-tiny-integer array before
+     * the full tree is retained. See the class javadoc for the full benchmark.
+     */
+    private static final long TOKEN_COUNT_DIVISOR = 4L;
+
+    /** Floor on the derived {@code maxTokenCount} so a pathologically small configured {@code
+     * maxBodySize} cannot produce a budget too tight for any legitimate envelope. */
+    private static final long MIN_TOKEN_COUNT = 1_024L;
 
     /**
      * Fixed internal cap on the magnitude of a decimal's scale, aligned exactly with the encoder's
@@ -94,7 +121,7 @@ final class McpEnvelopeJsonCodec {
                 .maxStringLength(MAX_STRING_LENGTH)
                 .maxNameLength(MAX_NAME_LENGTH)
                 .maxDocumentLength(httpConfig.maxBodySize())
-                .maxTokenCount(UNLIMITED_TOKEN_COUNT)
+                .maxTokenCount(Math.max(MIN_TOKEN_COUNT, httpConfig.maxBodySize() / TOKEN_COUNT_DIVISOR))
                 .build();
         JsonFactory factory =
                 JsonFactory.builder().streamReadConstraints(constraints).build();

@@ -42,6 +42,12 @@ SPDX-License-Identifier: EUPL-1.2
         <dependency><groupId>io.vertx</groupId><artifactId>vertx-junit5</artifactId><scope>test</scope></dependency>
         <dependency><groupId>io.vertx</groupId><artifactId>vertx-web-client</artifactId><scope>test</scope></dependency>
         <dependency><groupId>org.mockito</groupId><artifactId>mockito-core</artifactId><scope>test</scope></dependency>
+        <!-- R02 TP-002 (issue #424): drives the retired-key rejection proof through the real
+             DefaultConfigParser/DefaultConfigMapper production configuration mapper, not a bespoke
+             test-local ObjectMapper (test scope only — vertique-mcp-server has no production
+             dependency on the config-parsing module; an application composes McpServerConfig's
+             binding itself). -->
+        <dependency><groupId>${project.groupId}</groupId><artifactId>vertique-config-core</artifactId><scope>test</scope></dependency>
         <!-- T012 TP-002: compiles a real @McpTool application source with the real annotation processor
              (test scope only — vertique-mcp-server never depends on the codegen module at compile/runtime). -->
         <dependency><groupId>${project.groupId}</groupId><artifactId>vertique-codegen-mcp</artifactId><scope>test</scope></dependency>
