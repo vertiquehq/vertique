@@ -183,11 +183,19 @@ carries:
 - a document larger than the effective `http.maxBodySize` in bytes (`maxDocumentLength`) — the one
   Jackson default (unlimited) this codec narrows, read from the shared `HttpConfig` rather than a
   separate MCP configuration key;
-- more than `max(1024, http.maxBodySize / 4)` JSON tokens (`maxTokenCount`) — derived, not configured
-  (issue #423 fix). A bounded document *length* alone does not bound retained node allocation: a
-  deeply nested or token-dense shape can amplify tens of times past its own byte size before the
-  document-length check would ever matter. This bound rejects such a shape once its token count
-  exceeds the derived budget, before the oversized tree is retained;
+- more than 8,000 JSON tokens (`maxTokenCount`) — a fixed constant, **not** derived from
+  `http.maxBodySize` (R11, merge blocker 4; supersedes the issue #423 `max(1024, http.maxBodySize / 4)`
+  ratio). A bounded document *length* alone does not bound retained node allocation: a deeply nested or
+  token-dense shape can amplify tens of times past its own byte size before the document-length check
+  would ever matter — but the ratio-derived cap only ever answered "what ratio rejects a few
+  adversarial shapes?", not "how much heap may many concurrent anonymous requests retain?": at the
+  shipped 2 MiB default it admitted up to 524,288 tokens, and a single unauthenticated request could
+  retain 262,475 nodes — 95.2% of one adversarial shape's own full tree. The fixed 8,000-token cap is
+  instead derived from a stated heap-and-concurrency budget (512 MiB assumed instance heap, 10%
+  reserved for anonymous ingress retention, 256 assumed concurrent anonymous in-flight requests — this
+  layer enforces no connection-concurrency or rate limit of its own) and proven under concurrent load;
+  because heap retention tracks token count rather than input byte count, this cap does not scale with
+  `http.maxBodySize`;
 - invalid UTF-8.
 
 None of these bounds is a consumer-visible configuration key: the four generic JSON-limit properties
