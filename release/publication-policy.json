@@ -35,7 +35,7 @@
       "packaging": "pom"
     }
   ],
-  "expectedPublishableGavCount": 96,
+  "expectedPublishableGavCount": 101,
   "expectedPublishableGavs": [
     "dev.vertique:vertique-aop",
     "dev.vertique:vertique-app-parent",
@@ -46,6 +46,10 @@
     "dev.vertique:vertique-archetype-services",
     "dev.vertique:vertique-bom",
     "dev.vertique:vertique-bootstrap",
+    "dev.vertique:vertique-cache-codegen",
+    "dev.vertique:vertique-cache-core",
+    "dev.vertique:vertique-cache-injvm",
+    "dev.vertique:vertique-cache-redis",
     "dev.vertique:vertique-codegen-all",
     "dev.vertique:vertique-codegen-aop",
     "dev.vertique:vertique-codegen-application",
@@ -104,6 +108,7 @@
     "dev.vertique:vertique-opentelemetry-rest",
     "dev.vertique:vertique-opentelemetry-services",
     "dev.vertique:vertique-parent",
+    "dev.vertique:vertique-redis-core",
     "dev.vertique:vertique-rest-auth-jwt",
     "dev.vertique:vertique-rest-client",
     "dev.vertique:vertique-rest-core",

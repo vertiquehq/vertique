@@ -64,6 +64,8 @@ SPDX-License-Identifier: EUPL-1.2
         <module>vertique-services</module>
         <module>vertique-kafka</module>
         <module>vertique-db</module>
+        <module>vertique-redis</module>
+        <module>vertique-cache</module>
         <module>vertique-job</module>
         <module>vertique-deploy</module>
         <module>vertique-application</module>
@@ -427,6 +429,31 @@ SPDX-License-Identifier: EUPL-1.2
             <dependency>
                 <groupId>dev.vertique</groupId>
                 <artifactId>vertique-db-test</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-cache-core</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-cache-codegen</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-cache-injvm</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-cache-redis</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-redis-core</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>

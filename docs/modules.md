@@ -11,6 +11,10 @@ SPDX-License-Identifier: EUPL-1.2
 | `vertique-application` | [module.md](../vertique-application/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-application-test` | [module.md](../vertique-application-test/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-bootstrap` | [module.md](../vertique-bootstrap/src/main/resources/META-INF/vertique/module.md) |
+| `vertique-cache-codegen` | [module.md](../vertique-cache/vertique-cache-codegen/src/main/resources/META-INF/vertique/module.md) |
+| `vertique-cache-core` | [module.md](../vertique-cache/vertique-cache-core/src/main/resources/META-INF/vertique/module.md) |
+| `vertique-cache-injvm` | [module.md](../vertique-cache/vertique-cache-injvm/src/main/resources/META-INF/vertique/module.md) |
+| `vertique-cache-redis` | [module.md](../vertique-cache/vertique-cache-redis/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-codegen-all` | [module.md](../vertique-codegen/vertique-codegen-all/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-codegen-aop` | [module.md](../vertique-codegen/vertique-codegen-aop/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-codegen-application` | [module.md](../vertique-codegen/vertique-codegen-application/src/main/resources/META-INF/vertique/module.md) |
@@ -68,6 +72,7 @@ SPDX-License-Identifier: EUPL-1.2
 | `vertique-opentelemetry-prometheus` | [module.md](../vertique-opentelemetry/vertique-opentelemetry-prometheus/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-opentelemetry-rest` | [module.md](../vertique-opentelemetry/vertique-opentelemetry-rest/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-opentelemetry-services` | [module.md](../vertique-opentelemetry/vertique-opentelemetry-services/src/main/resources/META-INF/vertique/module.md) |
+| `vertique-redis-core` | [module.md](../vertique-redis/vertique-redis-core/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-rest-auth-jwt` | [module.md](../vertique-rest/vertique-rest-auth-jwt/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-rest-client` | [module.md](../vertique-rest/vertique-rest-client/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-rest-core` | [module.md](../vertique-rest/vertique-rest-core/src/main/resources/META-INF/vertique/module.md) |
