@@ -117,8 +117,25 @@ interface AppComponent { /* ... */ }
 `@Singleton`, package-private `McpRequestLifecycleObserver`. `open` captures `Span.current()` and
 its `SpanContext` and returns a session retaining both, or a no-op session when no valid span is
 current. The session's `onTerminal` enriches the retained span with the bounded attributes above and
-adds the optional body-trace link. The session does not override `onCompleted` — no work happens at
-transport completion.
+adds the optional body-trace link. The session does not override `onCompleted` — no MCP-specific work
+happens at transport completion — but it does implement the neutral `McpCompletionScope` capability
+(R06, issue #435): `openCompletionScope()` re-makes the retained span current for the framework's
+completion dispatch loop, so a co-installed Micrometer observer's timer recording happens with a valid
+span current and a registry-level exemplar bridge can attach its trace id. See
+"Micrometer exemplar completion scope" below.
+
+**Micrometer exemplar completion scope (R06, issue #435).** The frozen observability contract requires
+that "when a sampled HTTP span is current at terminal settlement, the adapter always invokes the
+Micrometer exemplar path." Vert.x's OpenTelemetry tracer ends the HTTP server span before any
+completion callback runs, so without help `Span.current()` is a no-op span by the time a Micrometer
+observer records its timer. `McpServerSpanObserver`'s session implements `McpCompletionScope`
+(`vertique-mcp-core`, `dev.vertique.mcp.lifecycle`) — the same opt-in-capability pattern
+`McpToolValueObservation` established — so `McpCompletionCoordinator` (`vertique-mcp-server`) opens it
+before dispatching `onCompleted` to any observer or listener, and closes it, in reverse order among
+every opened scope, only after all of them return. Both the open and the close are per-session
+failure-isolated. No OpenTelemetry type crosses into `vertique-mcp-core` or `vertique-micrometer-mcp`
+to make this work — the exemplar bridge itself (`OpenTelemetrySpanContext`) is registry-level,
+un-MCP-specific plumbing already shared with REST.
 
 ---
 

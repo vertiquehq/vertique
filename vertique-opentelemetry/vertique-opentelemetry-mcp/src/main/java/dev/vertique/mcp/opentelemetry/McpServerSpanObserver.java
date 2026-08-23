@@ -4,6 +4,7 @@
 package dev.vertique.mcp.opentelemetry;
 
 import dev.vertique.mcp.interceptor.McpTraceContext;
+import dev.vertique.mcp.lifecycle.McpCompletionScope;
 import dev.vertique.mcp.lifecycle.McpMethod;
 import dev.vertique.mcp.lifecycle.McpRequestLifecycleObserver;
 import dev.vertique.mcp.lifecycle.McpRequestObservation;
@@ -72,6 +73,15 @@ import lombok.extern.slf4j.Slf4j;
  * accepting a client-supplied trace reference, and doing so without deliberately deciding how to
  * bound the trust placed in it would open a trace-correlation-spoofing surface. No span status is
  * ever set here: transport status remains owned by Vert.x HTTP tracing (contract §4.10).
+ *
+ * <p><b>Completion scope (R06, issue #435).</b> The session returned by {@link #open} also implements
+ * {@link dev.vertique.mcp.lifecycle.McpCompletionScope}: {@code openCompletionScope()} re-makes the
+ * captured span current for the duration of the framework's completion dispatch loop ({@code
+ * McpCompletionCoordinator}, in {@code vertique-mcp-server}), so a co-installed Micrometer observer's
+ * timer recording happens with a valid span current and a registry-level exemplar bridge can attach
+ * its trace id — the frozen contract's "the adapter always invokes the Micrometer exemplar path"
+ * obligation. No OpenTelemetry type crosses into {@code vertique-mcp-core} or
+ * {@code vertique-micrometer-mcp} to make this work.
  *
  * <p>Every callback body is wrapped in try/catch that logs at WARN and swallows, so a misbehaving
  * OpenTelemetry implementation never affects MCP request processing.
@@ -152,8 +162,18 @@ final class McpServerSpanObserver implements McpRequestLifecycleObserver {
      * Per-request session retaining the {@link Span} and {@link SpanContext} captured at {@link
      * #open}, so {@link #onTerminal} enriches exactly that span regardless of which thread delivers
      * the terminal callback or what span (if any) is current on it.
+     *
+     * <p>Also implements {@link McpCompletionScope} (R06, issue #435): {@link #openCompletionScope()}
+     * re-makes this exact captured span current for the duration of the completion dispatch loop, so a
+     * co-installed Micrometer observer's timer recording happens with a valid span current and a
+     * registry-level exemplar bridge can attach its trace id — mirroring REST's {@code
+     * ServerSpanCompletionScope}. Never re-resolves {@link Span#current()}; always reactivates the one
+     * span captured at {@link #open}.
      */
-    private static final class Session implements McpRequestObservation {
+    private static final class Session implements McpCompletionScope {
+        /** No-op scope returned when the captured span's context is not (or no longer) valid. */
+        private static final AutoCloseable NO_OP_SCOPE = () -> {};
+
         private final Span span;
         private final SpanContext httpSpanContext;
 
@@ -174,6 +194,21 @@ final class McpServerSpanObserver implements McpRequestLifecycleObserver {
             McpTraceContext bodyTraceContext = observation.bodyTraceContext();
             if (bodyTraceContext != null) {
                 addBodyTraceLink(span, httpSpanContext, bodyTraceContext);
+            }
+        }
+
+        @Override
+        public AutoCloseable openCompletionScope() {
+            try {
+                if (!span.getSpanContext().isValid()) {
+                    return NO_OP_SCOPE;
+                }
+                return span.makeCurrent();
+            } catch (Exception e) {
+                log.warn(
+                        "McpServerSpanObserver failed to open the completion scope: {}",
+                        e.getClass().getName());
+                return NO_OP_SCOPE;
             }
         }
     }

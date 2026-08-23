@@ -123,6 +123,17 @@ per observer and never change the protocol or business outcome. The method, `Ori
 so — like a body-limit rejection — a request that fails admission produces no lifecycle observation;
 only an admitted request opens observation.
 
+**Completion scope bracketing (R06, issue #435).** Immediately before the completion coordinator
+dispatches the one completion event to every retained observation and completion listener, it opens
+every retained session's `McpCompletionScope` — an opt-in capability a session returned from
+`McpRequestLifecycleObserver#open` may additionally implement (see `vertique-mcp-core`'s "Opt-in
+completion scope") — and closes every opened scope, in reverse open order, only after every observer
+and listener has returned. Both the open and the close are per-session failure-isolated, exactly like
+every other lifecycle callback, so a misbehaving scope affects neither the request, another scope, nor
+any observer or listener. The motivating consumer is `vertique-opentelemetry-mcp`'s span observer,
+which re-establishes its captured span as current for this window so a co-installed Micrometer
+observer's timer recording carries a valid span for a registry-level exemplar bridge to attach.
+
 ## Cancellation and write-phase settlement
 
 A disconnect, a stream reset, or a failed terminal write fires the request's `McpCancellationSignal`

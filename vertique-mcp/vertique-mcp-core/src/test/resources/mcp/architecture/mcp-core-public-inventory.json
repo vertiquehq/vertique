@@ -68,6 +68,9 @@
       "public java.lang.String dev.vertique.mcp.lifecycle.McpAuthorizationSummary.policyVersion()",
       "public java.lang.String dev.vertique.mcp.lifecycle.McpAuthorizationSummary.reasonCode()"
     ],
+    "dev.vertique.mcp.lifecycle.McpCompletionScope": [
+      "public abstract java.lang.AutoCloseable dev.vertique.mcp.lifecycle.McpCompletionScope.openCompletionScope()"
+    ],
     "dev.vertique.mcp.lifecycle.McpErrorType": [
       "public static dev.vertique.mcp.lifecycle.McpErrorType dev.vertique.mcp.lifecycle.McpErrorType.valueOf(java.lang.String)",
       "public static dev.vertique.mcp.lifecycle.McpErrorType[] dev.vertique.mcp.lifecycle.McpErrorType.values()",

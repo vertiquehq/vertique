@@ -193,6 +193,19 @@ its own callback does so under its own documented obligation — an immutable re
 itself; only an installed audit adapter may copy a policy-permitted value into its own private
 evidence handle.
 
+## Opt-in completion scope
+
+`McpCompletionScope` is a neutral capability a session returned from `McpRequestLifecycleObserver
+#open` may additionally implement to bracket the completion dispatch loop with an ambient scope — for
+example, re-making a captured request span current so a co-installed metrics observer's recording
+happens inside it. The server calls `openCompletionScope()` once, before any retained observation's or
+completion listener's `onCompleted` runs, and closes the returned `AutoCloseable` once after all of
+them return. Both the open and the close are failure-isolated per session, exactly like every other
+lifecycle callback, so one misbehaving scope cannot affect another scope, any observer, any listener,
+or the request itself. This mirrors the framework's own `RequestCompletionScope` role for REST, but as
+an opt-in session capability rather than a separately multibound set, since the completion dispatch
+already threads through the per-request `McpRequestObservation` sessions this module owns.
+
 ## Dependency boundary
 
 This module consumes only the public core correlation snapshot, the security snapshot and

@@ -6,6 +6,7 @@ package dev.vertique.mcp.server;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.fail;
 
+import dev.vertique.mcp.lifecycle.McpCompletionScope;
 import dev.vertique.mcp.lifecycle.McpErrorType;
 import dev.vertique.mcp.lifecycle.McpMethod;
 import dev.vertique.mcp.lifecycle.McpRequestCompletedEvent;
@@ -19,6 +20,7 @@ import io.vertx.core.Context;
 import io.vertx.core.Vertx;
 import java.time.Instant;
 import java.time.InstantSource;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
@@ -319,6 +321,138 @@ class McpCompletionCoordinatorTest {
         observer.assertExactlyOneTerminalThenOneCompletion();
     }
 
+    // --- R06 (issue #435): McpCompletionScope bracketing ---
+
+    /**
+     * R06: proves the coordinator opens every retained session's {@link McpCompletionScope} before
+     * <em>any</em> observation's or listener's {@code onCompleted} runs, and closes every opened scope
+     * — in exact reverse open order — only after <em>all</em> of them have returned. Derived from the
+     * shared event log's own recorded indices, not a hardcoded observer order, so it holds regardless
+     * of {@link Set} iteration order. If the bracketing were removed (reverting to the pre-R06
+     * dispatch loop), no {@code :open}/{@code :close} entries would ever be logged and the index
+     * derivation below would fail outright.
+     */
+    @Test
+    @DisplayName("R06: completion scopes open before any onCompleted and close, in reverse order, after all of them")
+    void shouldOpenCompletionScopesBeforeDispatchAndCloseInReverseOrderAfter() throws Exception {
+        Context context = vertx.getOrCreateContext();
+        ManualClock clock = new ManualClock(COMPLETED_AT);
+        List<String> log = new CopyOnWriteArrayList<>();
+        ScopeOrderObserver scopeA = new ScopeOrderObserver(log, "A", false, false);
+        ScopeOrderObserver scopeB = new ScopeOrderObserver(log, "B", false, false);
+        PlainOrderObserver plain = new PlainOrderObserver(log, "P");
+
+        McpCompletionCoordinator coordinator = new McpCompletionCoordinator(
+                context,
+                new LinkedHashSet<>(List.of(scopeA, scopeB, plain)),
+                Set.<McpRequestCompletedListener>of(),
+                STARTED_AT,
+                clock);
+
+        coordinator.settleDisconnected(cancelledTerminal(McpErrorType.TRANSPORT), false);
+        flushContext(context);
+
+        List<String> opens = eventsEndingWith(log, ":open");
+        List<String> completions = eventsEndingWith(log, ":completed");
+        List<String> closes = eventsEndingWith(log, ":close");
+
+        assertThat(opens)
+                .as("both completion-scope sessions must have opened")
+                .containsExactlyInAnyOrder("A:open", "B:open");
+        assertThat(completions)
+                .as("every retained observation must have been notified of completion")
+                .containsExactlyInAnyOrder("A:completed", "B:completed", "P:completed");
+        assertThat(closes)
+                .as("both completion-scope sessions must have closed")
+                .containsExactlyInAnyOrder("A:close", "B:close");
+
+        // DECISIVE: every open precedes every completion, and every completion precedes every close —
+        // the bracket spans the whole dispatch loop, not an individual callback.
+        int lastOpenIndex = log.indexOf(opens.get(opens.size() - 1));
+        int firstCompletionIndex = log.indexOf(completions.get(0));
+        int lastCompletionIndex = log.indexOf(completions.get(completions.size() - 1));
+        int firstCloseIndex = log.indexOf(closes.get(0));
+        assertThat(lastOpenIndex)
+                .as("DECISIVE: the last scope open must precede the first onCompleted")
+                .isLessThan(firstCompletionIndex);
+        assertThat(lastCompletionIndex)
+                .as("DECISIVE: the last onCompleted must precede the first scope close")
+                .isLessThan(firstCloseIndex);
+
+        // DECISIVE: scopes close in the exact reverse of their observed open order.
+        String openOrderFirst = opens.get(0).split(":")[0];
+        String openOrderSecond = opens.get(1).split(":")[0];
+        assertThat(closes)
+                .as("DECISIVE: scopes close in exact reverse of their open order")
+                .containsExactly(openOrderSecond + ":close", openOrderFirst + ":close");
+    }
+
+    /**
+     * R06: a session whose {@code openCompletionScope()} throws must not prevent any other session's
+     * scope from opening, any observation's {@code onCompleted} from running, or that other session's
+     * own scope from closing. A {@link LinkedHashSet} fixes the iteration order so the failing session
+     * runs first — the harder ordering for the isolation guarantee to hold under.
+     */
+    @Test
+    @DisplayName("R06: a scope-open failure is isolated and does not suppress other sessions' completion or scope")
+    void shouldIsolateAScopeOpenFailureFromOtherSessions() throws Exception {
+        Context context = vertx.getOrCreateContext();
+        ManualClock clock = new ManualClock(COMPLETED_AT);
+        List<String> log = new CopyOnWriteArrayList<>();
+        ScopeOrderObserver failingOpen = new ScopeOrderObserver(log, "A", true, false);
+        ScopeOrderObserver healthy = new ScopeOrderObserver(log, "B", false, false);
+        PlainOrderObserver plain = new PlainOrderObserver(log, "P");
+
+        McpCompletionCoordinator coordinator = new McpCompletionCoordinator(
+                context,
+                new LinkedHashSet<>(List.of(failingOpen, healthy, plain)),
+                Set.<McpRequestCompletedListener>of(),
+                STARTED_AT,
+                clock);
+
+        coordinator.settleDisconnected(cancelledTerminal(McpErrorType.TRANSPORT), false);
+        flushContext(context);
+
+        assertThat(log)
+                .as("DECISIVE: the failing session's own open attempt is recorded but never closed, while "
+                        + "the healthy session's scope and every observation's completion still run")
+                .contains("A:open", "B:open", "B:close", "A:completed", "B:completed", "P:completed")
+                .doesNotContain("A:close");
+    }
+
+    /**
+     * R06: a session whose scope's {@code close()} throws must not prevent another session's scope
+     * from closing. Both sessions are given a failing close so ordering cannot mask a skipped close —
+     * if the loop aborted after the first failure, only one {@code :close} entry would ever appear.
+     */
+    @Test
+    @DisplayName("R06: a scope-close failure is isolated and does not suppress another scope's close")
+    void shouldIsolateAScopeCloseFailureFromOtherScopes() throws Exception {
+        Context context = vertx.getOrCreateContext();
+        ManualClock clock = new ManualClock(COMPLETED_AT);
+        List<String> log = new CopyOnWriteArrayList<>();
+        ScopeOrderObserver scopeA = new ScopeOrderObserver(log, "A", false, true);
+        ScopeOrderObserver scopeB = new ScopeOrderObserver(log, "B", false, true);
+
+        McpCompletionCoordinator coordinator = new McpCompletionCoordinator(
+                context,
+                new LinkedHashSet<>(List.of(scopeA, scopeB)),
+                Set.<McpRequestCompletedListener>of(),
+                STARTED_AT,
+                clock);
+
+        coordinator.settleDisconnected(cancelledTerminal(McpErrorType.TRANSPORT), false);
+        flushContext(context);
+
+        assertThat(eventsEndingWith(log, ":close"))
+                .as("DECISIVE: every opened scope's close must run even though both throw")
+                .containsExactlyInAnyOrder("A:close", "B:close");
+    }
+
+    private static List<String> eventsEndingWith(List<String> log, String suffix) {
+        return log.stream().filter(entry -> entry.endsWith(suffix)).toList();
+    }
+
     private static Stream<AbortSettlement> abortSettlements() {
         return Stream.of(
                 new AbortSettlement(
@@ -475,6 +609,71 @@ class McpCompletionCoordinatorTest {
             assertThat(order)
                     .as("the terminal event must precede the completion event")
                     .containsExactly("terminal", "completed");
+        }
+    }
+
+    /**
+     * A fake session implementing {@link McpCompletionScope}: {@code name + ":open"} is logged when
+     * {@code openCompletionScope()} is called (optionally throwing, per {@code failOpen}), and
+     * {@code name + ":close"} when the returned scope is closed (optionally throwing, per
+     * {@code failClose}); {@code name + ":completed"} is logged from {@code onCompleted}.
+     */
+    private static final class ScopeOrderObserver implements McpRequestLifecycleObserver, McpCompletionScope {
+        private final List<String> log;
+        private final String name;
+        private final boolean failOpen;
+        private final boolean failClose;
+
+        ScopeOrderObserver(List<String> log, String name, boolean failOpen, boolean failClose) {
+            this.log = log;
+            this.name = name;
+            this.failOpen = failOpen;
+            this.failClose = failClose;
+        }
+
+        @Override
+        public McpRequestObservation open(Instant startedAt) {
+            return this;
+        }
+
+        @Override
+        public AutoCloseable openCompletionScope() {
+            log.add(name + ":open");
+            if (failOpen) {
+                throw new RuntimeException("scope-open-failure:" + name);
+            }
+            return () -> {
+                log.add(name + ":close");
+                if (failClose) {
+                    throw new RuntimeException("scope-close-failure:" + name);
+                }
+            };
+        }
+
+        @Override
+        public void onCompleted(McpRequestCompletedEvent event) {
+            log.add(name + ":completed");
+        }
+    }
+
+    /** A fake session that only records {@code name + ":completed"} — never a {@link McpCompletionScope}. */
+    private static final class PlainOrderObserver implements McpRequestLifecycleObserver {
+        private final List<String> log;
+        private final String name;
+
+        PlainOrderObserver(List<String> log, String name) {
+            this.log = log;
+            this.name = name;
+        }
+
+        @Override
+        public McpRequestObservation open(Instant startedAt) {
+            return new McpRequestObservation() {
+                @Override
+                public void onCompleted(McpRequestCompletedEvent event) {
+                    log.add(name + ":completed");
+                }
+            };
         }
     }
 

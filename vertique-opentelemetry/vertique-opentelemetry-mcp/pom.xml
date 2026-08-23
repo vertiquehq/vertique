@@ -117,6 +117,23 @@ SPDX-License-Identifier: EUPL-1.2
             <artifactId>vertique-mcp-server</artifactId>
             <scope>test</scope>
         </dependency>
+        <!-- R06 (issue #435) IT: exemplar cross-adapter proof, mirroring vertique-opentelemetry-rest's
+             identical "S21 IT: exemplar cross-adapter proof" test-scope dependency set. -->
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-micrometer-mcp</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-registry-prometheus</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.prometheus</groupId>
+            <artifactId>prometheus-metrics-tracer-otel</artifactId>
+            <scope>test</scope>
+        </dependency>
         <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter</artifactId>

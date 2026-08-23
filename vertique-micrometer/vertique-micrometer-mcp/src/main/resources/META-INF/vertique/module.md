@@ -74,6 +74,11 @@ by this class, so none can become a tag (FR-MCP-202). The observer performs no m
 registration of its own; each tag value's domain is bounded structurally by the type it is read
 from, independent of any registry-level cardinality guard.
 
+**Defense in depth (R06, issue #430).** `vertique-micrometer-core`'s `CardinalityGuard.GUARDED_TAG_KEYS`
+now also lists `tool`, `result.type`, and `transport.outcome` alongside `method`, `outcome`, and
+`error.type`, so a future producer that ever bypassed the structural bound above would still be capped
+and warned by the registry-level guard, not silently unbounded.
+
 **Zero-overhead when unconfigured.** Before `VertiqueApplication` bootstrap the injected
 `MeterRegistry` is an empty composite whose recording is a no-op (NFR-TEL-003). When the optional
 `MetricsConfig` binding is absent (i.e., `MicrometerModule` is not installed), the observer defaults

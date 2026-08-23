@@ -74,7 +74,13 @@ final class CardinalityGuard {
             "result.kind",
             "stage",
             "sink",
-            "decision");
+            "decision",
+            // MCP adapter dimensions (T021/T022, repair R06, issue #430): "tool", "result.type", and
+            // "transport.outcome" are the three keys McpServerMetricsObserver emits that this list
+            // never covered — see McpMetricsCardinalityGuardContractTest for the derived-key proof.
+            "tool",
+            "result.type",
+            "transport.outcome");
 
     /** Prevent instantiation — this class is a static factory only. */
     private CardinalityGuard() {}

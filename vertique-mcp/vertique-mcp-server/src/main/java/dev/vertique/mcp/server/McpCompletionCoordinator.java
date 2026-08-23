@@ -3,6 +3,7 @@
 
 package dev.vertique.mcp.server;
 
+import dev.vertique.mcp.lifecycle.McpCompletionScope;
 import dev.vertique.mcp.lifecycle.McpRequestCompletedEvent;
 import dev.vertique.mcp.lifecycle.McpRequestCompletedListener;
 import dev.vertique.mcp.lifecycle.McpRequestLifecycleObserver;
@@ -324,7 +325,8 @@ final class McpCompletionCoordinator {
 
     /**
      * Publishes the completion to every retained observation and completion listener, isolating
-     * their failures.
+     * their failures, and bracketing the whole dispatch loop with every retained {@link
+     * McpCompletionScope} (R06, issue #435; contract §4.10).
      *
      * @param terminal the terminal the completion is built from
      * @param transport the transport outcome the completion records
@@ -342,8 +344,54 @@ final class McpCompletionCoordinator {
         // produces a contract-valid completion rather than throwing between terminal and completion.
         Instant settledAt = completedAt.isBefore(terminal.terminalAt()) ? terminal.terminalAt() : completedAt;
         McpRequestCompletedEvent event = completedEvent(terminal, transport, responseCommitted, settledAt);
-        observations.forEach(item -> invoke(() -> item.onCompleted(event)));
-        listeners.forEach(listener -> invoke(() -> listener.onCompleted(event)));
+        List<AutoCloseable> openedScopes = openCompletionScopes();
+        try {
+            observations.forEach(item -> invoke(() -> item.onCompleted(event)));
+            listeners.forEach(listener -> invoke(() -> listener.onCompleted(event)));
+        } finally {
+            closeCompletionScopes(openedScopes);
+        }
+    }
+
+    /**
+     * Opens every retained session's {@link McpCompletionScope}, isolating each session's open
+     * failure exactly like every other lifecycle callback. A session whose {@code openCompletionScope}
+     * throws, or returns {@code null}, contributes no entry — its absence never affects any other
+     * session's scope or the completion dispatch itself.
+     *
+     * @return the opened scopes, in the order their sessions were opened; never {@code null}
+     */
+    private List<AutoCloseable> openCompletionScopes() {
+        List<AutoCloseable> opened = new ArrayList<>();
+        for (McpRequestObservation session : observations) {
+            if (session instanceof McpCompletionScope capable) {
+                try {
+                    AutoCloseable scope = capable.openCompletionScope();
+                    if (scope != null) {
+                        opened.add(scope);
+                    }
+                } catch (RuntimeException ignored) {
+                    // Scope-open failures are isolated exactly like every other observer callback.
+                }
+            }
+        }
+        return opened;
+    }
+
+    /**
+     * Closes every scope {@link #openCompletionScopes} opened, in reverse order, isolating each
+     * scope's close failure so one misbehaving scope cannot prevent another from closing.
+     *
+     * @param scopes the scopes to close, in open order
+     */
+    private static void closeCompletionScopes(List<AutoCloseable> scopes) {
+        for (int i = scopes.size() - 1; i >= 0; i--) {
+            try {
+                scopes.get(i).close();
+            } catch (Exception ignored) {
+                // Scope-close failures are isolated exactly like every other observer callback.
+            }
+        }
     }
 
     private static List<McpRequestObservation> openObservers(
