@@ -616,6 +616,20 @@ scan — and is denied for this request (fail-closed). The returned `nextCursor`
 candidate *before* the timed-out one, not the timed-out candidate itself, so the next `tools/list`
 call re-examines it rather than permanently excluding it from every future page.
 
+**Request-scoped scan budget (R10, issue #438).** The per-candidate gate deadline above bounds only
+one decision; it does not bound the sum of up to `4 * mcp.tools.pageSize` of them. A decision point
+that consistently answers just under its own deadline never trips the gate-timeout stop, so the walk
+still needs its own aggregate bound. `mcp.tools.listDeadlineMs` (default `30000`, range
+1,000–600,000) is a single, request-scoped absolute wall-clock deadline computed once when the scan
+starts; once it elapses, the scan stops exactly like the gate-timeout and budget-exhaustion stops
+above — a truncated page whose `nextCursor` still reaches every unexamined candidate. Independently,
+the scan also observes the same request cancellation signal T013 already fires on client disconnect,
+stream reset, or a failed write (never a second, invented signal): both the deadline and the
+cancellation signal are checked immediately before a candidate's decision is started and again
+immediately after it resolves, so a client that has already left never keeps the scan issuing further
+authorization decisions, whether the disconnect lands between candidates or while one is genuinely in
+flight.
+
 The cursor is unsigned, non-expiring, opaque base64url (no padding) JSON: the frozen protocol
 version, the current registry digest, and the last global-name candidate examined (not merely the
 last visible tool). It carries no signature, HMAC, or expiry member — tampering cannot bypass

@@ -21,6 +21,7 @@
       "public java.lang.String dev.vertique.mcp.server.McpServerConfig.serverName()",
       "public java.lang.String dev.vertique.mcp.server.McpServerConfig.serverVersion()",
       "public java.util.Set<java.lang.String> dev.vertique.mcp.server.McpServerConfig.allowedOrigins()",
+      "public long dev.vertique.mcp.server.McpServerConfig.toolsListDeadlineMs()",
       "public long dev.vertique.mcp.server.McpServerConfig.toolsTtlMs()",
       "public static dev.vertique.mcp.server.McpServerConfig dev.vertique.mcp.server.McpServerConfig.defaults()",
       "public static dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder dev.vertique.mcp.server.McpServerConfig.builder()"
@@ -36,6 +37,7 @@
       "public dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder.outputMaxBytes(int)",
       "public dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder.serverName(java.lang.String)",
       "public dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder.serverVersion(java.lang.String)",
+      "public dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder.toolsListDeadlineMs(long)",
       "public dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder.toolsPageSize(int)",
       "public dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder.toolsTtlMs(long)",
       "public java.lang.String dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder.toString()"

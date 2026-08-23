@@ -83,6 +83,23 @@ public final class McpServerConfig {
     @Builder.Default
     private final long toolsTtlMs = 300_000;
 
+    /**
+     * The request-scoped absolute wall-clock deadline, in milliseconds, on one {@code tools/list}
+     * scan's whole candidate walk (R10, issue #438) — distinct from, and in addition to, {@link
+     * dev.vertique.rest.security.SecurityPolicyEnforcer#DEFAULT_GATE_DEADLINE_MS}'s per-candidate gate
+     * deadline. The per-candidate deadline alone bounds only one decision; it does not bound the sum
+     * of up to {@code 4 * mcp.tools.pageSize} of them, each of which may legitimately answer just
+     * under its own bound without ever tripping it — accumulating into hours of wall clock and
+     * thousands of outbound policy-decision round trips for one request (up to 2,000 candidates at
+     * the maximum {@code mcp.tools.pageSize}). {@code McpRequestDispatcher#scan} checks this deadline
+     * both before starting a candidate's decision and after it resolves, stopping the scan the moment
+     * it elapses and returning a truncated page whose {@code nextCursor} still reaches every
+     * unexamined candidate — exactly like the existing gate-timeout and budget-exhaustion stops.
+     * Defaults to {@code 30000} (30 seconds); range 1,000–600,000.
+     */
+    @Builder.Default
+    private final long toolsListDeadlineMs = 30_000;
+
     /** Returns the complete, programmatic MCP default configuration. */
     public static McpServerConfig defaults() {
         return builder().build();

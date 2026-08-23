@@ -1211,7 +1211,18 @@ final class McpRequestDispatcher {
         // McpPolicyEnforcer#decide null-checks its caller and would throw for the null the raw runtime
         // value can carry.
         SecurityContext caller = establishedSecurityContext();
-        scan(names, startIndex, pageSize, budget, 0, List.of(), seedAnchor, caller)
+        // R10 (issue #438): the per-candidate gate deadline alone never bounds the aggregate — a
+        // decision answering just under it, repeated across the whole examination budget, is
+        // unbounded in wall clock and outbound policy-decision round trips. This absolute deadline
+        // (computed once, here, before the scan starts) and the coordinator's own cancellation signal
+        // — the same signal T013 already fires on disconnect, reset, or a failed write, not a second,
+        // invented one — are both threaded through every scan() call and checked before and after
+        // every candidate's decision.
+        McpCompletionCoordinator coordinator = context.get(COMPLETION_COORDINATOR_KEY);
+        McpCancellationSignal cancellation =
+                coordinator != null ? coordinator.cancellation() : NoOpCancellationSignal.INSTANCE;
+        Instant scanDeadline = Instant.now().plusMillis(config.toolsListDeadlineMs());
+        scan(names, startIndex, pageSize, budget, 0, List.of(), seedAnchor, caller, cancellation, scanDeadline)
                 .onComplete(ar -> {
                     if (ar.failed()) {
                         // McpPolicyEnforcer#decide never fails per its own contract; defended here so a
@@ -1226,7 +1237,18 @@ final class McpRequestDispatcher {
     /**
      * Scans candidates {@code names[index..)} for one bounded page, reauthorizing every candidate it
      * examines exactly once, and stopping at the first of: the page reaching {@code pageSize} visible
-     * tools, {@code examined} reaching {@code budget}, or the candidate list being exhausted.
+     * tools, {@code examined} reaching {@code budget}, the candidate list being exhausted, {@code
+     * deadline} elapsing, or {@code cancellation} firing (R10, issue #438).
+     *
+     * <p>{@code cancellation} and {@code deadline} are each checked twice per candidate — immediately
+     * before {@link McpPolicyEnforcer#decide} is called, and again immediately after its decision
+     * resolves — because a decision that answers well inside its own per-gate deadline can still
+     * accumulate, across the whole examination budget, into an unbounded aggregate wall-clock cost;
+     * and because a disconnect can arrive at any point while a decision is genuinely in flight, not
+     * only between candidates. Both checks stop the scan the same way the pre-existing gate-timeout
+     * stop does: a truncated page whose {@code nextCursor} still reaches every unexamined candidate.
+     * A candidate whose decision had already resolved before either check tripped keeps its outcome
+     * (its cost is already paid); the scan simply does not start — or does not chain into — another.
      *
      * <p>Deliberately iterative, not recursive. Vert.x 5.1.6 documents no trampolining or
      * stack-safety guarantee for {@link Future#compose} on an already-completed future, and a
@@ -1238,6 +1260,14 @@ final class McpRequestDispatcher {
      * fresh callback stack frame posted through the event loop — the one time a decision is genuinely
      * still pending. At the maximum budget with every decision completing immediately (the case that
      * would otherwise recurse), this method never grows the call stack past its own single frame.
+     *
+     * @param cancellation this request's cancellation signal (T013) — the same signal a cooperative
+     *     tool handler observes, not a second, invented one; {@link McpCancellationSignal#isCancelled()}
+     *     is checked synchronously, never {@link McpCancellationSignal#cancelled()}, since this loop
+     *     must never itself wait on a future to learn whether it should stop
+     * @param deadline the absolute instant, computed once before the first {@link #scan} call for this
+     *     request, past which the whole scan stops regardless of how quickly each individual gate
+     *     answered
      */
     private Future<ScanResult> scan(
             List<String> names,
@@ -1247,7 +1277,9 @@ final class McpRequestDispatcher {
             int examined,
             List<McpToolDescriptor> visible,
             @Nullable String lastExaminedName,
-            SecurityContext caller) {
+            SecurityContext caller,
+            McpCancellationSignal cancellation,
+            Instant deadline) {
         List<McpToolDescriptor> currentVisible = visible;
         int currentIndex = index;
         int currentExamined = examined;
@@ -1259,6 +1291,16 @@ final class McpRequestDispatcher {
                         currentVisible, candidatesRemain ? currentLastExaminedName : null, currentExamined));
             }
             String name = names.get(currentIndex);
+            // R10 (issue #438): checked before this candidate's decision is ever started. Neither
+            // check has examined this candidate at all, so — mirroring the gate-timeout branches'
+            // established null-previousAnchor fallback below — the anchor is the last candidate this
+            // scan actually examined, falling back to self-anchoring only in the one narrow edge case
+            // where nothing has been examined yet on this scan call (the very first candidate), so
+            // nextCursor is never silently dropped while candidates remain.
+            if (cancellation.isCancelled() || deadlineExceeded(deadline)) {
+                String anchor = currentLastExaminedName != null ? currentLastExaminedName : name;
+                return Future.succeededFuture(new ScanResult(currentVisible, anchor, currentExamined));
+            }
             McpToolDescriptor descriptor = toolRegistry.descriptorsByName().get(name);
             var decisionFuture = policyEnforcer.decide(descriptor, caller);
             if (!decisionFuture.isComplete()) {
@@ -1300,7 +1342,31 @@ final class McpRequestDispatcher {
                         String anchor = previousAnchor != null ? previousAnchor : name;
                         return Future.succeededFuture(new ScanResult(updated, anchor, updatedExamined));
                     }
-                    return scan(names, indexSnapshot + 1, pageSize, budget, updatedExamined, updated, name, caller);
+                    // R10 (issue #438): checked immediately after this in-flight decision resolved —
+                    // the "after" half of the before/after pair this method's javadoc documents. This
+                    // candidate's own decision is kept (it already resolved; discarding it would waste
+                    // the round trip that already happened for nothing), but the scan does not chain
+                    // into another. Unlike the gate-timeout branch above, this candidate WAS genuinely
+                    // examined, so the anchor is this candidate itself — not the previous one — exactly
+                    // like the ordinary bottom-of-loop advance below; a null nextAnchor (only when no
+                    // candidate remains past this one) matches the same convention every other stop in
+                    // this method already uses.
+                    if (cancellation.isCancelled() || deadlineExceeded(deadline)) {
+                        boolean candidatesRemain = indexSnapshot + 1 < names.size();
+                        return Future.succeededFuture(
+                                new ScanResult(updated, candidatesRemain ? name : null, updatedExamined));
+                    }
+                    return scan(
+                            names,
+                            indexSnapshot + 1,
+                            pageSize,
+                            budget,
+                            updatedExamined,
+                            updated,
+                            name,
+                            caller,
+                            cancellation,
+                            deadline);
                 });
             }
             if (decisionFuture.failed()) {
@@ -1325,9 +1391,26 @@ final class McpRequestDispatcher {
                 String anchor = currentLastExaminedName != null ? currentLastExaminedName : name;
                 return Future.succeededFuture(new ScanResult(currentVisible, anchor, currentExamined));
             }
+            // R10 (issue #438): the synchronous-branch mirror of the async "after" check above — this
+            // candidate's decision genuinely resolved (immediately, in this case), so it is kept and
+            // the anchor is this candidate itself; the loop simply does not advance to examine another.
+            if (cancellation.isCancelled() || deadlineExceeded(deadline)) {
+                boolean candidatesRemain = currentIndex + 1 < names.size();
+                return Future.succeededFuture(
+                        new ScanResult(currentVisible, candidatesRemain ? name : null, currentExamined));
+            }
             currentLastExaminedName = name;
             currentIndex = currentIndex + 1;
         }
+    }
+
+    /**
+     * Reports whether {@code deadline} has already passed (R10, issue #438) — the request-scoped
+     * absolute wall-clock bound on one {@code tools/list} scan's whole candidate walk, distinct from,
+     * and in addition to, the per-candidate gate deadline {@link #gateTimedOut} observes.
+     */
+    private static boolean deadlineExceeded(Instant deadline) {
+        return !Instant.now().isBefore(deadline);
     }
 
     /**
