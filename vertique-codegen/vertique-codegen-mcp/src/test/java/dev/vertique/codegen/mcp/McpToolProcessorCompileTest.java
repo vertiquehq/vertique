@@ -1560,8 +1560,10 @@ class McpToolProcessorCompileTest {
          * A compiled stub of {@code dev.vertique.mcp.server.runtime.McpToolRuntime} (MCP-001 P04
          * remediation): every generated invoker retains one, obtained from
          * {@link #mcpToolRuntimeFactoryStub()}, and calls {@code descriptor()},
-         * {@code materializeArguments(...)}, and {@code fieldNameResolver()} on it. Same rationale and
-         * constraint as {@link #mcpToolParameterMetadataStub()}.
+         * {@code materializeArguments(...)}, and {@code fieldNameResolver()} on it. An Optional-reaching
+         * tool's invoker additionally calls {@code verifyOptionalMaterialization(...)} once during
+         * construction (R03, contract §4.1). Same rationale and constraint as
+         * {@link #mcpToolParameterMetadataStub()}.
          *
          * @return the {@code dev.vertique.mcp.server.runtime.McpToolRuntime} stub source
          */
@@ -1572,6 +1574,8 @@ class McpToolProcessorCompileTest {
                     import dev.vertique.core.sanitization.InputFieldNameResolver;
                     import dev.vertique.mcp.tool.McpToolDescriptor;
                     import java.util.Map;
+                    import java.util.Optional;
+                    import java.util.function.Function;
 
                     public final class McpToolRuntime<I> {
                         public McpToolDescriptor descriptor() {
@@ -1584,6 +1588,10 @@ class McpToolProcessorCompileTest {
 
                         public InputFieldNameResolver fieldNameResolver() {
                             return null;
+                        }
+
+                        public <P> void verifyOptionalMaterialization(
+                                Class<P> probeType, Function<P, Optional<?>> valueAccessor) {
                         }
                     }
                     """);

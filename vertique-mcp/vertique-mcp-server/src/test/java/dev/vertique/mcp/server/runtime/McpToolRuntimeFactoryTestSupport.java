@@ -3,10 +3,12 @@
 
 package dev.vertique.mcp.server.runtime;
 
+import dev.vertique.core.json.JsonMapperProfile;
 import dev.vertique.core.json.JsonMapperProfileRegistry;
 import dev.vertique.json.DefaultJsonMapperProfileRegistry;
 import dev.vertique.json.JsonConfig;
 import dev.vertique.mcp.server.McpServerConfig;
+import jakarta.annotation.Nullable;
 import java.util.Set;
 
 /**
@@ -33,9 +35,29 @@ public final class McpToolRuntimeFactoryTestSupport {
      * @return the composed factory
      */
     public static McpToolRuntimeFactory factory() {
-        JsonMapperProfileRegistry registry = new DefaultJsonMapperProfileRegistry(Set.of());
-        McpServerConfig mcpConfig =
-                McpServerConfig.builder().enabled(true).jsonProfile(null).build();
+        return factory(Set.of(), null);
+    }
+
+    /**
+     * Builds a real {@link McpToolRuntimeFactory} bound to the framework {@code vertx} profile plus the
+     * given application-registered profiles, with {@code applicationProfiles} bound to the given MCP
+     * boundary default (or the reserved {@code vertx} tail when {@code null}).
+     *
+     * <p>Used by a proof whose tool needs an {@code Optional}-materialization-capable profile (contract
+     * §4.1) rather than the zero-config {@code vertx} profile, which has no {@code Jdk8Module}
+     * registered.
+     *
+     * @param applicationProfiles the application-registered profiles; must not be {@code null}
+     * @param mcpJsonProfile the configured {@code mcp.jsonProfile} default id, or {@code null} for none
+     * @return the composed factory
+     */
+    public static McpToolRuntimeFactory factory(
+            Set<JsonMapperProfile> applicationProfiles, @Nullable String mcpJsonProfile) {
+        JsonMapperProfileRegistry registry = new DefaultJsonMapperProfileRegistry(applicationProfiles);
+        McpServerConfig mcpConfig = McpServerConfig.builder()
+                .enabled(true)
+                .jsonProfile(mcpJsonProfile)
+                .build();
         return new McpToolRuntimeFactory(registry, JsonConfig.defaults(), mcpConfig);
     }
 }

@@ -3,10 +3,15 @@
 
 package dev.vertique.mcp.server;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.datatype.jdk8.Jdk8Module;
 import dev.vertique.codegen.mcp.McpToolProcessor;
 import dev.vertique.codegen.test.ProcessorTestHarness;
 import dev.vertique.codegen.test.fixtures.SourceFiles;
+import dev.vertique.core.json.JsonMapperProfile;
+import dev.vertique.core.json.JsonProfileId;
 import dev.vertique.input.processing.InputObjectProcessor;
+import dev.vertique.json.VertxJsonSupport;
 import dev.vertique.mcp.server.runtime.McpToolRuntimeFactory;
 import dev.vertique.mcp.server.runtime.McpToolRuntimeFactoryTestSupport;
 import dev.vertique.mcp.tool.McpCancellationSignal;
@@ -14,6 +19,7 @@ import dev.vertique.mcp.tool.McpToolInvoker;
 import io.vertx.core.Future;
 import io.vertx.core.Promise;
 import java.lang.reflect.Constructor;
+import java.util.Set;
 import javax.tools.JavaFileObject;
 
 /**
@@ -25,6 +31,13 @@ import javax.tools.JavaFileObject;
  * through its real three-argument {@code @Inject} constructor, exactly like {@link
  * McpGeneratedParameterizedToolITFixture} but without the HTTP layer: this proof only needs {@link
  * McpToolInvoker#prepare}, never the dispatcher or a live request.
+ *
+ * <p>Bound to an {@code Optional}-materialization-capable {@code strict} profile (R03, contract §4.1),
+ * not the zero-config {@code vertx} profile: this tool declares an {@code Optional<T>} parameter, so
+ * composition now runs the generated {@code OptionalProbe} canary before construction completes, and
+ * {@code vertx}'s mapper (Vert.x's {@code DatabindCodec}) has no {@code Jdk8Module} registered. This
+ * fixture's own claim is about null-preserving deep-copy behavior, not profile selection, so it opts
+ * into a profile the canary accepts rather than one it correctly rejects.
  */
 final class McpGeneratedNullPreservingImmutableArgumentsTestFixture {
 
@@ -94,11 +107,34 @@ final class McpGeneratedNullPreservingImmutableArgumentsTestFixture {
                     throw new IllegalArgumentException("unresolvable sanitizer " + sanitizerType);
                 });
 
-        McpToolRuntimeFactory runtimes = McpToolRuntimeFactoryTestSupport.factory();
+        McpToolRuntimeFactory runtimes =
+                McpToolRuntimeFactoryTestSupport.factory(Set.of(new OptionalMaterializingProfile()), "strict");
         Constructor<?> invokerConstructor = invokerClass.getDeclaredConstructor(
                 toolsClass, McpToolRuntimeFactory.class, InputObjectProcessor.class);
         invokerConstructor.setAccessible(true);
         return (McpToolInvoker) invokerConstructor.newInstance(toolsInstance, runtimes, processor);
+    }
+
+    /**
+     * A registered {@code strict} application profile whose mapper actually materializes
+     * {@code Optional} correctly ({@code Jdk8Module}), plus Vert.x's Jackson support so the registry's
+     * structural round-trip probe (which round-trips a {@code JsonObject}/{@code JsonArray}) passes —
+     * mirrors {@code McpGeneratedInputCarrierITFixture.StrictProfile}.
+     */
+    private static final class OptionalMaterializingProfile implements JsonMapperProfile {
+
+        private final ObjectMapper mapper =
+                new ObjectMapper().registerModule(new Jdk8Module()).registerModule(VertxJsonSupport.module());
+
+        @Override
+        public JsonProfileId id() {
+            return JsonProfileId.of("strict");
+        }
+
+        @Override
+        public ObjectMapper mapper() {
+            return mapper;
+        }
     }
 
     /** A cancellation signal that never fires, standing in for the completion coordinator's real one. */

@@ -180,6 +180,14 @@ final class McpToolInvokerEmitter {
 
     private static final String INPUT_TYPE = "Input";
     private static final String PREPARED_CALL_TYPE = "PreparedCall";
+    private static final String OPTIONAL_PROBE_TYPE = "OptionalProbe";
+    private static final String OPTIONAL_PROBE_COMPONENT = "value";
+    private static final String OPTIONAL_PROBE_WIRE_NAME = "value";
+
+    /** The fully-qualified erasure name that identifies a {@code java.util.Optional<T>} parameter. */
+    private static final String OPTIONAL_FQN = "java.util.Optional";
+
+    private static final ClassName OPTIONAL = ClassName.get("java.util", "Optional");
     private static final String TOOL_FIELD = "tool";
     private static final String RUNTIME_FIELD = "runtime";
     private static final String RUNTIMES_PARAM = "runtimes";
@@ -218,7 +226,9 @@ final class McpToolInvokerEmitter {
         ClassName invokerType = ClassName.get(packageName, model.invokerSimpleName());
         ClassName inputType = invokerType.nestedClass(INPUT_TYPE);
         ClassName preparedCallType = invokerType.nestedClass(PREPARED_CALL_TYPE);
+        ClassName optionalProbeType = invokerType.nestedClass(OPTIONAL_PROBE_TYPE);
         boolean cancellationAware = model.parameters().stream().anyMatch(McpToolParameterModel::cancellationSignal);
+        boolean optionalReaching = hasOptionalParameter(model);
 
         TypeSpec.Builder invoker = TypeSpec.classBuilder(invokerType)
                 .addJavadoc(
@@ -252,7 +262,7 @@ final class McpToolInvokerEmitter {
                         RUNTIME_FIELD,
                         Modifier.PRIVATE,
                         Modifier.FINAL)
-                .addMethod(constructor(model, toolType, inputType))
+                .addMethod(constructor(model, toolType, inputType, optionalReaching, optionalProbeType))
                 .addMethod(MethodSpec.methodBuilder("descriptor")
                         .addAnnotation(Override.class)
                         .addModifiers(Modifier.PUBLIC)
@@ -262,6 +272,10 @@ final class McpToolInvokerEmitter {
                 .addMethod(prepare(model, inputType, preparedCallType, cancellationAware))
                 .addType(preparedCall(model, inputType, preparedCallType, cancellationAware))
                 .addType(inputCarrier(model, inputType));
+
+        if (optionalReaching) {
+            invoker.addType(optionalProbe(optionalProbeType));
+        }
 
         JavaFile javaFile = JavaFile.builder(packageName, invoker.build()).build();
         try {
@@ -274,8 +288,13 @@ final class McpToolInvokerEmitter {
 
     // --- Members ---
 
-    private MethodSpec constructor(McpToolModel model, ClassName toolType, ClassName inputType) {
-        return MethodSpec.constructorBuilder()
+    private MethodSpec constructor(
+            McpToolModel model,
+            ClassName toolType,
+            ClassName inputType,
+            boolean optionalReaching,
+            ClassName optionalProbeType) {
+        MethodSpec.Builder constructor = MethodSpec.constructorBuilder()
                 .addJavadoc(
                         "Constructs the invoker, wiring the mandatory input-processing pipeline (contract §4.7)\n"
                                 + "and obtaining its immutable runtime binding once, during composition.\n\n"
@@ -292,13 +311,28 @@ final class McpToolInvokerEmitter {
                 .addParameter(INPUT_OBJECT_PROCESSOR, INPUT_PROCESSOR_FIELD)
                 .addStatement("this.$N = $N", TOOL_FIELD, TOOL_FIELD)
                 .addStatement("this.$N = $N", INPUT_PROCESSOR_FIELD, INPUT_PROCESSOR_FIELD)
-                .addStatement("this.$N = $L", RUNTIME_FIELD, runtimeCreation(model, inputType))
-                .addStatement(
-                        "$N.precomputeFieldNameResolution($T.class, $N.fieldNameResolver())",
-                        INPUT_PROCESSOR_FIELD,
-                        inputType,
-                        RUNTIME_FIELD)
-                .build();
+                .addStatement("this.$N = $L", RUNTIME_FIELD, runtimeCreation(model, inputType));
+
+        if (optionalReaching) {
+            // Contract §4.1: this tool has at least one Optional<T> parameter, so composition proves
+            // this profile's mapper materializes Optional correctly — omitted, explicit-null, and
+            // present — through the real generated OptionalProbe canary before this constructor
+            // returns, i.e. before the tool can ever mount. A profile that fails this throws
+            // ConfigurationException here, failing startup rather than being inferred from which
+            // module ids happen to be registered.
+            constructor.addStatement(
+                    "$N.verifyOptionalMaterialization($T.class, $T::value)",
+                    RUNTIME_FIELD,
+                    optionalProbeType,
+                    optionalProbeType);
+        }
+
+        constructor.addStatement(
+                "$N.precomputeFieldNameResolution($T.class, $N.fieldNameResolver())",
+                INPUT_PROCESSOR_FIELD,
+                inputType,
+                RUNTIME_FIELD);
+        return constructor.build();
     }
 
     /**
@@ -649,5 +683,55 @@ final class McpToolInvokerEmitter {
                 component.addAnnotation(AnnotationSpec.get(mirror));
             }
         }
+    }
+
+    // --- OptionalProbe canary (contract §4.1, issue #428) ---
+
+    /**
+     * Returns {@code true} when {@code model} declares at least one schema parameter whose erasure is
+     * {@code java.util.Optional} — i.e. this tool is "Optional-reaching" and composition must prove
+     * this profile's mapper materializes {@code Optional} correctly before the tool can mount.
+     */
+    private boolean hasOptionalParameter(McpToolModel model) {
+        return model.schemaParameters().stream().anyMatch(this::isOptional);
+    }
+
+    /** Returns {@code true} when {@code parameter}'s declared type erases to {@code java.util.Optional}. */
+    private boolean isOptional(McpToolParameterModel parameter) {
+        return ctx.types().erasure(parameter.type()).toString().equals(OPTIONAL_FQN);
+    }
+
+    /**
+     * Builds the generated {@code OptionalProbe} canary record (contract §4.1, frozen inventory row):
+     * a private, same-package record whose sole component is an {@code Optional<String>}, materialized
+     * by {@code McpToolRuntime#verifyOptionalMaterialization} once during composition with omitted,
+     * explicit-null, and present cases — before this tool can mount. Its shape is fixed and
+     * independent of the tool's own Optional-typed parameter's element type: the canary proves the
+     * effective profile mapper's <em>Optional</em>-materialization capability, which {@code
+     * jackson-datatype-jdk8} governs generically for any element type, not a property of the specific
+     * contained type.
+     */
+    private TypeSpec optionalProbe(ClassName optionalProbeType) {
+        return TypeSpec.recordBuilder(optionalProbeType)
+                .addJavadoc(
+                        "Generated per-profile {@code Optional} materialization canary (contract §4.1). Composition\n"
+                                + "materializes this record with omitted, explicit-null, and present {@code $L} cases\n"
+                                + "through the same effective profile mapper that materializes this tool's real {@code $L}\n"
+                                + "carrier, and fails startup if any case does not resolve the way an {@code Optional<T>}\n"
+                                + "tool parameter's contract requires — never inferred from which module ids are\n"
+                                + "registered.\n",
+                        OPTIONAL_PROBE_COMPONENT,
+                        INPUT_TYPE)
+                .addModifiers(Modifier.PRIVATE)
+                .recordConstructor(MethodSpec.constructorBuilder()
+                        .addParameter(ParameterSpec.builder(
+                                        ParameterizedTypeName.get(OPTIONAL, ClassName.get(String.class)),
+                                        OPTIONAL_PROBE_COMPONENT)
+                                .addAnnotation(AnnotationSpec.builder(JSON_PROPERTY)
+                                        .addMember("value", "$S", OPTIONAL_PROBE_WIRE_NAME)
+                                        .build())
+                                .build())
+                        .build())
+                .build();
     }
 }

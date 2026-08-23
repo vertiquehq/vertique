@@ -72,6 +72,21 @@ public final class McpOutputPipelineITFixture {
             InvalidOutputToolInvoker invalidTool,
             OversizedResultToolInvoker oversizedTool)
             throws Exception {
+        return start(vertx, outputMaxBytes, metrics, capable, Set.of(structuredTool, invalidTool, oversizedTool));
+    }
+
+    /**
+     * Starts a real port-0 server, bound and connected only on the literal {@code 127.0.0.1}, exposing
+     * an arbitrary tool set plus the two observer sessions — the R04 decisive proof needs a fourth,
+     * instrumented tool the fixed three-tool overload above cannot carry.
+     */
+    public static Started start(
+            Vertx vertx,
+            int outputMaxBytes,
+            McpRequestLifecycleObserver metrics,
+            McpRequestLifecycleObserver capable,
+            Set<McpToolInvoker> tools)
+            throws Exception {
         McpServerConfig config = McpServerConfig.builder()
                 .enabled(true)
                 .serverName("vertique-test")
@@ -79,7 +94,7 @@ public final class McpOutputPipelineITFixture {
                 .outputMaxBytes(outputMaxBytes)
                 .build();
 
-        McpToolRegistry registry = McpToolRegistry.build(Set.of(structuredTool, invalidTool, oversizedTool));
+        McpToolRegistry registry = McpToolRegistry.build(tools);
 
         RecordingSecurityRuntime securityRuntime = new RecordingSecurityRuntime();
         McpPolicyEnforcer policyEnforcer = new McpPolicyEnforcer(new SecurityPolicyEnforcer(
@@ -351,6 +366,173 @@ public final class McpOutputPipelineITFixture {
                         elements.add(elementAt(i));
                     }
                     return Future.succeededFuture(McpToolResult.structured(elements));
+                }
+            };
+        }
+    }
+
+    /**
+     * R04 TP-001's decisive fixture: a tool whose structured result's own canonical JSON representation
+     * exceeds a small {@code mcp.output.maxBytes} cap, exposed as an {@link Iterable} rather than a
+     * plain {@code List} so {@link #accessCount()} decisively counts exactly how many elements
+     * serialization actually consumed before the capped sink aborted — distinguishing a bounded,
+     * as-bytes-are-produced abort (a small count, near what the cap admits) from the pre-R04 unbounded
+     * {@code convertValue} tree build, which would consume every element ({@link #ELEMENT_COUNT}) before
+     * any cap check ever ran.
+     *
+     * <p>{@link #ELEMENT_COUNT} elements of {@link #ELEMENT_LENGTH} characters each (roughly {@code
+     * ELEMENT_COUNT * ELEMENT_LENGTH} ≈ 1&nbsp;MB total) are deliberately far larger than any JSON
+     * generator's own internal write buffer (Jackson's default is a few KB): the underlying {@code
+     * CappedOutputStream} only ever observes bytes once the generator's internal buffer is flushed to
+     * it, so a document merely a little over the cap but still smaller than that internal buffer would
+     * flush — and therefore fully serialize every element — in one shot, making an element-count proof
+     * vacuous. Sizing the fixture value an order of magnitude past any plausible internal buffer size
+     * forces at least one genuine early flush-and-abort while the bulk of the value is still unvisited,
+     * which is what {@link #accessCount()} decisively proves.
+     */
+    public static final class CountingOversizedResultToolInvoker implements McpToolInvoker {
+        public static final String TOOL_NAME = "output.pipeline.oversized.counting";
+        public static final int ELEMENT_COUNT = 5_000;
+        public static final int ELEMENT_LENGTH = 200;
+
+        private final McpToolDescriptor descriptor;
+        private final AtomicInteger accessCount = new AtomicInteger();
+
+        public CountingOversizedResultToolInvoker() {
+            this.descriptor = new McpToolDescriptor(
+                    TOOL_NAME,
+                    null,
+                    "R04 TP-001 counting oversized-result fixture tool.",
+                    new McpToolAnnotations(true, false, true, false),
+                    "{\"type\":\"object\"}",
+                    null,
+                    new McpToolAccess(McpAccessMode.PERMIT_ALL, List.of(), null));
+        }
+
+        /**
+         * Returns how many elements of this tool's {@code ELEMENT_COUNT}-element result were actually
+         * visited during serialization — decisive for "aborts before a full tree is retained": a count
+         * that reaches {@link #ELEMENT_COUNT} would mean every element was produced before any cap check
+         * ran, exactly the pre-R04 defect.
+         */
+        public int accessCount() {
+            return accessCount.get();
+        }
+
+        @Override
+        public McpToolDescriptor descriptor() {
+            return descriptor;
+        }
+
+        @Override
+        public McpPreparedToolCall prepare(Map<String, Object> arguments, McpCancellationSignal cancellation) {
+            return new McpPreparedToolCall() {
+                @Override
+                public Map<String, Object> normalizedArguments() {
+                    return Map.of();
+                }
+
+                @Override
+                public Future<McpToolResult<?>> invoke() {
+                    return Future.succeededFuture(McpToolResult.structured(
+                            new CountingOversizedIterable(accessCount, ELEMENT_COUNT, ELEMENT_LENGTH)));
+                }
+            };
+        }
+    }
+
+    /**
+     * The {@link Iterable} {@link CountingOversizedResultToolInvoker} returns. Jackson's standard {@code
+     * Iterable} serializer calls {@link #iterator()} once, then {@code hasNext()}/{@code next()}
+     * repeatedly, writing one JSON array element per {@code next()} call and flushing progressively to
+     * the underlying sink — so an abort mid-stream (the capped sink throwing once the running byte count
+     * would exceed the cap) leaves {@code next()} having been called only as many times as fit, never
+     * {@link CountingOversizedResultToolInvoker#ELEMENT_COUNT} times. Each element is a fixed-length,
+     * individually-indexed padded string ({@link #ELEMENT_LENGTH} characters) rather than a short
+     * sentinel — see {@link CountingOversizedResultToolInvoker}'s Javadoc for why the total size matters.
+     */
+    private static final class CountingOversizedIterable implements Iterable<String> {
+        private final AtomicInteger accessCount;
+        private final int size;
+        private final int elementLength;
+
+        CountingOversizedIterable(AtomicInteger accessCount, int size, int elementLength) {
+            this.accessCount = accessCount;
+            this.size = size;
+            this.elementLength = elementLength;
+        }
+
+        @Override
+        public java.util.Iterator<String> iterator() {
+            return new java.util.Iterator<>() {
+                private int index;
+
+                @Override
+                public boolean hasNext() {
+                    return index < size;
+                }
+
+                @Override
+                public String next() {
+                    accessCount.incrementAndGet();
+                    String prefix = "OVERSIZED_ELEMENT_" + index++ + "_";
+                    return prefix + "X".repeat(Math.max(0, elementLength - prefix.length()));
+                }
+            };
+        }
+    }
+
+    /**
+     * R04 TP-001's second decisive fixture: a structured result whose own canonical JSON representation
+     * is comfortably <em>under</em> {@code mcp.output.maxBytes} (so normalization and output-schema
+     * validation both succeed, exactly like {@link StructuredResultToolInvoker}) but whose canonical
+     * JSON <em>once embedded in the full terminal envelope</em> — {@code content}/{@code isError}/{@code
+     * _meta} overhead plus this value — exceeds the cap. This isolates #426 from #427: it decisively
+     * distinguishes an over-cap {@code writeToolResult} encode from an over-cap normalization, so
+     * observation ordering — not normalization boundedness — is the only thing that can explain whether
+     * a capable observer is notified for this exact scenario.
+     */
+    public static final class NearCapResultToolInvoker implements McpToolInvoker {
+        public static final String TOOL_NAME = "output.pipeline.oversized.nearcap";
+
+        /**
+         * Large enough that {@code {"payload":"..."}} plus the terminal envelope's {@code content}/{@code
+         * isError}/{@code _meta} overhead exceeds a 1,024-byte cap, but on its own — the size {@link
+         * dev.vertique.mcp.server.McpRequestDispatcher#normalizeStructuredContent} actually bounds —
+         * comfortably fits under it.
+         */
+        public static final int PAYLOAD_LENGTH = 900;
+
+        private final McpToolDescriptor descriptor;
+
+        public NearCapResultToolInvoker() {
+            this.descriptor = new McpToolDescriptor(
+                    TOOL_NAME,
+                    null,
+                    "R04 TP-001 near-cap fixture tool: under cap alone, over cap once enveloped.",
+                    new McpToolAnnotations(true, false, true, false),
+                    "{\"type\":\"object\"}",
+                    null,
+                    new McpToolAccess(McpAccessMode.PERMIT_ALL, List.of(), null));
+        }
+
+        @Override
+        public McpToolDescriptor descriptor() {
+            return descriptor;
+        }
+
+        @Override
+        public McpPreparedToolCall prepare(Map<String, Object> arguments, McpCancellationSignal cancellation) {
+            return new McpPreparedToolCall() {
+                @Override
+                public Map<String, Object> normalizedArguments() {
+                    return Map.of();
+                }
+
+                @Override
+                public Future<McpToolResult<?>> invoke() {
+                    return Future.succeededFuture(
+                            McpToolResult.structured(Map.of("payload", "X".repeat(PAYLOAD_LENGTH))));
                 }
             };
         }

@@ -55,6 +55,9 @@ SPDX-License-Identifier: EUPL-1.2
         <!-- T014 TP-001: runs the real Dagger ComponentProcessor over in-memory compile fixtures to
              prove a missing InputObjectProcessor binding fails Dagger compilation (test scope only). -->
         <dependency><groupId>com.google.dagger</groupId><artifactId>dagger-compiler</artifactId><version>${dagger.version}</version><scope>test</scope></dependency>
+        <!-- R03 (finding #425): the published cross-transport input-processing fixture corpus,
+             consumed identically by vertique-rest-jaxrs so both transports read the same artifact. -->
+        <dependency><groupId>${project.groupId}</groupId><artifactId>vertique-input-processing</artifactId><version>${project.version}</version><type>test-jar</type><scope>test</scope></dependency>
     </dependencies>
     <build><plugins><plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-failsafe-plugin</artifactId></plugin></plugins></build>
 </project>

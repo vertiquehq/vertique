@@ -52,6 +52,15 @@ SPDX-License-Identifier: EUPL-1.2
             <artifactId>vertique-sanitization</artifactId>
             <scope>test</scope>
         </dependency>
+        <!-- R03 (finding #425): the published cross-transport input-processing fixture corpus,
+             consumed identically by vertique-mcp-server so both transports read the same artifact. -->
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-input-processing</artifactId>
+            <version>${project.version}</version>
+            <type>test-jar</type>
+            <scope>test</scope>
+        </dependency>
         <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter</artifactId>

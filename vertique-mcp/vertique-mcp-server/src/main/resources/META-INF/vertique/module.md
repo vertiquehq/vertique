@@ -313,21 +313,23 @@ This is the whole of the framework's enforceable claim: nothing prevents a sessi
 reference it is handed past its own callback — an immutable record cannot revoke itself — so
 callback-scoped use remains a documented obligation on implementors.
 
-`onToolOutput` (T020) is delivered the same way, through `McpCompletionCoordinator#publishToolOutput`,
+`onToolOutput` (T020/R04) is delivered the same way, through `McpCompletionCoordinator#publishToolOutput`,
 strictly after the [Bounded output pipeline](#bounded-output-pipeline) has normalized and validated
-the result and strictly before the response is written. It fires for every completed result — success
-or tool error alike — carrying the normalized structured value (`@Nullable`, absent for a text-only
-result); a schema-invalid value never reaches this callback. Delivery is capability-gated identically
-to `onToolInput`, and the coordinator retains no reference to the output observation or its value once
+the result **and** successfully encoded the bounded terminal envelope — never merely after validation.
+It fires for every completed result — success or tool error alike — carrying the normalized structured
+value (`@Nullable`, absent for a text-only result); a schema-invalid value, or a value the wire cap
+ultimately rejects, never reaches this callback. Delivery is capability-gated identically to
+`onToolInput`, and the coordinator retains no reference to the output observation or its value once
 every `onToolOutput` call has returned.
 
 ## Bounded output pipeline
 
 Every completed `tools/call` result (contract §4.7 stage 7) is normalized exactly once, bounded by
 `mcp.output.maxBytes` as bytes are produced, validated against the tool's advertised output schema,
-offered to the opt-in `onToolOutput` observation, and only then handed to the single terminal writer
-([Cancellation and write-phase settlement](#cancellation-and-write-phase-settlement)) — in that fixed
-order, introducing no second streaming, writing, completion, or settlement path.
+encoded into the bounded terminal envelope, offered to the opt-in `onToolOutput` observation only once
+that envelope exists, and only then handed to the single terminal writer ([Cancellation and
+write-phase settlement](#cancellation-and-write-phase-settlement)) — in that fixed order, introducing
+no second streaming, writing, completion, or settlement path.
 
 `McpRequestDispatcher` converts a handler's structured result (`McpToolResult#structuredContent()`)
 to its bounded, JSON-compatible canonical shape (`Map`/`List`/scalar) exactly once per call; that one
@@ -336,37 +338,42 @@ embed — nothing re-serializes the original application object a second time. A
 output schema, or a text-only/structured-content-free result, is trivially valid: there is nothing to
 normalize or validate.
 
-**The `mcp.output.maxBytes` cap bounds only the complete terminal message, not normalization itself.**
-Contract §4.3 describes two halves for the cap to enforce independently: the normalization of the
-application's structured value, and the complete terminal message. Only the second half is
-implemented — the response write below streams through the same byte-counting sink every terminal
-writer uses, aborting the moment the running byte count would exceed the cap. Normalization
-(`McpRequestDispatcher#normalizeStructuredContent`, the `convertValue` call above) is itself an
-unbounded, fully in-memory tree build with no independent size check: a byte-counting probe ahead of
-it was evaluated and rejected, because it requires serializing the handler's raw value a second time,
-which regresses the "normalized exactly once" guarantee the paragraph above states and
-`McpOutputPipelineIT#shouldNormalizeAndValidateAStructuredResultOnce` pins on real emitted output. A
-handler's raw value is trusted application-authored data, not attacker-controlled input, in the same
-sense the rest of this module's threat model treats a resolved tool's own logic; the response write's
-existing bound still catches an oversized value before it ever reaches the wire. It does **not** catch
-it before the `onToolOutput` observation: `publishToolOutput` runs before the bounded terminal write,
-so a capable session can observe a structured value the wire cap will shortly afterward reject.
-Closing that ordering gap is future work, not part of this bound.
+**The `mcp.output.maxBytes` cap independently bounds both halves contract §4.3 names.** Normalization
+(`McpRequestDispatcher#normalizeStructuredContent`) serializes a handler's raw structured value exactly
+once into the same byte-counting sink (`CappedOutputStream`, via `encodeCapped`) every terminal writer
+uses, aborting the moment the running byte count would exceed the cap — before a full `Map`/`List` tree
+is ever built. The resulting bounded byte array, never the raw value again, is then parsed back into
+that canonical tree. This keeps the "normalized exactly once" guarantee
+`McpOutputPipelineIT#shouldNormalizeAndValidateAStructuredResultOnce` pins on real emitted output: an
+independent byte-counting probe ahead of an otherwise-unbounded conversion was evaluated and rejected
+earlier, because a probe-then-convert shape would serialize the handler's raw value twice; reusing
+`encodeCapped` as the sole serialization step avoids that by construction. The complete terminal
+message is bounded the same way, by the same mechanism, when the normalized value is re-embedded into
+the full envelope.
+
+The output-value observation (`onToolOutput`) is published only after the terminal envelope has been
+successfully encoded — never before. A capable session can therefore never observe a structured value
+the wire cap or the output-schema check would still reject: both halves of the cap, and the schema
+check, always run to completion before `publishToolOutput` is ever reached.
+`McpOutputPipelineIT#shouldBoundNormalizationAndNotifyOnlyAfterBothChecks` proves this two ways — an
+application value whose own size exceeds the cap aborts during normalization, well before the value's
+full extent is visited, and a value that only exceeds the cap once fully enveloped is never published
+either, isolating the observation-ordering guarantee from normalization boundedness.
 
 A structured result that fails its own declared output schema never reaches the wire and never
 reaches a session: it is rejected before the `onToolOutput` observation fires and before any response
 byte is produced, settling as a bounded internal error (`McpErrorType.OUTPUT_VALIDATION`, JSON-RPC
 `-32603`) through the same non-leaking degrade-to-id-less shape used elsewhere for a serialization or
 handler failure — carrying no schema keyword, property, or value detail. The whole of this stage —
-normalization, output-schema validation, and the observation callback — runs under the same bounded
-fallback: an oversized value, a cyclic object graph a handler returned (`IllegalArgumentException`
-from Jackson's conversion), or a pathologically deep value (a native-recursion `StackOverflowError`)
-all degrade to the same bounded internal-error response rather than silently stranding the request
-with no response, no terminal, and no completion.
+normalization, output-schema validation, envelope encoding, and the observation callback — runs under
+the same bounded fallback: an over-cap value, a cyclic object graph a handler returned
+(`IllegalArgumentException` from Jackson's conversion), or a pathologically deep value (a
+native-recursion `StackOverflowError`) all degrade to the same bounded internal-error response rather
+than silently stranding the request with no response, no terminal, and no completion.
 
 The response write itself is bounded exactly like discovery and `tools/list` ([Bounded response
-output](#bounded-response-output)): serialization streams to a byte-counting sink that aborts the
-moment the running count would exceed `mcp.output.maxBytes`, so an over-cap structured result is
+output](#bounded-response-output)): serialization streams to the same byte-counting sink that aborts
+the moment the running count would exceed `mcp.output.maxBytes`, so an over-cap structured result is
 classified as a bounded internal error before its full byte array is ever materialized — the same T004
 mechanism, now also covering structured content rather than only discovery and listing payloads.
 

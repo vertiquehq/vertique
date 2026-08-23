@@ -94,10 +94,11 @@ import java.util.Set;
  * passes does the dispatcher invoke the generated invoker directly (no reflection); {@code prepare()}
  * itself then owns stages 2–4 (INP-001 canonicalization/sanitization, materialization, Bean
  * Validation), signalling a rejection there through {@link McpInputRejectionException}. Every complete
- * result (T020) is then normalized exactly once, bounded at {@code mcp.output.maxBytes} as bytes are
- * produced, validated against the tool's advertised output schema before exposure, offered to the
- * opt-in {@code onToolOutput} observation only once validation passes, and only then handed to the
- * single terminal writer — contract §4.7 stage 7's fixed order.
+ * result (T020/R04) is then normalized exactly once, bounded at {@code mcp.output.maxBytes} as bytes
+ * are produced, validated against the tool's advertised output schema before exposure, encoded into the
+ * same bounded terminal envelope, offered to the opt-in {@code onToolOutput} observation only once that
+ * envelope exists, and only then handed to the single terminal writer — contract §4.7 stage 7's fixed
+ * order.
  */
 final class McpRequestDispatcher {
     private static final String DISCOVER_METHOD = "server/discover";
@@ -1358,6 +1359,8 @@ final class McpRequestDispatcher {
             // rather than coerced to {}: coercion would let a zero-argument tool execute from a
             // schema-invalid call. Settles exactly like a stage-1 schema rejection — bounded text-only
             // isError=true — and never calls prepare().
+            // No tool ever ran, so there is no output value to observe: coordinator/toolContext are
+            // omitted, and writeToolResult never publishes onToolOutput for this call.
             writeToolResult(
                     context,
                     envelope,
@@ -1365,11 +1368,14 @@ final class McpRequestDispatcher {
                     toolName,
                     McpToolResult.error(ARGUMENTS_TYPE_REJECTION_MESSAGE),
                     null,
-                    McpErrorType.INPUT_VALIDATION);
+                    McpErrorType.INPUT_VALIDATION,
+                    null,
+                    null);
             return;
         }
         Map<String, Object> arguments = argumentsOf(envelope);
         if (!schemaValid(toolName, arguments)) {
+            // Same rationale as above: rejected before invocation, no output observation.
             writeToolResult(
                     context,
                     envelope,
@@ -1377,7 +1383,9 @@ final class McpRequestDispatcher {
                     toolName,
                     McpToolResult.error(SCHEMA_REJECTION_MESSAGE),
                     null,
-                    McpErrorType.INPUT_VALIDATION);
+                    McpErrorType.INPUT_VALIDATION,
+                    null,
+                    null);
             return;
         }
         McpCompletionCoordinator coordinator = context.get(COMPLETION_COORDINATOR_KEY);
@@ -1395,6 +1403,7 @@ final class McpRequestDispatcher {
             // Stages 2-4 (generated fixed input boundary) rejected before any application handler ran;
             // this is the same bounded tool-error outcome stage 1 produces above, never the internal
             // fallback a genuine bug in prepare()/invoke() produces.
+            // The generated fixed input boundary rejected before any handler ran: no output observation.
             writeToolResult(
                     context,
                     envelope,
@@ -1402,7 +1411,9 @@ final class McpRequestDispatcher {
                     toolName,
                     McpToolResult.error(rejected.getMessage()),
                     null,
-                    McpErrorType.INPUT_PROCESSING);
+                    McpErrorType.INPUT_PROCESSING,
+                    null,
+                    null);
             return;
         } catch (RuntimeException prepareFailure) {
             writeSseFallback(context, envelope, security, toolName, prepareFailure);
@@ -1445,6 +1456,7 @@ final class McpRequestDispatcher {
         }
         runToolInterceptors(0, toolContext).onComplete(interceptorResult -> {
             if (interceptorResult.failed()) {
+                // The interceptor stage rejected before the handler ever ran: no output to observe.
                 writeToolResult(
                         context,
                         envelope,
@@ -1452,7 +1464,9 @@ final class McpRequestDispatcher {
                         toolName,
                         McpToolResult.error(TOOL_INTERCEPTOR_REJECTED_MESSAGE),
                         null,
-                        McpErrorType.INTERCEPTOR);
+                        McpErrorType.INTERCEPTOR,
+                        null,
+                        null);
                 return;
             }
             Future<McpToolResult<?>> result;
@@ -1472,23 +1486,28 @@ final class McpRequestDispatcher {
                             ar.failed() ? ar.cause() : new NullPointerException("tool result"));
                     return;
                 }
-                // T020: every complete result is normalized exactly once, bounded by
-                // mcp.output.maxBytes as bytes are produced, validated against the advertised output
-                // schema, offered to the opt-in output observation, and only then handed to the single
-                // terminal writer (contract §4.7 stage 7). The raw application value is converted to
-                // its bounded, JSON-compatible canonical shape here — once — and that exact same value
-                // is reused below for schema validation, the observation callback, and the wire embed;
-                // nothing downstream re-serializes the original application object.
+                // R04 (closing #426/#427): every complete result is normalized exactly once — bounded by
+                // mcp.output.maxBytes as bytes are produced, exactly like the terminal write below —
+                // validated against the advertised output schema, encoded into the bounded terminal
+                // envelope, offered to the opt-in output observation only once that envelope exists, and
+                // only then handed to the single terminal writer (contract §4.7 stage 7). The raw
+                // application value is converted to its bounded, JSON-compatible canonical shape here —
+                // once — and that exact same value is reused below for schema validation, the observation
+                // callback, and the wire embed; nothing downstream re-serializes the original application
+                // object. writeToolResult (not this block) publishes the output observation, strictly
+                // after its own encodeCapped call succeeds — see its Javadoc — so an observer can never
+                // see a value the wire cap or the schema check would still reject.
                 //
                 // The whole stage runs inside this try: normalizeStructuredContent bounds serialization
-                // size but can still throw for a pathologically shaped value (e.g. IllegalArgumentException
-                // from a cyclic object graph Jackson cannot convert), and a deeply nested value can drive a
-                // native-recursion StackOverflowError in code this stage calls. Either would otherwise
-                // escape this lambda after beginWrite was never called — no response, no terminal, no
-                // completion — permanently stranding the request (compounded by the fact that MCP relies on
-                // the shared HttpConfig liveness bound, not a stage-local timer, to ever reclaim it). Both
-                // degrade to the same bounded, SSE-framed internal-error fallback every other invocation
-                // failure in this method already uses.
+                // size but can still throw — OutputCapExceededException for an over-cap value, or for a
+                // pathologically shaped one, IllegalArgumentException from a cyclic object graph Jackson
+                // cannot convert — and a deeply nested value can drive a native-recursion
+                // StackOverflowError in code this stage calls. Any of these would otherwise escape this
+                // lambda after beginWrite was never called — no response, no terminal, no completion —
+                // permanently stranding the request (compounded by the fact that MCP relies on the shared
+                // HttpConfig liveness bound, not a stage-local timer, to ever reclaim it). All degrade to
+                // the same bounded, SSE-framed internal-error fallback every other invocation failure in
+                // this method already uses.
                 McpToolResult<?> toolResult = ar.result();
                 try {
                     Object normalizedOutput = normalizeStructuredContent(toolResult.structuredContent());
@@ -1500,17 +1519,16 @@ final class McpRequestDispatcher {
                         writeOutputValidationFailure(context, envelope, security, toolName);
                         return;
                     }
-                    // T020: the opt-in, capability-gated output-value callback fires here — strictly
-                    // after bounded normalization and output-schema validation, strictly before the wire
-                    // write below (contract §4.4 callback order). Delivered only to a session
-                    // implementing McpToolValueObservation, exactly like publishToolInput above. Gated on
-                    // hasValueObservers() BEFORE construction for the same reason: McpToolOutputObservation's
-                    // compact constructor deep-copies the entire normalized result tree.
-                    if (coordinator != null && coordinator.hasValueObservers()) {
-                        coordinator.publishToolOutput(new McpToolOutputObservation(toolContext, normalizedOutput));
-                    }
                     writeToolResult(
-                            context, envelope, security, toolName, toolResult, normalizedOutput, McpErrorType.HANDLER);
+                            context,
+                            envelope,
+                            security,
+                            toolName,
+                            toolResult,
+                            normalizedOutput,
+                            McpErrorType.HANDLER,
+                            coordinator,
+                            toolContext);
                 } catch (RuntimeException | StackOverflowError stage7Failure) {
                     writeSseFallback(context, envelope, security, toolName, stage7Failure);
                 }
@@ -1550,36 +1568,53 @@ final class McpRequestDispatcher {
     }
 
     /**
-     * Runs the T020 output stage's single normalization pass: converts an application handler's
+     * Runs the R04 output stage's single, bounded normalization pass: converts an application handler's
      * structured result value to the one bounded, JSON-compatible canonical shape ({@code Map}/
      * {@code List}/scalar) reused for output-schema validation, the {@code onToolOutput} observation,
-     * and the wire embed.
+     * and the wire embed — closing #427, "the output cap bounds only the terminal message, not
+     * structured-value normalization".
      *
      * <p>Called exactly once per completed invocation, from {@link #invokeAndRespond}'s {@code
      * result.onComplete} handler, before validation, observation, or encoding ever run. Nothing else in
      * this class converts a handler's raw structured value a second time: {@link #writeToolResult} and
      * {@link #toolCallResponse} accept and reuse the already-normalized value.
      *
-     * <p><strong>Not independently bounded.</strong> Contract §4.3 describes two halves for the output
-     * cap to enforce: the normalization of an application structured value, and the complete terminal
-     * message. Only the second half is implemented, by {@link #encodeCapped} (used by every terminal
-     * writer, including {@link #writeToolResult}). This method's own conversion is an unbounded {@link
-     * ObjectMapper#convertValue} tree build: a P04 remediation slice evaluated adding an independent
-     * byte-counting probe ahead of it, but rejected that approach because it requires serializing
-     * {@code value} a second time — which regresses the already-frozen T020 TP-001 "normalized exactly
-     * once" guarantee ({@code McpOutputPipelineIT#shouldNormalizeAndValidateAStructuredResultOnce}),
-     * pinned because a handler's raw value may itself carry side-effecting or expensive conversion
-     * logic that must run at most once. A genuinely single-pass bounded conversion (e.g. a custom
-     * byte-budgeted {@code JsonGenerator}) is a larger change than this remediation slice's scope.
-     * {@link #encodeCapped} still bounds every response actually reaching a client or an observation:
-     * see {@link #outputSchemaValid} and the caller in {@link #invokeAndRespond} for the schema and
-     * observation gates that run before that write.
+     * <p><strong>Bounded as bytes are produced, in one pass over {@code value}.</strong> Contract §4.3
+     * describes two halves for the output cap to enforce independently: the normalization of an
+     * application structured value, and the complete terminal message. Both now run through the same
+     * mechanism: {@code value} is serialized exactly once into a {@link CappedOutputStream} via {@link
+     * #encodeCapped}, which aborts with {@link OutputCapExceededException} the moment the running byte
+     * count would exceed {@code mcp.output.maxBytes} — before a full byte array, let alone a full tree,
+     * is ever materialized. The resulting bounded byte array — never {@code value} itself again — is
+     * then parsed back into the canonical {@code Map}/{@code List}/scalar shape. This still touches
+     * {@code value}'s own state (bean getters, {@code toString}, custom serializers) exactly once: the
+     * parse step reads the bytes {@link #encodeCapped} already produced, not {@code value}. An earlier
+     * remediation attempt rejected an independent byte-counting probe ahead of an unbounded {@code
+     * convertValue} because a probe-then-convert shape serializes {@code value} twice, regressing the
+     * already-frozen T020 TP-001 "normalized exactly once" guarantee ({@code
+     * McpOutputPipelineIT#shouldNormalizeAndValidateAStructuredResultOnce}); reusing {@link
+     * #encodeCapped} as the sole serialization step — parsed once, not re-serialized — keeps that
+     * guarantee while also bounding this stage independently of the terminal-message encode in {@link
+     * #writeToolResult}.
      *
      * @param value the application handler's structured content, or {@code null} for a text-only result
      * @return the normalized JSON-compatible value, or {@code null} when {@code value} is {@code null}
+     * @throws OutputCapExceededException when {@code value}'s own canonical JSON representation would
+     *     exceed {@code mcp.output.maxBytes}
      */
-    private static @Nullable Object normalizeStructuredContent(@Nullable Object value) {
-        return value == null ? null : OUTPUT_ENCODER.convertValue(value, Object.class);
+    private @Nullable Object normalizeStructuredContent(@Nullable Object value) {
+        if (value == null) {
+            return null;
+        }
+        byte[] bounded = encodeCapped(value);
+        try {
+            return OUTPUT_ENCODER.readValue(bounded, Object.class);
+        } catch (IOException parseFailure) {
+            // Parsing bytes encodeCapped just produced from a well-formed write cannot fail on I/O or
+            // malformed content; a failure here is a programming error, not a wire condition — mirrors
+            // encodeCapped's own IOException-to-UncheckedIOException conversion.
+            throw new UncheckedIOException(parseFailure);
+        }
     }
 
     /**
@@ -1699,6 +1734,25 @@ final class McpRequestDispatcher {
      * Ignored when {@code result.isError()} is {@code false}, since a successful result is always
      * classified {@link McpOutcome#SUCCESS}/{@link McpErrorType#NONE} regardless of which stage called
      * this method.
+     *
+     * <p><strong>R04 (closing #426).</strong> {@code coordinator} and {@code toolContext} are non-{@code
+     * null} only for the one call site that reaches this method after an actual invocation completed
+     * (the caller in {@link #invokeAndRespond}'s {@code result.onComplete} handler); every earlier-stage
+     * rejection (malformed arguments, input-schema, input-processing, tool-interceptor) passes {@code
+     * null} for both, since no handler ever ran and there is no output value to observe. When both are
+     * given, the opt-in {@code onToolOutput} observation is published here — strictly after {@link
+     * #encodeCapped} has successfully produced the bounded terminal envelope below, and strictly before
+     * {@link #writeSse} commits any byte to the wire. This ordering is the fix: an observer only ever
+     * receives a value that also reached the wire, never one the cap or the output-schema check (already
+     * run by the caller before this method) would still reject. Gated on {@code
+     * coordinator.hasValueObservers()} before the observation is even constructed, for the same reason
+     * {@link #invokeAndRespond}'s {@code onToolInput} publish is: {@link McpToolOutputObservation}'s
+     * compact constructor deep-copies the entire normalized result tree.
+     *
+     * @param coordinator the request's completion coordinator, or {@code null} when this call site never
+     *     publishes an output observation
+     * @param toolContext the invocation's immutable context snapshot, or {@code null} exactly when
+     *     {@code coordinator} is {@code null}
      */
     private void writeToolResult(
             RoutingContext context,
@@ -1707,13 +1761,18 @@ final class McpRequestDispatcher {
             String toolName,
             McpToolResult<?> result,
             @Nullable Object normalizedStructuredContent,
-            McpErrorType errorType) {
+            McpErrorType errorType,
+            @Nullable McpCompletionCoordinator coordinator,
+            @Nullable McpToolInvocationContext toolContext) {
         byte[] payload;
         try {
             payload = encodeCapped(toolCallResponse(envelope, result, normalizedStructuredContent));
         } catch (OutputCapExceededException overCap) {
             writeSseFallback(context, envelope, security, toolName, overCap);
             return;
+        }
+        if (coordinator != null && toolContext != null && coordinator.hasValueObservers()) {
+            coordinator.publishToolOutput(new McpToolOutputObservation(toolContext, normalizedStructuredContent));
         }
         McpRequestTerminalEvent terminal = toolResultTerminal(context, security, toolName, result, errorType);
         writeSse(context, 200, payload, terminal);
@@ -2116,22 +2175,26 @@ final class McpRequestDispatcher {
     }
 
     /**
-     * Encodes a JSON node to canonical UTF-8 bytes, bounding the output at {@code mcp.output.maxBytes}
-     * as bytes are produced.
+     * Encodes a value to canonical UTF-8 bytes, bounding the output at {@code mcp.output.maxBytes} as
+     * bytes are produced rather than after the full byte array is materialized. Accepts any
+     * Jackson-serializable value — a {@link JsonNode} response envelope (every terminal writer) or a
+     * handler's raw structured-content object ({@link #normalizeStructuredContent}, R04) — so the same
+     * single mechanism bounds both halves contract §4.3 names: normalization of an application
+     * structured value, and the complete terminal message.
      *
-     * @param value the response node to encode
+     * @param value the value to encode
      * @return the canonical UTF-8 bytes, at most {@code mcp.output.maxBytes} long
      * @throws OutputCapExceededException when serialization would exceed the configured cap
      */
-    private byte[] encodeCapped(JsonNode value) {
+    private byte[] encodeCapped(Object value) {
         CappedOutputStream out = new CappedOutputStream(config.outputMaxBytes());
         try {
             OUTPUT_ENCODER.writeValue(out, value);
         } catch (OutputCapExceededException overCap) {
             throw overCap;
         } catch (IOException encodeFailure) {
-            // Writing a fully in-memory node tree to a byte sink cannot fail on I/O; a failure here is
-            // a programming error, not a wire condition.
+            // Writing a fully in-memory node tree, or a handler's own structured value, to a byte sink
+            // cannot fail on I/O; a failure here is a programming error, not a wire condition.
             throw new UncheckedIOException(encodeFailure);
         }
         return out.toByteArray();

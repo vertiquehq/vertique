@@ -47,4 +47,23 @@ SPDX-License-Identifier: EUPL-1.2
             <scope>test</scope>
         </dependency>
     </dependencies>
+
+    <build>
+        <plugins>
+            <!-- Publishes the dev.vertique.input.processing.testkit fixture corpus (R03, finding #425)
+                 as a test-jar so REST and MCP consume the exact same published corpus at test scope
+                 instead of each authoring their own — mirrors vertique-config-core's identical pattern. -->
+            <plugin>
+                <artifactId>maven-jar-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>test-jar</id>
+                        <goals>
+                            <goal>test-jar</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
 </project>
