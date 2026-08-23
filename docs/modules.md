@@ -69,6 +69,7 @@ SPDX-License-Identifier: EUPL-1.2
 | `vertique-micrometer-rest` | [module.md](../vertique-micrometer/vertique-micrometer-rest/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-micrometer-services` | [module.md](../vertique-micrometer/vertique-micrometer-services/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-opentelemetry-core` | [module.md](../vertique-opentelemetry/vertique-opentelemetry-core/src/main/resources/META-INF/vertique/module.md) |
+| `vertique-opentelemetry-mcp` | [module.md](../vertique-opentelemetry/vertique-opentelemetry-mcp/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-opentelemetry-prometheus` | [module.md](../vertique-opentelemetry/vertique-opentelemetry-prometheus/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-opentelemetry-rest` | [module.md](../vertique-opentelemetry/vertique-opentelemetry-rest/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-opentelemetry-services` | [module.md](../vertique-opentelemetry/vertique-opentelemetry-services/src/main/resources/META-INF/vertique/module.md) |

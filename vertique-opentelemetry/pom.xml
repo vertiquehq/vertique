@@ -23,6 +23,7 @@ SPDX-License-Identifier: EUPL-1.2
 
     <modules>
         <module>vertique-opentelemetry-core</module>
+        <module>vertique-opentelemetry-mcp</module>
         <module>vertique-opentelemetry-rest</module>
         <module>vertique-opentelemetry-services</module>
         <module>vertique-opentelemetry-prometheus</module>

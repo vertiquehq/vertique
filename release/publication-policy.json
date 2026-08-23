@@ -104,6 +104,7 @@
     "dev.vertique:vertique-micrometer-rest",
     "dev.vertique:vertique-micrometer-services",
     "dev.vertique:vertique-opentelemetry-core",
+    "dev.vertique:vertique-opentelemetry-mcp",
     "dev.vertique:vertique-opentelemetry-prometheus",
     "dev.vertique:vertique-opentelemetry-rest",
     "dev.vertique:vertique-opentelemetry-services",

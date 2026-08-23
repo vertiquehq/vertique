@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "module": "vertique-opentelemetry-mcp",
+  "comparisonBasis": "full-generic-signature",
+  "direction": "subset",
+  "scanScope": "hand-authored-public-surface; a top-level public type with no src/main/java source file is annotation-processor output and is excluded",
+  "packages": [
+    "dev.vertique.mcp.opentelemetry"
+  ],
+  "types": {
+    "dev.vertique.mcp.opentelemetry.McpOpenTelemetryModule": []
+  }
+}
