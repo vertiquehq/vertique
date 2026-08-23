@@ -48,16 +48,21 @@ import lombok.extern.slf4j.Slf4j;
  * are declared as internal, Vertique-owned {@link AttributeKey} constants here rather than pulled
  * from an incubating semconv artifact dependency.
  *
- * <p>It then adds at most one {@link Span#addLink(SpanContext) link} for the request's optional body
- * trace context ({@link McpRequestTerminalObservation#bodyTraceContext()}): a link is added only
- * when the body trace context is present, structurally convertible into a valid OpenTelemetry {@link
- * SpanContext}, and distinct (different trace id or span id) from the captured HTTP span's own
- * context — a body context identical to the HTTP span's own context adds no link, since it would be
- * a self-reference rather than a genuine cross-boundary correlation. Malformed body trace data (a
- * {@code traceState} that does not parse as W3C {@code key=value} entries) is caught, logged at WARN
- * with a bounded diagnostic (the exception class name only — never the raw trace data), and produces
- * no link; every other enrichment attribute is still recorded. No span status is ever set here:
- * transport status remains owned by Vert.x HTTP tracing (contract §4.10).
+ * <p>It then <em>would</em> add at most one {@link Span#addLink(SpanContext) link} for the request's
+ * optional body trace context ({@link McpRequestTerminalObservation#bodyTraceContext()}): a link is
+ * added only when the body trace context is present, structurally convertible into a valid
+ * OpenTelemetry {@link SpanContext}, and distinct (different trace id or span id) from the captured
+ * HTTP span's own context — a body context identical to the HTTP span's own context adds no link,
+ * since it would be a self-reference rather than a genuine cross-boundary correlation. Malformed body
+ * trace data (a {@code traceState} that does not parse as W3C {@code key=value} entries) is caught,
+ * logged at WARN with a bounded diagnostic (the exception class name only — never the raw trace
+ * data), and produces no link; every other enrichment attribute is still recorded. <b>This path
+ * exists but is not yet fed (P05 review remediation):</b> {@code McpCompletionCoordinator} always
+ * constructs {@link McpRequestTerminalObservation} with a {@code null} body trace context, so {@link
+ * #addBodyTraceLink} never runs today — connecting a real source is deferred, because it means
+ * accepting a client-supplied trace reference, and doing so without deliberately deciding how to
+ * bound the trust placed in it would open a trace-correlation-spoofing surface. No span status is
+ * ever set here: transport status remains owned by Vert.x HTTP tracing (contract §4.10).
  *
  * <p>Every callback body is wrapped in try/catch that logs at WARN and swallows, so a misbehaving
  * OpenTelemetry implementation never affects MCP request processing.
@@ -162,10 +167,19 @@ final class McpServerSpanObserver implements McpRequestLifecycleObserver {
      * Sets the frozen bounded attribute set on {@code span} from {@code terminal} — never a span
      * status, and never a rename.
      *
+     * <p>Guarded on {@link Span#isRecording()} (P05 review remediation): the span's validity is
+     * checked once at {@link #open}, but a late terminal callback can observe a span that has
+     * already ended by the time this method runs. Setting attributes on a non-recording span is
+     * harmless but emits SDK warnings, so this mirrors the same guard {@code
+     * ServiceDispatchSpanEnrichmentInterceptor} already applies before its own attribute writes.
+     *
      * @param span the span captured at {@code open}; never {@code null}
      * @param terminal the logical terminal facts; never {@code null}
      */
     private static void enrich(Span span, McpRequestTerminalEvent terminal) {
+        if (!span.isRecording()) {
+            return;
+        }
         span.setAttribute(RPC_SYSTEM_NAME, RPC_SYSTEM_JSONRPC);
         span.setAttribute(MCP_METHOD_NAME, methodTag(terminal.method()));
         span.setAttribute(VERTIQUE_MCP_OUTCOME, terminal.outcome().name());

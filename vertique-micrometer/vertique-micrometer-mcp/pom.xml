@@ -68,6 +68,15 @@ SPDX-License-Identifier: EUPL-1.2
             <artifactId>vertique-core</artifactId>
             <scope>test</scope>
         </dependency>
+        <!-- vertique-config-core is test-scope only: McpMetricsCompositionTest composes the real
+             MicrometerModule (which requires ConfigParsingModule/ConfigParser) alongside
+             McpMicrometerModule, proving both modules' @BindsOptionalOf MetricsConfig declarations
+             co-install cleanly, mirroring MicrometerModuleTest's own Dagger graph pattern. -->
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-config-core</artifactId>
+            <scope>test</scope>
+        </dependency>
         <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter</artifactId>

@@ -360,6 +360,10 @@ SPDX-License-Identifier: EUPL-1.2
         </dependency>
         <dependency>
             <groupId>dev.vertique</groupId>
+            <artifactId>vertique-micrometer-mcp</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>dev.vertique</groupId>
             <artifactId>vertique-micrometer-registry-prometheus</artifactId>
         </dependency>
         <dependency>
@@ -373,6 +377,10 @@ SPDX-License-Identifier: EUPL-1.2
         <dependency>
             <groupId>dev.vertique</groupId>
             <artifactId>vertique-opentelemetry-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-opentelemetry-mcp</artifactId>
         </dependency>
         <dependency>
             <groupId>dev.vertique</groupId>

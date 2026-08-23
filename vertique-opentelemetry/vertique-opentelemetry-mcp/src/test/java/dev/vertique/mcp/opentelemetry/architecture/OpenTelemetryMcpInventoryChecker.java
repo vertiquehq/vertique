@@ -23,7 +23,7 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 /**
- * Module-local public-surface reflection helper for {@link MicrometerMcpInventoryGuardTest}.
+ * Module-local public-surface reflection helper for {@link OpenTelemetryMcpInventoryGuardTest}.
  *
  * <p>This checker is deliberately duplicated per guarded module rather than shared (T006's frozen
  * decision): no single artifact is on every guarded module's test classpath, and a cross-repository
@@ -31,7 +31,7 @@ import java.util.stream.Stream;
  * knowledge lives in the module's own inventory resource, so the duplication carries no design
  * decision.
  *
- * <p>It scans only {@code vertique-micrometer-mcp}'s own compiled output, compares at full generic signature rather
+ * <p>It scans only {@code vertique-opentelemetry-mcp}'s own compiled output, compares at full generic signature rather
  * than erased descriptor, and records hand-authored public surface only.
  */
 final class OpenTelemetryMcpInventoryChecker {

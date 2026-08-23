@@ -12,8 +12,9 @@ SPDX-License-Identifier: EUPL-1.2
 
 Observe-only OpenTelemetry span-enrichment adapter for the MCP server. When installed alongside
 `McpServerModule`, it captures the current Vert.x HTTP server span in `open(...)`, retains it across
-asynchronous completion, and enriches that exact retained span with bounded MCP attributes and — for
-a valid, distinct body trace context — exactly one link. It never creates or renames a span.
+asynchronous completion, and enriches that exact retained span with bounded MCP attributes. It also
+carries a not-yet-fed body-trace-link path — see "At most one body-trace link" below (P05 review
+remediation) — and never creates or renames a span.
 
 The module compiles against the OpenTelemetry **API only** — no SDK dependency. Without an
 OpenTelemetry SDK installed (or with a no-op `OpenTelemetry` instance and no exporter configured),
@@ -67,18 +68,25 @@ before the terminal write."
 semantic-convention names; rather than depending on an incubating semconv artifact, they are declared
 as internal, Vertique-owned `AttributeKey` constants on `McpServerSpanObserver`.
 
-**At most one body-trace link, never a child span.** When the request's terminal observation carries
-a non-null `bodyTraceContext` (a normalized W3C trace reference captured from the request body), the
-observer converts it into an OpenTelemetry `SpanContext` and adds exactly one `Span#addLink` when
-that context is valid and distinct (different trace id or span id) from the HTTP span's own captured
-context. A body trace context identical to the HTTP span's own context is a self-reference and adds
-no link. Malformed trace-state data (not well-formed W3C `key=value` entries) is caught and logged at
-WARN with a bounded diagnostic — the exception class name only, never the raw trace data — and adds
-no link; every other enrichment attribute is still recorded.
+**At most one body-trace link, never a child span — path exists but is not yet fed (P05 review
+remediation).** When the request's terminal observation carries a non-null `bodyTraceContext` (a
+normalized W3C trace reference captured from the request body), the observer converts it into an
+OpenTelemetry `SpanContext` and adds exactly one `Span#addLink` when that context is valid and
+distinct (different trace id or span id) from the HTTP span's own captured context. A body trace
+context identical to the HTTP span's own context is a self-reference and adds no link. Malformed
+trace-state data (not well-formed W3C `key=value` entries) is caught and logged at WARN with a
+bounded diagnostic — the exception class name only, never the raw trace data — and adds no link;
+every other enrichment attribute is still recorded. **`McpCompletionCoordinator` always constructs the
+terminal observation with a `null` body trace context today, so this whole path never runs in
+practice** — connecting a real source is deferred, because it means accepting a client-supplied trace
+reference, and doing so without deliberately deciding how to bound the trust placed in it would open
+a trace-correlation-spoofing surface.
 
 **Zero-overhead when unconfigured.** Every operation is guarded by `Span#getSpanContext().isValid()`
-(at `open`) and try/catch (at enrichment), so a missing OpenTelemetry SDK, a no-op `OpenTelemetry`
-instance, or a throwing OpenTelemetry implementation never affects MCP request processing.
+(at `open`), `Span#isRecording()` (at enrichment — a late terminal callback can observe a span that
+already ended between capture and enrichment; P05 review remediation), and try/catch, so a missing
+OpenTelemetry SDK, a no-op `OpenTelemetry` instance, or a throwing OpenTelemetry implementation never
+affects MCP request processing.
 
 ---
 

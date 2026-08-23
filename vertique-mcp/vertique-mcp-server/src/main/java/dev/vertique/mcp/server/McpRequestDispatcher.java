@@ -1280,7 +1280,22 @@ final class McpRequestDispatcher {
         // compact constructor deep-copies the entire normalized argument tree, so a request with no
         // capable session never pays that copy for an attacker-sized argument tree.
         if (coordinator != null && coordinator.hasValueObservers()) {
-            coordinator.publishToolInput(new McpToolInputObservation(toolContext, prepared.normalizedArguments()));
+            // Security review (P05 finding #5): mirrors stage 7's guard below. Constructing the
+            // observation deep-copies the whole normalized argument tree (McpToolInputObservation's
+            // compact constructor), and every capable session's onToolInput callback runs
+            // synchronously inside publishToolInput (e.g. an audit adapter's String.valueOf on a
+            // nested Map/List value recurses natively). A pathologically deep or wide argument tree
+            // — the envelope codec permits 1,000 levels of nesting — can therefore throw a
+            // RuntimeException or drive a native-recursion StackOverflowError here, which would
+            // otherwise escape before any response was ever begun: no response, no terminal, no
+            // completion, permanently stranding the request (compounded by the fact that MCP relies
+            // on the shared HttpConfig liveness bound, not a stage-local timer, to ever reclaim it).
+            try {
+                coordinator.publishToolInput(new McpToolInputObservation(toolContext, prepared.normalizedArguments()));
+            } catch (RuntimeException | StackOverflowError stage5Failure) {
+                writeSseFallback(context, envelope, security, toolName, stage5Failure);
+                return;
+            }
         }
         runToolInterceptors(0, toolContext).onComplete(interceptorResult -> {
             if (interceptorResult.failed()) {
