@@ -16,12 +16,11 @@ import java.lang.reflect.Type;
 import java.time.Duration;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 
 /** Redis-backed provider-neutral cache store using the shared lazy client registry. */
 @Singleton
 public final class RedisCacheStore implements CacheStore {
-    private static final int SCAN_COUNT = 256;
-
     private final RedisAPI redis;
     private final CacheRedisConfig config;
 
@@ -33,52 +32,62 @@ public final class RedisCacheStore implements CacheStore {
 
     @Override
     public Future<Optional<Object>> get(CacheKey key, Type declaredType) {
-        return redis.get(storageKey(key)).map(response -> {
-            if (response == null || response.toString() == null || "null".equalsIgnoreCase(response.toString())) {
-                return Optional.empty();
-            }
-            return Optional.ofNullable(Json.decodeValue(response.toString(), Object.class));
-        });
+        return generation(key.region())
+                .compose(token -> redis.get(storageKey(key, token)))
+                .map(response -> {
+                    if (response == null
+                            || response.toString() == null
+                            || "null".equalsIgnoreCase(response.toString())) {
+                        return Optional.empty();
+                    }
+                    return Optional.ofNullable(Json.decodeValue(response.toString(), Object.class));
+                });
     }
 
     @Override
     public Future<Void> put(CacheKey key, Object value, Type declaredType, Duration ttl) {
         String json = Json.encode(value);
-        List<String> command = ttl.isZero()
-                ? List.of(storageKey(key), json)
-                : List.of(storageKey(key), json, "PX", Long.toString(Math.max(1, ttl.toMillis())));
-        return redis.set(command).mapEmpty();
+        return generation(key.region()).compose(token -> {
+            List<String> command = ttl.isZero()
+                    ? List.of(storageKey(key, token), json)
+                    : List.of(storageKey(key, token), json, "PX", Long.toString(Math.max(1, ttl.toMillis())));
+            return redis.set(command).mapEmpty();
+        });
     }
 
     @Override
     public Future<Void> evict(CacheKey key) {
-        return redis.del(List.of(storageKey(key))).mapEmpty();
+        return generation(key.region())
+                .compose(token -> redis.del(List.of(storageKey(key, token))).mapEmpty());
     }
 
     @Override
     public Future<Void> clear(CacheRegion region) {
-        return clearScan("0", region);
+        return redis.set(List.of(generationKey(region), UUID.randomUUID().toString()))
+                .mapEmpty();
     }
 
-    private Future<Void> clearScan(String cursor, CacheRegion region) {
-        return redis.scan(List.of(cursor, "MATCH", pattern(region), "COUNT", Integer.toString(SCAN_COUNT)))
-                .compose(response -> {
-                    List<String> keys =
-                            response.get(1).stream().map(Object::toString).toList();
-                    Future<Void> deleted = keys.isEmpty()
-                            ? Future.succeededFuture()
-                            : redis.del(keys).mapEmpty();
-                    String nextCursor = response.get(0).toString();
-                    return deleted.compose(ignored ->
-                            "0".equals(nextCursor) ? Future.succeededFuture() : clearScan(nextCursor, region));
+    private Future<String> generation(CacheRegion region) {
+        String generationKey = generationKey(region);
+        String candidate = UUID.randomUUID().toString();
+        return redis.set(List.of(generationKey, candidate, "NX"))
+                .compose(ignored -> redis.get(generationKey))
+                .map(response -> {
+                    if (response == null
+                            || response.toString() == null
+                            || response.toString().isBlank()) {
+                        throw new IllegalStateException("Redis cache generation key was not initialized");
+                    }
+                    return response.toString();
                 });
     }
 
-    private String storageKey(CacheKey key) {
-        return config.namespace() + ":" + key.canonical();
+    private String storageKey(CacheKey key, String generation) {
+        return config.namespace() + ":" + key.region().canonicalPrefix() + ":g" + generation + ":"
+                + key.identityComponent() + ":" + key.selector();
     }
 
-    private String pattern(CacheRegion region) {
-        return config.namespace() + ":" + region.canonicalPrefix() + ":*";
+    private String generationKey(CacheRegion region) {
+        return config.namespace() + ":" + region.canonicalPrefix() + ":generation";
     }
 }
