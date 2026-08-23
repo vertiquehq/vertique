@@ -33,6 +33,25 @@ SPDX-License-Identifier: EUPL-1.2
             <groupId>jakarta.annotation</groupId>
             <artifactId>jakarta.annotation-api</artifactId>
         </dependency>
+        <!-- MCP-001 P04 remediation: McpBeanValidation hosts stage 4 of the fixed request-time input
+             pipeline (contract §4.7) and must be public so generated code in an arbitrary application
+             package can reach it — relocated here from vertique-mcp-server, which is not on that
+             package's compile path. Resolved directly, not through vertique-validation, since MCP
+             needs only jakarta.validation.Validator#validate. -->
+        <dependency>
+            <groupId>jakarta.validation</groupId>
+            <artifactId>jakarta.validation-api</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.hibernate.validator</groupId>
+            <artifactId>hibernate-validator</artifactId>
+        </dependency>
+        <!-- Hibernate Validator's default message interpolator needs a jakarta.el implementation at
+             runtime (matches vertique-validation's established pattern for the same provider). -->
+        <dependency>
+            <groupId>org.glassfish.expressly</groupId>
+            <artifactId>expressly</artifactId>
+        </dependency>
         <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter</artifactId>

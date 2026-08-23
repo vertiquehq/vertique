@@ -393,7 +393,7 @@ class McpCancellationIT {
                     NO_OP_CONTEXT_HOLDER,
                     securityRuntime,
                     Optional.empty()));
-            HttpConfig httpConfig = HttpConfig.builder().build();
+            HttpConfig httpConfig = HttpConfig.builder().idleTimeoutSeconds(60).build();
 
             McpRouterMount mount = new McpRouterMount(
                     config,
@@ -410,7 +410,8 @@ class McpCancellationIT {
                             policyEnforcer),
                     Set.of(),
                     identityResolution(securityRuntime),
-                    httpConfig);
+                    httpConfig,
+                    registry);
             Router router = Router.router(vertx);
             router.route().handler(new RequestContextLifecycle());
             router.route(config.mountPath()).subRouter(await(mount.createRouter(vertx)));

@@ -88,16 +88,25 @@ final class McpProtocolCodec {
      * Strictly decodes and validates one JSON-RPC request envelope.
      *
      * @param utf8 the raw UTF-8 request bytes
-     * @return a validated envelope on success, or a bounded classified error
+     * @return a validated envelope on success, or a bounded classified error carrying the original
+     *     usable request id (or {@code null}), so a failing caller never needs to re-analyze {@code
+     *     utf8} a second time just to recover the id to echo (see {@link #errorResponseFor})
      */
     Decoded decodeEnvelope(byte[] utf8) {
         Analysis analysis = analyze(utf8);
-        return analysis.error() != null ? Decoded.failed(analysis.error()) : Decoded.ok(analysis.envelope());
+        return analysis.error() != null
+                ? Decoded.failed(analysis.id(), analysis.error())
+                : Decoded.ok(analysis.envelope());
     }
 
     /**
      * Produces the bounded external JSON-RPC error response for a failing request frame, stamping the
      * original usable request id or a null id, and never leaking internal exception text.
+     *
+     * <p>Re-analyzes {@code utf8} from scratch: a full strict-UTF-8 validation and Jackson parse of up
+     * to the body limit, exactly like {@link #decodeEnvelope} did. Prefer {@link #errorResponseFor}
+     * when a {@link Decoded} for the same bytes was already produced by {@link #decodeEnvelope} — this
+     * method exists for a caller (or test) that has only the raw bytes and no prior {@link Decoded}.
      *
      * @param utf8 the raw UTF-8 request bytes
      * @return the complete, bounded JSON-RPC error response bytes
@@ -107,6 +116,24 @@ final class McpProtocolCodec {
         CodecError error =
                 analysis.error() != null ? analysis.error() : new CodecError(INTERNAL_ERROR, MSG_INTERNAL_ERROR, null);
         return encodeError(analysis.id(), error.code(), error.message());
+    }
+
+    /**
+     * Produces the same bounded external JSON-RPC error response {@link #errorResponse} does, from an
+     * already-computed {@link Decoded} failure rather than re-decoding the original bytes — the body
+     * is analyzed exactly once per request on the {@link #decodeEnvelope} call that produced {@code
+     * decoded}.
+     *
+     * @param decoded a failed decode this codec already produced for the same request
+     * @return the complete, bounded JSON-RPC error response bytes
+     * @throws IllegalArgumentException if {@code decoded} is not an error ({@link Decoded#isError()}
+     *     is {@code false})
+     */
+    byte[] errorResponseFor(Decoded decoded) {
+        if (!decoded.isError()) {
+            throw new IllegalArgumentException("errorResponseFor requires a failed Decoded");
+        }
+        return encodeError(decoded.id(), decoded.error().code(), decoded.error().message());
     }
 
     /**
@@ -218,12 +245,18 @@ final class McpProtocolCodec {
 
     /**
      * The outcome of an envelope decode: either a validated {@code envelope} or a bounded
-     * {@code error}, never both.
+     * {@code error} carrying the original usable request id, never both.
      *
      * @param envelope the validated JSON-RPC envelope, or {@code null} on failure
+     * @param id the original usable request id an error response should echo, or {@code null} when
+     *     none is trustworthy; always {@code null} on a successful decode (the envelope itself carries
+     *     the id there)
      * @param error the bounded classified error, or {@code null} on success
      */
-    record Decoded(@Nullable JsonNode envelope, @Nullable CodecError error) {
+    record Decoded(
+            @Nullable JsonNode envelope,
+            @Nullable JsonNode id,
+            @Nullable CodecError error) {
 
         /**
          * Reports whether the decode failed.
@@ -241,17 +274,19 @@ final class McpProtocolCodec {
          * @return a successful decode
          */
         static Decoded ok(JsonNode envelope) {
-            return new Decoded(envelope, null);
+            return new Decoded(envelope, null, null);
         }
 
         /**
-         * Wraps a bounded classified error.
+         * Wraps a bounded classified error together with the original usable request id it should
+         * echo.
          *
+         * @param id the original usable request id, or {@code null} when none is trustworthy
          * @param error the bounded error
          * @return a failed decode carrying no envelope
          */
-        static Decoded failed(CodecError error) {
-            return new Decoded(null, error);
+        static Decoded failed(@Nullable JsonNode id, CodecError error) {
+            return new Decoded(null, id, error);
         }
     }
 

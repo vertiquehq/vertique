@@ -25,14 +25,12 @@ SPDX-License-Identifier: EUPL-1.2
         <dependency><groupId>io.vertx</groupId><artifactId>vertx-json-schema</artifactId></dependency>
         <dependency><groupId>${project.groupId}</groupId><artifactId>vertique-rest-core</artifactId></dependency>
         <dependency><groupId>${project.groupId}</groupId><artifactId>vertique-rest-security</artifactId></dependency>
-        <!-- T015: stage 4 of the fixed request-time input pipeline (contract §4.7) — Bean Validation
-             API and its provider, resolved directly (not through the vertique-validation module) since
-             MCP needs only jakarta.validation.Validator#validate, none of that module's Dagger wiring. -->
-        <dependency><groupId>jakarta.validation</groupId><artifactId>jakarta.validation-api</artifactId></dependency>
-        <dependency><groupId>org.hibernate.validator</groupId><artifactId>hibernate-validator</artifactId></dependency>
-        <!-- Hibernate Validator's default message interpolator needs a jakarta.el implementation at
-             runtime (matches vertique-validation's established pattern for the same provider). -->
-        <dependency><groupId>org.glassfish.expressly</groupId><artifactId>expressly</artifactId></dependency>
+        <!-- MCP-001 P04 remediation: stage 4 of the fixed request-time input pipeline (contract §4.7)
+             is hosted by McpBeanValidation in vertique-mcp-core (public there so generated code in an
+             arbitrary application package can reach it); its Bean Validation API/provider therefore
+             come transitively via that dependency. Declared directly here at test scope only because
+             McpInputPipelineIT's fixture carrier declares @NotBlank directly. -->
+        <dependency><groupId>jakarta.validation</groupId><artifactId>jakarta.validation-api</artifactId><scope>test</scope></dependency>
         <dependency><groupId>io.vertx</groupId><artifactId>vertx-web</artifactId></dependency>
         <dependency><groupId>com.google.dagger</groupId><artifactId>dagger</artifactId></dependency>
         <dependency><groupId>jakarta.inject</groupId><artifactId>jakarta.inject-api</artifactId></dependency>

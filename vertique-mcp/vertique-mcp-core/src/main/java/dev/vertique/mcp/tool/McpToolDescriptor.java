@@ -52,7 +52,7 @@ public record McpToolDescriptor(
         Objects.requireNonNull(annotations, "annotations");
         Objects.requireNonNull(inputSchema, "inputSchema");
         Objects.requireNonNull(access, "access");
-        if (!NAME_PATTERN.matcher(name).matches()) {
+        if (!isValidName(name)) {
             throw new IllegalArgumentException("name must match [A-Za-z0-9_.-]{1,128}");
         }
         if (description.isBlank()) {
@@ -70,5 +70,21 @@ public record McpToolDescriptor(
         if (outputSchema != null && outputSchema.isBlank()) {
             throw new IllegalArgumentException("outputSchema must not be blank when present");
         }
+    }
+
+    /**
+     * Reports whether {@code name} matches the published tool-name grammar, {@code
+     * [A-Za-z0-9_.-]{1,128}}.
+     *
+     * <p>Exposed so a caller outside this record — e.g. {@code McpRequestTerminalEvent}'s compact
+     * constructor, which bounds any resolved-tool-identity telemetry it records against this same
+     * grammar — can validate a candidate name against the identical rule this constructor enforces,
+     * without duplicating the pattern.
+     *
+     * @param name the candidate name to check; a {@code null} name is never valid
+     * @return {@code true} when {@code name} is non-null and matches the grammar
+     */
+    public static boolean isValidName(@Nullable String name) {
+        return name != null && NAME_PATTERN.matcher(name).matches();
     }
 }

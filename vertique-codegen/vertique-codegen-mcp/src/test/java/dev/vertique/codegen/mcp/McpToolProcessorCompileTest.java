@@ -1476,9 +1476,10 @@ class McpToolProcessorCompileTest {
         }
 
         /**
-         * Compiles the given sources once with the real processor, plus the always-present
-         * {@link #mcpToolParameterMetadataStub()} every parameterized tool's generated invoker
-         * references.
+         * Compiles the given sources once with the real processor, plus the always-present runtime
+         * stubs every generated invoker now references: {@link #mcpToolParameterMetadataStub()},
+         * {@link #mcpToolRuntimeFactoryStub()}, {@link #mcpToolRuntimeStub()},
+         * {@link #inputObjectProcessorStub()}, and {@link #effectiveInputPoliciesStub()}.
          *
          * @param sources the fixture sources; must not be empty
          * @return the open compilation, to be used in try-with-resources
@@ -1486,6 +1487,10 @@ class McpToolProcessorCompileTest {
         static McpToolCompilation of(JavaFileObject... sources) {
             List<JavaFileObject> retained = new ArrayList<>(List.of(sources));
             retained.add(mcpToolParameterMetadataStub());
+            retained.add(mcpToolRuntimeFactoryStub());
+            retained.add(mcpToolRuntimeStub());
+            retained.add(inputObjectProcessorStub());
+            retained.add(effectiveInputPoliciesStub());
             return new McpToolCompilation(
                     retained,
                     ProcessorTestHarness.run(new McpToolProcessor(), retained.toArray(JavaFileObject[]::new)));
@@ -1497,10 +1502,12 @@ class McpToolProcessorCompileTest {
          *
          * <p>{@code vertique-mcp-server} is deliberately not a dependency of this module (T006/T008:
          * "{@code vertique-mcp-server} is not a dependency and must not become one") and must not
-         * become one even at test scope, so this mirrors the existing {@code authorizedAnnotation()}
-         * pattern: the only way to let {@code compile-testing} actually compile generated source that
-         * references a runtime type outside this module's dependency graph is to declare a stub of
-         * that exact type, under its exact FQN, in the compiled source set.
+         * become one even at test scope — it test-depends on this module's own output (T012), so the
+         * reverse edge would be a reactor cycle, not merely an unwanted coupling — so this mirrors the
+         * existing {@code authorizedAnnotation()} pattern: the only way to let {@code compile-testing}
+         * actually compile generated source that references a runtime type outside this module's
+         * dependency graph is to declare a stub of that exact type, under its exact FQN, in the
+         * compiled source set.
          *
          * @return the {@code dev.vertique.mcp.server.runtime.McpToolParameterMetadata} stub source
          */
@@ -1510,6 +1517,132 @@ class McpToolProcessorCompileTest {
 
                     public record McpToolParameterMetadata(
                             String carrierComponentName, String externalName, String description) {}
+                    """);
+        }
+
+        /**
+         * A compiled stub of {@code dev.vertique.mcp.server.runtime.McpToolRuntimeFactory} (MCP-001
+         * P04 remediation): every generated invoker's {@code @Inject} constructor now takes one as a
+         * parameter and calls {@code create(...)} on it to obtain its runtime binding. Same rationale
+         * and constraint as {@link #mcpToolParameterMetadataStub()} — {@code vertique-mcp-server}
+         * cannot become a dependency of this module.
+         *
+         * @return the {@code dev.vertique.mcp.server.runtime.McpToolRuntimeFactory} stub source
+         */
+        private static JavaFileObject mcpToolRuntimeFactoryStub() {
+            return SourceFiles.inline("dev.vertique.mcp.server.runtime.McpToolRuntimeFactory", """
+                    package dev.vertique.mcp.server.runtime;
+
+                    import dev.vertique.core.json.JsonProfileId;
+                    import dev.vertique.mcp.tool.McpToolAccess;
+                    import dev.vertique.mcp.tool.McpToolAnnotations;
+                    import java.lang.reflect.Type;
+                    import java.util.List;
+
+                    public final class McpToolRuntimeFactory {
+                        public <I> McpToolRuntime<I> create(
+                                String name,
+                                String title,
+                                String description,
+                                McpToolAnnotations annotations,
+                                Class<I> inputCarrierType,
+                                Type structuredOutputType,
+                                List<McpToolParameterMetadata> parameters,
+                                JsonProfileId declaredJsonProfile,
+                                McpToolAccess access) {
+                            return null;
+                        }
+                    }
+                    """);
+        }
+
+        /**
+         * A compiled stub of {@code dev.vertique.mcp.server.runtime.McpToolRuntime} (MCP-001 P04
+         * remediation): every generated invoker retains one, obtained from
+         * {@link #mcpToolRuntimeFactoryStub()}, and calls {@code descriptor()},
+         * {@code materializeArguments(...)}, and {@code fieldNameResolver()} on it. Same rationale and
+         * constraint as {@link #mcpToolParameterMetadataStub()}.
+         *
+         * @return the {@code dev.vertique.mcp.server.runtime.McpToolRuntime} stub source
+         */
+        private static JavaFileObject mcpToolRuntimeStub() {
+            return SourceFiles.inline("dev.vertique.mcp.server.runtime.McpToolRuntime", """
+                    package dev.vertique.mcp.server.runtime;
+
+                    import dev.vertique.core.sanitization.InputFieldNameResolver;
+                    import dev.vertique.mcp.tool.McpToolDescriptor;
+                    import java.util.Map;
+
+                    public final class McpToolRuntime<I> {
+                        public McpToolDescriptor descriptor() {
+                            return null;
+                        }
+
+                        public I materializeArguments(Map<String, Object> normalizedArguments) {
+                            return null;
+                        }
+
+                        public InputFieldNameResolver fieldNameResolver() {
+                            return null;
+                        }
+                    }
+                    """);
+        }
+
+        /**
+         * A compiled stub of {@code dev.vertique.input.processing.InputObjectProcessor} (MCP-001 P04
+         * remediation): every generated invoker's {@code @Inject} constructor now takes one as a
+         * parameter and calls {@code precomputeFieldNameResolution(...)} once during construction and
+         * {@code processInput(...)} once per {@code prepare()}. {@code vertique-input-processing} is
+         * deliberately not a dependency of this module for the same reason
+         * {@code vertique-mcp-server} is not (T006/T008): the generated invoker's dependency footprint
+         * is a runtime concern of the application composing it, not of this annotation-processor
+         * module, and duplicating the constraint scope here rather than only for the mcp-server edge
+         * keeps this module's own dependency graph independent of what the invoker it emits will need
+         * at application build time.
+         *
+         * @return the {@code dev.vertique.input.processing.InputObjectProcessor} stub source
+         */
+        private static JavaFileObject inputObjectProcessorStub() {
+            return SourceFiles.inline("dev.vertique.input.processing.InputObjectProcessor", """
+                    package dev.vertique.input.processing;
+
+                    import dev.vertique.core.sanitization.InputFieldNameResolver;
+                    import dev.vertique.core.sanitization.InputLocation;
+                    import java.lang.reflect.Type;
+
+                    public interface InputObjectProcessor {
+                        void precomputeFieldNameResolution(Type declaredType, InputFieldNameResolver resolver);
+
+                        Object processInput(
+                                Object input,
+                                Type targetType,
+                                EffectiveInputPolicies policies,
+                                InputLocation location,
+                                InputFieldNameResolver nameResolver);
+                    }
+                    """);
+        }
+
+        /**
+         * A compiled stub of {@code dev.vertique.input.processing.EffectiveInputPolicies} (MCP-001 P04
+         * remediation): every generated invoker's {@code prepare()} passes the frozen {@code NONE}
+         * literal to {@code processInput(...)} (contract §4.1 — declared per-field policies are
+         * discovered from the carrier's own annotations, never passed as invocation-level policies).
+         * Same rationale and constraint as {@link #inputObjectProcessorStub()}.
+         *
+         * @return the {@code dev.vertique.input.processing.EffectiveInputPolicies} stub source
+         */
+        private static JavaFileObject effectiveInputPoliciesStub() {
+            return SourceFiles.inline("dev.vertique.input.processing.EffectiveInputPolicies", """
+                    package dev.vertique.input.processing;
+
+                    import java.util.List;
+
+                    public record EffectiveInputPolicies(List<Class<?>> canonicalizers, List<Class<?>> sanitizers) {
+                        public static final EffectiveInputPolicies NONE =
+                                new EffectiveInputPolicies(List.of(), List.of());
+                    }
                     """);
         }
 

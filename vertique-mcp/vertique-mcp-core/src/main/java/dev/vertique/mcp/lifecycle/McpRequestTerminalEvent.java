@@ -4,6 +4,7 @@
 package dev.vertique.mcp.lifecycle;
 
 import dev.vertique.core.correlation.CorrelationContextSnapshot;
+import dev.vertique.mcp.tool.McpToolDescriptor;
 import dev.vertique.security.SecurityContextSnapshot;
 import jakarta.annotation.Nullable;
 import java.time.Instant;
@@ -54,6 +55,16 @@ public record McpRequestTerminalEvent(
         }
         if (method != McpMethod.TOOLS_CALL && !UNKNOWN_TOOL_NAME.equals(toolName)) {
             throw new IllegalArgumentException("non-tool requests must use toolName UNKNOWN");
+        }
+        // A resolved tool identity is bounded by the published McpToolDescriptor name grammar
+        // ([A-Za-z0-9_.-]{1,128}); an unresolved tools/call name never touches a real descriptor, so
+        // without this check it would be bounded only by the wire's 20,000,000-char string limit before
+        // reaching every lifecycle observer and listener as internal telemetry. Every producer in this
+        // module already passes UNKNOWN_TOOL_NAME for an unresolved name (see McpRequestDispatcher's
+        // placeholder-descriptor decision point), so this is a defense-in-depth backstop covering every
+        // future producer, not merely today's.
+        if (!UNKNOWN_TOOL_NAME.equals(toolName) && !McpToolDescriptor.isValidName(toolName)) {
+            throw new IllegalArgumentException("toolName must be UNKNOWN or match [A-Za-z0-9_.-]{1,128}");
         }
         validateHttpStatus(httpStatus, outcome);
         validateState(outcome, errorType, resultType, httpStatus, protocolErrorCode);

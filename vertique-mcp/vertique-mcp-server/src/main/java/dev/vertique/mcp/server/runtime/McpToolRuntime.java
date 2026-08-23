@@ -4,6 +4,8 @@
 package dev.vertique.mcp.server.runtime;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import dev.vertique.core.sanitization.InputFieldNameResolver;
+import dev.vertique.json.JacksonFieldNameResolver;
 import dev.vertique.mcp.tool.McpToolDescriptor;
 import jakarta.annotation.Nullable;
 import java.util.Map;
@@ -24,6 +26,7 @@ public final class McpToolRuntime<I> {
     private final McpToolDescriptor descriptor;
     private final ObjectMapper mapper;
     private final Class<I> inputCarrierType;
+    private final InputFieldNameResolver fieldNameResolver;
 
     /**
      * Binds one tool's descriptor to the exact stable mapper of its effective JSON profile.
@@ -36,6 +39,7 @@ public final class McpToolRuntime<I> {
         this.descriptor = descriptor;
         this.mapper = mapper;
         this.inputCarrierType = inputCarrierType;
+        this.fieldNameResolver = JacksonFieldNameResolver.forMapper(mapper);
     }
 
     /**
@@ -56,6 +60,21 @@ public final class McpToolRuntime<I> {
     public I materializeArguments(Map<String, Object> normalizedArguments) {
         Objects.requireNonNull(normalizedArguments, "normalizedArguments");
         return mapper.convertValue(normalizedArguments, inputCarrierType);
+    }
+
+    /**
+     * Returns the wire-to-Java field name projection of this tool's effective profile mapper (contract
+     * §4.7 point 2), composed once during composition and reused for every request.
+     *
+     * <p>The generated invoker's {@code prepare()} passes this resolver to {@code
+     * InputObjectProcessor#processInput} and, once during composition, to {@code
+     * InputObjectProcessor#precomputeFieldNameResolution} for the input carrier type — the same
+     * resolver instance both times, so its per-type projection cache is composed exactly once.
+     *
+     * @return the effective profile's field name resolver; never {@code null}
+     */
+    public InputFieldNameResolver fieldNameResolver() {
+        return fieldNameResolver;
     }
 
     /**

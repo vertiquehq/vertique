@@ -32,6 +32,7 @@ import java.util.Set;
 final class McpCompletionCoordinator {
     private final Context context;
     private final List<McpRequestObservation> observations;
+    private final boolean hasValueObservers;
     private final Set<McpRequestCompletedListener> listeners;
     private final InstantSource clock;
     private final McpRequestCancellationSignal cancellationSignal = new McpRequestCancellationSignal();
@@ -75,8 +76,27 @@ final class McpCompletionCoordinator {
             InstantSource clock) {
         this.context = context;
         this.observations = openObservers(observers, startedAt);
+        this.hasValueObservers =
+                this.observations.stream().anyMatch(session -> session instanceof McpToolValueObservation);
         this.listeners = Set.copyOf(listeners);
         this.clock = clock;
+    }
+
+    /**
+     * Reports whether any retained session for this request implements the opt-in {@link
+     * McpToolValueObservation} capability (T018/T020, contract §4.4).
+     *
+     * <p>Computed once at construction from the opened session set, never per-call: callers use this
+     * to skip building a {@link McpToolInputObservation} or {@link McpToolOutputObservation} — and
+     * the deep, unmodifiable copy their compact constructors perform — for a request no capable
+     * session will ever see, so an attacker-sized argument or result tree is never deep-copied when
+     * nothing consumes it.
+     *
+     * @return {@code true} when at least one retained session implements {@link
+     *     McpToolValueObservation}
+     */
+    boolean hasValueObservers() {
+        return hasValueObservers;
     }
 
     /**

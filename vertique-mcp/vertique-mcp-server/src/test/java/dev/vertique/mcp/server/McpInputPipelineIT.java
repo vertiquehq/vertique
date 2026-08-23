@@ -22,8 +22,17 @@ import dev.vertique.core.sanitization.Sanitizer;
 import dev.vertique.input.processing.EffectiveInputPolicies;
 import dev.vertique.input.processing.InputObjectProcessor;
 import dev.vertique.json.JacksonFieldNameResolver;
+import dev.vertique.mcp.lifecycle.McpErrorType;
+import dev.vertique.mcp.lifecycle.McpOutcome;
+import dev.vertique.mcp.lifecycle.McpRequestLifecycleObserver;
+import dev.vertique.mcp.lifecycle.McpRequestObservation;
+import dev.vertique.mcp.lifecycle.McpRequestTerminalEvent;
+import dev.vertique.mcp.lifecycle.McpRequestTerminalObservation;
+import dev.vertique.mcp.lifecycle.McpResultType;
 import dev.vertique.mcp.tool.McpAccessMode;
+import dev.vertique.mcp.tool.McpBeanValidation;
 import dev.vertique.mcp.tool.McpCancellationSignal;
+import dev.vertique.mcp.tool.McpInputRejectionException;
 import dev.vertique.mcp.tool.McpPreparedToolCall;
 import dev.vertique.mcp.tool.McpToolAccess;
 import dev.vertique.mcp.tool.McpToolAnnotations;
@@ -78,7 +87,7 @@ import org.junit.jupiter.params.provider.MethodSource;
  * real generated invoker's {@code prepare()} exactly as {@code McpPreparedToolCallTestFixture}'s
  * {@code GeneratedInvoker} did for T014 — {@code prepare()} is the generated fixed input boundary and
  * runs stages 2-4 for real through the same production {@link InputObjectProcessor}, {@link
- * ObjectMapper}, and {@link McpBeanValidation#VALIDATOR} a real generated invoker would use; only
+ * ObjectMapper}, and {@link McpBeanValidation#validate} a real generated invoker would use; only
  * {@link McpRequestDispatcher} (stage 1, schema validation before {@code prepare()} is ever called) is
  * this task's own production change.
  *
@@ -185,6 +194,7 @@ class McpInputPipelineIT {
                                 + "(prepare()) is ever entered")
                         .isZero();
                 assertThat(tool.invocationCount()).isZero();
+                assertStage1TerminalClassification(fixture);
             }
             case SHOULD_REJECT_UNKNOWN_DISCRIMINATOR -> {
                 // Given/When: a polymorphic member whose discriminator names no declared subtype.
@@ -202,6 +212,7 @@ class McpInputPipelineIT {
                                 + "before prepare() is ever entered")
                         .isZero();
                 assertThat(tool.invocationCount()).isZero();
+                assertStage1TerminalClassification(fixture);
             }
             case SHOULD_REJECT_SANITIZATION_FAILURE -> {
                 // Given/When: schema-valid, but the name carries a value the tool's declared @Sanitize
@@ -223,6 +234,7 @@ class McpInputPipelineIT {
                         .isZero();
                 assertThat(tool.beanValidationAttempted()).isZero();
                 assertThat(tool.invocationCount()).isZero();
+                assertStages2To4TerminalClassification(fixture);
             }
             case SHOULD_REJECT_BEAN_VALIDATION_FAILURE -> {
                 // Given/When: schema-valid and sanitization-clean, but the materialized name is blank
@@ -246,9 +258,41 @@ class McpInputPipelineIT {
                 assertThat(tool.invocationCount())
                         .as("DECISIVE: the handler must never run despite materialization having succeeded")
                         .isZero();
+                assertStages2To4TerminalClassification(fixture);
             }
             default -> fail("unknown T015 input pipeline matrix row: " + row);
         }
+    }
+
+    /**
+     * DECISIVE (P04 remediation, issue W2): a stage 1 (schema) rejection must record {@link
+     * McpOutcome#TOOL_ERROR}/{@link McpErrorType#INPUT_VALIDATION}/{@link McpResultType#COMPLETE} on
+     * the terminal event — never {@link McpErrorType#HANDLER}, which would misclassify a rejection no
+     * handler ever ran as a genuine handler fault. The wire body is identical across every rejection
+     * stage in this matrix; only the terminal event's own facts distinguish them.
+     */
+    private static void assertStage1TerminalClassification(Fixture fixture) {
+        McpRequestTerminalEvent terminal = fixture.terminals().getLast();
+        assertThat(terminal.outcome()).isEqualTo(McpOutcome.TOOL_ERROR);
+        assertThat(terminal.errorType())
+                .as("DECISIVE: a stage 1 schema rejection must classify as INPUT_VALIDATION, never HANDLER")
+                .isEqualTo(McpErrorType.INPUT_VALIDATION);
+        assertThat(terminal.resultType()).isEqualTo(McpResultType.COMPLETE);
+    }
+
+    /**
+     * DECISIVE (P04 remediation, issue W2): a stages 2-4 ({@link McpInputRejectionException}) rejection
+     * must record {@link McpOutcome#TOOL_ERROR}/{@link McpErrorType#INPUT_PROCESSING}/{@link
+     * McpResultType#COMPLETE} on the terminal event — never {@link McpErrorType#HANDLER}.
+     */
+    private static void assertStages2To4TerminalClassification(Fixture fixture) {
+        McpRequestTerminalEvent terminal = fixture.terminals().getLast();
+        assertThat(terminal.outcome()).isEqualTo(McpOutcome.TOOL_ERROR);
+        assertThat(terminal.errorType())
+                .as("DECISIVE: a stages 2-4 input-processing rejection must classify as INPUT_PROCESSING, "
+                        + "never HANDLER")
+                .isEqualTo(McpErrorType.INPUT_PROCESSING);
+        assertThat(terminal.resultType()).isEqualTo(McpResultType.COMPLETE);
     }
 
     // --- Wire helpers ---
@@ -322,7 +366,7 @@ class McpInputPipelineIT {
      * Builds and starts one real MCP mount with one anonymous-only, {@code PERMIT_ALL},
      * record-argument tool: {@link PipelineToolInvoker} stands in for a real generated invoker's
      * {@code prepare()}, running stages 2-4 for real through production {@link InputObjectProcessor},
-     * {@link ObjectMapper}, and {@link McpBeanValidation#VALIDATOR} instances (T015 owns the request-time
+     * {@link ObjectMapper}, and {@link McpBeanValidation#validate} instances (T015 owns the request-time
      * pipeline; no reflection, no interceptor stage — matching T014's precedent).
      */
     private static final class Fixture {
@@ -330,6 +374,7 @@ class McpInputPipelineIT {
         private final HttpServer server;
         private final int port;
         private final PipelineToolInvoker tool;
+        private final List<McpRequestTerminalEvent> terminals = new java.util.concurrent.CopyOnWriteArrayList<>();
 
         private Fixture(Vertx vertx) throws Exception {
             McpServerConfig config = McpServerConfig.builder()
@@ -373,7 +418,7 @@ class McpInputPipelineIT {
                     NO_OP_CONTEXT_HOLDER,
                     securityRuntime,
                     Optional.empty()));
-            HttpConfig httpConfig = HttpConfig.builder().build();
+            HttpConfig httpConfig = HttpConfig.builder().idleTimeoutSeconds(60).build();
 
             McpRouterMount mount = new McpRouterMount(
                     config,
@@ -381,7 +426,7 @@ class McpInputPipelineIT {
                     new McpRequestDispatcher(
                             config,
                             securityRuntime,
-                            Set.of(),
+                            Set.of(recordingObserver()),
                             Set.of(),
                             Set.of(),
                             Set.of(),
@@ -390,7 +435,8 @@ class McpInputPipelineIT {
                             policyEnforcer),
                     Set.of(),
                     identityResolution(securityRuntime),
-                    httpConfig);
+                    httpConfig,
+                    registry);
             Router router = Router.router(vertx);
             router.route().handler(new RequestContextLifecycle());
             router.route(config.mountPath()).subRouter(await(mount.createRouter(vertx)));
@@ -412,6 +458,20 @@ class McpInputPipelineIT {
 
         PipelineToolInvoker tool() {
             return tool;
+        }
+
+        /** Every terminal event this fixture's dispatcher has published so far, in publish order. */
+        List<McpRequestTerminalEvent> terminals() {
+            return terminals;
+        }
+
+        private McpRequestLifecycleObserver recordingObserver() {
+            return startedAt -> new McpRequestObservation() {
+                @Override
+                public void onTerminal(McpRequestTerminalObservation observation) {
+                    terminals.add(observation.event());
+                }
+            };
         }
 
         private static IdentityResolutionMiddleware identityResolution(SecurityRuntime securityRuntime) {
@@ -493,7 +553,7 @@ class McpInputPipelineIT {
 
             // Stage 4 — Bean Validation on the materialized carrier (contract §4.7 point 4).
             beanValidationAttempted.incrementAndGet();
-            if (!McpBeanValidation.VALIDATOR.validate(materialized).isEmpty()) {
+            if (!McpBeanValidation.validate(materialized).isEmpty()) {
                 throw new McpInputRejectionException("Invalid tool arguments: constraint validation failed");
             }
 

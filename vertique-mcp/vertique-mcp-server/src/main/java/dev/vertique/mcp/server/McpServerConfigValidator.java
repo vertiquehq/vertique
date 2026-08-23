@@ -6,6 +6,7 @@ package dev.vertique.mcp.server;
 import dev.vertique.core.exception.ConfigurationException;
 import dev.vertique.mcp.tool.McpAccessMode;
 import dev.vertique.mcp.tool.McpToolDescriptor;
+import dev.vertique.rest.core.config.HttpConfig;
 import dev.vertique.rest.core.security.RouteAuthHandler;
 import io.vertx.core.Handler;
 import io.vertx.ext.web.RoutingContext;
@@ -83,6 +84,51 @@ final class McpServerConfigValidator {
                 .map(McpToolDescriptor::access)
                 .allMatch(access -> access.mode() != McpAccessMode.RESTRICTED);
         require(everyToolReachableWithoutAuthentication, "mcp.authenticationScheme");
+    }
+
+    /**
+     * Validates exactly as {@link #validate(McpServerConfig, Set, McpToolRegistry)} does, and
+     * additionally refuses to start an enabled MCP mount when the shared HTTP layer arms no liveness
+     * timeout at all.
+     *
+     * <p>MCP arms no whole-request deadline of its own (the T007 amendment removed {@code
+     * mcp.request.timeoutMs}): the only thing that can ever reclaim a hanging {@code
+     * McpRequestInterceptor}, a hanging {@code McpToolInterceptor}, a hanging tool handler, or a
+     * client that stops reading mid-response is the shared {@link HttpConfig} idle/read/write
+     * timeout behavior. Every one of {@link HttpConfig#idleTimeoutSeconds()}, {@link
+     * HttpConfig#readIdleTimeoutSeconds()}, and {@link HttpConfig#writeIdleTimeoutSeconds()} defaults
+     * to {@code 0} ("disabled"), so a default deployment provides no deadline at all — an
+     * unauthenticated caller can strand a {@code @PermitAll} tool's connection, coordinator, and every
+     * open observation indefinitely. This is the one place that closes that gap: an enabled mount
+     * refuses to start unless at least one of the three is armed.
+     *
+     * @param config the bounded configuration to validate
+     * @param routeAuthHandlers every registered optional-authentication-capable handler
+     * @param registry the immutable tool registry built before this validation runs
+     * @param httpConfig the shared HTTP configuration whose liveness timeouts are checked
+     * @throws ConfigurationException if any check {@link #validate(McpServerConfig, Set,
+     *     McpToolRegistry)} performs fails, or if the mount is enabled and every {@link HttpConfig}
+     *     liveness timeout is zero
+     */
+    void validate(
+            McpServerConfig config,
+            Set<RouteAuthHandler> routeAuthHandlers,
+            McpToolRegistry registry,
+            HttpConfig httpConfig) {
+        validate(config, routeAuthHandlers, registry);
+        require(httpConfig != null, "http");
+        if (!config.enabled()) {
+            return;
+        }
+        boolean anyLivenessTimeoutArmed = httpConfig.idleTimeoutSeconds() > 0
+                || httpConfig.readIdleTimeoutSeconds() > 0
+                || httpConfig.writeIdleTimeoutSeconds() > 0;
+        require(
+                anyLivenessTimeoutArmed,
+                "http.idleTimeoutSeconds, http.readIdleTimeoutSeconds, http.writeIdleTimeoutSeconds "
+                        + "(at least one must be greater than zero while mcp is enabled, so a hanging "
+                        + "interceptor, tool handler, or non-reading client cannot strand a connection "
+                        + "indefinitely)");
     }
 
     /**

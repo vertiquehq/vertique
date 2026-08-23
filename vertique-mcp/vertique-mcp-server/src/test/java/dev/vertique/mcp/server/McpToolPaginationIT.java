@@ -335,7 +335,7 @@ class McpToolPaginationIT {
             RecordingSecurityRuntime securityRuntime = new RecordingSecurityRuntime();
             this.securityPolicyEnforcer = new CountingSecurityPolicyEnforcer();
             McpPolicyEnforcer policyEnforcer = new McpPolicyEnforcer(securityPolicyEnforcer);
-            HttpConfig httpConfig = HttpConfig.builder().build();
+            HttpConfig httpConfig = HttpConfig.builder().idleTimeoutSeconds(60).build();
 
             McpRouterMount mount = new McpRouterMount(
                     config,
@@ -352,7 +352,8 @@ class McpToolPaginationIT {
                             policyEnforcer),
                     Set.of(new BearerRouteAuthHandler()),
                     identityResolution(securityRuntime),
-                    httpConfig);
+                    httpConfig,
+                    registry);
             Router router = Router.router(vertx);
             router.route().handler(new RequestContextLifecycle());
             router.route(config.mountPath()).subRouter(await(mount.createRouter(vertx)));

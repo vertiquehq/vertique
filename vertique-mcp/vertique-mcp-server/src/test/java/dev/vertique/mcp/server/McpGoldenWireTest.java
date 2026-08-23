@@ -4,6 +4,7 @@
 package dev.vertique.mcp.server;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import dev.vertique.rest.core.config.HttpConfig;
 import io.vertx.core.buffer.Buffer;
@@ -70,7 +71,25 @@ class McpGoldenWireTest {
             assertThat(new JsonObject(Buffer.buffer(errorResponse)).getValue("id"))
                     .as("invalid frame echoes exactly the pinned request id: %s", invalid.name())
                     .isEqualTo(invalid.expectedId());
+
+            // P04 remediation (issue W11): McpRequestDispatcher#emitProtocolError now builds the error
+            // response from the already-decoded Decoded via errorResponseFor, never by re-analyzing the
+            // raw bytes a second time through errorResponse(byte[]). This pins errorResponseFor as a
+            // byte-identical drop-in for every golden invalid case, so that production switch is provably
+            // behavior-preserving.
+            byte[] errorResponseFromDecoded = codec.errorResponseFor(decoded);
+            assertThat(errorResponseFromDecoded)
+                    .as(
+                            "errorResponseFor(decoded) must be byte-identical to errorResponse(bytes) without "
+                                    + "re-decoding: %s",
+                            invalid.name())
+                    .isEqualTo(errorResponse);
         }
+
+        McpProtocolCodec.Decoded successfulDecode = codec.decodeEnvelope(validFrames.getFirst());
+        assertThatThrownBy(() -> codec.errorResponseFor(successfulDecode))
+                .as("errorResponseFor must refuse a non-error Decoded rather than silently succeeding")
+                .isInstanceOf(IllegalArgumentException.class);
 
         byte[] pinnedError = McpGoldenWireTestFixture.firstErrorResponse(codec, invalidCases);
         byte[] mutatedError = McpGoldenWireTestFixture.flipFirstByte(pinnedError);

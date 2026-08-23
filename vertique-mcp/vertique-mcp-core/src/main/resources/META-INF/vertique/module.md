@@ -9,7 +9,8 @@ SPDX-License-Identifier: EUPL-1.2
 > **Package:** `dev.vertique.mcp.annotation`, `dev.vertique.mcp.tool`, `dev.vertique.mcp.lifecycle`,
 > `dev.vertique.mcp.interceptor`
 > **Artifact:** `vertique-mcp-core`
-> **Depends on:** `vertique-core`, `vertique-security-core`, `jakarta.annotation-api`
+> **Depends on:** `vertique-core`, `vertique-security-core`, `jakarta.annotation-api`,
+> `jakarta.validation-api`, `hibernate-validator`, `org.glassfish.expressly`
 
 `vertique-mcp-core` owns the stable public API for authoring Model Context Protocol tools, plus
 Model Context Protocol lifecycle facts and neutral per-request observation. It contains the tool
@@ -69,13 +70,27 @@ codec, and resource limits are profile-independent.
 description, `McpToolAnnotations` hints, canonical input schema, optional canonical output schema,
 and the `McpToolAccess` requirement resolved at compile time. `McpToolAccess` carries one
 `McpAccessMode` base policy — `PERMIT_ALL`, `DENY_ALL`, or `RESTRICTED` — with roles and an
-optional `ActionRef` that compose with AND under `RESTRICTED`.
+optional `ActionRef` that compose with AND under `RESTRICTED`. `McpToolDescriptor.isValidName(String)`
+exposes the published `[A-Za-z0-9_.-]{1,128}` name grammar as a reusable predicate — the same rule
+the constructor itself enforces — so another type in this module (`McpRequestTerminalEvent`'s compact
+constructor bounds any resolved-tool-identity telemetry against it) can validate a candidate name
+without duplicating the pattern.
 
 `McpToolInvoker` and `McpPreparedToolCall` are generated-runtime contracts: application code
 neither implements nor calls them. `prepare` is the fixed input boundary — the server validates
 arguments against the input schema, generated code then applies input policies, materializes typed
 parameters through the effective JSON profile, and performs Bean Validation. No prepared call
 exists for a failed stage.
+
+`McpBeanValidation` and `McpInputRejectionException` are two further generated-runtime support
+types, public for the same reason `McpToolInvoker` is: `prepare` is generated into an arbitrary
+application package, which cannot reach a package-private framework type in a different module.
+`McpBeanValidation.validate(carrier)` is the one shared, thread-safe Jakarta Bean Validation
+`Validator` every generated `prepare()` calls for its Bean Validation stage.
+`McpInputRejectionException` signals that a `tools/call` argument tree failed input-policy
+application, materialization, or Bean Validation; its message is always a fixed, non-interpolated
+literal, since it is returned to the caller verbatim. Application code neither calls nor throws
+either type itself.
 
 ## Lifecycle facts
 
@@ -169,6 +184,8 @@ evidence handle.
 ## Dependency boundary
 
 This module consumes only the public core correlation snapshot, the security snapshot and
-`ActionRef` types, and `io.vertx.core.Future`. Runtime dispatch, HTTP integration, schema
-generation, tool registration, authorization enforcement, and observability adapters belong to
-separately packaged modules and must not be introduced here.
+`ActionRef` types, `io.vertx.core.Future`, and the Jakarta Bean Validation API and its default
+provider (resolved directly, not through `vertique-validation`, since `McpBeanValidation` needs only
+`jakarta.validation.Validator#validate`). Runtime dispatch, HTTP integration, schema generation, tool
+registration, authorization enforcement, and observability adapters belong to separately packaged
+modules and must not be introduced here.

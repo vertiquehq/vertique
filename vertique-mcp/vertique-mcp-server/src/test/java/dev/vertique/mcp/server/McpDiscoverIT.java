@@ -433,7 +433,8 @@ public class McpDiscoverIT {
                     .authenticationScheme(options.scheme)
                     .build();
             RecordingSecurityRuntime securityRuntime = new RecordingSecurityRuntime(boundSecurityContext);
-            HttpConfig httpConfig = HttpConfig.builder().build();
+            HttpConfig httpConfig = HttpConfig.builder().idleTimeoutSeconds(60).build();
+            McpToolRegistry registry = McpToolRegistry.build(Set.of());
             McpRouterMount mount = new McpRouterMount(
                     config,
                     new McpServerConfigValidator(),
@@ -445,7 +446,7 @@ public class McpDiscoverIT {
                             Set.of(),
                             Set.of(),
                             httpConfig,
-                            McpToolRegistry.build(Set.of()),
+                            registry,
                             new McpPolicyEnforcer(new SecurityPolicyEnforcer(
                                     Optional.empty(),
                                     Optional.empty(),
@@ -456,7 +457,8 @@ public class McpDiscoverIT {
                                     Optional.empty()))),
                     options.handlers,
                     identityResolution(securityRuntime),
-                    httpConfig);
+                    httpConfig,
+                    registry);
             Router router = Router.router(vertx);
             router.route().handler(new RequestContextLifecycle());
             if (options.injectAmbientUser) {

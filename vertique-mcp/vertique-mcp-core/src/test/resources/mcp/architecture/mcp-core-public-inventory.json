@@ -200,6 +200,13 @@
       "public static final dev.vertique.mcp.tool.McpAccessMode dev.vertique.mcp.tool.McpAccessMode.PERMIT_ALL",
       "public static final dev.vertique.mcp.tool.McpAccessMode dev.vertique.mcp.tool.McpAccessMode.RESTRICTED"
     ],
+    "dev.vertique.mcp.tool.McpBeanValidation": [
+      "public static <T> java.util.Set<jakarta.validation.ConstraintViolation<T>> dev.vertique.mcp.tool.McpBeanValidation.validate(T)"
+    ],
+    "dev.vertique.mcp.tool.McpInputRejectionException": [
+      "public dev.vertique.mcp.tool.McpInputRejectionException(java.lang.String)",
+      "public dev.vertique.mcp.tool.McpInputRejectionException(java.lang.String,java.lang.Throwable)"
+    ],
     "dev.vertique.mcp.tool.McpCancellationSignal": [
       "public abstract boolean dev.vertique.mcp.tool.McpCancellationSignal.isCancelled()",
       "public abstract io.vertx.core.Future<java.lang.Void> dev.vertique.mcp.tool.McpCancellationSignal.cancelled()"
@@ -239,6 +246,7 @@
       "public java.lang.String dev.vertique.mcp.tool.McpToolDescriptor.name()",
       "public java.lang.String dev.vertique.mcp.tool.McpToolDescriptor.outputSchema()",
       "public java.lang.String dev.vertique.mcp.tool.McpToolDescriptor.title()",
+      "public static boolean dev.vertique.mcp.tool.McpToolDescriptor.isValidName(java.lang.String)",
       "public static final int dev.vertique.mcp.tool.McpToolDescriptor.MAX_DESCRIPTION_CHARS"
     ],
     "dev.vertique.mcp.tool.McpToolInvoker": [

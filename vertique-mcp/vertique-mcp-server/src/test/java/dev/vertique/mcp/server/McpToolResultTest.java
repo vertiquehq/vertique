@@ -9,10 +9,13 @@ import static org.junit.jupiter.api.Assertions.fail;
 import dev.vertique.codegen.mcp.McpToolProcessor;
 import dev.vertique.codegen.test.ProcessorTestHarness;
 import dev.vertique.codegen.test.fixtures.SourceFiles;
+import dev.vertique.input.processing.InputObjectProcessor;
 import dev.vertique.mcp.lifecycle.McpErrorType;
 import dev.vertique.mcp.lifecycle.McpMethod;
 import dev.vertique.mcp.lifecycle.McpRequestTerminalEvent;
 import dev.vertique.mcp.lifecycle.McpResultType;
+import dev.vertique.mcp.server.runtime.McpToolRuntimeFactory;
+import dev.vertique.mcp.server.runtime.McpToolRuntimeFactoryTestSupport;
 import dev.vertique.mcp.tool.McpCancellationSignal;
 import dev.vertique.mcp.tool.McpPreparedToolCall;
 import dev.vertique.mcp.tool.McpToolInvoker;
@@ -316,13 +319,28 @@ class McpToolResultTest {
         return loadInvoker(methodName).prepare(Map.of(), NEVER_CANCELLED);
     }
 
-    /** Loads the generated invoker for {@code methodName} and constructs it through its generated {@code @Inject} constructor. */
+    /**
+     * Loads the generated invoker for {@code methodName} and constructs it through its generated
+     * {@code @Inject} constructor: the tool bean, a real {@link McpToolRuntimeFactory}, and a real
+     * (policy-free) {@link InputObjectProcessor} — every {@code ResultAlgebraTools} method here is
+     * zero-argument, so neither resolver function is ever actually invoked.
+     */
     private static McpToolInvoker loadInvoker(String methodName) throws Exception {
         String invokerFqn = TOOLS_FQN + "_" + methodName + "_McpToolInvoker";
         Class<?> invokerClass = compilation.loadGeneratedClass(invokerFqn);
-        Constructor<?> constructor = invokerClass.getDeclaredConstructor(toolsClass);
+        Constructor<?> constructor = invokerClass.getDeclaredConstructor(
+                toolsClass, McpToolRuntimeFactory.class, InputObjectProcessor.class);
         constructor.setAccessible(true);
-        return (McpToolInvoker) constructor.newInstance(toolsInstance);
+        return (McpToolInvoker) constructor.newInstance(
+                toolsInstance,
+                McpToolRuntimeFactoryTestSupport.factory(),
+                InputObjectProcessor.createDefault(
+                        canonicalizerType -> {
+                            throw new IllegalArgumentException("unresolvable canonicalizer " + canonicalizerType);
+                        },
+                        sanitizerType -> {
+                            throw new IllegalArgumentException("unresolvable sanitizer " + sanitizerType);
+                        }));
     }
 
     private static McpToolResult<?> await(Future<McpToolResult<?>> future)

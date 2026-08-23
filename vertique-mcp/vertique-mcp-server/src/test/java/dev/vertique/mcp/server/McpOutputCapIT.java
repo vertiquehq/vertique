@@ -157,7 +157,8 @@ public class McpOutputCapIT {
                     .build();
             AtomicReference<SecurityContext> bound = new AtomicReference<>();
             RecordingSecurityRuntime securityRuntime = new RecordingSecurityRuntime(bound);
-            HttpConfig httpConfig = HttpConfig.builder().build();
+            HttpConfig httpConfig = HttpConfig.builder().idleTimeoutSeconds(60).build();
+            McpToolRegistry registry = McpToolRegistry.build(Set.of());
             McpRouterMount mount = new McpRouterMount(
                     config,
                     new McpServerConfigValidator(),
@@ -169,7 +170,7 @@ public class McpOutputCapIT {
                             Set.of(),
                             Set.of(),
                             httpConfig,
-                            McpToolRegistry.build(Set.of()),
+                            registry,
                             new McpPolicyEnforcer(new SecurityPolicyEnforcer(
                                     Optional.empty(),
                                     Optional.empty(),
@@ -180,7 +181,8 @@ public class McpOutputCapIT {
                                     Optional.empty()))),
                     Set.of(),
                     identityResolution(securityRuntime),
-                    httpConfig);
+                    httpConfig,
+                    registry);
             Router router = Router.router(vertx);
             router.route().handler(new RequestContextLifecycle());
             router.route(config.mountPath()).subRouter(await(mount.createRouter(vertx)));

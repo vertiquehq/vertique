@@ -28,12 +28,16 @@ final class McpRouterMount implements RouterMount {
             McpRequestDispatcher dispatcher,
             Set<RouteAuthHandler> routeAuthHandlers,
             IdentityResolutionMiddleware identityResolutionMiddleware,
-            HttpConfig httpConfig) {
+            HttpConfig httpConfig,
+            McpToolRegistry toolRegistry) {
         this.config = config;
         this.configValidator = configValidator;
         this.dispatcher = dispatcher;
         this.httpConfig = httpConfig;
-        configValidator.validate(config, routeAuthHandlers);
+        // The three-argument (registry-visibility, §4.5) and HttpConfig-liveness-gate rules both
+        // matter only at the one real production mount point: this constructor. Test fixtures that
+        // exercise a narrower slice of McpServerConfigValidator call its narrower overloads directly.
+        configValidator.validate(config, routeAuthHandlers, toolRegistry, httpConfig);
         this.identityEstablisher = new McpIdentityEstablisher(config, routeAuthHandlers, identityResolutionMiddleware);
     }
 

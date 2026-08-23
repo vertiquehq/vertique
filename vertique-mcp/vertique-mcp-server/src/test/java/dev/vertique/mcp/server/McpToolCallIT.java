@@ -165,8 +165,25 @@ class McpToolCallIT {
             }
             case SHOULD_MATCH_UNKNOWN_AND_DENIED -> {
                 // Given/When: the same request id calls an unknown tool name and the @DenyAll tool.
+                int decisionsBeforeUnknown = fixture.decisionEvents().size();
                 HttpResponse<Buffer> unknown = await(callTool(null, UNKNOWN_TOOL, 7));
+                int decisionsAfterUnknown = fixture.decisionEvents().size();
                 HttpResponse<Buffer> denied = await(callTool(null, DENY_TOOL, 7));
+                int decisionsAfterDenied = fixture.decisionEvents().size();
+
+                // Then (DECISIVE — P04 remediation, issue W8): an unknown name must reach the same
+                // McpPolicyEnforcer#decide decision point a denied name reaches — exactly one emitted
+                // AuthorizationDecisionEvent each — closing the timing/observability side channel a
+                // direct-to-response short-circuit for "unknown" would otherwise leave open (a caller
+                // could distinguish "no such tool" from "denied" by whether a decision was ever made,
+                // independent of the wire-identical bytes asserted below).
+                assertThat(decisionsAfterUnknown - decisionsBeforeUnknown)
+                        .as("DECISIVE: an unresolved tool name must itself produce exactly one authorization "
+                                + "decision, evaluated against the synthetic @DenyAll placeholder")
+                        .isEqualTo(1);
+                assertThat(decisionsAfterDenied - decisionsAfterUnknown)
+                        .as("a genuinely denied tool must also produce exactly one authorization decision")
+                        .isEqualTo(1);
 
                 // Then (DECISIVE — wire-identical, bytes and headers, not parsed JSON): absence and
                 // denial must be indistinguishable at the wire. Both must be -32602/JSON, never SSE.
@@ -351,6 +368,8 @@ class McpToolCallIT {
         private final ControllableToolInvoker publicTool;
         private final ControllableToolInvoker rolesTool;
         private final ControllableToolInvoker denyTool;
+        private final List<dev.vertique.security.events.AuthorizationDecisionEvent> decisionEvents =
+                new java.util.concurrent.CopyOnWriteArrayList<>();
 
         private McpToolCallITFixture(Vertx vertx) throws Exception {
             McpServerConfig config = McpServerConfig.builder()
@@ -372,15 +391,24 @@ class McpToolCallIT {
             McpToolRegistry registry = McpToolRegistry.build(Set.of(publicTool, rolesTool, denyTool));
 
             RecordingSecurityRuntime securityRuntime = new RecordingSecurityRuntime();
+            dev.vertique.security.events.SecurityEventObserver decisionObserver =
+                    new dev.vertique.security.events.SecurityEventObserver() {
+                        @Override
+                        public Future<Void> onAuthorizationDecided(
+                                dev.vertique.security.events.AuthorizationDecisionEvent event) {
+                            decisionEvents.add(event);
+                            return Future.succeededFuture();
+                        }
+                    };
             McpPolicyEnforcer policyEnforcer = new McpPolicyEnforcer(new SecurityPolicyEnforcer(
                     Optional.empty(),
                     Optional.empty(),
                     Set.of(),
-                    new SecurityEventEmitter(Set.of()),
+                    new SecurityEventEmitter(Set.of(decisionObserver)),
                     NO_OP_CONTEXT_HOLDER,
                     securityRuntime,
                     Optional.empty()));
-            HttpConfig httpConfig = HttpConfig.builder().build();
+            HttpConfig httpConfig = HttpConfig.builder().idleTimeoutSeconds(60).build();
 
             McpRouterMount mount = new McpRouterMount(
                     config,
@@ -397,7 +425,8 @@ class McpToolCallIT {
                             policyEnforcer),
                     Set.of(new BearerRouteAuthHandler()),
                     identityResolution(securityRuntime),
-                    httpConfig);
+                    httpConfig,
+                    registry);
             Router router = Router.router(vertx);
             router.route().handler(new RequestContextLifecycle());
             router.route(config.mountPath()).subRouter(await(mount.createRouter(vertx)));
@@ -427,6 +456,10 @@ class McpToolCallIT {
 
         ControllableToolInvoker denyTool() {
             return denyTool;
+        }
+
+        List<dev.vertique.security.events.AuthorizationDecisionEvent> decisionEvents() {
+            return decisionEvents;
         }
 
         private static McpToolDescriptor descriptor(String name, McpToolAccess access) {

@@ -565,6 +565,23 @@ class McpLifecycleEventTest {
                                 STARTED_AT, TERMINAL_AT, McpMethod.SERVER_DISCOVER, "greet", 200, null, null, null)),
                 Arguments.of("a blank tool name", (ThrowingConstruction) () -> McpRequestTerminalEvent.success(
                         STARTED_AT, TERMINAL_AT, McpMethod.TOOLS_CALL, "  ", 200, null, null, null)),
+                // P04 remediation (issue W7): a resolved tool identity must be bounded by the published
+                // McpToolDescriptor name grammar ([A-Za-z0-9_.-]{1,128}), not merely non-blank — an
+                // unresolved name never touches a real descriptor, so nothing else would bound it before
+                // it reached every lifecycle observer and listener as internal telemetry.
+                Arguments.of("a tool name violating the published grammar (embedded whitespace)", (ThrowingConstruction)
+                        () -> McpRequestTerminalEvent.success(
+                                STARTED_AT,
+                                TERMINAL_AT,
+                                McpMethod.TOOLS_CALL,
+                                "not a valid name",
+                                200,
+                                null,
+                                null,
+                                null)),
+                Arguments.of("a tool name longer than the published 128-character bound", (ThrowingConstruction)
+                        () -> McpRequestTerminalEvent.success(
+                                STARTED_AT, TERMINAL_AT, McpMethod.TOOLS_CALL, "a".repeat(129), 200, null, null, null)),
                 Arguments.of("an authentication rejection carrying security facts", (ThrowingConstruction)
                         () -> McpRequestTerminalEvent.rejected(
                                 STARTED_AT,

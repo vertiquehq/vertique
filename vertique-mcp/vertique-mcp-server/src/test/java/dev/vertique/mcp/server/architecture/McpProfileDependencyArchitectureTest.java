@@ -16,6 +16,7 @@ import com.tngtech.archunit.lang.ArchRule;
 import com.tngtech.archunit.lang.ConditionEvents;
 import com.tngtech.archunit.lang.SimpleConditionEvent;
 import dev.vertique.core.json.JsonProfileId;
+import dev.vertique.input.processing.InputObjectProcessor;
 import dev.vertique.json.DefaultJsonMapperProfileRegistry;
 import dev.vertique.json.schema.AnnotationJsonSchemaGenerator;
 import dev.vertique.mcp.server.runtime.McpToolRuntime;
@@ -40,16 +41,17 @@ import org.junit.jupiter.api.Test;
  *
  * <p>The frozen direction graph is the one stated in the schema/profile/mapping contract: MCP core and the MCP
  * annotation processor use the profile annotation and id contracts from {@code vertique-core}; the MCP server
- * consumes {@code vertique-json} for the registry/config and {@code vertique-json-schema} for schema generation;
- * neither JSON artifact depends on MCP; and no reversed edge exists.
+ * consumes {@code vertique-json} for the registry/config, {@code vertique-json-schema} for schema generation, and
+ * {@code vertique-input-processing} for the T014 fixed input boundary; neither JSON artifact nor
+ * {@code vertique-input-processing} depends on MCP; and no reversed edge exists.
  *
- * <p><strong>Scanned scope.</strong> The rule reads the compiled production bytecode of the five artifacts that
+ * <p><strong>Scanned scope.</strong> The rule reads the compiled production bytecode of the six artifacts that
  * {@code vertique-mcp-server} compiles against — {@code vertique-core}, {@code vertique-json},
- * {@code vertique-json-schema} (T009), {@code vertique-mcp-core}, {@code vertique-mcp-server} — so a newly added
- * production type is covered without touching this test. {@code vertique-codegen-mcp} and generated application
- * source are not on this module's classpath, so their <em>outgoing</em> edges cannot be read here; their zones are
- * still pinned as forbidden <em>targets</em>, which is what keeps the server and core artifacts from ever reaching
- * into the processor.
+ * {@code vertique-json-schema} (T009), {@code vertique-input-processing} (T014), {@code vertique-mcp-core},
+ * {@code vertique-mcp-server} — so a newly added production type is covered without touching this test.
+ * {@code vertique-codegen-mcp} and generated application source are not on this module's classpath, so their
+ * <em>outgoing</em> edges cannot be read here; their zones are still pinned as forbidden <em>targets</em>, which is
+ * what keeps the server and core artifacts from ever reaching into the processor.
  */
 class McpProfileDependencyArchitectureTest {
 
@@ -71,6 +73,7 @@ class McpProfileDependencyArchitectureTest {
                         "dev.vertique.core.json.JsonProfileId",
                         "dev.vertique.json.DefaultJsonMapperProfileRegistry",
                         "dev.vertique.json.schema.AnnotationJsonSchemaGenerator",
+                        "dev.vertique.input.processing.InputObjectProcessor",
                         "dev.vertique.mcp.tool.McpToolDescriptor",
                         "dev.vertique.mcp.server.runtime.McpToolRuntime");
         assertThat(productionViolations)
@@ -84,8 +87,10 @@ class McpProfileDependencyArchitectureTest {
                         "mcp-server -> mcp-core",
                         "mcp-server -> json",
                         "mcp-server -> json-schema",
+                        "mcp-server -> input-processing",
                         "json -> core",
-                        "json-schema -> core");
+                        "json-schema -> core",
+                        "input-processing -> core");
         assertThat(syntheticViolations).hasSize(1);
         assertThat(syntheticViolations.getFirst())
                 .contains(
@@ -112,8 +117,10 @@ class McpProfileDependencyArchitectureTest {
                 "mcp-server -> mcp-core",
                 "mcp-server -> json",
                 "mcp-server -> json-schema",
+                "mcp-server -> input-processing",
                 "json -> core",
-                "json-schema -> core");
+                "json-schema -> core",
+                "input-processing -> core");
 
         private McpProfileDependencyArchitectureTestFixture() {}
 
@@ -122,6 +129,7 @@ class McpProfileDependencyArchitectureTest {
             zones.put("dev.vertique.codegen.mcp", "codegen-mcp");
             zones.put("dev.vertique.json.schema", "json-schema");
             zones.put("dev.vertique.json", "json");
+            zones.put("dev.vertique.input.processing", "input-processing");
             zones.put("dev.vertique.mcp.server", "mcp-server");
             zones.put("dev.vertique.mcp", "mcp-core");
             zones.put("dev.vertique.core", "core");
@@ -129,9 +137,9 @@ class McpProfileDependencyArchitectureTest {
         }
 
         /**
-         * Imports every compiled production class of the five artifacts {@code vertique-mcp-server} compiles
+         * Imports every compiled production class of the six artifacts {@code vertique-mcp-server} compiles
          * against: {@code vertique-core}, {@code vertique-json}, {@code vertique-json-schema} (T009),
-         * {@code vertique-mcp-core} and {@code vertique-mcp-server}.
+         * {@code vertique-input-processing} (T014), {@code vertique-mcp-core} and {@code vertique-mcp-server}.
          */
         static JavaClasses importCompiledProfileGraph() {
             return new ClassFileImporter()
@@ -140,6 +148,7 @@ class McpProfileDependencyArchitectureTest {
                             compiledLocationOf(JsonProfileId.class),
                             compiledLocationOf(DefaultJsonMapperProfileRegistry.class),
                             compiledLocationOf(AnnotationJsonSchemaGenerator.class),
+                            compiledLocationOf(InputObjectProcessor.class),
                             compiledLocationOf(McpToolDescriptor.class),
                             compiledLocationOf(McpToolRuntime.class)));
         }

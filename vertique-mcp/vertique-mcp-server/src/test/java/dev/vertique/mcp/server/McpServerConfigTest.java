@@ -11,6 +11,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import dev.vertique.core.exception.ConfigurationException;
+import dev.vertique.rest.core.config.HttpConfig;
 import dev.vertique.rest.core.security.RouteAuthHandler;
 import io.vertx.core.Handler;
 import io.vertx.ext.web.RoutingContext;
@@ -191,6 +192,65 @@ class McpServerConfigTest {
                     .isInstanceOf(ConfigurationException.class)
                     .hasMessageContaining("mcp.allowedOrigins");
         }
+    }
+
+    /**
+     * Pins the P04 startup liveness gate (issue W1): an enabled mount refuses to start unless at
+     * least one {@link HttpConfig} idle/read/write timeout is armed, since MCP relies entirely on
+     * that shared bound to ever reclaim a hanging interceptor, tool handler, or non-reading client.
+     */
+    @Nested
+    @DisplayName("HttpConfig liveness gate")
+    class HttpLivenessGate {
+
+        private final McpToolRegistry emptyRegistry = McpToolRegistry.build(Set.of());
+
+        @Test
+        @DisplayName("rejects an enabled mount when every HttpConfig liveness timeout is zero (the default)")
+        void shouldRejectEnabledMountWithNoLivenessTimeoutArmed() {
+            assertThatThrownBy(() -> validator.validate(
+                            enabled(),
+                            Set.of(),
+                            emptyRegistry,
+                            HttpConfig.builder().build()))
+                    .isInstanceOf(ConfigurationException.class)
+                    .hasMessageContaining("http.idleTimeoutSeconds")
+                    .hasMessageContaining("http.readIdleTimeoutSeconds")
+                    .hasMessageContaining("http.writeIdleTimeoutSeconds");
+        }
+
+        @ParameterizedTest(name = "{0}")
+        @MethodSource("dev.vertique.mcp.server.McpServerConfigTest#armedLivenessTimeoutRows")
+        @DisplayName("accepts an enabled mount when at least one HttpConfig liveness timeout is armed")
+        void shouldAcceptEnabledMountWithAnyLivenessTimeoutArmed(String row, HttpConfig httpConfig) {
+            assertThatCode(() -> validator.validate(enabled(), Set.of(), emptyRegistry, httpConfig))
+                    .doesNotThrowAnyException();
+        }
+
+        @Test
+        @DisplayName("never applies the gate to a disabled mount, even with every timeout zero")
+        void shouldNotGateADisabledMount() {
+            McpServerConfig disabled = McpServerConfig.defaults();
+            assertThatCode(() -> validator.validate(
+                            disabled,
+                            Set.of(),
+                            emptyRegistry,
+                            HttpConfig.builder().build()))
+                    .doesNotThrowAnyException();
+        }
+    }
+
+    private static Stream<Arguments> armedLivenessTimeoutRows() {
+        return Stream.of(
+                Arguments.of(
+                        "idleTimeoutSeconds only",
+                        HttpConfig.builder().idleTimeoutSeconds(30).build()),
+                Arguments.of(
+                        "readIdleTimeoutSeconds only",
+                        HttpConfig.builder().readIdleTimeoutSeconds(30).build()),
+                Arguments.of(
+                        "writeIdleTimeoutSeconds only",
+                        HttpConfig.builder().writeIdleTimeoutSeconds(30).build()));
     }
 
     /**

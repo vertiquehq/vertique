@@ -19,14 +19,18 @@ import dev.vertique.mcp.interceptor.McpToolInterceptor;
 import dev.vertique.mcp.interceptor.McpToolInvocationContext;
 import dev.vertique.mcp.lifecycle.McpErrorType;
 import dev.vertique.mcp.lifecycle.McpMethod;
+import dev.vertique.mcp.lifecycle.McpOutcome;
 import dev.vertique.mcp.lifecycle.McpRequestCompletedListener;
 import dev.vertique.mcp.lifecycle.McpRequestLifecycleObserver;
 import dev.vertique.mcp.lifecycle.McpRequestTerminalEvent;
 import dev.vertique.mcp.lifecycle.McpToolInputObservation;
 import dev.vertique.mcp.lifecycle.McpToolOutputObservation;
 import dev.vertique.mcp.lifecycle.McpTransportOutcome;
+import dev.vertique.mcp.tool.McpAccessMode;
 import dev.vertique.mcp.tool.McpCancellationSignal;
+import dev.vertique.mcp.tool.McpInputRejectionException;
 import dev.vertique.mcp.tool.McpPreparedToolCall;
+import dev.vertique.mcp.tool.McpToolAccess;
 import dev.vertique.mcp.tool.McpToolAnnotations;
 import dev.vertique.mcp.tool.McpToolDescriptor;
 import dev.vertique.mcp.tool.McpToolInvoker;
@@ -65,9 +69,14 @@ import java.util.Set;
  * <p>The dispatcher wires the framework-owned strict codec onto the live request path, enforces the
  * method/origin/content-type/accept admission checks, registers the disconnect/reset settlement seam,
  * and bounds the response write at {@code mcp.output.maxBytes}. MCP arms no whole-request deadline of
- * its own: transport liveness comes from the shared {@link HttpConfig} idle/read/write timeouts, so an
- * idle or slow connection is closed by the shared HTTP layer and reaches this dispatcher through the
- * ordinary disconnect/reset settlement path (T007).
+ * its own: transport liveness is meant to come from the shared {@link HttpConfig} idle/read/write
+ * timeouts, so an idle or slow connection is closed by the shared HTTP layer and reaches this
+ * dispatcher through the ordinary disconnect/reset settlement path (T007) — <strong>but only when at
+ * least one of those three timeouts is actually armed</strong>. Every one of them defaults to
+ * {@code 0} ("disabled"), so this bound is not automatic: {@link McpServerConfigValidator} refuses to
+ * start an enabled mount unless at least one is nonzero, and that startup gate — not the default
+ * configuration — is what makes this dispatcher's liveness claim true for every mount that actually
+ * runs.
  *
  * <p>{@code tools/call} (T012) resolves the requested name through the immutable {@link
  * McpToolRegistry}, reauthorizes the resolved descriptor through {@link McpPolicyEnforcer#decide}
@@ -161,6 +170,26 @@ final class McpRequestDispatcher {
      * {@code tools/list} scan can trigger (issue #416).
      */
     private static final int EXAMINATION_BUDGET_MULTIPLIER = 4;
+
+    /**
+     * The synthetic {@link McpAccessMode#DENY_ALL} descriptor evaluated for an unresolved {@code
+     * tools/call} name (issue #420 residual — existence-oracle-by-timing). A known-but-denied name
+     * reaches {@link McpPolicyEnforcer#decide} before its response is written; short-circuiting an
+     * unknown name straight to {@link #writeUnknownOrUnauthorized} without ever reaching that same
+     * decision point leaves the two paths' latency measurably different (milliseconds against an
+     * application-supplied async PDP), which restores the very existence oracle the shared
+     * {@code -32602} response exists to close. Evaluating this placeholder for every unresolved name
+     * routes both paths through the identical asynchronous decision point instead. Never registered,
+     * never listed, never actually reachable — its one and only role is to be denied.
+     */
+    private static final McpToolDescriptor UNKNOWN_TOOL_PLACEHOLDER_DESCRIPTOR = new McpToolDescriptor(
+            McpRequestTerminalEvent.UNKNOWN_TOOL_NAME,
+            null,
+            "Synthetic placeholder evaluated for an unresolved tools/call name; never registered.",
+            new McpToolAnnotations(true, false, true, false),
+            "{}",
+            null,
+            new McpToolAccess(McpAccessMode.DENY_ALL, List.of(), null));
 
     private static final String KEY_PREFIX = McpRequestDispatcher.class.getName();
     private static final String COMPLETION_COORDINATOR_KEY = KEY_PREFIX + ".completionCoordinator";
@@ -290,14 +319,19 @@ final class McpRequestDispatcher {
      *
      * <p>All admission checks run <em>before</em> the completion coordinator is constructed, so — like
      * the body-limit rejection — a request that fails admission produces no lifecycle observation. Only
-     * POST is accepted; GET/DELETE and any other method are HTTP 405. A present {@code Origin} outside a
-     * non-empty {@code mcp.allowedOrigins} allowlist is HTTP 403; an empty allowlist imposes no origin
-     * restriction. A present {@code Content-Type} whose media type is not {@code application/json} is
-     * HTTP 415, and a present {@code Accept} that admits none of {@code application/json},
-     * {@code text/event-stream}, {@code application/*}, or {@code *&#47;*} is HTTP 406; an absent header
-     * imposes no restriction (present-only, mirroring Origin). Only once every check passes does the
-     * dispatcher construct the coordinator, register the disconnect and reset settlement hooks (§4.7
-     * stage 2), and continue.
+     * POST is accepted; GET/DELETE and any other method are HTTP 405. A present {@code Origin} is HTTP
+     * 403 unless it is literally contained in {@code mcp.allowedOrigins} — an empty (default) allowlist
+     * therefore denies every present {@code Origin} rather than imposing no restriction, so a locally
+     * bound, unconfigured MCP server is not reachable from an arbitrary browser page or a DNS-rebound
+     * name (the MCP HTTP transport spec requires Origin validation for exactly this reason); an absent
+     * {@code Origin} (every non-browser client) is unrestricted. Every admitted method is POST, which
+     * this protocol always carries a required JSON body on, so {@code Content-Type} is mandatory —
+     * absent or non-{@code application/json} is both HTTP 415 — closing the CORS simple-request path an
+     * absent-content-type admission would otherwise reopen ({@code Blob} with an empty type, {@code
+     * navigator.sendBeacon}). A present {@code Accept} that admits none of {@code application/json},
+     * {@code text/event-stream}, {@code application/*}, or {@code *&#47;*} is HTTP 406; an absent
+     * {@code Accept} imposes no restriction. Only once every check passes does the dispatcher construct
+     * the coordinator, register the disconnect and reset settlement hooks (§4.7 stage 2), and continue.
      */
     void begin(RoutingContext context) {
         Instant startedAt = Instant.now();
@@ -309,9 +343,11 @@ final class McpRequestDispatcher {
             return;
         }
         String origin = context.request().getHeader("Origin");
-        if (origin != null
-                && !config.allowedOrigins().isEmpty()
-                && !config.allowedOrigins().contains(origin)) {
+        // Deny-by-default: a present Origin must be literally contained in the allowlist. An empty
+        // (unconfigured) allowlist therefore rejects every present Origin instead of admitting it —
+        // the previous permissive default left a locally bound anonymous MCP server reachable from any
+        // page a user's browser visited.
+        if (origin != null && !config.allowedOrigins().contains(origin)) {
             reject(context, McpMethod.OTHER, McpErrorType.HTTP, 403, null);
             return;
         }
@@ -331,9 +367,13 @@ final class McpRequestDispatcher {
     }
 
     /**
-     * Enforces the present-only {@code Content-Type} admission check: an absent header is admitted, and
-     * a present one is admitted only when its media type (parameters such as {@code ; charset=utf-8}
-     * stripped, case-insensitive) is {@code application/json}.
+     * Enforces the mandatory {@code Content-Type} admission check: every admitted request is a POST
+     * carrying the protocol's required JSON-RPC body, so an absent header is HTTP 415 exactly like a
+     * present one whose media type (parameters such as {@code ; charset=utf-8} stripped,
+     * case-insensitive) is not {@code application/json}. Admitting an absent {@code Content-Type} would
+     * reopen the CORS simple-request path — a cross-origin {@code Blob} with an empty type, or {@code
+     * navigator.sendBeacon}, both send no {@code Content-Type} — which is exactly what a browser's CORS
+     * preflight exists to gate.
      *
      * @param context the request whose {@code Content-Type} header is inspected
      * @return {@code true} when the request may proceed, {@code false} when it is HTTP 415
@@ -341,7 +381,7 @@ final class McpRequestDispatcher {
     private static boolean contentTypeAdmitted(RoutingContext context) {
         String contentType = context.request().getHeader("Content-Type");
         if (contentType == null) {
-            return true;
+            return false;
         }
         return JSON_CONTENT_TYPE.equalsIgnoreCase(mediaTypeOf(contentType));
     }
@@ -449,7 +489,7 @@ final class McpRequestDispatcher {
         byte[] body = bodyBytes(context);
         McpProtocolCodec.Decoded decoded = codec.decodeEnvelope(body);
         if (decoded.isError()) {
-            emitProtocolError(context, decoded, body, security);
+            emitProtocolError(context, decoded, security);
             return;
         }
         JsonNode envelope = decoded.envelope();
@@ -460,7 +500,16 @@ final class McpRequestDispatcher {
                 writeInterceptorRejection(context, envelope, method, security);
                 return;
             }
-            dispatchByMethod(context, envelope, method, security);
+            // dispatchByMethod's own write*() methods are the ones that actually schedule work and
+            // settle the request; a RuntimeException or StackOverflowError escaping synchronously from
+            // here — before any of them ever calls beginWrite — would otherwise strand the request with
+            // no response, no terminal, and no completion (see the stage-7 guard in invokeAndRespond for
+            // the same class of risk on the tools/call path).
+            try {
+                dispatchByMethod(context, envelope, method, security);
+            } catch (RuntimeException | StackOverflowError dispatchFailure) {
+                writeDispatchByMethodFailure(context, envelope, method, security, dispatchFailure);
+            }
         });
     }
 
@@ -546,6 +595,43 @@ final class McpRequestDispatcher {
                 startedAt(context),
                 Instant.now(),
                 McpMethod.OTHER,
+                McpRequestTerminalEvent.UNKNOWN_TOOL_NAME,
+                McpErrorType.INTERNAL,
+                500,
+                INTERNAL_ERROR,
+                null,
+                security,
+                null);
+        write(context, 500, fallback, terminal);
+    }
+
+    /**
+     * Settles a {@code RuntimeException} or {@code StackOverflowError} that escapes synchronously from
+     * {@link #dispatchByMethod} — before any of its {@code write*} methods ever called {@code
+     * beginWrite} — through the same bounded, non-leaking internal-error fallback every other defensive
+     * fallback in this class uses, so the request settles instead of being permanently stranded.
+     *
+     * @param context the request context
+     * @param envelope the validated request envelope whose id is echoed when it fits the cap
+     * @param method the classified method the failure occurred while dispatching, recorded on the
+     *     terminal event
+     * @param security the established security snapshot, recorded on the terminal event
+     * @param cause the failure; never read for its message, only its occurrence matters
+     */
+    private void writeDispatchByMethodFailure(
+            RoutingContext context,
+            JsonNode envelope,
+            McpMethod method,
+            @Nullable SecurityContextSnapshot security,
+            Throwable cause) {
+        byte[] fallback = codec.internalFallback(envelope.get("id"), cause);
+        if (fallback.length > config.outputMaxBytes()) {
+            fallback = codec.internalFallback(null, cause);
+        }
+        McpRequestTerminalEvent terminal = McpRequestTerminalEvent.failed(
+                startedAt(context),
+                Instant.now(),
+                method,
                 McpRequestTerminalEvent.UNKNOWN_TOOL_NAME,
                 McpErrorType.INTERNAL,
                 500,
@@ -644,8 +730,33 @@ final class McpRequestDispatcher {
         errorNode.put("code", INTERCEPTOR_REJECTED);
         errorNode.put("message", INTERCEPTOR_REJECTED_MESSAGE);
         response.set("error", errorNode);
-        byte[] responseBytes = codec.encode(response);
         int status = httpStatusFor(INTERCEPTOR_REJECTED);
+        byte[] responseBytes;
+        try {
+            // The echoed id is client-controlled (up to the envelope codec's bounded maxStringLength),
+            // so — exactly like every other terminal writer in this class — this response is bounded at
+            // mcp.output.maxBytes through encodeCapped rather than the unbounded codec.encode, with the
+            // same degrade-to-id-less fallback below when even that cannot fit.
+            responseBytes = encodeCapped(response);
+        } catch (OutputCapExceededException overCap) {
+            byte[] fallback = codec.internalFallback(envelope.get("id"), overCap);
+            if (fallback.length > config.outputMaxBytes()) {
+                fallback = codec.internalFallback(null, overCap);
+            }
+            McpRequestTerminalEvent overCapTerminal = McpRequestTerminalEvent.failed(
+                    startedAt(context),
+                    Instant.now(),
+                    method,
+                    McpRequestTerminalEvent.UNKNOWN_TOOL_NAME,
+                    McpErrorType.SERIALIZATION,
+                    500,
+                    INTERNAL_ERROR,
+                    null,
+                    security,
+                    null);
+            write(context, 500, fallback, overCapTerminal);
+            return;
+        }
         McpRequestTerminalEvent terminal = McpRequestTerminalEvent.rejected(
                 startedAt(context),
                 Instant.now(),
@@ -666,6 +777,7 @@ final class McpRequestDispatcher {
      */
     private void writeDiscovery(RoutingContext context, JsonNode envelope, SecurityContextSnapshot security) {
         context.response().putHeader("content-type", JSON_CONTENT_TYPE);
+        putIdentityFilteredCacheHeaders(context);
         byte[] payload;
         try {
             payload = encodeCapped(discoveryResponse(envelope));
@@ -700,6 +812,22 @@ final class McpRequestDispatcher {
                 security,
                 null);
         write(context, 200, payload, terminal);
+    }
+
+    /**
+     * Adds the response headers a per-identity filtered result requires: the body itself already
+     * advertises {@code cacheScope: private} with a bounded {@code ttlMs} in its JSON payload, but
+     * without an HTTP-level cache directive a shared cache (a CDN, a corporate proxy, a browser's
+     * disk cache) has no signal not to store or replay one caller's filtered discovery or tool listing
+     * for another. {@code Cache-Control: private, no-store} forbids shared-cache storage outright, and
+     * {@code Vary: Authorization} additionally tells any cache that does key on the caller that
+     * authorization is part of the cache key.
+     *
+     * @param context the request whose response headers are set; must not have started writing yet
+     */
+    private static void putIdentityFilteredCacheHeaders(RoutingContext context) {
+        context.response().putHeader("Cache-Control", "private, no-store");
+        context.response().putHeader("Vary", "Authorization");
     }
 
     /**
@@ -778,7 +906,10 @@ final class McpRequestDispatcher {
         }
         int pageSize = config.toolsPageSize();
         int budget = pageSize * EXAMINATION_BUDGET_MULTIPLIER;
-        SecurityContext caller = securityRuntime.current();
+        // establishedSecurityContext() (never null) rather than the raw securityRuntime.current():
+        // McpPolicyEnforcer#decide null-checks its caller and would throw for the null the raw runtime
+        // value can carry.
+        SecurityContext caller = establishedSecurityContext();
         scan(names, startIndex, pageSize, budget, 0, List.of(), null, caller).onComplete(ar -> {
             if (ar.failed()) {
                 // McpPolicyEnforcer#decide never fails per its own contract; defended here so a
@@ -850,6 +981,7 @@ final class McpRequestDispatcher {
     private void writeToolsListResult(
             RoutingContext context, JsonNode envelope, @Nullable SecurityContextSnapshot security, ScanResult result) {
         context.response().putHeader("content-type", JSON_CONTENT_TYPE);
+        putIdentityFilteredCacheHeaders(context);
         byte[] payload;
         try {
             payload = encodeCapped(toolsListResponse(envelope, result));
@@ -1009,6 +1141,15 @@ final class McpRequestDispatcher {
      * produces for an invalid cursor — before any invocation is attempted. Only a known, authorized
      * call reaches {@link #invokeAndRespond}.
      *
+     * <p>An unresolved name is never short-circuited straight to that response: it is first evaluated
+     * against {@link #UNKNOWN_TOOL_PLACEHOLDER_DESCRIPTOR} through the same {@link
+     * McpPolicyEnforcer#decide} decision point a known-but-denied name reaches, so the two paths carry
+     * the same asynchronous latency shape and cannot be distinguished by timing. The terminal event for
+     * an unresolved name carries {@link McpRequestTerminalEvent#UNKNOWN_TOOL_NAME}, never the
+     * caller-supplied string: an unresolved name touches no real {@link McpToolDescriptor}, so nothing
+     * bounds it except the wire's own 20,000,000-char string limit, and it would otherwise reach every
+     * lifecycle observer and listener verbatim.
+     *
      * @param context the request context
      * @param envelope the validated {@code tools/call} request envelope
      * @param security the established security snapshot, recorded on the terminal event
@@ -1022,11 +1163,21 @@ final class McpRequestDispatcher {
         }
         String toolName = nameNode.asText();
         McpToolInvoker invoker = toolRegistry.invokersByName().get(toolName);
+        // establishedSecurityContext() (never null) rather than the raw securityRuntime.current():
+        // McpPolicyEnforcer#decide null-checks its caller and would throw for the null the raw runtime
+        // value can carry.
+        SecurityContext caller = establishedSecurityContext();
         if (invoker == null) {
-            writeUnknownOrUnauthorized(context, envelope, security, McpMethod.TOOLS_CALL, toolName);
+            policyEnforcer
+                    .decide(UNKNOWN_TOOL_PLACEHOLDER_DESCRIPTOR, caller)
+                    .onComplete(ar -> writeUnknownOrUnauthorized(
+                            context,
+                            envelope,
+                            security,
+                            McpMethod.TOOLS_CALL,
+                            McpRequestTerminalEvent.UNKNOWN_TOOL_NAME));
             return;
         }
-        SecurityContext caller = securityRuntime.current();
         policyEnforcer.decide(invoker.descriptor(), caller).onComplete(ar -> {
             if (ar.failed()) {
                 // McpPolicyEnforcer#decide never fails per its own contract; defended here so a
@@ -1073,7 +1224,14 @@ final class McpRequestDispatcher {
         selectSse(context);
         Map<String, Object> arguments = argumentsOf(envelope);
         if (!schemaValid(toolName, arguments)) {
-            writeToolResult(context, envelope, security, toolName, McpToolResult.error(SCHEMA_REJECTION_MESSAGE), null);
+            writeToolResult(
+                    context,
+                    envelope,
+                    security,
+                    toolName,
+                    McpToolResult.error(SCHEMA_REJECTION_MESSAGE),
+                    null,
+                    McpErrorType.INPUT_VALIDATION);
             return;
         }
         McpCompletionCoordinator coordinator = context.get(COMPLETION_COORDINATOR_KEY);
@@ -1091,7 +1249,14 @@ final class McpRequestDispatcher {
             // Stages 2-4 (generated fixed input boundary) rejected before any application handler ran;
             // this is the same bounded tool-error outcome stage 1 produces above, never the internal
             // fallback a genuine bug in prepare()/invoke() produces.
-            writeToolResult(context, envelope, security, toolName, McpToolResult.error(rejected.getMessage()), null);
+            writeToolResult(
+                    context,
+                    envelope,
+                    security,
+                    toolName,
+                    McpToolResult.error(rejected.getMessage()),
+                    null,
+                    McpErrorType.INPUT_PROCESSING);
             return;
         } catch (RuntimeException prepareFailure) {
             writeSseFallback(context, envelope, security, toolName, prepareFailure);
@@ -1110,8 +1275,11 @@ final class McpRequestDispatcher {
         // Validation (prepare() above already ran it) but strictly before the tool-interceptor stage
         // just below (contract §4.4 callback order). Delivered only to a session implementing
         // McpToolValueObservation; the coordinator retains no reference to the observation once every
-        // onToolInput call has returned (McpCompletionCoordinator#publishToolInput).
-        if (coordinator != null) {
+        // onToolInput call has returned (McpCompletionCoordinator#publishToolInput). Gated on
+        // hasValueObservers() BEFORE the observation is even constructed: McpToolInputObservation's
+        // compact constructor deep-copies the entire normalized argument tree, so a request with no
+        // capable session never pays that copy for an attacker-sized argument tree.
+        if (coordinator != null && coordinator.hasValueObservers()) {
             coordinator.publishToolInput(new McpToolInputObservation(toolContext, prepared.normalizedArguments()));
         }
         runToolInterceptors(0, toolContext).onComplete(interceptorResult -> {
@@ -1122,7 +1290,8 @@ final class McpRequestDispatcher {
                         security,
                         toolName,
                         McpToolResult.error(TOOL_INTERCEPTOR_REJECTED_MESSAGE),
-                        null);
+                        null,
+                        McpErrorType.INTERCEPTOR);
                 return;
             }
             Future<McpToolResult<?>> result;
@@ -1149,24 +1318,41 @@ final class McpRequestDispatcher {
                 // its bounded, JSON-compatible canonical shape here — once — and that exact same value
                 // is reused below for schema validation, the observation callback, and the wire embed;
                 // nothing downstream re-serializes the original application object.
+                //
+                // The whole stage runs inside this try: normalizeStructuredContent bounds serialization
+                // size but can still throw for a pathologically shaped value (e.g. IllegalArgumentException
+                // from a cyclic object graph Jackson cannot convert), and a deeply nested value can drive a
+                // native-recursion StackOverflowError in code this stage calls. Either would otherwise
+                // escape this lambda after beginWrite was never called — no response, no terminal, no
+                // completion — permanently stranding the request (compounded by the fact that MCP relies on
+                // the shared HttpConfig liveness bound, not a stage-local timer, to ever reclaim it). Both
+                // degrade to the same bounded, SSE-framed internal-error fallback every other invocation
+                // failure in this method already uses.
                 McpToolResult<?> toolResult = ar.result();
-                Object normalizedOutput = normalizeStructuredContent(toolResult.structuredContent());
-                if (!outputSchemaValid(toolName, normalizedOutput)) {
-                    // The schema-invalid value never reaches writeToolResult/encodeCapped: it is
-                    // rejected here, before any wire byte is produced and before the output
-                    // observation fires, so an invalid structured result never reaches the wire or a
-                    // capable session.
-                    writeOutputValidationFailure(context, envelope, security, toolName);
-                    return;
+                try {
+                    Object normalizedOutput = normalizeStructuredContent(toolResult.structuredContent());
+                    if (!outputSchemaValid(toolName, normalizedOutput)) {
+                        // The schema-invalid value never reaches writeToolResult/encodeCapped: it is
+                        // rejected here, before any wire byte is produced and before the output
+                        // observation fires, so an invalid structured result never reaches the wire or a
+                        // capable session.
+                        writeOutputValidationFailure(context, envelope, security, toolName);
+                        return;
+                    }
+                    // T020: the opt-in, capability-gated output-value callback fires here — strictly
+                    // after bounded normalization and output-schema validation, strictly before the wire
+                    // write below (contract §4.4 callback order). Delivered only to a session
+                    // implementing McpToolValueObservation, exactly like publishToolInput above. Gated on
+                    // hasValueObservers() BEFORE construction for the same reason: McpToolOutputObservation's
+                    // compact constructor deep-copies the entire normalized result tree.
+                    if (coordinator != null && coordinator.hasValueObservers()) {
+                        coordinator.publishToolOutput(new McpToolOutputObservation(toolContext, normalizedOutput));
+                    }
+                    writeToolResult(
+                            context, envelope, security, toolName, toolResult, normalizedOutput, McpErrorType.HANDLER);
+                } catch (RuntimeException | StackOverflowError stage7Failure) {
+                    writeSseFallback(context, envelope, security, toolName, stage7Failure);
                 }
-                // T020: the opt-in, capability-gated output-value callback fires here — strictly after
-                // bounded normalization and output-schema validation, strictly before the wire write
-                // below (contract §4.4 callback order). Delivered only to a session implementing
-                // McpToolValueObservation, exactly like publishToolInput above.
-                if (coordinator != null) {
-                    coordinator.publishToolOutput(new McpToolOutputObservation(toolContext, normalizedOutput));
-                }
-                writeToolResult(context, envelope, security, toolName, toolResult, normalizedOutput);
             });
         });
     }
@@ -1212,6 +1398,21 @@ final class McpRequestDispatcher {
      * result.onComplete} handler, before validation, observation, or encoding ever run. Nothing else in
      * this class converts a handler's raw structured value a second time: {@link #writeToolResult} and
      * {@link #toolCallResponse} accept and reuse the already-normalized value.
+     *
+     * <p><strong>Not independently bounded.</strong> Contract §4.3 describes two halves for the output
+     * cap to enforce: the normalization of an application structured value, and the complete terminal
+     * message. Only the second half is implemented, by {@link #encodeCapped} (used by every terminal
+     * writer, including {@link #writeToolResult}). This method's own conversion is an unbounded {@link
+     * ObjectMapper#convertValue} tree build: a P04 remediation slice evaluated adding an independent
+     * byte-counting probe ahead of it, but rejected that approach because it requires serializing
+     * {@code value} a second time — which regresses the already-frozen T020 TP-001 "normalized exactly
+     * once" guarantee ({@code McpOutputPipelineIT#shouldNormalizeAndValidateAStructuredResultOnce}),
+     * pinned because a handler's raw value may itself carry side-effecting or expensive conversion
+     * logic that must run at most once. A genuinely single-pass bounded conversion (e.g. a custom
+     * byte-budgeted {@code JsonGenerator}) is a larger change than this remediation slice's scope.
+     * {@link #encodeCapped} still bounds every response actually reaching a client or an observation:
+     * see {@link #outputSchemaValid} and the caller in {@link #invokeAndRespond} for the schema and
+     * observation gates that run before that write.
      *
      * @param value the application handler's structured content, or {@code null} for a text-only result
      * @return the normalized JSON-compatible value, or {@code null} when {@code value} is {@code null}
@@ -1307,6 +1508,20 @@ final class McpRequestDispatcher {
      * {@code result.structuredContent()} and never re-serializes the original application value. Every
      * call site that never carries structured content (a schema, input-processing, or interceptor
      * rejection) passes {@code null}, matching {@code result}'s own {@code null} structured content.
+     *
+     * <p>{@code errorType} classifies the terminal event recorded when {@code result.isError()} is
+     * {@code true}, so a caller-side rejection is never misclassified as a genuine handler fault (the
+     * frozen lifecycle algebra distinguishes {@link McpErrorType#INPUT_VALIDATION} (stage 1 schema
+     * rejection), {@link McpErrorType#INPUT_PROCESSING} (stages 2-4 {@link McpInputRejectionException}),
+     * and {@link McpErrorType#HANDLER} (the tool actually ran and returned an error)). {@link
+     * McpErrorType#INTERCEPTOR} is a distinct case: because the tool-interceptor stage runs before any
+     * handler invocation, a rejection there settles as {@link McpOutcome#REJECTED}/{@code
+     * resultType=NONE} on the terminal event even though the wire body is the same bounded, SSE-framed,
+     * text-only {@code isError=true} tool result every other rejection at this method produces — the
+     * response bytes never distinguish the stages, only the internal lifecycle classification does.
+     * Ignored when {@code result.isError()} is {@code false}, since a successful result is always
+     * classified {@link McpOutcome#SUCCESS}/{@link McpErrorType#NONE} regardless of which stage called
+     * this method.
      */
     private void writeToolResult(
             RoutingContext context,
@@ -1314,7 +1529,8 @@ final class McpRequestDispatcher {
             @Nullable SecurityContextSnapshot security,
             String toolName,
             McpToolResult<?> result,
-            @Nullable Object normalizedStructuredContent) {
+            @Nullable Object normalizedStructuredContent,
+            McpErrorType errorType) {
         byte[] payload;
         try {
             payload = encodeCapped(toolCallResponse(envelope, result, normalizedStructuredContent));
@@ -1322,20 +1538,51 @@ final class McpRequestDispatcher {
             writeSseFallback(context, envelope, security, toolName, overCap);
             return;
         }
-        McpRequestTerminalEvent terminal = result.isError()
-                ? McpRequestTerminalEvent.toolError(
-                        startedAt(context),
-                        Instant.now(),
-                        McpMethod.TOOLS_CALL,
-                        toolName,
-                        McpErrorType.HANDLER,
-                        200,
-                        null,
-                        security,
-                        null)
-                : McpRequestTerminalEvent.success(
-                        startedAt(context), Instant.now(), McpMethod.TOOLS_CALL, toolName, 200, null, security, null);
+        McpRequestTerminalEvent terminal = toolResultTerminal(context, security, toolName, result, errorType);
         writeSse(context, 200, payload, terminal);
+    }
+
+    /**
+     * Builds the terminal event for {@link #writeToolResult}, applying the frozen lifecycle algebra:
+     * a successful result is always {@link McpOutcome#SUCCESS}, an {@link McpErrorType#INTERCEPTOR}
+     * rejection is {@link McpOutcome#REJECTED} with {@code resultType=NONE} (no handler ever ran), and
+     * every other error classification ({@link McpErrorType#INPUT_VALIDATION}, {@link
+     * McpErrorType#INPUT_PROCESSING}, {@link McpErrorType#HANDLER}) is a completed {@link
+     * McpOutcome#TOOL_ERROR}.
+     */
+    private static McpRequestTerminalEvent toolResultTerminal(
+            RoutingContext context,
+            @Nullable SecurityContextSnapshot security,
+            String toolName,
+            McpToolResult<?> result,
+            McpErrorType errorType) {
+        if (!result.isError()) {
+            return McpRequestTerminalEvent.success(
+                    startedAt(context), Instant.now(), McpMethod.TOOLS_CALL, toolName, 200, null, security, null);
+        }
+        if (errorType == McpErrorType.INTERCEPTOR) {
+            return McpRequestTerminalEvent.rejected(
+                    startedAt(context),
+                    Instant.now(),
+                    McpMethod.TOOLS_CALL,
+                    toolName,
+                    errorType,
+                    200,
+                    null,
+                    null,
+                    security,
+                    null);
+        }
+        return McpRequestTerminalEvent.toolError(
+                startedAt(context),
+                Instant.now(),
+                McpMethod.TOOLS_CALL,
+                toolName,
+                errorType,
+                200,
+                null,
+                security,
+                null);
     }
 
     /**
@@ -1551,21 +1798,26 @@ final class McpRequestDispatcher {
      * classified codec error and settles through the bounded internal-error response; the tool surface
      * arrives in T006/T007.
      *
+     * <p>Builds the error bytes from {@code decoded} through {@link McpProtocolCodec#errorResponseFor}
+     * rather than {@link McpProtocolCodec#errorResponse(byte[])}: {@code decoded} already carries
+     * every fact ({@code id}, code, message) that a re-analysis of the raw body would recompute, so
+     * the request body is decoded exactly once on this path — by {@link #dispatch}'s {@code
+     * codec.decodeEnvelope} call — never twice.
+     *
      * @param context the request context
      * @param decoded the already-decoded envelope this dispatch produced, reused so the body is
      *     decoded only once on the dispatch path
-     * @param body the raw request bytes the codec re-analyzes for the error id and code
      * @param security the established security snapshot, or {@code null}
      */
     private void emitProtocolError(
-            RoutingContext context,
-            McpProtocolCodec.Decoded decoded,
-            byte[] body,
-            @Nullable SecurityContextSnapshot security) {
+            RoutingContext context, McpProtocolCodec.Decoded decoded, @Nullable SecurityContextSnapshot security) {
         int code = decoded.isError() ? decoded.error().code() : INTERNAL_ERROR;
         int status = httpStatusFor(code);
         McpErrorType errorType = code == INTERNAL_ERROR ? McpErrorType.INTERNAL : McpErrorType.PROTOCOL;
-        byte[] errorBytes = codec.errorResponse(body);
+        byte[] errorBytes = decoded.isError()
+                ? codec.errorResponseFor(decoded)
+                : codec.internalFallback(
+                        null, new IllegalStateException("emitProtocolError called on a non-error decode"));
         if (errorBytes.length > config.outputMaxBytes()) {
             // The classified error echoes the request id, whose only unbounded element can push the
             // response past mcp.output.maxBytes (a string id is bounded by the envelope codec's frozen
@@ -1655,11 +1907,14 @@ final class McpRequestDispatcher {
         // The admission-rejection path (W4) has no coordinator and writes directly with no
         // terminal/observation. A slow client (e.g. a stopped TCP receive window) can leave this
         // end(buffer) future pending indefinitely, so the write phase CAN stall. That is not left
-        // unbounded: the disconnect/exception settlement hooks registered in registerSettlementHooks
-        // reach the coordinator on the same request-owning context, and McpCompletionCoordinator's
+        // unbounded PROVIDED the shared HttpConfig liveness bound is actually armed: the
+        // disconnect/exception settlement hooks registered in registerSettlementHooks reach the
+        // coordinator on the same request-owning context, and McpCompletionCoordinator's
         // completeOnContext drives finishWrite from there when it finds settlement already claimed by
-        // this beginWrite — so a stalled end() cannot strand the request past the shared HttpConfig
-        // liveness bound that eventually closes the connection.
+        // this beginWrite — so a stalled end() cannot strand the request past that bound. The bound
+        // itself is not automatic (idleTimeoutSeconds/readIdleTimeoutSeconds/writeIdleTimeoutSeconds
+        // all default to 0/disabled); McpServerConfigValidator's startup gate is what guarantees an
+        // enabled mount always has at least one of them armed, which is what makes this comment true.
         if (coordinator != null && !coordinator.beginWrite(terminal)) {
             return;
         }

@@ -106,8 +106,15 @@ public abstract class McpServerModule {
             McpRequestDispatcher dispatcher,
             Set<RouteAuthHandler> routeAuthHandlers,
             IdentityResolutionMiddleware identityResolutionMiddleware,
-            HttpConfig httpConfig) {
+            HttpConfig httpConfig,
+            McpToolRegistry toolRegistry) {
         return new McpRouterMount(
-                config, configValidator, dispatcher, routeAuthHandlers, identityResolutionMiddleware, httpConfig);
+                config,
+                configValidator,
+                dispatcher,
+                routeAuthHandlers,
+                identityResolutionMiddleware,
+                httpConfig,
+                toolRegistry);
     }
 }

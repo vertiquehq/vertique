@@ -38,14 +38,19 @@ key for it. Request body size is enforced from `http.maxBodySize`, which also bo
 decodable envelope document length. A configured `jsonProfile` is validated during composition even
 if MCP is disabled, preventing a latent invalid deployment configuration.
 
-**Transport liveness is not provided out of the box.** MCP arms no whole-request deadline of its
-own (T007 removed the earlier `mcp.requestTimeoutMs`); it relies entirely on the shared `HttpConfig`
-idle/read/write timeouts to ever close a stalled or abandoned connection. Those three settings —
-`http.idleTimeoutSeconds`, `http.readIdleTimeoutSeconds`, and `http.writeIdleTimeoutSeconds` — all
-**default to `0`, which disables them**. A deployment that mounts MCP without setting at least one of
-these has no liveness bound at all: a client that stops reading or writing mid-request can hold its
-connection, and the MCP request lifecycle observation opened for it, open indefinitely. Set at least
-one non-zero `HttpConfig` timeout for any MCP deployment.
+**Transport liveness is not provided out of the box, and startup enforces that at least one bound
+exists.** MCP arms no whole-request deadline of its own (T007 removed the earlier
+`mcp.requestTimeoutMs`); it relies entirely on the shared `HttpConfig` idle/read/write timeouts to
+ever close a stalled or abandoned connection. Those three settings — `http.idleTimeoutSeconds`,
+`http.readIdleTimeoutSeconds`, and `http.writeIdleTimeoutSeconds` — all **default to `0`, which
+disables them**. Left unset, a hanging request-interceptor, a hanging tool-interceptor, a hanging
+tool handler, or a client that simply stops reading mid-response could hold its connection, and the
+MCP request lifecycle observation opened for it, open indefinitely — reachable by an unauthenticated
+caller against any `@PermitAll` tool. `McpServerConfigValidator` closes this at composition: **an
+enabled MCP mount refuses to start unless at least one of the three `HttpConfig` liveness timeouts is
+greater than zero**, naming all three keys in the `ConfigurationException` message when none is set.
+Set at least one non-zero `HttpConfig` timeout for any MCP deployment — the mount will not start
+otherwise.
 
 **Upgrading past T007:** `mcp.requestTimeoutMs`, `mcp.jsonMaxDepth`, `mcp.jsonMaxPropertiesPerObject`,
 `mcp.jsonMaxItemsPerArray`, and `mcp.jsonMaxStringChars` no longer exist. `McpServerConfig` ignores
@@ -64,12 +69,17 @@ header, and two independently deployed servers share nothing, so a load balancer
 request to any instance. Every request is admitted through the fixed pipeline before dispatch:
 
 - **Method** — only `POST` is accepted. `GET`, `DELETE`, and any other method are HTTP `405`.
-- **Origin** — a request that carries an `Origin` outside a non-empty `mcp.allowedOrigins` allowlist
-  is rejected with HTTP `403` before dispatch. An empty allowlist (the default) imposes no origin
-  restriction, and a request with no `Origin` header is never origin-rejected.
-- **Content-Type** — a request that carries a `Content-Type` whose media type (parameters such as
-  `; charset=utf-8` ignored) is not `application/json` is rejected with HTTP `415`. A request with no
-  `Content-Type` header is never media-rejected (present-only, like `Origin`).
+- **Origin** — deny-by-default: a request that carries an `Origin` not literally contained in
+  `mcp.allowedOrigins` is rejected with HTTP `403` before dispatch. An empty allowlist (the default)
+  therefore rejects **every** present `Origin` rather than imposing no restriction — the MCP HTTP
+  transport spec requires Origin validation specifically so a locally bound, unconfigured MCP server
+  is not reachable from an arbitrary browser page or a DNS-rebound name. A request with no `Origin`
+  header (every non-browser client) is never origin-rejected.
+- **Content-Type** — mandatory: every admitted request is a `POST` carrying the protocol's required
+  JSON-RPC body, so an absent `Content-Type` is rejected with HTTP `415` exactly like a present one
+  whose media type (parameters such as `; charset=utf-8` ignored) is not `application/json`. Admitting
+  an absent `Content-Type` would reopen the CORS simple-request path (a cross-origin `Blob` with an
+  empty type, or `navigator.sendBeacon`, both send none).
 - **Accept** — a request that carries an `Accept` admitting none of `application/json`,
   `text/event-stream`, `application/*`, or `*/*` is rejected with HTTP `406`. A request with no
   `Accept` header is never media-rejected. Discovery always answers `application/json`, so a client
@@ -99,10 +109,10 @@ precedes the completion, and any later signal after the first settlement wins is
 disconnect that races a late handler result cannot produce a second terminal. A disconnect or reset
 before the first response byte records an uncommitted (`responseCommitted=false`)
 `DISCONNECTED`/`RESET` completion. MCP arms no whole-request timer of its own: transport liveness
-comes from the shared `HttpConfig` idle/read/write timeouts, so an idle or slow connection is closed
-by the shared HTTP layer and reaches MCP through this same disconnect/reset settlement path,
-classified as transport cancellation (`McpErrorType.TRANSPORT`) rather than a distinct timeout
-outcome. `McpErrorType.TIMEOUT` has no producer in this module; it is retained in the frozen
+comes from the shared `HttpConfig` idle/read/write timeouts — guaranteed armed for every mount that
+actually starts by the startup gate described above — so an idle or slow connection is closed by the
+shared HTTP layer and reaches MCP through this same disconnect/reset settlement path, classified as
+transport cancellation (`McpErrorType.TRANSPORT`) rather than a distinct timeout outcome. `McpErrorType.TIMEOUT` has no producer in this module; it is retained in the frozen
 lifecycle enum purely for enum stability, reserved for a future cross-transport server-operation
 `@Timeout` capability. Observer `open`, callback, null-session, and retention failures are isolated
 per observer and never change the protocol or business outcome. The method, `Origin`,
@@ -131,7 +141,8 @@ exactly-once by the same completion latch; a write that does genuinely resolve a
 suppressed no-op. A write whose own transport future fails settles directly as `WRITE_FAILED`,
 recording the response's real commit state (`headWritten()` at settlement time) rather than a value
 inferred from the write's success flag. No MCP-owned whole-request deadline is introduced by any of
-this: transport liveness stays exclusively with the shared `HttpConfig` idle/read/write timeouts.
+this: transport liveness stays exclusively with the shared `HttpConfig` idle/read/write timeouts,
+guaranteed armed for every mount that actually starts by the startup gate described above.
 
 ## Bounded response output
 
@@ -257,6 +268,16 @@ rejection and a stage 2–4 rejection already use — never a JSON-RPC protocol 
 interceptor class name, reason, or exception text. A zero-interceptor composition is valid and always
 permits.
 
+The wire bytes are identical across all three rejection stages, but the internal lifecycle
+classification is not: a stage 1 schema rejection and a stage 2–4 `McpInputRejectionException`
+settle as a completed `McpOutcome.TOOL_ERROR` (`McpErrorType.INPUT_VALIDATION` and
+`McpErrorType.INPUT_PROCESSING` respectively), while a tool-interceptor rejection settles as
+`McpOutcome.REJECTED`/`McpErrorType.INTERCEPTOR`/`resultType=NONE` — because no handler ever ran, not
+because the call failed after running one. An observer distinguishing "the input was rejected," "the
+handler ran and returned an error," and "the call was rejected before the handler ever ran" reads this
+from the terminal event's `errorType`/`outcome`, never from the response body, which cannot make that
+distinction.
+
 ## Value observation stage
 
 Once the generated invoker's `prepare(...)` has returned — meaning stages 1–4 of the [Request-time
@@ -270,6 +291,13 @@ receives an argument or result reference through any callback. The coordinator d
 the observation; the reference exists only on the publish call's stack and each capable session's
 synchronous callback frame, and is unreachable through the coordinator once every `onToolInput` call
 has returned.
+
+The gate is checked *before* the observation is even constructed, not merely before delivery:
+`McpCompletionCoordinator#hasValueObservers()` is computed once at construction from the opened
+session set, and `McpRequestDispatcher` calls it before building an `McpToolInputObservation` or
+`McpToolOutputObservation` at all. Both compact constructors deep-copy their entire value tree
+unconditionally, so a request with no capable session in this composition never pays that copy for an
+attacker-sized argument or result tree.
 
 The delivered `normalizedArguments` is exactly `McpPreparedToolCall#normalizedArguments()`, deep-copied
 into an unmodifiable view at every nesting level by `McpToolInputObservation`'s compact constructor.
@@ -300,11 +328,33 @@ embed — nothing re-serializes the original application object a second time. A
 output schema, or a text-only/structured-content-free result, is trivially valid: there is nothing to
 normalize or validate.
 
+**The `mcp.output.maxBytes` cap bounds only the complete terminal message, not normalization itself.**
+Contract §4.3 describes two halves for the cap to enforce independently: the normalization of the
+application's structured value, and the complete terminal message. Only the second half is
+implemented — the response write below streams through the same byte-counting sink every terminal
+writer uses, aborting the moment the running byte count would exceed the cap. Normalization
+(`McpRequestDispatcher#normalizeStructuredContent`, the `convertValue` call above) is itself an
+unbounded, fully in-memory tree build with no independent size check: a byte-counting probe ahead of
+it was evaluated and rejected, because it requires serializing the handler's raw value a second time,
+which regresses the "normalized exactly once" guarantee the paragraph above states and
+`McpOutputPipelineIT#shouldNormalizeAndValidateAStructuredResultOnce` pins on real emitted output. A
+handler's raw value is trusted application-authored data, not attacker-controlled input, in the same
+sense the rest of this module's threat model treats a resolved tool's own logic; the response write's
+existing bound still catches an oversized value before it ever reaches the wire. It does **not** catch
+it before the `onToolOutput` observation: `publishToolOutput` runs before the bounded terminal write,
+so a capable session can observe a structured value the wire cap will shortly afterward reject.
+Closing that ordering gap is future work, not part of this bound.
+
 A structured result that fails its own declared output schema never reaches the wire and never
 reaches a session: it is rejected before the `onToolOutput` observation fires and before any response
 byte is produced, settling as a bounded internal error (`McpErrorType.OUTPUT_VALIDATION`, JSON-RPC
 `-32603`) through the same non-leaking degrade-to-id-less shape used elsewhere for a serialization or
-handler failure — carrying no schema keyword, property, or value detail.
+handler failure — carrying no schema keyword, property, or value detail. The whole of this stage —
+normalization, output-schema validation, and the observation callback — runs under the same bounded
+fallback: an oversized value, a cyclic object graph a handler returned (`IllegalArgumentException`
+from Jackson's conversion), or a pathologically deep value (a native-recursion `StackOverflowError`)
+all degrade to the same bounded internal-error response rather than silently stranding the request
+with no response, no terminal, and no completion.
 
 The response write itself is bounded exactly like discovery and `tools/list` ([Bounded response
 output](#bounded-response-output)): serialization streams to a byte-counting sink that aborts the
@@ -524,7 +574,10 @@ Both `server/discover` and `tools/list` carry the mandatory `ttlMs` (`mcp.tools.
 indistinguishable `-32602`/`Invalid params` response, and the same HTTP status, that a denied or
 unknown tool produces (`McpPolicyEnforcer#unknownOrUnauthorizedError()` mapped through the one
 shared `httpStatusFor` factory) — never a distinct code or status that would let a caller
-distinguish "malformed cursor" from any other `-32602` cause.
+distinguish "malformed cursor" from any other `-32602` cause. Because both bodies are per-identity
+filtered, both responses also carry `Cache-Control: private, no-store` and `Vary: Authorization`
+alongside their JSON `cacheScope`/`ttlMs` hints, so a shared cache (a CDN, a proxy, a browser disk
+cache) has an HTTP-level signal not to store or replay one caller's filtered result for another.
 
 ## Zero-argument tool calls
 
@@ -541,6 +594,17 @@ tool name, an unresolved name, and a denied decision all settle through the exac
 status, no tool ever invoked. This holds regardless of which of the three causes produced it — an
 unknown name and a `@DenyAll` tool are externally indistinguishable, matching the `tools/list`
 guarantee above.
+
+The bytes are identical, but the *path* to them used to differ: an unknown name resolved from a plain
+registry-map lookup, while a denied name additionally traversed `McpPolicyEnforcer#decide`. With an
+application-supplied asynchronous policy decision point, that gap is measurable and would let a caller
+recover the same existence oracle the shared `-32602` response exists to close by timing the response
+instead of reading it. An unresolved name is therefore evaluated against a synthetic, never-registered
+`@DenyAll` placeholder descriptor through the identical decision point, so both paths carry the same
+asynchronous latency shape. The terminal event recorded for an unresolved name always carries the
+bounded `UNKNOWN` placeholder, never the caller-supplied string — an unresolved name touches no real
+`McpToolDescriptor`, so nothing would otherwise bound it before it reached every lifecycle observer
+and listener as internal telemetry except the wire's own very large string limit.
 
 **SSE selection precedes invocation, unconditionally.** Only once a call is both known and
 authorized does the dispatcher select request-scoped SSE (`Content-Type: text/event-stream`,
@@ -586,8 +650,10 @@ application handler ever runs:
 A failure at any of the four stages yields the same bounded outcome: one text-only, `isError=true`
 `CallToolResult` — never a JSON-RPC protocol error, and never a detail of which schema keyword,
 policy, or constraint failed. Stage 1 failures are written directly by the dispatcher; a stage 2–4
-failure is signalled by the generated invoker throwing the package-private
-`McpInputRejectionException`, which the dispatcher maps to the identical bounded outcome — so a
+failure is signalled by the generated invoker throwing the public
+`dev.vertique.mcp.tool.McpInputRejectionException` (public, not package-private here, because
+`prepare()` is generated into an arbitrary application package that cannot reach a package-private
+type in this module), which the dispatcher maps to the identical bounded outcome — so a
 caller cannot tell which of the four stages rejected a call from the response shape. Only after all
 four stages succeed does the dispatcher deliver the [Value observation stage](#value-observation-stage)
 `onToolInput` callback and then run the [Tool interceptor stage](#tool-interceptor-stage); only once

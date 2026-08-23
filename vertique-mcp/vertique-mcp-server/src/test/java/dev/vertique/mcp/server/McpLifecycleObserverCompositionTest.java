@@ -436,7 +436,9 @@ class McpLifecycleObserverCompositionTest {
         @Provides
         @Singleton
         static HttpConfig httpConfig() {
-            return HttpConfig.builder().build();
+            // idleTimeoutSeconds armed: McpServerConfigValidator's startup gate (P04, issue W1) refuses
+            // an enabled mount unless at least one HttpConfig liveness timeout is nonzero.
+            return HttpConfig.builder().idleTimeoutSeconds(60).build();
         }
 
         /**

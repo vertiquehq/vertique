@@ -8,6 +8,9 @@ import dev.vertique.codegen.test.ProcessorTestHarness;
 import dev.vertique.codegen.test.fixtures.SourceFiles;
 import dev.vertique.core.context.ContextHolder;
 import dev.vertique.core.context.ContextValue;
+import dev.vertique.input.processing.InputObjectProcessor;
+import dev.vertique.mcp.server.runtime.McpToolRuntimeFactory;
+import dev.vertique.mcp.server.runtime.McpToolRuntimeFactoryTestSupport;
 import dev.vertique.mcp.tool.McpToolInvoker;
 import dev.vertique.rest.core.config.HttpConfig;
 import dev.vertique.rest.core.middleware.RequestContextLifecycle;
@@ -118,7 +121,7 @@ final class McpGeneratedHelloToolITFixture {
                 NO_OP_CONTEXT_HOLDER,
                 securityRuntime,
                 Optional.empty()));
-        HttpConfig httpConfig = HttpConfig.builder().build();
+        HttpConfig httpConfig = HttpConfig.builder().idleTimeoutSeconds(60).build();
 
         McpRouterMount mount = new McpRouterMount(
                 config,
@@ -135,7 +138,8 @@ final class McpGeneratedHelloToolITFixture {
                         policyEnforcer),
                 Set.of(),
                 identityResolution(securityRuntime),
-                httpConfig);
+                httpConfig,
+                registry);
         Router router = Router.router(vertx);
         router.route().handler(new RequestContextLifecycle());
         router.route(config.mountPath()).subRouter(await(mount.createRouter(vertx)));
@@ -171,15 +175,27 @@ final class McpGeneratedHelloToolITFixture {
 
     /**
      * Loads the generated {@code HelloTools} bean and its generated invoker, and constructs the
-     * invoker through its generated {@code @Inject} constructor.
+     * invoker through its generated {@code @Inject} constructor: the tool bean, a real
+     * {@link McpToolRuntimeFactory}, and a real (policy-free) {@link InputObjectProcessor} — {@code
+     * HelloTools.greet()} is zero-argument, so neither resolver function is ever actually invoked.
      */
     private McpToolInvoker loadInvoker() throws Exception {
         Class<?> toolsClass = result.loadGeneratedClass(TOOLS_SOURCE_FQN);
         Class<?> invokerClass = result.loadGeneratedClass(INVOKER_FQN);
         Object toolsInstance = toolsClass.getDeclaredConstructor().newInstance();
-        Constructor<?> invokerConstructor = invokerClass.getDeclaredConstructor(toolsClass);
+        Constructor<?> invokerConstructor = invokerClass.getDeclaredConstructor(
+                toolsClass, McpToolRuntimeFactory.class, InputObjectProcessor.class);
         invokerConstructor.setAccessible(true);
-        return (McpToolInvoker) invokerConstructor.newInstance(toolsInstance);
+        return (McpToolInvoker) invokerConstructor.newInstance(
+                toolsInstance,
+                McpToolRuntimeFactoryTestSupport.factory(),
+                InputObjectProcessor.createDefault(
+                        canonicalizerType -> {
+                            throw new IllegalArgumentException("unresolvable canonicalizer " + canonicalizerType);
+                        },
+                        sanitizerType -> {
+                            throw new IllegalArgumentException("unresolvable sanitizer " + sanitizerType);
+                        }));
     }
 
     private static IdentityResolutionMiddleware identityResolution(SecurityRuntime securityRuntime) {
