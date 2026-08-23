@@ -99,6 +99,7 @@
     "dev.vertique:vertique-mcp-core",
     "dev.vertique:vertique-mcp-server",
     "dev.vertique:vertique-micrometer-core",
+    "dev.vertique:vertique-micrometer-mcp",
     "dev.vertique:vertique-micrometer-registry-prometheus",
     "dev.vertique:vertique-micrometer-rest",
     "dev.vertique:vertique-micrometer-services",
