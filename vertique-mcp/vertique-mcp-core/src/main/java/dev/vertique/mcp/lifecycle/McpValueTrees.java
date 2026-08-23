@@ -20,20 +20,31 @@ import java.util.function.Supplier;
  *
  * <p>A value-observation record's normalized tree must reject mutation anywhere in its nested
  * structure, not only at the outermost map or list, regardless of whether the tree handed to the
- * record's compact constructor was itself already immutable. This package-private helper is the one
- * place both {@link McpToolInputObservation} and {@link McpToolOutputObservation} enforce that.
+ * record's compact constructor was itself already immutable. This helper is the one place both
+ * {@link McpToolInputObservation} and {@link McpToolOutputObservation} enforce that.
+ *
+ * <p>Public — beyond the two observation records above, {@code McpToolInvokerEmitter}-generated code
+ * (a different module, a different package per generated invoker) also calls {@link
+ * #deepUnmodifiableMap} to build the deeply immutable {@code normalizedArguments} map {@link
+ * dev.vertique.mcp.tool.McpPreparedToolCall#normalizedArguments()} contractually promises, in place
+ * of {@code Map.copyOf} — which both throws on an explicit {@code null} value (INP-001 deliberately
+ * preserves an explicit-null {@code Optional<T>} argument all the way through materialization) and
+ * only freezes the root map, leaving nested {@code Map}/{@code List} values mutable.
  */
-final class McpValueTrees {
+public final class McpValueTrees {
 
     private McpValueTrees() {}
 
     /**
-     * Returns a deeply unmodifiable copy of {@code source}, preserving key order.
+     * Returns a deeply unmodifiable copy of {@code source}, preserving key order and any explicit
+     * {@code null} value: unlike {@link Map#copyOf}, a {@code null} value never throws here — it
+     * copies straight through both at the top level and at every nested {@code Map}/{@code List}
+     * level, exactly like every other scalar.
      *
-     * @param source the map to copy; must not be {@code null}
+     * @param source the map to copy; must not be {@code null}, but any of its values may be
      * @return an unmodifiable map whose nested {@code Map}/{@code List} values are unmodifiable too
      */
-    static Map<String, Object> deepUnmodifiableMap(Map<String, Object> source) {
+    public static Map<String, Object> deepUnmodifiableMap(Map<String, Object> source) {
         Map<String, Object> copy = new LinkedHashMap<>();
         source.forEach((key, value) -> copy.put(key, deepUnmodifiable(value)));
         return Collections.unmodifiableMap(copy);

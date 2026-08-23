@@ -31,9 +31,11 @@ blank `@McpToolParam.name` resolves to the source parameter name. Requiredness i
 an `Optional<T>` parameter may be absent, every other parameter is required.
 
 `McpCancellationSignal` is the only framework-supplied parameter a tool method may declare. It is
-excluded from the input schema and lets a handler stop cooperative work when the client disconnects
-or the call times out. Cancellation is cooperative: the framework cannot stop a handler that
-ignores the signal.
+excluded from the input schema and lets a handler stop cooperative work when the request settles as
+anything other than a successful write: a client disconnect, a response stream reset, a failed
+write, or the shared HTTP layer closing an idle or slow connection (MCP arms no whole-request
+timeout of its own). Cancellation is cooperative: the framework cannot stop a handler that ignores
+the signal.
 
 `McpToolResult` is the immutable, complete-only result type a handler may return when it needs
 explicit text content or a tool execution error; use its `text`, `structured`, and `error`
@@ -82,15 +84,18 @@ arguments against the input schema, generated code then applies input policies, 
 parameters through the effective JSON profile, and performs Bean Validation. No prepared call
 exists for a failed stage.
 
-`McpBeanValidation` and `McpInputRejectionException` are two further generated-runtime support
-types, public for the same reason `McpToolInvoker` is: `prepare` is generated into an arbitrary
-application package, which cannot reach a package-private framework type in a different module.
-`McpBeanValidation.validate(carrier)` is the one shared, thread-safe Jakarta Bean Validation
+`McpBeanValidation`, `McpInputRejectionException`, and `McpValueTrees` are further generated-runtime
+support types, public for the same reason `McpToolInvoker` is: `prepare` is generated into an
+arbitrary application package, which cannot reach a package-private framework type in a different
+module. `McpBeanValidation.validate(carrier)` is the one shared, thread-safe Jakarta Bean Validation
 `Validator` every generated `prepare()` calls for its Bean Validation stage.
 `McpInputRejectionException` signals that a `tools/call` argument tree failed input-policy
 application, materialization, or Bean Validation; its message is always a fixed, non-interpolated
-literal, since it is returned to the caller verbatim. Application code neither calls nor throws
-either type itself.
+literal, since it is returned to the caller verbatim. `McpValueTrees.deepUnmodifiableMap(map)` builds
+the deeply immutable, null-preserving `normalizedArguments` map every generated `PreparedCall`
+returns — unlike `Map.copyOf`, an explicit `null` value never throws, and every nested `Map`/`List`
+is unmodifiable too, not just the root. Application code neither calls nor throws any of these three
+types itself.
 
 ## Lifecycle facts
 

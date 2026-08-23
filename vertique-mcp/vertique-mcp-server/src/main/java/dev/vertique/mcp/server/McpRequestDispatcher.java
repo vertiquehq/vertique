@@ -165,6 +165,18 @@ final class McpRequestDispatcher {
     private static final String SCHEMA_REJECTION_MESSAGE = "Invalid tool arguments: schema validation failed";
 
     /**
+     * The bounded, non-leaking text returned as the sole content item when {@code tools/call}'s
+     * {@code arguments} member is present and non-null but not a JSON object (e.g. an array, string,
+     * or number). Such a value is rejected outright rather than silently coerced to the empty map:
+     * coercing it would let a zero-argument tool execute from a schema-invalid call, materializing a
+     * result from an input the client never actually sent (§4.7). An absent {@code arguments} member,
+     * or an explicit JSON {@code null}, is unaffected and still normalizes to {@code {}} through
+     * {@link #argumentsOf} — only a present non-null non-object value is rejected here.
+     */
+    private static final String ARGUMENTS_TYPE_REJECTION_MESSAGE =
+            "Invalid tool arguments: arguments must be an object";
+
+    /**
      * The hard per-page examination cap (§4.7): a page examines at most this many multiples of
      * {@code mcp.tools.pageSize} candidates, bounding the authorization fan-out an unauthenticated
      * {@code tools/list} scan can trigger (issue #416).
@@ -314,26 +326,34 @@ final class McpRequestDispatcher {
     }
 
     /**
-     * Applies the cheap HTTP admission checks (§4.7 stage 1) before opening any lifecycle observation
-     * and before authentication and identity establishment.
+     * Applies the cheap HTTP admission checks (§4.7 stage 1) — method, {@code Origin}, {@code
+     * Content-Type}, {@code Accept} — before any request body is read.
      *
-     * <p>All admission checks run <em>before</em> the completion coordinator is constructed, so — like
-     * the body-limit rejection — a request that fails admission produces no lifecycle observation. Only
-     * POST is accepted; GET/DELETE and any other method are HTTP 405. A present {@code Origin} is HTTP
-     * 403 unless it is literally contained in {@code mcp.allowedOrigins} — an empty (default) allowlist
-     * therefore denies every present {@code Origin} rather than imposing no restriction, so a locally
-     * bound, unconfigured MCP server is not reachable from an arbitrary browser page or a DNS-rebound
-     * name (the MCP HTTP transport spec requires Origin validation for exactly this reason); an absent
-     * {@code Origin} (every non-browser client) is unrestricted. Every admitted method is POST, which
-     * this protocol always carries a required JSON body on, so {@code Content-Type} is mandatory —
-     * absent or non-{@code application/json} is both HTTP 415 — closing the CORS simple-request path an
-     * absent-content-type admission would otherwise reopen ({@code Blob} with an empty type, {@code
-     * navigator.sendBeacon}). A present {@code Accept} that admits none of {@code application/json},
-     * {@code text/event-stream}, {@code application/*}, or {@code *&#47;*} is HTTP 406; an absent
-     * {@code Accept} imposes no restriction. Only once every check passes does the dispatcher construct
-     * the coordinator, register the disconnect and reset settlement hooks (§4.7 stage 2), and continue.
+     * <p>Mounted by {@link McpRouterMount} strictly <em>before</em> {@code BodyHandler}: every check
+     * here inspects only the request line and headers, never {@code context.body()}, so a request that
+     * fails admission is rejected without the framework ever aggregating its body — up to {@code
+     * mcp.output.maxBytes}/{@code httpConfig.maxBodySize()} of aggregation work a disallowed Origin,
+     * method, or media type would otherwise force before its 403/405/415, inverting the cheap-
+     * admission-first contract this method restores. {@link #begin}, which constructs the completion
+     * coordinator and registers the disconnect/reset settlement hooks, still runs after {@code
+     * BodyHandler} for every request this method admits — splitting the two never changes when
+     * lifecycle observation opens for an admitted request, only when a doomed one is rejected.
+     *
+     * <p>Only POST is accepted; GET/DELETE and any other method are HTTP 405. A present {@code Origin}
+     * is HTTP 403 unless it is literally contained in {@code mcp.allowedOrigins} — an empty (default)
+     * allowlist therefore denies every present {@code Origin} rather than imposing no restriction, so a
+     * locally bound, unconfigured MCP server is not reachable from an arbitrary browser page or a
+     * DNS-rebound name (the MCP HTTP transport spec requires Origin validation for exactly this reason);
+     * an absent {@code Origin} (every non-browser client) is unrestricted. Every admitted method is
+     * POST, which this protocol always carries a required JSON body on, so {@code Content-Type} is
+     * mandatory — absent or non-{@code application/json} is both HTTP 415 — closing the CORS
+     * simple-request path an absent-content-type admission would otherwise reopen ({@code Blob} with an
+     * empty type, {@code navigator.sendBeacon}). A present {@code Accept} that admits none of {@code
+     * application/json}, {@code text/event-stream}, {@code application/*}, or {@code *&#47;*} is HTTP
+     * 406; an absent {@code Accept} imposes no restriction. Only once every check passes does the
+     * request continue toward {@code BodyHandler} and, eventually, {@link #begin}.
      */
-    void begin(RoutingContext context) {
+    void admitCheap(RoutingContext context) {
         Instant startedAt = Instant.now();
         context.put(STARTED_AT_KEY, startedAt);
         // Every admission check runs before the coordinator exists, so a rejection here opens no
@@ -359,6 +379,21 @@ final class McpRequestDispatcher {
             reject(context, McpMethod.OTHER, McpErrorType.HTTP, 406, null);
             return;
         }
+        context.next();
+    }
+
+    /**
+     * Constructs the request's completion coordinator and registers its disconnect/reset settlement
+     * hooks (§4.7 stage 2), for a request that already passed {@link #admitCheap}'s cheap admission
+     * checks and {@code BodyHandler}'s body aggregation.
+     *
+     * <p>Opens the request's lifecycle observation: every observer and completed-listener call for this
+     * request is scoped to the coordinator constructed here, so — like the cheap-admission rejections
+     * above it — nothing before this point (a disallowed method/Origin/Content-Type/Accept, or a
+     * body-limit rejection) ever produces a lifecycle observation.
+     */
+    void begin(RoutingContext context) {
+        Instant startedAt = startedAt(context);
         McpCompletionCoordinator coordinator = new McpCompletionCoordinator(
                 context.vertx().getOrCreateContext(), lifecycleObservers, completedListeners, startedAt);
         context.put(COMPLETION_COORDINATOR_KEY, coordinator);
@@ -925,6 +960,17 @@ final class McpRequestDispatcher {
      * Scans candidates {@code names[index..)} for one bounded page, reauthorizing every candidate it
      * examines exactly once, and stopping at the first of: the page reaching {@code pageSize} visible
      * tools, {@code examined} reaching {@code budget}, or the candidate list being exhausted.
+     *
+     * <p>Deliberately iterative, not recursive. Vert.x 5.1.6 documents no trampolining or
+     * stack-safety guarantee for {@link Future#compose} on an already-completed future, and a
+     * synchronous {@link McpPolicyEnforcer#decide} decision (e.g. {@code PermitAll}) resolves exactly
+     * that way — so a per-candidate recursive call chained through {@code compose} would be genuine
+     * native recursion up to {@code budget} (2,000) stack frames deep. This loop instead advances
+     * in-place on the current stack frame whenever a decision is already resolved ({@link
+     * Future#isComplete()}), and only ever calls back into itself — via {@code compose}, resuming on a
+     * fresh callback stack frame posted through the event loop — the one time a decision is genuinely
+     * still pending. At the maximum budget with every decision completing immediately (the case that
+     * would otherwise recurse), this method never grows the call stack past its own single frame.
      */
     private Future<ScanResult> scan(
             List<String> names,
@@ -935,21 +981,47 @@ final class McpRequestDispatcher {
             List<McpToolDescriptor> visible,
             @Nullable String lastExaminedName,
             SecurityContext caller) {
-        if (visible.size() >= pageSize || examined >= budget || index >= names.size()) {
-            boolean candidatesRemain = index < names.size();
-            return Future.succeededFuture(
-                    new ScanResult(visible, candidatesRemain ? lastExaminedName : null, examined));
-        }
-        String name = names.get(index);
-        McpToolDescriptor descriptor = toolRegistry.descriptorsByName().get(name);
-        return policyEnforcer.decide(descriptor, caller).compose(decision -> {
-            List<McpToolDescriptor> updated = visible;
-            if (decision.permitted()) {
-                updated = new ArrayList<>(visible);
-                updated.add(descriptor);
+        List<McpToolDescriptor> currentVisible = visible;
+        int currentIndex = index;
+        int currentExamined = examined;
+        String currentLastExaminedName = lastExaminedName;
+        while (true) {
+            if (currentVisible.size() >= pageSize || currentExamined >= budget || currentIndex >= names.size()) {
+                boolean candidatesRemain = currentIndex < names.size();
+                return Future.succeededFuture(new ScanResult(
+                        currentVisible, candidatesRemain ? currentLastExaminedName : null, currentExamined));
             }
-            return scan(names, index + 1, pageSize, budget, examined + 1, updated, name, caller);
-        });
+            String name = names.get(currentIndex);
+            McpToolDescriptor descriptor = toolRegistry.descriptorsByName().get(name);
+            var decisionFuture = policyEnforcer.decide(descriptor, caller);
+            if (!decisionFuture.isComplete()) {
+                // Genuinely asynchronous: resume through compose, on a fresh stack frame, instead of
+                // looping here — looping would spin-wait on a future that is not yet resolved.
+                List<McpToolDescriptor> visibleSnapshot = currentVisible;
+                int examinedSnapshot = currentExamined;
+                int indexSnapshot = currentIndex;
+                return decisionFuture.compose(decision -> {
+                    List<McpToolDescriptor> updated = visibleSnapshot;
+                    if (decision.permitted()) {
+                        updated = new ArrayList<>(visibleSnapshot);
+                        updated.add(descriptor);
+                    }
+                    return scan(
+                            names, indexSnapshot + 1, pageSize, budget, examinedSnapshot + 1, updated, name, caller);
+                });
+            }
+            if (decisionFuture.failed()) {
+                return Future.failedFuture(decisionFuture.cause());
+            }
+            if (decisionFuture.result().permitted()) {
+                List<McpToolDescriptor> updated = new ArrayList<>(currentVisible);
+                updated.add(descriptor);
+                currentVisible = updated;
+            }
+            currentLastExaminedName = name;
+            currentExamined = currentExamined + 1;
+            currentIndex = currentIndex + 1;
+        }
     }
 
     /** One bounded page's outcome: the visible tools, the next-page anchor, and the examined count. */
@@ -1115,8 +1187,33 @@ final class McpRequestDispatcher {
         errorNode.put("code", error.code());
         errorNode.put("message", error.message());
         response.set("error", errorNode);
-        byte[] body = codec.encode(response);
         int status = httpStatusFor(error.code());
+        byte[] body;
+        try {
+            // The echoed id is client-controlled (up to the envelope codec's bounded maxStringLength),
+            // so — exactly like every other terminal writer in this class — this response is bounded at
+            // mcp.output.maxBytes through encodeCapped rather than the unbounded codec.encode, with the
+            // same degrade-to-id-less fallback below when even that cannot fit.
+            body = encodeCapped(response);
+        } catch (OutputCapExceededException overCap) {
+            byte[] fallback = codec.internalFallback(envelope.get("id"), overCap);
+            if (fallback.length > config.outputMaxBytes()) {
+                fallback = codec.internalFallback(null, overCap);
+            }
+            McpRequestTerminalEvent overCapTerminal = McpRequestTerminalEvent.failed(
+                    startedAt(context),
+                    Instant.now(),
+                    method,
+                    method == McpMethod.TOOLS_CALL ? toolName : McpRequestTerminalEvent.UNKNOWN_TOOL_NAME,
+                    McpErrorType.SERIALIZATION,
+                    500,
+                    INTERNAL_ERROR,
+                    null,
+                    security,
+                    null);
+            write(context, 500, fallback, overCapTerminal);
+            return;
+        }
         McpRequestTerminalEvent terminal = McpRequestTerminalEvent.rejected(
                 startedAt(context),
                 Instant.now(),
@@ -1203,7 +1300,10 @@ final class McpRequestDispatcher {
      * invocation begins and independently of how invocation later resolves: a synchronous {@code
      * prepare}/{@code invoke} throw and a failed invocation future both settle through {@link
      * #writeSseFallback}, never a JSON response. {@code arguments} is the bounded empty map for an
-     * absent or non-object {@code arguments} member.
+     * absent or explicit-{@code null} {@code arguments} member; a present member that is neither
+     * absent/null nor a JSON object (an array, string, number, or boolean) is rejected outright — see
+     * {@link #isMalformedArguments} — rather than silently coerced to the empty map, so a zero-argument
+     * tool never executes from a schema-invalid call.
      *
      * <p>Stage 1 — the precompiled schema validator T009 compiled at composition — runs next, on
      * exactly this {@code arguments} tree, before {@code prepare()} is ever called: a schema rejection
@@ -1222,6 +1322,21 @@ final class McpRequestDispatcher {
             String toolName,
             McpToolInvoker invoker) {
         selectSse(context);
+        if (isMalformedArguments(envelope)) {
+            // A present, non-null, non-object arguments member (e.g. [], "x", 3) is rejected outright
+            // rather than coerced to {}: coercion would let a zero-argument tool execute from a
+            // schema-invalid call. Settles exactly like a stage-1 schema rejection — bounded text-only
+            // isError=true — and never calls prepare().
+            writeToolResult(
+                    context,
+                    envelope,
+                    security,
+                    toolName,
+                    McpToolResult.error(ARGUMENTS_TYPE_REJECTION_MESSAGE),
+                    null,
+                    McpErrorType.INPUT_VALIDATION);
+            return;
+        }
         Map<String, Object> arguments = argumentsOf(envelope);
         if (!schemaValid(toolName, arguments)) {
             writeToolResult(
@@ -1499,11 +1614,27 @@ final class McpRequestDispatcher {
     }
 
     /**
-     * Normalizes the {@code tools/call} {@code arguments} member to a bounded, non-null map: absent,
-     * explicit {@code null}, or non-object all normalize to the same immutable empty map as {@code {}}
-     * (§4.7). A present object is shallow-converted to {@code Map<String, Object>}; deeper structure is
-     * preserved as nested {@code Map}/{@code List}/scalar values exactly as Jackson's generic
-     * conversion produces them.
+     * Reports whether the {@code tools/call} {@code arguments} member is present, non-null, and not a
+     * JSON object — an array, string, number, or boolean. {@link #invokeAndRespond} checks this before
+     * ever calling {@link #argumentsOf}, and rejects such a request outright instead of letting it
+     * silently coerce to the empty map: without this guard a zero-argument tool would execute from a
+     * schema-invalid call.
+     *
+     * @param envelope the validated {@code tools/call} request envelope
+     * @return {@code true} when {@code arguments} is present, non-null, and not an object
+     */
+    private static boolean isMalformedArguments(JsonNode envelope) {
+        JsonNode arguments = envelope.get("params").get("arguments");
+        return arguments != null && !arguments.isNull() && !arguments.isObject();
+    }
+
+    /**
+     * Normalizes the {@code tools/call} {@code arguments} member to a bounded, non-null map: absent or
+     * explicit {@code null} both normalize to the same immutable empty map as {@code {}} (§4.7). A
+     * present non-null, non-object value is never passed here — {@link #invokeAndRespond} rejects it
+     * through {@link #isMalformedArguments} first. A present object is shallow-converted to
+     * {@code Map<String, Object>}; deeper structure is preserved as nested {@code Map}/{@code List}/
+     * scalar values exactly as Jackson's generic conversion produces them.
      */
     private static Map<String, Object> argumentsOf(JsonNode envelope) {
         JsonNode arguments = envelope.get("params").get("arguments");

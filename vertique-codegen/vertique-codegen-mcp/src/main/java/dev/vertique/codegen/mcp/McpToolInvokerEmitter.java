@@ -21,8 +21,11 @@ import java.util.List;
 import java.util.Map;
 import javax.annotation.processing.Generated;
 import javax.lang.model.element.AnnotationMirror;
+import javax.lang.model.element.Element;
 import javax.lang.model.element.Modifier;
 import javax.lang.model.element.TypeElement;
+import javax.lang.model.type.ArrayType;
+import javax.lang.model.type.DeclaredType;
 import javax.lang.model.type.TypeMirror;
 
 /**
@@ -83,7 +86,7 @@ import javax.lang.model.type.TypeMirror;
  *             throw new McpInputRejectionException("Invalid tool arguments: constraint validation failed");
  *         }
  *
- *         return new PreparedCall(Map.copyOf(normalizedArguments), input);
+ *         return new PreparedCall(McpValueTrees.deepUnmodifiableMap(normalizedArguments), input);
  *     }
  *
  *     private final class PreparedCall implements McpPreparedToolCall { … tool.lookup(input.city()) … }
@@ -154,6 +157,17 @@ final class McpToolInvokerEmitter {
             ClassName.get("dev.vertique.mcp.server.runtime", "McpToolRuntime");
     private static final ClassName MCP_TOOL_PARAMETER_METADATA =
             ClassName.get("dev.vertique.mcp.server.runtime", "McpToolParameterMetadata");
+    private static final ClassName MCP_VALUE_TREES = ClassName.get("dev.vertique.mcp.lifecycle", "McpValueTrees");
+
+    /**
+     * Jackson's super-type-token idiom, used only to capture a generic structured-output type's full
+     * {@link java.lang.reflect.Type} (element type included) at compile time — mirrors {@code
+     * JaxRsDescriptorEmitter#buildGenericTypeExpr}'s identical convention for a parameterized
+     * {@code BODY} parameter. Jackson is already on every application's runtime classpath
+     * transitively through {@code vertique-core}, so this adds no new dependency.
+     */
+    private static final ClassName JACKSON_TYPE_REFERENCE =
+            ClassName.get("com.fasterxml.jackson.core.type", "TypeReference");
 
     private static final TypeName TOOL_RESULT_WILDCARD =
             ParameterizedTypeName.get(MCP_TOOL_RESULT, WildcardTypeName.subtypeOf(ClassName.OBJECT));
@@ -390,10 +404,15 @@ final class McpToolInvokerEmitter {
         prepare.addStatement("throw new $T($S)", MCP_INPUT_REJECTION_EXCEPTION, BEAN_VALIDATION_MESSAGE);
         prepare.endControlFlow();
 
+        // McpValueTrees.deepUnmodifiableMap, not Map.copyOf: INP-001 deliberately preserves an
+        // explicit-null Optional<T> argument all the way through materialization, and Map.copyOf
+        // throws NPE on a null value; it also only freezes the root map, leaving nested Map/List
+        // values mutable, which violates McpPreparedToolCall#normalizedArguments()'s deeply-immutable
+        // contract.
         prepare.addStatement(
-                "return new $T($T.copyOf($N), $N$L)",
+                "return new $T($T.deepUnmodifiableMap($N), $N$L)",
                 preparedCallType,
-                Map.class,
+                MCP_VALUE_TREES,
                 NORMALIZED_ARGUMENTS,
                 INPUT_FIELD,
                 cancellationAware ? CodeBlock.of(", $N", CANCELLATION_PARAM) : CodeBlock.of(""));
@@ -493,20 +512,60 @@ final class McpToolInvokerEmitter {
 
     /**
      * Builds the {@code structuredOutputType} argument to {@code McpToolRuntimeFactory#create}: the
-     * erased result type for a structured (non-text) tool, or the {@code null} literal for a text-only
-     * tool. Erasure is used deliberately — {@code McpToolRuntimeFactory#create} declares this parameter
-     * {@code java.lang.reflect.Type}, and a parameterized type (e.g. {@code List<Foo>}) has no
-     * {@code .class} literal; the erased raw type is what {@code Foo.class}-style emission can always
-     * express, at the cost of type-argument fidelity for a generic structured result — a known,
-     * narrower-than-ideal limitation of this slice, not a regression it introduces (no structured
-     * output schema was ever generated before it).
+     * {@code null} literal for a text-only tool, and otherwise a full {@link java.lang.reflect.Type}
+     * token for the structured result — {@code Foo.class} for a non-generic type, or, for a
+     * parameterized type (e.g. {@code List<Foo>}), an anonymous Jackson {@code TypeReference}
+     * super-type-token literal ({@code new TypeReference<List<Foo>>() {}.getType()}) that captures the
+     * element type too. {@code McpToolRuntimeFactory#create} declares this parameter {@code
+     * java.lang.reflect.Type}, not {@code Class<?>}, specifically so a generic structured result's
+     * advertised output schema — and output-schema validation — can describe its element type instead
+     * of erasing to the raw container ({@code List.class}). Mirrors {@code
+     * JaxRsDescriptorEmitter#buildGenericTypeExpr}'s identical convention for a parameterized
+     * {@code BODY} parameter.
      */
     private CodeBlock structuredOutputTypeExpr(McpToolModel model) {
         if (isTextResult(model)) {
             return CodeBlock.of("null");
         }
-        return CodeBlock.of(
-                "$T.class", TypeName.get(ctx.types().erasure(model.returnModel().resultType())));
+        TypeMirror resultType = model.returnModel().resultType();
+        if (resultType instanceof DeclaredType declared
+                && !declared.getTypeArguments().isEmpty()) {
+            return CodeBlock.of("new $T<$L>() {}.getType()", JACKSON_TYPE_REFERENCE, genericSourceTypeName(resultType));
+        }
+        return CodeBlock.of("$T.class", TypeName.get(ctx.types().erasure(resultType)));
+    }
+
+    /**
+     * Returns the erased-generic <b>source</b>-form name of {@code type}, suitable for interpolation
+     * into a generated {@code TypeReference<...>} literal (a binary {@code Outer$Inner} form would not
+     * compile there). A parameterized type recurses into its own type arguments so nested generics
+     * (e.g. {@code Map<String, List<Foo>>}) render fully; a raw or non-declared type falls back to its
+     * erasure's own {@code toString()}.
+     *
+     * @param type the type mirror to render
+     * @return the source-form type name string
+     */
+    private String genericSourceTypeName(TypeMirror type) {
+        if (type instanceof ArrayType arrayType) {
+            return genericSourceTypeName(arrayType.getComponentType()) + "[]";
+        }
+        if (!(type instanceof DeclaredType declared)
+                || declared.getTypeArguments().isEmpty()) {
+            return ctx.types().erasure(type).toString();
+        }
+        Element rawElement = ctx.types().asElement(ctx.types().erasure(declared));
+        String rawName = rawElement instanceof TypeElement te
+                ? te.getQualifiedName().toString()
+                : ctx.types().erasure(declared).toString();
+        StringBuilder sb = new StringBuilder(rawName).append('<');
+        List<? extends TypeMirror> args = declared.getTypeArguments();
+        for (int i = 0; i < args.size(); i++) {
+            if (i > 0) {
+                sb.append(", ");
+            }
+            sb.append(genericSourceTypeName(args.get(i)));
+        }
+        return sb.append('>').toString();
     }
 
     /**

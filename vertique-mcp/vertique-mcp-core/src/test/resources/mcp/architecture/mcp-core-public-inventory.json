@@ -193,6 +193,9 @@
       "public static final dev.vertique.mcp.lifecycle.McpTransportOutcome dev.vertique.mcp.lifecycle.McpTransportOutcome.WRITE_FAILED",
       "public static final dev.vertique.mcp.lifecycle.McpTransportOutcome dev.vertique.mcp.lifecycle.McpTransportOutcome.WRITTEN"
     ],
+    "dev.vertique.mcp.lifecycle.McpValueTrees": [
+      "public static java.util.Map<java.lang.String, java.lang.Object> dev.vertique.mcp.lifecycle.McpValueTrees.deepUnmodifiableMap(java.util.Map<java.lang.String, java.lang.Object>)"
+    ],
     "dev.vertique.mcp.tool.McpAccessMode": [
       "public static dev.vertique.mcp.tool.McpAccessMode dev.vertique.mcp.tool.McpAccessMode.valueOf(java.lang.String)",
       "public static dev.vertique.mcp.tool.McpAccessMode[] dev.vertique.mcp.tool.McpAccessMode.values()",

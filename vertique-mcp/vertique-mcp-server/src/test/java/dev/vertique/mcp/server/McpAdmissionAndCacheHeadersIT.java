@@ -31,6 +31,9 @@ import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.http.HttpClient;
+import io.vertx.core.http.HttpClientRequest;
+import io.vertx.core.http.HttpClientResponse;
+import io.vertx.core.http.HttpMethod;
 import io.vertx.core.http.HttpServer;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.Router;
@@ -62,6 +65,7 @@ class McpAdmissionAndCacheHeadersIT {
     private static final String CONTENT_TYPE_ABSENT_ROW = "shouldRejectAbsentContentTypeAsUnsupportedMediaType";
     private static final String DISCOVERY_CACHE_HEADERS_ROW = "shouldCarryPrivateCacheHeadersOnDiscovery";
     private static final String TOOLS_LIST_CACHE_HEADERS_ROW = "shouldCarryPrivateCacheHeadersOnToolsList";
+    private static final String BODY_NOT_CONSUMED_ROW = "shouldRejectDisallowedOriginWithoutConsumingBody";
 
     private static final String LOOPBACK = "127.0.0.1";
     private static final String REQUEST_PATH = "/mcp/";
@@ -83,7 +87,8 @@ class McpAdmissionAndCacheHeadersIT {
                 ORIGIN_DENY_BY_DEFAULT_ROW,
                 CONTENT_TYPE_ABSENT_ROW,
                 DISCOVERY_CACHE_HEADERS_ROW,
-                TOOLS_LIST_CACHE_HEADERS_ROW);
+                TOOLS_LIST_CACHE_HEADERS_ROW,
+                BODY_NOT_CONSUMED_ROW);
     }
 
     @AfterEach
@@ -111,6 +116,7 @@ class McpAdmissionAndCacheHeadersIT {
             case CONTENT_TYPE_ABSENT_ROW -> shouldRejectAbsentContentTypeAsUnsupportedMediaType();
             case DISCOVERY_CACHE_HEADERS_ROW -> shouldCarryPrivateCacheHeadersOnDiscovery();
             case TOOLS_LIST_CACHE_HEADERS_ROW -> shouldCarryPrivateCacheHeadersOnToolsList();
+            case BODY_NOT_CONSUMED_ROW -> shouldRejectDisallowedOriginWithoutConsumingBody();
             default -> fail("unknown row: " + row);
         }
     }
@@ -126,6 +132,37 @@ class McpAdmissionAndCacheHeadersIT {
                         + "— the previous permissive default left an unconfigured mount reachable from any "
                         + "page a browser visited")
                 .isEqualTo(403);
+    }
+
+    // --- Row 1b (review finding #2): a rejected request must not consume its body ---
+
+    /**
+     * DECISIVE — proves body-consumption ordering, not merely the resulting status code. The request
+     * declares Origin (disallowed by the default empty allowlist) and writes only a fragment of a
+     * chunked body, then deliberately never calls {@code end()}: the promised body is never completed.
+     *
+     * <p>If cheap admission ran before {@code BodyHandler} (the fix), the 403 is decided from the
+     * request line and headers alone and the response arrives immediately, independent of the
+     * incomplete body. If {@code BodyHandler} ran first (the pre-fix ordering this proof would catch),
+     * it would aggregate indefinitely waiting for the rest of a body that never arrives, and {@code
+     * response()} would never resolve — the bounded {@link #await} below would time out. A same-status
+     * assertion alone cannot distinguish the two orderings, since both eventually answer 403 once a
+     * body happens to be short enough or absent; only the fact that the response arrives despite an
+     * unfinished body proves the body was never read.
+     */
+    private void shouldRejectDisallowedOriginWithoutConsumingBody() throws Exception {
+        HttpClientRequest request = await(rawClient.request(HttpMethod.POST, fixture.port(), LOOPBACK, REQUEST_PATH));
+        request.putHeader("Origin", PRESENT_ORIGIN);
+        request.putHeader("content-type", "application/json");
+        Future<HttpClientResponse> responseFuture = request.response();
+        request.write(Buffer.buffer("{\"unterminated"));
+
+        HttpClientResponse response = await(responseFuture);
+        assertThat(response.statusCode())
+                .as("DECISIVE: cheap Origin admission must reject before BodyHandler ever attempts to "
+                        + "aggregate this incomplete, never-ended body")
+                .isEqualTo(403);
+        request.reset();
     }
 
     // --- Row 2 (W9b): an absent Content-Type is now rejected, not admitted ---
