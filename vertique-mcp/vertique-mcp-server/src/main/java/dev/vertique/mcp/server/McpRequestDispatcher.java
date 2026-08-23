@@ -3,6 +3,8 @@
 
 package dev.vertique.mcp.server;
 
+import com.fasterxml.jackson.core.JsonFactory;
+import com.fasterxml.jackson.core.StreamReadConstraints;
 import com.fasterxml.jackson.core.StreamWriteFeature;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.DeserializationFeature;
@@ -129,6 +131,15 @@ final class McpRequestDispatcher {
     private static final int INVALID_REQUEST = -32600;
     private static final int METHOD_NOT_FOUND = -32601;
     private static final int INTERNAL_ERROR = -32603;
+
+    /**
+     * The standard, non-leaking message paired with {@link #INTERNAL_ERROR}. Mirrors {@link
+     * McpProtocolCodec}'s own private {@code MSG_INTERNAL_ERROR} constant of the same value — this class
+     * already redeclares every other codec-classified code/message it needs locally (see {@link
+     * #NEGOTIATION_MISMATCH} below) rather than routing a bounded response through a codec call whose own
+     * serialization step is unbounded (R12, merge blocker 5; see {@link #boundedErrorResponse}).
+     */
+    private static final String INTERNAL_ERROR_MESSAGE = "Internal error";
 
     /**
      * The bounded JSON-RPC server-error-range code {@link McpProtocolCodec#validateNegotiation} settles
@@ -291,10 +302,40 @@ final class McpRequestDispatcher {
      * normalization only: {@link #OUTPUT_ENCODER} still deserializes {@code tools/call} input {@code
      * arguments} (see {@link #argumentsOf}) with its unmodified default numeric handling, which this
      * repair has no contract to change.
+     *
+     * <p><strong>R12.</strong> Configured with an explicit {@link StreamReadConstraints#getMaxTokenCount()
+     * maxTokenCount} and {@link StreamReadConstraints#getMaxDocumentLength() maxDocumentLength}, both
+     * derived from {@link McpServerConfig#outputMaxBytes()} rather than left at Jackson's own implicit,
+     * silently-inheritable defaults ({@code Long.MAX_VALUE} and {@code -1}/unbounded, respectively) —
+     * mirroring {@link McpEnvelopeJsonCodec}'s own established "freeze every bound explicitly" philosophy
+     * for its ingress decode. {@code bounded} — the only input {@link #normalizeStructuredContent} ever
+     * hands this reader — is already {@link #encodeCapped}'s own output and therefore already at most
+     * {@code outputMaxBytes} bytes long, so {@code maxTokenCount = outputMaxBytes} is a deliberately
+     * generous but mathematically tight worst-case bound: a JSON token can never be shorter than one byte
+     * of source text, so no valid document within that byte budget can ever carry more tokens than the
+     * budget has bytes.
+     *
+     * <p>This deliberately does not reuse R11's fixed, heap-and-concurrency-derived {@code maxTokenCount}
+     * (8,000, independent of body size) for the ingress envelope decode. Three differences make that
+     * derivation the wrong fit here rather than the right one to copy: (1) this reparse runs once per
+     * already-authorized, already-invoked {@code tools/call} completion — R11's derivation exists to
+     * divide one shared heap budget across {@code N=256} concurrent <em>anonymous, pre-authorization</em>
+     * requests, a concurrency shape that does not apply to a single accepted request's own
+     * already-budgeted output; (2) this reader's input is already hard-capped to {@code outputMaxBytes}
+     * (2 MiB default, 16 MiB validator ceiling), a materially smaller and already-enforced bound than the
+     * {@code maxBodySize} R11 bounds; and (3) this reader's source bytes are the framework's own {@link
+     * #encodeCapped} output produced moments earlier in the same request, not fresh untrusted bytes
+     * arriving at a new trust boundary. Building an instance field rather than a {@code static final}
+     * constant is what this derivation costs: {@code outputMaxBytes} is a per-{@link McpServerConfig}
+     * instance value, so this reader can no longer be shared before a config instance exists.
+     *
+     * <p><strong>Serialized once.</strong> This reader only parses bytes {@link #encodeCapped} already
+     * wrote; it never serializes {@code value} a second time — see {@link #normalizeStructuredContent}'s
+     * own javadoc for the single-serialization guarantee these constraints must not disturb, and R04's
+     * evidence for why an earlier attempt at a related fix was reverted for violating exactly that
+     * guarantee.
      */
-    private static final ObjectMapper NORMALIZATION_DECODER = JsonMapper.builder()
-            .enable(DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS)
-            .build();
+    private final ObjectMapper normalizationDecoder;
 
     private final McpServerConfig config;
     private final SecurityRuntime securityRuntime;
@@ -334,6 +375,38 @@ final class McpRequestDispatcher {
         this.cursorCodec = new McpCursorCodec();
         this.contextHolder = contextHolder;
         this.correlationContextFactory = correlationContextFactory;
+        this.normalizationDecoder = buildNormalizationDecoder(config.outputMaxBytes());
+    }
+
+    /**
+     * Builds {@link #normalizationDecoder}, constraining {@code maxTokenCount} and {@code
+     * maxDocumentLength} to {@code outputMaxBytes} — see {@link #normalizationDecoder}'s own javadoc for
+     * the full R12 derivation and why it deliberately diverges from R11's ingress-side derivation.
+     *
+     * @param outputMaxBytes this instance's configured {@code mcp.output.maxBytes}
+     * @return a reader scoped to that bound
+     */
+    private static ObjectMapper buildNormalizationDecoder(int outputMaxBytes) {
+        StreamReadConstraints constraints = StreamReadConstraints.builder()
+                .maxTokenCount(outputMaxBytes)
+                .maxDocumentLength(outputMaxBytes)
+                .build();
+        JsonFactory factory =
+                JsonFactory.builder().streamReadConstraints(constraints).build();
+        return JsonMapper.builder(factory)
+                .enable(DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS)
+                .build();
+    }
+
+    /**
+     * Exposes {@link #normalizationDecoder}'s constraints for structural regression assertions
+     * (test-only seam; no production caller) — mirrors {@link McpEnvelopeJsonCodec#mapper()}'s
+     * established pattern for the same purpose on the ingress side.
+     *
+     * @return this instance's normalization reader
+     */
+    ObjectMapper normalizationDecoder() {
+        return normalizationDecoder;
     }
 
     /**
@@ -805,12 +878,13 @@ final class McpRequestDispatcher {
 
     /**
      * Settles the defensive, practically-unreachable {@link #dispatchByMethod} default branch through
-     * the bounded internal-error fallback, exactly like {@link #writeToolsListFallback}.
+     * the bounded internal-error fallback, exactly like {@link #writeToolsListFallback}. Bounded through
+     * {@link #boundedErrorResponse} (R12) rather than an unchecked {@link McpProtocolCodec#internalFallback}
+     * call: the earlier revision here built and sent the fallback with no cap check at all.
      */
     private void writeDispatchFallback(
             RoutingContext context, JsonNode envelope, @Nullable SecurityContextSnapshot security) {
-        byte[] fallback = codec.internalFallback(
-                envelope.get("id"), new IllegalStateException("Unrecognized method reached dispatchByMethod"));
+        byte[] fallback = boundedErrorResponse(envelope.get("id"), INTERNAL_ERROR, INTERNAL_ERROR_MESSAGE);
         McpRequestTerminalEvent terminal = McpRequestTerminalEvent.failed(
                 startedAt(context),
                 Instant.now(),
@@ -845,10 +919,10 @@ final class McpRequestDispatcher {
             McpMethod method,
             @Nullable SecurityContextSnapshot security,
             Throwable cause) {
-        byte[] fallback = codec.internalFallback(envelope.get("id"), cause);
-        if (fallback.length > config.outputMaxBytes()) {
-            fallback = codec.internalFallback(null, cause);
-        }
+        // cause is deliberately never read, mirroring McpProtocolCodec#internalFallback's own established
+        // convention (R12): only its occurrence mattered before this fix routed the fallback through
+        // boundedErrorResponse, and still only its occurrence matters now.
+        byte[] fallback = boundedErrorResponse(envelope.get("id"), INTERNAL_ERROR, INTERNAL_ERROR_MESSAGE);
         McpRequestTerminalEvent terminal = McpRequestTerminalEvent.failed(
                 startedAt(context),
                 Instant.now(),
@@ -952,14 +1026,7 @@ final class McpRequestDispatcher {
     private void writeInterceptorRejection(
             RoutingContext context, JsonNode envelope, McpMethod method, @Nullable SecurityContextSnapshot security) {
         context.response().putHeader("content-type", JSON_CONTENT_TYPE);
-        ObjectNode response = OUTPUT_ENCODER.createObjectNode();
-        response.put("jsonrpc", "2.0");
         JsonNode id = envelope.get("id");
-        response.set("id", id != null ? id : NullNode.getInstance());
-        ObjectNode errorNode = OUTPUT_ENCODER.createObjectNode();
-        errorNode.put("code", INTERCEPTOR_REJECTED);
-        errorNode.put("message", INTERCEPTOR_REJECTED_MESSAGE);
-        response.set("error", errorNode);
         int status = httpStatusFor(INTERCEPTOR_REJECTED);
         byte[] responseBytes;
         try {
@@ -967,12 +1034,12 @@ final class McpRequestDispatcher {
             // so — exactly like every other terminal writer in this class — this response is bounded at
             // mcp.output.maxBytes through encodeCapped rather than the unbounded codec.encode, with the
             // same degrade-to-id-less fallback below when even that cannot fit.
-            responseBytes = encodeCapped(response);
+            responseBytes = encodeCapped(errorNode(id, INTERCEPTOR_REJECTED, INTERCEPTOR_REJECTED_MESSAGE));
         } catch (OutputCapExceededException overCap) {
-            byte[] fallback = codec.internalFallback(envelope.get("id"), overCap);
-            if (fallback.length > config.outputMaxBytes()) {
-                fallback = codec.internalFallback(null, overCap);
-            }
+            // R12: routed through boundedErrorResponse rather than the previous codec.internalFallback(id)
+            // + measure-the-completed-array idiom, which itself fully allocated an id-bearing response
+            // before checking whether it fit.
+            byte[] fallback = boundedErrorResponse(id, INTERNAL_ERROR, INTERNAL_ERROR_MESSAGE);
             McpRequestTerminalEvent overCapTerminal = McpRequestTerminalEvent.failed(
                     startedAt(context),
                     Instant.now(),
@@ -1029,9 +1096,18 @@ final class McpRequestDispatcher {
         context.response().putHeader("content-type", JSON_CONTENT_TYPE);
         int code = negotiation.error().code();
         int status = httpStatusFor(code);
-        byte[] errorBytes = codec.errorResponseFor(envelope.get("id"), negotiation);
-        if (errorBytes.length > config.outputMaxBytes()) {
-            byte[] fallback = codec.internalFallback(null, new OutputCapExceededException());
+        byte[] errorBytes;
+        try {
+            // R12 (merge blocker 5): the earlier revision here called codec.errorResponseFor — an
+            // unrestricted writeValueAsBytes — and only then compared the completed array's length
+            // against the cap, so a large client-controlled id allocated the entire response before the
+            // promised cap ever applied. This now serializes once through the same capped stream every
+            // other terminal writer in this class uses, degrading to the id-less internal error below
+            // only when the cap actually trips while bytes are being produced.
+            errorBytes = encodeCapped(
+                    errorNode(envelope.get("id"), code, negotiation.error().message()));
+        } catch (OutputCapExceededException overCap) {
+            byte[] fallback = boundedErrorResponse(null, INTERNAL_ERROR, INTERNAL_ERROR_MESSAGE);
             McpRequestTerminalEvent overCapTerminal = McpRequestTerminalEvent.failed(
                     startedAt(context),
                     Instant.now(),
@@ -1073,12 +1149,10 @@ final class McpRequestDispatcher {
         try {
             payload = encodeCapped(discoveryResponse(envelope));
         } catch (OutputCapExceededException overCap) {
-            byte[] fallback = codec.internalFallback(envelope.get("id"), overCap);
-            if (fallback.length > config.outputMaxBytes()) {
-                // Even the id-bearing internal-error can exceed the cap when the request id is itself
-                // large; degrade to the minimal id-less internal error, which is always under cap.
-                fallback = codec.internalFallback(null, overCap);
-            }
+            // R12: boundedErrorResponse serializes the id-bearing attempt through the same capped stream
+            // and degrades to the minimal id-less internal error — itself encoded the same bounded way,
+            // not assumed to fit — only when that attempt also exceeds the cap.
+            byte[] fallback = boundedErrorResponse(envelope.get("id"), INTERNAL_ERROR, INTERNAL_ERROR_MESSAGE);
             McpRequestTerminalEvent terminal = McpRequestTerminalEvent.failed(
                     startedAt(context),
                     Instant.now(),
@@ -1426,10 +1500,15 @@ final class McpRequestDispatcher {
     private record ScanResult(
             List<McpToolDescriptor> visible, @Nullable String nextAnchor, int examined) {}
 
-    /** Settles a {@link McpPolicyEnforcer#decide} contract violation through the internal fallback. */
+    /**
+     * Settles a {@link McpPolicyEnforcer#decide} contract violation through the internal fallback.
+     * Bounded through {@link #boundedErrorResponse} (R12): the earlier revision here sent the fallback
+     * with no cap check at all.
+     */
     private void writeToolsListFallback(
             RoutingContext context, JsonNode envelope, @Nullable SecurityContextSnapshot security, Throwable cause) {
-        byte[] fallback = codec.internalFallback(envelope.get("id"), cause);
+        // cause is deliberately never read (see writeDispatchByMethodFailure's identical note).
+        byte[] fallback = boundedErrorResponse(envelope.get("id"), INTERNAL_ERROR, INTERNAL_ERROR_MESSAGE);
         McpRequestTerminalEvent terminal = McpRequestTerminalEvent.failed(
                 startedAt(context),
                 Instant.now(),
@@ -1457,10 +1536,9 @@ final class McpRequestDispatcher {
         try {
             payload = encodeCapped(toolsListResponse(envelope, result));
         } catch (OutputCapExceededException overCap) {
-            byte[] fallback = codec.internalFallback(envelope.get("id"), overCap);
-            if (fallback.length > config.outputMaxBytes()) {
-                fallback = codec.internalFallback(null, overCap);
-            }
+            // R12: see writeDiscovery's identical note — boundedErrorResponse replaces the previous
+            // materialize-then-measure idiom.
+            byte[] fallback = boundedErrorResponse(envelope.get("id"), INTERNAL_ERROR, INTERNAL_ERROR_MESSAGE);
             McpRequestTerminalEvent terminal = McpRequestTerminalEvent.failed(
                     startedAt(context),
                     Instant.now(),
@@ -1580,14 +1658,7 @@ final class McpRequestDispatcher {
             String toolName) {
         context.response().putHeader("content-type", JSON_CONTENT_TYPE);
         McpProtocolCodec.CodecError error = McpPolicyEnforcer.unknownOrUnauthorizedError();
-        ObjectNode response = OUTPUT_ENCODER.createObjectNode();
-        response.put("jsonrpc", "2.0");
         JsonNode id = envelope.get("id");
-        response.set("id", id != null ? id : NullNode.getInstance());
-        ObjectNode errorNode = OUTPUT_ENCODER.createObjectNode();
-        errorNode.put("code", error.code());
-        errorNode.put("message", error.message());
-        response.set("error", errorNode);
         int status = httpStatusFor(error.code());
         byte[] body;
         try {
@@ -1595,12 +1666,10 @@ final class McpRequestDispatcher {
             // so — exactly like every other terminal writer in this class — this response is bounded at
             // mcp.output.maxBytes through encodeCapped rather than the unbounded codec.encode, with the
             // same degrade-to-id-less fallback below when even that cannot fit.
-            body = encodeCapped(response);
+            body = encodeCapped(errorNode(id, error.code(), error.message()));
         } catch (OutputCapExceededException overCap) {
-            byte[] fallback = codec.internalFallback(envelope.get("id"), overCap);
-            if (fallback.length > config.outputMaxBytes()) {
-                fallback = codec.internalFallback(null, overCap);
-            }
+            // R12: see writeDiscovery's identical note.
+            byte[] fallback = boundedErrorResponse(id, INTERNAL_ERROR, INTERNAL_ERROR_MESSAGE);
             McpRequestTerminalEvent overCapTerminal = McpRequestTerminalEvent.failed(
                     startedAt(context),
                     Instant.now(),
@@ -1973,10 +2042,8 @@ final class McpRequestDispatcher {
      * #encodeCapped}, which aborts with {@link OutputCapExceededException} the moment the running byte
      * count would exceed {@code mcp.output.maxBytes} — before a full byte array, let alone a full tree,
      * is ever materialized. The resulting bounded byte array — never {@code value} itself again — is
-     * then parsed back into the canonical {@code Map}/{@code List}/scalar shape through {@link
-     * #NORMALIZATION_DECODER}, never {@link #OUTPUT_ENCODER}: a plain {@code readValue} loses precision
-     * relative to {@link #encodeCapped}'s own {@code WRITE_BIGDECIMAL_AS_PLAIN} encode (see {@link
-     * #NORMALIZATION_DECODER}'s own javadoc for the two ways that showed up on the wire — R07 item 4).
+     * then parsed back into the canonical {@code Map}/{@code List}/scalar shape through {@link #normalizationDecoder}, never {@link #OUTPUT_ENCODER}: a plain {@code readValue} loses precision
+     * relative to {@link #encodeCapped}'s own {@code WRITE_BIGDECIMAL_AS_PLAIN} encode (see {@link #normalizationDecoder}'s own javadoc for the two ways that showed up on the wire — R07 item 4).
      * This still touches
      * {@code value}'s own state (bean getters, {@code toString}, custom serializers) exactly once: the
      * parse step reads the bytes {@link #encodeCapped} already produced, not {@code value}. An earlier
@@ -1999,7 +2066,7 @@ final class McpRequestDispatcher {
         }
         byte[] bounded = encodeCapped(value);
         try {
-            return NORMALIZATION_DECODER.readValue(bounded, Object.class);
+            return normalizationDecoder.readValue(bounded, Object.class);
         } catch (IOException parseFailure) {
             // Parsing bytes encodeCapped just produced from a well-formed write cannot fail on I/O or
             // malformed content; a failure here is a programming error, not a wire condition — mirrors
@@ -2050,12 +2117,10 @@ final class McpRequestDispatcher {
      */
     private void writeOutputValidationFailure(
             RoutingContext context, JsonNode envelope, @Nullable SecurityContextSnapshot security, String toolName) {
-        byte[] fallback = codec.internalFallback(envelope.get("id"), new OutputSchemaValidationException());
-        if (fallback.length > config.outputMaxBytes()) {
-            // Degrade to the id-less internal error so the hard cap holds, exactly like the discovery,
-            // tools/list, and writeSseFallback degrade paths.
-            fallback = codec.internalFallback(null, new OutputSchemaValidationException());
-        }
+        // R12: boundedErrorResponse serializes the id-bearing attempt through the capped stream and
+        // degrades to the id-less internal error, itself encoded the same bounded way, only when that
+        // attempt also exceeds the cap — replacing the previous materialize-then-measure idiom.
+        byte[] fallback = boundedErrorResponse(envelope.get("id"), INTERNAL_ERROR, INTERNAL_ERROR_MESSAGE);
         McpRequestTerminalEvent terminal = McpRequestTerminalEvent.failed(
                 startedAt(context),
                 Instant.now(),
@@ -2236,8 +2301,7 @@ final class McpRequestDispatcher {
      * {@link ObjectNode#putPOJO}, not {@link ObjectMapper#valueToTree}: {@code valueToTree} (and {@code
      * convertValue(..., JsonNode.class)}, which shares the same code path) materializes a real {@code
      * BigDecimal}-typed value through Jackson's {@code TokenBuffer}-backed tree construction, which —
-     * independently of {@code WRITE_BIGDECIMAL_AS_PLAIN} and independently of {@link
-     * #NORMALIZATION_DECODER}'s own fix — silently strips trailing zeros in the process ({@code
+     * independently of {@code WRITE_BIGDECIMAL_AS_PLAIN} and independently of {@link #normalizationDecoder}'s own fix — silently strips trailing zeros in the process ({@code
      * BigDecimal("0.1000")} becomes a {@code DecimalNode} whose own value is {@code
      * BigDecimal("0.1")}). {@code putPOJO} instead wraps {@code normalizedStructuredContent} in a
      * {@code POJONode} that defers to this exact object's ordinary bean/collection serializer when the
@@ -2287,12 +2351,9 @@ final class McpRequestDispatcher {
             @Nullable SecurityContextSnapshot security,
             String toolName,
             Throwable cause) {
-        byte[] fallback = codec.internalFallback(envelope.get("id"), cause);
-        if (fallback.length > config.outputMaxBytes()) {
-            // Degrade to the id-less internal error so the hard cap holds, exactly like the discovery
-            // and tools/list fallback paths.
-            fallback = codec.internalFallback(null, cause);
-        }
+        // cause is deliberately never read (see writeDispatchByMethodFailure's identical note). R12:
+        // boundedErrorResponse replaces the previous materialize-then-measure idiom.
+        byte[] fallback = boundedErrorResponse(envelope.get("id"), INTERNAL_ERROR, INTERNAL_ERROR_MESSAGE);
         McpRequestTerminalEvent terminal = McpRequestTerminalEvent.failed(
                 startedAt(context),
                 Instant.now(),
@@ -2452,11 +2513,16 @@ final class McpRequestDispatcher {
      * classified codec error and settles through the bounded internal-error response; the tool surface
      * arrives in T006/T007.
      *
-     * <p>Builds the error bytes from {@code decoded} through {@link McpProtocolCodec#errorResponseFor}
-     * rather than {@link McpProtocolCodec#errorResponse(byte[])}: {@code decoded} already carries
-     * every fact ({@code id}, code, message) that a re-analysis of the raw body would recompute, so
-     * the request body is decoded exactly once on this path — by {@link #dispatch}'s {@code
-     * codec.decodeEnvelope} call — never twice.
+     * <p>Builds the error node from {@code decoded}'s own already-classified id, code, and message —
+     * never by re-analyzing the raw body a second time (that classification is {@link #dispatch}'s one
+     * {@code codec.decodeEnvelope} call, reused here, not repeated) — and serializes it exactly once
+     * through the capped stream {@link #encodeCapped} every other terminal writer in this class uses
+     * (R12, merge blocker 5). The earlier revision here called {@link McpProtocolCodec#errorResponseFor},
+     * an unrestricted {@code writeValueAsBytes}, and only then compared the completed array's length
+     * against the cap: this is the "ordinary protocol errors have the same defect" finding named
+     * alongside the negotiation-rejection defect this same repair slice fixes in {@link
+     * #writeNegotiationRejection}. {@link McpProtocolCodec#errorResponseFor} itself is unchanged and
+     * still used directly by {@code McpGoldenWireTest} to pin the codec's own wire-format bytes.
      *
      * @param context the request context
      * @param decoded the already-decoded envelope this dispatch produced, reused so the body is
@@ -2465,20 +2531,22 @@ final class McpRequestDispatcher {
      */
     private void emitProtocolError(
             RoutingContext context, McpProtocolCodec.Decoded decoded, @Nullable SecurityContextSnapshot security) {
+        JsonNode id = decoded.isError() ? decoded.id() : null;
         int code = decoded.isError() ? decoded.error().code() : INTERNAL_ERROR;
+        String message = decoded.isError() ? decoded.error().message() : INTERNAL_ERROR_MESSAGE;
         int status = httpStatusFor(code);
         McpErrorType errorType = code == INTERNAL_ERROR ? McpErrorType.INTERNAL : McpErrorType.PROTOCOL;
-        byte[] errorBytes = decoded.isError()
-                ? codec.errorResponseFor(decoded)
-                : codec.internalFallback(
-                        null, new IllegalStateException("emitProtocolError called on a non-error decode"));
-        if (errorBytes.length > config.outputMaxBytes()) {
+        byte[] errorBytes;
+        try {
+            errorBytes = encodeCapped(errorNode(id, code, message));
+        } catch (OutputCapExceededException overCap) {
             // The classified error echoes the request id, whose only unbounded element can push the
             // response past mcp.output.maxBytes (a string id is bounded by the envelope codec's frozen
             // maxStringLength, 20,000,000 chars, far above the minimum cap). Degrade to a bounded
             // id-less internal error so the hard cap holds — the emitted status, terminal, and body
-            // stay consistent as a 500 internal error.
-            errorBytes = codec.internalFallback(null, new OutputCapExceededException());
+            // stay consistent as a 500 internal error. boundedErrorResponse(null, ...) is trusted to
+            // fit, exactly like every other degrade path in this class.
+            errorBytes = boundedErrorResponse(null, INTERNAL_ERROR, INTERNAL_ERROR_MESSAGE);
             code = INTERNAL_ERROR;
             status = httpStatusFor(INTERNAL_ERROR);
             errorType = McpErrorType.INTERNAL;
@@ -2596,6 +2664,67 @@ final class McpRequestDispatcher {
     }
 
     /**
+     * Builds the {@code {jsonrpc, id, error:{code, message}}} JSON-RPC error node every bounded error
+     * writer in this class shares, mirroring {@link McpProtocolCodec}'s own private {@code encodeError}
+     * field order exactly ({@code jsonrpc}, {@code id}, {@code error} — {@code code}, {@code message})
+     * so a caller that switches from that codec method to this one (R12) produces byte-identical output
+     * for the same facts.
+     *
+     * @param id the request id to echo, or {@code null} to build the id-less shape
+     * @param code the final-spec or implementation-defined JSON-RPC error code
+     * @param message the standard, non-leaking JSON-RPC error message
+     * @return the unencoded response node
+     */
+    private static ObjectNode errorNode(@Nullable JsonNode id, int code, String message) {
+        ObjectNode response = OUTPUT_ENCODER.createObjectNode();
+        response.put("jsonrpc", "2.0");
+        response.set("id", id != null ? id : NullNode.getInstance());
+        ObjectNode error = OUTPUT_ENCODER.createObjectNode();
+        error.put("code", code);
+        error.put("message", message);
+        response.set("error", error);
+        return response;
+    }
+
+    /**
+     * Serializes the bounded {@code id}/{@code code}/{@code message} JSON-RPC error shape exactly once,
+     * through the same {@link CappedOutputStream} {@link #encodeCapped} already uses for every success
+     * payload, degrading to the always-fitting id-less {@link #INTERNAL_ERROR}/{@link
+     * #INTERNAL_ERROR_MESSAGE} shape — itself encoded the same bounded way, never assumed to fit without
+     * going through the cap — only when the with-id shape would exceed {@code mcp.output.maxBytes} (R12,
+     * merge blocker 5).
+     *
+     * <p>Replaces the idiom every error-writing path in this class previously shared: build the full
+     * response through {@link McpProtocolCodec#errorResponseFor} or {@link
+     * McpProtocolCodec#internalFallback} — both an unrestricted {@code writeValueAsBytes} — then compare
+     * the <em>completed</em> array's length against the cap. That idiom always allocated the whole
+     * response, id included, before the promised cap could ever apply: a large client-controlled id (the
+     * only unbounded element in any of these shapes) forced the full allocation regardless of how it was
+     * eventually classified. Those two codec methods are unchanged and still used directly by {@code
+     * McpGoldenWireTest} and {@code McpCodecFailureTest} to pin the codec's own wire-format bytes, which
+     * have no {@code mcp.output.maxBytes} to honor; this dispatcher no longer calls either of them for any
+     * client-facing write — every terminal writer below builds and encodes its own error node instead.
+     *
+     * @param id the request id to echo, or {@code null} to build the id-less shape directly
+     * @param code the final-spec or implementation-defined JSON-RPC error code
+     * @param message the standard, non-leaking JSON-RPC error message
+     * @return the complete, bounded response bytes
+     */
+    private byte[] boundedErrorResponse(@Nullable JsonNode id, int code, String message) {
+        try {
+            return encodeCapped(errorNode(id, code, message));
+        } catch (OutputCapExceededException overCap) {
+            // The id-less shape is trusted to fit without a further length check, exactly as every
+            // degrade path in this class already trusted its own id-less fallback: every message this
+            // method pairs with it is a short, fixed constant, and the validator-enforced 1,024-byte
+            // floor on mcp.output.maxBytes (McpServerConfigValidator) makes a second cap trip here
+            // unreachable in practice. Still routed through encodeCapped rather than assumed unencoded,
+            // so a pathological misconfiguration fails loudly instead of silently.
+            return encodeCapped(errorNode(null, INTERNAL_ERROR, INTERNAL_ERROR_MESSAGE));
+        }
+    }
+
+    /**
      * Encodes a value to canonical UTF-8 bytes, bounding the output at {@code mcp.output.maxBytes} as
      * bytes are produced rather than after the full byte array is materialized. Accepts any
      * Jackson-serializable value — a {@link JsonNode} response envelope (every terminal writer) or a
@@ -2659,18 +2788,6 @@ final class McpRequestDispatcher {
     static final class OutputCapExceededException extends RuntimeException {
         OutputCapExceededException() {
             super("MCP response exceeded mcp.output.maxBytes");
-        }
-    }
-
-    /**
-     * Signals that a tool's normalized structured result failed validation against its declared output
-     * schema (T020). Carries no schema detail, failing property, or value text — {@link
-     * #writeOutputValidationFailure} never reads this exception's message, matching {@link
-     * #OutputCapExceededException}'s established non-leaking convention for a different stage.
-     */
-    static final class OutputSchemaValidationException extends RuntimeException {
-        OutputSchemaValidationException() {
-            super("MCP tool structured output failed schema validation");
         }
     }
 }

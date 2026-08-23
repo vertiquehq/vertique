@@ -167,6 +167,16 @@ materialized. Discovery and `tools/list` responses are far below the default cap
 structured result is bounded the same way — see [Bounded output pipeline](#bounded-output-pipeline)
 for the full output-stage order this cap is one part of.
 
+Every JSON-RPC error response — a negotiation-mismatch `-32020`, an unknown-or-unauthorized `-32602`,
+an interceptor rejection, an ordinary envelope-decode failure (`-32700`/`-32600`/`-32601`), and every
+internal-error fallback — serializes through this exact same capped mechanism, never a separate
+unrestricted encode measured only after the fact. The one unbounded element any of these shapes can
+carry is the echoed request `id` (bounded only by the envelope codec's own frozen `maxStringLength`,
+far above this cap's floor): when even the id-bearing shape would exceed `mcp.output.maxBytes`, the
+response degrades to the minimal id-less generic internal-error shape instead — itself encoded through
+the same capped writer — so a client that sent an oversized id receives a bounded response with a
+`null` id rather than its own id ever being echoed back in an oversized payload.
+
 ## Bounded JSON-RPC envelope codec
 
 Wire decoding is framework-owned and trusts no application mapper. A package-private
