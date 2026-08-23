@@ -12,7 +12,10 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import dev.vertique.core.context.ContextHolder;
+import dev.vertique.core.context.ContextValue;
 import dev.vertique.core.extension.ExtensionPhase;
+import dev.vertique.correlation.CorrelationContextFactory;
 import dev.vertique.mcp.interceptor.McpRequestContext;
 import dev.vertique.mcp.interceptor.McpRequestInterceptor;
 import dev.vertique.mcp.lifecycle.McpRequestCompletedEvent;
@@ -21,6 +24,7 @@ import dev.vertique.mcp.lifecycle.McpRequestLifecycleObserver;
 import dev.vertique.mcp.lifecycle.McpRequestObservation;
 import dev.vertique.mcp.lifecycle.McpRequestTerminalObservation;
 import dev.vertique.rest.core.config.HttpConfig;
+import dev.vertique.rest.core.middleware.RequestContextLifecycle;
 import dev.vertique.rest.core.security.SecurityRuntime;
 import dev.vertique.security.SecurityContext;
 import dev.vertique.security.SecurityContexts;
@@ -39,6 +43,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.DisplayName;
@@ -408,9 +413,15 @@ class McpProtocolNegotiationTest {
                 Set.of(),
                 HttpConfig.builder().build(),
                 McpToolRegistry.build(Set.of()),
-                policyEnforcer);
+                policyEnforcer,
+                NO_OP_CONTEXT_HOLDER,
+                new CorrelationContextFactory(Optional.empty()));
 
         RoutingContext context = mockStatefulRoutingContext(body, headers);
+        // R09: begin() registers the correlation bind scope with RequestContextLifecycle's per-request
+        // handle; this synthetic RoutingContext has no real ROOT-scoped middleware chain, so the test
+        // installs the lifecycle handle itself, exactly as production's HttpVerticle does.
+        new RequestContextLifecycle().handle(context);
 
         // DECISIVE: dispatch() must return normally — a crash here (e.g. an IllegalArgumentException
         // escaping from a poisoned McpRequestTerminalEvent construction, and then again from its own
@@ -520,7 +531,9 @@ class McpProtocolNegotiationTest {
                 Set.of(),
                 HttpConfig.builder().build(),
                 McpToolRegistry.build(Set.of()),
-                policyEnforcer);
+                policyEnforcer,
+                NO_OP_CONTEXT_HOLDER,
+                new CorrelationContextFactory(Optional.empty()));
 
         RoutingContext context = mock(RoutingContext.class);
         HttpServerRequest request = mock(HttpServerRequest.class);
@@ -625,4 +638,17 @@ class McpProtocolNegotiationTest {
             return invocations;
         }
     }
+
+    /** A {@link ContextHolder} that resolves nothing and discards every binding (R09). */
+    private static final ContextHolder NO_OP_CONTEXT_HOLDER = new ContextHolder() {
+        @Override
+        public <T> Optional<T> current(Class<T> type) {
+            return Optional.empty();
+        }
+
+        @Override
+        public <T extends ContextValue> Scope bind(Class<T> type, T value) {
+            return () -> {};
+        }
+    };
 }

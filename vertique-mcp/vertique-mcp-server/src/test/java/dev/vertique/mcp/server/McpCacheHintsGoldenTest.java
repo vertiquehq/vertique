@@ -13,6 +13,7 @@ import static org.mockito.Mockito.when;
 
 import dev.vertique.core.context.ContextHolder;
 import dev.vertique.core.context.ContextValue;
+import dev.vertique.correlation.CorrelationContextFactory;
 import dev.vertique.mcp.tool.McpAccessMode;
 import dev.vertique.mcp.tool.McpCancellationSignal;
 import dev.vertique.mcp.tool.McpPreparedToolCall;
@@ -131,7 +132,9 @@ class McpCacheHintsGoldenTest {
                     Set.of(),
                     HttpConfig.builder().build(),
                     registry,
-                    policyEnforcer);
+                    policyEnforcer,
+                    NO_OP_CONTEXT_HOLDER,
+                    new CorrelationContextFactory(Optional.empty()));
             return new McpCacheHintsGoldenTestFixture(dispatcher);
         }
 

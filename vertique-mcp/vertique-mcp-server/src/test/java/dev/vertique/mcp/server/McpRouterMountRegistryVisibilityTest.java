@@ -9,6 +9,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import dev.vertique.core.context.ContextHolder;
 import dev.vertique.core.context.ContextValue;
 import dev.vertique.core.exception.ConfigurationException;
+import dev.vertique.correlation.CorrelationContextFactory;
 import dev.vertique.mcp.interceptor.McpRequestInterceptor;
 import dev.vertique.mcp.interceptor.McpToolInterceptor;
 import dev.vertique.mcp.lifecycle.McpRequestCompletedListener;
@@ -112,7 +113,9 @@ class McpRouterMountRegistryVisibilityTest {
                 Set.<McpToolInterceptor>of(),
                 httpConfig,
                 registry,
-                policyEnforcer);
+                policyEnforcer,
+                NO_OP_CONTEXT_HOLDER,
+                new CorrelationContextFactory(Optional.empty()));
         IdentityResolutionMiddleware identityResolution = new IdentityResolutionMiddleware(
                 Set.of(new AnonymousOnlyIdentityResolver()),
                 Optional.of(new DefaultSecurityClaimMapper()),

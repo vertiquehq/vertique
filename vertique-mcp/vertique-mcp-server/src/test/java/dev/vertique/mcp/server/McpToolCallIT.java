@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.fail;
 
 import dev.vertique.core.context.ContextHolder;
 import dev.vertique.core.context.ContextValue;
+import dev.vertique.correlation.CorrelationContextFactory;
 import dev.vertique.mcp.tool.McpAccessMode;
 import dev.vertique.mcp.tool.McpCancellationSignal;
 import dev.vertique.mcp.tool.McpPreparedToolCall;
@@ -434,7 +435,9 @@ class McpToolCallIT {
                             Set.of(),
                             httpConfig,
                             registry,
-                            policyEnforcer),
+                            policyEnforcer,
+                            NO_OP_CONTEXT_HOLDER,
+                            new CorrelationContextFactory(Optional.empty())),
                     Set.of(new BearerRouteAuthHandler()),
                     identityResolution(securityRuntime),
                     httpConfig,

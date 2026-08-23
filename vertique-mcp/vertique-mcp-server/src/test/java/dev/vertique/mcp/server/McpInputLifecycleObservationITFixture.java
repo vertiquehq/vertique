@@ -5,6 +5,7 @@ package dev.vertique.mcp.server;
 
 import dev.vertique.core.context.ContextHolder;
 import dev.vertique.core.context.ContextValue;
+import dev.vertique.correlation.CorrelationContextFactory;
 import dev.vertique.mcp.lifecycle.McpRequestCompletedEvent;
 import dev.vertique.mcp.lifecycle.McpRequestLifecycleObserver;
 import dev.vertique.mcp.lifecycle.McpRequestObservation;
@@ -104,7 +105,9 @@ public final class McpInputLifecycleObservationITFixture {
                 Set.of(),
                 httpConfig,
                 registry,
-                policyEnforcer);
+                policyEnforcer,
+                NO_OP_CONTEXT_HOLDER,
+                new CorrelationContextFactory(Optional.empty()));
 
         McpRouterMount mount = new McpRouterMount(
                 config,

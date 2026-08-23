@@ -10,6 +10,7 @@ import static org.assertj.core.api.Assertions.fail;
 import dev.vertique.core.context.ContextHolder;
 import dev.vertique.core.context.ContextValue;
 import dev.vertique.core.exception.ConfigurationException;
+import dev.vertique.correlation.CorrelationContextFactory;
 import dev.vertique.mcp.lifecycle.McpErrorType;
 import dev.vertique.mcp.lifecycle.McpMethod;
 import dev.vertique.mcp.lifecycle.McpOutcome;
@@ -457,7 +458,9 @@ public class McpDiscoverIT {
                                     new SecurityEventEmitter(Set.of()),
                                     NO_OP_CONTEXT_HOLDER,
                                     securityRuntime,
-                                    Optional.empty()))),
+                                    Optional.empty())),
+                            NO_OP_CONTEXT_HOLDER,
+                            new CorrelationContextFactory(Optional.empty())),
                     options.handlers,
                     identityResolution(securityRuntime),
                     httpConfig,

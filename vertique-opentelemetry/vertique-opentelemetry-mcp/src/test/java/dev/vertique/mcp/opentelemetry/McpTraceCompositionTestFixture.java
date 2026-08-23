@@ -9,6 +9,7 @@ import dagger.Provides;
 import dagger.multibindings.Multibinds;
 import dev.vertique.context.ContextRuntimeModule;
 import dev.vertique.core.VertxModule;
+import dev.vertique.correlation.CorrelationContextModule;
 import dev.vertique.mcp.lifecycle.McpRequestLifecycleObserver;
 import dev.vertique.mcp.server.McpServerConfig;
 import dev.vertique.mcp.server.McpServerModule;
@@ -149,6 +150,7 @@ final class McpTraceCompositionTestFixture {
             modules = {
                 VertxModule.class,
                 ContextRuntimeModule.class,
+                CorrelationContextModule.class,
                 SecurityModule.class,
                 AuthModule.class,
                 McpServerModule.class,
@@ -173,6 +175,7 @@ final class McpTraceCompositionTestFixture {
             modules = {
                 VertxModule.class,
                 ContextRuntimeModule.class,
+                CorrelationContextModule.class,
                 SecurityModule.class,
                 AuthModule.class,
                 McpServerModule.class,

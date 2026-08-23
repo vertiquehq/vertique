@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.fail;
 
 import dev.vertique.core.context.ContextHolder;
 import dev.vertique.core.context.ContextValue;
+import dev.vertique.correlation.CorrelationContextFactory;
 import dev.vertique.mcp.interceptor.McpRequestInterceptor;
 import dev.vertique.mcp.interceptor.McpToolInterceptor;
 import dev.vertique.mcp.lifecycle.McpErrorType;
@@ -343,7 +344,9 @@ class McpInterceptorRejectionContractIT {
                             toolInterceptors,
                             httpConfig,
                             registry,
-                            policyEnforcer),
+                            policyEnforcer,
+                            NO_OP_CONTEXT_HOLDER,
+                            new CorrelationContextFactory(Optional.empty())),
                     Set.of(),
                     identityResolution(securityRuntime),
                     httpConfig,

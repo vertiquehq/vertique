@@ -13,7 +13,10 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import dev.vertique.core.context.ContextHolder;
+import dev.vertique.core.context.ContextValue;
 import dev.vertique.core.extension.ExtensionPhase;
+import dev.vertique.correlation.CorrelationContextFactory;
 import dev.vertique.mcp.interceptor.McpRequestContext;
 import dev.vertique.mcp.interceptor.McpRequestInterceptor;
 import dev.vertique.rest.core.config.HttpConfig;
@@ -32,6 +35,7 @@ import java.lang.reflect.RecordComponent;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.DisplayName;
@@ -270,7 +274,9 @@ class McpRequestInterceptorPipelineTest {
                     Set.of(),
                     HttpConfig.builder().build(),
                     McpToolRegistry.build(Set.of()),
-                    mock(McpPolicyEnforcer.class));
+                    mock(McpPolicyEnforcer.class),
+                    NO_OP_CONTEXT_HOLDER,
+                    new CorrelationContextFactory(Optional.empty()));
         }
 
         /**
@@ -474,4 +480,17 @@ class McpRequestInterceptorPipelineTest {
             }
         }
     }
+
+    /** A {@link ContextHolder} that resolves nothing and discards every binding (R09). */
+    private static final ContextHolder NO_OP_CONTEXT_HOLDER = new ContextHolder() {
+        @Override
+        public <T> Optional<T> current(Class<T> type) {
+            return Optional.empty();
+        }
+
+        @Override
+        public <T extends ContextValue> Scope bind(Class<T> type, T value) {
+            return () -> {};
+        }
+    };
 }

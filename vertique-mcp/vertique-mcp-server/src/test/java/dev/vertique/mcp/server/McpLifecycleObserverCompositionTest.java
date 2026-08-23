@@ -14,12 +14,15 @@ import dagger.Module;
 import dagger.Provides;
 import dagger.multibindings.IntoSet;
 import dagger.multibindings.Multibinds;
+import dev.vertique.context.ContextRuntimeModule;
+import dev.vertique.correlation.CorrelationContextModule;
 import dev.vertique.mcp.lifecycle.McpRequestCompletedEvent;
 import dev.vertique.mcp.lifecycle.McpRequestCompletedListener;
 import dev.vertique.mcp.lifecycle.McpRequestLifecycleObserver;
 import dev.vertique.mcp.lifecycle.McpRequestObservation;
 import dev.vertique.mcp.lifecycle.McpRequestTerminalObservation;
 import dev.vertique.rest.core.config.HttpConfig;
+import dev.vertique.rest.core.middleware.RequestContextLifecycle;
 import dev.vertique.rest.core.router.RouterMount;
 import dev.vertique.rest.core.security.RouteAuthHandler;
 import dev.vertique.rest.core.security.SecurityRuntime;
@@ -247,6 +250,10 @@ class McpLifecycleObserverCompositionTest {
     private int mountServer(RouterMount mount, BodyHandler rootBodyHandler, List<Path> spooledUploads)
             throws Exception {
         Router router = Router.router(vertx);
+        // R09: production composes RequestContextLifecycle as a ROOT-scoped middleware ahead of every
+        // RouterMount sub-router (HttpVerticle); this hand-assembled router must install it too, or
+        // McpRequestDispatcher#begin's correlation binding has no lifecycle handle to register with.
+        router.route().handler(new RequestContextLifecycle());
         router.route().handler(rootBodyHandler);
         router.route().handler(context -> {
             context.fileUploads().forEach(upload -> spooledUploads.add(Path.of(upload.uploadedFileName())));
@@ -476,7 +483,13 @@ class McpLifecycleObserverCompositionTest {
      * Compiling this component is itself the proof that the zero-extension graph resolves.
      */
     @Singleton
-    @Component(modules = {McpServerModule.class, GraphExternalsModule.class})
+    @Component(
+            modules = {
+                McpServerModule.class,
+                GraphExternalsModule.class,
+                ContextRuntimeModule.class,
+                CorrelationContextModule.class
+            })
     interface ZeroExtensionComponent {
 
         /**
@@ -503,7 +516,14 @@ class McpLifecycleObserverCompositionTest {
 
     /** The multi-contribution graph: several observers and listeners, including failing contributions. */
     @Singleton
-    @Component(modules = {McpServerModule.class, GraphExternalsModule.class, ObserverAndListenerContributions.class})
+    @Component(
+            modules = {
+                McpServerModule.class,
+                GraphExternalsModule.class,
+                ContextRuntimeModule.class,
+                CorrelationContextModule.class,
+                ObserverAndListenerContributions.class
+            })
     interface ObserverAndListenerComponent {
 
         /**
@@ -530,7 +550,14 @@ class McpLifecycleObserverCompositionTest {
 
     /** The listeners-only graph: zero observer contributions alongside several listeners. */
     @Singleton
-    @Component(modules = {McpServerModule.class, GraphExternalsModule.class, ListenerOnlyContributions.class})
+    @Component(
+            modules = {
+                McpServerModule.class,
+                GraphExternalsModule.class,
+                ContextRuntimeModule.class,
+                CorrelationContextModule.class,
+                ListenerOnlyContributions.class
+            })
     interface ListenerOnlyComponent {
 
         /**

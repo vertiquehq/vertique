@@ -9,6 +9,7 @@ import dagger.Provides;
 import dagger.multibindings.IntoSet;
 import dev.vertique.context.ContextRuntimeModule;
 import dev.vertique.core.VertxModule;
+import dev.vertique.correlation.CorrelationContextModule;
 import dev.vertique.mcp.server.McpServerConfig;
 import dev.vertique.mcp.server.McpServerModule;
 import dev.vertique.mcp.tool.McpAccessMode;
@@ -122,6 +123,7 @@ final class McpServerSpanObserverITFixture {
             modules = {
                 VertxModule.class,
                 ContextRuntimeModule.class,
+                CorrelationContextModule.class,
                 SecurityModule.class,
                 AuthModule.class,
                 McpServerModule.class,

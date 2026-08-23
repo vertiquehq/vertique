@@ -7,6 +7,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import dev.vertique.core.context.ContextHolder;
 import dev.vertique.core.context.ContextValue;
+import dev.vertique.correlation.CorrelationContextFactory;
 import dev.vertique.mcp.tool.McpAccessMode;
 import dev.vertique.mcp.tool.McpCancellationSignal;
 import dev.vertique.mcp.tool.McpPreparedToolCall;
@@ -320,7 +321,9 @@ class McpToolsListGateTimeoutTerminatesScanIT {
                             Set.of(),
                             httpConfig,
                             registry,
-                            policyEnforcer),
+                            policyEnforcer,
+                            NO_OP_CONTEXT_HOLDER,
+                            new CorrelationContextFactory(Optional.empty())),
                     routeAuthHandlers,
                     identityResolution(securityRuntime),
                     httpConfig,

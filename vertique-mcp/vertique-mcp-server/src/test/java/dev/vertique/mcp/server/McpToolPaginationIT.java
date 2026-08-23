@@ -11,6 +11,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import dev.vertique.core.context.ContextHolder;
 import dev.vertique.core.context.ContextValue;
+import dev.vertique.correlation.CorrelationContextFactory;
 import dev.vertique.mcp.tool.McpAccessMode;
 import dev.vertique.mcp.tool.McpCancellationSignal;
 import dev.vertique.mcp.tool.McpPreparedToolCall;
@@ -352,7 +353,9 @@ class McpToolPaginationIT {
                             Set.of(),
                             httpConfig,
                             registry,
-                            policyEnforcer),
+                            policyEnforcer,
+                            NO_OP_CONTEXT_HOLDER,
+                            new CorrelationContextFactory(Optional.empty())),
                     Set.of(new BearerRouteAuthHandler()),
                     identityResolution(securityRuntime),
                     httpConfig,

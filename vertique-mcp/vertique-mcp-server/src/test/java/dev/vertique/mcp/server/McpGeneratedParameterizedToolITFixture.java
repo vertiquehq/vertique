@@ -9,6 +9,7 @@ import dev.vertique.codegen.test.fixtures.SourceFiles;
 import dev.vertique.core.context.ContextHolder;
 import dev.vertique.core.context.ContextValue;
 import dev.vertique.core.sanitization.Sanitizer;
+import dev.vertique.correlation.CorrelationContextFactory;
 import dev.vertique.input.processing.InputObjectProcessor;
 import dev.vertique.mcp.server.runtime.McpToolRuntimeFactory;
 import dev.vertique.mcp.server.runtime.McpToolRuntimeFactoryTestSupport;
@@ -200,7 +201,9 @@ final class McpGeneratedParameterizedToolITFixture {
                         Set.of(),
                         httpConfig,
                         registry,
-                        policyEnforcer),
+                        policyEnforcer,
+                        NO_OP_CONTEXT_HOLDER,
+                        new CorrelationContextFactory(Optional.empty())),
                 Set.of(),
                 identityResolution(securityRuntime),
                 httpConfig,

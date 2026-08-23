@@ -10,7 +10,10 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import dev.vertique.core.context.ContextHolder;
+import dev.vertique.core.context.ContextValue;
 import dev.vertique.core.correlation.CorrelationContextSnapshot;
+import dev.vertique.correlation.CorrelationContextFactory;
 import dev.vertique.mcp.interceptor.McpRequestContext;
 import dev.vertique.mcp.interceptor.McpRequestInterceptor;
 import dev.vertique.mcp.lifecycle.McpAuthorizationSummary;
@@ -31,6 +34,7 @@ import dev.vertique.mcp.tool.McpToolDescriptor;
 import dev.vertique.mcp.tool.McpToolInvoker;
 import dev.vertique.mcp.tool.McpToolResult;
 import dev.vertique.rest.core.config.HttpConfig;
+import dev.vertique.rest.core.middleware.RequestContextLifecycle;
 import dev.vertique.rest.core.security.SecurityRuntime;
 import dev.vertique.security.SecurityContext;
 import dev.vertique.security.SecurityContexts;
@@ -51,6 +55,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.AfterEach;
@@ -292,9 +297,15 @@ class McpLifecycleFactsTest {
                 Set.of(),
                 HttpConfig.builder().build(),
                 McpToolRegistry.build(Set.of(invoker)),
-                policyEnforcer);
+                policyEnforcer,
+                NO_OP_CONTEXT_HOLDER,
+                new CorrelationContextFactory(Optional.empty()));
 
         RoutingContext context = mockRoutingContext(vertxContext, toolsCallBody());
+        // R09: begin() now registers the correlation bind scope with RequestContextLifecycle's per-
+        // request handle; this synthetic RoutingContext has no real ROOT-scoped middleware chain, so
+        // the fixture installs the lifecycle handle itself, exactly as production's HttpVerticle does.
+        new RequestContextLifecycle().handle(context);
         dispatcher.begin(context);
 
         return new Fixture(dispatcher, context, observer);
@@ -431,4 +442,17 @@ class McpLifecycleFactsTest {
             };
         }
     }
+
+    /** A {@link ContextHolder} that resolves nothing and discards every binding (R09). */
+    private static final ContextHolder NO_OP_CONTEXT_HOLDER = new ContextHolder() {
+        @Override
+        public <T> Optional<T> current(Class<T> type) {
+            return Optional.empty();
+        }
+
+        @Override
+        public <T extends ContextValue> Scope bind(Class<T> type, T value) {
+            return () -> {};
+        }
+    };
 }

@@ -19,6 +19,7 @@ import dev.vertique.core.sanitization.InputLocation;
 import dev.vertique.core.sanitization.InputValueContext;
 import dev.vertique.core.sanitization.Sanitize;
 import dev.vertique.core.sanitization.Sanitizer;
+import dev.vertique.correlation.CorrelationContextFactory;
 import dev.vertique.input.processing.EffectiveInputPolicies;
 import dev.vertique.input.processing.InputObjectProcessor;
 import dev.vertique.json.JacksonFieldNameResolver;
@@ -435,7 +436,9 @@ class McpInputPipelineIT {
                             Set.of(),
                             httpConfig,
                             registry,
-                            policyEnforcer),
+                            policyEnforcer,
+                            NO_OP_CONTEXT_HOLDER,
+                            new CorrelationContextFactory(Optional.empty())),
                     Set.of(),
                     identityResolution(securityRuntime),
                     httpConfig,

@@ -12,10 +12,12 @@ import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.NullNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import dev.vertique.core.context.ContextHolder;
+import dev.vertique.core.correlation.CorrelationContext;
 import dev.vertique.core.correlation.CorrelationContextSnapshot;
-import dev.vertique.core.correlation.CorrelationIdentifier;
 import dev.vertique.core.extension.ExtensionPhase;
 import dev.vertique.core.extension.OrderedExtension;
+import dev.vertique.correlation.CorrelationContextFactory;
 import dev.vertique.mcp.interceptor.McpRequestContext;
 import dev.vertique.mcp.interceptor.McpRequestInterceptor;
 import dev.vertique.mcp.interceptor.McpToolInterceptor;
@@ -40,6 +42,7 @@ import dev.vertique.mcp.tool.McpToolDescriptor;
 import dev.vertique.mcp.tool.McpToolInvoker;
 import dev.vertique.mcp.tool.McpToolResult;
 import dev.vertique.rest.core.config.HttpConfig;
+import dev.vertique.rest.core.middleware.RequestContextLifecycle;
 import dev.vertique.rest.core.security.SecurityRuntime;
 import dev.vertique.rest.security.SecurityPolicyEnforcer;
 import dev.vertique.security.SecurityContext;
@@ -68,7 +71,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.UUID;
 
 /**
  * Dispatches the bounded discovery endpoint over the hardened stateless HTTP contract (§4.7).
@@ -225,11 +227,14 @@ final class McpRequestDispatcher {
     private static final String STARTED_AT_KEY = KEY_PREFIX + ".startedAt";
 
     /**
-     * Routing-context key for this request's {@link CorrelationContextSnapshot} (R05, issue #431),
-     * established once in {@link #begin} — contract §4.7 stage 2, "establish correlation ... before
-     * optional authentication" — and read by every terminal-event construction site for the remainder
-     * of the request through {@link #correlationOf}. {@code null} (the key absent) only before {@link
-     * #begin} runs, i.e. for a cheap-admission rejection in {@link #admitCheap}.
+     * Routing-context key for a snapshot of this request's live {@link CorrelationContext} (R05, issue
+     * #431; R09, merge blocker 2), established once in {@link #begin} — via {@link #bindCorrelation} —
+     * contract §4.7 stage 2, "establish correlation ... before optional authentication" — and read by
+     * every terminal-event construction site and every tool-interceptor context for the remainder of
+     * the request through {@link #correlationOf}. Always a snapshot of the same live context bound onto
+     * {@code ContextHolder} by {@link #bindCorrelation}, never an independently generated value. {@code
+     * null} (the key absent) only before {@link #begin} runs, i.e. for a cheap-admission rejection in
+     * {@link #admitCheap}.
      */
     private static final String CORRELATION_KEY = KEY_PREFIX + ".correlation";
 
@@ -253,9 +258,6 @@ final class McpRequestDispatcher {
      * "authorization is present only after an actual policy evaluation."
      */
     private static final String AUTHORIZATION_KEY = KEY_PREFIX + ".authorization";
-
-    /** The origin label stamped on every {@link CorrelationIdentifier} this dispatcher mints. */
-    private static final String CORRELATION_SOURCE = "seeded:mcp";
 
     /**
      * Compact, insertion-order-preserving success encoder, canonicalized identically to the codec's
@@ -304,6 +306,8 @@ final class McpRequestDispatcher {
     private final McpToolRegistry toolRegistry;
     private final McpPolicyEnforcer policyEnforcer;
     private final McpCursorCodec cursorCodec;
+    private final ContextHolder contextHolder;
+    private final CorrelationContextFactory correlationContextFactory;
 
     @Inject
     McpRequestDispatcher(
@@ -315,7 +319,9 @@ final class McpRequestDispatcher {
             Set<McpToolInterceptor> toolInterceptors,
             HttpConfig httpConfig,
             McpToolRegistry toolRegistry,
-            McpPolicyEnforcer policyEnforcer) {
+            McpPolicyEnforcer policyEnforcer,
+            ContextHolder contextHolder,
+            CorrelationContextFactory correlationContextFactory) {
         this.config = config;
         this.securityRuntime = securityRuntime;
         this.lifecycleObservers = Set.copyOf(lifecycleObservers);
@@ -326,6 +332,8 @@ final class McpRequestDispatcher {
         this.toolRegistry = toolRegistry;
         this.policyEnforcer = policyEnforcer;
         this.cursorCodec = new McpCursorCodec();
+        this.contextHolder = contextHolder;
+        this.correlationContextFactory = correlationContextFactory;
     }
 
     /**
@@ -460,9 +468,10 @@ final class McpRequestDispatcher {
     }
 
     /**
-     * Constructs the request's completion coordinator and registers its disconnect/reset settlement
-     * hooks (§4.7 stage 2), for a request that already passed {@link #admitCheap}'s cheap admission
-     * checks and {@code BodyHandler}'s body aggregation.
+     * Constructs the request's completion coordinator, establishes the live request-scoped {@link
+     * CorrelationContext}, and registers its disconnect/reset settlement hooks (§4.7 stage 2), for a
+     * request that already passed {@link #admitCheap}'s cheap admission checks and {@code
+     * BodyHandler}'s body aggregation.
      *
      * <p>Opens the request's lifecycle observation: every observer and completed-listener call for this
      * request is scoped to the coordinator constructed here, so — like the cheap-admission rejections
@@ -471,7 +480,7 @@ final class McpRequestDispatcher {
      */
     void begin(RoutingContext context) {
         Instant startedAt = startedAt(context);
-        context.put(CORRELATION_KEY, establishCorrelation());
+        bindCorrelation(context);
         McpCompletionCoordinator coordinator = new McpCompletionCoordinator(
                 context.vertx().getOrCreateContext(), lifecycleObservers, completedListeners, startedAt);
         context.put(COMPLETION_COORDINATOR_KEY, coordinator);
@@ -480,23 +489,36 @@ final class McpRequestDispatcher {
     }
 
     /**
-     * Mints a fresh {@link CorrelationContextSnapshot} for one request (R05, issue #431; contract §4.7
-     * stage 2 — "establish correlation ... before optional authentication"). MCP defines no inbound
-     * correlation header of its own — unlike REST's {@code CorrelationIngressMiddleware}, deliberately
-     * not reused here — so this mints two independently generated identifiers, matching {@code
-     * CorrelationContextFactory#seed}'s own shape for the existing non-REST first-ingress boundaries
-     * (Kafka, the outbox relay, a delayed job), each tagged {@value #CORRELATION_SOURCE}. The snapshot
-     * is stored on this request's {@link RoutingContext} only ({@link #begin}), never bound onto the
-     * shared {@code ContextHolder} substrate: nothing else on the MCP request path reads correlation
-     * ambiently, and every terminal-event construction site reads it back explicitly through {@link
-     * #correlationOf}.
+     * Establishes the one live {@link CorrelationContext} for this request (R09, merge blocker 2;
+     * contract §4.7 stage 2 — "establish correlation ... before optional authentication") and binds it
+     * onto the shared {@code ContextHolder} substrate — the same mechanism REST's {@code
+     * CorrelationIngressMiddleware} uses for its own ingress boundary. MCP defines no inbound
+     * correlation header of its own, so the context is minted, not resolved, via {@link
+     * CorrelationContextFactory#seed(String)} exactly as the existing non-REST first-ingress boundaries
+     * do (Kafka, the outbox relay, a delayed job) — tagged {@code "seeded:mcp"} — which is also what
+     * routes an application-supplied {@link dev.vertique.core.correlation.CorrelationIdGenerator}
+     * override into every id this dispatcher mints, instead of bypassing it with a raw {@code
+     * UUID.randomUUID()} call.
+     *
+     * <p>The bind {@link ContextHolder.Scope} is registered with this request's {@link
+     * RequestContextLifecycle.Handle}, so it is torn down at request end on every exit path —
+     * normal completion, an interceptor or authorization rejection, a thrown failure, a client
+     * disconnect, or a stream reset — exactly like every other holder binding on this request, and
+     * never leaks onto the next request scheduled on the same event-loop thread.
+     *
+     * <p>This is the single live context every downstream consumer reads: {@code
+     * IdentityResolutionMiddleware} (via {@code ContextHolder.current(CorrelationContext.class)}, for
+     * {@code CredentialAcceptedEvent} emission), {@code SecurityPolicyEnforcer} (for every {@code
+     * AuthorizationDecisionEvent} this dispatcher's {@link McpPolicyEnforcer#decide} calls trigger), and
+     * this class's own {@link #correlationOf} — which snapshots the same live context rather than a
+     * second, independently generated source of correlation.
      */
-    private static CorrelationContextSnapshot establishCorrelation() {
-        CorrelationIdentifier requestId =
-                new CorrelationIdentifier(UUID.randomUUID().toString(), CORRELATION_SOURCE);
-        CorrelationIdentifier correlationId =
-                new CorrelationIdentifier(UUID.randomUUID().toString(), CORRELATION_SOURCE);
-        return CorrelationContextSnapshot.of(requestId, correlationId);
+    private void bindCorrelation(RoutingContext context) {
+        RequestContextLifecycle.Handle lifecycle = RequestContextLifecycle.fromRoutingContext(context);
+        CorrelationContext live = correlationContextFactory.seed("mcp");
+        ContextHolder.Scope scope = contextHolder.bind(CorrelationContext.class, live);
+        lifecycle.onClose(scope);
+        context.put(CORRELATION_KEY, live.snapshot());
     }
 
     /**
@@ -1703,8 +1725,12 @@ final class McpRequestDispatcher {
         // McpRequestContext and the resolved descriptor: no raw or normalized argument ever reaches an
         // interceptor. A rejection settles through the same bounded, SSE-framed writeToolResult path
         // stage 1 and stages 2-4 already use, and prepared.invoke() is never called.
+        //
+        // correlationOf(context) (R09, merge blocker 2): the same live-context snapshot every other
+        // terminal-event and interceptor site on this request reads, never a hardcoded null — a tool
+        // interceptor observes the same correlation the terminal event for this request will carry.
         McpToolInvocationContext toolContext = new McpToolInvocationContext(
-                new McpRequestContext(McpMethod.TOOLS_CALL, establishedSecurityContext(), null, null),
+                new McpRequestContext(McpMethod.TOOLS_CALL, establishedSecurityContext(), correlationOf(context), null),
                 invoker.descriptor());
         // T018: the opt-in, capability-gated value-observation callback fires here — after Bean
         // Validation (prepare() above already ran it) but strictly before the tool-interceptor stage
