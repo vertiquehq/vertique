@@ -20,6 +20,10 @@ Use this artifact when composing a Vertique capability that needs shared Redis c
 
 Connection profiles are named application configuration. Feature modules reference a profile and receive shared infrastructure through explicit Dagger composition.
 
+## Deadline behavior
+
+`RedisDeadline.withDeadline(Vertx, Future<T>, Duration)` provides a non-blocking event-loop deadline for asynchronous Redis operations. The duration must be positive; when it expires, the returned future fails with a timeout. The backend future is not canceled: late backend completion is fenced and ignored after the returned future settles, so callers must not assume upstream cancellation.
+
 ## Dependencies
 
 | Artifact | Purpose |
