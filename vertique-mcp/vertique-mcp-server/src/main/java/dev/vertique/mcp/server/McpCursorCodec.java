@@ -7,6 +7,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import dev.vertique.mcp.tool.McpToolDescriptor;
 import jakarta.annotation.Nullable;
 import java.io.IOException;
 import java.util.Base64;
@@ -34,11 +35,33 @@ import java.util.Set;
  *
  * <p>Not part of the application-facing public surface: package-private per the frozen artifact
  * inventory, matching {@link McpToolRegistry} and {@link McpSchemaRegistry}.
+ *
+ * <p><b>R13 item 2 (retracting R07 item 7's "unavoidable" residual).</b> {@link #BEFORE_FIRST_ANCHOR}
+ * is a reserved, non-membership-checked anchor value meaning "resume scanning from the very
+ * beginning of the registry" — distinct from an ordinary anchor, which always names a genuinely
+ * examined candidate and is therefore excluded (the grammar's anchor is exclusive). It is the empty
+ * string, which {@link McpToolDescriptor#isValidName} can never accept as a real tool name ({@code
+ * [A-Za-z0-9_.-]{1,128}} requires at least one character), so it can never collide with a genuine
+ * anchor and needs no dedicated wire field. R07 claimed no such value was expressible because the
+ * cursor's anchor was assumed to always mean "this candidate was examined and is excluded"; that
+ * assumption, not the cursor's opacity, was the limitation — the grammar already had room for one
+ * more reserved value.
  */
 final class McpCursorCodec {
 
     /** The one frozen final-2026 protocol version every valid cursor must carry. */
     static final String PROTOCOL_VERSION = "2026-07-28";
+
+    /**
+     * The reserved anchor meaning "resume scanning from the very beginning of the registry" — used
+     * when a scan must stop before any candidate was ever genuinely examined (a gate timeout, an
+     * exhausted deadline, or a cancellation observed before the very first candidate's decision even
+     * started). Never a real tool name ({@link McpToolDescriptor#isValidName} requires at least one
+     * character), so {@link #decode} recognizes it without checking registry membership, and a
+     * resumed scan seeded with it starts again at index 0 rather than silently excluding the
+     * candidate an ordinary (membership-checked, exclusive) anchor would.
+     */
+    static final String BEFORE_FIRST_ANCHOR = "";
 
     /**
      * The upper bound on base64url-decoded cursor bytes, checked before any JSON parsing is attempted.
@@ -76,9 +99,11 @@ final class McpCursorCodec {
     }
 
     /**
-     * Encodes an unsigned, non-expiring cursor naming the last examined global-name candidate.
+     * Encodes an unsigned, non-expiring cursor naming the last examined global-name candidate, or
+     * {@link #BEFORE_FIRST_ANCHOR} to encode "resume from the very beginning" instead.
      *
-     * @param anchor the last examined candidate's global tool name; must not be {@code null}
+     * @param anchor the last examined candidate's global tool name, or {@link #BEFORE_FIRST_ANCHOR};
+     *     must not be {@code null}
      * @param registryDigest the current immutable registry digest; must not be {@code null}
      * @return the opaque, base64url-encoded (no padding) cursor token
      */
@@ -105,14 +130,15 @@ final class McpCursorCodec {
      *
      * <p>Validation order is: base64url decode, then the decoded-byte-length bound (before any JSON
      * parsing), then JSON parsing and structural shape, then the protocol version, then the registry
-     * digest, then anchor membership in the current registry. Every failure — regardless of which
-     * check rejected it — collapses to the same {@link Decoded#isInvalid()} result with no
+     * digest, then anchor membership in the current registry — skipped for {@link
+     * #BEFORE_FIRST_ANCHOR}, which never needs to name a real candidate. Every failure — regardless of
+     * which check rejected it — collapses to the same {@link Decoded#isInvalid()} result with no
      * distinguishing detail.
      *
      * @param cursor the opaque cursor token to decode; must not be {@code null}
      * @param registryDigest the current immutable registry digest a valid cursor must match
      * @param validAnchors the current registry's global tool names; a valid cursor's anchor must be
-     *     one of these
+     *     one of these, or {@link #BEFORE_FIRST_ANCHOR}
      * @return the decoded anchor on success, or an invalid result carrying no anchor
      */
     Decoded decode(String cursor, String registryDigest, Set<String> validAnchors) {
@@ -147,7 +173,13 @@ final class McpCursorCodec {
             return Decoded.invalid();
         }
         String anchor = textField(node, FIELD_ANCHOR);
-        if (anchor == null || anchor.isBlank() || !validAnchors.contains(anchor)) {
+        if (anchor == null) {
+            return Decoded.invalid();
+        }
+        // R13 item 2: BEFORE_FIRST_ANCHOR is a reserved sentinel, never a real tool name, so it is
+        // recognized by exact equality and never checked against registry membership.
+        boolean beforeFirst = BEFORE_FIRST_ANCHOR.equals(anchor);
+        if (!beforeFirst && (anchor.isBlank() || !validAnchors.contains(anchor))) {
             return Decoded.invalid();
         }
         return Decoded.ok(anchor);
@@ -163,7 +195,8 @@ final class McpCursorCodec {
      * The outcome of a cursor decode: either a valid {@code anchor} or an invalid result carrying no
      * distinguishing detail about why validation failed.
      *
-     * @param anchor the decoded last-examined global tool name, or {@code null} when invalid
+     * @param anchor the decoded last-examined global tool name, {@link #BEFORE_FIRST_ANCHOR}, or
+     *     {@code null} when invalid
      * @param isInvalid whether the cursor failed validation
      */
     record Decoded(@Nullable String anchor, boolean isInvalid) {

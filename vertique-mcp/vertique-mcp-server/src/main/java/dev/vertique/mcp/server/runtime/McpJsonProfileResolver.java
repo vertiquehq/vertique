@@ -15,12 +15,28 @@ import jakarta.annotation.Nullable;
  * Resolves the effective tool-payload JSON profile once, at composition.
  *
  * <p>The precedence is method {@code @JsonProfile}, declaring type {@code @JsonProfile},
- * {@code mcp.jsonProfile}, global {@code json.jsonProfile}, then the reserved {@code vertx} profile.
- * The annotation processor has already collapsed the method-over-type selection into one nullable
- * declared literal, so this resolver owns the configured tail. An unknown id fails composition before
- * Router mount; a blank id never reaches composition (it fails compilation).
+ * {@code mcp.jsonProfile}, global {@code json.jsonProfile}, then the {@code vertique} profile
+ * (issue #440). The annotation processor has already collapsed the method-over-type selection into
+ * one nullable declared literal, so this resolver owns the configured tail. An unknown id fails
+ * composition before Router mount; a blank id never reaches composition (it fails compilation).
+ *
+ * <p><b>Issue #440 scoping.</b> Only the final fallback tier changed — from the reserved {@code
+ * vertx} profile (Vert.x's bare {@code DatabindCodec.mapper()}, which cannot serialize an {@code
+ * Optional}-typed tool result) to {@code vertique} (this framework's own default profile). This is
+ * deliberately <em>not</em> an MCP configuration default: a configuration default would sit ahead of
+ * {@code json.jsonProfile} in {@link #configuredDefault()}'s precedence chain and would silently
+ * override an application's own explicit global choice. The fallback instead applies only when
+ * nothing upstream of it — the per-tool declaration, {@code mcp.jsonProfile}, and {@code
+ * json.jsonProfile} — ever selected a profile at all.
  */
 final class McpJsonProfileResolver {
+
+    /**
+     * The final fallback profile (issue #440): resolved only when the per-tool declaration, {@code
+     * mcp.jsonProfile}, and {@code json.jsonProfile} are all unset. Never outranks {@code
+     * json.jsonProfile} — see {@link #configuredDefault()}.
+     */
+    private static final JsonProfileId VERTIQUE_FALLBACK = JsonProfileId.of("vertique");
 
     private final JsonMapperProfileRegistry profiles;
     private final JsonConfig jsonConfig;
@@ -54,15 +70,18 @@ final class McpJsonProfileResolver {
     }
 
     /**
-     * Resolves the configured tail of the precedence: MCP boundary, then global, then {@code vertx}.
+     * Resolves the configured tail of the precedence: MCP boundary, then global, then {@code
+     * vertique} (issue #440).
      *
      * <p>A {@code null} or blank configured id means "not set" and inherits the next tier, matching
      * {@code JsonConfig}'s documented semantics; a non-blank unknown id is rejected by the registry.
+     * {@code json.jsonProfile} is read here, ahead of the fallback — an application that sets it
+     * always gets its own configured profile, never {@link #VERTIQUE_FALLBACK}.
      *
-     * @return the configured default id, or the reserved {@code vertx} id when neither tier is set
+     * @return the configured default id, or {@link #VERTIQUE_FALLBACK} when neither tier is set
      */
     private JsonProfileId configuredDefault() {
         String configured = Strings.firstNonBlank(mcpConfig.jsonProfile(), jsonConfig.jsonProfile());
-        return configured != null ? JsonProfileId.of(configured) : JsonProfileId.VERTX;
+        return configured != null ? JsonProfileId.of(configured) : VERTIQUE_FALLBACK;
     }
 }

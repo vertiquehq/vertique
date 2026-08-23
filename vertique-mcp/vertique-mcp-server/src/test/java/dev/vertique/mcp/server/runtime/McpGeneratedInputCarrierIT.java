@@ -20,9 +20,11 @@ import org.junit.jupiter.api.Test;
  *
  * <p>Given a composed server exposing one record-parameter tool ({@code identity.register}'s
  * address carrier) and one {@code Optional<T>} tool ({@code identity.register}'s nickname carrier)
- * under the framework {@code vertx} profile and a registered {@code strict} profile — with the
- * address carrier always bound to {@code vertx} and the nickname carrier bound to the selected
- * profile ({@code strict} in the Given, swapped to {@code vertx} by the sensitivity mutation).
+ * under a real {@link dev.vertique.json.DefaultJsonMapperProfileRegistry} and a registered {@code
+ * strict} profile — with the address carrier resolved through {@link McpJsonProfileResolver}'s
+ * unconfigured tail (the {@code vertique} profile, issue #440) and the nickname carrier bound to the
+ * selected profile ({@code strict} in the Given, swapped to {@code vertx} by the sensitivity
+ * mutation).
  *
  * <p>Both carriers are hand-authored to the exact generated shape T008's emitter produces: a
  * private record whose sole component is named with the collision-safe positional identifier
@@ -40,7 +42,7 @@ class McpGeneratedInputCarrierIT {
     @Test
     @DisplayName("shouldMaterializeCarriersThroughTheEffectiveMapper")
     void shouldMaterializeCarriersThroughTheEffectiveMapper() {
-        // --- Given: a composed server, the framework vertx profile, and a registered strict profile ---
+        // --- Given: a composed server, the resolver's unconfigured tail, and a registered strict profile ---
         McpJsonProfileResolver resolver = McpGeneratedInputCarrierITFixture.resolver();
         JsonMapperProfile addressEffectiveProfile = resolver.resolve(null);
         JsonMapperProfile nicknameEffectiveProfile = resolver.resolve(JsonProfileId.of(SELECTED_PROFILE));
@@ -66,8 +68,8 @@ class McpGeneratedInputCarrierIT {
                 .as("the tool count stays fixed across the sensitivity mutation")
                 .hasSize(2);
 
-        // --- Then: the record-parameter carrier materializes via the effective (vertx) mapper, and the
-        // external protocol name "addr-info" maps to the collision-safe internal component argument0 ---
+        // --- Then: the record-parameter carrier materializes via the effective (vertique) mapper, and
+        // the external protocol name "addr-info" maps to the collision-safe internal component argument0 ---
         assertThat(materializedAddress.argument0())
                 .as("the external protocol name maps to the collision-safe internal component")
                 .isEqualTo(new Address("Helsinki", "00100"));

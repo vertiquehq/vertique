@@ -15,30 +15,55 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * R03 TP-002 — {@code shouldProveOptionalMaterializationThroughGeneratedCode} (finding #428).
+ * R03 TP-002 — {@code shouldProveOptionalMaterializationThroughGeneratedCode} (finding #428), plus
+ * R13 item 3 (issue #440)'s zero-config mounting proof.
  *
  * <p>Drives the real generated {@code OptionalProbe} canary — emitted by {@link
  * dev.vertique.codegen.mcp.McpToolInvokerEmitter} only for a tool with an {@code Optional<T>}
  * parameter, and run once, from the generated invoker's constructor, through {@code McpToolRuntime
  * #verifyOptionalMaterialization} — with omitted, explicit-null, and present cases (contract §4.1).
  *
- * <p><strong>Both cases are real, not synthetic.</strong> {@code shouldFailStartup...} exercises the
- * framework's own zero-config {@code vertx} profile: Vert.x's {@code DatabindCodec} registers no
- * {@code Jdk8Module}, confirmed directly (see {@code McpToolRuntime}'s javadoc and the mutation below)
- * — an application that declares an {@code Optional<T>} MCP tool parameter and configures no JSON
- * profile gets exactly this profile today. {@code shouldMountForACapableProfile} exercises a profile
- * that does register {@code Jdk8Module}.
+ * <p><strong>Every case is real, not synthetic.</strong> {@code shouldMountForTheZeroConfigDefaultProfile}
+ * exercises the framework's actual zero-config default — before R13 item 3 (issue #440), that default
+ * was the reserved {@code vertx} profile, and this exact canary failed startup for it (confirmed
+ * directly by this same row prior to the fix: see {@code McpToolRuntime}'s javadoc and the mutation
+ * below for why {@code vertx}'s {@code DatabindCodec} registers no {@code Jdk8Module}). The fallback is
+ * now {@code vertique}, which does register it, so this row now mounts.
+ * {@code shouldFailStartupForAnExplicitlyIncapableProfile} proves the canary's own contract is
+ * unchanged: a profile that is genuinely {@code Optional}-incapable — reached through an explicit MCP
+ * boundary default, not the zero-config tail — still fails startup exactly as before.
+ * {@code shouldMountForACapableProfile} exercises a profile that does register {@code Jdk8Module}.
  */
 class McpOptionalMaterializationCanaryTest {
 
     @Test
-    @DisplayName("shouldFailStartupForAnOptionalUnmaterializableProfile")
-    void shouldFailStartupForAnOptionalUnmaterializableProfile() throws Exception {
-        // Given: a real generated invoker for an Optional-reaching tool, and the framework's own
-        // zero-config vertx profile — which cannot materialize Optional<T> correctly.
+    @DisplayName("shouldMountForTheZeroConfigDefaultProfile")
+    void shouldMountForTheZeroConfigDefaultProfile() throws Exception {
+        // Given: a real generated invoker for an Optional-reaching tool, and the framework's actual
+        // zero-config default profile — vertique (issue #440), not the reserved vertx profile.
         ProcessorTestHarness.Result compiled = McpOptionalMaterializationCanaryTestFixture.compile();
-        McpToolRuntimeFactory unmaterializable =
-                McpOptionalMaterializationCanaryTestFixture.unmaterializableProfileFactory();
+        McpToolRuntimeFactory zeroConfig = McpOptionalMaterializationCanaryTestFixture.zeroConfigProfileFactory();
+
+        // When: construction runs the same canary against the real zero-config default.
+        McpToolInvoker invoker = McpOptionalMaterializationCanaryTestFixture.construct(compiled, zeroConfig);
+
+        // Then (DECISIVE, R13 item 3 / issue #440): the tool mounts. Before the fix, this exact call
+        // threw ConfigurationException naming "probe.register" — the zero-config vertx profile could
+        // not materialize Optional<T>. "The tool never mounts" was exactly "construction throws" (see
+        // shouldFailStartupForAnExplicitlyIncapableProfile below for that failure shape, now reached
+        // only by an explicitly incapable profile).
+        assertNotNull(invoker, "R13 item 3 (issue #440): the zero-config default must mount an Optional-reaching tool");
+    }
+
+    @Test
+    @DisplayName("shouldFailStartupForAnExplicitlyIncapableProfile")
+    void shouldFailStartupForAnExplicitlyIncapableProfile() throws Exception {
+        // Given: a real generated invoker for an Optional-reaching tool, and a profile explicitly
+        // selected to be Optional-incapable — proving the canary's own contract is unaffected by which
+        // profile the zero-config tail itself resolves to.
+        ProcessorTestHarness.Result compiled = McpOptionalMaterializationCanaryTestFixture.compile();
+        McpToolRuntimeFactory incapable =
+                McpOptionalMaterializationCanaryTestFixture.explicitlyIncapableProfileFactory();
 
         // When / Then (DECISIVE): construction — the generated invoker's constructor, which runs the
         // canary before returning — must fail with ConfigurationException naming the tool, rather than
@@ -47,7 +72,7 @@ class McpOptionalMaterializationCanaryTest {
         // composition can obtain an McpToolInvoker from a constructor that never returned one.
         ConfigurationException failure = assertThrows(
                 ConfigurationException.class,
-                () -> McpOptionalMaterializationCanaryTestFixture.construct(compiled, unmaterializable),
+                () -> McpOptionalMaterializationCanaryTestFixture.construct(compiled, incapable),
                 "an Optional-unmaterializable profile must fail startup, not be inferred from module ids");
         assertTrue(
                 failure.getMessage().contains("probe.register"),

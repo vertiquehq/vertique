@@ -117,14 +117,30 @@ final class McpOptionalMaterializationCanaryTestFixture {
     }
 
     /**
-     * The framework's own zero-config {@code vertx} profile (Vert.x's {@code DatabindCodec}), which
-     * registers no {@code Jdk8Module} and therefore cannot materialize {@code Optional<T>} correctly —
-     * the real, unmodified default a composed application gets when it configures no profile at all.
+     * The real, zero-config default a composed application gets when it configures no JSON profile at
+     * all: {@link McpToolRuntimeFactoryTestSupport#factory()}, resolved through {@code
+     * McpJsonProfileResolver}'s real tail. R13 item 2 (issue #440) changed that tail from the reserved
+     * {@code vertx} profile (Vert.x's {@code DatabindCodec}, which registers no {@code Jdk8Module} and
+     * so cannot materialize {@code Optional<T>} correctly) to the built-in {@code vertique} profile,
+     * which does — so this factory is now materialization-capable, unlike before the fix.
      *
-     * @return a factory bound to the {@code vertx} profile only
+     * @return a factory bound to the zero-config default profile
      */
-    static McpToolRuntimeFactory unmaterializableProfileFactory() {
+    static McpToolRuntimeFactory zeroConfigProfileFactory() {
         return McpToolRuntimeFactoryTestSupport.factory();
+    }
+
+    /**
+     * An explicitly selected profile whose mapper registers no {@code Jdk8Module} and therefore cannot
+     * materialize {@code Optional<T>} correctly, deliberately reached through an MCP-boundary default
+     * rather than the zero-config tail — proving the canary still fails startup for a genuinely
+     * incapable profile regardless of which profile the zero-config tail itself resolves to (issue
+     * #440 changed only the tail, not the canary's own contract).
+     *
+     * @return a factory bound to an explicitly selected, {@code Optional}-incapable profile
+     */
+    static McpToolRuntimeFactory explicitlyIncapableProfileFactory() {
+        return McpToolRuntimeFactoryTestSupport.factory(Set.of(new NonMaterializingProfile()), "non-materializing");
     }
 
     /**
@@ -146,6 +162,22 @@ final class McpOptionalMaterializationCanaryTestFixture {
         @Override
         public JsonProfileId id() {
             return JsonProfileId.of("strict");
+        }
+
+        @Override
+        public ObjectMapper mapper() {
+            return mapper;
+        }
+    }
+
+    /** Registers Vert.x's Jackson support (so the registry's structural probe passes) but no {@code Jdk8Module}. */
+    private static final class NonMaterializingProfile implements JsonMapperProfile {
+
+        private final ObjectMapper mapper = new ObjectMapper().registerModule(VertxJsonSupport.module());
+
+        @Override
+        public JsonProfileId id() {
+            return JsonProfileId.of("non-materializing");
         }
 
         @Override

@@ -35,10 +35,11 @@ final class McpGeneratedInputCarrierITFixture {
     private McpGeneratedInputCarrierITFixture() {}
 
     /**
-     * Builds a resolver over the framework {@code vertx} profile plus one registered {@code strict}
-     * profile whose mapper supports JDK8 {@code Optional} materialization and Vert.x JSON types (so
-     * it passes the registry's structural round-trip probe), with no configured MCP-boundary or
-     * global default (the tail is the reserved {@code vertx} profile).
+     * Builds a resolver over the framework {@code vertx}/{@code vertique} profiles plus one
+     * registered {@code strict} profile whose mapper supports JDK8 {@code Optional} materialization
+     * and Vert.x JSON types (so it passes the registry's structural round-trip probe), with no
+     * configured MCP-boundary or global default (the tail is the {@code vertique} profile, issue
+     * #440 — not the reserved {@code vertx} profile).
      *
      * @return the composed resolver
      */

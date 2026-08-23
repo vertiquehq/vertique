@@ -37,16 +37,18 @@ import org.junit.jupiter.params.provider.MethodSource;
 /**
  * TP-003 — the frozen T002 contract matrix for effective JSON profile binding.
  *
- * <p>Profiles {@code type}, {@code method}, {@code mcp-default}, {@code global-default} and the
- * reserved {@code vertx} are registered (plus {@code strict}, the registered control the sensitivity
- * proof swaps in for the unknown {@code missing} id). Each row composes the resolver once and
- * captures the effective profile or the startup failure.
+ * <p>Profiles {@code type}, {@code method}, {@code mcp-default}, {@code global-default}, the
+ * reserved {@code vertx}, and {@code vertique} (the final fallback, issue #440) are registered (plus
+ * {@code strict}, the registered control the sensitivity proof swaps in for the unknown {@code
+ * missing} id). Each row composes the resolver once and captures the effective profile or the
+ * startup failure.
  *
  * <p>Three rows isolate three boundaries, one each:
  *
  * <ol>
  *   <li>{@link #shouldResolveMethodTypeBoundaryGlobalAndVertxPrecedenceOnceAtComposition()} — the
- *       five-tier precedence method → type → MCP boundary → global → {@code vertx}. The annotation
+ *       five-tier precedence method → type → MCP boundary → global → {@code vertique} (issue #440).
+ *       The annotation
  *       processor collapses the method-over-type selection into the one nullable declared literal
  *       this resolver receives (TP-001 row {@code shouldResolveMethodJsonProfileOverTypeAndRejectBlankValues}
  *       proves that half at compile time), so the row feeds the exact literal each tier emits.</li>
@@ -98,7 +100,8 @@ class McpJsonProfileBindingTest {
     /**
      * Each tier resolves to its exact profile id, and a lower tier never shadows a higher one: a
      * declared id wins over both configured defaults, the MCP boundary default wins over the global
-     * one, and the reserved {@code vertx} profile is the tail.
+     * one, and {@code vertique} — never the reserved {@code vertx} profile, which cannot materialize
+     * an {@code Optional<T>} tool argument (issue #440) — is the tail.
      */
     private static void shouldResolveMethodTypeBoundaryGlobalAndVertxPrecedenceOnceAtComposition() {
         McpJsonProfileResolver bothDefaultsConfigured =
@@ -118,6 +121,11 @@ class McpJsonProfileBindingTest {
         assertThat(globalDefaultOnly.resolve(null).id())
                 .as("the global default applies when the MCP boundary declares none")
                 .isEqualTo(JsonProfileId.of("global-default"));
+        assertThat(globalDefaultOnly.resolve(null).id())
+                .as("issue #440 scoping (DECISIVE): an application that sets json.jsonProfile must get "
+                        + "its own configured profile, never the vertique fallback — the fallback must never "
+                        + "outrank an explicit global choice")
+                .isNotEqualTo(JsonProfileId.of("vertique"));
 
         McpJsonProfileResolver blankBoundaryDefault = McpJsonProfileBindingTestFixture.resolver("  ", "global-default");
         assertThat(blankBoundaryDefault.resolve(null).id())
@@ -126,8 +134,8 @@ class McpJsonProfileBindingTest {
 
         McpJsonProfileResolver noDefaults = McpJsonProfileBindingTestFixture.resolver(null, null);
         assertThat(noDefaults.resolve(null).id())
-                .as("the reserved vertx profile is the tail")
-                .isEqualTo(JsonProfileId.VERTX);
+                .as("issue #440: the vertique profile is the tail, never the reserved vertx profile")
+                .isEqualTo(JsonProfileId.of("vertique"));
     }
 
     // --- Row 2: unknown annotation-selected profile ---
@@ -236,7 +244,14 @@ class McpJsonProfileBindingTest {
         private final Map<JsonProfileId, JsonMapperProfile> profilesById = new LinkedHashMap<>();
 
         private StubProfileRegistry() {
-            Stream.of("type", "method", "mcp-default", "global-default", "strict", JsonProfileId.VERTX.value())
+            Stream.of(
+                            "type",
+                            "method",
+                            "mcp-default",
+                            "global-default",
+                            "strict",
+                            JsonProfileId.VERTX.value(),
+                            "vertique")
                     .map(StubProfile::new)
                     .forEach(profile -> profilesById.put(profile.id(), profile));
         }

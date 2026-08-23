@@ -20,17 +20,18 @@ import java.util.Set;
  * hand-loaded generated invoker's reflective construction in {@code McpToolResultTest} — cannot build
  * one directly. This type is the one public seam that does, mirroring the same package-private
  * fixtures ({@code McpJson005ConsumptionITFixture}, {@code McpJsonProfileITFixture}) this package
- * already uses for its own tests, bound to the minimal framework {@code vertx} profile with no MCP
- * boundary or global default configured.
+ * already uses for its own tests, bound to the framework's built-in profiles with no MCP boundary or
+ * global default configured.
  */
 public final class McpToolRuntimeFactoryTestSupport {
 
     private McpToolRuntimeFactoryTestSupport() {}
 
     /**
-     * Builds a real {@link McpToolRuntimeFactory} bound to the framework {@code vertx} profile — no
-     * application-registered profile, MCP boundary default, or global default configured, so the
-     * resolver's reserved tail always applies.
+     * Builds a real {@link McpToolRuntimeFactory} with no application-registered profile, MCP
+     * boundary default, or global default configured, so {@link McpJsonProfileResolver}'s tail always
+     * applies — the built-in {@code vertique} profile (issue #440), never the reserved {@code vertx}
+     * profile.
      *
      * @return the composed factory
      */
@@ -39,13 +40,15 @@ public final class McpToolRuntimeFactoryTestSupport {
     }
 
     /**
-     * Builds a real {@link McpToolRuntimeFactory} bound to the framework {@code vertx} profile plus the
+     * Builds a real {@link McpToolRuntimeFactory} over the framework's built-in profiles plus the
      * given application-registered profiles, with {@code applicationProfiles} bound to the given MCP
-     * boundary default (or the reserved {@code vertx} tail when {@code null}).
+     * boundary default (or the resolver's tail — the built-in {@code vertique} profile, issue #440 —
+     * when {@code null}).
      *
-     * <p>Used by a proof whose tool needs an {@code Optional}-materialization-capable profile (contract
-     * §4.1) rather than the zero-config {@code vertx} profile, which has no {@code Jdk8Module}
-     * registered.
+     * <p>Used by a proof whose tool needs a profile other than the resolver's own tail — e.g. one
+     * explicitly selected to be {@code Optional}-materialization-incapable (contract §4.1), to prove
+     * the canary still fails startup for a genuinely incapable profile regardless of which profile the
+     * zero-config tail resolves to.
      *
      * @param applicationProfiles the application-registered profiles; must not be {@code null}
      * @param mcpJsonProfile the configured {@code mcp.jsonProfile} default id, or {@code null} for none

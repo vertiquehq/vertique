@@ -487,13 +487,19 @@ The effective tool-payload profile is resolved once per tool at composition time
 2. the declaring type's `@JsonProfile`;
 3. the MCP boundary default `mcp.jsonProfile`;
 4. the global default `json.jsonProfile`;
-5. the reserved `vertx` profile.
+5. the `vertique` profile (issue #440).
 
 The first two tiers are resolved at compile time by `vertique-codegen-mcp`, which rejects a blank
 annotation value; the server resolves the remaining tail against the `JsonMapperProfileRegistry`. An
 explicitly selected profile that is not registered fails composition, before the router is mounted.
 The configured `mcp.jsonProfile` default is validated independently, even when MCP is disabled or
 its mount is shadowed — so an invalid deployment configuration cannot lie dormant.
+
+The final tail is the `vertique` profile, never the reserved `vertx` profile: `vertx`'s
+`DatabindCodec`-backed mapper registers no `Jdk8Module`, so it cannot correctly materialize an
+`Optional<T>` tool parameter, while `vertique` does. This tail is scoped to the fallback only — it
+never outranks `json.jsonProfile`; an application that sets `json.jsonProfile` always gets its own
+configured profile.
 
 ### JSON mapper safety is the profile's responsibility
 
@@ -632,7 +638,10 @@ A candidate whose authorization decision exceeds the shared gate deadline also e
 the same amplification bound above, applied to a single hanging candidate rather than the whole
 scan — and is denied for this request (fail-closed). The returned `nextCursor` anchors to the
 candidate *before* the timed-out one, not the timed-out candidate itself, so the next `tools/list`
-call re-examines it rather than permanently excluding it from every future page.
+call re-examines it rather than permanently excluding it from every future page — including when the
+very first candidate of the scan is the one that times out, with no previous candidate to anchor to:
+the cursor then carries a reserved "resume from the beginning" anchor instead, so this case is
+retried too, never silently and permanently excluded.
 
 **Request-scoped scan budget (R10, issue #438).** The per-candidate gate deadline above bounds only
 one decision; it does not bound the sum of up to `4 * mcp.tools.pageSize` of them. A decision point

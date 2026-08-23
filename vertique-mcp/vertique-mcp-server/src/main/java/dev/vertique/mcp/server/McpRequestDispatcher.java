@@ -960,7 +960,14 @@ final class McpRequestDispatcher {
         Future<Void> outcome;
         try {
             outcome = interceptor.beforeRequest(requestContext);
-        } catch (RuntimeException thrown) {
+        } catch (RuntimeException | StackOverflowError thrown) {
+            // R13 (#440-adjacent isolation sweep): interceptor.beforeRequest is application-supplied
+            // lifecycle code, exactly like the stage-5/stage-7 callbacks below — a pathologically deep
+            // argument or context graph can drive native-recursion StackOverflowError here just as
+            // easily as a RuntimeException. Failing the future (rather than letting it escape
+            // synchronously through dispatch(), out to the Vert.x router) keeps this on the same
+            // bounded, terminal-event-emitting settlement path as every other rejection this chain
+            // produces.
             return Future.failedFuture(thrown);
         }
         if (outcome == null) {
@@ -993,7 +1000,10 @@ final class McpRequestDispatcher {
         Future<Void> outcome;
         try {
             outcome = interceptor.beforeInvocation(toolContext);
-        } catch (RuntimeException thrown) {
+        } catch (RuntimeException | StackOverflowError thrown) {
+            // R13: mirrors runRequestInterceptors above — interceptor.beforeInvocation is the same
+            // class of application-supplied lifecycle callback, and a StackOverflowError from it is no
+            // less able to strand this request than one from stage 5 or stage 7.
             return Future.failedFuture(thrown);
         }
         if (outcome == null) {
@@ -1257,11 +1267,16 @@ final class McpRequestDispatcher {
         }
         List<String> names = List.copyOf(toolRegistry.descriptorsByName().keySet());
         int startIndex;
-        // R07 item 7: seeded from the incoming cursor's own anchor (or null when this is the first
-        // page) rather than an unconditional null, so a gate timeout on the very first candidate
-        // examined on page 2+ still has a genuine previous-candidate anchor to fall back to instead of
-        // one it can never have (see scan()'s own R07 item 7 comment for why a null anchor is still
-        // correct specifically on the true first page).
+        // R07 item 7: seeded from the incoming cursor's own anchor (or null when this is the true
+        // first page — no cursor was ever presented at all) rather than an unconditional null, so a
+        // gate timeout on the very first candidate examined on page 2+ still has a genuine
+        // previous-candidate anchor to fall back to instead of one it can never have. R13 item 2
+        // retracts R07 item 7's "unavoidable" residual on the true first page too:
+        // McpCursorCodec.BEFORE_FIRST_ANCHOR round-trips through decode() to startIndex 0 exactly like
+        // a null cursorNode does (names.indexOf(BEFORE_FIRST_ANCHOR) is always -1 — no real tool name
+        // can ever equal it — so +1 yields 0), so a resumed scan seeded with it, or one that falls back
+        // to it again on a repeat timeout, keeps retrying the very first candidate rather than
+        // excluding it.
         String seedAnchor;
         if (cursorNode == null) {
             startIndex = 0;
@@ -1367,12 +1382,15 @@ final class McpRequestDispatcher {
             String name = names.get(currentIndex);
             // R10 (issue #438): checked before this candidate's decision is ever started. Neither
             // check has examined this candidate at all, so — mirroring the gate-timeout branches'
-            // established null-previousAnchor fallback below — the anchor is the last candidate this
-            // scan actually examined, falling back to self-anchoring only in the one narrow edge case
-            // where nothing has been examined yet on this scan call (the very first candidate), so
-            // nextCursor is never silently dropped while candidates remain.
+            // established fallback below — the anchor is the last candidate this scan actually
+            // examined, falling back to McpCursorCodec.BEFORE_FIRST_ANCHOR (R13 item 2, retracting R07
+            // item 7's "unavoidable" self-anchor) in the one narrow edge case where nothing has been
+            // examined yet on this scan call (the very first candidate), so nextCursor is never
+            // silently dropped AND this candidate is retried on the next page rather than permanently
+            // excluded by an exclusive anchor pointing at itself.
             if (cancellation.isCancelled() || deadlineExceeded(deadline)) {
-                String anchor = currentLastExaminedName != null ? currentLastExaminedName : name;
+                String anchor =
+                        currentLastExaminedName != null ? currentLastExaminedName : McpCursorCodec.BEFORE_FIRST_ANCHOR;
                 return Future.succeededFuture(new ScanResult(currentVisible, anchor, currentExamined));
             }
             McpToolDescriptor descriptor = toolRegistry.descriptorsByName().get(name);
@@ -1409,11 +1427,19 @@ final class McpRequestDispatcher {
                         // silently excluding it forever. A null previousAnchor means this was the very
                         // first candidate examined across the whole scan (module.md's own contract: "a
                         // page may be empty and still carry a nextCursor while unexamined candidates
-                        // remain" — so nextCursor must never silently disappear here); the cursor
-                        // grammar has no anchor that means "before the beginning", so this one narrow
-                        // case falls back to the pre-fix self-anchor shape (excluding only this single
-                        // candidate) rather than dropping nextCursor and falsely signalling "no more".
-                        String anchor = previousAnchor != null ? previousAnchor : name;
+                        // remain" — so nextCursor must never silently disappear here).
+                        //
+                        // R13 item 2 (retracting R07 item 7's "unavoidable" wording): R07 claimed the
+                        // cursor grammar had no anchor meaning "before the beginning" and so fell back
+                        // to self-anchoring — excluding this one candidate permanently after all, on
+                        // exactly the one page where it could happen. That claim was wrong: the cursor
+                        // is opaque wire format entirely under this codec's control, so
+                        // McpCursorCodec.BEFORE_FIRST_ANCHOR (a reserved value no real tool name can
+                        // ever equal) now expresses "resume scanning from index 0" explicitly, and
+                        // McpCursorCodec#decode recognizes it without a registry-membership check. The
+                        // timed-out first candidate is retried on the next page, exactly like every
+                        // other timed-out candidate.
+                        String anchor = previousAnchor != null ? previousAnchor : McpCursorCodec.BEFORE_FIRST_ANCHOR;
                         return Future.succeededFuture(new ScanResult(updated, anchor, updatedExamined));
                     }
                     // R10 (issue #438): checked immediately after this in-flight decision resolved —
@@ -1455,14 +1481,15 @@ final class McpRequestDispatcher {
             currentExamined = currentExamined + 1;
             if (gateTimedOut(decision)) {
                 // Defensive mirror of the async stop above, same R07 item 7 fix (including the same
-                // null-previousAnchor self-anchor fallback — see that branch's comment): anchor to
+                // R13-item-2 BEFORE_FIRST_ANCHOR fallback — see that branch's comment): anchor to
                 // currentLastExaminedName as it stood BEFORE this candidate (not yet advanced to
                 // `name`), so this timed-out candidate is retried on the next page rather than
                 // permanently skipped. In practice a genuine gate timeout is scheduled by
                 // Future#timeout on a later event-loop tick, so it is never observed through this
                 // already-complete synchronous branch — but stopping here too means this method's
                 // termination guarantee does not depend on that scheduling detail.
-                String anchor = currentLastExaminedName != null ? currentLastExaminedName : name;
+                String anchor =
+                        currentLastExaminedName != null ? currentLastExaminedName : McpCursorCodec.BEFORE_FIRST_ANCHOR;
                 return Future.succeededFuture(new ScanResult(currentVisible, anchor, currentExamined));
             }
             // R10 (issue #438): the synchronous-branch mirror of the async "after" check above — this
@@ -1867,7 +1894,13 @@ final class McpRequestDispatcher {
                     null,
                     null);
             return;
-        } catch (RuntimeException prepareFailure) {
+        } catch (RuntimeException | StackOverflowError prepareFailure) {
+            // R13: invoker.prepare() (stages 2-4, the generated fixed input boundary) walks the
+            // envelope-permitted 1,000-level-deep argument tree — the same depth stage 5's comment
+            // above already calls out as StackOverflowError-capable — and may itself invoke
+            // application-supplied Bean Validation constraint code. A RuntimeException-only catch here
+            // would let a native-recursion StackOverflowError escape before beginWrite is ever called:
+            // no response, no terminal, no completion.
             writeSseFallback(context, envelope, security, toolName, prepareFailure);
             return;
         }
@@ -1928,7 +1961,11 @@ final class McpRequestDispatcher {
             Future<McpToolResult<?>> result;
             try {
                 result = prepared.invoke();
-            } catch (RuntimeException invokeFailure) {
+            } catch (RuntimeException | StackOverflowError invokeFailure) {
+                // R13: prepared.invoke() is the generated call directly into the application's own tool
+                // handler — the most direct lifecycle callback on this whole path. A RuntimeException-only
+                // catch left a recursing handler free to strand the request exactly like the already-fixed
+                // stage 5/7 callbacks below.
                 writeSseFallback(context, envelope, security, toolName, invokeFailure);
                 return;
             }
