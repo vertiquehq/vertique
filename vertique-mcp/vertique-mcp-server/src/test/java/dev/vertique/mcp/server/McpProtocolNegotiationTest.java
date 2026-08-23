@@ -48,7 +48,7 @@ import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.ArgumentCaptor;
 
 /**
- * R05 TP-001 — {@code shouldValidateHeadersAndMethodSchemasBeforeAnyDispatch} (issue #429).
+ * R05 TP-001 — {@code shouldValidateHeadersAndMethodSchemasBeforeAnyDispatch} (issues #429/#438).
  *
  * <p>Every row drives {@link McpRequestDispatcher#dispatch} directly against a mocked {@link
  * RoutingContext} — mirroring {@code McpRequestInterceptorPipelineTest}'s driving style — carrying a
@@ -65,6 +65,30 @@ import org.mockito.ArgumentCaptor;
  * interceptor <em>does</em> run — proving the fixture's baseline body/header shape is not itself
  * accidentally triggering {@code -32020}, so a negative row's rejection is attributable to the one
  * mutated fact it names.
+ *
+ * <p><strong>R08 (issue #438) rows.</strong> The {@code SCHEMA_INVALID_..._ROW} rows above mutate only
+ * {@code _meta} — exactly why R08 found this suite could pass while {@link McpProtocolCodec} validated
+ * nothing else against the pinned official schema. The {@code NON_META_...} rows below each mutate a
+ * schema-typed field <em>outside</em> {@code _meta} — {@code cursor} ({@code tools/list}), {@code name}
+ * ({@code tools/call}, two ways: absent and non-textual) — proving the new {@link
+ * McpProtocolSchemaValidator} gate itself, not the pre-existing {@code _meta} checks, is what rejects
+ * them. There is no equivalent non-{@code _meta} row for {@code server/discover}: the pinned schema's
+ * {@code RequestParams} — {@code server/discover}'s own {@code params} shape — declares exactly one
+ * property, {@code _meta}; every other request-envelope fact ({@code id}, {@code jsonrpc}, {@code
+ * method}) is already validated earlier, by {@link McpProtocolCodec#decodeEnvelope}. Fabricating an
+ * unsupported extra property on {@code server/discover} would not exercise the schema gate either — the
+ * pinned schema permits unknown properties there (contract §4.7 — "Unknown fields permitted by the
+ * official schema... are accepted"), so such a request would still be schema-valid.
+ *
+ * <p><strong>{@code arguments} is deliberately not one of these rows.</strong> {@link
+ * #shouldNotRejectNonObjectArgumentsAtNegotiation()} below proves, directly against {@link
+ * McpProtocolCodec}, that a present non-object {@code arguments} value still passes negotiation: it is
+ * already rejected downstream, as a bounded SSE tool-error, by the pre-existing, decisively tested
+ * {@code McpToolCallMalformedArgumentsIT} contract (review-finding round-14 remediation) — reached only
+ * after registry lookup and the policy enforcer have already run. Folding it into this gate too would
+ * reject the identical condition earlier with a different wire response, a consumer-visible behavior
+ * change outside this repair-only slice's authority (see {@link McpProtocolSchemaValidator}'s own
+ * javadoc for the full reasoning).
  */
 class McpProtocolNegotiationTest {
 
@@ -85,6 +109,28 @@ class McpProtocolNegotiationTest {
     private static final String SCHEMA_INVALID_TOOLS_CALL_ROW =
             "shouldRejectSchemaInvalidMetaForToolsCallBeforeDispatch";
     private static final String RESERVED_FIELD_ROW = "shouldRejectAToolsCallReservedFieldBeforeDispatch";
+
+    /**
+     * R08 (issue #438): a {@code cursor} value the pinned schema types as a string, mutated to a
+     * number — a schema violation entirely outside {@code _meta}.
+     */
+    private static final String NON_META_INVALID_CURSOR_ROW = "shouldRejectANonStringCursorBeforeDispatch";
+
+    /**
+     * R08 (issue #438): a {@code tools/call} request whose {@code name} — schema-required and typed as
+     * a string — is absent. The pinned schema's {@code name} type carries no {@code minLength}, so a
+     * present-but-blank {@code name} stays schema-valid and is deliberately left to the downstream
+     * {@code -32602} unknown-or-unauthorized path (not this row's concern); an <em>absent</em> {@code
+     * name} is a genuine schema violation this row proves is now caught before the interceptor stage.
+     */
+    private static final String NON_META_MISSING_NAME_ROW = "shouldRejectAMissingToolNameBeforeDispatch";
+
+    /**
+     * R08 (issue #438): a {@code tools/call} request whose {@code name} is present but non-textual (a
+     * number) — the pinned schema's {@code name} type is {@code string}, so this is also a genuine
+     * schema violation, distinct from the missing-name row above.
+     */
+    private static final String NON_META_NON_TEXTUAL_NAME_ROW = "shouldRejectANonTextualToolNameBeforeDispatch";
 
     /**
      * R07 item 1 (security review): HTAB (0x09) survives Netty's own non-first-byte header validation
@@ -114,7 +160,10 @@ class McpProtocolNegotiationTest {
                 SCHEMA_INVALID_TOOLS_CALL_ROW,
                 RESERVED_FIELD_ROW,
                 CONTROL_CHARACTER_ROW,
-                UNSUPPORTED_VERSION_ROW);
+                UNSUPPORTED_VERSION_ROW,
+                NON_META_INVALID_CURSOR_ROW,
+                NON_META_MISSING_NAME_ROW,
+                NON_META_NON_TEXTUAL_NAME_ROW);
     }
 
     @ParameterizedTest(name = "{0}")
@@ -131,6 +180,9 @@ class McpProtocolNegotiationTest {
             case RESERVED_FIELD_ROW -> shouldRejectAToolsCallReservedFieldBeforeDispatch();
             case CONTROL_CHARACTER_ROW -> shouldRejectAControlCharacterInProtocolVersionBeforeDispatch();
             case UNSUPPORTED_VERSION_ROW -> shouldRejectAnUnsupportedProtocolVersionBeforeDispatch();
+            case NON_META_INVALID_CURSOR_ROW -> shouldRejectANonStringCursorBeforeDispatch();
+            case NON_META_MISSING_NAME_ROW -> shouldRejectAMissingToolNameBeforeDispatch();
+            case NON_META_NON_TEXTUAL_NAME_ROW -> shouldRejectANonTextualToolNameBeforeDispatch();
             default -> throw new IllegalArgumentException("unknown R05 TP-001 row: " + row);
         }
     }
@@ -210,6 +262,71 @@ class McpProtocolNegotiationTest {
         Outcome outcome = drive(body, validHeaders("tools/call", KNOWN_TOOL));
 
         assertRejectedBeforeDispatch(outcome, "a tools/call params carrying the reserved inputResponses field");
+    }
+
+    // --- R08 (issue #438): schema violations outside _meta, one row per field the pinned schema types ---
+
+    private void shouldRejectANonStringCursorBeforeDispatch() {
+        JsonObject body = toolsListBody();
+        body.getJsonObject("params").put("cursor", 12345);
+
+        Outcome outcome = drive(body, validHeaders("tools/list", null));
+
+        assertRejectedBeforeDispatch(outcome, "tools/list with a non-string cursor");
+    }
+
+    private void shouldRejectAMissingToolNameBeforeDispatch() {
+        JsonObject body = toolsCallBody(KNOWN_TOOL);
+        body.getJsonObject("params").remove("name");
+
+        Outcome outcome = drive(body, validHeaders("tools/call", KNOWN_TOOL));
+
+        assertRejectedBeforeDispatch(outcome, "tools/call with an absent (schema-required) name");
+    }
+
+    private void shouldRejectANonTextualToolNameBeforeDispatch() {
+        JsonObject body = toolsCallBody(KNOWN_TOOL);
+        body.getJsonObject("params").put("name", 42);
+
+        Outcome outcome = drive(body, validHeaders("tools/call", KNOWN_TOOL));
+
+        assertRejectedBeforeDispatch(outcome, "tools/call with a non-textual name");
+    }
+
+    /**
+     * R08 (issue #438), decisive boundary proof: a present non-object {@code arguments} value must
+     * still pass negotiation — it is deliberately excluded from {@link McpProtocolSchemaValidator}'s
+     * compiled {@code tools/call} schema (see that class's javadoc) because {@code
+     * McpToolCallMalformedArgumentsIT} already, decisively, pins a different wire shape for the exact
+     * same condition (a bounded SSE tool-error reached only after registry lookup and the policy
+     * enforcer already ran). Driven directly against {@link McpProtocolCodec} rather than through
+     * {@link #drive}: {@link #drive}'s shared fixture uses an empty tool registry and an unstubbed
+     * mocked {@link McpPolicyEnforcer}, so it cannot safely exercise the real downstream tool-call
+     * pipeline this boundary is about — this test only needs to prove negotiation itself does not
+     * reject the request, which {@link McpProtocolCodec#validateNegotiation} alone already answers.
+     * If a future change folded {@code arguments} back into the negotiation schema gate, this test
+     * would go red instead of {@code McpToolCallMalformedArgumentsIT} silently changing its own wire
+     * shape.
+     */
+    @Test
+    @DisplayName("R08: arguments' type-validity stays out of the negotiation-stage schema gate")
+    void shouldNotRejectNonObjectArgumentsAtNegotiation() {
+        JsonObject body = toolsCallBody(KNOWN_TOOL);
+        body.getJsonObject("params").put("arguments", "not-an-object");
+        MultiMap headers = validHeaders("tools/call", KNOWN_TOOL);
+
+        McpProtocolCodec codec = new McpProtocolCodec(HttpConfig.builder().build());
+        McpProtocolCodec.Decoded decoded = codec.decodeEnvelope(body.toBuffer().getBytes());
+        assertThat(decoded.isError())
+                .as("the envelope itself must decode cleanly")
+                .isFalse();
+
+        McpProtocolCodec.NegotiationResult negotiation = codec.validateNegotiation(decoded.envelope(), headers);
+
+        assertThat(negotiation.isError())
+                .as("DECISIVE: non-object arguments must not fail negotiation — that condition is "
+                        + "already, deliberately, rejected downstream by McpToolCallMalformedArgumentsIT")
+                .isFalse();
     }
 
     // --- R07 item 1: a control character in protocolVersion ---

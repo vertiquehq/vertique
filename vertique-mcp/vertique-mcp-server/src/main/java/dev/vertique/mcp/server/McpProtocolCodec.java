@@ -32,10 +32,12 @@ import java.util.Set;
  * <p>Envelope validation trusts only the framework-owned {@link McpEnvelopeJsonCodec}; the supported
  * request methods are the bounded set {@code server/discover}, {@code tools/list}, and
  * {@code tools/call}. Tool-level authorization ({@code -32602}) belongs to a later HTTP slice and is
- * deliberately absent here. Protocol negotiation — the required header/body agreement and per-method
- * {@code _meta} shape (issue #429) — is {@link #validateNegotiation}, a distinct step the caller runs
- * strictly after a successful {@link #decodeEnvelope} and strictly before any interceptor, tool
- * lookup, or authorization; this class has no dependency on any of those later stages.
+ * deliberately absent here. Protocol negotiation — validation of {@code params} against the pinned
+ * official per-method schema (R08, issue #438), the required header/body agreement, the per-method
+ * {@code _meta} shape (issue #429), and the reserved {@code tools/call} MRTR fields — is {@link
+ * #validateNegotiation}, a distinct step the caller runs strictly after a successful {@link
+ * #decodeEnvelope} and strictly before any interceptor, tool lookup, or authorization; this class has
+ * no dependency on any of those later stages.
  */
 final class McpProtocolCodec {
 
@@ -55,7 +57,12 @@ final class McpProtocolCodec {
      * shape, and a rejected reserved {@code tools/call} field — rather than the header/body comparison
      * alone: every one of these is a negotiation-stage failure in the sense R05's own title names, and
      * splitting them across two codes would give a caller no reliable signal that "negotiation failed"
-     * without also parsing the specific reason.
+     * without also parsing the specific reason. Widened again (R08, issue #438) to also cover a
+     * {@code params} value that fails the pinned official per-method schema — {@link
+     * McpProtocolSchemaValidator} — for exactly the same reason: it is still a negotiation-stage
+     * failure, and the contract's own frozen stage-4 language ("strict JSON decode, official envelope
+     * validation, required-header comparison...") already named schema validation as part of this same
+     * stage before R05 ever ran.
      */
     private static final int NEGOTIATION_MISMATCH = -32020;
 
@@ -121,6 +128,7 @@ final class McpProtocolCodec {
             .build();
 
     private final McpEnvelopeJsonCodec envelopeCodec;
+    private final McpProtocolSchemaValidator schemaValidator;
 
     /**
      * Creates a codec bound to the effective ingress cap.
@@ -130,6 +138,7 @@ final class McpProtocolCodec {
      */
     McpProtocolCodec(HttpConfig httpConfig) {
         this.envelopeCodec = new McpEnvelopeJsonCodec(httpConfig);
+        this.schemaValidator = new McpProtocolSchemaValidator();
     }
 
     /**
@@ -165,16 +174,34 @@ final class McpProtocolCodec {
     }
 
     /**
-     * Validates protocol negotiation for one already envelope-validated request (contract §4.7, issue
-     * #429): the required {@code MCP-Protocol-Version} / {@code Mcp-Method} / {@code Mcp-Name} headers
-     * against their body-mirrored values, the mandatory per-method {@code _meta} negotiation shape, and
-     * — for {@code tools/call} only — the rejected reserved MRTR fields.
+     * Validates protocol negotiation for one already envelope-validated request (contract §4.7,
+     * issues #429/#438): {@code params} against the pinned official per-method schema ({@link
+     * McpProtocolSchemaValidator}, R08), the required {@code MCP-Protocol-Version} / {@code
+     * Mcp-Method} / {@code Mcp-Name} headers against their body-mirrored values, the mandatory
+     * per-method {@code _meta} negotiation shape, and — for {@code tools/call} only — the rejected
+     * reserved MRTR fields.
      *
      * <p><strong>Ordering is the caller's obligation, not this method's.</strong> This method reads
      * only {@code envelope} and {@code headers}; it has no dependency on interceptors, the tool
      * registry, or authorization, so a caller that invokes it immediately after a successful {@link
      * #decodeEnvelope} and before anything else necessarily satisfies contract §4.7's "before
      * interceptors, lookup, or authorization" ordering.
+     *
+     * <p><strong>Official schema.</strong> {@code params} must satisfy the pinned schema's {@code
+     * $defs} entry for {@code method} — {@code RequestParams} ({@code server/discover}), {@code
+     * PaginatedRequestParams} ({@code tools/list}: types {@code cursor} as a string when present),
+     * {@code CallToolRequestParams} ({@code tools/call}: requires {@code name} as a non-absent string;
+     * {@code arguments} is deliberately excluded from this check — see {@link
+     * McpProtocolSchemaValidator}'s javadoc for why). This is the check R08 (issue #438) adds: before
+     * it, an invalid {@code cursor} or {@code name} reached interceptors, tool lookup, or authorization,
+     * because none of the narrower checks below ever inspected them (a non-object {@code arguments}
+     * value also reached them, and by design still does — {@link McpRequestDispatcher}'s pre-existing
+     * stage-6 input pipeline rejects it downstream instead, with a different, already-frozen wire
+     * shape). The pinned schema's {@code name} type is a bare {@code string} with no {@code minLength}, so a
+     * present-but-<em>blank</em> {@code name} is schema-valid and is still left, exactly as before, to
+     * {@link McpRequestDispatcher#writeToolsCall}'s existing, already-tested {@code -32602}
+     * unknown-or-unauthorized handling; only an <em>absent</em> or <em>non-textual</em> {@code name}
+     * — a genuine schema violation — is now rejected here instead of reaching that later stage.
      *
      * <p><strong>Header comparison.</strong> {@code MCP-Protocol-Version} must equal {@code
      * params._meta["io.modelcontextprotocol/protocolVersion"]} — the vendored schema's own {@code
@@ -183,20 +210,16 @@ final class McpProtocolCodec {
      * Mcp-Method} must equal {@code envelope.method}. {@code Mcp-Name} is required on every request,
      * but its value is compared against {@code params.name} only for {@code tools/call} when {@code
      * name} is itself present and textual; {@code server/discover} and {@code tools/list} carry no
-     * schema-level "name" concept to mirror, so their {@code Mcp-Name} value is accepted as sent. A
-     * {@code tools/call} request whose {@code name} is absent, blank, or non-textual is left to {@link
-     * McpRequestDispatcher#writeToolsCall}'s existing, already-tested {@code -32602}
-     * unknown-or-unauthorized handling — this method never duplicates or preempts that check, so this
-     * repair does not change that scenario's wire response. All three header <em>values</em> are
-     * compared case-sensitively; the header <em>name</em> lookup is case-insensitive ({@link
-     * MultiMap#get(String)}'s own contract). This method does not implement the contract's "Base64
-     * sentinel values are decoded before comparison" clause: no concrete sentinel syntax is specified
-     * anywhere in this feature's governance corpus, and the three values compared here (the fixed
-     * protocol-version literal, the fixed method-string enum, and a tool name already bounded to
-     * {@code [A-Za-z0-9_.-]{1,128}} once resolved) never need one — see the R05 evidence for the full
-     * reasoning. The vendored schema's {@code x-mcp-header}/{@code Mcp-Param-*} argument-mirroring
-     * mechanism (§4.7 — "Phase 1 emits no {@code x-mcp-header}") is the more plausible owner of that
-     * clause, and Phase 1 does not implement it either.
+     * schema-level "name" concept to mirror, so their {@code Mcp-Name} value is accepted as sent. All
+     * three header <em>values</em> are compared case-sensitively; the header <em>name</em> lookup is
+     * case-insensitive ({@link MultiMap#get(String)}'s own contract). This method does not implement
+     * the contract's "Base64 sentinel values are decoded before comparison" clause: no concrete
+     * sentinel syntax is specified anywhere in this feature's governance corpus, and the three values
+     * compared here (the fixed protocol-version literal, the fixed method-string enum, and a tool name
+     * already bounded to {@code [A-Za-z0-9_.-]{1,128}} once resolved) never need one — see the R05
+     * evidence for the full reasoning. The vendored schema's {@code x-mcp-header}/{@code Mcp-Param-*}
+     * argument-mirroring mechanism (§4.7 — "Phase 1 emits no {@code x-mcp-header}") is the more
+     * plausible owner of that clause, and Phase 1 does not implement it either.
      *
      * <p><strong>{@code _meta} shape.</strong> {@code params._meta} must be an object; {@code
      * io.modelcontextprotocol/protocolVersion} must be a non-blank string of at most {@value
@@ -208,11 +231,16 @@ final class McpProtocolCodec {
      * cannot be skipped in favor of trusting the header alone) and must be a member of {@link
      * #SUPPORTED_PROTOCOL_VERSIONS} — the single final-2026 version this server actually advertises;
      * {@code io.modelcontextprotocol/clientCapabilities} must be an object. Both are schema-required on
-     * every supported method's {@code RequestMetaObject}.
+     * every supported method's {@code RequestMetaObject}; these bounds (length, control characters, the
+     * supported-version set) are application policy layered on top of the pinned schema's own plain
+     * {@code string} type for {@code protocolVersion}, so the official-schema check above does not
+     * subsume them.
      *
      * <p><strong>Reserved fields.</strong> A {@code tools/call} {@code params} containing {@code
      * inputResponses} or {@code requestState} — schema-permitted MRTR fields Phase 1 does not implement
-     * — fails negotiation (contract §4.7).
+     * — fails negotiation (contract §4.7). The pinned schema itself permits both fields, so the
+     * official-schema check above does not catch this either; it is Phase 1's own policy, not a schema
+     * violation.
      *
      * @param envelope a successfully decoded envelope, as {@link Decoded#envelope()} carries it
      * @param headers the request's HTTP headers
@@ -222,6 +250,15 @@ final class McpProtocolCodec {
     NegotiationResult validateNegotiation(JsonNode envelope, MultiMap headers) {
         String method = envelope.get("method").asText();
         JsonNode params = envelope.get("params");
+        // R08 (issue #438): official envelope validation — contract §4.7 stage 4 names this before
+        // "required-header comparison" — against the pinned per-method schema runs first, so a
+        // structurally invalid cursor or name (neither of which the hand-rolled checks below ever
+        // inspected) is rejected here, before any of the narrower _meta/header/reserved-field checks
+        // below could otherwise let it through to them. arguments' type-validity is deliberately
+        // excluded from this check (see McpProtocolSchemaValidator's javadoc for why).
+        if (!schemaValidator.isValid(method, params)) {
+            return NegotiationResult.failed(negotiationError());
+        }
         JsonNode meta = params.get(META_FIELD);
         if (meta == null || !meta.isObject()) {
             return NegotiationResult.failed(negotiationError());

@@ -223,17 +223,27 @@ through a pre-encoded `-32603` *Internal error* response that is written exactly
 carries the cause's text, so an internal exception message cannot leak to a client.
 
 Once a decode succeeds, `McpProtocolCodec#validateNegotiation` validates protocol negotiation (R05,
-issue #429): the required `MCP-Protocol-Version`, `Mcp-Method`, and `Mcp-Name` headers agree with their
-body-mirrored values (`params._meta`'s `io.modelcontextprotocol/protocolVersion`, the envelope's
-`method`, and — for `tools/call` only, when present — `params.name`), the per-method `_meta` shape is
-structurally valid (`io.modelcontextprotocol/protocolVersion` a non-blank string of at most 64
-characters containing no control character, and a member of the versions this server actually
-supports; `io.modelcontextprotocol/clientCapabilities` an object), and — for `tools/call` only —
-`params` carries neither of the reserved multi-round-trip fields `inputResponses`/`requestState`. Any
-violation classifies as `-32020` *Header/body mismatch*, mapped to HTTP 400 through the same bounded,
-capped writer every other terminal response uses. This runs strictly after envelope decode and
-strictly before the request-interceptor stage below, tool lookup, or authorization — see
-[Request interceptor stage](#request-interceptor-stage).
+issue #429; R08, issue #438): `params` must satisfy the pinned official per-method schema
+(`schema/2026-07-28/schema.json` — `RequestParams` for `server/discover`, `PaginatedRequestParams`
+for `tools/list`, `CallToolRequestParams` for `tools/call`), so a schema-invalid `cursor` or `name` is
+rejected here — one narrow, deliberate exception: `tools/call`'s `arguments` is excluded from this
+schema check, because a present, non-null, non-object `arguments` value is already rejected
+downstream, as a bounded SSE tool-error (never invoking the handler), by the pre-existing
+[Request-time input pipeline](#request-time-input-pipeline)'s stage 1; rejecting it here too would
+change that already-shipped wire response. The required `MCP-Protocol-Version`, `Mcp-Method`, and `Mcp-Name`
+headers must also agree with their body-mirrored values (`params._meta`'s
+`io.modelcontextprotocol/protocolVersion`, the envelope's `method`, and — for `tools/call` only, when
+present — `params.name`), the per-method `_meta` shape must be structurally valid
+(`io.modelcontextprotocol/protocolVersion` a non-blank string of at most 64 characters containing no
+control character, and a member of the versions this server actually supports;
+`io.modelcontextprotocol/clientCapabilities` an object), and — for `tools/call` only — `params` must
+carry neither of the reserved multi-round-trip fields `inputResponses`/`requestState`. Any violation
+classifies as `-32020` *Header/body mismatch*, mapped to HTTP 400 through the same bounded, capped
+writer every other terminal response uses. This runs strictly after envelope decode and strictly
+before the request-interceptor stage below, tool lookup, or authorization — see
+[Request interceptor stage](#request-interceptor-stage). The pinned schema document ships in this
+module's own resources (not test-only), so this validation is available in production as shipped, not
+merely in the test tree.
 
 The mount handles no file uploads of its own, but it does not rely on that alone: an
 application-composed ancestor `BodyHandler` with uploads enabled spools multipart parts to disk
