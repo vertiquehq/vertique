@@ -5,6 +5,7 @@ package dev.vertique.redis;
 
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
+import io.vertx.core.net.NetClientOptions;
 import io.vertx.redis.client.Redis;
 import io.vertx.redis.client.RedisOptions;
 import jakarta.inject.Inject;
@@ -34,7 +35,10 @@ public final class RedisClientRegistry {
         }
         return clients.computeIfAbsent(profileName, ignored -> {
             RedisOptions options = new RedisOptions()
-                    .setConnectionString(profile.endpoints().getFirst())
+                    .setEndpoints(profile.endpoints())
+                    .setNetClientOptions(new NetClientOptions()
+                            .setSsl(profile.tlsEnabled())
+                            .setConnectTimeout(Math.toIntExact(profile.connectTimeoutMs())))
                     .setMaxPoolSize(profile.maxPoolSize())
                     .setMaxPoolWaiting(profile.maxPoolWaiting());
             if (profile.username() != null) {
