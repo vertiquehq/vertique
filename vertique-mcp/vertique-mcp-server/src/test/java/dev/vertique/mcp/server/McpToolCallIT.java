@@ -238,6 +238,12 @@ class McpToolCallIT {
                         await(rawClient.request(HttpMethod.POST, fixture.port(), "127.0.0.1", REQUEST_PATH));
                 request.putHeader("content-type", "application/json");
                 Future<HttpClientResponse> responseFuture = request.response();
+                // Compose the body future BEFORE sending. Attaching body() only after awaiting the
+                // headers leaves a window in which the SSE body buffers arrive with no handler
+                // attached and are discarded — which surfaces as a correct 200 with an empty body,
+                // and only under load. The headers future is still the decisive premature-byte
+                // assertion below; this just makes sure the body is captured from the first buffer.
+                Future<Buffer> bodyFuture = responseFuture.compose(HttpClientResponse::body);
                 request.end(callBody(PUBLIC_TOOL, 3));
 
                 assertThat(invokedLatch.await(5, TimeUnit.SECONDS))
@@ -260,7 +266,7 @@ class McpToolCallIT {
                 gateCompleted.get(5, TimeUnit.SECONDS);
 
                 HttpClientResponse lateResponse = await(responseFuture);
-                Buffer lateBody = await(lateResponse.body());
+                Buffer lateBody = await(bodyFuture);
                 assertThat(lateResponse.statusCode()).isEqualTo(200);
                 JsonObject lateResult = sseResult(lateBody.toString());
                 assertThat(lateResult.getJsonArray("content").getJsonObject(0).getString("text"))
